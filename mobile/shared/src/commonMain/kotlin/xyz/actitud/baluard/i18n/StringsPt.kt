@@ -276,6 +276,8 @@ internal val PT: Map<String, String> = mapOf(
     "totp.oneTimeCode" to "Código de verificação",
     "totp.nextCodeIn" to "Próximo código em",
     "settings.title" to "Configurações",
+    "settings.enabled" to "Ativado",
+    "settings.disabled" to "Desativado",
     "settings.sync" to "Sincronização",
     "settings.syncOnUnlock" to "Sincronizar ao desbloquear",
     "settings.syncAfterChange" to "Sincronizar após alterações",
@@ -611,6 +613,8 @@ internal val PT: Map<String, String> = mapOf(
     "space.joinCode" to "Código de convite",
 
     "space.quorumLabel" to "Aprovações para mudanças importantes",
+    "space.policyTitle" to "Configurações recomendadas",
+    "space.policyHint" to "Recomendado: {0}",
     "space.quorumDesc" to "Quantos administradores devem confirmar ações sensíveis: remoções, redefinições, transferências, rotação de chaves, mudança do endereço de sincronização.",
     "space.quorumCurrent" to "Atual: {0} administrador(es) devem confirmar",
     "space.createAuthLabel" to "Quem pode criar coleções",

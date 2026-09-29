@@ -3974,6 +3974,39 @@ impl VaultState {
         Ok(report.to_string())
     }
 
+    /// Advisory org policies (S4-6): publish or clear (empty map).
+    /// The core gate refuses non-admins in plain language.
+    pub async fn policies_set(&self, payload: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let map = parsed
+            .as_object()
+            .ok_or("The payload must be an object of policy recommendations.")?
+            .clone();
+        handle.policies_set(map).map_err(|e| e.to_string())
+    }
+
+    /// Advisory org policies (S4-6): read what is published. Any
+    /// unlocked device may read; no keys involved. Empty object when
+    /// nothing is published.
+    pub async fn policies_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let published = handle.policies_list().map_err(|e| e.to_string())?;
+        let policies = published
+            .and_then(|v| v.get("policies").cloned())
+            .unwrap_or_else(|| serde_json::json!({}));
+        Ok(serde_json::json!({ "policies": policies }).to_string())
+    }
+
     /// A quorum refusal just wrote (or matched) a pending record on
     /// THIS device. The ask only matters if the other admins ever see
     /// it, so ship it with a best-effort signed sync cycle (commit →

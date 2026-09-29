@@ -310,6 +310,8 @@ internal val EN: Map<String, String> = mapOf(
 
     // settings
     "settings.title" to "Settings",
+    "settings.enabled" to "Enabled",
+    "settings.disabled" to "Disabled",
     "settings.sync" to "Sync",
     "settings.syncOnUnlock" to "Sync when I unlock the vault",
     "settings.syncAfterChange" to "Sync after every change I make",
@@ -640,6 +642,8 @@ internal val EN: Map<String, String> = mapOf(
     "space.joinCode" to "Invite code",
 
     "space.quorumLabel" to "Approvals for big changes",
+    "space.policyTitle" to "Recommended settings",
+    "space.policyHint" to "Recommended: {0}",
     "space.quorumDesc" to "How many admins must confirm sensitive actions: removals, resets, transfers, key rotation, moving the sync address.",
     "space.quorumCurrent" to "Current: {0} admin(s) must confirm",
     "space.createAuthLabel" to "Who can create collections",

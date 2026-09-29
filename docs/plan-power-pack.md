@@ -149,6 +149,13 @@ default.
 
 ## 5. S4-6 Advisory org policies
 
+> **SHIPPED (2026-09-29, tracer; see D63):** plaintext
+> `meta/policies.json` on the meta/** Admin row, fail-closed validation
+> over the shipped §6.5 knob table, `policies.set`/`policies.list`
+> routes, desktop Space-tab publish/clear with per-row recommended
+> hints, mobile hints showing only recommendations that differ.
+> Advisory only — no gate reads the file for decisions.
+
 Goal: a Space owner publishes recommended settings ("use Viewers without
 export", "invite authority: owners") and member surfaces show them.
 
@@ -299,7 +306,7 @@ extension Phase 2, 2FA tiers 2-5.
    D61; spec: §13).
 2. **S4-4 access review report** (M) — SHIPPED (2026-09-29, D62;
    carries the S4-8 exposure/rotation filter).
-3. **S4-6 advisory org policies** (S).
+3. **S4-6 advisory org policies** (S) — SHIPPED (2026-09-29, D63).
 4. **S4-7 emergency × org doc + Space Recovery Kit** (S).
 5. **S4-9 mobile multi-Space host** (L, parallelizable).
 6. **S4-2 groups as a key layer** (L, the headline item; Q6a confirmed,

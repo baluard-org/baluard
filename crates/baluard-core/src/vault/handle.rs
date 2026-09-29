@@ -472,6 +472,43 @@ impl VaultHandle {
         crate::vault::approvals::list_pending(&self.path)
     }
 
+    /// Publish (or clear) the advisory org policies (S4-6). Owner/Admin
+    /// gated with the legacy-founder equivalence; the file rides the
+    /// meta/** Admin row, values validate fail-closed in the module.
+    pub fn policies_set(
+        &self,
+        policies: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let members_dir = self.path.join(crate::vault::members::MEMBERS_DIR);
+        let allowed = if !members_dir.exists() {
+            true // legacy personal vault: the founder manages
+        } else {
+            matches!(
+                crate::vault::members::member_role_for_device(&self.path, self.device_id),
+                Some(crate::vault::members::MemberRole::Owner)
+                    | Some(crate::vault::members::MemberRole::Admin)
+            )
+        };
+        if !allowed {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "Only the owner or an admin can publish space policies.".into(),
+            )));
+        }
+        crate::vault::policies::write_policies(&self.path, policies)
+    }
+
+    /// Read the published advisory policies. Any unlocked device may
+    /// read (member surfaces render the hints); no keys involved.
+    pub fn policies_list(&self) -> Result<Option<serde_json::Value>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::policies::read_policies(&self.path)
+    }
+
     /// Access review (S4-4, plan-power-pack §3): one admin-facing JSON
     /// report answering "who can see what". Computed on demand from
     /// disk state; nothing persists. The S4-8 exposure summary rides

@@ -305,6 +305,8 @@ internal val ES: Map<String, String> = mapOf(
 
     // settings
     "settings.title" to "Ajustes",
+    "settings.enabled" to "Activado",
+    "settings.disabled" to "Desactivado",
     "settings.sync" to "Sincronización",
     "settings.syncOnUnlock" to "Sincronizar al desbloquear la bóveda",
     "settings.syncAfterChange" to "Sincronizar después de cada cambio",
@@ -645,6 +647,8 @@ internal val ES: Map<String, String> = mapOf(
     "space.joinCode" to "Código de invitación",
 
     "space.quorumLabel" to "Aprobaciones para cambios importantes",
+    "space.policyTitle" to "Ajustes recomendados",
+    "space.policyHint" to "Recomendado: {0}",
     "space.quorumDesc" to "Cuántos administradores deben confirmar acciones sensibles: eliminaciones, reinicios, transferencias, rotación de llaves, mudanza de la dirección de sincronización.",
     "space.quorumCurrent" to "Actual: {0} administrador(es) deben confirmar",
     "space.createAuthLabel" to "Quién puede crear colecciones",

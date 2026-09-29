@@ -140,6 +140,7 @@ open class StubVault(
         `collectionCreateAuthority`: String?,
     ): Unit = err()
     override suspend fun `approvalsList`(): String = err()
+    override suspend fun `policiesList`(): String = err()
     override suspend fun `spaceStatus`(): String = err()
     override suspend fun `spacePrepare`(): String = err()
     override suspend fun `spaceFlip`(): String = err()

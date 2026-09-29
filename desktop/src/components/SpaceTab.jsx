@@ -2,7 +2,7 @@ import { createSignal, onSettled, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
-import { toastError } from "../context/toastSignal.js";
+import { toastError, toastSuccess } from "../context/toastSignal.js";
 import TypedConfirmModal from "./TypedConfirmModal.jsx";
 
 /**
@@ -25,12 +25,92 @@ export default function SpaceTab() {
   const [spaceTeam, setSpaceTeam] = createSignal(null);
   const [teamBusy, setTeamBusy] = createSignal(false);
   const [showFlipConfirm, setShowFlipConfirm] = createSignal(false);
+  // S4-6: advisory org policies. null = nothing published.
+  const [policies, setPolicies] = createSignal(null);
+  const [policiesBusy, setPoliciesBusy] = createSignal(false);
 
   onSettled(() => {
     void loadSettings();
     void loadTeam();
     void loadPending();
+    void loadPolicies();
   });
+
+  async function loadPolicies() {
+    try {
+      const r = JSON.parse(await daemon("policies.list", {}));
+      setPolicies(r.policies && Object.keys(r.policies).length > 0 ? r.policies : null);
+    } catch {
+      setPolicies(null); // locked or nothing published
+    }
+  }
+
+  function recommendedFor(key) {
+    return policies()?.[key];
+  }
+
+  function policyValue(key) {
+    const v = recommendedFor(key);
+    if (typeof v === "boolean") return v ? t("settings.enabled") : t("settings.disabled");
+    // Enum values render through their existing chip labels, never as
+    // raw wire strings.
+    const labels = {
+      admins: "space.authorityAdmins",
+      owners: "space.authorityOwners",
+      editors: "space.createEditors",
+      write_scope_can_trash: "space.trashWriteScope",
+      admins_only: "space.trashAdminsOnly",
+      manual: "space.joinManual",
+      code: "space.joinCode",
+    };
+    return labels[v] ? t(labels[v]) : String(v);
+  }
+
+  function policyHint(key) {
+    return (
+      <Show when={recommendedFor(key) !== undefined}>
+        <span class="text-[10px] text-[var(--color-primary)] mt-0.5">
+          {t("space.policyHint", { value: policyValue(key) })}
+        </span>
+      </Show>
+    );
+  }
+
+  async function publishPolicies() {
+    if (policiesBusy()) return;
+    setPoliciesBusy(true);
+    try {
+      await daemon("policies.set", {
+        space_invite_authority: authority(),
+        allow_viewer_export: viewerExport(),
+        guest_enabled: guestSharing(),
+        trash_policy: trashPolicy(),
+        join_approval: joinApproval(),
+        quorum_admin_ops: quorum(),
+        collection_create_authority: createAuth(),
+      });
+      toastSuccess(t("space.policyDone"));
+      await loadPolicies();
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setPoliciesBusy(false);
+    }
+  }
+
+  async function clearPolicies() {
+    if (policiesBusy()) return;
+    setPoliciesBusy(true);
+    try {
+      await daemon("policies.set", {});
+      toastSuccess(t("space.policyCleared"));
+      await loadPolicies();
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setPoliciesBusy(false);
+    }
+  }
 
   async function loadPending() {
     try {
@@ -221,6 +301,7 @@ export default function SpaceTab() {
         <div class="flex flex-col flex-1 pr-4">
           <span class={rowLabel}>{t("space.inviteAuthorityLabel")}</span>
           <span class={rowDesc}>{t("space.inviteAuthorityDesc")}</span>
+          {policyHint("space_invite_authority")}
         </div>
         <div class="flex gap-2">
           <button disabled={busy()} class={chip(authority() === "admins")} onClick={() => changeAuthority("admins")}>
@@ -237,6 +318,7 @@ export default function SpaceTab() {
         <div class="flex flex-col flex-1 pr-4">
           <span class={rowLabel}>{t("space.viewerExportLabel")}</span>
           <span class={rowDesc}>{t("space.viewerExportDesc")}</span>
+          {policyHint("allow_viewer_export")}
         </div>
         <button disabled={busy()} class={toggle(viewerExport())} onClick={toggleViewerExport}>
           {viewerExport() ? t("settings.enabled") : t("settings.disabled")}
@@ -248,6 +330,7 @@ export default function SpaceTab() {
         <div class="flex flex-col flex-1 pr-4">
           <span class={rowLabel}>{t("space.guestLabel")}</span>
           <span class={rowDesc}>{t("space.guestDesc")}</span>
+          {policyHint("guest_enabled")}
         </div>
         <button disabled={busy()} class={toggle(guestSharing())} onClick={toggleGuestSharing}>
           {guestSharing() ? t("settings.enabled") : t("settings.disabled")}
@@ -258,6 +341,7 @@ export default function SpaceTab() {
         <div class="flex flex-col flex-1 pr-4">
           <span class={rowLabel}>{t("space.trashPolicyLabel")}</span>
           <span class={rowDesc}>{t("space.trashPolicyDesc")}</span>
+          {policyHint("trash_policy")}
         </div>
         <div class="flex gap-2">
           <button
@@ -282,6 +366,7 @@ export default function SpaceTab() {
         <div class="flex flex-col flex-1 pr-4">
           <span class={rowLabel}>{t("space.joinApprovalLabel")}</span>
           <span class={rowDesc}>{t("space.joinApprovalDesc")}</span>
+          {policyHint("join_approval")}
         </div>
         <div class="flex gap-2">
           <button
@@ -306,6 +391,7 @@ export default function SpaceTab() {
         <div class="flex flex-col flex-1 pr-4">
           <span class={rowLabel}>{t("space.quorumLabel")}</span>
           <span class={rowDesc}>{t("space.quorumDesc")}</span>
+          {policyHint("quorum_admin_ops")}
         </div>
         <div class="flex flex-col items-end gap-1">
           <div class="flex gap-2">
@@ -324,6 +410,7 @@ export default function SpaceTab() {
         <div class="flex flex-col flex-1 pr-4">
           <span class={rowLabel}>{t("space.createAuthLabel")}</span>
           <span class={rowDesc}>{t("space.createAuthDesc")}</span>
+          {policyHint("collection_create_authority")}
         </div>
         <div class="flex gap-2">
           <button disabled={busy()} class={chip(createAuth() === "admins")} onClick={() => changeCreateAuth("admins")}>
@@ -331,6 +418,30 @@ export default function SpaceTab() {
           </button>
           <button disabled={busy()} class={chip(createAuth() === "editors")} onClick={() => changeCreateAuth("editors")}>
             {t("space.createEditors")}
+          </button>
+        </div>
+      </div>
+
+      {/* S4-6: advisory org policies — publish current settings as
+          recommendations; member surfaces render them as hints. The
+          daemon is the validator (SyncTab precedent). */}
+      <div class="flex items-center justify-between pt-4 border-t border-[var(--color-border)]">
+        <div class="flex flex-col flex-1 pr-4">
+          <span class={rowLabel}>{t("space.policyTitle")}</span>
+          <span class={rowDesc}>
+            {policies()
+              ? t("space.policyPublished", { n: Object.keys(policies()).length })
+              : t("space.policyNone")}
+          </span>
+        </div>
+        <div class="flex gap-2">
+          <Show when={policies()}>
+            <button disabled={policiesBusy()} class={chip(false)} onClick={clearPolicies}>
+              {t("space.policyClear")}
+            </button>
+          </Show>
+          <button disabled={policiesBusy()} class={chip(false)} onClick={publishPolicies}>
+            {t("space.policyPublish")}
           </button>
         </div>
       </div>

@@ -891,6 +891,16 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Published advisory org policies (S4-6): {policies: {knob:
+    /// value}} — empty object when nothing is published. Read-only,
+    /// unlocked-gated; member surfaces render the hints.
+    pub async fn policies_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .policies_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Mint or refresh the shared-space key wraps for every live
     /// member (S3-7a). Run before flipping; the report lists members
     /// that still need to sign in with a current app version.

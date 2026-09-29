@@ -251,6 +251,8 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         // S4-1: sensitive-op approvals (quorum knob).
         "approvals.list",
         "access.review",
+        "policies.set",
+        "policies.list",
         // S2: item-sharing send/receive surfaces.
         "reveals.export_guest",
         "packages.import",

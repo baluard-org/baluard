@@ -434,6 +434,23 @@ class VaultRepository {
 
     /** Pending sensitive-op asks (quorum knob). Fail toward empty:
      * a malformed read degrades to an empty list. */
+    /** Published advisory org policies (S4-6): knob -> recommended
+     * value, empty map when nothing is published. Read-only hints
+     * input; fail toward empty. */
+    suspend fun policiesList(vault: MobileVault): Map<String, String> =
+        runCatching {
+            val o = Json.parseToJsonElement(vault.policiesList()).jsonObject
+            val policies = o["policies"]?.jsonObject ?: return@runCatching emptyMap()
+            policies.entries
+                .mapNotNull { (k, v) ->
+                    when (v) {
+                        is kotlinx.serialization.json.JsonPrimitive -> k to v.content
+                        else -> null
+                    }
+                }
+                .toMap()
+        }.getOrDefault(emptyMap())
+
     suspend fun approvalsPending(vault: MobileVault): List<MobilePendingOp> =
         runCatching {
             val o = Json.parseToJsonElement(vault.approvalsList()).jsonObject
