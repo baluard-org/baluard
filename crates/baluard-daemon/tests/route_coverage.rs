@@ -1636,6 +1636,128 @@ async fn policies_set_list_roundtrip_and_role_gates() {
 }
 
 #[tokio::test]
+async fn space_kit_lifecycle_and_role_gates() {
+    let (_dir, vault_path) = make_vault("kit");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // NOT unlocked: all three surfaces refuse.
+    assert!(state.space_kit_status().await.is_err());
+    assert!(state.space_kit_enable().await.is_err());
+    assert!(state.space_kit_disable().await.is_err());
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    // Enable: the phrase comes back exactly once through the wrapper.
+    let raw = state.space_kit_enable().await.unwrap();
+    let read: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let phrase = read["phrase"].as_str().expect("phrase in response");
+    assert_eq!(phrase.split_whitespace().count(), 24);
+    let raw = state.space_kit_status().await.unwrap();
+    let read: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(read["enabled"], true);
+    // Disable reports a removal; status flips back.
+    let raw = state.space_kit_disable().await.unwrap();
+    let read: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(read["removed"], true);
+    let raw = state.space_kit_status().await.unwrap();
+    let read: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(read["enabled"], false);
+
+    // Re-enable so the Editor-rebound legs have a kit to see.
+    state.space_kit_enable().await.unwrap();
+
+    // An Editor-rebound device manages nothing — and the kit status is
+    // admin-gated too, so all three refuse (the file's existence is
+    // still locally readable; this gates the IPC surface).
+    let editor_device =
+        uuid::Uuid::parse_str(&state.device_id().await).expect("device id is a uuid");
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        editor_device,
+        None,
+    );
+    assert!(state.space_kit_status().await.is_err());
+    let err = state.space_kit_enable().await.unwrap_err();
+    assert!(err.contains("admin"), "refusal names the gate: {err}");
+    let err = state.space_kit_disable().await.unwrap_err();
+    assert!(err.contains("admin"), "refusal names the gate: {err}");
+}
+
+#[tokio::test]
+async fn recover_kit_route_parses_and_resolves_slug() {
+    // Registry writes + env sandbox: hold the join guard so env-setting
+    // tests never interleave.
+    let _guard = JOIN_REG.lock().await;
+    let _sandbox = sandboxed_host_env();
+    let (_dir, vault_path) = make_vault("kitroute");
+    let password = MASTER.to_string();
+    // Enable the kit so the route reaches the brick guard (creation's
+    // device keystore lives in this vault dir), proving the full path.
+    let mut handle = baluard_core::vault::handle::VaultHandle::open(&vault_path).unwrap();
+    handle.unlock(&password).unwrap();
+    let phrase = handle.space_recovery_kit_enable().unwrap();
+    drop(handle);
+
+    let slug = baluard_core::vault::slug::normalize_slug("kitroute");
+    let mut reg = VaultRegistry::default();
+    reg.add(VaultEntry {
+        slug: slug.clone(),
+        display_name: slug.clone(),
+        path: vault_path.clone(),
+        provider: None,
+        remote_url: None,
+        last_synced: None,
+        last_opened: None,
+        vault_id: baluard_core::vault::handle::VaultHandle::vault_id_for_path(&vault_path).unwrap(),
+    })
+    .unwrap();
+    reg.save_locked().unwrap();
+
+    let host = Arc::new(VaultHost::new());
+
+    // Unknown slug refuses in plain language.
+    let resp = route_host_request(
+        join_request(
+            "vault.recover_kit",
+            serde_json::json!({"slug": "nosuch", "phrase": "x", "password": "y", "device_name": "z"}),
+        ),
+        &host,
+    )
+    .await;
+    assert!(!resp.success);
+    assert!(resp.error_message.contains("Unknown vault"));
+
+    // Missing phrase refuses before touching a vault.
+    let resp = route_host_request(
+        join_request(
+            "vault.recover_kit",
+            serde_json::json!({"slug": slug, "password": "y", "device_name": "z"}),
+        ),
+        &host,
+    )
+    .await;
+    assert!(!resp.success);
+    assert!(resp.error_message.contains("phrase"));
+
+    // A real phrase on a device that already holds keys hits the brick
+    // guard through the full route -> core path.
+    let resp = route_host_request(
+        join_request(
+            "vault.recover_kit",
+            serde_json::json!({"slug": slug, "phrase": phrase, "password": password, "device_name": "again"}),
+        ),
+        &host,
+    )
+    .await;
+    assert!(!resp.success);
+    assert!(
+        resp.error_message.contains("already has its own keys"),
+        "err: {}",
+        resp.error_message
+    );
+}
+
+#[tokio::test]
 async fn space_settings_lifecycle_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("space-settings");
     let state = Arc::new(VaultState::new(vault_path.clone()));

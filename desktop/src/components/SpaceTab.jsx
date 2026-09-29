@@ -2,7 +2,9 @@ import { createSignal, onSettled, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
+import { copyToClipboard } from "../lib/clipboard.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
+import ConfirmModal from "./ConfirmModal.jsx";
 import TypedConfirmModal from "./TypedConfirmModal.jsx";
 
 /**
@@ -28,13 +30,60 @@ export default function SpaceTab() {
   // S4-6: advisory org policies. null = nothing published.
   const [policies, setPolicies] = createSignal(null);
   const [policiesBusy, setPoliciesBusy] = createSignal(false);
+  // S4-7: recovery kit. null = status not loaded yet.
+  const [kitEnabled, setKitEnabled] = createSignal(null);
+  const [kitBusy, setKitBusy] = createSignal(false);
+  const [kitPhrase, setKitPhrase] = createSignal(null);
+  const [showKitConfirm, setShowKitConfirm] = createSignal(false);
 
   onSettled(() => {
     void loadSettings();
     void loadTeam();
     void loadPending();
     void loadPolicies();
+    void loadKit();
   });
+
+  async function loadKit() {
+    try {
+      const r = JSON.parse(await daemon("space.kit_status", {}));
+      setKitEnabled(r.enabled === true);
+    } catch {
+      setKitEnabled(null); // locked, refused, or unavailable
+    }
+  }
+
+  async function runKitEnable() {
+    if (kitBusy()) return;
+    setKitBusy(true);
+    try {
+      const r = JSON.parse(await daemon("space.kit_enable", {}));
+      setKitPhrase(r.phrase);
+      setKitEnabled(true);
+      toastSuccess(t("space.kitEnabled"));
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+      await loadKit();
+    } finally {
+      setKitBusy(false);
+    }
+  }
+
+  async function runKitDisable() {
+    if (kitBusy()) return;
+    setKitBusy(true);
+    try {
+      await daemon("space.kit_disable", {});
+      setKitEnabled(false);
+      setKitPhrase(null);
+      toastSuccess(t("space.kitDisabled"));
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+      await loadKit();
+    } finally {
+      setKitBusy(false);
+    }
+  }
 
   async function loadPolicies() {
     try {
@@ -498,6 +547,60 @@ export default function SpaceTab() {
         </span>
       </div>
 
+      {/* S4-7: Space Recovery Kit — the offline phrase that opens the
+          Space when every admin device is lost. The daemon gates it. */}
+      <div class="flex items-center justify-between pt-4 border-t border-[var(--color-border)]">
+        <div class="flex flex-col flex-1 pr-4">
+          <span class={rowLabel}>{t("space.kitLabel")}</span>
+          <span class={rowDesc}>{t("space.kitDesc")}</span>
+        </div>
+        <Show
+          when={kitEnabled() !== null}
+          fallback={<span class="text-[11px] text-[var(--color-muted)]">…</span>}
+        >
+          <Show
+            when={kitEnabled()}
+            fallback={
+              <button disabled={kitBusy()} class={chip(false)} onClick={runKitEnable}>
+                {t("space.kitEnable")}
+              </button>
+            }
+          >
+            <button
+              disabled={kitBusy()}
+              class={chip(false)}
+              onClick={() => setShowKitConfirm(true)}
+            >
+              {t("space.kitDisable")}
+            </button>
+          </Show>
+        </Show>
+      </div>
+
+      <Show when={kitPhrase()}>
+        <div class="mt-3 p-3 rounded-xl border border-amber-500/40 bg-amber-500/10">
+          <div class="text-[11px] font-bold text-amber-500">{t("space.kitPhraseTitle")}</div>
+          <div class="text-[11px] text-[var(--color-text)] mt-1">{t("space.kitPhraseWarn")}</div>
+          <div class="mt-2 p-2 rounded-lg bg-[var(--color-surface)] font-mono text-[11px] break-words">
+            {kitPhrase()}
+          </div>
+          <div class="flex items-center justify-between mt-2">
+            <button
+              class="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
+              onClick={() => copyToClipboard(kitPhrase())}
+            >
+              {t("space.kitCopy")}
+            </button>
+            <button
+              class="text-[11px] font-bold text-[var(--color-text)] cursor-pointer"
+              onClick={() => setKitPhrase(null)}
+            >
+              {t("space.kitStored")}
+            </button>
+          </div>
+        </div>
+      </Show>
+
       <TypedConfirmModal
         show={showFlipConfirm()}
         idPrefix="space-flip"
@@ -507,6 +610,17 @@ export default function SpaceTab() {
         confirmWord="team"
         onConfirm={runFlip}
         onClose={() => setShowFlipConfirm(false)}
+      />
+
+      <ConfirmModal
+        show={showKitConfirm()}
+        idPrefix="space-kit-disable"
+        title={t("space.kitConfirmTitle")}
+        body={t("space.kitConfirmBody")}
+        confirmLabel={t("space.kitDisable")}
+        confirmVariant="danger"
+        onConfirm={runKitDisable}
+        onClose={() => setShowKitConfirm(false)}
       />
     </div>
   );

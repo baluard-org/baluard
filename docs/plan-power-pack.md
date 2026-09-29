@@ -167,12 +167,15 @@ No new crypto, one route pair, one card per platform.
 
 ## 6. S4-7 Emergency × org × identity doc
 
-> **SHIPPED (2026-09-29, tracer; D64 pending review round):** the doc
-> landed as `docs/emergency-org-identity.md` and the Space Recovery Kit
-> core shipped (enable/disable/status + rotation rewrap in both paths
-> + phrase unwrap, tested). The recovery ceremony (device enrollment,
-> owner-row binding) is designed in the doc and deferred to its own
-> reviewed slice.
+> **SHIPPED (2026-09-29, tracer; D64 + D65):** the doc landed as
+> `docs/emergency-org-identity.md`; the Space Recovery Kit core shipped
+> (enable/disable/status + rotation rewrap in both paths + phrase
+> unwrap, tested); the recovery ceremony shipped the same day —
+> `recover_device_with_kit` (canary verified, registry entry, binding
+> to the live Owner row, brick guard), host-level `vault.recover_kit`,
+> admin-gated `space.kit_*` routes, the desktop Space settings kit
+> section, and the CLI disaster path (`vaults recover-kit`). Deferred:
+> login-screen recovery UI on desktop, any mobile recovery surface.
 
 Goal: one design doc tying the three layers together.
 

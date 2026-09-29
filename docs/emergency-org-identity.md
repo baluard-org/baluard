@@ -75,18 +75,25 @@ it only stops distributing it to members (S3-7b). So:
 
 ## 5. Shipped today and the follow-up
 
-Shipped 2026-09-29 (core, tested):
+Shipped (core, tested; ceremony + routes 2026-09-29):
 
 - `space_recovery_kit_enable` / `_disable` / `_status` (Owner/Admin
   gated, founder equivalence) on `VaultHandle`.
 - `rewrap_kit` wired into both rotation paths (P4 failure semantics).
 - `recover_root_from_kit` (phrase + vault-id checked unwrap).
-- The kit file rides the meta/** Admin row, so member writes are
-  refused by the shipped policy table and the P5 staging filter.
+- The recovery ceremony itself: `recover_device_with_kit` (canary
+  verified, fresh device enrolled into the existing registry, bound to
+  the live Owner member row, brick guard refusing devices that already
+  hold keys).
+- Surfaces: daemon routes (`space.kit_enable/_disable/_status`
+  token-gated admin; host-level `vault.recover_kit`), the desktop
+  Space settings section (enable/disable/status, one-time phrase
+  panel), and the CLI disaster path: `baluard vaults recover-kit
+  <slug>`.
 
-Follow-up slice (routes, CLI, UI, and the enrollment ceremony of
-section 2): deliberately deferred per plan section 6 so the unlock-
-critical enrollment lands reviewed, with the doc as its spec.
+Deferred: a login-screen recovery UI on desktop and any mobile
+recovery surface. The CLI is the natural fresh-machine tool; revisit
+if demand says otherwise.
 
 ## 6. Boundaries and threat model
 

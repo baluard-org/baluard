@@ -321,6 +321,12 @@ enum VaultAction {
         /// New sync address (https://, ssh://, or git@).
         url: String,
     },
+    RecoverKit {
+        /// Vault slug (the fresh clone of the Space).
+        slug: String,
+        /// Device name for the recovered device (prompted when omitted).
+        device_name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
