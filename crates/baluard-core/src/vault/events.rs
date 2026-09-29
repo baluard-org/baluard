@@ -34,6 +34,7 @@ pub enum ShareEventKind {
     MemberRemoved,
     MemberReset,
     OwnershipTransferred,
+    OwnershipClaimed,
     IdentityRotated,
     ContactTrustReset,
     /// S3-6: a JIT access ask was approved (grant issued).

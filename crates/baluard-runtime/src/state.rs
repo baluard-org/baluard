@@ -2610,6 +2610,28 @@ impl VaultState {
         Ok("{}".into())
     }
 
+    /// §13: an admin claims ownership when the Owner cannot act. The
+    /// quorum ask binds both member ids; a refusal ships the ask to
+    /// peers so a second admin can confirm the SAME ask by repeating
+    /// the claimant's id.
+    pub async fn members_claim(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let member_id = uuid::Uuid::parse_str(v["member_id"].as_str().ok_or("missing member_id")?)
+            .map_err(|e| e.to_string())?;
+        let outcome = handle.ownership_claim(member_id).map_err(|e| e.to_string());
+        drop(guard);
+        if let Err(e) = &outcome {
+            self.ship_pending_approval().await;
+            return Err(e.clone());
+        }
+        Ok("{}".into())
+    }
+
     /// Screen 6: aggregated actionable notices for the People surface.
     /// Filesystem-derived notices (reset-pending members, stale invites,
     /// malformed join requests) are always current; transport seat checks
@@ -3892,6 +3914,21 @@ impl VaultState {
             let n = v.as_u64().ok_or("quorum_admin_ops must be a number")?;
             if !(1..=5).contains(&n) {
                 return Err("quorum_admin_ops must be between 1 and 5".into());
+            }
+            // S4-3 ratchet: lowering the threshold is itself sensitive
+            // and is gated at the CURRENT threshold. The knob on disk
+            // still holds the old value (the save happens below), so
+            // quorum_gate evaluates at the live bar; a genuine lowering
+            // always demands >= 2 approvals. Raising stays instant.
+            let current = settings.quorum_admin_ops.unwrap_or(1).max(1);
+            if (n as u8) < current {
+                if let Err(e) =
+                    handle.assert_op_quorum("quorum_lower", &serde_json::json!({ "to": n }))
+                {
+                    drop(guard);
+                    self.ship_pending_approval().await;
+                    return Err(e.to_string());
+                }
             }
             settings.quorum_admin_ops = Some(n as u8);
         }

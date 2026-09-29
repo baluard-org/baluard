@@ -241,6 +241,15 @@ export default function PeopleTab() {
       } else if (action.kind === "transfer") {
         await daemon("members.transfer", { member_id: id });
         toastSuccess(t("people.transferDone"));
+      } else if (action.kind === "claim") {
+        const selfId = members().find((r) => r.is_self)?.id;
+        if (!selfId) {
+          toastError(t("error.generic"));
+          setBusy(false);
+          return;
+        }
+        await daemon("members.claim", { member_id: selfId });
+        toastSuccess(t("people.claimDone"));
       }
       closeAction();
       await loadMembers();
@@ -474,7 +483,9 @@ export default function PeopleTab() {
                 {/* §4.8-3: destructive actions — never on the viewer's own
                     row, never on tombstoned rows. Transfer belongs on the
                     TARGET row and only when the viewer is the owner (the
-                    owner initiates transfers to a member). */}
+                    owner initiates transfers to a member). §13: an ADMIN
+                    viewing the OWNER row sees exactly one action, Take
+                    Over — contextual labels so nobody faces both. */}
                 <Show when={!m.is_self && !m.reset && !m.removed}>
                   <Show when={yourRole() === "owner" && m.role !== "owner"}>
                     <button
@@ -485,6 +496,15 @@ export default function PeopleTab() {
                       {t("people.transfer")}
                     </button>
                   </Show>
+                  <Show when={yourRole() === "admin" && m.role === "owner"}>
+                    <button
+                      onClick={() => openAction("claim", m)}
+                      disabled={busy()}
+                      class="px-2 py-1 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {t("people.claim")}
+                    </button>
+                  </Show>
                   <Show when={yourRole() === "owner" || yourRole() === "admin"}>
                     <button
                       onClick={() => openAction("reset", m)}
@@ -493,13 +513,18 @@ export default function PeopleTab() {
                     >
                       {t("people.reset")}
                     </button>
-                    <button
-                      onClick={() => openAction("remove", m)}
-                      disabled={busy()}
-                      class="px-2 py-1 rounded-lg border border-red-400/30 text-[10px] font-bold text-red-400 hover:bg-red-500/10 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      {t("people.remove")}
-                    </button>
+                    {/* §13 review F2: removing the OWNER row fails at the
+                        core (transfer or claim first) — never render the
+                        dead button. */}
+                    <Show when={m.role !== "owner"}>
+                      <button
+                        onClick={() => openAction("remove", m)}
+                        disabled={busy()}
+                        class="px-2 py-1 rounded-lg border border-red-400/30 text-[10px] font-bold text-red-400 hover:bg-red-500/10 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        {t("people.remove")}
+                      </button>
+                    </Show>
                   </Show>
                 </Show>
               </li>
@@ -604,7 +629,7 @@ export default function PeopleTab() {
           )}
           confirmWord={pendingAction().member.display_name}
           confirmLabel={t(`people.${pendingAction().kind}Confirm`)}
-          danger={pendingAction().kind !== "transfer"}
+          danger={pendingAction().kind !== "transfer" && pendingAction().kind !== "claim"}
           extra={
             <Show when={pendingAction().kind === "remove" && lastRemoveError()}>
               <div class="mb-3 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30">

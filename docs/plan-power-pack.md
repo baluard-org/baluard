@@ -287,9 +287,8 @@ extension Phase 2, 2FA tiers 2-5.
 
 ## 12. Suggested build order (updated for the 2026-09-28 resolutions)
 
-1. **S4-3 ratchet + Q5 owner-reset fix** (S) — closes two real holes
-   (threshold downgrade, incapacitated-Owner freeze); builds on the
-   shipped quorum engine. Spec: §13.
+1. **S4-3 ratchet + Q5 owner-reset fix** (S) — SHIPPED (2026-09-28,
+   D61; spec: §13).
 2. **S4-4 access review report** (M) — no new crypto, immediate admin
    value; carries the S4-8 exposure/rotation filter.
 3. **S4-6 advisory org policies** (S).
@@ -300,10 +299,13 @@ extension Phase 2, 2FA tiers 2-5.
 7. **S4-5 derived timeline** (M/L) — last; the synthesis engine over
    commit history.
 
-## 13. First-wave build spec: Q5 owner recovery + S4-3 ratchet (locked 2026-09-28)
+## 13. First-wave build spec: Q5 owner recovery + S4-3 ratchet (locked and SHIPPED 2026-09-28)
 
 The reviewed design for §12 item 1, settled by a second adversarial
-review round whose code claims were source-verified. Two separate ops,
+review round whose code claims were source-verified, then built as
+specified (D61) with one review-driven amendment: the claimant id is an
+explicit parameter that travels in the ask's params, so a co-approver
+can repeat the SAME ask from the pending card. Two separate ops,
 no widening of the voluntary transfer gate.
 
 **Two ops, two scenarios.** `member_reset` gains Owner targets for admin actors (the owner-row refusal in `members.rs` lifts for Owner/Admin callers; the quorum gate is already on the op): the successor row inherits the Owner role, so an owner who returns rejoins as self — the family path. A NEW `ownership_claim` core op covers owner-gone-forever: ownership moves to the claiming admin's EXISTING row, old owner demoted. `transfer_ownership` stays untouched (Owner-actor-only, S1a-7 gate intact).

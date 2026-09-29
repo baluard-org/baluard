@@ -84,7 +84,7 @@ pub fn validate_template(
     }
     if role == MemberRole::Owner {
         return Err(VaultError::InvalidOperation(
-            "ownership cannot be invited; use transfer_ownership".into(),
+            "ownership cannot be invited; use an ownership transfer".into(),
         )
         .into());
     }

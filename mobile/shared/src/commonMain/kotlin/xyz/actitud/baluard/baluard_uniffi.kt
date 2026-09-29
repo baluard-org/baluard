@@ -935,6 +935,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1075,6 +1077,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_list_trash_ciphers(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_lock(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_claim(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_invite(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1436,6 +1440,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_lock(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_claim(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_invite(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_remove(
@@ -1737,6 +1743,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_lock() != 39822.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_claim() != 6235.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_invite() != 53433.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1782,7 +1791,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_get() != 19637.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 44577.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 3228.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_status() != 58379.toShort()) {
@@ -3048,6 +3057,14 @@ public interface MobileVaultInterface {
     suspend fun `lock`()
     
     /**
+     * §13: claim ownership when the Owner cannot act (admin-only;
+     * quorum-gated, the ask binds both member ids). `member_id` is the
+     * claimant's member id — the co-approver repeats the same ask.
+     * Returns `{}`.
+     */
+    suspend fun `memberClaim`(`memberId`: kotlin.String): kotlin.String
+    
+    /**
      * Mint a one-time invite code. Payload: `{role: "viewer"|"editor"
      * |"admin", transport_username?}` (role parsing fails closed).
      * Returns `{code, seat_granted, seat_error}`.
@@ -3145,6 +3162,10 @@ public interface MobileVaultInterface {
     /**
      * Set Space policy knobs (partial, admin-gated). Typed args so the
      * app never hand-builds JSON; the bridge constructs the payload.
+     * Set Space policy knobs (partial). Present-fields-only: the
+     * runtime parser treats a present-null key as a mistyped value, so
+     * None args must stay absent. The typed-args rule (D53) makes the
+     * width deliberate.
      */
     suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?, `joinApproval`: kotlin.String?, `quorumAdminOps`: kotlin.ULong?, `collectionCreateAuthority`: kotlin.String?)
     
@@ -4583,6 +4604,33 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * §13: claim ownership when the Owner cannot act (admin-only;
+     * quorum-gated, the ask binds both member ids). `member_id` is the
+     * claimant's member id — the co-approver repeats the same ask.
+     * Returns `{}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberClaim`(`memberId`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_claim(
+                thisPtr,
+                FfiConverterString.lower(`memberId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Mint a one-time invite code. Payload: `{role: "viewer"|"editor"
      * |"admin", transport_username?}` (role parsing fails closed).
      * Returns `{code, seat_granted, seat_error}`.
@@ -4967,6 +5015,10 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     /**
      * Set Space policy knobs (partial, admin-gated). Typed args so the
      * app never hand-builds JSON; the bridge constructs the payload.
+     * Set Space policy knobs (partial). Present-fields-only: the
+     * runtime parser treats a present-null key as a mistyped value, so
+     * None args must stay absent. The typed-args rule (D53) makes the
+     * width deliberate.
      */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
