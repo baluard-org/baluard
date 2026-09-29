@@ -3700,6 +3700,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(v) => ok_resp(v, token_str),
             Err(e) => err_response(e),
         },
+        "access.review" => match state.access_review().await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
         "collections.create" => {
             let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
                 Ok(v) => v,

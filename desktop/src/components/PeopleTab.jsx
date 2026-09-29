@@ -51,6 +51,58 @@ export default function PeopleTab() {
   // S3-6 / 4.8: collection access asks (JIT inbox).
   const [asks, setAsks] = createSignal([]);
   const [askBusy, setAskBusy] = createSignal(null);
+  // S4-4: the access review report. Computed on demand; nothing persists.
+  const [review, setReview] = createSignal(null);
+  const [reviewBusy, setReviewBusy] = createSignal(false);
+  const [expanded, setExpanded] = createSignal(null);
+
+  async function loadReview() {
+    setReviewBusy(true);
+    try {
+      const data = JSON.parse(await daemon("access.review"));
+      setReview(data);
+      setExpanded(null);
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setReviewBusy(false);
+    }
+  }
+
+  function exportReview() {
+    const r = review();
+    if (!r) return;
+    const blob = new Blob([JSON.stringify(r, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `baluard-access-review-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Per-member view rows: grants for the live, exposure for the
+  // tombstoned. A tombstoned member's surviving grant rows are the
+  // S4-8 summary: credentials to rotate.
+  function memberReviewRows(m) {
+    const r = review();
+    if (!r) return [];
+    const tombstoned = !!(m.removed || m.reset);
+    const rows = [];
+    for (const col of r.collections || []) {
+      const g = (col.grants || []).find((g) => g.member_id === m.id);
+      if (g)
+        rows.push({
+          name: col.name,
+          access: g.access,
+          expires_at: g.expires_at,
+          tombstoned,
+        });
+    }
+    return rows;
+  }
 
   async function loadMembers() {
     try {
@@ -535,6 +587,146 @@ export default function PeopleTab() {
           <p class="text-xs text-[var(--color-muted)]">{t("people.membersLegacy")}</p>
         </Show>
       </section>
+
+      {/* Access review (S4-4): who can see what, computed on demand.
+          Owner/Admin plus the legacy founder (yourRole null); the
+          daemon stays the validator. */}
+      <Show
+        when={
+          yourRole() === "owner" ||
+          yourRole() === "admin" ||
+          yourRole() === null
+        }
+      >
+      <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-bold text-[var(--color-text)]">
+            {t("people.reviewTitle")}
+          </h3>
+          <div class="flex items-center gap-3">
+            <Show when={review()}>
+              <button
+                onClick={exportReview}
+                class="text-[10px] font-bold text-[var(--color-primary)] cursor-pointer"
+              >
+                {t("people.reviewExport")}
+              </button>
+            </Show>
+            <button
+              onClick={loadReview}
+              disabled={reviewBusy()}
+              class="text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+            >
+              {reviewBusy() ? t("people.reviewRunning") : t("people.reviewRun")}
+            </button>
+          </div>
+        </div>
+        <Show
+          when={review()}
+          fallback={
+            <p class="text-xs text-[var(--color-muted)]">
+              {t("people.reviewHint")}
+            </p>
+          }
+        >
+          <Show when={(review().exposure || []).length > 0}>
+            <div class="mb-3 p-3 rounded-lg bg-red-500/5 border border-red-400/30">
+              <p class="text-[10px] font-bold text-red-400 uppercase mb-1">
+                {t("people.reviewExposureTitle")}
+              </p>
+              <For each={review().exposure}>
+                {(ex) => (
+                  <p class="text-xs text-[var(--color-text)]">
+                    {(ex.collections || []).length > 0
+                      ? t("people.reviewExposureItems", {
+                          name: ex.display_name,
+                          count: ex.collections.length,
+                          names: ex.collections.map((c) => c.name).join(", "),
+                        })
+                      : t("people.reviewExposureNone", {
+                          name: ex.display_name,
+                        })}
+                  </p>
+                )}
+              </For>
+            </div>
+          </Show>
+          <ul class="space-y-1.5">
+            <For each={review().members || []}>
+              {(m) => {
+                const rows = () => memberReviewRows(m);
+                const tombstoned = !!(m.removed || m.reset);
+                return (
+                  <li class="rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+                    <button
+                      onClick={() =>
+                        setExpanded(expanded() === m.id ? null : m.id)
+                      }
+                      class="w-full flex items-center gap-2 p-2.5 text-left"
+                    >
+                      <span
+                        class={`text-xs font-bold flex-1 truncate ${
+                          tombstoned
+                            ? "text-[var(--color-muted)] line-through"
+                            : "text-[var(--color-text)]"
+                        }`}
+                      >
+                        {m.display_name}
+                      </span>
+                      <span class="text-[10px] text-[var(--color-muted)]">
+                        {t("people.reviewCollections", {
+                          count: rows().length,
+                        })}
+                      </span>
+                      <span class="text-[10px] text-[var(--color-muted)]">
+                        {expanded() === m.id ? "▾" : "▸"}
+                      </span>
+                    </button>
+                    <Show when={expanded() === m.id}>
+                      <div class="px-3 pb-2.5 space-y-1">
+                        <Show
+                          when={rows().length > 0}
+                          fallback={
+                            <p class="text-xs text-[var(--color-muted)]">
+                              {tombstoned
+                                ? t("people.reviewKeptBytes")
+                                : t("people.reviewNoAccess")}
+                            </p>
+                          }
+                        >
+                          <For each={rows()}>
+                            {(row) => (
+                              <div class="flex items-center gap-2 text-xs">
+                                <span class="text-[var(--color-text)] flex-1 truncate">
+                                  {row.name}
+                                </span>
+                                <span class="text-[10px] font-bold text-[var(--color-muted)] uppercase">
+                                  {row.access}
+                                </span>
+                                <span class="text-[10px] text-[var(--color-muted)]">
+                                  {row.expires_at
+                                    ? t("people.reviewExpires")
+                                    : t("people.reviewNoExpiry")}
+                                </span>
+                              </div>
+                            )}
+                          </For>
+                        </Show>
+                      </div>
+                    </Show>
+                  </li>
+                );
+              }}
+            </For>
+          </ul>
+          <p class="mt-2 text-[10px] text-[var(--color-muted)]">
+            {t("people.reviewGenerated", {
+              time: new Date((review().generated_at || 0) * 1000).toLocaleString(),
+            })}
+          </p>
+        </Show>
+      </section>
+      </Show>
 
       {/* Activity */}
       <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">

@@ -472,6 +472,183 @@ impl VaultHandle {
         crate::vault::approvals::list_pending(&self.path)
     }
 
+    /// Access review (S4-4, plan-power-pack §3): one admin-facing JSON
+    /// report answering "who can see what". Computed on demand from
+    /// disk state; nothing persists. The S4-8 exposure summary rides
+    /// here: a removed or reset member's grant ROWS survive the
+    /// tombstone by design (only the expiry sweep prunes), so each
+    /// surviving row names a collection the departing member could
+    /// read while active — the credentials an admin should rotate
+    /// (read bytes cannot be un-read; changing the passwords is the
+    /// mitigation). Raw key material never enters the report.
+    pub fn access_review(&self) -> Result<serde_json::Value, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let sgk = self.unlocked().sgk()?;
+        let now = crate::vault::collections::now_secs_pub();
+
+        // Members: roles, trust, tombstones — the review's spine.
+        let members = crate::vault::members::list_members(&self.path)?;
+        let mut member_rows = Vec::new();
+        for m in &members {
+            member_rows.push(serde_json::json!({
+                "id": m.id,
+                "display_name": m.display_name,
+                "role": m.role,
+                "trust": m.trust,
+                "removed": m.removed,
+                "reset": m.reset.as_ref().map(|r| serde_json::json!({
+                    "successor": r.successor, "at": r.at,
+                })),
+            }));
+        }
+
+        // Collections: every grant with access + expiry, decrypted
+        // names (admin device holds the SGK).
+        let mut collection_rows = Vec::new();
+        for (file, name) in crate::vault::collections::list_collections(&self.path, sgk)? {
+            collection_rows.push(serde_json::json!({
+                "id": file.id,
+                "name": name,
+                "grants": file.grants.iter().map(|g| serde_json::json!({
+                    "member_id": g.member_id,
+                    "access": g.access,
+                    "expires_at": g.expires_at,
+                })).collect::<Vec<_>>(),
+            }));
+        }
+
+        // Exposure (S4-8): tombstoned members × surviving grant rows.
+        let exposed_ids: Vec<Uuid> = members
+            .iter()
+            .filter(|m| m.removed.is_some() || m.reset.is_some())
+            .map(|m| m.id)
+            .collect();
+        let mut exposure = Vec::new();
+        for tid in &exposed_ids {
+            let mut hit_collections = Vec::new();
+            for row in &collection_rows {
+                for g in row["grants"].as_array().expect("grants array") {
+                    if g["member_id"]
+                        .as_str()
+                        .map(|s| s == tid.to_string())
+                        .unwrap_or(false)
+                    {
+                        hit_collections.push(serde_json::json!({
+                            "id": row["id"],
+                            "name": row["name"],
+                            "access": g["access"],
+                            "expires_at": g["expires_at"],
+                        }));
+                    }
+                }
+            }
+            let m = members.iter().find(|m| m.id == *tid);
+            exposure.push(serde_json::json!({
+                "member_id": tid,
+                "display_name": m.map(|m| m.display_name.clone()).unwrap_or_default(),
+                "kind": if m.and_then(|m| m.removed).is_some() { "removed" } else { "reset" },
+                "collections": hit_collections,
+            }));
+        }
+
+        // Pre-flip boundary: members held the Root Key, so every flat
+        // cipher was readable. Post-flip, flats are admin-surface only.
+        let flipped = crate::vault::space_meta::shape_flipped(&self.path);
+
+        // Pending asks: quorum approvals, the join queue, and access
+        // requests — everything waiting on an admin decision.
+        let approvals: Vec<_> = self
+            .pending_op_approvals()
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "kind": p.kind,
+                    "params_digest": p.params_digest,
+                    "initiated_by": p.initiated_by,
+                    "required": p.required,
+                    "approvals": p.approvals,
+                    "params": p.params,
+                })
+            })
+            .collect();
+        let (join_rows, join_malformed) = crate::vault::members::list_requests(&self.path)?;
+        let join_requests: Vec<_> = join_rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "req_id": r.req_id,
+                    "display_name": r.display_name,
+                    "secret_ok": r.secret_ok,
+                })
+            })
+            .collect();
+        let (access_rows, access_malformed) =
+            // The JIT inbox resolves the acting device's member id and
+            // refuses on legacy vaults (no member directory); the
+            // founder sees an empty inbox instead of a failed report.
+            if self.path.join(crate::vault::members::MEMBERS_DIR).exists() {
+                self.access_requests_inbox()?
+            } else {
+                (Vec::new(), 0)
+            };
+        let access_requests: Vec<serde_json::Value> = access_rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "request_id": r.request_id,
+                    "requester_name": r.requester_name,
+                    "collection_id": r.collection_id,
+                    "collection_name": r.collection_name,
+                    "access": r.access,
+                    "note": r.note,
+                })
+            })
+            .collect();
+
+        // Outbox mirrors (owner side): what is being mirrored to whom.
+        // Contact display names resolve by signing pubkey; raw content
+        // keys never leave this function.
+        let outboxes = self.outbox_list()?;
+        let contacts = self.contacts_list().unwrap_or_default();
+        let contact_name = |pub_hex: &str| {
+            contacts
+                .iter()
+                .find(|c| c.card.identity_signing_pubkey == pub_hex)
+                .map(|c| c.card.display_name.clone())
+        };
+        let outbox_rows: Vec<_> = outboxes
+            .iter()
+            .map(|o| {
+                serde_json::json!({
+                    "outbox_id": o.outbox_id,
+                    "path": o.path,
+                    "recipient": contact_name(&o.recipient_signing_pub),
+                    "recipient_signing_pub": o.recipient_signing_pub,
+                    "published": o.published.len(),
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "generated_at": now,
+            "flipped": flipped,
+            "members": member_rows,
+            "collections": collection_rows,
+            "exposure": exposure,
+            "pending": {
+                "approvals": approvals,
+                "join_requests": join_requests,
+                "join_malformed": join_malformed,
+                "access_requests": access_requests,
+                "access_malformed": access_malformed,
+            },
+            "outboxes": outbox_rows,
+        }))
+    }
+
     /// Delegated manage (S3-5): Owner/Admin pass structurally; a legacy
     /// vault (no member directory) is admin-equivalent; otherwise the
     /// device's member must hold a LIVE `manage` grant on this exact
@@ -9431,6 +9608,86 @@ mod tests {
     /// refuses the member's trash; the owner trashes and restores
     /// throughout. Bindings are swapped on one device (the rebind
     /// pattern) so role resolution is deterministic.
+    #[test]
+    fn access_review_reports_exposure_and_grants() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let work = handle.collection_create("Work").unwrap();
+
+        // Plant an Editor row and grant Write while live. The review
+        // lists the grant under the collection.
+        let member_id = uuid::Uuid::new_v4();
+        let mk_row = |removed: Option<u64>| crate::vault::members::MemberFile {
+            id: member_id,
+            display_name: "Ed".into(),
+            role: crate::vault::members::MemberRole::Editor,
+            trust: crate::vault::members::TrustLevel::Channel,
+            identity_signing_pubkey: Some(hex::encode([1u8; 32])),
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        crate::vault::members::write_member(dir.path(), &mk_row(None)).unwrap();
+        handle
+            .collection_grant(
+                work,
+                member_id,
+                crate::vault::collections::CollectionAccess::Write,
+                None,
+            )
+            .unwrap();
+
+        let report = handle.access_review().unwrap();
+        assert_eq!(report["flipped"], serde_json::Value::Bool(false));
+        let cols = report["collections"].as_array().unwrap();
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0]["name"], "Work");
+        assert_eq!(
+            cols[0]["grants"].as_array().unwrap()[0]["member_id"]
+                .as_str()
+                .unwrap(),
+            member_id.to_string()
+        );
+        assert_eq!(report["exposure"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            report["pending"]["access_requests"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(report["outboxes"].as_array().unwrap().len(), 0);
+
+        // Tombstone the row (the removal ceremonies prove the flow;
+        // here only the report matters). The surviving grant row is
+        // the S4-8 exposure: credentials to rotate.
+        crate::vault::members::write_member(dir.path(), &mk_row(Some(1))).unwrap();
+        let report = handle.access_review().unwrap();
+        let exposure = report["exposure"].as_array().unwrap();
+        assert_eq!(exposure.len(), 1);
+        assert_eq!(
+            exposure[0]["member_id"].as_str().unwrap(),
+            member_id.to_string()
+        );
+        assert_eq!(exposure[0]["display_name"], "Ed");
+        assert_eq!(exposure[0]["kind"], "removed");
+        let hits = exposure[0]["collections"].as_array().unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["name"], "Work");
+        assert_eq!(hits[0]["access"], "write");
+
+        // Raw key material never enters the report.
+        let text = serde_json::to_string(&report).unwrap();
+        assert!(!text.contains("content_key"));
+        assert!(!text.contains("ck_wrapped"));
+    }
+
     #[test]
     fn trash_and_restore_policies_gate_members() {
         let (dir, password) = create_test_vault();

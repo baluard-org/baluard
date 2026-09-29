@@ -89,6 +89,14 @@ the ratchet intrinsic (no lock knob).
 
 ## 3. S4-4 Access review report
 
+> **SHIPPED (2026-09-29, tracer; see D61's sibling record D62):** the
+> aggregated report is live end to end — core `access_review`, the
+> `access.review` route, the People-tab card with per-member expandable
+> rows and JSON export, and the S4-8 exposure summary (removed/reset
+> members' surviving grants listed as the rotation list). Mobile bridge
+> method deferred; contact-key grants and outbox links (other devices'
+> local state) stay out.
+
 Goal: an admin answers "who can see what" in one place.
 
 Exists today: the data is all there (collection grants with expiry, member
@@ -289,8 +297,8 @@ extension Phase 2, 2FA tiers 2-5.
 
 1. **S4-3 ratchet + Q5 owner-reset fix** (S) — SHIPPED (2026-09-28,
    D61; spec: §13).
-2. **S4-4 access review report** (M) — no new crypto, immediate admin
-   value; carries the S4-8 exposure/rotation filter.
+2. **S4-4 access review report** (M) — SHIPPED (2026-09-29, D62;
+   carries the S4-8 exposure/rotation filter).
 3. **S4-6 advisory org policies** (S).
 4. **S4-7 emergency × org doc + Space Recovery Kit** (S).
 5. **S4-9 mobile multi-Space host** (L, parallelizable).

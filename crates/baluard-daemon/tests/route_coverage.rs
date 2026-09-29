@@ -1521,6 +1521,49 @@ async fn join_approval_code_auto_approves_manual_queues() {
     );
 }
 
+/// S4-4: the access review surface — locked refusal, the solo-owner
+/// report shape, and the non-admin refusal (rebound Editor device).
+/// The exposure logic lives in the core test.
+#[tokio::test]
+async fn access_review_locked_solo_and_role_gates() {
+    let (_dir, vault_path) = make_vault("access-review");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // NOT unlocked: refuses.
+    assert!(state.access_review().await.is_err());
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    // The creator device is the owner (owner genesis), so the review
+    // runs and reports the empty solo shape.
+    let raw = state.access_review().await.unwrap();
+    let report: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(report["members"].as_array().unwrap().len(), 1);
+    assert_eq!(report["collections"].as_array().unwrap().len(), 0);
+    assert_eq!(report["exposure"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        report["pending"]["join_requests"].as_array().unwrap().len(),
+        0
+    );
+    assert_eq!(report["outboxes"].as_array().unwrap().len(), 0);
+    assert!(report["generated_at"].as_u64().unwrap() > 0);
+
+    // A rebound Editor device is refused in plain language. The
+    // device id comes from the state itself (route-test convention).
+    let editor_state = Arc::new(VaultState::new(vault_path.clone()));
+    editor_state.open().await.expect("vault open");
+    editor_state.unlock(MASTER).await.expect("vault unlock");
+    let editor_device =
+        uuid::Uuid::parse_str(&editor_state.device_id().await).expect("device id is a uuid");
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        editor_device,
+        None,
+    );
+    let err = editor_state.access_review().await.unwrap_err();
+    assert!(err.contains("admin"), "refusal names the gate: {err}");
+}
+
 #[tokio::test]
 async fn space_settings_lifecycle_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("space-settings");
