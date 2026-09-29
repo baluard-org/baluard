@@ -205,6 +205,13 @@ rotation, "synthesized" from the recovery path), or drop the line.
 
 ## 8. S4-9 Mobile multi-Space host
 
+> **SHIPPED (2026-09-29, tracer; see D66):** app-level coordination won over
+> a host object — a bounded `MultiVaultSession` (max 3 unlocked, LRU
+> evict-locks) behind the existing per-vault exports, with zero Rust change.
+> The fast path lives in the switcher; `ON_STOP` locks inactive sessions and
+> the auto-lock poll enforces every session's timer (the desktop walker's
+> replacement).
+
 Goal: the phone holds several vaults (personal + Spaces) like the desktop
 VaultHost does since Phase 6.
 
@@ -318,7 +325,7 @@ extension Phase 2, 2FA tiers 2-5.
    carries the S4-8 exposure/rotation filter).
 3. **S4-6 advisory org policies** (S) — SHIPPED (2026-09-29, D63).
 4. **S4-7 emergency × org doc + Space Recovery Kit** (S) — SHIPPED (2026-09-29, kit core + doc; the enrollment ceremony is its own follow-up slice).
-5. **S4-9 mobile multi-Space host** (L, parallelizable).
+5. **S4-9 mobile multi-Space host** (L, parallelizable) — SHIPPED (2026-09-29, D66; app-level session, zero Rust).
 6. **S4-2 groups as a key layer** (L, the headline item; Q6a confirmed,
    design leans on the collection pattern).
 7. **S4-5 derived timeline** (M/L) — last; the synthesis engine over

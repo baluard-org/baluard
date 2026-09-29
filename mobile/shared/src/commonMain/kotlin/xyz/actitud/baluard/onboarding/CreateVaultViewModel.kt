@@ -36,7 +36,7 @@ class CreateVaultViewModel(
         return try {
             val result = repo.createVaultWithRecovery(path, password, deviceName)
             recoveryWords = result.recoveryPhrase.phrase.split(' ').filter { it.isNotBlank() }
-            auth.adopt(result.vault)
+            auth.adopt(path, result.vault)
             true
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e

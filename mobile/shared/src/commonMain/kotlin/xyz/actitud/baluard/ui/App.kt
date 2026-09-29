@@ -173,19 +173,37 @@ fun App(
                 nav = Nav.Edit(null)
             }
         }
-        // Switch vaults (desktop VaultSwitcher parity): lock + forget the
-        // current handle, persist the new path, reset the UI to Unlock.
+        // Multi-Space switch (S4-9): a cached, still-unlocked target adopts
+        // with no unlock ceremony (desktop VaultHost parity); anything else
+        // locks the outgoing vault and drops to the unlock screen as before.
         val switchVault: (String) -> Unit = { target ->
-            scope.launch { runCatching { auth.lock() } }
-            auth.forget()
-            xyz.actitud.baluard.platform.VaultRegistry.saveActiveVault(target)
-            path = target
-            hasVault = AppPaths.vaultExists(target)
-            detailOrigin = null
-            unlocked = false
-            nav = Nav.List
-            homeSyncPhase = SyncPhase.Idle
-            listSyncPhase = SyncPhase.Idle
+            scope.launch {
+                if (auth.switchTo(target)) {
+                    xyz.actitud.baluard.platform.VaultRegistry.saveActiveVault(target)
+                    path = target
+                    hasVault = true
+                    detailOrigin = null
+                    unlocked = true
+                    nav = Nav.List
+                    homeSyncPhase = SyncPhase.Idle
+                    listSyncPhase = SyncPhase.Idle
+                    auth.vault()?.let { v ->
+                        runCatching { sync.onUnlock(v) }
+                        conflictVm.refresh(v)
+                    }
+                } else {
+                    runCatching { auth.lock() }
+                    conflictVm.clear()
+                    xyz.actitud.baluard.platform.VaultRegistry.saveActiveVault(target)
+                    path = target
+                    hasVault = AppPaths.vaultExists(target)
+                    detailOrigin = null
+                    unlocked = false
+                    nav = Nav.List
+                    homeSyncPhase = SyncPhase.Idle
+                    listSyncPhase = SyncPhase.Idle
+                }
+            }
         }
 
 
@@ -301,6 +319,11 @@ fun App(
         }
         LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
             auth.vault()?.let { v -> scope.launch { runCatching { sync.onBackground(v) } } }
+            // Multi-Space rule (S4-9): only the vault on screen may ride out a
+            // background stretch (its own vault timeout governs it); cached
+            // vaults have no timer while inactive, so they lock on background —
+            // the desktop lock-all-on-blur twin.
+            scope.launch { runCatching { auth.lockInactiveSessions() } }
         }
 
         LaunchedEffect(unlocked) {
@@ -317,6 +340,10 @@ fun App(
         // the runtime's idle policy (foreground-lifecycle, no background
         // walker — plan §3.5). Both are cheap local FFI reads.
         suspend fun checkAutoLock() {
+            // Enforce EVERY session's timeout (the desktop walker's
+            // replacement), then the active vault's own check — an expired
+            // cached vault must not survive its configured timeout unlocked.
+            auth.enforceAutoLock()
             val v = auth.vault() ?: return
             if (v.shouldAutoLock()) doAutoLock()
         }
@@ -509,7 +536,7 @@ fun App(
                                     vaultPath = path,
                                     authViewModel = auth,
                                     onVaultRemoved = {
-                                        auth.forget()
+                                        scope.launch { auth.forget() }
                                         Toast.success(t("toast.vaultRemoved"))
                                         // Prefer another discovered vault over
                                         // onboarding when one exists on disk.

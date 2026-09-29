@@ -4,37 +4,42 @@ import xyz.actitud.baluard.data.UnlockResult
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.MobileVault
 /**
- * Drives the unlock flow. Holds the unlocked vault handle and exposes
- * unlock / lock to the UI. (The unlock screens own the AuthState UI state
- * machine; this class holds no UI state.)
+ * Drives the unlock flow over the multi-Space session (plan-power-pack S4-9):
+ * up to [MultiVaultSession.MAX_UNLOCKED] vaults stay unlocked at once, so
+ * switching Spaces does not re-run the unlock ceremony. The unlock screens own
+ * the AuthState UI state machine; this class holds no UI state.
  *
  * Concurrency: unlock is a suspend fn (UniFFI async -> Kotlin suspend). The
  * caller (UnlockScreen) launches it in a coroutine scope off the UI thread;
  * the Argon2id KDF runs on the parked shared tokio Runtime under the hood.
+ * The KDF stays user-serialized — one password prompt runs one KDF.
  */
 class AuthViewModel(private val repo: VaultRepository) {
-    private var vault: MobileVault? = null
+    private val session = MultiVaultSession()
 
     /**
-     * KEK retained from the most recent biometric quick-unlock. Lets the
-     * Settings screen re-enroll (disable -> re-enable) without ever asking
-     * for the master password again. Null after a password unlock (the KEK
-     * never materializes on that path) and on lock.
+     * KEK retained from the most recent biometric quick-unlock of the ACTIVE
+     * vault. Lets the Settings screen re-enroll (disable -> re-enable) without
+     * ever asking for the master password again. Returns a COPY: the session
+     * wipes its own array on lock/evict, and a wipe must never reach into a
+     * caller's in-flight use (a biometric re-enroll mid-prompt would otherwise
+     * encrypt zeros). Null after a password unlock (the KEK never materializes
+     * on that path) and on lock.
      */
-    var sessionKek: ByteArray? = null
-        private set
+    val sessionKek: ByteArray?
+        get() = session.activeEntry()?.kek?.copyOf()
 
     /**
      * Open a local vault directory and attempt to unlock it with [password].
-     * On success, holds the unlocked [MobileVault] for subsequent cipher ops.
+     * A cached, still-unlocked session for [path] adopts with no unlock
+     * ceremony at all (the multi-Space fast path). On a fresh unlock, the
+     * handle joins the session (LRU-evicting the oldest beyond the bound).
      */
     suspend fun openAndUnlock(path: String, password: String): UnlockResult {
-        sessionKek?.fill(0)
-        sessionKek = null
         return try {
             val v = repo.openVault(path)
             v.unlock(password)
-            vault = v
+            session.adopt(path, MobileSessionVault(v), kek = null)
             UnlockResult.Success
         } catch (e: Exception) {
             UnlockResult.Failure(e.message ?: "unlock failed")
@@ -50,8 +55,7 @@ class AuthViewModel(private val repo: VaultRepository) {
         return try {
             val v = repo.openVault(path)
             v.unlockWithKek(kek)
-            vault = v
-            sessionKek = kek
+            session.adopt(path, MobileSessionVault(v), kek = kek)
             UnlockResult.Success
         } catch (e: Exception) {
             UnlockResult.Failure(e.message ?: "unlock failed")
@@ -62,36 +66,50 @@ class AuthViewModel(private val repo: VaultRepository) {
     suspend fun deriveKek(path: String, password: String): ByteArray =
         repo.deriveKek(path, password)
 
-    /** Lock the currently-open vault (zeroizes in-memory keys). */
-    suspend fun lock(): Boolean {
-        val v = vault ?: return false
-        return try {
-            v.lock()
-            true
-        } catch (e: Exception) {
-            false
-        } finally {
-            sessionKek?.fill(0)
-            sessionKek = null
-        }
+    /**
+     * Multi-Space fast path: true when [path] already sits unlocked in the
+     * session — the vault switcher skips the lock screen entirely.
+     */
+    suspend fun switchTo(path: String): Boolean = session.switchTo(path)
+
+    /** Lock the active vault (zeroizes in-memory keys, frees its slot). */
+    suspend fun lock(): Boolean = session.lockActive()
+
+    /**
+     * Lock every cached session EXCEPT the active one (the app-shell calls
+     * this on background — the desktop lock-all-on-blur twin): a cached vault
+     * has no timer enforcement while inactive, so it must not ride out a
+     * background stretch unlocked.
+     */
+    suspend fun lockInactiveSessions(): Int = session.lockInactive()
+
+    /**
+     * Enforce every session's own vault timeout (the desktop walker's
+     * replacement): the app shell calls this on its auto-lock poll so an
+     * expired cached vault is locked even before anyone tries to switch to
+     * it.
+     */
+    suspend fun enforceAutoLock(): Int = session.enforceAutoLock()
+
+    /**
+     * Drop the active vault's session: lock + wipe its KEK + free the slot
+     * (vault switch-away, vault removed).
+     */
+    suspend fun forget() {
+        session.forgetActive()
     }
 
-    /** Drop the vault handle + retained KEK (vault removed from device). */
-    fun forget() {
-        vault = null
-        sessionKek = null
-    }
-
-    /** The unlocked vault, or null if not yet unlocked. */
-    fun vault(): MobileVault? = vault
+    /** The active vault's handle, or null if nothing is unlocked. */
+    fun vault(): MobileVault? = session.activeEntry()?.vault?.mobile
 
     /**
      * Adopt a vault handle produced outside [openAndUnlock]: the onboarding
-     * create flow (plan §5.5) and the recovery-phrase enroll flow (§5.4).
-     * The handle arrives already unlocked from the FFI.
+     * create flow (plan §5.5), the provider/enroll flow, and the
+     * recovery-phrase enroll flow (§5.4). The handle arrives already unlocked
+     * from the FFI.
      */
-    fun adopt(v: MobileVault) {
-        vault = v
+    suspend fun adopt(path: String, v: MobileVault) {
+        session.adopt(path, MobileSessionVault(v), kek = null)
     }
 
 }
