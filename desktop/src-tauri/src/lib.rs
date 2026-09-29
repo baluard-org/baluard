@@ -253,6 +253,10 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "access.review",
         "policies.set",
         "policies.list",
+        // S4-7: Space Recovery Kit (admin surfaces).
+        "space.kit_enable",
+        "space.kit_disable",
+        "space.kit_status",
         // S2: item-sharing send/receive surfaces.
         "reveals.export_guest",
         "packages.import",

@@ -2974,6 +2974,9 @@ pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std:
             delete_from_disk,
         } => vaults_detach(slug, *delete_from_disk, cli),
         VaultAction::Repoint { slug, url } => vaults_repoint(slug, url),
+        VaultAction::RecoverKit { slug, device_name } => {
+            vaults_recover_kit(slug, device_name.as_deref())
+        }
     }
 }
 
@@ -3000,6 +3003,48 @@ fn vaults_repoint(slug: &str, url: &str) -> Result<(), Box<dyn std::error::Error
         let _ = cfg.set_str("baluard.adopted-remote", url);
     }
     println!("Sync address for '{slug}' is now {url}");
+    Ok(())
+}
+
+/// `baluard vaults recover-kit <slug>`: recover a lost admin device on
+/// a FRESH clone of a Space using the Space Recovery Kit phrase. The
+/// phrase unwraps the Root Key, the canary verifies the vault, and the
+/// new device binds to the live Owner member row — then unlock with
+/// the master password as usual and pull. Direct-core by design: the
+/// ceremony is one local op on a clone and needs no daemon session.
+fn vaults_recover_kit(
+    slug: &str,
+    device_name: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let reg = baluard_core::vault::registry::VaultRegistry::load_locked()?;
+    let entry = reg
+        .get(slug)
+        .ok_or_else(|| format!("vault '{slug}' not found in registry"))?;
+    let vault_path = std::path::PathBuf::from(&entry.path);
+    if !vault_path.is_dir() {
+        return Err(format!("vault directory missing: {}", entry.path.display()).into());
+    }
+    let phrase = prompt_password("Recovery phrase (24 words): ")?;
+    let password = prompt_password("Master password: ")?;
+    let device_name = match device_name {
+        Some(name) => name.to_string(),
+        None => {
+            print!("Device name: ");
+            use std::io::Write;
+            std::io::stdout().flush()?;
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            line.trim().to_string()
+        }
+    };
+    let device_id = baluard_core::vault::handle::VaultHandle::recover_device_with_kit(
+        &vault_path,
+        &phrase,
+        &password,
+        &device_name,
+    )?;
+    println!("Device recovered ({device_id}).");
+    println!("Unlock with your master password, then pull to catch up.");
     Ok(())
 }
 

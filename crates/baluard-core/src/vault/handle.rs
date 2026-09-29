@@ -524,6 +524,163 @@ impl VaultHandle {
         Ok(())
     }
 
+    /// Recover a lost admin device with the kit phrase: unwrap the Root
+    /// Key, verify both canaries, enroll a fresh device, and bind it to
+    /// the live Owner member row. Never resets the device registry (the
+    /// multi-device roster is what peers verify signatures against).
+    /// Path-only BY DESIGN: a fresh clone of a multi-device Space cannot
+    /// open() a handle (no local keystore to resolve the device keywrap
+    /// against), so the ceremony must never require one. The recovered
+    /// device adopts the owner identity through the existing cross-device
+    /// heal at first unlock.
+    pub fn recover_device_with_kit(
+        vault_path: &Path,
+        phrase: &str,
+        password: &str,
+        device_name: &str,
+    ) -> Result<Uuid, BaluardError> {
+        if device_name.contains(['\n', '\r']) {
+            return Err(VaultError::InvalidOperation(
+                "device name must not contain newlines".into(),
+            )
+            .into());
+        }
+        // Brick guard first (needs no secret): recovery mints THIS
+        // device's keystore; running it where keys already exist would
+        // clobber them.
+        if vault_path.join("meta/device-privkey.json").exists() {
+            return Err(VaultError::InvalidOperation(
+                "This device already has its own keys; kit recovery is for fresh installs.".into(),
+            )
+            .into());
+        }
+        if !crate::vault::recovery_kit::kit_exists(vault_path)? {
+            return Err(VaultError::InvalidOperation(
+                "No recovery kit is set up for this vault.".into(),
+            )
+            .into());
+        }
+        let vault_id = Self::vault_id_for_path(vault_path)?;
+        let root = crate::vault::recovery_kit::recover_root_from_kit(vault_path, vault_id, phrase)
+            .map_err(|_| {
+                BaluardError::from(VaultError::InvalidOperation(
+                    "That recovery phrase does not open this vault's recovery kit.".into(),
+                ))
+            })?;
+        // Root canary: the recovered key must be THIS vault's key. The
+        // kit targets vaults that carry the canary (creation writes it);
+        // a vault without one is out of the kit's scope.
+        let canary_data = std::fs::read(vault_path.join("meta/rk-canary.enc")).map_err(|_| {
+            BaluardError::from(VaultError::InvalidOperation(
+                "This vault has no root canary; the recovery kit cannot verify it.".into(),
+            ))
+        })?;
+        crate::vault::canary::verify_rk_canary(&root, &canary_data).map_err(|_| {
+            BaluardError::from(VaultError::InvalidOperation(
+                "The recovered key does not match this vault.".into(),
+            ))
+        })?;
+
+        let kdf_raw = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))
+            .map_err(|e| VaultError::Metadata(format!("kdf params: {e}")))?;
+        let kdf_params: crate::types::KdfParams = serde_json::from_str(&kdf_raw)
+            .map_err(|e| VaultError::Metadata(format!("kdf params: {e}")))?;
+        let kek = Zeroizing::new(crate::crypto::kdf::derive_kek(password, &kdf_params)?);
+        // KEK canary: a mistyped master password would mint a keystore
+        // this device could never unlock with the real password. Verify
+        // BEFORE anything is written.
+        let kek_canary_data = std::fs::read(vault_path.join("meta/kek-canary.enc")).map_err(
+            |_| {
+                BaluardError::from(VaultError::InvalidOperation(
+                    "This vault has no master-password canary; the recovery kit cannot verify the password.".into(),
+                ))
+            },
+        )?;
+        let session_key = crate::crypto::hkdf_derive::derive_session_key(&kek)?;
+        crate::vault::canary::verify_kek_canary(&session_key, &kek_canary_data).map_err(|_| {
+            BaluardError::from(VaultError::InvalidOperation(
+                "That master password does not open this vault.".into(),
+            ))
+        })?;
+
+        // Resolve the Owner row BEFORE any disk mutation: a failure here
+        // must not strand a half-written keystore that trips the brick
+        // guard on retry.
+        let owner = crate::vault::members::list_members(vault_path)?
+            .into_iter()
+            .find(|m| {
+                m.role == crate::vault::members::MemberRole::Owner
+                    && m.removed.is_none()
+                    && m.reset.is_none()
+            })
+            .ok_or_else(|| {
+                BaluardError::from(VaultError::InvalidOperation(
+                    "No live owner member row was found to bind the recovered device to.".into(),
+                ))
+            })?;
+
+        // Fresh device identity (mirrors create_introduction). The KEK
+        // derives from the VAULT-level KDF params with no fresh salt —
+        // this device unlocks through the admin path like any other
+        // admin device.
+        let (x25519_secret, x25519_public) = crate::crypto::hpke_wrap::generate_x25519_keypair();
+        let (ed25519_signing, ed25519_verifying) =
+            crate::crypto::signature::generate_ed25519_keypair();
+        let device_id = Uuid::new_v4();
+        let devkey_seal = Zeroizing::new(crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek)?);
+
+        let mut inner = serde_json::json!({
+            "device_id": device_id.to_string(),
+            "x25519_private": hex::encode(x25519_secret.to_bytes()),
+            "ed25519_private": hex::encode(ed25519_signing.to_bytes()),
+        })
+        .to_string();
+        crate::vault::device_privkey::seal_file(
+            &vault_path.join("meta/device-privkey.json"),
+            &inner,
+            &devkey_seal,
+            Some(device_id),
+        )?;
+        inner.zeroize();
+        crate::vault::device_privkey::write_device_id(vault_path, device_id)?;
+
+        // Keywrap carrying the recovered Root Key (the same shape the
+        // rotation staging and approve_join write; the admin unlock tail
+        // unwraps it under root-key-keywrap).
+        let (eph, ct, tag) =
+            hpke_wrap::wrap_key(root.as_bytes(), &x25519_public, "root-key-keywrap")?;
+        let keywrap = serde_json::json!({
+            "device_id": device_id.to_string(),
+            "ephemeral_public": hex::encode(eph),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        super::write_vault_file(
+            &vault_path.join(format!("meta/keywrap/{device_id}.json")),
+            serde_json::to_string_pretty(&keywrap).unwrap().as_bytes(),
+        )?;
+
+        // Registry entry so the device's commits verify against the roster.
+        let mut dm = crate::device_manager::DeviceManager::load_from_vault(vault_path)?;
+        dm.registry.enroll_with_id(
+            device_id,
+            device_name.to_string(),
+            *x25519_public.as_bytes(),
+            crate::crypto::signature::verifying_key_bytes(&ed25519_verifying),
+            None,
+        )?;
+        dm.save_to_vault()?;
+
+        crate::vault::members::write_device_binding(
+            vault_path,
+            &crate::vault::members::DeviceBinding {
+                device_id,
+                member_id: owner.id,
+            },
+        )?;
+        Ok(device_id)
+    }
+
     /// Publish (or clear) the advisory org policies (S4-6). Owner/Admin
     /// gated with the legacy-founder equivalence; the file rides the
     /// meta/** Admin row, values validate fail-closed in the module.
@@ -8535,7 +8692,8 @@ fn keyring_service(vault_path: &Path) -> String {
 }
 
 /// Load device private keys from OS keyring, falling back to plaintext file.
-/// On successful file read, migrates to keyring and deletes the file.
+/// The file is retained as a fallback (never deleted): the keyring may be
+/// unavailable on a later unlock, and losing the keystore bricks the device.
 fn load_device_privkeys(
     vault_path: &Path,
     device_id: Uuid,
@@ -9781,6 +9939,120 @@ mod tests {
         let text = serde_json::to_string(&report).unwrap();
         assert!(!text.contains("content_key"));
         assert!(!text.contains("ck_wrapped"));
+    }
+
+    #[test]
+    fn kit_recovery_enrolls_on_a_fresh_clone_and_unlocks() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let phrase = handle.space_recovery_kit_enable().unwrap();
+        drop(handle);
+
+        // A "fresh install" clone: sibling tempdir (never inside the
+        // source tree), full recursive copy, kit file rides along.
+        fn copy_vault(src: &std::path::Path, dst: &std::path::Path) {
+            for entry in std::fs::read_dir(src).unwrap().flatten() {
+                let ty = entry.file_type().unwrap();
+                let to = dst.join(entry.file_name());
+                if ty.is_dir() {
+                    std::fs::create_dir_all(&to).unwrap();
+                    copy_vault(&entry.path(), &to);
+                } else {
+                    std::fs::copy(entry.path(), &to).unwrap();
+                }
+            }
+        }
+        let clone_dir = tempfile::tempdir().unwrap();
+        let clone_path = clone_dir.path().join("clone");
+        std::fs::create_dir_all(&clone_path).unwrap();
+        copy_vault(dir.path(), &clone_path);
+        // A real fresh clone carries none of the OLD device's local
+        // state (gitignored device files); strip them like git would.
+        for local in [
+            "meta/device-privkey.json",
+            "meta/device-id",
+            "meta/member-unlock.json",
+        ] {
+            let p = clone_path.join(local);
+            if p.exists() {
+                std::fs::remove_file(p).unwrap();
+            }
+        }
+        assert!(!clone_path.join("meta/device-privkey.json").exists());
+
+        // Recover: phrase + master password + device name -> a device
+        // bound to the live Owner row. Path-only: no handle open before
+        // the ceremony (a multi-device clone cannot open()).
+        let device_id =
+            VaultHandle::recover_device_with_kit(&clone_path, &phrase, &password, "Recovered Mac")
+                .expect("recovery on a fresh clone");
+        assert_eq!(
+            crate::vault::members::member_role_for_device(&clone_path, device_id),
+            Some(crate::vault::members::MemberRole::Owner)
+        );
+
+        // The recovered device unlocks through the admin path.
+        let mut clone = VaultHandle::open(&clone_path).unwrap();
+        clone.unlock(&password).unwrap();
+        assert!(clone.holds_root());
+
+        // The brick guard: re-running on a device that already holds
+        // keys refuses instead of clobbering the keystore.
+        let err = VaultHandle::recover_device_with_kit(&clone_path, &phrase, &password, "again")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("already has its own keys"), "err: {err}");
+        drop(clone);
+
+        // Wrong phrase refuses (a keystore-less clone: the phrase check
+        // fires before anything else).
+        let clone2_path = clone_dir.path().join("clone2");
+        std::fs::create_dir_all(&clone2_path).unwrap();
+        copy_vault(dir.path(), &clone2_path);
+        for local in [
+            "meta/device-privkey.json",
+            "meta/device-id",
+            "meta/member-unlock.json",
+        ] {
+            let p = clone2_path.join(local);
+            if p.exists() {
+                std::fs::remove_file(p).unwrap();
+            }
+        }
+        let wrong = VaultHandle::open(&clone2_path).unwrap();
+        let wrong_phrase = crate::recovery::RecoveryPhrase::generate()
+            .unwrap()
+            .phrase();
+        let err =
+            VaultHandle::recover_device_with_kit(&clone2_path, &wrong_phrase, &password, "nope")
+                .unwrap_err()
+                .to_string();
+        assert!(
+            err.contains("does not open this vault's recovery kit"),
+            "err: {err}"
+        );
+        drop(wrong);
+
+        // Wrong master password refuses at the KEK canary — a typo would
+        // otherwise mint an un-unlockable keystore.
+        let err =
+            VaultHandle::recover_device_with_kit(&clone2_path, &phrase, "not-the-password", "nope")
+                .unwrap_err()
+                .to_string();
+        assert!(
+            err.contains("master password does not open this vault"),
+            "err: {err}"
+        );
+        assert!(!clone2_path.join("meta/device-privkey.json").exists());
+
+        // No kit refuses in plain language (remove the kit from the
+        // same keystore-less clone).
+        std::fs::remove_file(clone2_path.join("meta/recovery-kit.json")).unwrap();
+        let err = VaultHandle::recover_device_with_kit(&clone2_path, &phrase, &password, "third")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No recovery kit"), "err: {err}");
     }
 
     #[test]

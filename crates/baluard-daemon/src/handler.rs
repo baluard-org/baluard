@@ -230,6 +230,7 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     "vault.clone_finalize",
     "join.introduce",
     "join.poll",
+    "vault.recover_kit",
     "reveals.open_guest",
 ];
 
@@ -286,6 +287,7 @@ const HOST_ACTIONS: &[&str] = &[
     "bridge.reauth",
     "bridge.revoke",
     "reveals.open_guest",
+    "vault.recover_kit",
 ];
 
 /// Actions that mutate vault data. Schedule cover commits after these.
@@ -325,6 +327,10 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     // S3-7a: prepare writes the sealed store + per-member wraps.
     "space.prepare",
     "space.flip",
+    // S4-7: kit enable/disable write the git-tracked
+    // meta/recovery-kit.json (meta/** Admin row).
+    "space.kit_enable",
+    "space.kit_disable",
     // S3-9: space settings are git-tracked policy (settings.enc) — ship
     // tightening promptly.
     "space.settings_set",
@@ -1392,6 +1398,12 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     }
     if req.action.as_str() == "join.poll" {
         return handle_join_poll(req, host).await;
+    }
+    // S4-7: Space Recovery Kit claim (host-level, pre-unlock — recovery
+    // runs on a fresh install with no session). The phrase gates the
+    // crypto; the canary check gates the vault.
+    if req.action.as_str() == "vault.recover_kit" {
+        return handle_recover_kit(req);
     }
     // S2 IS-6 passphrase-guest reveal: host-level and vault-agnostic —
     // a guest has NO vault ("Open a shared file" on first-run). Pure
@@ -2819,10 +2831,65 @@ async fn handle_join_introduce(
     }
 }
 
-/// S2 IS-6: open a passphrase-guest reveal (host-level, no vault, no
-/// token). The payload's own crypto is the gate: a wrong passphrase or
-/// an expired file refuses in core. The TOTP seed, when present, never
-/// leaves core; the response carries only the current code.
+/// S4-7: recover a lost admin device with the Space Recovery Kit
+/// (host-level, pre-unlock). The payload's phrase is the only gate the
+/// moment needs: it unwraps the Root Key, the canary verifies the
+/// vault, and the fresh device binds to the live Owner member row.
+/// Returns the new device id; the caller then unlocks with the master
+/// password through the normal path.
+fn handle_recover_kit(mut req: GatewayRequest) -> GatewayResponse {
+    let v: serde_json::Value = match serde_json::from_str(&req.payload) {
+        Ok(v) => v,
+        Err(e) => {
+            req.payload.zeroize();
+            return err_response(format!("Invalid recovery payload: {e}"));
+        }
+    };
+    let Some(slug) = v["slug"].as_str().map(str::to_string) else {
+        req.payload.zeroize();
+        return err_response("Missing 'slug' in recovery payload".to_string());
+    };
+    let Some(phrase) = v["phrase"]
+        .as_str()
+        .map(|p| zeroize::Zeroizing::new(p.to_string()))
+    else {
+        req.payload.zeroize();
+        return err_response("Missing 'phrase' in recovery payload".to_string());
+    };
+    // Same zeroizing discipline as the unlock path: the serde Value copy
+    // drops without scrubbing, matching vault.unlock's documented behavior.
+    let password = v["password"]
+        .as_str()
+        .map(|p| zeroize::Zeroizing::new(p.to_string()));
+    let Some(device_name) = v["device_name"].as_str().map(str::to_string) else {
+        req.payload.zeroize();
+        return err_response("Missing 'device_name' in recovery payload".to_string());
+    };
+    if device_name.contains(['\n', '\r']) {
+        req.payload.zeroize();
+        return err_response("device name must not contain newlines".to_string());
+    }
+    let Some(path) = registry_vault_path(&slug) else {
+        req.payload.zeroize();
+        return err_response(format!("Unknown vault: {slug}"));
+    };
+    let result = match password {
+        Some(password) => baluard_core::vault::handle::VaultHandle::recover_device_with_kit(
+            &path,
+            &phrase,
+            &password,
+            &device_name,
+        )
+        .map(|device_id| serde_json::json!({ "device_id": device_id.to_string() }).to_string())
+        .map_err(|e| e.to_string()),
+        None => Err("Missing 'password' in recovery payload".to_string()),
+    };
+    req.payload.zeroize();
+    match result {
+        Ok(payload) => ok_resp(payload, None),
+        Err(e) => err_response(e),
+    }
+}
 fn handle_reveal_open_guest(req: GatewayRequest) -> GatewayResponse {
     let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
         Ok(v) => v,
@@ -3672,6 +3739,20 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
         "space.flip" => match state.space_flip().await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
+        // ── S4-7: Space Recovery Kit (admin; the core gate is the same
+        // one policies uses) ──
+        "space.kit_enable" => match state.space_kit_enable().await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
+        "space.kit_disable" => match state.space_kit_disable().await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
+        "space.kit_status" => match state.space_kit_status().await {
             Ok(v) => ok_resp(v, token_str),
             Err(e) => err_response(e),
         },
@@ -5862,6 +5943,9 @@ mod tests {
             "collections.revoke",
             "space.prepare",
             "space.flip",
+            "space.kit_enable",
+            "space.kit_disable",
+            "space.kit_status",
             "space.settings_set",
             "policies.set",
             "collections.request_access",

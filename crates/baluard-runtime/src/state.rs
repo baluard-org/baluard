@@ -3642,6 +3642,45 @@ impl VaultState {
         .to_string())
     }
 
+    /// S4-7: kit surfaces (admin, per the core gate). Enable returns the
+    /// 24-word phrase exactly once; disable reports whether a kit
+    /// existed; status is a plain boolean.
+    pub async fn space_kit_enable(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let phrase = handle
+            .space_recovery_kit_enable()
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "phrase": phrase }).to_string())
+    }
+
+    pub async fn space_kit_disable(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let removed = handle
+            .space_recovery_kit_disable()
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "removed": removed }).to_string())
+    }
+
+    pub async fn space_kit_status(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let enabled = handle
+            .space_recovery_kit_status()
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "enabled": enabled }).to_string())
+    }
+
     /// S3-8: move this vault's sync to a new remote (admin-only). The
     /// announcement lands on the old remote, origin re-points, and the
     /// full history pushes to the new address; every device follows on
