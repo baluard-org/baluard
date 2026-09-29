@@ -167,6 +167,13 @@ No new crypto, one route pair, one card per platform.
 
 ## 6. S4-7 Emergency × org × identity doc
 
+> **SHIPPED (2026-09-29, tracer; D64 pending review round):** the doc
+> landed as `docs/emergency-org-identity.md` and the Space Recovery Kit
+> core shipped (enable/disable/status + rotation rewrap in both paths
+> + phrase unwrap, tested). The recovery ceremony (device enrollment,
+> owner-row binding) is designed in the doc and deferred to its own
+> reviewed slice.
+
 Goal: one design doc tying the three layers together.
 
 Exists today: `emergency.rs` is core-wired (both rotation paths rewrap the
@@ -307,7 +314,7 @@ extension Phase 2, 2FA tiers 2-5.
 2. **S4-4 access review report** (M) — SHIPPED (2026-09-29, D62;
    carries the S4-8 exposure/rotation filter).
 3. **S4-6 advisory org policies** (S) — SHIPPED (2026-09-29, D63).
-4. **S4-7 emergency × org doc + Space Recovery Kit** (S).
+4. **S4-7 emergency × org doc + Space Recovery Kit** (S) — SHIPPED (2026-09-29, kit core + doc; the enrollment ceremony is its own follow-up slice).
 5. **S4-9 mobile multi-Space host** (L, parallelizable).
 6. **S4-2 groups as a key layer** (L, the headline item; Q6a confirmed,
    design leans on the collection pattern).

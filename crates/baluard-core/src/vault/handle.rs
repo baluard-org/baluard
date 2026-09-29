@@ -472,6 +472,58 @@ impl VaultHandle {
         crate::vault::approvals::list_pending(&self.path)
     }
 
+    /// Create or rotate the Space Recovery Kit (admin-only). Returns
+    /// the 24-word phrase, which the caller must show exactly once and
+    /// the owner stores offline (the physical safe).
+    pub fn space_recovery_kit_enable(&self) -> Result<String, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        Self::assert_kit_admin(&self.path, self.device_id)?;
+        crate::vault::recovery_kit::enable_kit(&self.path, self.unlocked().root()?, self.vault_id)
+    }
+
+    /// Remove the kit (admin-only). Returns whether a kit existed.
+    pub fn space_recovery_kit_disable(&self) -> Result<bool, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        Self::assert_kit_admin(&self.path, self.device_id)?;
+        crate::vault::recovery_kit::disable_kit(&self.path)
+    }
+
+    /// Whether a kit is set up (admin-only; the file's existence is
+    /// already locally readable, so this gates nothing secret).
+    pub fn space_recovery_kit_status(&self) -> Result<bool, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        Self::assert_kit_admin(&self.path, self.device_id)?;
+        crate::vault::recovery_kit::kit_exists(&self.path)
+    }
+
+    /// Owner/Admin gate shared by the kit surfaces, with the legacy
+    /// no-member-directory founder equivalence (same shape as the
+    /// policies gate so every Space-settings surface reads alike).
+    fn assert_kit_admin(vault_path: &Path, device_id: Uuid) -> Result<(), BaluardError> {
+        let members_dir = vault_path.join(crate::vault::members::MEMBERS_DIR);
+        let allowed = if !members_dir.exists() {
+            true // legacy personal vault: the founder manages
+        } else {
+            matches!(
+                crate::vault::members::member_role_for_device(vault_path, device_id),
+                Some(crate::vault::members::MemberRole::Owner)
+                    | Some(crate::vault::members::MemberRole::Admin)
+            )
+        };
+        if !allowed {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "Only the owner or an admin can manage the recovery kit.".into(),
+            )));
+        }
+        Ok(())
+    }
+
     /// Publish (or clear) the advisory org policies (S4-6). Owner/Admin
     /// gated with the legacy-founder equivalence; the file rides the
     /// meta/** Admin row, values validate fail-closed in the module.
@@ -7594,6 +7646,9 @@ impl VaultHandle {
 
         // H4 fix: re-wrap recovery key with new Root Key (propagate error)
         Self::rewrap_recovery_key(&self.path, &new_root_key)?;
+        // S4-7: the Space Recovery Kit's phrase must keep working after
+        // a rotation — rewrap to the NEW root (absent kit is a no-op).
+        crate::vault::recovery_kit::rewrap_kit(&self.path, &new_root_key)?;
 
         // Success: only now clear the rotation state. Every fallible step
         // above propagated its error while the guard was still armed, so a
@@ -8125,6 +8180,9 @@ impl VaultHandle {
 
         // H4 fix: re-wrap recovery key with new Root Key (propagate error)
         Self::rewrap_recovery_key(&self.path, &new_root_key)?;
+        // S4-7: the Space Recovery Kit's phrase must keep working after
+        // a rotation — rewrap to the NEW root (absent kit is a no-op).
+        crate::vault::recovery_kit::rewrap_kit(&self.path, &new_root_key)?;
 
         // Success: only now clear the rotation state (same ordering rationale
         // as rotate_root_key — the marker must survive any failure).
@@ -9723,6 +9781,114 @@ mod tests {
         let text = serde_json::to_string(&report).unwrap();
         assert!(!text.contains("content_key"));
         assert!(!text.contains("ck_wrapped"));
+    }
+
+    #[test]
+    fn recovery_kit_survives_rotation_and_refuses_members() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Enable: a 24-word phrase comes back exactly once.
+        let phrase = handle.space_recovery_kit_enable().unwrap();
+        assert_eq!(phrase.split_whitespace().count(), 24);
+        assert!(handle.space_recovery_kit_status().unwrap());
+
+        // The phrase unwraps the live Root Key.
+        let live_root = handle_root_key_for_test(&handle);
+        let recovered =
+            crate::vault::recovery_kit::recover_root_from_kit(dir.path(), handle.vault_id, &phrase)
+                .unwrap();
+        assert_eq!(recovered.as_bytes(), live_root.as_slice());
+
+        // Rotation rewraps the kit: the SAME phrase recovers the NEW root.
+        handle.rotate_root_key().unwrap();
+        let new_root = handle_root_key_for_test(&handle);
+        assert_ne!(new_root, live_root);
+        let recovered =
+            crate::vault::recovery_kit::recover_root_from_kit(dir.path(), handle.vault_id, &phrase)
+                .unwrap();
+        assert_eq!(recovered.as_bytes(), new_root.as_slice());
+
+        // A bound Editor manages nothing kit-related.
+        let device_id = handle.device_id;
+        let members_dir = dir.path().join("meta/members");
+        let mut owner_member_id = None;
+        for entry in std::fs::read_dir(&members_dir).unwrap().flatten() {
+            let binding = entry
+                .path()
+                .join("devices")
+                .join(format!("{device_id}.json"));
+            if binding.exists() {
+                owner_member_id = Some(
+                    entry
+                        .path()
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string(),
+                );
+                std::fs::remove_file(binding).unwrap();
+            }
+        }
+        let owner_member_id =
+            uuid::Uuid::parse_str(&owner_member_id.expect("genesis binding")).unwrap();
+        let editor_id = uuid::Uuid::new_v4();
+        crate::vault::members::write_member(
+            dir.path(),
+            &crate::vault::members::MemberFile {
+                id: editor_id,
+                display_name: "Ed".into(),
+                role: crate::vault::members::MemberRole::Editor,
+                trust: crate::vault::members::TrustLevel::Channel,
+                identity_signing_pubkey: Some(hex::encode([1u8; 32])),
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                transport_username: None,
+                identity_wrap_pubkey: None,
+            },
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            dir.path(),
+            &crate::vault::members::DeviceBinding {
+                device_id,
+                member_id: editor_id,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            crate::vault::members::member_role_for_device(dir.path(), device_id),
+            Some(crate::vault::members::MemberRole::Editor)
+        );
+        let err = handle.space_recovery_kit_enable().unwrap_err().to_string();
+        assert!(err.contains("Only the owner or an admin"), "err: {err}");
+        let err = handle.space_recovery_kit_disable().unwrap_err().to_string();
+        assert!(err.contains("Only the owner or an admin"), "err: {err}");
+
+        // Rebind back to the owner row (the Editor binding must go first
+        // so role resolution finds exactly one binding).
+        std::fs::remove_file(
+            dir.path()
+                .join("meta/members")
+                .join(editor_id.to_string())
+                .join("devices")
+                .join(format!("{device_id}.json")),
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            dir.path(),
+            &crate::vault::members::DeviceBinding {
+                device_id,
+                member_id: owner_member_id,
+            },
+        )
+        .unwrap();
+        assert!(handle.space_recovery_kit_disable().unwrap());
+        assert!(!handle.space_recovery_kit_status().unwrap());
     }
 
     #[test]
