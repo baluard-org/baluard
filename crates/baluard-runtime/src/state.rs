@@ -3962,6 +3962,18 @@ impl VaultState {
         Ok(serde_json::json!({ "pending": rows }).to_string())
     }
 
+    /// Access review (S4-4): the aggregated who-can-see-what report.
+    /// Read-only; the core gate refuses non-admins in plain language.
+    pub async fn access_review(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let report = handle.access_review().map_err(|e| e.to_string())?;
+        Ok(report.to_string())
+    }
+
     /// A quorum refusal just wrote (or matched) a pending record on
     /// THIS device. The ask only matters if the other admins ever see
     /// it, so ship it with a best-effort signed sync cycle (commit →
