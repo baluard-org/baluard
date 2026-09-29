@@ -126,6 +126,7 @@ data class MobilePendingOp(
     val kind: String,
     val required: Int,
     val approvals: Int,
+    val claimantId: String? = null,
 )
 
 /** Team-shape readiness + state (S3-7b). */
@@ -440,10 +441,19 @@ class VaultRepository {
                 .mapNotNull { el ->
                     val row = runCatching { el.jsonObject }.getOrNull() ?: return@mapNotNull null
                     val kind = row.str("kind") ?: return@mapNotNull null
+                    // §13 review F1: confirming a claim means repeating
+                    // the SAME ask — the claimant id travels in the
+                    // ask's params (initiated_by as the pre-params
+                    // fallback, since the asker claims for self).
+                    val claimant = row["params"]
+                        ?.takeUnless { it is kotlinx.serialization.json.JsonNull }
+                        ?.jsonObject?.str("new_owner_id")
+                        ?: row.str("initiated_by")
                     MobilePendingOp(
                         kind = kind,
                         required = row.str("required")?.toIntOrNull() ?: 1,
                         approvals = row["approvals"]?.jsonArray?.size ?: 0,
+                        claimantId = claimant,
                     )
                 }
         }.getOrDefault(emptyList())
@@ -554,6 +564,8 @@ class VaultRepository {
         vault.memberReset(memberId)
     suspend fun memberTransfer(vault: MobileVault, memberId: String): String =
         vault.memberTransfer(memberId)
+    suspend fun memberClaim(vault: MobileVault, memberId: String): String =
+        vault.memberClaim(memberId)
     suspend fun memberRemove(
         vault: MobileVault,
         memberIds: List<String>,

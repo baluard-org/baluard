@@ -1650,8 +1650,11 @@ async fn space_settings_lifecycle_and_locked_rejection() {
         serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
     assert_eq!(get["quorum_admin_ops"], 2);
     assert_eq!(get["collection_create_authority"], "editors");
+    // S4-3 ratchet: LOWERING is now a sensitive op (single device can
+    // never self-confirm), so the authority resets alone; the knob
+    // stays raised for the rest of this test.
     state
-        .space_settings_set(r#"{"quorum_admin_ops":1,"collection_create_authority":"admins"}"#)
+        .space_settings_set(r#"{"collection_create_authority":"admins"}"#)
         .await
         .unwrap();
 
@@ -1775,6 +1778,68 @@ async fn space_settings_lifecycle_and_locked_rejection() {
     assert!(state.export_bw_json().await.is_err());
 }
 
+/// S4-3 ratchet + §13 claim gate: lowering the quorum threshold is
+/// itself sensitive (gated at the CURRENT bar, owner cannot self-
+/// confirm) while raising stays instant; members.claim refuses locked
+/// and validates its payload.
+#[tokio::test]
+async fn quorum_lower_ratchet_and_claim_gate() {
+    let (_dir, vault_path) = make_vault("quorum-lower");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // Locked: claim refuses.
+    assert!(
+        state
+            .members_claim(r#"{"member_id":"11111111-1111-1111-1111-111111111111"}"#)
+            .await
+            .is_err()
+    );
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    // Raising is instant.
+    state
+        .space_settings_set(r#"{"quorum_admin_ops":2}"#)
+        .await
+        .expect("raise is not gated");
+
+    // Lowering is sensitive: refused at the CURRENT bar, ask on file.
+    let err = state
+        .space_settings_set(r#"{"quorum_admin_ops":1}"#)
+        .await
+        .expect_err("lowering waits for quorum");
+    assert!(err.contains("admin approvals"), "{err}");
+    let pending: serde_json::Value =
+        serde_json::from_str(&state.approvals_pending().await.unwrap()).unwrap();
+    assert_eq!(pending["pending"].as_array().unwrap().len(), 1);
+    assert_eq!(pending["pending"][0]["kind"], "quorum_lower");
+    assert_eq!(pending["pending"][0]["required"], 2);
+
+    // The owner cannot self-confirm the lowering.
+    let err = state
+        .space_settings_set(r#"{"quorum_admin_ops":1}"#)
+        .await
+        .expect_err("self-confirm");
+    assert!(err.contains("different admin"), "{err}");
+
+    // Raising further stays instant even with the ask pending; the
+    // stale ask cannot be confirmed by the same member afterwards.
+    state
+        .space_settings_set(r#"{"quorum_admin_ops":3}"#)
+        .await
+        .expect("raise while an ask is pending");
+    let get: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(get["quorum_admin_ops"], 3);
+
+    // Claim payload contract: a bad id refuses fail-closed.
+    assert!(
+        state
+            .members_claim(r#"{"member_id":"nope"}"#)
+            .await
+            .is_err()
+    );
+}
+
 #[tokio::test]
 async fn collection_create_authority_and_approvals_gate() {
     let (_dir, vault_path) = make_vault("s41-knobs");
@@ -1854,11 +1919,13 @@ async fn collection_create_authority_and_approvals_gate() {
         err.contains("different admin"),
         "self-confirm refusal: {err}"
     );
-    // Threshold back to 1: the gate passes and the ask is ignored.
-    state
+    // S4-3 ratchet: threshold back to 1 is itself a sensitive ask —
+    // single-device lowering refuses and queues the ask instead.
+    let err = state
         .space_settings_set(r#"{"quorum_admin_ops":1}"#)
         .await
-        .expect("quorum back to 1");
+        .expect_err("lowering waits for quorum");
+    assert!(err.contains("admin approvals"), "{err}");
 }
 
 #[tokio::test]

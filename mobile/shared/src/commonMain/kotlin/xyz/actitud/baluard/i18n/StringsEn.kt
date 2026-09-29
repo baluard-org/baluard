@@ -540,6 +540,10 @@ internal val EN: Map<String, String> = mapOf(
         "people.revoke" to "Revoke",
         "people.revoked" to "Access revoked",
         "people.actionTransfer" to "Transfer",
+        "people.actionClaim" to "Take over",
+        "people.claimTitle" to "Take over ownership",
+        "people.claimBody" to "Take ownership from {name}? They become an admin and can be made owner again later.",
+        "people.claimDone" to "You are now the owner",
         "people.actionReset" to "Reset",
         "people.actionRemove" to "Remove",
         "people.removeTitle" to "Remove member",
@@ -551,6 +555,7 @@ internal val EN: Map<String, String> = mapOf(
         "people.confirmWordLabel" to "Type the member name to confirm",
         "people.confirmRemove" to "Remove",
         "people.confirmReset" to "Reset",
+        "people.confirmClaim" to "Take over",
         "people.confirmTransfer" to "Transfer",
         "people.overrideLabel" to "Remove anyway (provider unreachable)",
         "people.seatUnstruck" to "Warning: download access could not be revoked for:",
@@ -648,5 +653,7 @@ internal val EN: Map<String, String> = mapOf(
     "space.opTransfer" to "Ownership transfer",
     "space.opReset" to "Member reset",
     "space.opMigrate" to "Move sync address",
+    "space.opClaim" to "Ownership claim",
+    "space.opLower" to "Lower approval bar",
 
 )

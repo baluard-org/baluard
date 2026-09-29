@@ -307,6 +307,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "members.remove",
     "members.reset",
     "members.transfer",
+    "members.claim",
     "requests.approve",
     "requests.deny",
     "tag.create",
@@ -4576,6 +4577,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
         "members.transfer" => match state.members_transfer(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "members.claim" => match state.members_claim(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },

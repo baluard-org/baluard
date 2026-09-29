@@ -224,7 +224,9 @@ pub fn identity_rotation_payload(
 /// id and a one-time reset invite bound to it: approval flows through
 /// the NORMAL join ceremony but binds the successor row instead of
 /// minting a new one. Entries are untouched. Actor gating (admin+,
-/// not-self, not-owner) is the caller's job.
+/// not-self, owner targets admitted for admins per §13) is the
+/// caller's job — resetting the Owner row hands the successor the
+/// Owner role, so the owner rejoins as self.
 pub fn reset_member(
     vault_path: &Path,
     vault_id: Uuid,
@@ -239,11 +241,6 @@ pub fn reset_member(
         serde_json::from_str(&data).map_err(|e| deny(&format!("member record unreadable: {e}")))?;
     if old.reset.is_some() || old.removed.is_some() {
         return Err(deny("member is already tombstoned"));
-    }
-    if old.role == MemberRole::Owner {
-        return Err(deny(
-            "the owner row cannot be reset (use ownership transfer)",
-        ));
     }
     let successor_id = Uuid::new_v4();
     let now = std::time::SystemTime::now()
@@ -355,12 +352,13 @@ pub fn remove_member(vault_path: &Path, member_id: Uuid) -> Result<Vec<Uuid>, Ba
 
 /// S1a-7: ownership transfer (§4.2, first-class action). A role change
 /// on TWO member records: `old_member_id` (the current Owner row) is
-/// demoted to Admin, `new_member_id` is promoted to Owner with
-/// SelfTrust. Exactly one Owner row exists before and after — the two
-/// writes ship in ONE git commit, so the atomic unit is the commit, not
-/// the working tree. Mechanics only; actor gating (owner-only) is the
+/// demoted to Admin (Editor on pair Spaces — S2 IS-5), `new_member_id`
+/// is promoted to Owner with SelfTrust. Exactly one Owner row exists
+/// before and after — the two writes ship in ONE git commit, so the
+/// atomic unit is the commit, not the working tree. Mechanics only;
+/// actor gating (owner-only for transfers, admin for claims) is the
 /// caller's job.
-pub fn transfer_ownership(
+pub fn commit_ownership_swap(
     vault_path: &Path,
     old_member_id: Uuid,
     new_member_id: Uuid,
@@ -810,11 +808,12 @@ pub fn create_invite(
 ) -> Result<String, BaluardError> {
     // S1a-7 review: an Owner invite would mint a SECOND owner row at
     // approval, violating the single-owner invariant. Ownership changes
-    // go through transfer_ownership only. (Reset invites never carry
-    // Owner either — the owner row cannot be reset.)
-    if role == MemberRole::Owner {
+    // go through transfer or claim. A successor-bound reset invite
+    // (target_member set, §13) carries no mint: approval binds the
+    // existing successor row, so an Owner-role reset invite is safe.
+    if role == MemberRole::Owner && target_member.is_none() {
         return Err(BaluardError::from(VaultError::InvalidOperation(
-            "ownership cannot be invited; use transfer_ownership".into(),
+            "ownership cannot be invited; use an ownership transfer".into(),
         )));
     }
     // S2 IS-5: pair Space policy — owner plus one editor/viewer, no
@@ -1509,7 +1508,7 @@ mod tests {
         write_member(vault, &owner).unwrap();
         write_member(vault, &partner).unwrap();
 
-        super::transfer_ownership(vault, owner.id, partner.id).unwrap();
+        super::commit_ownership_swap(vault, owner.id, partner.id).unwrap();
         let old: MemberFile = serde_json::from_str(
             &std::fs::read_to_string(vault.join(MEMBERS_DIR).join(format!("{}.json", owner.id)))
                 .unwrap(),

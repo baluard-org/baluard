@@ -1919,10 +1919,9 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        self.quorum_gate(
-            "member_reset",
-            &serde_json::json!({ "member_id": member_id }),
-        )?;
+        // Review F5: the self guard fires BEFORE the gate — a self-reset
+        // must fail outright, never record a pending ask to reset
+        // yourself.
         if crate::vault::members::member_id_for_device(&self.path, self.device_id)
             == Some(member_id)
         {
@@ -1931,6 +1930,10 @@ impl VaultHandle {
             )
             .into());
         }
+        self.quorum_gate(
+            "member_reset",
+            &serde_json::json!({ "member_id": member_id }),
+        )?;
         let (successor, code) =
             crate::vault::members::reset_member(&self.path, self.vault_id, member_id)?;
         // S3-7a: the successor row re-joins with a fresh identity, so the
@@ -2188,11 +2191,66 @@ impl VaultHandle {
             );
         };
         let demoted = old_member_id;
-        crate::vault::members::transfer_ownership(&self.path, old_member_id, new_member_id)?;
+        crate::vault::members::commit_ownership_swap(&self.path, old_member_id, new_member_id)?;
         // S1b-1: activity log (best-effort).
         self.emit_share_event(
             crate::vault::events::ShareEventKind::OwnershipTransferred,
             format!("ownership transferred (member {demoted} is now admin)"),
+        );
+        Ok(())
+    }
+
+    /// §13: an admin claims ownership when the Owner cannot act
+    /// (incapacitated, gone, or lost device AND recovery phrase). The
+    /// voluntary transfer gate stays untouched; this op is its own
+    /// gated entry so peers approving the ask see exactly what they
+    /// approve. The quorum gate binds BOTH member ids, so an ask
+    /// recorded against one owner can never execute against another.
+    /// `new_owner_id` is explicit (the house re-call-to-confirm
+    /// pattern): the co-approver repeats the SAME ask, so the params
+    /// must not depend on who calls.
+    pub fn ownership_claim(&mut self, new_owner_id: uuid::Uuid) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let actor_role = crate::vault::members::member_role_for_device(&self.path, self.device_id);
+        if actor_role != Some(crate::vault::members::MemberRole::Admin) {
+            return Err(
+                VaultError::InvalidOperation("only an admin can claim ownership".into()).into(),
+            );
+        }
+        let Some(old_member_id) = crate::vault::members::owner_member_id(&self.path) else {
+            return Err(
+                VaultError::InvalidOperation("this vault has no owner member row".into()).into(),
+            );
+        };
+        if old_member_id == new_owner_id {
+            return Err(VaultError::InvalidOperation("you already own this vault".into()).into());
+        }
+        // Review F6: pre-flight the target row BEFORE the gate — a
+        // nonexistent or tombstoned claimant would otherwise burn real
+        // approvals on an ask that can never execute.
+        let target = crate::vault::members::member_file_by_id(&self.path, new_owner_id)
+            .ok_or_else(|| VaultError::InvalidOperation("that member row does not exist".into()))?;
+        if target.reset.is_some() || target.removed.is_some() {
+            return Err(VaultError::InvalidOperation(
+                "that member row is gone; ownership cannot be claimed for it".into(),
+            )
+            .into());
+        }
+        self.quorum_gate(
+            "ownership_claim",
+            &serde_json::json!({
+                "new_owner_id": new_owner_id,
+                "old_owner_id": old_member_id,
+            }),
+        )?;
+        crate::vault::members::commit_ownership_swap(&self.path, old_member_id, new_owner_id)?;
+        // S1b-1: activity log (best-effort).
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::OwnershipClaimed,
+            format!("ownership claimed from member {old_member_id}"),
         );
         Ok(())
     }
@@ -11572,6 +11630,269 @@ mod tests {
         assert!(extra_row.removed.is_some(), "target tombstoned");
     }
 
+    // ── §13: owner recovery — ownership_claim + owner-targeted reset ──
+
+    /// Default threshold (1): an admin claims ownership in one step —
+    /// the family path. Roles swap between EXISTING rows, the demoted
+    /// owner stays an admin, and the event log records the claim. The
+    /// demoted owner (now admin) can then reset the new owner's row;
+    /// the successor inherits the Owner role so the owner rejoins as
+    /// self. The new owner cannot claim (only admins) nor self-reset.
+    #[test]
+    fn admin_claims_ownership_and_owner_reset_rejoins() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Admin, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        handle.contacts_import_intro(&intro_code).unwrap();
+        let contacts = handle.contacts_list().unwrap();
+        let joiner_card = contacts
+            .iter()
+            .find(|c| c.trust == crate::vault::contacts::ContactTrust::Channel)
+            .expect("imported joiner card");
+        handle
+            .contacts_mark_verified(&joiner_card.card.identity_signing_pubkey)
+            .unwrap();
+        let joiner_member_id = handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve").unwrap();
+
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+
+        let old_owner_member_id = crate::vault::members::owner_member_id(&owner_path).unwrap();
+        joiner
+            .ownership_claim(joiner_member_id)
+            .expect("threshold-1 claim executes");
+
+        // The swap mutated the JOINER's clone; ship it back so the
+        // owner's disk carries the new roles (a role swap does not
+        // rotate keys, so no re-unlock is needed).
+        let joiner_device = joiner.device_id;
+        let joiner_seal = joiner.devkey_seal();
+        let engine_js = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        let repo_js = engine_js.open_repo().unwrap();
+        engine_js.commit_all(&repo_js, "claim").unwrap();
+        drop(repo_js);
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+
+        assert_eq!(
+            crate::vault::members::owner_member_id(&owner_path),
+            Some(joiner_member_id),
+            "claimant owns the vault"
+        );
+        let old_row =
+            crate::vault::members::member_file_by_id(&owner_path, old_owner_member_id).unwrap();
+        assert_eq!(old_row.role, crate::vault::members::MemberRole::Admin);
+        assert!(joiner.pending_op_approvals().is_empty());
+        assert_eq!(
+            joiner.share_events(50).unwrap().last().unwrap().kind,
+            crate::vault::events::ShareEventKind::OwnershipClaimed
+        );
+
+        // The new owner is not an admin: cannot claim (no-op for them).
+        let err = joiner
+            .ownership_claim(joiner_member_id)
+            .expect_err("owner cannot claim");
+        assert!(err.to_string().contains("only an admin"), "{err}");
+
+        // The demoted owner (now admin) resets the new owner's row; the
+        // successor inherits the Owner role, so the owner rejoins as self.
+        let (successor_id, _reset_code) = handle
+            .member_reset(joiner_member_id)
+            .expect("admin resets an owner row per the family path");
+        let successor =
+            crate::vault::members::member_file_by_id(&owner_path, successor_id).unwrap();
+        assert_eq!(successor.role, crate::vault::members::MemberRole::Owner);
+
+        // The self-reset guard survives the owner-target lift.
+        let joiner_member =
+            crate::vault::members::member_id_for_device(&joiner_path, joiner.device_id);
+        assert_eq!(joiner_member, Some(joiner_member_id));
+        assert!(joiner.member_reset(joiner_member_id).is_err(), "self-reset");
+    }
+
+    /// Threshold 2: the claim becomes a two-admin ask. The ask binds
+    /// BOTH member ids (a changed owner means a different digest, so a
+    /// stale ask can never execute against a new owner), the owner
+    /// cannot co-approve (not an admin — the one-admin stall is real
+    /// and surfaced), and the second admin's confirming call executes
+    /// the swap on their clone.
+    #[test]
+    fn ownership_claim_threshold_two_needs_distinct_admins() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Two admin joiners through the standard ceremony (Admin needs a
+        // Verified contact); the threshold rises before any pull.
+        let mut joiner_dirs = Vec::new();
+        let mut joiner_members = Vec::new();
+        for i in 0..2 {
+            let code = handle
+                .invite_create(crate::vault::members::MemberRole::Admin, None)
+                .unwrap();
+            engine_o.commit_all(&repo_o, "invite").unwrap();
+            let joiner_path = temp.path().join(format!("joiner{i}")).into_boxed_path();
+            git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+            let intro_code = crate::vault::members::create_introduction(
+                &joiner_path,
+                &code,
+                "member-pass",
+                &format!("MemberDevice{i}"),
+            )
+            .unwrap();
+            handle.contacts_import_intro(&intro_code).unwrap();
+            let contacts = handle.contacts_list().unwrap();
+            let card = contacts
+                .iter()
+                .find(|c| c.trust == crate::vault::contacts::ContactTrust::Channel)
+                .expect("imported joiner card");
+            handle
+                .contacts_mark_verified(&card.card.identity_signing_pubkey)
+                .unwrap();
+            joiner_members.push(handle.approve_join(&intro_code).unwrap());
+            engine_o.commit_all(&repo_o, "approve").unwrap();
+            joiner_dirs.push(joiner_path);
+        }
+        let mut settings = handle.get_settings().unwrap();
+        settings.quorum_admin_ops = Some(2);
+        handle.save_settings(&settings).unwrap();
+        engine_o.commit_all(&repo_o, "quorum").unwrap();
+
+        let mut joiner_handles = Vec::new();
+        let mut joiner_engines = Vec::new();
+        for (i, path) in joiner_dirs.iter().enumerate() {
+            let engine = crate::sync::engine::SyncEngine::new(path, "pull-only", None);
+            let repo = engine.open_repo().unwrap();
+            engine.pull(&repo, "origin").unwrap();
+            drop(repo);
+            let mut h = VaultHandle::open(path).unwrap();
+            h.unlock("member-pass").unwrap();
+            assert_eq!(h.get_settings().unwrap().quorum_admin_ops, Some(2));
+            let seal = h.devkey_seal();
+            let device = h.device_id;
+            joiner_engines.push(crate::sync::engine::SyncEngine::new(
+                path,
+                &device.to_string(),
+                seal.as_ref(),
+            ));
+            joiner_handles.push(h);
+            let _ = i;
+        }
+        let admin1 = joiner_handles.first_mut().expect("admin1");
+
+        // Ask: refused solo, record on file at the live bar.
+        let err = admin1
+            .ownership_claim(joiner_members[0])
+            .expect_err("solo claim must wait for quorum");
+        assert!(err.to_string().contains("admin approvals"), "{err}");
+        let pending = admin1.pending_op_approvals();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind, "ownership_claim");
+        assert_eq!(pending[0].required, 2);
+        let err = admin1
+            .ownership_claim(joiner_members[0])
+            .expect_err("self-confirm");
+        assert!(err.to_string().contains("different admin"), "{err}");
+
+        // The owner is not an admin: cannot co-approve a claim. With a
+        // single admin this vault would stall — the UI surfaces the
+        // pending ask; the doctrine answers with "raise admins first".
+        let err = handle
+            .ownership_claim(joiner_members[0])
+            .expect_err("owner cannot approve");
+        assert!(err.to_string().contains("only an admin"), "{err}");
+
+        // The digest binds BOTH ids: a changed owner is a different ask.
+        let old_owner = crate::vault::members::owner_member_id(&owner_path).unwrap();
+        let d_real = crate::vault::approvals::op_digest(
+            "ownership_claim",
+            &serde_json::json!({"new_owner_id": joiner_members[0], "old_owner_id": old_owner}),
+        );
+        let d_other = crate::vault::approvals::op_digest(
+            "ownership_claim",
+            &serde_json::json!({"new_owner_id": joiner_members[0], "old_owner_id": uuid::Uuid::new_v4()}),
+        );
+        assert_ne!(d_real, d_other, "stale asks cannot match a new owner");
+
+        // Ship the ask: joiner1 commits, the owner pulls it in, and the
+        // second admin fetches it from origin before confirming.
+        let repo1 = joiner_engines[0].open_repo().unwrap();
+        joiner_engines[0].commit_all(&repo1, "pending ask").unwrap();
+        drop(repo1);
+        repo_o
+            .remote("joiner1", joiner_dirs[0].to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner1").unwrap();
+        let repo2 = joiner_engines[1].open_repo().unwrap();
+        joiner_engines[1].pull(&repo2, "origin").unwrap();
+        drop(repo2);
+
+        joiner_handles[1]
+            .ownership_claim(joiner_members[0])
+            .expect("second admin confirms the SAME ask");
+        assert!(joiner_handles[1].pending_op_approvals().is_empty());
+        // The ask names the CLAIMANT: the confirming admin executes
+        // admin1's takeover, not their own.
+        assert_eq!(
+            crate::vault::members::owner_member_id(&joiner_dirs[1]),
+            Some(joiner_members[0]),
+            "the claimant owns the vault"
+        );
+        let old_row = crate::vault::members::member_file_by_id(&joiner_dirs[1], old_owner).unwrap();
+        assert_eq!(old_row.role, crate::vault::members::MemberRole::Admin);
+    }
+
     #[test]
     fn team_shape_flip_two_devices() {
         let temp = tempfile::tempdir().unwrap();
@@ -12517,7 +12838,6 @@ mod tests {
                 .unwrap();
         handle.unlock("owner-pass").unwrap();
         let owner_seal = handle.devkey_seal();
-        let owner_member_id = crate::vault::members::owner_member_id(&owner_path).unwrap();
 
         let code = handle
             .invite_create(crate::vault::members::MemberRole::Editor, None)
@@ -12569,8 +12889,9 @@ mod tests {
         );
         assert!(joiner.member_reset(old_member_id).is_err());
 
-        // Gates: no owner reset, no unknown reset, no self reset.
-        assert!(handle.member_reset(owner_member_id).is_err());
+        // Gates: unknown reset and self reset refuse; the OWNER row is
+        // now resettable by an admin (S13) but the owner resetting their
+        // own row is still the self guard.
         assert!(handle.member_reset(uuid::Uuid::new_v4()).is_err());
         let (successor_id, reset_code) = handle.member_reset(old_member_id).unwrap();
         // Double reset refused.

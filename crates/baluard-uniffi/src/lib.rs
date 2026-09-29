@@ -1012,6 +1012,18 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// §13: claim ownership when the Owner cannot act (admin-only;
+    /// quorum-gated, the ask binds both member ids). `member_id` is the
+    /// claimant's member id — the co-approver repeats the same ask.
+    /// Returns `{}`.
+    pub async fn member_claim(&self, member_id: String) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "member_id": member_id }).to_string();
+        self.state
+            .members_claim(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Remove members and rotate the root key so their key material is
     /// dead. Provider seats are struck first; a strike failure refuses
     /// the removal unless `offline_override` is explicit. Returns

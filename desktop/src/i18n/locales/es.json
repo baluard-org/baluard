@@ -656,6 +656,11 @@
     "removedToast": "Miembro eliminado; bóveda recifrada.",
     "resetDone": "Miembro restablecido — envíale el nuevo código.",
     "transferDone": "Propiedad transferida.",
+    "claim": "Tomar propiedad",
+    "claimTitle": "Tomar la propiedad",
+    "claimBody": "¿Tomar la propiedad de {name}? Pasa a admin y puede ser propietario de nuevo más tarde.",
+    "claimConfirm": "Tomar la propiedad",
+    "claimDone": "Ya eres el propietario.",
     "resetCodeTitle": "Código de restablecimiento listo",
     "resetCodeBody": "Envía este código de un solo uso al miembro. Se vuelve a unir con él y establece una nueva contraseña.",
     "roleEditor": "Editor (lectura y escritura)",
@@ -924,6 +929,8 @@
     "opRemove": "Eliminación de miembro",
     "opTransfer": "Transferencia de propiedad",
     "opReset": "Reinicio de miembro",
-    "opMigrate": "Mudar dirección de sincronización"
+    "opMigrate": "Mudar dirección de sincronización",
+    "opClaim": "Reclamación de propiedad",
+    "opLower": "Bajar barra de aprobación"
   }
 }

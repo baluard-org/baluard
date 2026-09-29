@@ -106,6 +106,8 @@ export default function SpaceTab() {
       transfer_ownership: "space.opTransfer",
       member_reset: "space.opReset",
       space_migrate: "space.opMigrate",
+      ownership_claim: "space.opClaim",
+      quorum_lower: "space.opLower",
     };
     return map[kind] ? t(map[kind]) : kind;
   }
@@ -341,8 +343,31 @@ export default function SpaceTab() {
             {pendingOps().map((op) => (
               <div class="flex items-center justify-between text-[11px]">
                 <span class="text-[var(--color-text)]">{opLabel(op.kind)}</span>
-                <span class="text-[var(--color-muted)]">
-                  {t("space.pendingItem", { have: op.approvals?.length ?? 0, need: op.required })}
+                <span class="flex items-center gap-2">
+                  <span class="text-[var(--color-muted)]">
+                    {t("space.pendingItem", { have: op.approvals?.length ?? 0, need: op.required })}
+                  </span>
+                  {/* §13 review F1: a pending claim is confirmed by
+                      repeating the SAME ask — the row now carries the
+                      ask's params, so the co-approver approves the
+                      claimant named there. */}
+                  <Show when={op.kind === "ownership_claim"}>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await daemon("members.claim", {
+                            member_id: op.params?.new_owner_id || op.initiated_by,
+                          });
+                          await loadPending();
+                        } catch {
+                          /* the row stays pending on failure */
+                        }
+                      }}
+                      class="px-2 py-0.5 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                    >
+                      {t("people.approve")}
+                    </button>
+                  </Show>
                 </span>
               </div>
             ))}

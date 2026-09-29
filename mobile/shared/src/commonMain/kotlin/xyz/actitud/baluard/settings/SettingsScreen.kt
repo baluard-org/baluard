@@ -99,6 +99,8 @@ internal fun s4OpLabel(kind: String): String = when (kind) {
     "transfer_ownership" -> "space.opTransfer"
     "member_reset" -> "space.opReset"
     "space_migrate" -> "space.opMigrate"
+    "ownership_claim" -> "space.opClaim"
+    "quorum_lower" -> "space.opLower"
     else -> kind
 }
 
@@ -1424,11 +1426,30 @@ fun SettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
                                 Text(t(s4OpLabel(op.kind)), style = MaterialTheme.typography.bodySmall)
-                                Text(
-                                    text = t("space.pendingItem", op.approvals, op.required),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = t("space.pendingItem", op.approvals, op.required),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    // §13 review F1: confirming a pending
+                                    // claim repeats the SAME ask — the row
+                                    // carries the claimant id.
+                                    if (op.kind == "ownership_claim" && op.claimantId != null) {
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                try {
+                                                    repo.memberClaim(vault, op.claimantId!!)
+                                                    pendingOps = repo.approvalsPending(vault)
+                                                } catch (e: Exception) {
+                                                    Toast.error(e.message ?: t("error.generic"))
+                                                }
+                                            }
+                                        }) {
+                                            Text(t("people.approve"))
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

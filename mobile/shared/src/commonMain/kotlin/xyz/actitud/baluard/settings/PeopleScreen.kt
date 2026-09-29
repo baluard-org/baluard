@@ -167,6 +167,16 @@ fun PeopleScreen(
                     Toast.success(t("people.transferDone"))
                     closeOffboard()
                 }
+                "claim" -> {
+                    val selfId = members.firstOrNull { it.isSelf }?.id
+                    if (selfId == null) {
+                        Toast.error(t("error.generic"))
+                    } else {
+                        repo.memberClaim(vault, selfId)
+                        Toast.success(t("people.claimDone"))
+                        closeOffboard()
+                    }
+                }
             }
             refreshAll()
         } catch (e: Exception) {
@@ -363,10 +373,24 @@ fun PeopleScreen(
                                             Text(t("people.actionTransfer"))
                                         }
                                     }
-                                    if (canOffboard && m.role != "owner") {
+                                    // §13: an admin viewing the OWNER row sees
+                                    // exactly one action, Take Over — contextual
+                                    // labels so nobody faces both.
+                                    if (myRole == "admin" && m.role == "owner") {
+                                        TextButton(onClick = { openOffboard("claim", m) }) {
+                                            Text(t("people.actionClaim"))
+                                        }
+                                    }
+                                    // §13: an admin may RESET an owner row
+                                    // (the successor inherits Owner), but
+                                    // removal still requires the owner row
+                                    // gone first.
+                                    if (canOffboard) {
                                         TextButton(onClick = { openOffboard("reset", m) }) {
                                             Text(t("people.actionReset"))
                                         }
+                                    }
+                                    if (canOffboard && m.role != "owner") {
                                         TextButton(onClick = { openOffboard("remove", m) }) {
                                             Text(
                                                 t("people.actionRemove"),
@@ -620,6 +644,7 @@ fun PeopleScreen(
         val body = when (pendingKind) {
             "remove" -> t("people.removeBody").replace("{name}", pm.name)
             "reset" -> t("people.resetBody").replace("{name}", pm.name)
+            "claim" -> t("people.claimBody").replace("{name}", pm.name)
             else -> t("people.transferBody").replace("{name}", pm.name)
         }
         AlertDialog(
@@ -667,6 +692,7 @@ fun PeopleScreen(
                         when (pendingKind) {
                             "remove" -> t("people.confirmRemove")
                             "reset" -> t("people.confirmReset")
+                            "claim" -> t("people.confirmClaim")
                             else -> t("people.confirmTransfer")
                         },
                     )

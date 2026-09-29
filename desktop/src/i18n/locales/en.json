@@ -656,6 +656,11 @@
     "removedToast": "Member removed; vault re-encrypted.",
     "resetDone": "Member reset — send them the new code.",
     "transferDone": "Ownership transferred.",
+    "claim": "Take over",
+    "claimTitle": "Take over ownership",
+    "claimBody": "Take ownership from {name}? They become an admin and can be made owner again later.",
+    "claimConfirm": "Take over ownership",
+    "claimDone": "You are now the owner.",
     "resetCodeTitle": "Reset code ready",
     "resetCodeBody": "Send this one-time code to the member. They re-join with it and set a new password.",
     "roleEditor": "Editor (read and write)",
@@ -924,6 +929,8 @@
     "opRemove": "Member removal",
     "opTransfer": "Ownership transfer",
     "opReset": "Member reset",
-    "opMigrate": "Move sync address"
+    "opMigrate": "Move sync address",
+    "opClaim": "Ownership claim",
+    "opLower": "Lower approval bar"
   }
 }

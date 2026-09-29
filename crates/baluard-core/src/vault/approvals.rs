@@ -54,6 +54,12 @@ pub struct PendingOp {
     pub required: u8,
     /// Member ids that approved, initiator included.
     pub approvals: Vec<Uuid>,
+    /// The canonical params the ask was raised with (review F1: the
+    /// co-approver repeats the SAME ask, so claim-type ops must expose
+    /// the claimant id the ask names; legacy records predate this and
+    /// read as None).
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
 }
 
 /// Outcome of presenting an op at the gate.
@@ -182,6 +188,7 @@ pub fn present(
         initiated_at: now,
         required: required.clamp(2, MAX_QUORUM),
         approvals: vec![member_id],
+        params: Some(params.clone()),
     };
     let _ = write_record(vault_path, &op);
     ApprovalOutcome::Pending
