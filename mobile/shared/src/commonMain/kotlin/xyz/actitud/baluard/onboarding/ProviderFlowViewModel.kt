@@ -224,7 +224,7 @@ class ProviderFlowViewModel(
             // enrolled one — never rely on GC timing to drop the old handle.
             if (auth.vault() != null) runCatching { auth.lock() }
             val vault: MobileVault = repo.enrollDeviceWithPhrase(vaultPath, masterPassword, recoveryPhrase, deviceName)
-            auth.adopt(vault)
+            auth.adopt(vaultPath, vault)
             return true
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
