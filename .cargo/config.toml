@@ -6,3 +6,11 @@
 # (cargo rule: env overrides config files).
 [target.'cfg(all(target_arch = "aarch64", not(aes_force_soft)))']
 rustflags = ["--cfg", "aes_armv8"]
+
+# Pin openssl-sys to system OpenSSL 3 (2026-09-29). A Homebrew openssl@4
+# won pkg-config globally and its .so.4 libs are not loader-visible, so
+# build artifacts linked against it die at load (libssl.so.4 not found).
+# /usr carries the distro OpenSSL 3 the loader resolves. Project-only:
+# scoped to this workspace via [env], no shell prefix needed.
+[env]
+OPENSSL_DIR = "/usr"
