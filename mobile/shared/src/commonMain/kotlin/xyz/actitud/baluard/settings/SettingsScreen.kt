@@ -1036,9 +1036,12 @@ fun SettingsScreen(
                     var spaceSettings by remember(vault) { mutableStateOf<MobileSpaceSettings?>(null) }
                     var spaceBusy by remember(vault) { mutableStateOf(false) }
                     var pendingOps by remember(vault) { mutableStateOf(listOf<MobilePendingOp>()) }
+                    // S4-6: advisory org policies (recommended settings).
+                    var spacePolicies by remember(vault) { mutableStateOf(mapOf<String, String>()) }
                     LaunchedEffect(vault) {
                         spaceSettings = repo.spaceSettingsGet(vault)
                         pendingOps = repo.approvalsPending(vault)
+                        spacePolicies = repo.policiesList(vault)
                     }
 
                     // Team mode (S3-7b): one-way upgrade. The daemon
@@ -1414,6 +1417,58 @@ fun SettingsScreen(
                             ),
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    }
+
+                    // S4-6: recommendations that DIFFER from the current
+                    // value render as one hint block (a small screen shows
+                    // what is worth acting on, not the full list).
+                    val policyDiffs = spacePolicies.entries.mapNotNull { (key, rec) ->
+                        val label = when (key) {
+                            "space_invite_authority" -> t("space.inviteAuthorityLabel")
+                            "allow_viewer_export" -> t("space.viewerExportLabel")
+                            "guest_enabled" -> t("space.guestLabel")
+                            "trash_policy" -> t("space.trashPolicyLabel")
+                            "join_approval" -> t("space.joinApprovalLabel")
+                            "quorum_admin_ops" -> t("space.quorumLabel")
+                            "collection_create_authority" -> t("space.createAuthLabel")
+                            else -> return@mapNotNull null
+                        }
+                        val current = when (key) {
+                            "space_invite_authority" -> spaceSettings?.inviteAuthority
+                            "allow_viewer_export" -> spaceSettings?.allowViewerExport?.toString()
+                            "guest_enabled" -> spaceSettings?.guestEnabled?.toString()
+                            "trash_policy" -> spaceSettings?.trashPolicy
+                            "join_approval" -> spaceSettings?.joinApproval
+                            "quorum_admin_ops" -> spaceSettings?.quorumAdminOps?.toString()
+                            "collection_create_authority" -> spaceSettings?.collectionCreateAuthority
+                            else -> null
+                        }
+                        // Render the recommendation through its existing
+                        // chip label, never as a raw wire string.
+                        val recLabel = when (rec) {
+                            "admins" -> t("space.authorityAdmins")
+                            "owners" -> t("space.authorityOwners")
+                            "editors" -> t("space.createEditors")
+                            "write_scope_can_trash" -> t("space.trashWriteScope")
+                            "admins_only" -> t("space.trashAdminsOnly")
+                            "manual" -> t("space.joinManual")
+                            "code" -> t("space.joinCode")
+                            "true" -> t("settings.enabled")
+                            "false" -> t("settings.disabled")
+                            else -> rec
+                        }
+                        if (current != null && current != rec) label to recLabel else null
+                    }
+                    if (policyDiffs.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(t("space.policyTitle"), style = MaterialTheme.typography.bodyMedium)
+                        policyDiffs.forEach { (label, rec) ->
+                            Text(
+                                text = t("space.policyHint", "$label: $rec"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
 
                     // Pending sensitive-op asks (visible when quorum > 1).

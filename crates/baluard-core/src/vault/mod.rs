@@ -24,6 +24,7 @@ pub mod members;
 pub mod outbox;
 pub mod packages;
 pub mod padding;
+pub mod policies;
 pub mod registry;
 pub mod reveals;
 pub mod slug;

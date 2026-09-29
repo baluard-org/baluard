@@ -1564,6 +1564,77 @@ async fn access_review_locked_solo_and_role_gates() {
     assert!(err.contains("admin"), "refusal names the gate: {err}");
 }
 
+/// S4-6: advisory org policies — locked refusal, the publish/read
+/// roundtrip with the opt-out, the fail-closed unknown-knob refusal,
+/// and the non-admin publish refusal. The validation table is covered
+/// by the core module tests.
+#[tokio::test]
+async fn policies_set_list_roundtrip_and_role_gates() {
+    let (_dir, vault_path) = make_vault("policies");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // NOT unlocked: both surfaces refuse.
+    assert!(state.policies_list().await.is_err());
+    assert!(state.policies_set("{}").await.is_err());
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    // Publish a recommendation set, read it back.
+    state
+        .policies_set(
+            r#"{"space_invite_authority":"owners","join_approval":"code","quorum_admin_ops":2}"#,
+        )
+        .await
+        .unwrap();
+    let raw = state.policies_list().await.unwrap();
+    let read: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(read["policies"]["space_invite_authority"], "owners");
+    assert_eq!(read["policies"]["join_approval"], "code");
+    assert_eq!(read["policies"]["quorum_admin_ops"], 2);
+
+    // Unknown knob names refuse (fail-closed).
+    assert!(state.policies_set(r#"{"theme":"dark"}"#).await.is_err());
+    // Mistyped values refuse.
+    assert!(
+        state
+            .policies_set(r#"{"quorum_admin_ops":9}"#)
+            .await
+            .is_err()
+    );
+    // The refused calls wrote nothing.
+    let raw = state.policies_list().await.unwrap();
+    let read: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(read["policies"].get("theme").is_none());
+
+    // Empty publish is the opt-out (as the owner, before the rebind
+    // below demotes this device).
+    state.policies_set("{}").await.unwrap();
+    let raw = state.policies_list().await.unwrap();
+    let read: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(read["policies"].as_object().unwrap().len(), 0);
+
+    // Publish again so the Editor-rebind legs have something to read.
+    state
+        .policies_set(r#"{"join_approval":"code"}"#)
+        .await
+        .unwrap();
+
+    // An Editor-rebound device reads but cannot publish.
+    let editor_device =
+        uuid::Uuid::parse_str(&state.device_id().await).expect("device id is a uuid");
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        editor_device,
+        None,
+    );
+    assert!(state.policies_list().await.is_ok());
+    let err = state
+        .policies_set(r#"{"join_approval":"code"}"#)
+        .await
+        .unwrap_err();
+    assert!(err.contains("admin"), "refusal names the gate: {err}");
+}
+
 #[tokio::test]
 async fn space_settings_lifecycle_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("space-settings");
