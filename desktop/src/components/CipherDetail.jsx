@@ -58,7 +58,10 @@ export default function CipherDetail(props) {
         ((r.access === "write" || r.access === "manage") && (!r.expires_at || r.expires_at > now)),
     );
   });
-  const isAdminDevice = createMemo(() => (vault.collections() || []).some((r) => r.access === "admin"));
+  // Server-derived marker (vault.is_admin_device), not a row count:
+  // holds for zero-collection vaults; unknown (null) reads as false so
+  // admin-only controls stay hidden until the daemon answers.
+  const isAdminDevice = () => vault.isAdmin() === true;
   const currentCollection = () => (cipher() ? cipherCollectionId(cipher()) : null);
   // Review F3: the daemon gates the move on write access to BOTH ends;
   // a member viewing a read-only collection gets a plain label instead

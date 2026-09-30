@@ -118,11 +118,9 @@ export default function VaultView() {
     return list;
   });
 
-  // "admin" on any row = this device manages the space; members see the
-  // ask-for-access entry instead of management controls.
-  const myAccess = createMemo(() =>
-    (vault.collections() || []).some((c) => c.access === "admin") ? "admin" : "member"
-  );
+  // Server-derived admin marker (vault.is_admin_device): true = this
+  // device manages the space; members see the ask-for-access entry
+  // instead of management controls. null = unknown, hide both.
 
   function startAdd(type = "login") {
     setNewCipher({
@@ -410,7 +408,7 @@ export default function VaultView() {
                       </button>
                     )}
                   </For>
-                  <Show when={myAccess() !== "admin"}>
+                  <Show when={vault.isAdmin() === false}>
                     <button
                       onClick={() => setShowAskAccess(true)}
                       class="w-full flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-slate-800/10 cursor-pointer min-h-[30px]"
