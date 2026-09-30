@@ -1319,6 +1319,16 @@ Two review-round rules are worth keeping. First, divergence fails toward the man
 
 **Boundaries**: quorum_admin_ops stays deferred on the unconfirmed §10 Q1 default; a leaked invite code under code mode grants membership — that is the knob's stated trade, which is why manual stays the default; the knob is enforced at approval time only, and staged rows approved under manual remain queue-resident until a human decides.
 
+### D71. The Flip Keeps Keys From Members, Not From Admins (role-aware flipped keywraps) (2026-09-30)
+
+The team-shape flip was coded shape-blind: no post-flip joiner got the Root Key keywrap, and any device with a member-unlock file took the member unlock path. A peer review flagged the consequence (F9): an ADMIN invited after the flip held the Admin role but no admin keys — unable to create collections, grant, rotate, or act on quorum ops. A growing organization could not add a second real admin.
+
+The fix makes the flip's property explicit: it is role-scoped. Members hold nothing; admins keep keys. The invite path now writes the keywrap for elevated joiners on flipped vaults (`!flipped || elevated`), and the unlock dispatch takes the admin path when the device maps to an admin AND its own keywrap file exists. Both sites join the two that already agreed — the flip's own strip loop and rotation staging were role-aware from the start; only invite and unlock lagged.
+
+Three rules recorded with it: the unlock conjunct fails closed (the keywrap-existence check keeps the legacy no-binding fallback from ever riding the admin path, and a copied keywrap is HPKE-bound to the victim's device key); the elevated member unlocks with their OWN password (member canary) and inherits full powers through their keywrap; and the pre-pull window is unchanged — before the approval commit lands, the member tail refuses with sync-and-retry exactly as for every member. The keywrap and the member row ship in one approval commit, so a crash strands nothing.
+
+Boundaries: demotion is unreachable (no role-edit route exists; reset and remove tombstone and rotate); an elevated member device runs the admin convergence pass, which is role-legal and inert on a clean clone; and the design was endorsed independently by two peer reviews (a design consult that read the source and a post-implementation adversarial pass that returned SOUND on six attack invariants).
+
 ### D70. A Yes Is a Signature (approvals records become self-authenticating) (2026-09-30)
 
 The quorum workflow's records were the one remaining trust-me point: an approval was a bare member id in a plaintext file, so any admin with repo access could hand-write a second yes and the gate would count it. Every approval entry now carries the approver's member-identity Ed25519 signature over the ask (kind, params digest, vault id, ask timestamp), and the gate counts only entries whose signature verifies against the member row's published identity key. A forged record parses but approves nothing; on the next touch the record self-heals to the real entries.

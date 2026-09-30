@@ -2292,7 +2292,9 @@ impl VaultHandle {
             }
             if !self.device_maps_to_admin(dev_id) {
                 // Best-effort; a leftover file is stripped on the next flip
-                // call and the unlock tail never uses it on a flipped vault.
+                // call. Non-admin members' unlock tail never opens it; an
+                // elevated member's admin unlock path needs it, and
+                // device_maps_to_admin keeps their wraps right here.
                 if std::fs::remove_file(entry.path()).is_ok() {
                     removed += 1;
                 }
@@ -3236,10 +3238,16 @@ impl VaultHandle {
 
         // Wrap the Root Key to the joiner's device key (their transport
         // seat: read until the approval ships this keywrap).
-        // S3-7b: skipped on team-shape vaults — the joiner's unlock path
-        // is identity seed + space.wrap (minted below); the Root Key must
-        // never reach a member device.
-        if !crate::vault::space_meta::shape_flipped(&self.path) {
+        // S3-7b: skipped for non-admin joiners on team-shape vaults —
+        // their unlock path is identity seed + space.wrap (minted
+        // below); the Root Key must never reach a member device.
+        // F9: an elevated joiner (Owner/Admin) on a flipped vault takes
+        // the admin unlock path, so they DO get the keywrap — the flip
+        // keeps keys from members, not from admins. The keywrap and the
+        // member row ship in the same approval commit, so a crash before
+        // the commit strands nothing (the intro stays pending).
+        let flipped = crate::vault::space_meta::shape_flipped(&self.path);
+        if !flipped || elevated {
             let root = self.unlocked().root()?;
             let recipient = x25519_dalek::PublicKey::from(enc_bytes);
             let (eph, ct, tag) =
@@ -3971,16 +3979,33 @@ impl VaultHandle {
         // path is identity seed (device-local, KEK-sealed) → identity keys
         // → the identity-keyed space.wrap → SMK → meta IKM. No keywrap
         // unwrap, no SGK, no Root Key ever enters memory.
+        // F9: an ELEVATED member (Owner/Admin) whose keywrap has landed
+        // takes the admin path below instead — their password is still
+        // their own (the member canary verified above), but their powers
+        // need the Root Key. The keywrap-existence conjunct keeps the
+        // legacy no-binding fallback fail-closed: a device with no member
+        // row has no keywrap file, so it can never ride the admin path.
+        // Before the approval commit is pulled the keywrap is absent and
+        // the member tail refuses with sync-and-retry, as for every
+        // member.
         let flipped = crate::vault::space_meta::shape_flipped(&self.path);
         if flipped {
             if let Some(member) =
                 crate::vault::members::load_member_unlock(&self.path, self.device_id)?
             {
-                return self.unlock_tail_member(&member, session_key, sync_key, devkey_seal);
+                let elevated_member = self.device_maps_to_admin(self.device_id)
+                    && self
+                        .path
+                        .join(format!("meta/keywrap/{}.json", self.device_id))
+                        .exists();
+                if !elevated_member {
+                    return self.unlock_tail_member(&member, session_key, sync_key, devkey_seal);
+                }
             }
-            // Founding/admin device: the Root Key path below still runs;
-            // the SMK comes from the sealed store so meta keys match the
-            // members' HKDF(SMK) derivation.
+            // Founding/admin device — or an elevated member with their
+            // keywrap on disk: the Root Key path below still runs; the SMK
+            // comes from the sealed store so meta keys match the members'
+            // HKDF(SMK) derivation.
         }
 
         // Step 4 (cont.): admin/founding path — HPKE-decapsulate Root Key
@@ -13553,6 +13578,165 @@ mod tests {
         joiner2.unlock("member2-pass").unwrap();
         assert!(!joiner2.unlocked().holds_root());
         assert!(joiner2.unlocked().smk.is_some());
+    }
+
+    // F9 (general-pass review): an ADMIN invited after the flip must get
+    // the Root Key keywrap and take the admin unlock path — a second
+    // admin with no admin keys cannot run a growing Space. The flip's
+    // property is role-scoped: members hold nothing, admins keep keys.
+    // Rotation already staged wraps for admin-mapped devices; this pins
+    // invite + unlock to the same rule, and pins members still rootless.
+    #[test]
+    fn admin_invitee_post_flip_holds_full_powers() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Owner row carries the identity wrap pubkey (flip readiness).
+        let owner_member =
+            crate::vault::members::member_id_for_device(&owner_path, handle.device_id).unwrap();
+        let mut owner_row =
+            crate::vault::members::member_file_by_id(&owner_path, owner_member).unwrap();
+        let card = handle.contact_card_signed().unwrap();
+        owner_row.identity_wrap_pubkey = Some(card.card.identity_wrap_pubkey.clone());
+        crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
+
+        handle.space_prepare().unwrap();
+        handle.space_flip().unwrap();
+
+        // Invite an ADMIN on the flipped vault.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Admin, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite admin").unwrap();
+
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "admin2-pass",
+            "Admin2Device",
+        )
+        .unwrap();
+
+        // Before the approval commit is pulled the joiner has a member
+        // unlock file but no binding and no keywrap: unlock refuses.
+        {
+            let mut probe = VaultHandle::open(&joiner_path).unwrap();
+            assert!(probe.unlock("admin2-pass").is_err());
+        }
+
+        // Elevated approval needs a Verified contact.
+        handle.contacts_import_intro(&intro_code).unwrap();
+        let unverified = handle
+            .contacts_list()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.trust == crate::vault::contacts::ContactTrust::Channel)
+            .map(|c| c.card.identity_signing_pubkey)
+            .unwrap();
+        handle.contacts_mark_verified(&unverified).unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve admin join").unwrap();
+
+        // The approval commit carries the keywrap: the joiner takes the
+        // ADMIN path with their own password and holds full powers.
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("admin2-pass").unwrap();
+        assert!(
+            joiner.unlocked().holds_root(),
+            "post-flip admin invitee must hold the Root Key"
+        );
+        assert!(joiner.unlocked().smk.is_some());
+        // Full powers: collection creation needs can-manage + the SGK.
+        // The admin commits it like a real device (signed engine) so the
+        // Space converges before the rotation leg.
+        let cid = joiner.collection_create("Admin-made").unwrap();
+        let joiner_seal = joiner.devkey_seal();
+        let engine_j_signed = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner.device_id.to_string(),
+            joiner_seal.as_ref(),
+        );
+        let repo_j_signed = engine_j_signed.open_repo().unwrap();
+        engine_j_signed
+            .commit_all(&repo_j_signed, "add collection")
+            .unwrap();
+        drop(joiner);
+
+        // The owner pulls the second admin's collection, THEN rotates:
+        // the rotation re-keys the collection, so it survives with its
+        // content key intact.
+        let repo_o = {
+            let repo = engine_o.open_repo().unwrap();
+            if repo.find_remote("joiner").is_err() {
+                repo.remote("joiner", joiner_path.to_str().unwrap())
+                    .unwrap();
+            }
+            repo
+        };
+        engine_o.pull(&repo_o, "joiner").unwrap();
+
+        // Rotation: rotation stages keywraps for admin-mapped devices, so
+        // the second admin survives it.
+        handle.rotate_root_key().unwrap();
+        engine_o.commit_all(&repo_o, "rotate").unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("admin2-pass").unwrap();
+        assert!(joiner.unlocked().holds_root(), "admin survives rotation");
+        // Meta reads work under the new epoch: the collection they made
+        // is still listed by name.
+        assert!(
+            joiner
+                .collections_list()
+                .unwrap()
+                .iter()
+                .any(|c| c.0 == cid)
+        );
+        drop(joiner);
+
+        // An EDITOR invited on the same flipped vault (after rotation)
+        // still takes the member path: rootless, member-only powers.
+        let code2 = handle
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite editor").unwrap();
+        let joiner3_path = temp.path().join("joiner3");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner3_path).unwrap();
+        let intro3 = crate::vault::members::create_introduction(
+            &joiner3_path,
+            &code2,
+            "editor-pass",
+            "EditorDevice",
+        )
+        .unwrap();
+        handle.approve_join(&intro3).unwrap();
+        engine_o.commit_all(&repo_o, "approve editor").unwrap();
+        let engine_j3 = crate::sync::engine::SyncEngine::new(&joiner3_path, "joiner3", None);
+        let repo_j3 = engine_j3.open_repo().unwrap();
+        engine_j3.pull(&repo_j3, "origin").unwrap();
+        let mut editor = VaultHandle::open(&joiner3_path).unwrap();
+        editor.unlock("editor-pass").unwrap();
+        assert!(!editor.unlocked().holds_root());
+        assert!(editor.unlocked().smk.is_some());
     }
 
     // S3-7b review F6: a live non-admin row with NO wrap pubkey but a
