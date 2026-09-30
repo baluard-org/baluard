@@ -434,13 +434,98 @@ impl VaultHandle {
                 VaultError::InvalidOperation("only admins can approve this change".into()).into(),
             );
         };
+        // The approval is signed with the member identity key, so a
+        // hand-written record cannot forge it (post-commit review
+        // round): the gate counts only entries whose signature
+        // verifies against the approver's member row.
+        let digest = crate::vault::approvals::op_digest(kind, params);
+        let now = crate::vault::collections::now_secs_pub();
+        // Confirming an existing ask signs ITS ask timestamp; raising a
+        // fresh one signs now. A stale ask is consumed first, so the
+        // call re-raises as a fresh initiator. The message binds the
+        // vault and the timestamp, so a signature harvested from git
+        // history cannot be replayed onto a fresh ask or into another
+        // Space.
+        let existing = crate::vault::approvals::list_pending(&self.path)
+            .into_iter()
+            .find(|p| p.kind == kind && p.params_digest == digest);
+        let (ask_time, stale) = match existing.as_ref() {
+            Some(op)
+                if now.saturating_sub(op.initiated_at)
+                    >= crate::vault::approvals::APPROVAL_STALE_SECS =>
+            {
+                (now, true)
+            }
+            Some(op) => (op.initiated_at, false),
+            None => (now, false),
+        };
+        if stale {
+            crate::vault::approvals::consume_matching(&self.path, kind, params);
+        }
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation(
+                "this device cannot sign approvals; unlock with your identity".into(),
+            )
+        })?;
+        let msg = crate::vault::approvals::approval_message(kind, &digest, self.vault_id, ask_time);
+        let sig = hex::encode(
+            crate::crypto::signature::sign(identity.signing_key(), &msg)
+                .map_err(BaluardError::Crypto)?
+                .to_bytes(),
+        );
+        let entry = crate::vault::approvals::ApprovalEntry {
+            member: member_id,
+            sig,
+        };
+        let verify_entry = |candidate: &crate::vault::approvals::ApprovalEntry| -> bool {
+            let Some(row) = crate::vault::members::member_file_by_id(&self.path, candidate.member)
+            else {
+                return false;
+            };
+            // Only live Owner/Admin rows count toward an admin quorum:
+            // a Viewer's yes or an evicted admin's old key never does.
+            if !matches!(
+                row.role,
+                crate::vault::members::MemberRole::Owner | crate::vault::members::MemberRole::Admin
+            ) || row.reset.is_some()
+                || row.removed.is_some()
+            {
+                return false;
+            }
+            let Some(pub_hex) = row.identity_signing_pubkey.as_deref() else {
+                return false;
+            };
+            let (Ok(pk_bytes), Ok(sig_bytes)) = (hex::decode(pub_hex), hex::decode(&candidate.sig))
+            else {
+                return false;
+            };
+            let (Ok(pk_arr), Ok(sig_arr)) = (
+                <[u8; 32]>::try_from(pk_bytes.as_slice()),
+                <[u8; 64]>::try_from(sig_bytes.as_slice()),
+            ) else {
+                return false;
+            };
+            let Ok(pk) = crate::crypto::signature::verifying_key_from_bytes(&pk_arr) else {
+                return false;
+            };
+            let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+            crate::crypto::signature::verify(&pk, &msg, &sig).is_ok()
+        };
+        if !verify_entry(&entry) {
+            return Err(VaultError::InvalidOperation(
+                "this device's identity does not match its member record; unlock again before approving"
+                    .into(),
+            )
+            .into());
+        }
         match crate::vault::approvals::present(
             &self.path,
             kind,
             params,
-            member_id,
+            entry,
             required,
-            crate::vault::collections::now_secs_pub(),
+            now,
+            &verify_entry,
         ) {
             crate::vault::approvals::ApprovalOutcome::Approved => Ok(()),
             crate::vault::approvals::ApprovalOutcome::Pending => {
@@ -13234,6 +13319,51 @@ mod tests {
             .to_string();
         assert!(err.contains("does not exist"), "err: {err}");
         assert!(handle.pending_op_approvals().is_empty());
+    }
+
+    /// A hand-written approvals record cannot forge a second yes: the
+    /// gate counts only entries whose signature verifies against the
+    /// member row's identity key, and the record self-heals on touch.
+    #[test]
+    fn forged_approval_record_never_executes() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let mut settings = handle.get_settings().unwrap();
+        settings.quorum_admin_ops = Some(2);
+        handle.save_settings(&settings).unwrap();
+        let owner_id = crate::vault::members::owner_member_id(dir.path()).unwrap();
+
+        // Hand-written record: the owner's member id with a garbage
+        // signature, format 2 so it parses.
+        let digest = crate::vault::approvals::op_digest("rotate_root_key", &serde_json::json!({}));
+        let forged = serde_json::json!({
+            "format": 2,
+            "kind": "rotate_root_key",
+            "params_digest": digest,
+            "initiated_by": owner_id,
+            "initiated_at": 1,
+            "required": 2,
+            "approvals": [{"member": owner_id, "sig": "00"}],
+            "params": {},
+        });
+        let rec = dir.path().join("meta/approvals").join(format!(
+            "{}-{}.json",
+            digest,
+            &owner_id.simple().to_string()[..8]
+        ));
+        std::fs::create_dir_all(rec.parent().unwrap()).unwrap();
+        std::fs::write(&rec, forged.to_string()).unwrap();
+
+        // The owner's REAL call counts only its own signed entry: the
+        // forged one drops, the ask stays pending, and the record
+        // self-heals to the real signature.
+        let err = handle.rotate_root_key().unwrap_err().to_string();
+        assert!(err.contains("admin approvals"), "{err}");
+        let pending = handle.pending_op_approvals();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].approvals.len(), 1);
+        assert_ne!(pending[0].approvals[0].sig, "00");
     }
 
     #[test]
