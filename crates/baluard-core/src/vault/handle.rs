@@ -727,6 +727,22 @@ impl VaultHandle {
     /// read while active — the credentials an admin should rotate
     /// (read bytes cannot be un-read; changing the passwords is the
     /// mitigation). Raw key material never enters the report.
+    /// S4-5: the derived activity timeline — the space-wide feed
+    /// synthesized from verified signed git history (newest-first).
+    /// Reads leave no trace; nothing is persisted. Admin-gated like the
+    /// access review: this is the audit surface.
+    #[cfg(feature = "git-sync")]
+    pub fn activity_timeline(&self, limit: usize) -> Result<serde_json::Value, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let engine = crate::sync::engine::SyncEngine::new(&self.path, "timeline", None);
+        let repo = engine.open_repo()?;
+        let entries = crate::sync::engine::SyncEngine::derive_timeline(&repo, limit)?;
+        Ok(serde_json::json!({ "timeline": entries }))
+    }
+
     pub fn access_review(&self) -> Result<serde_json::Value, BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
@@ -9186,6 +9202,89 @@ mod tests {
                 old_keys.wrapping_secret()
             )
             .is_err()
+        );
+    }
+
+    #[cfg(feature = "git-sync")]
+    #[test]
+    fn timeline_derives_structural_history_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let password = "test-timeline-password";
+        let (handle, _secrets) = creation::VaultCreator::new(dir.path(), password, "test-device")
+            .kdf_profile(KdfProfile::MobileLow)
+            .execute()
+            .unwrap();
+        drop(handle);
+
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(password).unwrap();
+        let seal = h.devkey_seal();
+        let device = h.device_id.to_string();
+
+        // A live member row to grant to (12-field literal, house test
+        // convention).
+        let member_id = uuid::Uuid::new_v4();
+        let row = crate::vault::members::MemberFile {
+            id: member_id,
+            display_name: "Ada".into(),
+            role: crate::vault::members::MemberRole::Editor,
+            trust: crate::vault::members::TrustLevel::Channel,
+            identity_signing_pubkey: Some(hex::encode([1u8; 32])),
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        crate::vault::members::write_member(dir.path(), &row).unwrap();
+
+        let engine = crate::sync::engine::SyncEngine::new(dir.path(), &device, seal.as_ref());
+        let repo = engine.open_repo().unwrap();
+        engine.commit_all(&repo, "member row").unwrap();
+
+        let cid = h.collection_create("Work").unwrap();
+        h.lock();
+        drop(h);
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(password).unwrap();
+        engine.commit_all(&repo, "collection").unwrap();
+
+        h.collection_grant(
+            cid,
+            crate::vault::collections::GrantTarget::Member { id: member_id },
+            crate::vault::collections::CollectionAccess::Write,
+            None,
+        )
+        .unwrap();
+        drop(h);
+        engine.commit_all(&repo, "grant").unwrap();
+
+        let feed = crate::sync::engine::SyncEngine::derive_timeline(&repo, 100).unwrap();
+        let kinds: Vec<&str> = feed.iter().map(|e| e.kind.as_str()).collect();
+        // Newest-first: the grant is the most recent fact, the vault's
+        // birth the oldest.
+        assert_eq!(kinds.first().copied(), Some("grant-added"));
+        assert!(kinds.contains(&"collection-created"), "kinds: {kinds:?}");
+        assert!(kinds.contains(&"member-added"), "kinds: {kinds:?}");
+        assert_eq!(kinds.last().copied(), Some("vault-created"));
+        // Positional order: grant before collection before birth.
+        let grant_at = kinds.iter().position(|k| *k == "grant-added").unwrap();
+        let coll_at = kinds
+            .iter()
+            .position(|k| *k == "collection-created")
+            .unwrap();
+        let born_at = kinds.iter().position(|k| *k == "vault-created").unwrap();
+        assert!(grant_at < coll_at && coll_at < born_at);
+        // Genesis attribution falls back to the creator label; the
+        // grant commit's actor resolves to the creator's display name
+        // (the only member row at that point).
+        assert_eq!(feed.last().unwrap().actor, "the space's creator");
+        assert!(!feed[0].actor.is_empty());
+        assert_eq!(
+            feed[0].detail,
+            format!("member {}: write", &member_id.to_string()[..8])
         );
     }
 

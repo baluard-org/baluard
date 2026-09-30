@@ -258,6 +258,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         // S4-1: sensitive-op approvals (quorum knob).
         "approvals.list",
         "access.review",
+        "activity.timeline",
         "policies.set",
         "policies.list",
         // S4-7: Space Recovery Kit (admin surfaces).

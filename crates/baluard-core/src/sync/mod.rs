@@ -14,6 +14,7 @@ pub mod known_hosts;
 pub mod policy;
 pub mod revocation;
 pub mod state_machine;
+pub mod timeline;
 #[cfg(feature = "git-sync")]
 pub mod tls;
 
