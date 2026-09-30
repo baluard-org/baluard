@@ -17,6 +17,7 @@ import SyncTab from "./SyncTab.jsx";
 import PeopleTab from "./PeopleTab.jsx";
 import SpaceTab from "./SpaceTab.jsx";
 import CollectionsTab from "./CollectionsTab.jsx";
+import GroupsTab from "./GroupsTab.jsx";
 import ContactsTab from "./ContactsTab.jsx";
 import OutboxesTab from "./OutboxesTab.jsx";
 import BridgeTab from "./BridgeTab.jsx";
@@ -477,6 +478,7 @@ export default function SettingsModal() {
               <TabButton id="people" label={t("settings.tabPeople")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="space" label={t("settings.tabSpace")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="collections" label={t("settings.tabCollections")} active={activeTab()} setActiveTab={setActiveTab} />
+              <TabButton id="groups" label={t("settings.tabGroups")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="contacts" label={t("settings.tabContacts")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="outboxes" label={t("settings.tabOutboxes")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="devices" label={t("settings.tabDevices")} active={activeTab()} setActiveTab={setActiveTab} />
@@ -872,6 +874,9 @@ export default function SettingsModal() {
               </Show>
               <Show when={activeTab() === "collections"}>
                 <CollectionsTab />
+              </Show>
+              <Show when={activeTab() === "groups"}>
+                <GroupsTab />
               </Show>
               <Show when={activeTab() === "contacts"}>
                 <ContactsTab />

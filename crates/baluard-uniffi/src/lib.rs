@@ -797,11 +797,8 @@ impl MobileVault {
         let id = v["id"].as_str().ok_or_else(|| BaluardError::Vault {
             detail: "missing id".into(),
         })?;
-        let member_id = v["member_id"].as_str().ok_or_else(|| BaluardError::Vault {
-            detail: "missing member_id".into(),
-        })?;
         self.state
-            .collection_revoke(id, member_id)
+            .collection_revoke(id, &v)
             .await
             .map_err(|e| BaluardError::Vault { detail: e })
     }

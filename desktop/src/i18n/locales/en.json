@@ -326,6 +326,7 @@
     "tabBridge": "Browser extensions",
     "themeSystem": "System",
     "tabCollections": "Shared collections",
+    "tabGroups": "Groups",
     "tabContacts": "Contacts",
     "tabOutboxes": "Outboxes",
     "tabSpace": "Space"
@@ -966,5 +967,26 @@
     "opMigrate": "Move sync address",
     "opClaim": "Ownership claim",
     "opLower": "Lower approval bar"
+  },
+  "groups": {
+    "badge": "Group",
+    "person": "Person",
+    "pick": "Pick a group",
+    "subtitle": "A group is a list of people — like a department. Give the whole group access to a shared collection at once. When someone leaves the group, they keep what they already copied; nothing new opens for them.",
+    "createTitle": "New group",
+    "namePlaceholder": "Group name",
+    "createButton": "Create group",
+    "createdToast": "Group \"{name}\" created",
+    "memberCount": "members",
+    "manageMembers": "Members",
+    "rename": "Rename",
+    "renameTitle": "Rename group",
+    "delete": "Delete",
+    "deleteTitle": "Delete group",
+    "deleteBody": "Delete \"{name}\"? Entries stay; the group's access to shared collections ends.",
+    "deletedToast": "Group \"{name}\" deleted",
+    "remove": "Remove",
+    "add": "Add",
+    "removeNote": "Removing someone re-keys the group: what they already opened stays open to them, but future group access ends."
   }
 }

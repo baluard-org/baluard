@@ -296,6 +296,7 @@
     "tabBridge": "Extensiones de navegador",
     "themeSystem": "Sistema",
     "tabCollections": "Colecciones compartidas",
+    "tabGroups": "Grupos",
     "tabContacts": "Contactos",
     "tabOutboxes": "Buzones",
     "tabSpace": "Espacio"
@@ -966,5 +967,26 @@
     "opMigrate": "Mudar dirección de sincronización",
     "opClaim": "Reclamación de propiedad",
     "opLower": "Bajar barra de aprobación"
+  },
+  "groups": {
+    "badge": "Grupo",
+    "person": "Persona",
+    "pick": "Elige un grupo",
+    "subtitle": "Un grupo es una lista de personas — como un departamento. Dale acceso a una colección compartida a todo el grupo de una vez. Cuando alguien sale del grupo, conserva lo que ya copió; nada nuevo se abre para esa persona.",
+    "createTitle": "Nuevo grupo",
+    "namePlaceholder": "Nombre del grupo",
+    "createButton": "Crear grupo",
+    "createdToast": "Grupo \"{name}\" creado",
+    "memberCount": "miembros",
+    "manageMembers": "Miembros",
+    "rename": "Renombrar",
+    "renameTitle": "Renombrar grupo",
+    "delete": "Eliminar",
+    "deleteTitle": "Eliminar grupo",
+    "deleteBody": "¿Eliminar \"{name}\"? Las entradas se quedan; el acceso del grupo a las colecciones compartidas termina.",
+    "deletedToast": "Grupo \"{name}\" eliminado",
+    "remove": "Quitar",
+    "add": "Añadir",
+    "removeNote": "Quitar a alguien regenera la clave del grupo: lo que ya abrió sigue abierto para esa persona, pero el acceso futuro al grupo termina."
   }
 }

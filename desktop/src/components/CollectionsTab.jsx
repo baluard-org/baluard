@@ -31,6 +31,9 @@ export default function CollectionsTab() {
   const [deleteTarget, setDeleteTarget] = createSignal(null);
   const [clearAsk, setClearAsk] = createSignal(false);
   const [members, setMembers] = createSignal([]);
+  const [groups, setGroups] = createSignal([]);
+  // S4-2: a grant can name a person or a group.
+  const [grantKind, setGrantKind] = createSignal("member");
 
   async function loadMembers() {
     try {
@@ -41,10 +44,28 @@ export default function CollectionsTab() {
     }
   }
 
+  async function loadGroups() {
+    try {
+      const data = JSON.parse(await daemon("groups.list"));
+      setGroups(Array.isArray(data.groups) ? data.groups : []);
+    } catch {
+      setGroups([]);
+    }
+  }
+
   onSettled(() => {
     void vault.refreshCollections();
     void loadMembers();
+    void loadGroups();
   });
+
+  // Display name for a grant row: kind-aware member/group resolution.
+  function grantTargetName(g) {
+    if (g.kind === "group") {
+      return groups().find((x) => x.id === g.id)?.name || g.id.slice(0, 8);
+    }
+    return members().find((m) => m.id === g.id)?.display_name || g.id.slice(0, 8);
+  }
 
   async function createCollection() {
     const name = newName().trim();
@@ -90,7 +111,8 @@ export default function CollectionsTab() {
   }
 
   async function grant(col) {
-    if (!grantMember()) {
+    const targetId = grantMember();
+    if (!targetId) {
       toastError(t("collections.pickMember"));
       return;
     }
@@ -98,7 +120,8 @@ export default function CollectionsTab() {
     try {
       const payload = {
         id: col.id,
-        member_id: grantMember(),
+        kind: grantKind(),
+        target_id: targetId,
         access: grantAccess(),
       };
       const days = parseInt(grantDays(), 10);
@@ -117,10 +140,10 @@ export default function CollectionsTab() {
     }
   }
 
-  async function revoke(col, memberId) {
+  async function revoke(col, g) {
     setBusy(true);
     try {
-      await daemon("collections.revoke", { id: col.id, member_id: memberId });
+      await daemon("collections.revoke", { id: col.id, kind: g.kind, target_id: g.id });
       await vault.refreshCollections();
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -215,7 +238,10 @@ export default function CollectionsTab() {
                         {(g) => (
                           <div class="flex items-center gap-2 text-xs">
                             <span class="flex-1 truncate text-[var(--color-text)]">
-                              {members().find((m) => m.id === g.member_id)?.display_name || g.member_id.slice(0, 8)}
+                              {grantTargetName(g)}
+                              <Show when={g.kind === "group"}>
+                                <span class="ml-1 text-[10px] font-bold text-[var(--color-muted)]">({t("groups.badge")})</span>
+                              </Show>
                             </span>
                             <span class={`text-[10px] font-bold border rounded-full px-2 py-0.5 ${ACCESS_STYLES[g.access] || ""}`}>
                               {g.access === "manage"
@@ -231,7 +257,7 @@ export default function CollectionsTab() {
                             </Show>
                             <button
                               disabled={busy()}
-                              onClick={() => void revoke(col, g.member_id)}
+                              onClick={() => void revoke(col, g)}
                               class="text-[10px] font-bold text-red-400 hover:text-red-300 disabled:opacity-50 cursor-pointer"
                             >
                               {t("collections.revoke")}
@@ -242,14 +268,41 @@ export default function CollectionsTab() {
                       <div class="flex gap-2 items-center flex-wrap pt-1">
                         <select
                           class="text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[var(--color-text)] cursor-pointer"
-                          value={grantMember()}
-                          onChange={(e) => setGrantMember(e.currentTarget.value)}
+                          value={grantKind()}
+                          onChange={(e) => {
+                            setGrantKind(e.currentTarget.value);
+                            setGrantMember("");
+                          }}
                         >
-                          <option value="">{t("collections.pickMember")}</option>
-                          <For each={members().filter((m) => !m.removed && !m.reset)}>
-                            {(m) => <option value={m.id}>{m.display_name}</option>}
-                          </For>
+                          <option value="member">{t("groups.person")}</option>
+                          <option value="group">{t("groups.badge")}</option>
                         </select>
+                        <Show
+                          when={grantKind() === "group"}
+                          fallback={
+                            <select
+                              class="text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[var(--color-text)] cursor-pointer"
+                              value={grantMember()}
+                              onChange={(e) => setGrantMember(e.currentTarget.value)}
+                            >
+                              <option value="">{t("collections.pickMember")}</option>
+                              <For each={members().filter((m) => !m.removed && !m.reset)}>
+                                {(m) => <option value={m.id}>{m.display_name}</option>}
+                              </For>
+                            </select>
+                          }
+                        >
+                          <select
+                            class="text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[var(--color-text)] cursor-pointer"
+                            value={grantMember()}
+                            onChange={(e) => setGrantMember(e.currentTarget.value)}
+                          >
+                            <option value="">{t("groups.pick")}</option>
+                            <For each={groups()}>
+                              {(g) => <option value={g.id}>{g.name}</option>}
+                            </For>
+                          </select>
+                        </Show>
                         <select
                           class="text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[var(--color-text)] cursor-pointer"
                           value={grantAccess()}

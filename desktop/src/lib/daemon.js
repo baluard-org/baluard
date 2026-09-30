@@ -21,6 +21,7 @@ const MUTATION_ACTIONS = new Set([
   "passkey.finish_register", "passkey.delete", "passkey.rename", "passkey.finish_assert",
   "cipher.set_collection", "collections.create", "collections.rename", "collections.delete",
   "collections.grant", "collections.revoke", "collections.catalog_set",
+  "groups.create", "groups.rename", "groups.delete", "groups.member_add", "groups.member_remove",
   "policies.set",
   "packages.import",
 ]);

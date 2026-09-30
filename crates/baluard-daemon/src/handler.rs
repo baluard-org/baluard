@@ -324,6 +324,13 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "collections.delete",
     "collections.grant",
     "collections.revoke",
+    // S4-2: group management writes git-tracked meta/groups (defs,
+    // gkwraps, ckwraps) and membership removal rotates the group key.
+    "groups.create",
+    "groups.rename",
+    "groups.delete",
+    "groups.member_add",
+    "groups.member_remove",
     // S3-7a: prepare writes the sealed store + per-member wraps.
     "space.prepare",
     "space.flip",
@@ -3868,14 +3875,42 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let Some(id) = parsed["id"].as_str() else {
                 return err_response("Missing id in payload");
             };
-            let Some(member_id) = parsed["member_id"].as_str() else {
-                return err_response("Missing member_id in payload");
-            };
-            match state.collection_revoke(id, member_id).await {
+            match state.collection_revoke(id, &parsed).await {
                 Ok(json) => ok_resp(json, token_str),
                 Err(e) => err_response(e),
             }
         }
+
+        // ── S4-2: groups ──
+        "groups.list" => match state.groups_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "groups.create" => match state.group_create(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "groups.rename" => match state.group_rename(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "groups.delete" => match state.group_delete(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "groups.member_add" => match state.group_member_add(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "groups.member_remove" => match state.group_member_remove(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
 
         "templates.create" => match state.templates_create(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
@@ -5941,6 +5976,11 @@ mod tests {
             "collections.delete",
             "collections.grant",
             "collections.revoke",
+            "groups.create",
+            "groups.rename",
+            "groups.delete",
+            "groups.member_add",
+            "groups.member_remove",
             "space.prepare",
             "space.flip",
             "space.kit_enable",

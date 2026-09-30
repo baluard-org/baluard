@@ -20,9 +20,7 @@
 
 use crate::error::{BaluardError, VaultError};
 use crate::keys::hierarchy::SpaceGroupKey;
-use crate::vault::collections::{
-    CollectionAccess, CollectionFile, is_grant_expired, list_collections,
-};
+use crate::vault::collections::{CollectionAccess, CollectionFile, list_collections};
 use crate::vault::members;
 use crate::vault::write_vault_file;
 use serde::{Deserialize, Serialize};
@@ -236,15 +234,21 @@ pub fn submit_request(
     // Asking for access the member already holds (live, covering the
     // request) is refused: the admin inbox stays an inbox, not a mirror
     // of the grant list (review F4). An EXPIRED grant lapses and may be
-    // re-asked.
-    if let Some(existing) = collection
-        .grants
-        .iter()
-        .find(|g| g.member_id == requester && !is_grant_expired(g, now_secs()))
-    {
-        if covers(existing.access, access) {
-            return Err(deny("You already have access to this collection."));
-        }
+    // re-asked. Group grants count as held access — a member covered
+    // through their group has no ask to make.
+    let held = crate::vault::groups::effective_access(
+        &collection.grants,
+        requester,
+        &|gid| {
+            crate::vault::collections::load_group_memberships(vault_path)
+                .into_iter()
+                .find(|(id, _)| *id == gid)
+                .map(|(_, ms)| ms)
+        },
+        now_secs(),
+    );
+    if held.is_some_and(|h| covers(h, access)) {
+        return Err(deny("You already have access to this collection."));
     }
     let note = validate_note(note)?;
     let request_id = Uuid::new_v4();
@@ -843,7 +847,7 @@ mod tests {
             &sgk,
             &row.collection_id,
             collections::CollectionGrant {
-                member_id: requester,
+                target: collections::GrantTarget::Member { id: requester },
                 access: CollectionAccess::Write,
                 expires_at: None,
             },
@@ -969,7 +973,7 @@ mod tests {
             &sgk,
             &held.id,
             collections::CollectionGrant {
-                member_id: requester,
+                target: collections::GrantTarget::Member { id: requester },
                 access: CollectionAccess::Read,
                 expires_at: None,
             },
@@ -988,7 +992,7 @@ mod tests {
         let lapsed = collections::create_collection(&path, &sgk, "Lapsed").unwrap();
         let (mut lapsed_file, _) = collections::open_collection(&path, &sgk, &lapsed.id).unwrap();
         lapsed_file.grants.push(collections::CollectionGrant {
-            member_id: requester,
+            target: collections::GrantTarget::Member { id: requester },
             access: CollectionAccess::Read,
             expires_at: Some(1),
         });
