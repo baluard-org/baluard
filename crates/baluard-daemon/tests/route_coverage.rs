@@ -1013,7 +1013,7 @@ async fn collections_state_lifecycle_and_locked_rejection() {
         1
     );
     state
-        .collection_revoke(id, &member.to_string())
+        .collection_revoke(id, &serde_json::json!({ "member_id": member.to_string() }))
         .await
         .expect("revoke");
     state.collection_delete(id).await.expect("delete");
@@ -1187,8 +1187,9 @@ async fn access_requests_state_lifecycle_and_locked_rejection() {
     let grants = servers["grants"].as_array().unwrap();
     assert_eq!(grants.len(), 1);
     assert_eq!(grants[0]["access"], "write");
+    assert_eq!(grants[0]["kind"], "member");
     assert_eq!(
-        grants[0]["member_id"].as_str(),
+        grants[0]["id"].as_str(),
         Some(owner_member.to_string()).as_deref()
     );
 
@@ -1297,6 +1298,137 @@ async fn collections_list_admin_shape_and_cipher_collection_ids() {
     assert!(moved_back["_meta"]["collection_id"].is_null());
 }
 
+#[tokio::test]
+async fn groups_lifecycle_and_locked_rejection() {
+    let (_dir, vault_path) = make_vault("groups-ui");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    assert!(state.groups_list().await.is_err(), "locked refuses");
+    state.unlock(MASTER).await.expect("vault unlock");
+
+    // Empty name refuses; create parses.
+    assert!(state.group_create(r#"{"name":"  "}"#).await.is_err());
+    let created: serde_json::Value =
+        serde_json::from_str(&state.group_create(r#"{"name":"Ops"}"#).await.unwrap()).unwrap();
+    let gid = created["id"].as_str().unwrap().to_string();
+
+    let list: serde_json::Value =
+        serde_json::from_str(&state.groups_list().await.unwrap()).unwrap();
+    let rows = list["groups"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["name"], "Ops");
+    assert_eq!(rows[0]["members"].as_array().unwrap().len(), 0);
+
+    // Rename round-trips.
+    let rename_payload = format!(r#"{{"id":"{gid}","name":"Ops crew"}}"#);
+    state.group_rename(&rename_payload).await.unwrap();
+    let list: serde_json::Value =
+        serde_json::from_str(&state.groups_list().await.unwrap()).unwrap();
+    assert_eq!(list["groups"][0]["name"], "Ops crew");
+
+    // A live member row joins the group (duplicate add refuses). The
+    // row is planted directly — the acting device stays the owner, so
+    // the admin gates keep passing.
+    let member_id = uuid::Uuid::new_v4();
+    let member_row = serde_json::json!({
+        "id": member_id,
+        "display_name": "Rey",
+        "role": "editor",
+        "trust": "channel",
+        "reset": null,
+        "removed": null,
+    });
+    std::fs::create_dir_all(vault_path.join("meta/members")).unwrap();
+    std::fs::write(
+        vault_path.join(format!("meta/members/{member_id}.json")),
+        serde_json::to_vec(&member_row).unwrap(),
+    )
+    .unwrap();
+    let add_payload = format!(r#"{{"id":"{gid}","member_id":"{member_id}"}}"#);
+    state.group_member_add(&add_payload).await.unwrap();
+    assert!(
+        state.group_member_add(&add_payload).await.is_err(),
+        "duplicate add refuses"
+    );
+
+    // Grant a collection to the GROUP: the admin listing shows the
+    // group-targeted grant; an unknown kind refuses.
+    let cid_val: serde_json::Value =
+        serde_json::from_str(&state.collection_create("Servers").await.unwrap()).unwrap();
+    let cid = cid_val["id"].as_str().unwrap().to_string();
+    let grant_payload =
+        format!(r#"{{"id":"{cid}","kind":"group","target_id":"{gid}","access":"write"}}"#);
+    state
+        .collection_grant(
+            &cid,
+            &serde_json::from_str::<serde_json::Value>(&grant_payload).unwrap(),
+        )
+        .await
+        .unwrap();
+    let bad_kind =
+        format!(r#"{{"id":"{cid}","kind":"alien","target_id":"{gid}","access":"write"}}"#);
+    assert!(
+        state
+            .collection_grant(
+                &cid,
+                &serde_json::from_str::<serde_json::Value>(&bad_kind).unwrap()
+            )
+            .await
+            .is_err()
+    );
+    let list: serde_json::Value =
+        serde_json::from_str(&state.collections_list().await.unwrap()).unwrap();
+    let grants = list["collections"][0]["grants"].as_array().unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0]["kind"], "group");
+    assert_eq!(grants[0]["id"], gid.as_str());
+
+    // Group revoke via the new target shape.
+    let revoke_payload = format!(r#"{{"id":"{cid}","kind":"group","target_id":"{gid}"}}"#);
+    state
+        .collection_revoke(
+            &cid,
+            &serde_json::from_str::<serde_json::Value>(&revoke_payload).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Re-grant, then remove the member: the GK rotation path runs at
+    // route level and the group empties.
+    state
+        .collection_grant(
+            &cid,
+            &serde_json::from_str::<serde_json::Value>(&grant_payload).unwrap(),
+        )
+        .await
+        .unwrap();
+    state.group_member_remove(&add_payload).await.unwrap();
+    let list: serde_json::Value =
+        serde_json::from_str(&state.groups_list().await.unwrap()).unwrap();
+    assert_eq!(list["groups"][0]["members"].as_array().unwrap().len(), 0);
+
+    // Unknown-group mutations refuse; delete round-trips and empties.
+    let missing = format!(
+        r#"{{"id":"{}","member_id":"{member_id}"}}"#,
+        uuid::Uuid::new_v4()
+    );
+    assert!(state.group_member_add(&missing).await.is_err());
+    state
+        .group_delete(&format!(r#"{{"id":"{gid}"}}"#))
+        .await
+        .unwrap();
+    assert!(
+        state
+            .group_delete(&format!(r#"{{"id":"{gid}"}}"#))
+            .await
+            .is_err()
+    );
+    let list: serde_json::Value =
+        serde_json::from_str(&state.groups_list().await.unwrap()).unwrap();
+    assert_eq!(list["groups"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn space_meta_prepare_status_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("space-meta");
     let state = Arc::new(VaultState::new(vault_path.clone()));

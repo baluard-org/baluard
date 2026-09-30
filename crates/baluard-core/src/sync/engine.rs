@@ -391,6 +391,17 @@ impl SyncEngine {
     ) -> crate::sync::policy::CollectionScope {
         let mut scope = crate::sync::policy::CollectionScope::none();
         let member = member_id.and_then(|m| uuid::Uuid::parse_str(m).ok());
+        // Keyless group memberships from the same worktree source the
+        // grants come from — a non-admin cannot forge membership (group
+        // defs are Admin-gated), so disk is as trustworthy as the tree
+        // here.
+        let memberships = crate::vault::collections::load_group_memberships(&self.vault_path);
+        let group_members = |gid: uuid::Uuid| -> Option<Vec<uuid::Uuid>> {
+            memberships
+                .iter()
+                .find(|(id, _)| *id == gid)
+                .map(|(_, ms)| ms.clone())
+        };
         let coll_dir = self.vault_path.join("meta/collections");
         if let Ok(entries) = std::fs::read_dir(&coll_dir) {
             for entry in entries.flatten() {
@@ -415,23 +426,15 @@ impl SyncEngine {
                     scope.dirs.push((d, file.id));
                 }
                 let Some(m) = member else { continue };
-                for g in &file.grants {
-                    if g.member_id != m {
-                        continue;
-                    }
-                    match g.access {
-                        crate::vault::collections::CollectionAccess::Write => {
-                            if !scope.writable.contains(&file.id) {
-                                scope.writable.push(file.id);
-                            }
-                        }
-                        crate::vault::collections::CollectionAccess::Manage => {
-                            if !scope.writable.contains(&file.id) {
-                                scope.writable.push(file.id);
-                            }
-                        }
-                        crate::vault::collections::CollectionAccess::Read => {}
-                    }
+                let now = crate::vault::collections::now_secs_pub();
+                if matches!(
+                    crate::vault::groups::effective_access(&file.grants, m, &group_members, now),
+                    Some(
+                        crate::vault::collections::CollectionAccess::Write
+                            | crate::vault::collections::CollectionAccess::Manage,
+                    ) if !scope.writable.contains(&file.id)
+                ) {
+                    scope.writable.push(file.id);
                 }
             }
         }
@@ -4324,6 +4327,44 @@ impl SyncEngine {
     /// `parent_tree` — the grants that existed BEFORE the commit — so a
     /// member cannot self-grant manage in the same commit). Manage
     /// implies write: a manager may move ciphers in their collection.
+    /// S4-2: group memberships readable from one commit tree —
+    /// stem-pinned, format-pinned, malformed rows skipped inert (the
+    /// same discipline as the collection walk). Group defs are
+    /// Admin-gated policy, so a membership list read from a verified
+    /// tree is trustworthy input to scope expansion.
+    fn group_members_from_tree(
+        repo: &Repository,
+        tree: &git2::Tree<'_>,
+    ) -> Vec<(uuid::Uuid, Vec<uuid::Uuid>)> {
+        let mut out = Vec::new();
+        if let Ok(dir_entry) = tree.get_path(std::path::Path::new("meta/groups")) {
+            if let Ok(sub) = repo.find_tree(dir_entry.id()) {
+                for e in sub.iter() {
+                    let Some(name) = e.name() else { continue };
+                    if !name.ends_with(".json") {
+                        continue;
+                    }
+                    let Ok(blob) = repo.find_blob(e.id()) else {
+                        continue;
+                    };
+                    let Ok(file) =
+                        serde_json::from_slice::<crate::vault::groups::GroupFile>(blob.content())
+                    else {
+                        continue;
+                    };
+                    if file.format != 1 {
+                        continue;
+                    }
+                    if name != format!("{}.json", file.id) {
+                        continue;
+                    }
+                    out.push((file.id, file.members));
+                }
+            }
+        }
+        out
+    }
+
     fn collection_scope_for_tree(
         repo: &Repository,
         tree: &git2::Tree<'_>,
@@ -4368,10 +4409,21 @@ impl SyncEngine {
                     dirs.push((d, file.id));
                 }
                 if let Some(m) = member {
-                    if file.grants.iter().any(|g| {
-                        g.member_id == m
-                            && g.access == crate::vault::collections::CollectionAccess::Write
-                    }) {
+                    // S4-2: effective access — direct grants or through a
+                    // group. Membership reads from the SAME tree as the
+                    // grants: group defs are Admin-gated, so a non-admin
+                    // cannot forge membership in the commit being
+                    // verified.
+                    let group_members = |gid: uuid::Uuid| -> Option<Vec<uuid::Uuid>> {
+                        Self::group_members_from_tree(repo, tree)
+                            .into_iter()
+                            .find(|(id, _)| *id == gid)
+                            .map(|(_, ms)| ms)
+                    };
+                    let now = crate::vault::collections::now_secs_pub();
+                    if crate::vault::groups::effective_access(&file.grants, m, &group_members, now)
+                        == Some(crate::vault::collections::CollectionAccess::Write)
+                    {
                         writable.push(file.id);
                     }
                 }
@@ -4411,9 +4463,31 @@ impl SyncEngine {
                                 continue;
                             }
                             if file.grants.iter().any(|g| {
-                                g.member_id == m
-                                    && g.access
-                                        == crate::vault::collections::CollectionAccess::Manage
+                                // S4-2: manage authority also travels
+                                // through groups, with membership from
+                                // the PARENT tree — the state before
+                                // the commit — so a member cannot
+                                // self-grant manage by editing a group
+                                // def in the same commit (defs are
+                                // Admin-gated anyway; reading the
+                                // parent keeps the rule symmetric with
+                                // the grant check above).
+                                let is_manage =
+                                    g.access == crate::vault::collections::CollectionAccess::Manage;
+                                if !is_manage {
+                                    return false;
+                                }
+                                match &g.target {
+                                    crate::vault::collections::GrantTarget::Member { id } => {
+                                        *id == m
+                                    }
+                                    crate::vault::collections::GrantTarget::Group { id } => {
+                                        Self::group_members_from_tree(repo, parent)
+                                            .into_iter()
+                                            .find(|(gid, _)| *gid == *id)
+                                            .is_some_and(|(_, ms)| ms.contains(&m))
+                                    }
+                                }
                             }) {
                                 managed.push(file.id);
                                 if !writable.contains(&file.id) {

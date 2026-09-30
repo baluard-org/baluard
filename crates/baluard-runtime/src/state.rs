@@ -4348,7 +4348,14 @@ impl VaultState {
                     "access": "admin",
                     "expires_at": null,
                     "grants": grants.iter().map(|g| serde_json::json!({
-                        "member_id": g.member_id.to_string(),
+                        "kind": match g.target {
+                            baluard_core::vault::collections::GrantTarget::Member { .. } => "member",
+                            baluard_core::vault::collections::GrantTarget::Group { .. } => "group",
+                        },
+                        "id": match g.target {
+                            baluard_core::vault::collections::GrantTarget::Member { id } => id.to_string(),
+                            baluard_core::vault::collections::GrantTarget::Group { id } => id.to_string(),
+                        },
                         "access": g.access,
                         "expires_at": g.expires_at,
                     })).collect::<Vec<_>>(),
@@ -4530,32 +4537,178 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".to_string());
         }
         let uuid = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid collection id: {e}"))?;
-        let member_id = payload["member_id"]
-            .as_str()
-            .ok_or("Missing member_id in payload")?;
-        let member =
-            uuid::Uuid::parse_str(member_id).map_err(|e| format!("Invalid member_id: {e}"))?;
+        // The target names a member or a group (S4-2): {kind: member|group,
+        // target_id}. member_id stays accepted as a member shorthand.
+        // "id" remains the collection id everywhere in collections.*.
+        let target: baluard_core::vault::collections::GrantTarget = if let Some(kind) =
+            payload["kind"].as_str()
+        {
+            let tid = payload["target_id"]
+                .as_str()
+                .ok_or("Missing target_id in payload")?;
+            let tid = uuid::Uuid::parse_str(tid).map_err(|e| format!("Invalid target_id: {e}"))?;
+            match kind {
+                "member" => baluard_core::vault::collections::GrantTarget::Member { id: tid },
+                "group" => baluard_core::vault::collections::GrantTarget::Group { id: tid },
+                other => return Err(format!("Invalid target kind: {other}")),
+            }
+        } else {
+            let member_id = payload["member_id"]
+                .as_str()
+                .ok_or("Missing member_id in payload")?;
+            let member =
+                uuid::Uuid::parse_str(member_id).map_err(|e| format!("Invalid member_id: {e}"))?;
+            baluard_core::vault::collections::GrantTarget::Member { id: member }
+        };
         let access: baluard_core::vault::collections::CollectionAccess =
             serde_json::from_value(payload["access"].clone())
                 .map_err(|e| format!("Invalid access: {e}"))?;
         let expires_at = payload["expires_at"].as_u64();
         handle
-            .collection_grant(uuid, member, access, expires_at)
+            .collection_grant(uuid, target, access, expires_at)
             .map_err(|e| format!("{e}"))?;
         Ok(serde_json::json!({ "ok": true }).to_string())
     }
 
-    pub async fn collection_revoke(&self, id: &str, member_id: &str) -> Result<String, String> {
+    pub async fn collection_revoke(
+        &self,
+        id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<String, String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".to_string());
         }
         let uuid = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid collection id: {e}"))?;
-        let member =
+        let target: baluard_core::vault::collections::GrantTarget = if let Some(kind) =
+            payload["kind"].as_str()
+        {
+            let tid = payload["target_id"]
+                .as_str()
+                .ok_or("Missing target_id in payload")?;
+            let tid = uuid::Uuid::parse_str(tid).map_err(|e| format!("Invalid target_id: {e}"))?;
+            match kind {
+                "member" => baluard_core::vault::collections::GrantTarget::Member { id: tid },
+                "group" => baluard_core::vault::collections::GrantTarget::Group { id: tid },
+                other => return Err(format!("Invalid target kind: {other}")),
+            }
+        } else {
+            let member_id = payload["member_id"]
+                .as_str()
+                .ok_or("Missing member_id in payload")?;
+            let member =
+                uuid::Uuid::parse_str(member_id).map_err(|e| format!("Invalid member_id: {e}"))?;
+            baluard_core::vault::collections::GrantTarget::Member { id: member }
+        };
+        handle
+            .collection_revoke(uuid, target)
+            .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
+    }
+
+    // ── Groups (S4-2) ──
+
+    pub async fn groups_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let rows = handle.groups_list().map_err(|e| format!("{e}"))?;
+        let groups: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|(id, name, members)| {
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "name": name,
+                    "members": members.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "groups": groups }).to_string())
+    }
+
+    pub async fn group_create(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid payload: {e}"))?;
+        let name = parsed["name"].as_str().ok_or("Missing name in payload")?;
+        let id = handle.group_create(name).map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "id": id.to_string() }).to_string())
+    }
+
+    pub async fn group_rename(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid payload: {e}"))?;
+        let id = parsed["id"].as_str().ok_or("Missing id in payload")?;
+        let id = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid id: {e}"))?;
+        let name = parsed["name"].as_str().ok_or("Missing name in payload")?;
+        handle.group_rename(id, name).map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
+    }
+
+    pub async fn group_delete(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid payload: {e}"))?;
+        let id = parsed["id"].as_str().ok_or("Missing id in payload")?;
+        let id = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid id: {e}"))?;
+        handle.group_delete(id).map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
+    }
+
+    pub async fn group_member_add(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid payload: {e}"))?;
+        let id = parsed["id"].as_str().ok_or("Missing id in payload")?;
+        let id = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid id: {e}"))?;
+        let member_id = parsed["member_id"]
+            .as_str()
+            .ok_or("Missing member_id in payload")?;
+        let member_id =
             uuid::Uuid::parse_str(member_id).map_err(|e| format!("Invalid member_id: {e}"))?;
         handle
-            .collection_revoke(uuid, member)
+            .group_member_add(id, member_id)
+            .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
+    }
+
+    pub async fn group_member_remove(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid payload: {e}"))?;
+        let id = parsed["id"].as_str().ok_or("Missing id in payload")?;
+        let id = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid id: {e}"))?;
+        let member_id = parsed["member_id"]
+            .as_str()
+            .ok_or("Missing member_id in payload")?;
+        let member_id =
+            uuid::Uuid::parse_str(member_id).map_err(|e| format!("Invalid member_id: {e}"))?;
+        handle
+            .group_member_remove(id, member_id)
             .map_err(|e| format!("{e}"))?;
         Ok(serde_json::json!({ "ok": true }).to_string())
     }

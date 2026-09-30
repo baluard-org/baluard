@@ -115,6 +115,12 @@ const TABLE: &[PolicyRow] = &[
         pattern: "meta/collections/**",
         required: RequiredRole::Admin,
     },
+    // Groups (S4-2): defs (membership, keys) are admin surface; a
+    // member's own gkwrap carries a structural self-service rule below.
+    PolicyRow {
+        pattern: "meta/groups/**",
+        required: RequiredRole::Admin,
+    },
     // Rotation artifacts (rekey txns, acks) are admin surface.
     PolicyRow {
         pattern: "meta/rekey/**",
@@ -323,6 +329,21 @@ pub fn authorize_scoped(
                     return Ok(());
                 }
             }
+        }
+    }
+    if segs.first() == Some(&"meta") && segs.get(1) == Some(&"groups") {
+        // Own-gkwrap self-service (S4-2): a member rotating their
+        // identity rewrites their OWN group key wraps. Structural rule
+        // at any role, mirroring the collections own-wrap rule above —
+        // without it a grantee's identity rotation would wedge sync on
+        // the Admin meta/groups row. The .gkwrap suffix keeps ckwraps
+        // (admin surface) out of this rule.
+        if segs.len() == 4
+            && segs[3].ends_with(".gkwrap")
+            && segs[3].strip_suffix(".gkwrap") == member
+            && segs[2].parse::<Uuid>().is_ok()
+        {
+            return Ok(());
         }
     }
     for row in TABLE {
@@ -536,6 +557,28 @@ mod tests {
         assert!(allowed(&deep_def, CommitRole::Editor, &scope).is_err());
         let no_ext = format!("meta/collections/{cid}");
         assert!(allowed(&no_ext, CommitRole::Editor, &scope).is_err());
+    }
+
+    #[test]
+    fn group_paths_are_admin_with_own_gkwrap_self_service() {
+        let gid = uuid::Uuid::new_v4();
+        let def = format!("meta/groups/{gid}.json");
+        let own_gkwrap = format!("meta/groups/{gid}/{MA}.gkwrap");
+        let other_gkwrap = format!("meta/groups/{gid}/{}.gkwrap", uuid::Uuid::new_v4());
+        let ckwrap = format!("meta/groups/{gid}/{}.ckwrap", uuid::Uuid::new_v4());
+
+        // S4-2: group defs, other members' gkwraps, and ckwraps are
+        // Admin surface (membership changes rotate the group key).
+        assert!(allowed(&def, CommitRole::Editor, &CollectionScope::none()).is_err());
+        allowed(&def, CommitRole::Admin, &CollectionScope::none()).unwrap();
+        assert!(allowed(&other_gkwrap, CommitRole::Editor, &CollectionScope::none()).is_err());
+        assert!(allowed(&ckwrap, CommitRole::Editor, &CollectionScope::none()).is_err());
+
+        // The member's OWN gkwrap is self-service at any role (identity
+        // rotation), and the .gkwrap suffix is what admits it — a
+        // ckwrap named like a wrap cannot ride this rule.
+        allowed(&own_gkwrap, CommitRole::Viewer, &CollectionScope::none()).unwrap();
+        allowed(&own_gkwrap, CommitRole::Editor, &CollectionScope::none()).unwrap();
     }
 
     #[test]

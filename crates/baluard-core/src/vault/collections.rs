@@ -63,12 +63,40 @@ pub enum CollectionAccess {
     Manage,
 }
 
+/// What a grant names. Member grants mint a per-member CK wrap; group
+/// grants mint a per-group CK wrap under the group key, which every
+/// group member reaches through their own gkwrap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GrantTarget {
+    Member { id: Uuid },
+    Group { id: Uuid },
+}
+
+impl GrantTarget {
+    /// The member this grant names, if it names one.
+    pub fn member_id(&self) -> Option<Uuid> {
+        match self {
+            GrantTarget::Member { id } => Some(*id),
+            GrantTarget::Group { .. } => None,
+        }
+    }
+
+    /// The group this grant names, if it names one.
+    pub fn group_id(&self) -> Option<Uuid> {
+        match self {
+            GrantTarget::Group { id } => Some(*id),
+            GrantTarget::Member { .. } => None,
+        }
+    }
+}
+
 /// One grant row. `expires_at` (unix seconds): the admin client executes
 /// expiry at unlock (drop grant + rotate the collection key); pending and
 /// expired grants surface on the notices screen.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionGrant {
-    pub member_id: Uuid,
+    pub target: GrantTarget,
     pub access: CollectionAccess,
     #[serde(default)]
     pub expires_at: Option<u64>,
@@ -151,8 +179,43 @@ pub fn load_dir_map(vault_path: &Path) -> Vec<(String, Uuid)> {
     map
 }
 
-/// One row of the member-side listing (4.8): the caller's own grant,
-/// with the name decrypted through their grant wrap. No SGK needed.
+/// Keyless group-membership reader: (group id, live members) for every
+/// well-formed group def. Members have no SGK, so the plaintext member
+/// list is all they (and the member listing) can read.
+pub fn load_group_memberships(vault_path: &Path) -> Vec<(Uuid, Vec<Uuid>)> {
+    let dir = vault_path.join("meta/groups");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if bytes.len() > crate::vault::groups::MAX_GROUP_FILE_BYTES {
+            continue;
+        }
+        let Ok(file) = serde_json::from_slice::<crate::vault::groups::GroupFile>(&bytes) else {
+            continue;
+        };
+        if file.format != 1 {
+            continue;
+        }
+        if path.file_stem().and_then(|x| x.to_str()) != Some(file.id.to_string().as_str()) {
+            continue;
+        }
+        out.push((file.id, file.members));
+    }
+    out
+}
+
+/// One row of the member-side listing (4.8): the caller's own effective
+/// access — direct grant or through a group — with the name decrypted
+/// through whichever key path reaches the CK. No SGK needed.
 #[derive(Debug, Clone)]
 pub struct MemberCollectionRow {
     pub collection_id: Uuid,
@@ -163,14 +226,22 @@ pub struct MemberCollectionRow {
 
 /// List the collections a member can actually open: walk the dir map,
 /// parse each file (malformed rows skip inert, matching the admin walk),
-/// keep the member's own LIVE grant, and decrypt the name through the
-/// per-member grant wrap. A member with no wrap for a granted row
-/// (revoked-race or pre-wrap legacy) skips inert — sync converges it.
+/// keep rows where the member's effective access (direct or via a
+/// group) is live, and decrypt the name through their key path — the
+/// per-member grant wrap for direct grants, gkwrap → ckwrap for group
+/// grants. Unreadable rows skip inert — sync converges them.
 pub fn list_member_collections(
     vault_path: &Path,
     member_id: &Uuid,
     wrapping_secret: &x25519_dalek::StaticSecret,
 ) -> Vec<MemberCollectionRow> {
+    let memberships = load_group_memberships(vault_path);
+    let lookup = |gid: Uuid| -> Option<Vec<Uuid>> {
+        memberships
+            .iter()
+            .find(|(id, _)| *id == gid)
+            .map(|(_, ms)| ms.clone())
+    };
     let mut rows = Vec::new();
     let now = now_secs_pub();
     for (dir, id) in load_dir_map(vault_path) {
@@ -181,14 +252,35 @@ pub fn list_member_collections(
         let Ok(file) = serde_json::from_slice::<CollectionFile>(&bytes) else {
             continue;
         };
-        let Some(grant) = file
-            .grants
-            .iter()
-            .find(|g| g.member_id == *member_id && !is_grant_expired(g, now))
+        let Some(access) =
+            crate::vault::groups::effective_access(&file.grants, *member_id, &lookup, now)
         else {
             continue;
         };
-        let Ok(ck) = open_grant_wrap(vault_path, &id, member_id, wrapping_secret) else {
+        // Direct grant first (its per-member wrap is the shortest
+        // path); group grants ride gkwrap → ckwrap.
+        let ck = if let Some(direct) = file
+            .grants
+            .iter()
+            .find(|g| g.target.member_id() == Some(*member_id) && !is_grant_expired(g, now))
+            .map(|g| g.expires_at)
+        {
+            let _ = direct;
+            open_grant_wrap(vault_path, &id, member_id, wrapping_secret).ok()
+        } else {
+            file.grants.iter().find_map(|g| {
+                let gid = g.target.group_id()?;
+                crate::vault::groups::open_ck_through_group(
+                    vault_path,
+                    &gid,
+                    &id,
+                    member_id,
+                    wrapping_secret,
+                )
+                .ok()
+            })
+        };
+        let Some(ck) = ck else {
             continue;
         };
         let Ok(name_bytes) = open_secret_blob(
@@ -208,8 +300,20 @@ pub fn list_member_collections(
         rows.push(MemberCollectionRow {
             collection_id: id,
             name,
-            access: grant.access,
-            expires_at: grant.expires_at,
+            access,
+            expires_at: file
+                .grants
+                .iter()
+                .filter(|g| !is_grant_expired(g, now))
+                .filter(|g| {
+                    g.target.member_id() == Some(*member_id)
+                        || g.target
+                            .group_id()
+                            .and_then(&lookup)
+                            .is_some_and(|ms| ms.contains(member_id))
+                })
+                .filter_map(|g| g.expires_at)
+                .min(),
         });
     }
     rows.sort_by_key(|r| r.name.to_lowercase());
@@ -666,7 +770,7 @@ pub fn rewrap_grant_wraps(
         };
         let granted = grants
             .iter()
-            .any(|g| g.member_id == member_id && !is_grant_expired(g, now_secs()));
+            .any(|g| g.target.member_id() == Some(member_id) && !is_grant_expired(g, now_secs()));
         let wrap_pub = if granted {
             members::member_file_by_id(vault_path, member_id)
                 .filter(|row| row.removed.is_none() && row.reset.is_none())
@@ -731,7 +835,10 @@ pub fn rewrap_own_grant_wraps(
     Ok(collected.len())
 }
 
-/// Add or update a grant. Refuses tombstoned members and cap overflow.
+/// Add or update a grant. Member targets must be live and never
+/// Viewers-for-write (path-membership rule); group targets must exist.
+/// Group grants mint the group's ckwrap and refresh member gkwraps;
+/// member grants mint the per-member wrap.
 pub fn upsert_grant(
     vault_path: &Path,
     sgk: &SpaceGroupKey,
@@ -739,33 +846,40 @@ pub fn upsert_grant(
     grant: CollectionGrant,
 ) -> Result<CollectionFile, BaluardError> {
     let (mut file, _) = open_collection(vault_path, sgk, collection_id)?;
-    let member = live_member(vault_path, &grant.member_id)?;
-    // Path-membership rule (S3-2): a Viewer can never author a cipher
-    // or meta commit (Editor floor in the git policy), so a write or
-    // manage grant to a Viewer would pass locally and wedge their sync
-    // at verification.
-    if matches!(
-        grant.access,
-        CollectionAccess::Write | CollectionAccess::Manage
-    ) && member.role == crate::vault::members::MemberRole::Viewer
-    {
-        return Err(VaultError::InvalidOperation(
-            "Viewers cannot be given write or manage access to a collection.".into(),
-        )
-        .into());
-    }
+    let member = match &grant.target {
+        GrantTarget::Member { id } => {
+            let member = live_member(vault_path, id)?;
+            // Path-membership rule (S3-2): a Viewer can never author a cipher
+            // or meta commit (Editor floor in the git policy), so a write or
+            // manage grant to a Viewer would pass locally and wedge their sync
+            // at verification.
+            if matches!(
+                grant.access,
+                CollectionAccess::Write | CollectionAccess::Manage
+            ) && member.role == crate::vault::members::MemberRole::Viewer
+            {
+                return Err(VaultError::InvalidOperation(
+                    "Viewers cannot be given write or manage access to a collection.".into(),
+                )
+                .into());
+            }
+            Some(member)
+        }
+        GrantTarget::Group { id } => {
+            // The group must exist; membership validity is checked at
+            // mint time (tombstoned members hold no gkwraps).
+            crate::vault::groups::parse_group_file(vault_path, id)?;
+            None
+        }
+    };
     if is_grant_expired(&grant, now_secs()) {
         return Err(VaultError::InvalidOperation(
             "That expiry date is already in the past.".into(),
         )
         .into());
     }
-    let grant_member_id = grant.member_id;
-    if let Some(slot) = file
-        .grants
-        .iter_mut()
-        .find(|g| g.member_id == grant.member_id)
-    {
+    let target = grant.target.clone();
+    if let Some(slot) = file.grants.iter_mut().find(|g| g.target == target) {
         *slot = grant;
     } else {
         if file.grants.len() >= MAX_GRANTS {
@@ -777,31 +891,42 @@ pub fn upsert_grant(
         file.grants.push(grant);
     }
     save_collection(vault_path, &file)?;
-    // P1: mint the per-member CK wrap when the member record carries an
-    // identity wrap pubkey (legacy rows stay SGK-covered until the
-    // Team-shape flip).
-    if let Some(wrap_pub) = member
-        .identity_wrap_pubkey
-        .as_deref()
-        .filter(|w| !w.is_empty())
-    {
-        let ck = unwrap_ck(&file, sgk)?;
-        write_grant_wrap(vault_path, collection_id, &grant_member_id, wrap_pub, &ck)?;
+    match &target {
+        // P1: mint the per-member CK wrap when the member record carries an
+        // identity wrap pubkey (legacy rows stay SGK-covered until the
+        // Team-shape flip).
+        GrantTarget::Member { id } => {
+            if let Some(wrap_pub) = member
+                .and_then(|m| m.identity_wrap_pubkey)
+                .filter(|w| !w.is_empty())
+            {
+                let ck = unwrap_ck(&file, sgk)?;
+                write_grant_wrap(vault_path, collection_id, id, &wrap_pub, &ck)?;
+            }
+        }
+        // S4-2: the group's ckwrap (re)mints and every member gkwrap
+        // refreshes — idempotent and self-healing against stale pubkeys.
+        GrantTarget::Group { id } => {
+            let ck = unwrap_ck(&file, sgk)?;
+            crate::vault::groups::grant_minted_for_group(vault_path, sgk, id, collection_id, &ck)?;
+        }
     }
     Ok(file)
 }
 
-/// Remove one member's grant. Unknown grants are a refusal (the caller
-/// should know; idempotency is the route layer's call).
+/// Remove one grant (a member's or a group's). Unknown grants are a
+/// refusal (the caller should know; idempotency is the route layer's
+/// call). Group grants also drop the group's ckwrap; member grants
+/// drop the member's wrap.
 pub fn revoke_grant(
     vault_path: &Path,
     sgk: &SpaceGroupKey,
     collection_id: &Uuid,
-    member_id: &Uuid,
+    target: &GrantTarget,
 ) -> Result<CollectionFile, BaluardError> {
     let (mut file, _) = open_collection(vault_path, sgk, collection_id)?;
     let before = file.grants.len();
-    file.grants.retain(|g| g.member_id != *member_id);
+    file.grants.retain(|g| &g.target != target);
     if file.grants.len() == before {
         return Err(VaultError::InvalidOperation(
             "That person has no access to this collection.".into(),
@@ -809,7 +934,14 @@ pub fn revoke_grant(
         .into());
     }
     save_collection(vault_path, &file)?;
-    remove_grant_wrap(vault_path, collection_id, member_id)?;
+    match target {
+        GrantTarget::Member { id } => {
+            remove_grant_wrap(vault_path, collection_id, id)?;
+        }
+        GrantTarget::Group { id } => {
+            crate::vault::groups::grant_revoked_for_group(vault_path, id, collection_id)?;
+        }
+    }
     Ok(file)
 }
 
@@ -837,11 +969,11 @@ pub fn sweep_expired_grants(
     let mut removed = Vec::new();
     let now = now_secs();
     for (file, name) in list_collections(vault_path, sgk)? {
-        let expired: Vec<Uuid> = file
+        let expired: Vec<GrantTarget> = file
             .grants
             .iter()
             .filter(|g| is_grant_expired(g, now))
-            .map(|g| g.member_id)
+            .map(|g| g.target.clone())
             .collect();
         if expired.is_empty() {
             continue;
@@ -858,12 +990,19 @@ pub fn sweep_expired_grants(
         updated.name_enc = seal_name(&new_ck, &updated.id, &name)?;
         save_collection(vault_path, &updated)?;
         let collection_id = updated.id;
-        for member_id in &expired {
-            // The expired grantee must not keep a wrap to the NEW key.
-            remove_grant_wrap(vault_path, &collection_id, member_id)?;
+        for target in &expired {
+            // The expired grantee must not keep a path to the NEW key.
+            match target {
+                GrantTarget::Member { id } => {
+                    remove_grant_wrap(vault_path, &collection_id, id)?;
+                }
+                GrantTarget::Group { id } => {
+                    crate::vault::groups::grant_revoked_for_group(vault_path, id, &collection_id)?;
+                }
+            }
             removed.push(ExpiredGrant {
                 collection_id,
-                member_id: *member_id,
+                target: target.clone(),
             });
         }
         rewrap_grant_wraps(vault_path, &collection_id, &new_ck, &updated.grants)?;
@@ -875,7 +1014,7 @@ pub fn sweep_expired_grants(
 #[derive(Debug, Clone, Serialize)]
 pub struct ExpiredGrant {
     pub collection_id: Uuid,
-    pub member_id: Uuid,
+    pub target: GrantTarget,
 }
 
 pub fn delete_collection(vault_path: &Path, id: &Uuid) -> Result<(), BaluardError> {
@@ -1020,7 +1159,7 @@ mod tests {
             &sgk,
             &file.id,
             CollectionGrant {
-                member_id: member,
+                target: GrantTarget::Member { id: member },
                 access: CollectionAccess::Read,
                 expires_at: None,
             },
@@ -1032,7 +1171,7 @@ mod tests {
             &sgk,
             &file.id,
             CollectionGrant {
-                member_id: member,
+                target: GrantTarget::Member { id: member },
                 access: CollectionAccess::Write,
                 expires_at: Some(2_000_000_000),
             },
@@ -1042,10 +1181,11 @@ mod tests {
         assert_eq!(updated.grants[0].access, CollectionAccess::Write);
         let (_, name) = open_collection(&path, &sgk, &file.id).unwrap();
         assert_eq!(name, "Servers");
-        revoke_grant(&path, &sgk, &file.id, &member).unwrap();
+        revoke_grant(&path, &sgk, &file.id, &GrantTarget::Member { id: member }).unwrap();
         let (_, name) = open_collection(&path, &sgk, &file.id).unwrap();
         assert_eq!(name, "Servers");
-        let err = revoke_grant(&path, &sgk, &file.id, &member).unwrap_err();
+        let err =
+            revoke_grant(&path, &sgk, &file.id, &GrantTarget::Member { id: member }).unwrap_err();
         assert!(err.to_string().contains("no access"));
     }
 
@@ -1064,7 +1204,7 @@ mod tests {
             &sgk,
             &file.id,
             CollectionGrant {
-                member_id: editor,
+                target: GrantTarget::Member { id: editor },
                 access: CollectionAccess::Manage,
                 expires_at: Some(2_000_000_000),
             },
@@ -1076,14 +1216,14 @@ mod tests {
             &sgk,
             &file.id,
             CollectionGrant {
-                member_id: editor,
+                target: GrantTarget::Member { id: editor },
                 access: CollectionAccess::Manage,
                 expires_at: None,
             },
         )
         .unwrap();
         assert_eq!(updated.grants.len(), 1);
-        revoke_grant(&path, &sgk, &file.id, &editor).unwrap();
+        revoke_grant(&path, &sgk, &file.id, &GrantTarget::Member { id: editor }).unwrap();
 
         // A Viewer can hold neither write nor manage: they can never
         // author the resulting meta/ciphers commits, so the grant would
@@ -1098,7 +1238,7 @@ mod tests {
                 &sgk,
                 &file.id,
                 CollectionGrant {
-                    member_id: viewer_row.id,
+                    target: GrantTarget::Member { id: viewer_row.id },
                     access,
                     expires_at: None,
                 },
@@ -1123,7 +1263,7 @@ mod tests {
             &sgk,
             &file.id,
             CollectionGrant {
-                member_id: member,
+                target: GrantTarget::Member { id: member },
                 access: CollectionAccess::Read,
                 expires_at: None,
             },
@@ -1227,7 +1367,7 @@ mod tests {
         // mint gate refuses those).
         let (mut seeded, _) = open_collection(&path, &sgk, &file.id).unwrap();
         seeded.grants.push(CollectionGrant {
-            member_id: gone,
+            target: GrantTarget::Member { id: gone },
             access: CollectionAccess::Write,
             expires_at: Some(now - 10),
         });
@@ -1237,7 +1377,7 @@ mod tests {
             &sgk,
             &file.id,
             CollectionGrant {
-                member_id: staying,
+                target: GrantTarget::Member { id: staying },
                 access: CollectionAccess::Read,
                 expires_at: Some(now + 3600),
             },
@@ -1245,14 +1385,14 @@ mod tests {
         .unwrap();
         let removed = sweep_expired_grants(&path, &sgk).unwrap();
         assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0].member_id, gone);
+        assert_eq!(removed[0].target.member_id(), Some(gone));
         assert_eq!(removed[0].collection_id, file.id);
         // The surviving grant is intact and the name still decrypts
         // under the rotated key.
         let (updated, name) = open_collection(&path, &sgk, &file.id).unwrap();
         assert_eq!(name, "Servers");
         assert_eq!(updated.grants.len(), 1);
-        assert_eq!(updated.grants[0].member_id, staying);
+        assert_eq!(updated.grants[0].target.member_id(), Some(staying));
         // Idempotent: a second sweep removes nothing.
         assert!(sweep_expired_grants(&path, &sgk).unwrap().is_empty());
     }
@@ -1261,7 +1401,7 @@ mod tests {
     fn expired_grant_does_not_authorize() {
         // is_grant_expired is the gate used by the local write check.
         let g = CollectionGrant {
-            member_id: Uuid::new_v4(),
+            target: GrantTarget::Member { id: Uuid::new_v4() },
             access: CollectionAccess::Write,
             expires_at: Some(1),
         };
@@ -1298,7 +1438,7 @@ mod tests {
 
     fn grant_to(member_id: Uuid) -> CollectionGrant {
         CollectionGrant {
-            member_id,
+            target: GrantTarget::Member { id: member_id },
             access: CollectionAccess::Read,
             expires_at: None,
         }
@@ -1323,7 +1463,7 @@ mod tests {
         upsert_grant(&path, &sgk, &servers.id, grant_to(member_id)).unwrap();
         let (mut fin_file, _) = open_collection(&path, &sgk, &finance.id).unwrap();
         fin_file.grants.push(CollectionGrant {
-            member_id,
+            target: GrantTarget::Member { id: member_id },
             access: CollectionAccess::Write,
             expires_at: Some(1),
         });
@@ -1339,6 +1479,75 @@ mod tests {
         // No grant at all → empty.
         let none = list_member_collections(&path, &stranger, alice.wrapping_secret());
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn group_granted_collection_lists_through_gkwrap() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let servers = create_collection(&path, &sgk, "Servers").unwrap();
+        let member_id = Uuid::new_v4();
+        let alice = crate::vault::identity::IdentityKeys::from_seed(&[7u8; 32]);
+        members::write_member(
+            &path,
+            &wrap_row(member_id, &hex::encode(alice.wrapping_pub_bytes())),
+        )
+        .unwrap();
+        let group = crate::vault::groups::create_group(&path, &sgk, "Ops").unwrap();
+        crate::vault::groups::add_group_member(&path, &sgk, &group.id, &member_id).unwrap();
+
+        // Grant the whole collection to the GROUP; the member reaches it
+        // through gkwrap → ckwrap and the listing shows group access.
+        upsert_grant(
+            &path,
+            &sgk,
+            &servers.id,
+            CollectionGrant {
+                target: GrantTarget::Group { id: group.id },
+                access: CollectionAccess::Write,
+                expires_at: None,
+            },
+        )
+        .unwrap();
+
+        // The ckwrap under the GK opens to the same CK the SGK yields.
+        let through = crate::vault::groups::open_ck_through_group(
+            &path,
+            &group.id,
+            &servers.id,
+            &member_id,
+            alice.wrapping_secret(),
+        )
+        .unwrap();
+        let (file, _) = open_collection(&path, &sgk, &servers.id).unwrap();
+        assert_eq!(through.as_ref(), unwrap_ck(&file, &sgk).unwrap().as_ref());
+
+        let rows = list_member_collections(&path, &member_id, alice.wrapping_secret());
+        assert_eq!(rows.len(), 1, "group grant lists: {rows:?}");
+        assert_eq!(rows[0].collection_id, servers.id);
+        assert_eq!(rows[0].name, "Servers");
+        assert_eq!(rows[0].access, CollectionAccess::Write);
+
+        // Leaving the group ends the listing AND the ckwrap path; the
+        // collection key itself never moved.
+        let ck_before = unwrap_ck(&file, &sgk).unwrap();
+        crate::vault::groups::remove_group_member(&path, &sgk, &group.id, &member_id).unwrap();
+        assert!(list_member_collections(&path, &member_id, alice.wrapping_secret()).is_empty());
+        assert!(
+            crate::vault::groups::open_ck_through_group(
+                &path,
+                &group.id,
+                &servers.id,
+                &member_id,
+                alice.wrapping_secret(),
+            )
+            .is_err()
+        );
+        let (file2, _) = open_collection(&path, &sgk, &servers.id).unwrap();
+        assert_eq!(
+            unwrap_ck(&file2, &sgk).unwrap().as_ref(),
+            ck_before.as_ref()
+        );
     }
 
     #[test]
@@ -1384,7 +1593,13 @@ mod tests {
         upsert_grant(&path, &sgk, &file.id, grant_to(member_id)).unwrap();
         let wrap = grant_wrap_path(&path, &file.id, &member_id);
         assert!(wrap.exists());
-        revoke_grant(&path, &sgk, &file.id, &member_id).unwrap();
+        revoke_grant(
+            &path,
+            &sgk,
+            &file.id,
+            &GrantTarget::Member { id: member_id },
+        )
+        .unwrap();
         assert!(!wrap.exists(), "revoke must remove the member wrap");
         // Re-grant then delete the collection: the whole wrap dir dies.
         upsert_grant(&path, &sgk, &file.id, grant_to(member_id)).unwrap();

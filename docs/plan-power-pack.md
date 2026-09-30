@@ -36,6 +36,12 @@ Foundations this builds on (all shipped, see D-records in
 
 ## 1. S4-2 Groups as a key layer
 
+> **SHIPPED (2026-09-29, tracer; see D67):** the GK indirection — gkwrap →
+> GK → ckwrap → CK — with typed grant targets, admin-only group grants
+> (delegated managers grant people, not departments), offboarding prunes
+> rotating each affected group key, and the shared effective-access
+> predicate running in every scope walk.
+
 Goal: grant a collection to a department instead of person by person. A group
 holds a key; members of the group can open what the group can open.
 
@@ -327,7 +333,7 @@ extension Phase 2, 2FA tiers 2-5.
 4. **S4-7 emergency × org doc + Space Recovery Kit** (S) — SHIPPED (2026-09-29, kit core + doc; the enrollment ceremony is its own follow-up slice).
 5. **S4-9 mobile multi-Space host** (L, parallelizable) — SHIPPED (2026-09-29, D66; app-level session, zero Rust).
 6. **S4-2 groups as a key layer** (L, the headline item; Q6a confirmed,
-   design leans on the collection pattern).
+   design leans on the collection pattern) — SHIPPED (2026-09-29, D67).
 7. **S4-5 derived timeline** (M/L) — last; the synthesis engine over
    commit history.
 

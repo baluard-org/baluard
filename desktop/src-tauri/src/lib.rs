@@ -240,6 +240,13 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "collections.delete",
         "collections.grant",
         "collections.revoke",
+        // S4-2: group management.
+        "groups.list",
+        "groups.create",
+        "groups.rename",
+        "groups.delete",
+        "groups.member_add",
+        "groups.member_remove",
         // S3-7a: space meta key groundwork.
         "space.prepare",
         "space.status",

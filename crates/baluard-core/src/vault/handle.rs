@@ -751,15 +751,22 @@ impl VaultHandle {
             }));
         }
 
-        // Collections: every grant with access + expiry, decrypted
-        // names (admin device holds the SGK).
+        // Collections: every grant with target + access + expiry,
+        // decrypted names (admin device holds the SGK).
         let mut collection_rows = Vec::new();
         for (file, name) in crate::vault::collections::list_collections(&self.path, sgk)? {
             collection_rows.push(serde_json::json!({
                 "id": file.id,
                 "name": name,
                 "grants": file.grants.iter().map(|g| serde_json::json!({
-                    "member_id": g.member_id,
+                    "kind": match g.target {
+                        crate::vault::collections::GrantTarget::Member { .. } => "member",
+                        crate::vault::collections::GrantTarget::Group { .. } => "group",
+                    },
+                    "id": match g.target {
+                        crate::vault::collections::GrantTarget::Member { id } => id,
+                        crate::vault::collections::GrantTarget::Group { id } => id,
+                    },
                     "access": g.access,
                     "expires_at": g.expires_at,
                 })).collect::<Vec<_>>(),
@@ -777,10 +784,11 @@ impl VaultHandle {
             let mut hit_collections = Vec::new();
             for row in &collection_rows {
                 for g in row["grants"].as_array().expect("grants array") {
-                    if g["member_id"]
-                        .as_str()
-                        .map(|s| s == tid.to_string())
-                        .unwrap_or(false)
+                    if g["kind"] == "member"
+                        && g["id"]
+                            .as_str()
+                            .map(|s| s == tid.to_string())
+                            .unwrap_or(false)
                     {
                         hit_collections.push(serde_json::json!({
                             "id": row["id"],
@@ -803,6 +811,19 @@ impl VaultHandle {
         // Pre-flip boundary: members held the Root Key, so every flat
         // cipher was readable. Post-flip, flats are admin-surface only.
         let flipped = crate::vault::space_meta::shape_flipped(&self.path);
+
+        // Groups (S4-2): membership lists are plaintext; the names ride
+        // the GK, which the admin reaches through the SGK.
+        let groups: Vec<_> = crate::vault::groups::list_groups(&self.path, sgk)?
+            .into_iter()
+            .map(|(f, name)| {
+                serde_json::json!({
+                    "id": f.id,
+                    "name": name,
+                    "member_count": f.members.len(),
+                })
+            })
+            .collect();
 
         // Pending asks: quorum approvals, the join queue, and access
         // requests — everything waiting on an admin decision.
@@ -883,6 +904,7 @@ impl VaultHandle {
             "flipped": flipped,
             "members": member_rows,
             "collections": collection_rows,
+            "groups": groups,
             "exposure": exposure,
             "pending": {
                 "approvals": approvals,
@@ -927,15 +949,17 @@ impl VaultHandle {
                 let manages = member_id.is_some_and(|m| {
                     collections.into_iter().any(|(f, _)| {
                         f.id == id
-                            && f.grants.iter().any(|g| {
-                                g.member_id == m
-                                    && g.access
-                                        == crate::vault::collections::CollectionAccess::Manage
-                                    && !crate::vault::collections::is_grant_expired(
-                                        g,
-                                        crate::vault::collections::now_secs_pub(),
-                                    )
-                            })
+                            && crate::vault::groups::effective_access(
+                                &f.grants,
+                                m,
+                                &|gid| {
+                                    crate::vault::collections::load_group_memberships(&self.path)
+                                        .into_iter()
+                                        .find(|(id2, _)| *id2 == gid)
+                                        .map(|(_, ms)| ms)
+                                },
+                                crate::vault::collections::now_secs_pub(),
+                            ) == Some(crate::vault::collections::CollectionAccess::Manage)
                     })
                 });
                 if manages {
@@ -1811,25 +1835,112 @@ impl VaultHandle {
         crate::vault::collections::delete_collection(&self.path, &id)
     }
 
-    /// Grant or update a member's access on a collection (admin, or
-    /// the collection's delegated manager — S3-5).
+    // ── Groups (S4-2) ─────────────────────────────────────────────────
+
+    /// Admin-gated throughout: group management is the admin surface
+    /// (who may do what defaults to admins per the power-pack doctrine).
+    fn assert_group_admin(&self) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()
+    }
+
+    /// Mint a group: random Group Key, SGK-sealed, name sealed under
+    /// the GK, empty membership.
+    pub fn group_create(&mut self, name: &str) -> Result<Uuid, BaluardError> {
+        self.assert_group_admin()?;
+        let file = crate::vault::groups::create_group(&self.path, self.unlocked().sgk()?, name)?;
+        Ok(file.id)
+    }
+
+    /// List groups with decrypted names (any unlocked member — the
+    /// membership lists are plaintext and the names ride the GK, which
+    /// members reach through their gkwrap only for groups they are in;
+    /// this listing is the ADMIN view, so it needs the SGK).
+    pub fn groups_list(&self) -> Result<Vec<(Uuid, String, Vec<Uuid>)>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        Ok(
+            crate::vault::groups::list_groups(&self.path, self.unlocked().sgk()?)?
+                .into_iter()
+                .map(|(f, name)| (f.id, name, f.members))
+                .collect(),
+        )
+    }
+
+    /// Rename a group (re-seals the name under the GK).
+    pub fn group_rename(&mut self, id: Uuid, name: &str) -> Result<(), BaluardError> {
+        self.assert_group_admin()?;
+        crate::vault::groups::rename_group(&self.path, self.unlocked().sgk()?, &id, name)?;
+        Ok(())
+    }
+
+    /// Delete a group. Collection grants naming it are pruned; entries
+    /// stay.
+    pub fn group_delete(&mut self, id: Uuid) -> Result<(), BaluardError> {
+        self.assert_group_admin()?;
+        crate::vault::groups::delete_group(&self.path, self.unlocked().sgk()?, &id)
+    }
+
+    /// Add a member to a group: membership row + gkwrap mint.
+    pub fn group_member_add(&mut self, id: Uuid, member_id: Uuid) -> Result<(), BaluardError> {
+        self.assert_group_admin()?;
+        crate::vault::groups::add_group_member(
+            &self.path,
+            self.unlocked().sgk()?,
+            &id,
+            &member_id,
+        )?;
+        Ok(())
+    }
+
+    /// Remove a member from a group: the GK rotates (ckwraps re-seal
+    /// under it; collection CKs stay invariant) and the leaver's gkwrap
+    /// dies.
+    pub fn group_member_remove(&mut self, id: Uuid, member_id: Uuid) -> Result<(), BaluardError> {
+        self.assert_group_admin()?;
+        crate::vault::groups::remove_group_member(
+            &self.path,
+            self.unlocked().sgk()?,
+            &id,
+            &member_id,
+        )?;
+        Ok(())
+    }
+
+    /// Grant or update access on a collection (admin, or the
+    /// collection's delegated manager — S3-5). The target names a
+    /// member or a group (S4-2).
     pub fn collection_grant(
         &mut self,
         id: Uuid,
-        member_id: Uuid,
+        target: crate::vault::collections::GrantTarget,
         access: crate::vault::collections::CollectionAccess,
         expires_at: Option<u64>,
     ) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        self.assert_can_manage_collection(id)?;
+        match &target {
+            // S4-2: group grants write ckwraps under meta/groups — an
+            // Admin row. A delegated manager grants PEOPLE, not
+            // departments: a group grant from a manage-holder would
+            // wedge their commit at every peer's policy walk.
+            crate::vault::collections::GrantTarget::Group { .. } => {
+                self.assert_can_manage_members()?;
+            }
+            crate::vault::collections::GrantTarget::Member { .. } => {
+                self.assert_can_manage_collection(id)?;
+            }
+        }
         crate::vault::collections::upsert_grant(
             &self.path,
             self.unlocked().sgk()?,
             &id,
             crate::vault::collections::CollectionGrant {
-                member_id,
+                target,
                 access,
                 expires_at,
             },
@@ -1837,19 +1948,28 @@ impl VaultHandle {
         Ok(())
     }
 
-    /// Revoke one member's access on a collection (admin, or the
-    /// collection's delegated manager — S3-5).
-    pub fn collection_revoke(&mut self, id: Uuid, member_id: Uuid) -> Result<(), BaluardError> {
+    /// Revoke one grant (a member's or a group's) on a collection
+    /// (admin, or the collection's delegated manager — S3-5).
+    pub fn collection_revoke(
+        &mut self,
+        id: Uuid,
+        target: crate::vault::collections::GrantTarget,
+    ) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        self.assert_can_manage_collection(id)?;
-        crate::vault::collections::revoke_grant(
-            &self.path,
-            self.unlocked().sgk()?,
-            &id,
-            &member_id,
-        )?;
+        match &target {
+            // Revoking a group grant removes the group's ckwrap — also a
+            // meta/groups write, so the same admin-only rule applies
+            // (delegated managers revoke PEOPLE, not departments).
+            crate::vault::collections::GrantTarget::Group { .. } => {
+                self.assert_can_manage_members()?;
+            }
+            crate::vault::collections::GrantTarget::Member { .. } => {
+                self.assert_can_manage_collection(id)?;
+            }
+        }
+        crate::vault::collections::revoke_grant(&self.path, self.unlocked().sgk()?, &id, &target)?;
         Ok(())
     }
 
@@ -2201,7 +2321,9 @@ impl VaultHandle {
             self.unlocked().sgk()?,
             &row.collection_id,
             crate::vault::collections::CollectionGrant {
-                member_id: requester_member_id,
+                target: crate::vault::collections::GrantTarget::Member {
+                    id: requester_member_id,
+                },
                 access: final_access,
                 expires_at,
             },
@@ -2359,6 +2481,11 @@ impl VaultHandle {
         )?;
         let (successor, code) =
             crate::vault::members::reset_member(&self.path, self.vault_id, member_id)?;
+        // S4-2: group memberships die with the reset — the successor
+        // re-joins fresh, and each affected group's GK rotates so the
+        // reset row's gkwrap opens nothing (review F3). The successor
+        // can be re-added to groups by an admin.
+        crate::vault::groups::prune_member(&self.path, self.unlocked().sgk()?, &member_id)?;
         // S3-7a: the successor row re-joins with a fresh identity, so the
         // stale identity-keyed wrap is dead mail. Best-effort (the 7b
         // gate counts it via status; prepare re-mints on the new card).
@@ -2532,6 +2659,11 @@ impl VaultHandle {
         for id in member_ids {
             let devices = crate::vault::members::remove_member(&self.path, *id)?;
             removed_members.push(*id);
+            // S4-2 (review F3): group memberships die with the removal —
+            // each affected group's GK rotates while the CURRENT SGK is
+            // still held, so the removed member's gkwrap opens nothing
+            // going forward.
+            crate::vault::groups::prune_member(&self.path, self.unlocked().sgk()?, id)?;
             // S3-7a: the removed member's identity-keyed wrap dies with
             // the tombstone (same semantics as the collection wraps).
             let _ = crate::vault::space_meta::remove_space_wrap(&self.path, id);
@@ -3068,7 +3200,7 @@ impl VaultHandle {
                     .expires_in_days
                     .map(|days| crate::vault::templates::now_secs() + u64::from(days) * 86_400);
                 let grant = crate::vault::collections::CollectionGrant {
-                    member_id: member.id,
+                    target: crate::vault::collections::GrantTarget::Member { id: member.id },
                     access: spec.access,
                     expires_at,
                 };
@@ -3354,12 +3486,20 @@ impl VaultHandle {
                         old_identity.wrapping_secret(),
                         &new_wrap_hex,
                     )?;
+                    // S4-2: group key wraps ride the same identity too.
+                    crate::vault::groups::rewrap_own_gkwraps(
+                        &self.path,
+                        &member_id,
+                        old_identity.wrapping_secret(),
+                        &new_wrap_hex,
+                    )?;
                 }
                 None => {
                     // No old identity in memory: existing wraps would be
                     // orphaned by the rotation. Refuse while they exist.
                     if crate::vault::collections::has_grant_wraps(&self.path, &member_id)
                         || crate::vault::space_meta::has_space_wrap(&self.path, &member_id)
+                        || crate::vault::groups::has_gkwraps(&self.path, &member_id)
                     {
                         return Err(VaultError::InvalidOperation(
                             "This device lost its identity key, so rotation is refused to keep the shared collection keys readable.".into(),
@@ -5923,6 +6063,31 @@ impl VaultHandle {
             &member_id,
             identity.wrapping_secret(),
         )
+        .or_else(|_| {
+            // S4-2: no direct grant wrap — try the group chain (gkwrap →
+            // GK → ckwrap) across every group that names this member and
+            // holds a live ckwrap for the collection.
+            for (gid, members) in crate::vault::collections::load_group_memberships(&self.path) {
+                if !members.contains(&member_id) {
+                    continue;
+                }
+                if let Ok(ck) = crate::vault::groups::open_ck_through_group(
+                    &self.path,
+                    &gid,
+                    collection_id,
+                    &member_id,
+                    identity.wrapping_secret(),
+                ) {
+                    return Ok(ck);
+                }
+            }
+            crate::vault::collections::open_grant_wrap(
+                &self.path,
+                collection_id,
+                &member_id,
+                identity.wrapping_secret(),
+            )
+        })
     }
 
     /// Derive the item key for a cipher at its on-disk location.
@@ -6274,17 +6439,23 @@ impl VaultHandle {
                 ))
             })?;
         let has_grant = file.id == *collection_id
-            && file.grants.iter().any(|g| {
-                g.member_id == member_id
-                    && matches!(
-                        g.access,
-                        crate::vault::collections::CollectionAccess::Write
-                            | crate::vault::collections::CollectionAccess::Manage
-                    )
-                    && !crate::vault::collections::is_grant_expired(
-                        g,
-                        crate::vault::collections::now_secs_pub(),
-                    )
+            && crate::vault::groups::effective_access(
+                &file.grants,
+                member_id,
+                &|gid| {
+                    crate::vault::collections::load_group_memberships(&self.path)
+                        .into_iter()
+                        .find(|(id2, _)| *id2 == gid)
+                        .map(|(_, ms)| ms)
+                },
+                crate::vault::collections::now_secs_pub(),
+            )
+            .is_some_and(|a| {
+                matches!(
+                    a,
+                    crate::vault::collections::CollectionAccess::Write
+                        | crate::vault::collections::CollectionAccess::Manage
+                )
             });
         if !has_grant {
             return Err(BaluardError::from(VaultError::InvalidOperation(
@@ -7687,6 +7858,11 @@ impl VaultHandle {
         let old_events =
             crate::vault::events::load(&self.path, self.vault_id, &self.unlocked().meta_ikm())
                 .unwrap_or_default();
+        // S4-2 rotation coverage: group keys ride the same pre-swap read
+        // (gk_wrapped is SGK-epoch-sealed; gkwraps and ckwraps are
+        // identity/GK-keyed and rotation-invariant).
+        let old_group_keys =
+            crate::vault::groups::collect_group_keys(&self.path, self.unlocked().sgk()?)?;
 
         // Phase 5: Swap Root Key and update epoch via DeviceManager lifecycle
         match &mut self.state {
@@ -7759,6 +7935,12 @@ impl VaultHandle {
         if let Some(smk) = &old_space_smk {
             crate::vault::space_meta::reseal_store(&self.path, self.unlocked().root()?, smk)?;
         }
+        // S4-2: re-seal every group key under the NEW SGK epoch.
+        crate::vault::groups::rewrap_group_keys(
+            &self.path,
+            self.unlocked().sgk()?,
+            &old_group_keys,
+        )?;
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
@@ -8223,6 +8405,11 @@ impl VaultHandle {
         let old_events =
             crate::vault::events::load(&self.path, self.vault_id, &self.unlocked().meta_ikm())
                 .unwrap_or_default();
+        // S4-2 rotation coverage: group keys ride the same pre-swap read
+        // (gk_wrapped is SGK-epoch-sealed; gkwraps and ckwraps are
+        // identity/GK-keyed and rotation-invariant).
+        let old_group_keys =
+            crate::vault::groups::collect_group_keys(&self.path, self.unlocked().sgk()?)?;
 
         // ── Update in-memory state ──
         match &mut self.state {
@@ -8294,6 +8481,12 @@ impl VaultHandle {
         if let Some(smk) = &old_space_smk {
             crate::vault::space_meta::reseal_store(&self.path, self.unlocked().root()?, smk)?;
         }
+        // S4-2: re-seal every group key under the NEW SGK epoch.
+        crate::vault::groups::rewrap_group_keys(
+            &self.path,
+            self.unlocked().sgk()?,
+            &old_group_keys,
+        )?;
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
@@ -8905,7 +9098,10 @@ mod tests {
             .find(|(id, _, _)| *id == work.id)
             .map(|(_, _, grants)| grants)
             .unwrap();
-        let grant = grants.iter().find(|g| g.member_id == member_id).unwrap();
+        let grant = grants
+            .iter()
+            .find(|g| g.target.member_id() == Some(member_id))
+            .unwrap();
         assert_eq!(
             grant.access,
             crate::vault::collections::CollectionAccess::Read
@@ -8957,7 +9153,7 @@ mod tests {
             &sgk,
             &file.id,
             crate::vault::collections::CollectionGrant {
-                member_id,
+                target: crate::vault::collections::GrantTarget::Member { id: member_id },
                 access: crate::vault::collections::CollectionAccess::Write,
                 expires_at: None,
             },
@@ -9372,7 +9568,7 @@ mod tests {
             &sgk,
             &col,
             crate::vault::collections::CollectionGrant {
-                member_id: editor,
+                target: crate::vault::collections::GrantTarget::Member { id: editor },
                 access: crate::vault::collections::CollectionAccess::Write,
                 expires_at: None,
             },
@@ -9380,7 +9576,13 @@ mod tests {
         .unwrap();
         h.assign_cipher_to_collection(cid, Some(col)).unwrap();
         // Moving out also needs the write grant; revoke it first.
-        crate::vault::collections::revoke_grant(dir.path(), &sgk, &col, &editor).unwrap();
+        crate::vault::collections::revoke_grant(
+            dir.path(),
+            &sgk,
+            &col,
+            &crate::vault::collections::GrantTarget::Member { id: editor },
+        )
+        .unwrap();
         h.assign_cipher_to_collection(cid, None).unwrap_err();
     }
 
@@ -9420,13 +9622,17 @@ mod tests {
         .unwrap();
         a.collection_grant(
             id,
-            member,
+            crate::vault::collections::GrantTarget::Member { id: member },
             crate::vault::collections::CollectionAccess::Write,
             None,
         )
         .unwrap();
         assert_eq!(a.collections_list().unwrap()[0].2.len(), 1);
-        a.collection_revoke(id, member).unwrap();
+        a.collection_revoke(
+            id,
+            crate::vault::collections::GrantTarget::Member { id: member },
+        )
+        .unwrap();
         assert_eq!(a.collections_list().unwrap()[0].2.len(), 0);
 
         // Rotation: the content keys must re-wrap under the new SGK.
@@ -9492,13 +9698,19 @@ mod tests {
         assert!(
             a.collection_grant(
                 fake,
-                member,
+                crate::vault::collections::GrantTarget::Member { id: member },
                 crate::vault::collections::CollectionAccess::Read,
                 None
             )
             .is_err()
         );
-        assert!(a.collection_revoke(fake, member).is_err());
+        assert!(
+            a.collection_revoke(
+                fake,
+                crate::vault::collections::GrantTarget::Member { id: member }
+            )
+            .is_err()
+        );
     }
     #[test]
     fn delegated_manager_gates_follow_manage_grant() {
@@ -9536,7 +9748,7 @@ mod tests {
         owner
             .collection_grant(
                 c1,
-                member,
+                crate::vault::collections::GrantTarget::Member { id: member },
                 crate::vault::collections::CollectionAccess::Manage,
                 None,
             )
@@ -9576,25 +9788,35 @@ mod tests {
         // revoke.
         m.collection_grant(
             c1,
-            stranger,
+            crate::vault::collections::GrantTarget::Member { id: stranger },
             crate::vault::collections::CollectionAccess::Read,
             None,
         )
         .unwrap();
         m.collection_rename(c1, "Servers Renamed").unwrap();
-        m.collection_revoke(c1, stranger).unwrap();
+        m.collection_revoke(
+            c1,
+            crate::vault::collections::GrantTarget::Member { id: stranger },
+        )
+        .unwrap();
         // Outside the managed scope everything refuses: grants on the
         // other collection, and create/delete stay admin-only.
         assert!(
             m.collection_grant(
                 c2,
-                stranger,
+                crate::vault::collections::GrantTarget::Member { id: stranger },
                 crate::vault::collections::CollectionAccess::Read,
                 None
             )
             .is_err()
         );
-        assert!(m.collection_revoke(c2, stranger).is_err());
+        assert!(
+            m.collection_revoke(
+                c2,
+                crate::vault::collections::GrantTarget::Member { id: stranger }
+            )
+            .is_err()
+        );
         assert!(m.collection_rename(c2, "Nope").is_err());
         assert!(m.collection_create("Nope").is_err());
         assert!(m.collection_delete(c1).is_err());
@@ -9890,7 +10112,7 @@ mod tests {
         handle
             .collection_grant(
                 work,
-                member_id,
+                crate::vault::collections::GrantTarget::Member { id: member_id },
                 crate::vault::collections::CollectionAccess::Write,
                 None,
             )
@@ -9902,7 +10124,7 @@ mod tests {
         assert_eq!(cols.len(), 1);
         assert_eq!(cols[0]["name"], "Work");
         assert_eq!(
-            cols[0]["grants"].as_array().unwrap()[0]["member_id"]
+            cols[0]["grants"].as_array().unwrap()[0]["id"]
                 .as_str()
                 .unwrap(),
             member_id.to_string()
@@ -10220,7 +10442,7 @@ mod tests {
         handle
             .collection_grant(
                 work,
-                member_id,
+                crate::vault::collections::GrantTarget::Member { id: member_id },
                 crate::vault::collections::CollectionAccess::Write,
                 None,
             )
@@ -13121,7 +13343,7 @@ mod tests {
         handle
             .collection_grant(
                 work,
-                joiner_member,
+                crate::vault::collections::GrantTarget::Member { id: joiner_member },
                 crate::vault::collections::CollectionAccess::Write,
                 None,
             )
@@ -13390,7 +13612,7 @@ mod tests {
         let listed = joiner.collections_list().unwrap();
         let work_row = listed.iter().find(|(id, _, _)| *id == work.id).unwrap();
         assert!(work_row.2.iter().any(|g| {
-            g.member_id == joiner_member
+            g.target.member_id() == Some(joiner_member)
                 && g.access == crate::vault::collections::CollectionAccess::Write
         }));
         let finance_row = listed.iter().find(|(id, _, _)| *id == finance.id).unwrap();
