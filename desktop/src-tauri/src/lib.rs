@@ -212,6 +212,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.create",
     "space.create",
     "vault.info",
+    "vault.is_admin_device",
     "vault.lock",
     "vault.open",
     "vault.unlock",

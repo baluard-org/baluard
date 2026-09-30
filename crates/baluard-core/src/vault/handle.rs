@@ -13834,6 +13834,146 @@ mod tests {
         );
     }
 
+    // Debt: threshold-2 rotation was only exercised on unflipped
+    // vaults. This pins the combination: the ask needs a second admin,
+    // the confirming rotation runs on the confirming device, both
+    // admins converge onto the new root, and the SMK is untouched
+    // (rotation-invariant), so members keep their wraps.
+    #[test]
+    fn quorum_rotation_on_flipped_vault_two_admins() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Flip readiness, then flip: members hold nothing, admins keep
+        // keys.
+        let owner_member =
+            crate::vault::members::member_id_for_device(&owner_path, handle.device_id).unwrap();
+        let mut owner_row =
+            crate::vault::members::member_file_by_id(&owner_path, owner_member).unwrap();
+        let card = handle.contact_card_signed().unwrap();
+        owner_row.identity_wrap_pubkey = Some(card.card.identity_wrap_pubkey.clone());
+        crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
+        handle.space_prepare().unwrap();
+        handle.space_flip().unwrap();
+
+        // Second admin through the standard verified-contact ceremony.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Admin, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite admin").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "admin2-pass",
+            "Admin2Device",
+        )
+        .unwrap();
+        handle.contacts_import_intro(&intro_code).unwrap();
+        let unverified = handle
+            .contacts_list()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.trust == crate::vault::contacts::ContactTrust::Channel)
+            .map(|c| c.card.identity_signing_pubkey)
+            .unwrap();
+        handle.contacts_mark_verified(&unverified).unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        // Raise the threshold BEFORE the joiner's first pull so both
+        // devices read the same setting from disk.
+        let mut settings = handle.get_settings().unwrap();
+        settings.quorum_admin_ops = Some(2);
+        handle.save_settings(&settings).unwrap();
+        engine_o.commit_all(&repo_o, "approve + quorum").unwrap();
+
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("admin2-pass").unwrap();
+        assert!(
+            joiner.unlocked().holds_root(),
+            "admin invitee holds the root"
+        );
+        let joiner_seal = joiner.devkey_seal();
+        let joiner_device = joiner.device_id;
+
+        let pre_rotation_root = RootKey::from_bytes(
+            handle_root_key_for_test(&handle)
+                .try_into()
+                .expect("root 64 bytes"),
+        );
+        let pre_root_bytes = handle_root_key_for_test(&handle);
+        let smk_before =
+            crate::vault::space_meta::open_store(&owner_path, &pre_rotation_root).unwrap();
+
+        // Owner raises the ask; a solo rotation must not run.
+        let err = handle
+            .rotate_root_key()
+            .expect_err("solo rotation must wait for quorum");
+        assert!(err.to_string().contains("admin approvals"), "{err}");
+        let pending = handle.pending_op_approvals();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind, "rotate_root_key");
+        assert_eq!(pending[0].required, 2);
+
+        // Ship the ask; the second admin's confirming call runs the
+        // rotation on THEIR clone.
+        engine_o.commit_all(&repo_o, "pending ask").unwrap();
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        joiner.rotate_root_key().expect("second admin confirms");
+        assert!(joiner.pending_op_approvals().is_empty());
+        let joiner_root_bytes = handle_root_key_for_test(&joiner);
+        let new_root =
+            RootKey::from_bytes(joiner_root_bytes.clone().try_into().expect("root 64 bytes"));
+        assert_ne!(joiner_root_bytes, pre_root_bytes);
+        // The SMK is rotation-invariant: same bytes under the new root.
+        let smk_after = crate::vault::space_meta::open_store(&joiner_path, &new_root).unwrap();
+        assert_eq!(*smk_after, *smk_before);
+
+        // Converge: the rotation ships back, the owner re-unlocks and
+        // adopts the new root through the P3 rekey wrap.
+        let engine_js = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        let repo_js = engine_js.open_repo().unwrap();
+        engine_js.commit_all(&repo_js, "joiner rotation").unwrap();
+        drop(repo_js);
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+        drop(handle);
+        let mut handle = VaultHandle::open(&owner_path).unwrap();
+        handle.unlock("owner-pass").unwrap();
+        assert!(handle.unlocked().holds_root());
+        let new_root_bytes = handle_root_key_for_test(&handle);
+        assert_eq!(new_root_bytes, joiner_root_bytes);
+        assert!(handle.pending_op_approvals().is_empty());
+        // The old root no longer opens the resealed store.
+        assert!(crate::vault::space_meta::open_store(&owner_path, &pre_rotation_root).is_err());
+    }
+
     // S3-7b review F6: a live non-admin row with NO wrap pubkey but a
     // stale space.wrap file on disk must be BLOCKED by the flip gate —
     // the wrap file alone is not readiness.
