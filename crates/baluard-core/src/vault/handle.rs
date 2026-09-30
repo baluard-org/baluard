@@ -2258,11 +2258,18 @@ impl VaultHandle {
                     .ok()
                     .and_then(|rows| {
                         rows.iter().find(|r| r.id == m).map(|r| {
+                            // Tombstones kill the mapping: a reset or
+                            // removed row keeps its role field, but the
+                            // device behind it must not read as an
+                            // admin anywhere — unlock dispatch, rotation
+                            // staging, rekey adoption, and keywrap
+                            // stripping all share this predicate.
                             matches!(
                                 r.role,
                                 crate::vault::members::MemberRole::Owner
                                     | crate::vault::members::MemberRole::Admin
-                            )
+                            ) && r.reset.is_none()
+                                && r.removed.is_none()
                         })
                     })
             })
@@ -13737,6 +13744,94 @@ mod tests {
         editor.unlock("editor-pass").unwrap();
         assert!(!editor.unlocked().holds_root());
         assert!(editor.unlocked().smk.is_some());
+    }
+
+    // Review Blocker on the F9 commit: a RESET admin's old device must
+    // stay locked out on a flipped vault. Reset tombstones the row but
+    // deliberately keeps its role field and never rotates, so the admin
+    // mapping had to become tombstone-aware — otherwise the old device
+    // rode the new admin unlock path with its still-valid keywrap.
+    #[test]
+    fn reset_locks_out_elevated_member_on_flipped_vault() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        let owner_member =
+            crate::vault::members::member_id_for_device(&owner_path, handle.device_id).unwrap();
+        let mut owner_row =
+            crate::vault::members::member_file_by_id(&owner_path, owner_member).unwrap();
+        let card = handle.contact_card_signed().unwrap();
+        owner_row.identity_wrap_pubkey = Some(card.card.identity_wrap_pubkey.clone());
+        crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
+
+        handle.space_prepare().unwrap();
+        handle.space_flip().unwrap();
+
+        // Admin joiner ceremony (verified contact required for the role).
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Admin, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite admin").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "admin2-pass",
+            "Admin2Device",
+        )
+        .unwrap();
+        handle.contacts_import_intro(&intro_code).unwrap();
+        let unverified = handle
+            .contacts_list()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.trust == crate::vault::contacts::ContactTrust::Channel)
+            .map(|c| c.card.identity_signing_pubkey)
+            .unwrap();
+        handle.contacts_mark_verified(&unverified).unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve admin join").unwrap();
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("admin2-pass").unwrap();
+        assert!(joiner.unlocked().holds_root());
+        let joiner_device = joiner.device_id;
+        drop(joiner);
+
+        // The owner resets the admin's row (suspected device, say). The
+        // row tombstones; the role field stays; the keywrap file stays;
+        // the Root Key is deliberately not rotated.
+        let admin_member =
+            crate::vault::members::member_id_for_device(&owner_path, joiner_device).unwrap();
+        handle.member_reset(admin_member).unwrap();
+        engine_o.commit_all(&repo_o, "reset admin").unwrap();
+
+        // The old device pulls the tombstone and must NOT unlock: the
+        // admin mapping is dead, and the member tail's space.wrap was
+        // removed by the reset.
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        assert!(
+            joiner.unlock("admin2-pass").is_err(),
+            "a reset admin's old device must stay locked out"
+        );
     }
 
     // S3-7b review F6: a live non-admin row with NO wrap pubkey but a
