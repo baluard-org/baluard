@@ -127,6 +127,7 @@ data class MobilePendingOp(
     val required: Int,
     val approvals: Int,
     val claimantId: String? = null,
+    val transferTarget: String? = null,
 )
 
 /** Team-shape readiness + state (S3-7b). */
@@ -466,11 +467,17 @@ class VaultRepository {
                         ?.takeUnless { it is kotlinx.serialization.json.JsonNull }
                         ?.jsonObject?.str("new_owner_id")
                         ?: row.str("initiated_by")
+                    // A pending transfer names its successor (the owner
+                    // initiates, an admin confirms the same ask).
+                    val transferTarget = row["params"]
+                        ?.takeUnless { it is kotlinx.serialization.json.JsonNull }
+                        ?.jsonObject?.str("new_member_id")
                     MobilePendingOp(
                         kind = kind,
                         required = row.str("required")?.toIntOrNull() ?: 1,
                         approvals = row["approvals"]?.jsonArray?.size ?: 0,
                         claimantId = claimant,
+                        transferTarget = transferTarget,
                     )
                 }
         }.getOrDefault(emptyList())
