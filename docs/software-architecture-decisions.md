@@ -1319,6 +1319,14 @@ Two review-round rules are worth keeping. First, divergence fails toward the man
 
 **Boundaries**: quorum_admin_ops stays deferred on the unconfirmed §10 Q1 default; a leaked invite code under code mode grants membership — that is the knob's stated trade, which is why manual stays the default; the knob is enforced at approval time only, and staged rows approved under manual remain queue-resident until a human decides.
 
+### D70. A Yes Is a Signature (approvals records become self-authenticating) (2026-09-30)
+
+The quorum workflow's records were the one remaining trust-me point: an approval was a bare member id in a plaintext file, so any admin with repo access could hand-write a second yes and the gate would count it. Every approval entry now carries the approver's member-identity Ed25519 signature over the ask (kind, params digest, vault id, ask timestamp), and the gate counts only entries whose signature verifies against the member row's published identity key. A forged record parses but approves nothing; on the next touch the record self-heals to the real entries.
+
+Four rules landed with it, each from a review attack: one member counts once (duplicated valid entries dedupe), only live Owner/Admin rows count (a Viewer's yes or an evicted admin's old key never does), the signature binds the vault and the ask timestamp (git-history harvesting cannot replay a yes onto a fresh ask or into another Space), and stale asks past seven days are consumed so a confirming admin past the window simply re-raises fresh. The live threshold governs exactly in both directions: a tampered record can never approve below the knob, and never above it either, so no tamper can brick an ask. Consumption removes every matching record file by discovered path, so renamed or concurrently raised duplicates cannot linger and replay their entries.
+
+Boundaries: the record file itself still rides the meta/** Admin sync row, so visibility of asks stays admin-wide; the signature check is a gate-side read discipline (the keyless sync walker still cannot read the encrypted threshold, so the knob remains local-only like every §6.5 knob); rotating an identity invalidates that member's old signatures by design, and the ask then needs a fresh approval. Old plain-uuid records parse-fail inert (format bump, pre-1.0).
+
 ### D69. Share Nothing That Acts (peer-review fix wave) (2026-09-30)
 
 A general Claude pass over the whole sharing surface returned ten findings; source triage accepted four, declined six as designed or documented. Two rules landed with the fixes.
