@@ -25,6 +25,29 @@ const TRUST_KEYS = {
   "admin-unverified": "people.trustAdminUnverified",
 };
 
+// S4-5: timeline kinds → label keys (unknown kinds render verbatim).
+const TL_KINDS = {
+  "vault-created": "people.tlVaultCreated",
+  "member-added": "people.tlMemberAdded",
+  "member-removed": "people.tlMemberRemoved",
+  "member-reset": "people.tlMemberReset",
+  "identity-rotated": "people.tlIdentityRotated",
+  "role-changed": "people.tlRoleChanged",
+  "ownership-transferred": "people.tlOwnershipTransferred",
+  "collection-created": "people.tlCollectionCreated",
+  "collection-deleted": "people.tlCollectionDeleted",
+  "grant-added": "people.tlGrantAdded",
+  "grant-revoked": "people.tlGrantRevoked",
+  "group-created": "people.tlGroupCreated",
+  "group-deleted": "people.tlGroupDeleted",
+  "group-membership-changed": "people.tlGroupMembershipChanged",
+  "key-rotated": "people.tlKeyRotated",
+  "team-flip": "people.tlTeamFlip",
+  "policies-set": "people.tlPoliciesSet",
+  "recovery-kit-set": "people.tlRecoveryKitSet",
+  "remote-moved": "people.tlRemoteMoved",
+};
+
 export default function PeopleTab() {
   const { t } = useI18n();
 
@@ -33,6 +56,9 @@ export default function PeopleTab() {
   const [malformed, setMalformed] = createSignal(0);
   const [events, setEvents] = createSignal([]);
   const [refusals, setRefusals] = createSignal([]);
+  // S4-5: the derived space timeline (newest-first). Admin-gated by the
+  // daemon; failures land empty like the per-device feed.
+  const [timeline, setTimeline] = createSignal([]);
   const [inviteCode, setInviteCode] = createSignal(null);
   const [inviteRole, setInviteRole] = createSignal("editor");
   const [inviteUsername, setInviteUsername] = createSignal("");
@@ -138,6 +164,16 @@ export default function PeopleTab() {
     }
   }
 
+  async function loadTimeline() {
+    try {
+      const data = JSON.parse(await daemon("activity.timeline", { limit: 100 }));
+      setTimeline(Array.isArray(data.timeline) ? data.timeline : []);
+    } catch {
+      // Non-admin devices are refused; the card just stays empty.
+      setTimeline([]);
+    }
+  }
+
   async function loadNotices(refreshTransport) {
     if (refreshTransport) setCheckingAccess(true);
     try {
@@ -201,7 +237,7 @@ export default function PeopleTab() {
 
   async function reloadAll() {
     setBusy(true);
-    await Promise.all([loadMembers(), loadRequests(), loadActivity(), loadNotices(false), loadAsks()]);
+    await Promise.all([loadMembers(), loadRequests(), loadActivity(), loadTimeline(), loadNotices(false), loadAsks()]);
     setBusy(false);
   }
 
@@ -807,6 +843,32 @@ export default function PeopleTab() {
               </For>
             </ul>
           </div>
+        </Show>
+      </section>
+
+      {/* S4-5: space timeline (derived from signed history) */}
+      <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
+        <h3 class="text-sm font-bold text-[var(--color-text)] mb-3">{t("people.timelineTitle")}</h3>
+        <Show
+          when={timeline().length > 0}
+          fallback={<p class="text-xs text-[var(--color-muted)]">{t("people.timelineEmpty")}</p>}
+        >
+          <ul class="space-y-2">
+            <For each={timeline()}>
+              {(e) => (
+                <li class="text-xs text-[var(--color-text)] flex gap-2 items-baseline">
+                  <span class="text-[10px] text-[var(--color-muted)] font-mono shrink-0">
+                    {new Date(e.at * 1000).toLocaleString()}
+                  </span>
+                  <span class="font-bold shrink-0">{e.actor}</span>
+                  <span class="text-[10px] font-bold border rounded-full px-2 py-0.5 text-[var(--color-primary)] border-[var(--color-primary)]/30 shrink-0">
+                    {t(TL_KINDS[e.kind] || e.kind)}
+                  </span>
+                  <span class="flex-1">{e.detail}</span>
+                </li>
+              )}
+            </For>
+          </ul>
         </Show>
       </section>
 

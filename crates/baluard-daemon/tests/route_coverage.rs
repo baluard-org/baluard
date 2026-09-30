@@ -1696,6 +1696,43 @@ async fn access_review_locked_solo_and_role_gates() {
     assert!(err.contains("admin"), "refusal names the gate: {err}");
 }
 
+/// S4-5: the derived timeline surface — locked refusal, the solo-vault
+/// shape (the genesis commit renders as vault-created, newest-first),
+/// and the rebound-Editor refusal. The derivation rules live in the
+/// core tests.
+#[tokio::test]
+async fn activity_timeline_locked_solo_and_role_gates() {
+    let (_dir, vault_path) = make_vault("activity-timeline");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // NOT unlocked: refuses.
+    assert!(state.activity_timeline(100).await.is_err());
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    let raw = state.activity_timeline(100).await.unwrap();
+    let feed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let rows = feed["timeline"].as_array().unwrap();
+    assert!(!rows.is_empty(), "a git-backed vault has history");
+    assert_eq!(rows[0]["kind"], "vault-created");
+    assert!(rows[0]["at"].as_i64().unwrap_or(0) > 0);
+    assert!(rows[0]["oid"].as_str().unwrap().len() == 8);
+
+    // A rebound Editor device is refused like the access review.
+    let editor_state = Arc::new(VaultState::new(vault_path.clone()));
+    editor_state.open().await.expect("vault open");
+    editor_state.unlock(MASTER).await.expect("vault unlock");
+    let editor_device =
+        uuid::Uuid::parse_str(&editor_state.device_id().await).expect("device id is a uuid");
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        editor_device,
+        None,
+    );
+    let err = editor_state.activity_timeline(100).await.unwrap_err();
+    assert!(err.contains("admin"), "refusal names the gate: {err}");
+}
+
 /// S4-6: advisory org policies — locked refusal, the publish/read
 /// roundtrip with the opt-out, the fail-closed unknown-knob refusal,
 /// and the non-admin publish refusal. The validation table is covered

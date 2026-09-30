@@ -128,6 +128,12 @@ access + expiry, pending asks, outbox mirrors; tombstoned rows greyed with
 > **RESOLVED 2026-09-28 (see section 10): derived-only v1 — synthesized
 > from verified signed git history; no shared event files, no read
 > tracking. Builds last.**
+>
+> **SHIPPED (2026-09-30, tracer; see D68):** the verified-history walk
+> (newest-first, topological), structural events only (membership,
+> grants, groups, keys, space facts), unverifiable commits tell no
+> story, admin-gated like the access review. The power pack is
+> COMPLETE.
 
 Goal: one space-wide feed of who did what, instead of per-device logs.
 
@@ -335,7 +341,8 @@ extension Phase 2, 2FA tiers 2-5.
 6. **S4-2 groups as a key layer** (L, the headline item; Q6a confirmed,
    design leans on the collection pattern) — SHIPPED (2026-09-29, D67).
 7. **S4-5 derived timeline** (M/L) — last; the synthesis engine over
-   commit history.
+   commit history — SHIPPED (2026-09-30, D68). The power pack is
+   COMPLETE.
 
 ## 13. First-wave build spec: Q5 owner recovery + S4-3 ratchet (locked and SHIPPED 2026-09-28)
 

@@ -3795,6 +3795,17 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(v) => ok_resp(v, token_str),
             Err(e) => err_response(e),
         },
+        "activity.timeline" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let limit = parsed["limit"].as_u64().unwrap_or(100);
+            match state.activity_timeline(limit).await {
+                Ok(v) => ok_resp(v, token_str),
+                Err(e) => err_response(e),
+            }
+        }
         "policies.set" => match state.policies_set(&req.payload).await {
             Ok(()) => ok_resp("{\"ok\":true}".to_string(), token_str),
             Err(e) => err_response(e),

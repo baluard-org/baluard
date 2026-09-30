@@ -4013,6 +4013,20 @@ impl VaultState {
         Ok(report.to_string())
     }
 
+    /// S4-5: the derived activity timeline (newest-first), admin-gated
+    /// in the handle like the access review.
+    pub async fn activity_timeline(&self, limit: u64) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let feed = handle
+            .activity_timeline(limit.clamp(1, 500) as usize)
+            .map_err(|e| e.to_string())?;
+        Ok(feed.to_string())
+    }
+
     /// Advisory org policies (S4-6): publish or clear (empty map).
     /// The core gate refuses non-admins in plain language.
     pub async fn policies_set(&self, payload: &str) -> Result<(), String> {

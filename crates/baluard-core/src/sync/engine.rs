@@ -3878,6 +3878,428 @@ impl SyncEngine {
         }
     }
 
+    /// S4-5: the derived activity timeline. Walks first-parent history
+    /// newest-first and synthesizes structural events from verified
+    /// signed commit diffs — nothing is written, reads leave no trace.
+    /// Entry-level cipher churn is deliberately excluded (the per-device
+    /// share-events log covers it locally); the timeline is the space
+    /// story: membership, grants, groups, keys, and space-shape facts.
+    /// Unverifiable commits tell no story (deny-only): the walk skips
+    /// what they changed but never aborts.
+    pub fn derive_timeline(
+        repo: &Repository,
+        limit: usize,
+    ) -> Result<Vec<crate::sync::timeline::TimelineEntry>, BaluardError> {
+        use crate::sync::timeline::{MemberFacts, TimelineEntry, TimelineKind};
+        use uuid::Uuid;
+        const MAX_COMMITS: usize = 500;
+        let limit = limit.clamp(1, 500);
+        let mut out: Vec<TimelineEntry> = Vec::new();
+
+        let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) else {
+            return Ok(out); // no history yet
+        };
+
+        let read_blob = |repo: &Repository, tree: &git2::Tree<'_>, path: &str| -> Option<Vec<u8>> {
+            let entry = tree.get_path(std::path::Path::new(path)).ok()?;
+            let blob = repo.find_blob(entry.id()).ok()?;
+            Some(blob.content().to_vec())
+        };
+
+        let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
+            std::collections::HashMap::new();
+        let mut snapshot_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
+            std::collections::HashMap::new();
+
+        let push = |out: &mut Vec<TimelineEntry>,
+                    at: i64,
+                    oid: &Oid,
+                    actor: &str,
+                    actor_member: Option<Uuid>,
+                    kind: TimelineKind,
+                    detail: String| {
+            out.push(TimelineEntry {
+                kind,
+                at,
+                oid: oid.to_string().chars().take(8).collect(),
+                actor: actor.to_string(),
+                actor_member,
+                detail,
+            });
+        };
+
+        let mut commit = head;
+        let mut walked = 0usize;
+        loop {
+            if out.len() >= limit || walked >= MAX_COMMITS {
+                break;
+            }
+            walked += 1;
+            let oid = commit.id();
+            let tree = commit
+                .tree()
+                .map_err(|e| SyncError::Git(format!("timeline tree: {e}")))?;
+            let at = commit.time().seconds();
+            let is_root = commit.parent_count() == 0;
+
+            // Verify + attribute. The root commit is the vault's birth;
+            // an enrolled commit must verify against its roster;
+            // pre-enrollment ancestors are grandfathered in sync but
+            // carry no verifiable signature, so they tell no story.
+            let signer: Option<String> = if is_root {
+                Some(String::new())
+            } else {
+                match Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
+                    Some(roster) => {
+                        Self::verify_commit_against_roster_static(repo, oid, &roster).ok()
+                    }
+                    None => None,
+                }
+            };
+            let Some(signer) = signer else {
+                match commit.parent(0) {
+                    Ok(p) => {
+                        commit = p;
+                        continue;
+                    }
+                    Err(_) => break,
+                }
+            };
+
+            let snapshot = Self::member_table_for_commit(repo, &commit, &mut snapshot_cache)?;
+            let member_id: Option<Uuid> = snapshot
+                .as_ref()
+                .and_then(|s| s.member_of.get(&signer))
+                .and_then(|m| Uuid::parse_str(m).ok());
+            let actor: String = if let Some(mid) = member_id {
+                read_blob(repo, &tree, &format!("meta/members/{mid}.json"))
+                    .as_deref()
+                    .and_then(|b| {
+                        serde_json::from_slice::<crate::vault::members::MemberFile>(b).ok()
+                    })
+                    .map(|r| r.display_name)
+                    .unwrap_or_else(|| crate::sync::timeline::short_id(&mid))
+            } else if signer.is_empty() {
+                "the space's creator".to_string()
+            } else {
+                signer.chars().take(8).collect()
+            };
+
+            if is_root {
+                push(
+                    &mut out,
+                    at,
+                    &oid,
+                    &actor,
+                    member_id,
+                    TimelineKind::VaultCreated,
+                    "the space was created".to_string(),
+                );
+                break;
+            }
+
+            // Diff this commit against its first parent and classify.
+            let parent = commit
+                .parent(0)
+                .map_err(|e| SyncError::Git(format!("timeline parent: {e}")))?;
+            let parent_tree = parent
+                .tree()
+                .map_err(|e| SyncError::Git(format!("timeline parent tree: {e}")))?;
+            let diff = repo
+                .diff_tree_to_tree(Some(&parent_tree), Some(&tree), None)
+                .map_err(|e| SyncError::Git(format!("timeline diff: {e}")))?;
+            let mut changed: Vec<(String, bool, bool)> = Vec::new(); // path, added, deleted
+            diff.foreach(
+                &mut |delta, _| {
+                    if let Some(p) = delta.new_file().path().or_else(|| delta.old_file().path()) {
+                        let added = delta.status() == git2::Delta::Added;
+                        let deleted = delta.status() == git2::Delta::Deleted;
+                        changed.push((p.to_string_lossy().into_owned(), added, deleted));
+                    }
+                    true
+                },
+                None,
+                None,
+                None,
+            )
+            .map_err(|e| SyncError::Git(format!("timeline walk diff: {e}")))?;
+
+            // ── Member rows ──
+            let mut member_events: Vec<(TimelineKind, String, Option<Uuid>)> = Vec::new();
+            let mut old_roles: Vec<(Uuid, crate::vault::members::MemberRole)> = Vec::new();
+            for (path, added, deleted) in &changed {
+                let Some(rest) = path.strip_prefix("meta/members/") else {
+                    continue;
+                };
+                // Row files only (bindings live one segment deeper).
+                let Some(stem) = rest.strip_suffix(".json") else {
+                    continue;
+                };
+                if stem.contains('/') || !stem.chars().all(|c| c == '-' || c.is_ascii_hexdigit()) {
+                    continue;
+                }
+                let Ok(id) = Uuid::parse_str(stem) else {
+                    continue;
+                };
+                let old = if *added {
+                    None
+                } else {
+                    read_blob(repo, &parent_tree, path)
+                        .as_deref()
+                        .and_then(|b| {
+                            serde_json::from_slice::<crate::vault::members::MemberFile>(b).ok()
+                        })
+                        .map(|r| MemberFacts::from_row(&r))
+                };
+                let new = if *deleted {
+                    None
+                } else {
+                    read_blob(repo, &tree, path)
+                        .as_deref()
+                        .and_then(|b| {
+                            serde_json::from_slice::<crate::vault::members::MemberFile>(b).ok()
+                        })
+                        .map(|r| MemberFacts::from_row(&r))
+                };
+                if let Some(o) = &old {
+                    old_roles.push((id, o.role));
+                }
+                for (kind, detail) in
+                    crate::sync::timeline::classify_member_change(id, old.as_ref(), new.as_ref())
+                {
+                    member_events.push((kind, detail, Some(id)));
+                }
+            }
+            for (kind, detail, who) in
+                crate::sync::timeline::coalesce_ownership(&member_events, &old_roles)
+            {
+                push(&mut out, at, &oid, &actor, member_id, kind, detail.clone());
+                let _ = who;
+            }
+
+            // ── Collections (defs + grants) ──
+            for (path, added, deleted) in &changed {
+                let Some(rest) = path.strip_prefix("meta/collections/") else {
+                    continue;
+                };
+                let Some(stem) = rest.strip_suffix(".json") else {
+                    continue; // wraps live deeper; the catalog is non-UUID
+                };
+                if stem.contains('/') {
+                    continue;
+                }
+                let Ok(id) = Uuid::parse_str(stem) else {
+                    continue;
+                };
+                let old = if *added {
+                    None
+                } else {
+                    read_blob(repo, &parent_tree, path)
+                        .as_deref()
+                        .and_then(|b| {
+                            serde_json::from_slice::<crate::vault::collections::CollectionFile>(b)
+                                .ok()
+                        })
+                };
+                let new = if *deleted {
+                    None
+                } else {
+                    read_blob(repo, &tree, path).as_deref().and_then(|b| {
+                        serde_json::from_slice::<crate::vault::collections::CollectionFile>(b).ok()
+                    })
+                };
+                match (old, new) {
+                    (None, Some(_)) => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::CollectionCreated,
+                        format!(
+                            "collection {} was created",
+                            crate::sync::timeline::short_id(&id)
+                        ),
+                    ),
+                    (Some(_), None) => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::CollectionDeleted,
+                        format!(
+                            "collection {} was deleted",
+                            crate::sync::timeline::short_id(&id)
+                        ),
+                    ),
+                    (Some(o), Some(n)) => {
+                        for (kind, detail) in
+                            crate::sync::timeline::classify_grant_changes(&o.grants, &n.grants)
+                        {
+                            push(&mut out, at, &oid, &actor, member_id, kind, detail);
+                        }
+                    }
+                    (None, None) => {}
+                }
+            }
+
+            // ── Groups ──
+            for (path, added, deleted) in &changed {
+                let Some(rest) = path.strip_prefix("meta/groups/") else {
+                    continue;
+                };
+                let Some(stem) = rest.strip_suffix(".json") else {
+                    continue; // gkwraps/ckwraps ride deeper paths
+                };
+                if stem.contains('/') {
+                    continue;
+                }
+                let Ok(id) = Uuid::parse_str(stem) else {
+                    continue;
+                };
+                let old = if *added {
+                    None
+                } else {
+                    read_blob(repo, &parent_tree, path)
+                        .as_deref()
+                        .and_then(|b| {
+                            serde_json::from_slice::<crate::vault::groups::GroupFile>(b).ok()
+                        })
+                };
+                let new = if *deleted {
+                    None
+                } else {
+                    read_blob(repo, &tree, path).as_deref().and_then(|b| {
+                        serde_json::from_slice::<crate::vault::groups::GroupFile>(b).ok()
+                    })
+                };
+                match (old, new) {
+                    (None, Some(_)) => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::GroupCreated,
+                        format!("group {} was created", crate::sync::timeline::short_id(&id)),
+                    ),
+                    (Some(_), None) => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::GroupDeleted,
+                        format!("group {} was deleted", crate::sync::timeline::short_id(&id)),
+                    ),
+                    (Some(o), Some(n)) => {
+                        if let Some((kind, detail)) =
+                            crate::sync::timeline::classify_group_change(&o.members, &n.members)
+                        {
+                            push(&mut out, at, &oid, &actor, member_id, kind, detail);
+                        }
+                    }
+                    (None, None) => {}
+                }
+            }
+
+            // ── Space-shape facts ──
+            for (path, added, deleted) in &changed {
+                match path.as_str() {
+                    "meta/space-shape.json" if *added => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::TeamFlip,
+                        "the space switched to team mode".to_string(),
+                    ),
+                    "meta/policies.json" if !*deleted => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::PoliciesSet,
+                        "recommended settings were published or updated".to_string(),
+                    ),
+                    "meta/policies.json" if *deleted => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::PoliciesSet,
+                        "recommended settings were cleared".to_string(),
+                    ),
+                    "meta/recovery-kit.json" if *added => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::RecoveryKitSet,
+                        "a recovery kit was set up".to_string(),
+                    ),
+                    "meta/recovery-kit.json" if !*added && !*deleted => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::RecoveryKitSet,
+                        "the recovery kit was re-wrapped".to_string(),
+                    ),
+                    "meta/recovery-kit.json" if *deleted => push(
+                        &mut out,
+                        at,
+                        &oid,
+                        &actor,
+                        member_id,
+                        TimelineKind::RecoveryKitSet,
+                        "the recovery kit was removed".to_string(),
+                    ),
+                    "meta/remote.json" if !*deleted => {
+                        let url = read_blob(repo, &tree, path)
+                            .as_deref()
+                            .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                            .and_then(|v| v["url"].as_str().map(str::to_string))
+                            .unwrap_or_default();
+                        push(
+                            &mut out,
+                            at,
+                            &oid,
+                            &actor,
+                            member_id,
+                            TimelineKind::RemoteMoved,
+                            format!("the sync address moved to {url}"),
+                        );
+                    }
+                    p if p.starts_with("meta/rekey/") && p.ends_with(".txn") && *added => {
+                        push(
+                            &mut out,
+                            at,
+                            &oid,
+                            &actor,
+                            member_id,
+                            TimelineKind::KeyRotated,
+                            "the space's keys were rotated".to_string(),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+
+            match commit.parent(0) {
+                Ok(p) => commit = p,
+                Err(_) => break,
+            }
+        }
+        Ok(out)
+    }
+
     /// Order commits parents-first within the pulled batch so roster
     /// inheritance sees every parent before its children.
     fn topo_order_commits(repo: &Repository, oids: &[Oid]) -> Result<Vec<Oid>, BaluardError> {
