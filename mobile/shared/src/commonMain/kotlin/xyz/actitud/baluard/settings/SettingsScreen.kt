@@ -1489,12 +1489,29 @@ fun SettingsScreen(
                                     )
                                     // §13 review F1: confirming a pending
                                     // claim repeats the SAME ask — the row
-                                    // carries the claimant id.
+                                    // carries the claimant id. A pending
+                                    // transfer works the same way: the
+                                    // owner initiates, an admin confirms
+                                    // the named successor.
                                     if (op.kind == "ownership_claim" && op.claimantId != null) {
                                         TextButton(onClick = {
                                             scope.launch {
                                                 try {
                                                     repo.memberClaim(vault, op.claimantId!!)
+                                                    pendingOps = repo.approvalsPending(vault)
+                                                } catch (e: Exception) {
+                                                    Toast.error(e.message ?: t("error.generic"))
+                                                }
+                                            }
+                                        }) {
+                                            Text(t("people.approve"))
+                                        }
+                                    }
+                                    if (op.kind == "transfer_ownership" && op.transferTarget != null) {
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                try {
+                                                    repo.memberTransfer(vault, op.transferTarget!!)
                                                     pendingOps = repo.approvalsPending(vault)
                                                 } catch (e: Exception) {
                                                     Toast.error(e.message ?: t("error.generic"))

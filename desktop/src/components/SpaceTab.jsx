@@ -510,14 +510,26 @@ export default function SpaceTab() {
                   {/* §13 review F1: a pending claim is confirmed by
                       repeating the SAME ask — the row now carries the
                       ask's params, so the co-approver approves the
-                      claimant named there. */}
-                  <Show when={op.kind === "ownership_claim"}>
+                      claimant named there. A pending transfer works
+                      the same way: the owner initiates, an admin
+                      confirms the named successor. */}
+                  <Show
+                    when={
+                      op.kind === "ownership_claim" || op.kind === "transfer_ownership"
+                    }
+                  >
                     <button
                       onClick={async () => {
                         try {
-                          await daemon("members.claim", {
-                            member_id: op.params?.new_owner_id || op.initiated_by,
-                          });
+                          if (op.kind === "transfer_ownership") {
+                            await daemon("members.transfer", {
+                              member_id: op.params?.new_member_id,
+                            });
+                          } else {
+                            await daemon("members.claim", {
+                              member_id: op.params?.new_owner_id || op.initiated_by,
+                            });
+                          }
                           await loadPending();
                         } catch {
                           /* the row stays pending on failure */

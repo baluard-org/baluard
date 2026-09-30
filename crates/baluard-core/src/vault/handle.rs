@@ -1188,6 +1188,10 @@ impl VaultHandle {
         item.folder_id = None;
         item.archived = false;
         item.created_at = None;
+        // Sharing-posture symmetry with the outbox: a one-shot package
+        // must never carry a live passkey private key. A recipient who
+        // needs the passkey re-registers it on their own device.
+        Self::strip_fido2(&mut item);
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1219,12 +1223,15 @@ impl VaultHandle {
         let payload = crate::vault::packages::open_package(package_bytes, identity)?;
         let mut item = payload.item;
         // Defense in depth: the exporter strips these, a hostile
-        // hand-built payload does not get to resurrect them.
+        // hand-built payload does not get to resurrect them. Passkeys
+        // included: a planted credential would import a fake live
+        // login the recipient might trust.
         item.attachments.clear();
         item.password_history.clear();
         item.folder_id = None;
         item.archived = false;
         item.created_at = None;
+        Self::strip_fido2(&mut item);
         let cipher_id = self.add_cipher(&item)?;
         Ok((cipher_id, payload.sender_card.card.display_name.clone()))
     }
@@ -2739,10 +2746,6 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        self.quorum_gate(
-            "transfer_ownership",
-            &serde_json::json!({ "new_member_id": new_member_id }),
-        )?;
         // S1a-7 review: gate on the ACTOR'S OWN role (disk-backed), not
         // on owner_member_id equality — in the abnormal two-owner state
         // (crash between the transfer's two writes) owner_member_id
@@ -2750,7 +2753,9 @@ impl VaultHandle {
         // recovery. An owner-role actor can always re-run the transfer,
         // which demotes the extra owner.
         let actor_role = crate::vault::members::member_role_for_device(&self.path, self.device_id);
-        if actor_role != Some(crate::vault::members::MemberRole::Owner) {
+        if actor_role != Some(crate::vault::members::MemberRole::Owner)
+            && actor_role != Some(crate::vault::members::MemberRole::Admin)
+        {
             return Err(VaultError::InvalidOperation(
                 "only the owner can transfer ownership".into(),
             )
@@ -2761,6 +2766,58 @@ impl VaultHandle {
                 VaultError::InvalidOperation("this vault has no owner member row".into()).into(),
             );
         };
+        if actor_role == Some(crate::vault::members::MemberRole::Owner) {
+            // Initiator path: the owner consents by calling. Wave-39
+            // rule (deterministic refusals precede the gate): a
+            // self-transfer or a nonexistent/tombstoned successor must
+            // fail outright, never record a pending ask that can never
+            // execute and burn a co-approval. Mirrors ownership_claim's
+            // pre-flight.
+            if new_member_id == old_member_id {
+                return Err(
+                    VaultError::InvalidOperation("you already own this vault".into()).into(),
+                );
+            }
+            let target = crate::vault::members::member_file_by_id(&self.path, new_member_id)
+                .ok_or_else(|| {
+                    VaultError::InvalidOperation("that member row does not exist".into())
+                })?;
+            if target.reset.is_some() || target.removed.is_some() {
+                return Err(VaultError::InvalidOperation(
+                    "that member row is gone; ownership cannot be transferred to it".into(),
+                )
+                .into());
+            }
+            self.quorum_gate(
+                "transfer_ownership",
+                &serde_json::json!({ "new_member_id": new_member_id }),
+            )?;
+        } else {
+            // Confirmer path (review round): the house quorum pattern is
+            // re-call-to-confirm, so at a raised threshold an ADMIN must
+            // be able to complete the owner's ask. An admin can only
+            // confirm a pending owner-initiated ask — never start one,
+            // because a voluntary transfer's consent IS the owner's
+            // call. Execution re-validates both rows.
+            let digest = crate::vault::approvals::op_digest(
+                "transfer_ownership",
+                &serde_json::json!({ "new_member_id": new_member_id }),
+            );
+            let matching = crate::vault::approvals::list_pending(&self.path)
+                .iter()
+                .any(|p| p.kind == "transfer_ownership" && p.params_digest == digest);
+            if !matching {
+                return Err(VaultError::InvalidOperation(
+                    "no pending ownership transfer to confirm; the owner starts a transfer, then an admin confirms it"
+                        .into(),
+                )
+                .into());
+            }
+            self.quorum_gate(
+                "transfer_ownership",
+                &serde_json::json!({ "new_member_id": new_member_id }),
+            )?;
+        }
         let demoted = old_member_id;
         crate::vault::members::commit_ownership_swap(&self.path, old_member_id, new_member_id)?;
         // S1b-1: activity log (best-effort).
@@ -9357,9 +9414,10 @@ mod tests {
         let mut b = VaultHandle::open(dir_b.path()).unwrap();
         b.unlock(&pw_b).unwrap();
 
-        let kind: crate::types::CipherKind =
-            serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
-                .unwrap();
+        let kind: crate::types::CipherKind = serde_json::from_str(
+            r#"{"type":"login","data":{"username":"u","password":"p","fido2_credentials":[{"credential_id":"abc","key_type":"public-key","key_algorithm":"ES256","key_curve":"P-256","key_value":"aa","rp_id":"bank.example","counter":0,"aaguid":"00000000-0000-0000-0000-000000000000","creation_date":1700000000,"private_key_missing":true}]}}"#,
+        )
+        .unwrap();
         let foreign_folder = Uuid::new_v4();
         let source_id = a
             .add_cipher(&crate::types::CipherInput {
@@ -9396,6 +9454,11 @@ mod tests {
                     c.created_at, 1_600_000_000,
                     "creation timestamp must be reset"
                 );
+                // Sharing-posture symmetry with the outbox: passkeys are
+                // live credentials and never travel in a one-shot package.
+                if let crate::types::CipherKind::Login(login) = &c.kind {
+                    assert!(login.fido2_credentials.is_none(), "passkeys never travel");
+                }
             }
             CipherRead::Locked(_) => panic!("imported cipher must be readable"),
         }
@@ -12944,6 +13007,130 @@ mod tests {
         );
         let old_row = crate::vault::members::member_file_by_id(&joiner_dirs[1], old_owner).unwrap();
         assert_eq!(old_row.role, crate::vault::members::MemberRole::Admin);
+    }
+
+    /// Threshold-2 transfer twin (review F4): only the OWNER initiates a
+    /// voluntary transfer, but an ADMIN completes it — the house
+    /// re-call-to-confirm pattern. Without the confirmer path the ask
+    /// could never reach quorum (the owner self-confirm is refused and
+    /// no second owner exists).
+    #[test]
+    fn transfer_threshold_two_admin_confirms_owner_ask() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // One admin joiner through the standard ceremony (Admin needs a
+        // Verified contact); the threshold rises before the pull.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Admin, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        handle.contacts_import_intro(&intro_code).unwrap();
+        let contacts = handle.contacts_list().unwrap();
+        let card = contacts
+            .iter()
+            .find(|c| c.trust == crate::vault::contacts::ContactTrust::Channel)
+            .expect("imported joiner card");
+        handle
+            .contacts_mark_verified(&card.card.identity_signing_pubkey)
+            .unwrap();
+        let admin1_member = handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve").unwrap();
+        let mut settings = handle.get_settings().unwrap();
+        settings.quorum_admin_ops = Some(2);
+        handle.save_settings(&settings).unwrap();
+        engine_o.commit_all(&repo_o, "quorum").unwrap();
+
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "pull-only", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        let mut admin1 = VaultHandle::open(&joiner_path).unwrap();
+        admin1.unlock("member-pass").unwrap();
+        assert_eq!(admin1.get_settings().unwrap().quorum_admin_ops, Some(2));
+
+        // An admin cannot START a voluntary transfer — the consent is
+        // the owner's call.
+        let err = admin1
+            .transfer_ownership(admin1_member)
+            .expect_err("admin cannot initiate");
+        assert!(err.to_string().contains("no pending"), "{err}");
+
+        // The owner initiates: at threshold 2 this records a pending ask
+        // (the owner's own approval is one of the required two).
+        handle
+            .transfer_ownership(admin1_member)
+            .expect_err("ask waits for quorum");
+        let pending = handle.pending_op_approvals();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind, "transfer_ownership");
+        assert_eq!(pending[0].required, 2);
+
+        // Ship the ask, then the admin's confirming call executes the
+        // swap on their clone.
+        engine_o.commit_all(&repo_o, "transfer ask").unwrap();
+        let repo_j2 = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j2, "origin").unwrap();
+        drop(repo_j2);
+        admin1
+            .transfer_ownership(admin1_member)
+            .expect("admin confirms the owner's ask");
+        assert!(admin1.pending_op_approvals().is_empty());
+        assert_eq!(
+            crate::vault::members::owner_member_id(&joiner_path),
+            Some(admin1_member),
+            "the successor owns the vault"
+        );
+    }
+
+    /// F10: deterministic transfer refusals precede the quorum gate —
+    /// a self-transfer and a bogus target fail outright and record no
+    /// pending ask (a doomed ask would burn a co-approval). Runs at
+    /// threshold 2 so a recorded ask would be visible: under the old
+    /// gate-first ordering both refusals stranded a PendingOp.
+    #[test]
+    fn transfer_deterministic_refusals_record_no_pending_ask() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let mut settings = handle.get_settings().unwrap();
+        settings.quorum_admin_ops = Some(2);
+        handle.save_settings(&settings).unwrap();
+        let owner_id = crate::vault::members::owner_member_id(dir.path()).unwrap();
+
+        // Self-transfer refuses before the gate.
+        let err = handle.transfer_ownership(owner_id).unwrap_err().to_string();
+        assert!(err.contains("you already own"), "err: {err}");
+        // A bogus target refuses before the gate.
+        let err = handle
+            .transfer_ownership(uuid::Uuid::new_v4())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not exist"), "err: {err}");
+        assert!(handle.pending_op_approvals().is_empty());
     }
 
     #[test]

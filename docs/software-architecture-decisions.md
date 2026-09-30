@@ -1319,6 +1319,16 @@ Two review-round rules are worth keeping. First, divergence fails toward the man
 
 **Boundaries**: quorum_admin_ops stays deferred on the unconfirmed §10 Q1 default; a leaked invite code under code mode grants membership — that is the knob's stated trade, which is why manual stays the default; the knob is enforced at approval time only, and staged rows approved under manual remain queue-resident until a human decides.
 
+### D69. Share Nothing That Acts (peer-review fix wave) (2026-09-30)
+
+A general Claude pass over the whole sharing surface returned ten findings; source triage accepted four, declined six as designed or documented. Two rules landed with the fixes.
+
+Share nothing that acts: a shared copy must never carry live credentials. The outbox already stripped passkeys; the one-shot package path did not — now both export AND import strip FIDO2 credentials (the importer is defense in depth against a hostile hand-built payload planting a fake live login), and the test pins the end-to-end absence with a passkey-carrying source. Reveals never carried them (field projection).
+
+Initiator and confirmer are different actors on a voluntary op: a voluntary ownership transfer's consent IS the owner's call, but at a raised threshold the house re-call-to-confirm pattern needs a second approver who is not the owner — so transfer gained a confirmer path where an admin completes the owner's pending ask (refusing to start one), fixing a permanent threshold-2 deadlock, and both pending-asks cards (desktop SpaceTab, mobile SettingsScreen) grew the matching approve action. Completes the wave-39 rule: deterministic refusals (self-transfer, bogus or tombstoned target, wrong actor) precede the gate, so a doomed ask never burns a co-approval — the rule's pin test runs at threshold 2, because at the default of 1 a stranded ask is invisible.
+
+Boundaries: the recovery-kit and pre-flip-key findings were declined as recorded design (D64 possession-is-approval; grants cosmetic pre-flip is why the flip exists); other pending-ask kinds (removal, rotation) keep completing by the admin repeating the op itself rather than a one-click approve.
+
 ### D68. History Is the Ledger (S4-5 derived activity timeline) (2026-09-30)
 
 The space-wide feed writes nothing. Every git commit is already signed, roster-attributed, and policy-checked — so the timeline just re-reads that verified history and names what changed: memberships, grants, groups, keys, and space-shape facts, synthesized on demand. No shared event file ever exists (S1b's per-device log stays per-device), reads leave no trace, and entry-level cipher churn is deliberately absent — the per-device feed covers it locally, and "who viewed what" is unbuildable by design. Unverifiable commits tell no story: the walk skips what they changed and keeps going. Ordering is topological (newest-first, HEAD toward the root); git timestamps render but never sort, because clocks skew across devices. Raw keys, sealed names, and cipher contents never enter the feed — collections and groups appear as short ids.
