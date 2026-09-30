@@ -2618,12 +2618,24 @@ fn rebind_device(
         DeviceBinding, MemberFile, TrustLevel, write_device_binding, write_member,
     };
     let members = vault_path.join("meta/members");
+    // Carry the device's real identity pubkey across the rebind: the
+    // signed-approval gate verifies signatures against the member row's
+    // published key, so a planted row without it would refuse the
+    // device's own signature.
+    let mut carried_pubkey: Option<String> = None;
     for entry in std::fs::read_dir(&members).expect("members dir") {
-        let binding = entry
-            .expect("entry")
-            .path()
-            .join("devices")
-            .join(format!("{device_id}.json"));
+        let path = entry.expect("entry").path();
+        let binding = path.join("devices").join(format!("{device_id}.json"));
+        if binding.exists() {
+            if let Some(stem) = path.file_name().and_then(|s| s.to_str()) {
+                let row_path = members.join(format!("{stem}.json"));
+                if let Ok(bytes) = std::fs::read(&row_path) {
+                    if let Ok(row) = serde_json::from_slice::<MemberFile>(&bytes) {
+                        carried_pubkey = row.identity_signing_pubkey;
+                    }
+                }
+            }
+        }
         let _ = std::fs::remove_file(binding);
     }
     let member = MemberFile {
@@ -2631,7 +2643,7 @@ fn rebind_device(
         display_name: "Test Member".into(),
         role,
         trust: TrustLevel::Channel,
-        identity_signing_pubkey: None,
+        identity_signing_pubkey: carried_pubkey,
         identity_signing_pubkey_previous: None,
         identity_rotation_signature: None,
         identity_rotated_at: None,
