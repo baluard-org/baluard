@@ -2766,6 +2766,13 @@ impl VaultHandle {
                 VaultError::InvalidOperation("this vault has no owner member row".into()).into(),
             );
         };
+        // The ask's digest binds BOTH ids: a changed owner means a
+        // different digest, so a stale ask can never execute against a
+        // new owner (the claim's rule).
+        let params = serde_json::json!({
+            "new_member_id": new_member_id,
+            "old_owner_id": old_member_id,
+        });
         if actor_role == Some(crate::vault::members::MemberRole::Owner) {
             // Initiator path: the owner consents by calling. Wave-39
             // rule (deterministic refusals precede the gate): a
@@ -2788,21 +2795,35 @@ impl VaultHandle {
                 )
                 .into());
             }
-            self.quorum_gate(
+            // A fresh ask supersedes the owner's earlier transfer asks
+            // (a new target invalidates the old one).
+            crate::vault::approvals::consume_other_of_kind(
+                &self.path,
                 "transfer_ownership",
-                &serde_json::json!({ "new_member_id": new_member_id }),
-            )?;
+                &crate::vault::approvals::op_digest("transfer_ownership", &params),
+            );
+            self.quorum_gate("transfer_ownership", &params)?;
         } else {
             // Confirmer path (review round): the house quorum pattern is
             // re-call-to-confirm, so at a raised threshold an ADMIN must
             // be able to complete the owner's ask. An admin can only
             // confirm a pending owner-initiated ask — never start one,
             // because a voluntary transfer's consent IS the owner's
-            // call. Execution re-validates both rows.
-            let digest = crate::vault::approvals::op_digest(
-                "transfer_ownership",
-                &serde_json::json!({ "new_member_id": new_member_id }),
-            );
+            // call. Deterministic target checks precede the gate here
+            // too, so a dead target cannot burn the co-approval; the
+            // digest binds the owner of record, so a swapped owner
+            // makes the ask unmatchable.
+            let target = crate::vault::members::member_file_by_id(&self.path, new_member_id)
+                .ok_or_else(|| {
+                    VaultError::InvalidOperation("that member row does not exist".into())
+                })?;
+            if target.reset.is_some() || target.removed.is_some() {
+                return Err(VaultError::InvalidOperation(
+                    "that member row is gone; ownership cannot be transferred to it".into(),
+                )
+                .into());
+            }
+            let digest = crate::vault::approvals::op_digest("transfer_ownership", &params);
             let matching = crate::vault::approvals::list_pending(&self.path)
                 .iter()
                 .any(|p| p.kind == "transfer_ownership" && p.params_digest == digest);
@@ -2813,10 +2834,7 @@ impl VaultHandle {
                 )
                 .into());
             }
-            self.quorum_gate(
-                "transfer_ownership",
-                &serde_json::json!({ "new_member_id": new_member_id }),
-            )?;
+            self.quorum_gate("transfer_ownership", &params)?;
         }
         let demoted = old_member_id;
         crate::vault::members::commit_ownership_swap(&self.path, old_member_id, new_member_id)?;
@@ -13079,15 +13097,80 @@ mod tests {
             .expect_err("admin cannot initiate");
         assert!(err.to_string().contains("no pending"), "{err}");
 
+        // The transfer target: a planted third-party row, so the
+        // admin actor stays intact for the confirm legs.
+        let editor_id = uuid::Uuid::new_v4();
+        let editor_json = serde_json::json!({
+            "id": editor_id,
+            "display_name": "Successor",
+            "role": "editor",
+            "trust": "channel",
+        });
+        std::fs::write(
+            owner_path
+                .join("meta/members")
+                .join(format!("{editor_id}.json")),
+            editor_json.to_string(),
+        )
+        .unwrap();
+
         // The owner initiates: at threshold 2 this records a pending ask
         // (the owner's own approval is one of the required two).
         handle
-            .transfer_ownership(admin1_member)
+            .transfer_ownership(editor_id)
             .expect_err("ask waits for quorum");
         let pending = handle.pending_op_approvals();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].kind, "transfer_ownership");
         assert_eq!(pending[0].required, 2);
+
+        // F3: the ask's digest binds the owner of record — a swapped
+        // owner makes the ask unmatchable, like the claim's rule.
+        let owner_member = crate::vault::members::owner_member_id(&owner_path).unwrap();
+        let d_bind = crate::vault::approvals::op_digest(
+            "transfer_ownership",
+            &serde_json::json!({"new_member_id": editor_id, "old_owner_id": owner_member}),
+        );
+        let d_swap = crate::vault::approvals::op_digest(
+            "transfer_ownership",
+            &serde_json::json!({"new_member_id": editor_id, "old_owner_id": uuid::Uuid::new_v4()}),
+        );
+        assert_ne!(d_bind, d_swap, "a stale ask cannot match a new owner");
+
+        // F4: a fresh ask supersedes the owner's earlier transfer asks
+        // (a new target invalidates the old one).
+        let second_id = uuid::Uuid::new_v4();
+        let second_json = serde_json::json!({
+            "id": second_id,
+            "display_name": "Third",
+            "role": "editor",
+            "trust": "channel",
+        });
+        std::fs::write(
+            owner_path
+                .join("meta/members")
+                .join(format!("{second_id}.json")),
+            second_json.to_string(),
+        )
+        .unwrap();
+        handle
+            .transfer_ownership(second_id)
+            .expect_err("second ask waits for quorum");
+        let pending = handle.pending_op_approvals();
+        assert_eq!(pending.len(), 1, "the second ask superseded the first");
+        assert_eq!(
+            pending[0].params.as_ref().unwrap()["new_member_id"].as_str(),
+            Some(second_id.to_string().as_str()),
+        );
+        handle
+            .transfer_ownership(editor_id)
+            .expect_err("re-ask waits for quorum");
+        let pending = handle.pending_op_approvals();
+        assert_eq!(pending.len(), 1, "the re-ask superseded the second ask");
+        assert_eq!(
+            pending[0].params.as_ref().unwrap()["new_member_id"].as_str(),
+            Some(editor_id.to_string().as_str()),
+        );
 
         // Ship the ask, then the admin's confirming call executes the
         // swap on their clone.
@@ -13095,13 +13178,33 @@ mod tests {
         let repo_j2 = engine_j.open_repo().unwrap();
         engine_j.pull(&repo_j2, "origin").unwrap();
         drop(repo_j2);
+
+        // F2: a dead target refuses BEFORE the gate — the ask is not
+        // consumed and no co-approval burns on it. The target row is
+        // corrupted on the CONFIRMING device only.
+        let row_path = joiner_path
+            .join("meta/members")
+            .join(format!("{editor_id}.json"));
+        let row_bytes = std::fs::read(&row_path).unwrap();
+        std::fs::write(&row_path, "not json").unwrap();
+        let err = admin1
+            .transfer_ownership(editor_id)
+            .expect_err("dead target refuses");
+        assert!(err.to_string().contains("does not exist"), "{err}");
+        assert_eq!(
+            admin1.pending_op_approvals().len(),
+            1,
+            "the ask survives a dead-target refusal"
+        );
+        std::fs::write(&row_path, row_bytes).unwrap();
+
         admin1
-            .transfer_ownership(admin1_member)
+            .transfer_ownership(editor_id)
             .expect("admin confirms the owner's ask");
         assert!(admin1.pending_op_approvals().is_empty());
         assert_eq!(
             crate::vault::members::owner_member_id(&joiner_path),
-            Some(admin1_member),
+            Some(editor_id),
             "the successor owns the vault"
         );
     }

@@ -205,6 +205,17 @@ pub fn consume_matching(vault_path: &Path, kind: &str, params: &serde_json::Valu
     }
 }
 
+/// Remove every pending record of `kind` whose digest differs from
+/// `keep_digest` — a fresh ask supersedes the asker's older asks of
+/// the same kind (a new transfer target invalidates the old one).
+pub fn consume_other_of_kind(vault_path: &Path, kind: &str, keep_digest: &str) {
+    for op in list_pending(vault_path) {
+        if op.kind == kind && op.params_digest != keep_digest {
+            let _ = std::fs::remove_file(record_path(vault_path, &op));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
