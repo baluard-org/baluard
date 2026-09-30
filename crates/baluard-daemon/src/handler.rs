@@ -3387,6 +3387,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        "vault.is_admin_device" => match state.is_admin_device().await {
+            Ok(is_admin) => {
+                let json = serde_json::json!({"is_admin": is_admin});
+                ok_resp(json.to_string(), token_str)
+            }
+            Err(e) => err_response(e),
+        },
+
         // ── Cipher CRUD (token required, enforced above) ──
         "vault.list" => match state.list_cipher_meta().await {
             Ok(metas) => {

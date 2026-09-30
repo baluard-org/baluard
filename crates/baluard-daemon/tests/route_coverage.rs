@@ -1428,6 +1428,27 @@ async fn groups_lifecycle_and_locked_rejection() {
     assert_eq!(list["groups"].as_array().unwrap().len(), 0);
 }
 
+// Debt: the desktop admin marker asks the daemon (holds_root) instead
+// of counting admin rows — it holds for zero-collection vaults, and a
+// locked vault reports no powers.
+#[tokio::test]
+async fn is_admin_device_reports_the_managing_marker() {
+    let (_dir, vault_path) = make_vault("is-admin");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    assert!(
+        !state.is_admin_device().await.unwrap(),
+        "locked = no powers"
+    );
+    state.unlock(MASTER).await.expect("vault unlock");
+    // True on a ZERO-collection vault — the row-counting proxy read
+    // false here and hid admin surfaces (the wave-29 lockout).
+    assert!(state.is_admin_device().await.unwrap());
+    // Key-state semantics: the marker reports holds_root, so a device
+    // whose role changes server-side keeps reporting admin until it
+    // locks (the recorded session-keys-live-until-lock boundary).
+}
+
 #[tokio::test]
 async fn space_meta_prepare_status_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("space-meta");

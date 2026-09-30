@@ -247,10 +247,17 @@ Size L; independent of every other item; can go any time.
 
 ## 9. Cross-cutting debt (tracked here, small)
 
-1. Desktop `VaultView` gates the ask button on a row-counting `myAccess`
-   proxy; should read `is_admin_device` like mobile does (wave-29 fix).
-2. Thin quorum-rotation test coverage on a flipped vault (threshold 2 +
-   rotation + member unlock in one ceremony).
+1. Desktop admin gating: SHIPPED (2026-09-30 debt round) — `VaultView`
+   and `CipherDetail` consume the server-derived `vault.is_admin_device`
+   marker (`holds_root`) through a `VaultContext` signal; the row-counting
+   proxy is gone (wave-29 fix pattern, desktop side). The marker is key
+   state: a locked vault reports false, a demoted-but-unlocked device
+   keeps reporting admin until it locks (recorded boundary).
+2. Thin quorum-rotation test coverage on a flipped vault: SHIPPED
+   (2026-09-30) — `quorum_rotation_on_flipped_vault_two_admins` runs the
+   threshold-2 ceremony on a flipped vault: ask ships via git, the
+   confirming rotation executes on the confirmer's clone, both admins
+   converge through P3 adoption, SMK byte-invariant, old root rejected.
 3. Mobile pending-approvals card: SHIPPED — wave-37 renders the pending
    list in mobile Settings beside the quorum knob (the `approvals_list()`
    bridge has a UI row); nothing pending.

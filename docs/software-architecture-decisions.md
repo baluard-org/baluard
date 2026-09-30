@@ -1319,6 +1319,14 @@ Two review-round rules are worth keeping. First, divergence fails toward the man
 
 **Boundaries**: quorum_admin_ops stays deferred on the unconfirmed §10 Q1 default; a leaked invite code under code mode grants membership — that is the knob's stated trade, which is why manual stays the default; the knob is enforced at approval time only, and staged rows approved under manual remain queue-resident until a human decides.
 
+### D72. Ask the Server, Count Nothing (the admin marker debt round) (2026-09-30)
+
+The desktop's admin signal was a proxy: it counted admin rows in the collections list. Counting the artifacts a capability produces breaks on the empty set — an admin of a zero-collection vault read as a member. The mobile side already asked the server (wave-29); the desktop now does too, through a read-only `vault.is_admin_device` route answering `holds_root()`.
+
+Three rules recorded with it. First, the marker is key state, not live role: a locked vault reports false (no keys in memory, no powers), and a device whose role was demoted server-side keeps reporting admin until it locks — the recorded session-keys-live-until-lock boundary. Surfaces may use it for ergonomics only; the daemon re-validates every mutation. Second, vault-scoped context signals must reset on vault switch: a stale admin flag would show admin controls on a member vault (and the ask button on an admin vault) until the refresh lands — the peer review caught exactly that bleed, and `resetNavigation` now clears collections and the marker with the rest. Third, the flip's quorum-rotation gap closed as a test: threshold-2 rotation on a flipped vault needs a second admin, the ask travels by git, the confirming rotation runs on the confirmer's clone, both admins converge through the rekey wrap, and the SMK never changes — so members keep their wraps across every rotation.
+
+Boundaries: the route leaks one boolean and joins no mutation lists (read-only, default-deny token-gated); `CipherDetail`'s admin-only move-to-flat option inherits the same marker; and the collections empty-set on switch now renders as the honest empty state instead of a stale list.
+
 ### D71. The Flip Keeps Keys From Members, Not From Admins (role-aware flipped keywraps) (2026-09-30)
 
 The team-shape flip was coded shape-blind: no post-flip joiner got the Root Key keywrap, and any device with a member-unlock file took the member unlock path. A peer review flagged the consequence (F9): an ADMIN invited after the flip held the Admin role but no admin keys — unable to create collections, grant, rotate, or act on quorum ops. A growing organization could not add a second real admin.

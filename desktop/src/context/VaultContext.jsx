@@ -49,6 +49,10 @@ function VaultProvider(props) {
   const [selectedTag, setSelectedTag] = createSignal(null);
   // S3-7c / 4.8: shared collections (role-aware) + the selected one.
   const [collections, setCollections] = createSignal([]);
+  // The precise admin marker from the daemon (holds_root), not a
+  // row-counting proxy: holds for zero-collection vaults. null =
+  // unknown (still loading or load failed).
+  const [isAdmin, setIsAdmin] = createSignal(null);
   const [selectedCollection, setSelectedCollection] = createSignal(null);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [activePane, setActivePane] = createSignal("welcome");
@@ -75,6 +79,11 @@ function VaultProvider(props) {
     setSelectedCollection(null);
     setSearchQuery("");
     setActivePane("welcome");
+    // Vault-scoped data must not bleed across switches: stale admin
+    // state would show admin controls on a member vault (and the ask
+    // button on an admin vault) until the refresh lands.
+    setCollections([]);
+    setIsAdmin(null);
   }
 
   async function refreshCiphers(t) {
@@ -107,6 +116,12 @@ function VaultProvider(props) {
       setCollections(Array.isArray(data.collections) ? data.collections : []);
     } catch {
       setCollections([]);
+    }
+    try {
+      const r = JSON.parse(await daemon("vault.is_admin_device"));
+      setIsAdmin(r.is_admin === true);
+    } catch {
+      setIsAdmin(null);
     }
   }
 
@@ -305,6 +320,7 @@ function VaultProvider(props) {
     selectedFolder, setSelectedFolder,
     selectedTag, setSelectedTag,
     collections, refreshCollections,
+    isAdmin,
     selectedCollection, setSelectedCollection,
     searchQuery, setSearchQuery,
     activePane, setActivePane,
