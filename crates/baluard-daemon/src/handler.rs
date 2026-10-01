@@ -300,6 +300,9 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "cipher.clone",
     "packages.import",
     "vault.import",
+    // Escrow swaps must reach the remote promptly: the ceremony tells the
+    // user the old phrase is dead, which is only true once it syncs.
+    "vault.rotate_recovery",
     "vault.trash.restore",
     "vault.trash.purge",
     "folder.create",
@@ -3381,6 +3384,26 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        // Recovery phrase rotation (token required, password gated in core).
+        // Rides COVER so the rotated escrow commits and pushes promptly:
+        // until the swap reaches the remote, the OLD phrase still opens the
+        // remote copy, and a lost device would recover against the stale
+        // escrow with a phrase the ceremony said was dead (review F1).
+        "vault.rotate_recovery" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(e) => return err_response(format!("Invalid JSON: {e}")),
+            };
+            let old_pw = match payload["old_password"].as_str() {
+                Some(s) => s,
+                None => return err_response("missing old_password"),
+            };
+            match state.rotate_recovery_phrase(old_pw).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
         // vault.info: token NOT required (no secret data, used as pre-flight by CLI)
         "vault.info" => match state.info().await {
             Ok(info) => ok_resp(info, token_str),
@@ -5966,6 +5989,7 @@ mod tests {
             "vault.export",
             "vault.trash.purge",
             "vault.change_password",
+            "vault.rotate_recovery",
             "vault.enroll_with_phrase",
             "settings.get",
             "settings.set",

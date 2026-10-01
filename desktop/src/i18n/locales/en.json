@@ -1010,6 +1010,21 @@
     "add": "Add",
     "removeNote": "Removing someone re-keys the group: what they already opened stays open to them, but future group access ends."
   },
+  "recovery": {
+    "title": "Recovery phrase",
+    "desc": "The 24-word phrase is the only way to recover this vault if you lose your password. Keep it somewhere safe.",
+    "replace": "Replace phrase",
+    "replacedNote": "A fresh phrase is printed once; the old one stops working right away.",
+    "ceremonyTitle": "Your new recovery phrase",
+    "warning": "Anyone who can read this phrase can read this vault. Store it before you close this window.",
+    "copy": "Copy",
+    "copied": "Copied",
+    "downloadTxt": "Download .txt",
+    "downloadMd": "Download .md",
+    "stored": "I stored my new phrase somewhere safe",
+    "done": "Done",
+    "rotatedToast": "Recovery phrase replaced. The old phrase no longer works."
+  },
   "removal": {
     "bodyConfirmed": "You were removed from this Space. It no longer syncs on this device.",
     "bodyReset": "The owner reset this device's access. It no longer syncs on this device.",

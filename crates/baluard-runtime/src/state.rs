@@ -673,6 +673,25 @@ impl VaultState {
             .map_err(|e| format!("{e}"))
     }
 
+    /// Replace the vault's recovery phrase (master-password gated in the
+    /// core). Returns {"phrase": ...} — the new 24 words, shown once.
+    /// Holds the autosync cycle lock so a background cycle cannot commit
+    /// the escrow mid-swap (review F5).
+    pub async fn rotate_recovery_phrase(&self, old_password: &str) -> Result<String, String> {
+        let _cycle = self.autosync.cycle_lock_guard().await;
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
+
+        let phrase = handle
+            .rotate_recovery_phrase(old_password)
+            .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "phrase": phrase }).to_string())
+    }
+
     /// Check if vault is currently unlocked.
     pub async fn is_unlocked(&self) -> bool {
         let guard = self.inner.read().await;

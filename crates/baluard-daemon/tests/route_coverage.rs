@@ -1856,6 +1856,30 @@ async fn policies_set_list_roundtrip_and_role_gates() {
 }
 
 #[tokio::test]
+async fn rotate_recovery_locked_wrong_password_and_roundtrip() {
+    let (_dir, vault_path) = make_vault("rotate-recovery");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.unwrap();
+
+    // Locked vault refuses before the password is even looked at.
+    let err = state.rotate_recovery_phrase("whatever").await.unwrap_err();
+    assert!(err.contains("locked"), "locked refusal: {err}");
+
+    state.unlock(MASTER).await.unwrap();
+
+    let err = state
+        .rotate_recovery_phrase("wrong-password")
+        .await
+        .unwrap_err();
+    assert!(err.contains("old master password incorrect"), "gate: {err}");
+
+    let raw = state.rotate_recovery_phrase(MASTER).await.unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let phrase = parsed["phrase"].as_str().expect("phrase key");
+    assert_eq!(phrase.split_whitespace().count(), 24);
+}
+
+#[tokio::test]
 async fn space_kit_lifecycle_and_role_gates() {
     let (_dir, vault_path) = make_vault("kit");
     let state = Arc::new(VaultState::new(vault_path.clone()));
