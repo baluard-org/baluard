@@ -27,7 +27,9 @@ export default function RepromptModal(props) {
       await daemon("vault.unlock", pw);
       // If we get here, password is correct. Re-lock since we were already unlocked.
       // The daemon.unlock is idempotent if already unlocked with same password.
-      if (repromptCallback) repromptCallback();
+      // The verified password is passed to the callback so flows that need
+      // it as a parameter (e.g. recovery-phrase rotation) can use it.
+      if (repromptCallback) repromptCallback(pw);
       setShow(false);
       setPassword("");
       setFailed(false);
