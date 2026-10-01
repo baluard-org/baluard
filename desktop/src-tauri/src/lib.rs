@@ -343,6 +343,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "sync.autosync_status",
     "sync.conflict",
     "sync.conflict.resolve",
+    "sync.removal_notice",
     "sync.disconnect",
     "sync.pull",
     "sync.push",
