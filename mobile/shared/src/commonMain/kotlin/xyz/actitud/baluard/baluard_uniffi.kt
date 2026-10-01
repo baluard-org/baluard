@@ -1056,7 +1056,7 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_is_unlocked(`ptr`: Pointer,
     ): Long
-    fun uniffi_baluard_uniffi_fn_method_mobilevault_join_introduce(`ptr`: Pointer,`code`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_join_introduce(`ptr`: Pointer,`code`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,`email`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_join_poll(`ptr`: Pointer,
     ): Long
@@ -1713,7 +1713,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_is_unlocked() != 31920.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_join_introduce() != 6673.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_join_introduce() != 42458.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_join_poll() != 43730.toShort()) {
@@ -2999,7 +2999,7 @@ public interface MobileVaultInterface {
      * approve. The password seeds the joiner's local unlock material;
      * it is zeroized after the introduction is written.
      */
-    suspend fun `joinIntroduce`(`code`: kotlin.String, `password`: kotlin.String, `deviceName`: kotlin.String): kotlin.String
+    suspend fun `joinIntroduce`(`code`: kotlin.String, `password`: kotlin.String, `deviceName`: kotlin.String, `email`: kotlin.String?): kotlin.String
     
     /**
      * Poll the join status: `{introduced, approved}`. While introduced
@@ -4326,12 +4326,12 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
      */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `joinIntroduce`(`code`: kotlin.String, `password`: kotlin.String, `deviceName`: kotlin.String) : kotlin.String {
+    override suspend fun `joinIntroduce`(`code`: kotlin.String, `password`: kotlin.String, `deviceName`: kotlin.String, `email`: kotlin.String?) : kotlin.String {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_join_introduce(
                 thisPtr,
-                FfiConverterString.lower(`code`),FfiConverterString.lower(`password`),FfiConverterString.lower(`deviceName`),
+                FfiConverterString.lower(`code`),FfiConverterString.lower(`password`),FfiConverterString.lower(`deviceName`),FfiConverterOptionalString.lower(`email`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },

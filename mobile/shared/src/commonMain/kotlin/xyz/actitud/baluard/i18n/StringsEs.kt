@@ -484,6 +484,8 @@ internal val ES: Map<String, String> = mapOf(
     "join.confirm" to "Confirma la contraseña maestra",
     "join.deviceName" to "Nombre del dispositivo",
     "join.devicePlaceholder" to "Mi dispositivo",
+    "join.emailLabel" to "Correo (opcional)",
+    "join.emailPlaceholder" to "nombre@ejemplo.com",
     "join.send" to "Enviar solicitud",
     "join.waitingBody" to "Envía este código al administrador del espacio. Cuando apruebe, este dispositivo se desbloqueará automáticamente.",
     "join.copyIntro" to "Copiar código",

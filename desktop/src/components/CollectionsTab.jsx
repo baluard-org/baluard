@@ -287,7 +287,11 @@ export default function CollectionsTab() {
                             >
                               <option value="">{t("collections.pickMember")}</option>
                               <For each={members().filter((m) => !m.removed && !m.reset)}>
-                                {(m) => <option value={m.id}>{m.display_name}</option>}
+                                {(m) => (
+                                  <option value={m.id}>
+                                    {m.email ? `${m.display_name} · ${m.email}` : m.display_name}
+                                  </option>
+                                )}
                               </For>
                             </select>
                           }

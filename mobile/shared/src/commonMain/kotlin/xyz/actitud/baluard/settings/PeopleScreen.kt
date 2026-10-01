@@ -225,6 +225,13 @@ fun PeopleScreen(
                         joinRequests.forEach { req ->
                             Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
                                 Text(req.displayName, style = MaterialTheme.typography.bodyLarge)
+                                req.email?.let {
+                                    Text(
+                                        it,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                                 if (!req.secretOk) {
                                     Text(
                                         t("people.secretMismatch"),
@@ -351,6 +358,13 @@ fun PeopleScreen(
                                     m.name + if (m.isSelf) " (${t("people.you")})" else "",
                                     style = MaterialTheme.typography.bodyLarge,
                                 )
+                                m.email?.let {
+                                    Text(
+                                        it,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                                 Text(
                                     when (m.role) {
                                         "owner" -> t("people.roleOwner")

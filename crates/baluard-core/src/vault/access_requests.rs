@@ -728,6 +728,7 @@ mod tests {
         members::MemberFile {
             id,
             display_name: "Alicia".into(),
+            email: None,
             role,
             trust: members::TrustLevel::Verified,
             identity_signing_pubkey: None,

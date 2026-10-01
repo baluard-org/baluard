@@ -256,6 +256,7 @@ mod tests {
             "Sender",
             &hex::encode(signing.verifying_key().as_bytes()),
             &hex::encode(wrap_pub),
+            None,
             1_700_000_000,
             signing,
         )
@@ -331,6 +332,7 @@ mod tests {
         let mut card = sender_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         card.card = ContactCard {
             display_name: "Mallory".into(),
+            email: None,
             identity_signing_pubkey: card.card.identity_signing_pubkey.clone(),
             identity_wrap_pubkey: card.card.identity_wrap_pubkey.clone(),
             created_at: card.card.created_at,

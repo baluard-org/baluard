@@ -175,7 +175,11 @@ export default function GroupsTab() {
                         >
                           <option value="">{t("collections.pickMember")}</option>
                           <For each={members().filter((m) => !m.removed && !m.reset && !g.members.includes(m.id))}>
-                            {(m) => <option value={m.id}>{m.display_name}</option>}
+                            {(m) => (
+                              <option value={m.id}>
+                                {m.email ? `${m.display_name} · ${m.email}` : m.display_name}
+                              </option>
+                            )}
                           </For>
                         </select>
                         <Button onClick={() => void addMemberTo(g)} disabled={busy()}>

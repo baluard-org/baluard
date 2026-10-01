@@ -61,6 +61,7 @@ fun JoinSpaceDialog(
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var deviceName by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
     var introCode by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
@@ -123,6 +124,13 @@ fun JoinSpaceDialog(
                         placeholder = t("join.devicePlaceholder"),
                         singleLine = true,
                     )
+                    BaluardTextField(
+                        value = email,
+                        onValueChange = { email = it },
+                        label = t("join.emailLabel"),
+                        placeholder = t("join.emailPlaceholder"),
+                        singleLine = true,
+                    )
                     errorMsg?.let {
                         Text(
                             text = it,
@@ -148,6 +156,7 @@ fun JoinSpaceDialog(
                                         code.trim(),
                                         password,
                                         deviceName.trim().ifBlank { "My device" },
+                                        email.trim().ifBlank { null },
                                     )
                                 }.onSuccess { raw ->
                                     introCode = runCatching {

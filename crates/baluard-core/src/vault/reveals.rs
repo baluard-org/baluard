@@ -516,6 +516,7 @@ mod tests {
             "Sender",
             &hex::encode(signing.verifying_key().as_bytes()),
             &hex::encode(wrap_pub),
+            None,
             1_700_000_000,
             signing,
         )

@@ -479,6 +479,8 @@ internal val EN: Map<String, String> = mapOf(
     "join.confirm" to "Confirm master password",
     "join.deviceName" to "Device name",
     "join.devicePlaceholder" to "My device",
+    "join.emailLabel" to "Email (optional)",
+    "join.emailPlaceholder" to "name@example.com",
     "join.send" to "Send request",
     "join.waitingBody" to "Send this code to the space admin. When they approve, this device unlocks automatically.",
     "join.copyIntro" to "Copy code",

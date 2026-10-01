@@ -884,6 +884,7 @@ impl VaultHandle {
             member_rows.push(serde_json::json!({
                 "id": m.id,
                 "display_name": m.display_name,
+                "email": m.email,
                 "role": m.role,
                 "trust": m.trust,
                 "removed": m.removed,
@@ -1162,6 +1163,7 @@ impl VaultHandle {
             &display_name,
             &vk_hex,
             &wrap_hex,
+            None,
             now,
             identity.signing_key(),
         )
@@ -3574,6 +3576,7 @@ impl VaultHandle {
             let member = crate::vault::members::MemberFile {
                 id: uuid::Uuid::new_v4(),
                 display_name: intro.display_name.clone(),
+                email: intro.email.clone(),
                 role: invite.role,
                 trust: crate::vault::members::TrustLevel::Verified,
                 identity_signing_pubkey: identity_pub,
@@ -5445,6 +5448,44 @@ impl VaultHandle {
 
     /// S1b-1: emit a share event (best-effort — never fails the parent
     /// operation).
+    /// Member-email wave: the admin corrects a member's self-declared
+    /// email. The field is delta-frozen after approval, so this admin
+    /// route is the ONLY writer; the email stays strictly decorative.
+    pub fn members_set_email(
+        &mut self,
+        member_id: Uuid,
+        email: Option<&str>,
+    ) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let email = crate::vault::members::normalize_email(email)?;
+        let mut row =
+            crate::vault::members::member_file_by_id(&self.path, member_id).ok_or_else(|| {
+                BaluardError::from(VaultError::NotFound(
+                    "that member row does not exist".into(),
+                ))
+            })?;
+        if row.email == email {
+            return Ok(());
+        }
+        row.email = email;
+        let path = self
+            .path
+            .join(crate::vault::members::MEMBERS_DIR)
+            .join(format!("{}.json", row.id));
+        crate::vault::write_vault_file(
+            &path,
+            serde_json::to_string_pretty(&row).unwrap().as_bytes(),
+        )?;
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::MemberEmailChanged,
+            format!("{}'s email was updated", row.display_name),
+        );
+        Ok(())
+    }
+
     fn emit_share_event(
         &self,
         kind: crate::vault::events::ShareEventKind,
@@ -9891,6 +9932,7 @@ mod tests {
         let row = crate::vault::members::MemberFile {
             id: member_id,
             display_name: "Ada".into(),
+            email: None,
             role: crate::vault::members::MemberRole::Editor,
             trust: crate::vault::members::TrustLevel::Channel,
             identity_signing_pubkey: Some(hex::encode([1u8; 32])),
@@ -10093,6 +10135,7 @@ mod tests {
 
         let legacy = crate::vault::contacts::ContactCard {
             display_name: "Old Card".into(),
+            email: None,
             identity_signing_pubkey: hex::encode([1u8; 32]),
             identity_wrap_pubkey: String::new(),
             created_at: 1,
@@ -10293,6 +10336,7 @@ mod tests {
             &crate::vault::members::MemberFile {
                 id: editor,
                 display_name: "Editor".into(),
+                email: None,
                 role: crate::vault::members::MemberRole::Editor,
                 trust: crate::vault::members::TrustLevel::Verified,
                 identity_signing_pubkey: None,
@@ -10391,6 +10435,7 @@ mod tests {
             &crate::vault::members::MemberFile {
                 id: member,
                 display_name: "Alicia".into(),
+                email: None,
                 role: crate::vault::members::MemberRole::Editor,
                 trust: crate::vault::members::TrustLevel::Verified,
                 identity_signing_pubkey: None,
@@ -10449,6 +10494,7 @@ mod tests {
             &crate::vault::members::MemberFile {
                 id: member,
                 display_name: "Editor Person".into(),
+                email: None,
                 role: crate::vault::members::MemberRole::Editor,
                 trust: crate::vault::members::TrustLevel::Verified,
                 identity_signing_pubkey: None,
@@ -10516,6 +10562,7 @@ mod tests {
             &crate::vault::members::MemberFile {
                 id: member,
                 display_name: "Manager Person".into(),
+                email: None,
                 role: crate::vault::members::MemberRole::Editor,
                 trust: crate::vault::members::TrustLevel::Verified,
                 identity_signing_pubkey: None,
@@ -10569,6 +10616,7 @@ mod tests {
             &crate::vault::members::MemberFile {
                 id: stranger,
                 display_name: "Stranger Person".into(),
+                email: None,
                 role: crate::vault::members::MemberRole::Viewer,
                 trust: crate::vault::members::TrustLevel::Verified,
                 identity_signing_pubkey: None,
@@ -10895,6 +10943,7 @@ mod tests {
         let mk_row = |removed: Option<u64>| crate::vault::members::MemberFile {
             id: member_id,
             display_name: "Ed".into(),
+            email: None,
             role: crate::vault::members::MemberRole::Editor,
             trust: crate::vault::members::TrustLevel::Channel,
             identity_signing_pubkey: Some(hex::encode([1u8; 32])),
@@ -11194,6 +11243,7 @@ mod tests {
             &crate::vault::members::MemberFile {
                 id: editor_id,
                 display_name: "Ed".into(),
+                email: None,
                 role: crate::vault::members::MemberRole::Editor,
                 trust: crate::vault::members::TrustLevel::Channel,
                 identity_signing_pubkey: Some(hex::encode([1u8; 32])),
@@ -11287,6 +11337,7 @@ mod tests {
             &crate::vault::members::MemberFile {
                 id: member_id,
                 display_name: "Ed".into(),
+                email: None,
                 role: crate::vault::members::MemberRole::Editor,
                 trust: crate::vault::members::TrustLevel::Channel,
                 identity_signing_pubkey: Some(hex::encode([1u8; 32])),
@@ -12086,6 +12137,7 @@ mod tests {
             &crate::vault::members::MemberFile {
                 id: gone,
                 display_name: "Gone".into(),
+                email: None,
                 role: crate::vault::members::MemberRole::Viewer,
                 trust: crate::vault::members::TrustLevel::Channel,
                 identity_signing_pubkey: None,
@@ -14720,6 +14772,7 @@ mod tests {
         let m = crate::vault::members::MemberFile {
             id: uuid::Uuid::new_v4(),
             display_name: "Stale".into(),
+            email: None,
             role: crate::vault::members::MemberRole::Editor,
             trust: crate::vault::members::TrustLevel::Verified,
             identity_signing_pubkey: Some(hex::encode([1u8; 32])),

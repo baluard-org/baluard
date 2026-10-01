@@ -2455,6 +2455,7 @@ impl VaultState {
                 serde_json::json!({
                     "id": m.id.to_string(),
                     "display_name": m.display_name,
+                    "email": m.email,
                     "role": m.role,
                     "trust": m.trust,
                     "reset": m.reset.is_some(),
@@ -2465,6 +2466,26 @@ impl VaultState {
             })
             .collect();
         Ok(serde_json::json!({ "members": rows, "your_role": your_role }).to_string())
+    }
+
+    /// Member-email wave: the admin corrects a member's self-declared
+    /// email. The only writer of the delta-frozen field.
+    pub async fn members_set_email(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let member_id = match v["member_id"].as_str().map(uuid::Uuid::parse_str) {
+            Some(Ok(id)) => id,
+            _ => return Err("missing or malformed 'member_id'".into()),
+        };
+        let email = v["email"].as_str();
+        handle
+            .members_set_email(member_id, email)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
     }
 
     /// Mint a one-time invite code for the given role. The pending
@@ -2912,6 +2933,7 @@ impl VaultState {
                     "invite_id": r.invite_id.to_string(),
                     "device_id": r.device_id.to_string(),
                     "display_name": r.display_name,
+                    "email": r.email,
                     "secret_ok": r.secret_ok,
                 })
             })

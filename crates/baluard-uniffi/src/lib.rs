@@ -1063,6 +1063,7 @@ impl MobileVault {
         code: String,
         password: String,
         device_name: String,
+        email: Option<String>,
     ) -> Result<String, BaluardError> {
         let pw = zeroize::Zeroizing::new(password);
         if device_name.contains(['\n', '\r']) {
@@ -1070,11 +1071,12 @@ impl MobileVault {
                 detail: "device name must not contain newlines".into(),
             });
         }
-        let intro_code = baluard_core::vault::members::create_introduction(
+        let intro_code = baluard_core::vault::members::create_introduction_with_email(
             &self.state.vault_path,
             &code,
             &pw,
             &device_name,
+            email.as_deref(),
         )
         .map_err(|e| BaluardError::Vault {
             detail: e.to_string(),

@@ -138,6 +138,7 @@ mod tests {
             connected_at: 1_700_000_000,
             instance_url: None,
             client_id: None,
+            email: None,
         };
         let token = ProviderToken::new("ghp_test", "repo");
 
@@ -211,6 +212,7 @@ mod tests {
             connected_at: 0,
             instance_url: None,
             client_id: None,
+            email: None,
         };
         let token = ProviderToken::new("ghp_test", "repo");
 

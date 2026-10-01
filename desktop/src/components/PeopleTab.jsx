@@ -62,6 +62,10 @@ export default function PeopleTab() {
   const [inviteCode, setInviteCode] = createSignal(null);
   const [inviteRole, setInviteRole] = createSignal("editor");
   const [inviteUsername, setInviteUsername] = createSignal("");
+  // Member-email wave: the admin corrects a member's self-declared email
+  // (the field is delta-frozen, so this route is the only writer).
+  const [emailEdit, setEmailEdit] = createSignal(null); // member row | null
+  const [emailDraft, setEmailDraft] = createSignal("");
   const [seatError, setSeatError] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
   const [yourRole, setYourRole] = createSignal(null);
@@ -231,6 +235,25 @@ export default function PeopleTab() {
       toastError(sanitizeError(e, t));
     } finally {
       setAskBusy(null);
+    }
+  }
+
+  async function saveEmail() {
+    const m = emailEdit();
+    if (!m || busy()) return;
+    setBusy(true);
+    try {
+      await daemon("members.set_email", {
+        member_id: m.id,
+        email: emailDraft(),
+      });
+      toastSuccess(t("people.emailUpdated"));
+      setEmailEdit(null);
+      await reloadAll();
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -444,9 +467,14 @@ export default function PeopleTab() {
             <For each={requests()}>
               {(r) => (
                 <li class="flex items-center gap-2 p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
-                  <span class="text-xs font-bold text-[var(--color-text)] flex-1 truncate">
-                    {r.display_name}
-                  </span>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold text-[var(--color-text)] truncate">
+                      {r.display_name}
+                    </div>
+                    <Show when={r.email}>
+                      <div class="text-[10px] text-[var(--color-muted)] truncate">{r.email}</div>
+                    </Show>
+                  </div>
                   <Show
                     when={r.secret_ok}
                     fallback={
@@ -543,9 +571,14 @@ export default function PeopleTab() {
           <For each={members()}>
             {(m) => (
               <li class="flex items-center gap-2 p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
-                <span class="text-xs font-bold text-[var(--color-text)] flex-1 truncate">
-                  {m.display_name}
-                </span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-xs font-bold text-[var(--color-text)] truncate">
+                    {m.display_name}
+                  </div>
+                  <Show when={m.email}>
+                    <div class="text-[10px] text-[var(--color-muted)] truncate">{m.email}</div>
+                  </Show>
+                </div>
                 <Show when={m.reset || m.removed}>
                   <span class="text-[10px] font-bold text-red-400 border border-red-400/30 rounded-full px-2 py-0.5">
                     {m.removed ? t("people.stateRemoved") : t("people.stateReset")}
@@ -566,6 +599,19 @@ export default function PeopleTab() {
                   <span class="text-[10px] text-[var(--color-muted)]">
                     {t(TRUST_KEYS[m.trust] || "people.trustChannel")}
                   </span>
+                </Show>
+                {/* Member-email wave: the admin corrects the frozen field. */}
+                <Show when={!m.reset && !m.removed}>
+                  <button
+                    onClick={() => {
+                      setEmailEdit(m);
+                      setEmailDraft(m.email || "");
+                    }}
+                    disabled={busy()}
+                    class="px-2 py-1 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    {t("people.editEmail")}
+                  </button>
                 </Show>
                 {/* §4.8-3: destructive actions — never on the viewer's own
                     row, never on tombstoned rows. Transfer belongs on the
@@ -699,15 +745,20 @@ export default function PeopleTab() {
                       }
                       class="w-full flex items-center gap-2 p-2.5 text-left"
                     >
-                      <span
-                        class={`text-xs font-bold flex-1 truncate ${
-                          tombstoned
-                            ? "text-[var(--color-muted)] line-through"
-                            : "text-[var(--color-text)]"
-                        }`}
-                      >
-                        {m.display_name}
-                      </span>
+                      <div class="flex-1 min-w-0">
+                        <div
+                          class={`text-xs font-bold truncate ${
+                            tombstoned
+                              ? "text-[var(--color-muted)] line-through"
+                              : "text-[var(--color-text)]"
+                          }`}
+                        >
+                          {m.display_name}
+                        </div>
+                        <Show when={m.email}>
+                          <div class="text-[10px] text-[var(--color-muted)] truncate">{m.email}</div>
+                        </Show>
+                      </div>
                       <span class="text-[10px] text-[var(--color-muted)]">
                         {t("people.reviewCollections", {
                           count: rows().length,
@@ -901,6 +952,48 @@ export default function PeopleTab() {
           onConfirm={doConfirmedAction}
           onClose={closeAction}
         />
+      </Show>
+
+      {/* Member-email wave: the admin edits the frozen email. A simple
+          dialog — no typed confirm needed for advisory data. */}
+      <Show when={emailEdit()}>
+        <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="email-edit-title"
+            class="w-[380px] max-w-[90vw] p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)]"
+          >
+            <h3 id="email-edit-title" class="text-sm font-bold text-[var(--color-text)] mb-1">
+              {t("people.editEmail")}
+            </h3>
+            <p class="text-[10px] text-[var(--color-muted)] mb-3">
+              {t("people.editEmailHint", { name: emailEdit().display_name })}
+            </p>
+            <input
+              value={emailDraft()}
+              onInput={(e) => setEmailDraft(e.currentTarget.value)}
+              maxlength="254"
+              class="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+              placeholder="name@example.com"
+            />
+            <div class="flex justify-end gap-2 mt-3">
+              <button
+                onClick={() => setEmailEdit(null)}
+                class="px-3 py-2 rounded-lg border border-[var(--color-border)] text-xs font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                onClick={saveEmail}
+                disabled={busy()}
+                class="px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+              >
+                {t("people.emailSave")}
+              </button>
+            </div>
+          </div>
+        </div>
       </Show>
     </div>
   );

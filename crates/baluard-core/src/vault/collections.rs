@@ -1222,6 +1222,7 @@ mod tests {
         crate::vault::members::MemberFile {
             id,
             display_name: "Alicia".into(),
+            email: None,
             role: crate::vault::members::MemberRole::Editor,
             trust: crate::vault::members::TrustLevel::Verified,
             identity_signing_pubkey: None,

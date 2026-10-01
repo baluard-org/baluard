@@ -639,6 +639,10 @@
     "inviteCreated": "Convite criado",
     "inviteHint": "Compartilhe este código de uso único com a pessoa que você quer convidar. Ele serve para um único acesso.",
     "usernamePlaceholder": "Nome de usuário git da pessoa (para que ela possa baixar o cofre) — opcional",
+    "editEmail": "Editar e-mail",
+    "editEmailHint": "Aparece sob o nome de {name} nas listas. Apenas informativo: a aprovação é onde você confere.",
+    "emailUpdated": "E-mail atualizado.",
+    "emailSave": "Salvar",
     "seatErrorPrefix": "Não foi possível conceder acesso de download:",
     "remove": "Remover",
     "reset": "Redefinir",
@@ -744,7 +748,9 @@
     "introHint": "Seu pedido de acesso — copie e envie ao proprietário",
     "passwordShort": "Use pelo menos 8 caracteres para sua senha.",
     "passwordMismatch": "As senhas não coincidem.",
-    "unlockFailed": "Aprovado, mas o desbloqueio falhou. Tente desbloquear com sua senha."
+    "unlockFailed": "Aprovado, mas o desbloqueio falhou. Tente desbloquear com sua senha.",
+    "emailLabel": "E-mail (opcional)",
+    "emailPlaceholder": "nome@exemplo.com"
   },
   "notices": {
     "title": "Precisa de atenção",
