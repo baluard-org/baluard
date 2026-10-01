@@ -639,6 +639,10 @@
     "inviteCreated": "Invite created",
     "inviteHint": "Share this one-time code with the person you want to invite. It works for a single join.",
     "usernamePlaceholder": "Their git username (so they can download the vault) — optional",
+    "editEmail": "Edit email",
+    "editEmailHint": "Shown under {name}'s name in member lists. Advisory only — the approval is where you check it.",
+    "emailUpdated": "Email updated.",
+    "emailSave": "Save",
     "seatErrorPrefix": "Could not grant download access:",
     "remove": "Remove",
     "reset": "Reset",
@@ -744,7 +748,9 @@
     "introHint": "Your join request — copy and send it to the owner",
     "passwordShort": "Use at least 8 characters for your password.",
     "passwordMismatch": "The passwords do not match.",
-    "unlockFailed": "Approved, but the unlock failed. Try unlocking with your password."
+    "unlockFailed": "Approved, but the unlock failed. Try unlocking with your password.",
+    "emailLabel": "Email (optional)",
+    "emailPlaceholder": "name@example.com"
   },
   "notices": {
     "title": "Needs attention",

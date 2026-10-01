@@ -346,6 +346,12 @@ pub struct ProviderInfo {
     /// Backward-compat: absent in old providers.json => public default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_url: Option<String>,
+    /// The connected account's email as the provider reports it
+    /// (GitLab/Codeberg return it under our existing scopes; GitHub
+    /// hides it without the `user:email` scope, so `None` there).
+    /// Local-device data only — it never syncs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
     /// OAuth client_id override. `None` = project default app.
     /// Backward-compat: absent in old providers.json => project default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -801,6 +807,7 @@ pub mod mock {
                     connected_at: now,
                     instance_url: None,
                     client_id: None,
+                    email: None,
                 },
             ))
         }
@@ -816,6 +823,7 @@ pub mod mock {
                 connected_at: 0,
                 instance_url: None,
                 client_id: None,
+                email: None,
             })
         }
 

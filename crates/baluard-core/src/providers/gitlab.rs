@@ -368,6 +368,10 @@ impl ForgeProvider for GitLabProvider {
                 .as_str()
                 .ok_or_else(|| ProviderError::Api("missing username".into()))?
                 .to_string(),
+            // The `api` scope already covers the account email — no new
+            // consent needed (GitHub would need `user:email`, so it
+            // stays None there).
+            email: u["email"].as_str().map(|s| s.to_string()),
             scopes: token.scopes.clone(),
             connected_at: now_secs(),
             instance_url: self.config.instance_url.clone(),

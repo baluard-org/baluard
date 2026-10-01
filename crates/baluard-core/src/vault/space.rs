@@ -145,6 +145,7 @@ mod tests {
         MemberFile {
             id: Uuid::new_v4(),
             display_name: "M".into(),
+            email: None,
             role,
             trust: TrustLevel::Channel,
             identity_signing_pubkey: None,

@@ -65,6 +65,7 @@ export default function LoginScreen() {
   const [joinPassword, setJoinPassword] = createSignal("");
   const [joinConfirm, setJoinConfirm] = createSignal("");
   const [joinDeviceName, setJoinDeviceName] = createSignal("");
+  const [joinEmail, setJoinEmail] = createSignal("");
   const [introCode, setIntroCode] = createSignal("");
   const [joinBusy, setJoinBusy] = createSignal(false);
   // Slug captured at introduction time: polling must never float to
@@ -117,6 +118,7 @@ export default function LoginScreen() {
           code: joinCode().trim(),
           password: joinPassword(),
           device_name: joinDeviceName().trim() || "My device",
+          email: joinEmail().trim() || null,
         }),
       );
       setIntroCode(res.intro_code);
@@ -380,6 +382,16 @@ export default function LoginScreen() {
                     maxlength="64"
                     class="w-full mt-1 px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
                     placeholder={t("join.namePlaceholder")}
+                  />
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-[var(--color-muted)] uppercase tracking-wide">{t("join.emailLabel")}</label>
+                  <input
+                    value={joinEmail()}
+                    onInput={(e) => setJoinEmail(e.currentTarget.value)}
+                    maxlength="254"
+                    class="w-full mt-1 px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                    placeholder={t("join.emailPlaceholder")}
                   />
                 </div>
                 <button

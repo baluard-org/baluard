@@ -5058,6 +5058,7 @@ impl SyncEngine {
         if old_member.id != new_member.id
             || Some(new_member.id) != own
             || old_member.display_name != new_member.display_name
+            || old_member.email != new_member.email
             || old_member.role != new_member.role
             || old_member.trust != new_member.trust
         {
@@ -5503,6 +5504,55 @@ pub fn is_access_denied_error(e: &BaluardError) -> bool {
 #[cfg(feature = "git-sync")]
 mod tests {
     use super::*;
+
+    #[test]
+    fn member_email_delta_is_frozen() {
+        // Every own-subtree row rewrite must be a signed identity
+        // rotation (continuity + proof of possession), so the fixture is
+        // a real rotation with the email as the only varying field.
+        let id = uuid::Uuid::new_v4();
+        let (new_sk, new_vk) = crate::crypto::signature::generate_ed25519_keypair();
+        let old_key = hex::encode([7u8; 32]);
+        let new_key = hex::encode(new_vk.as_bytes());
+        let payload = crate::vault::members::identity_rotation_payload(&id, &new_key, &old_key);
+        let sig = hex::encode(
+            crate::crypto::signature::sign(&new_sk, &payload)
+                .unwrap()
+                .to_bytes(),
+        );
+        let row = |email: &str| {
+            serde_json::json!({
+                "id": id.to_string(),
+                "display_name": "Ed",
+                "email": email,
+                "role": "editor",
+                "trust": "channel",
+                "identity_signing_pubkey": new_key,
+                "identity_signing_pubkey_previous": old_key,
+                "identity_rotation_signature": sig,
+            })
+            .to_string()
+            .into_bytes()
+        };
+        let mut old_row = row("a@x.io");
+        // The OLD side carries the predecessor key (parse-only; the
+        // continuity rule reads it).
+        let old_json: serde_json::Value = serde_json::from_slice(&old_row).unwrap();
+        let mut old_json = old_json;
+        old_json["identity_signing_pubkey"] = serde_json::json!(old_key);
+        old_json["identity_signing_pubkey_previous"] = serde_json::Value::Null;
+        old_json["identity_rotation_signature"] = serde_json::Value::Null;
+        old_row = serde_json::to_vec(&old_json).unwrap();
+        // Same email: the rotation-shaped delta passes.
+        assert!(
+            SyncEngine::member_record_delta_ok(&old_row, &row("a@x.io"), Some(id), "dev").is_ok()
+        );
+        // An email swap is admin-owned: the member cannot silently
+        // become someone else's address in every peer's lists.
+        assert!(
+            SyncEngine::member_record_delta_ok(&old_row, &row("b@x.io"), Some(id), "dev").is_err()
+        );
+    }
 
     #[test]
     fn access_denied_classification_is_conservative() {

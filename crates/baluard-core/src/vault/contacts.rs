@@ -47,6 +47,11 @@ pub struct ContactCard {
     /// card).
     #[serde(default)]
     pub identity_wrap_pubkey: String,
+    /// Self-declared email (advisory). `None` on cards that skipped it;
+    /// the signed payload carries the line only when present so cards
+    /// signed before the field existed still verify.
+    #[serde(default)]
+    pub email: Option<String>,
     /// Unix timestamp of card creation.
     pub created_at: u64,
 }
@@ -63,6 +68,12 @@ impl ContactCard {
         payload.push(b'\n');
         payload.extend_from_slice(self.identity_wrap_pubkey.as_bytes());
         payload.push(b'\n');
+        // The email line rides the signature only when present, so
+        // cards signed before the field existed verify byte-exact.
+        if let Some(email) = &self.email {
+            payload.extend_from_slice(email.as_bytes());
+            payload.push(b'\n');
+        }
         payload.extend_from_slice(&self.created_at.to_le_bytes());
         payload
     }
@@ -97,6 +108,7 @@ impl SignedContactCard {
         display_name: &str,
         identity_signing_pubkey: &str,
         identity_wrap_pubkey: &str,
+        email: Option<&str>,
         created_at: u64,
         signing_key: &ed25519_dalek::SigningKey,
     ) -> Result<Self, BaluardError> {
@@ -110,10 +122,12 @@ impl SignedContactCard {
                 "card needs the identity wrap pubkey".into(),
             )));
         }
+        let email = crate::vault::members::normalize_email(email)?;
         let card = ContactCard {
             display_name: display_name.to_string(),
             identity_signing_pubkey: identity_signing_pubkey.to_string(),
             identity_wrap_pubkey: identity_wrap_pubkey.to_string(),
+            email,
             created_at,
         };
         let sig = signature::sign(signing_key, &card.payload())?;
@@ -361,6 +375,7 @@ mod tests {
             name,
             &hex::encode(vk.as_bytes()),
             &hex::encode(wrap.wrapping_pub_bytes()),
+            None,
             1_700_000_000,
             signing,
         )
@@ -418,6 +433,7 @@ mod tests {
         let vk = signing.verifying_key();
         let card = ContactCard {
             display_name: "A".into(),
+            email: None,
             identity_signing_pubkey: hex::encode(vk.as_bytes()),
             identity_wrap_pubkey: hex::encode([9u8; 32]),
             created_at: 1,

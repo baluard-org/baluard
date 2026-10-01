@@ -480,6 +480,10 @@ impl ForgeProvider for GitHubProvider {
         Ok(ProviderInfo {
             provider: Provider::GitHub,
             username: user.login,
+            // /user omits email without the `user:email` scope, which we
+            // deliberately do not request (re-consent + noreply reality);
+            // GitHub users type their email instead.
+            email: None,
             scopes: token.scopes.clone(),
             connected_at: now,
             instance_url: self.config.instance_url.clone(),

@@ -268,6 +268,9 @@ impl ForgeProvider for CodebergProvider {
                 .as_str()
                 .ok_or_else(|| ProviderError::Api("missing username".into()))?
                 .to_string(),
+            // The full-access token covers the account email (no scope
+            // concept on Forgejo); GitHub stays None without user:email.
+            email: u["email"].as_str().map(|s| s.to_string()),
             scopes: token.scopes.clone(),
             connected_at: now_secs(),
             instance_url: self.config.instance_url.clone(),

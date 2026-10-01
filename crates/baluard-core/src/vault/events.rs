@@ -41,6 +41,9 @@ pub enum ShareEventKind {
     AccessGranted,
     /// S3-6: a JIT access ask was denied.
     AccessDenied,
+    /// The admin corrected a member's self-declared email (the email
+    /// wave: the only admin-owned mutation of the frozen field).
+    MemberEmailChanged,
 }
 
 /// One activity entry: a machine-readable kind plus a human sentence

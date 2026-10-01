@@ -46,13 +46,20 @@ pub enum TrustLevel {
     AdminUnverified,
 }
 
-/// One member of the vault (plan-sharing §4.2). S1a shipped without the
-/// planned per-provider handle and optional email; add them here only when
-/// a feature needs them (they ride this file's serde defaults).
+/// One member of the vault (plan-sharing §4.2). The planned per-provider
+/// handle stays deferred until a feature needs it; the optional email
+/// arrived with the member-email wave (join-time self-declared, frozen
+/// after approval — the admin's out-of-band check at the gate that
+/// matters, never an authentication).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberFile {
     pub id: Uuid,
     pub display_name: String,
+    /// Self-declared at join, admin-correctable, then delta-frozen:
+    /// strictly decorative (disambiguation in lists), never used in
+    /// permissions or matching. `None` on legacy rows.
+    #[serde(default)]
+    pub email: Option<String>,
     pub role: MemberRole,
     pub trust: TrustLevel,
     /// S1a-4: the member's current identity signing pubkey (hex). `None`
@@ -267,6 +274,9 @@ pub fn reset_member(
     let successor = MemberFile {
         id: successor_id,
         display_name: old.display_name.clone(),
+        // The successor keeps the predecessor's self-declared email (the
+        // admin can correct it; the rejoin introduction can supersede).
+        email: old.email.clone(),
         role: old.role,
         trust: TrustLevel::Channel,
         identity_signing_pubkey: None,
@@ -729,6 +739,10 @@ pub struct Introduction {
     pub encryption_public_key: String,
     pub signing_public_key: String,
     pub display_name: String,
+    /// The joiner's self-declared email (advisory, delta-frozen after
+    /// approval). `None` on introductions that skipped it.
+    #[serde(default)]
+    pub email: Option<String>,
     /// S1a-3: the joiner's identity-signed contact card (trust dial).
     #[serde(default)]
     pub contact_card: Option<crate::vault::contacts::SignedContactCard>,
@@ -964,6 +978,8 @@ pub struct JoinRequest {
     pub invite_id: Uuid,
     pub device_id: Uuid,
     pub display_name: String,
+    #[serde(default)]
+    pub email: Option<String>,
     /// Whether the request's secret matches a live pending invite's
     /// hash. Display-only: approval re-verifies through the standard
     /// path regardless.
@@ -1050,6 +1066,7 @@ pub fn list_requests(vault_path: &Path) -> Result<(Vec<JoinRequest>, usize), Bal
             invite_id: intro.invite_id,
             device_id: intro.device_id,
             display_name: intro.display_name.clone(),
+            email: intro.email.clone(),
             secret_ok,
         });
     }
@@ -1163,6 +1180,37 @@ pub fn update_member_unlock_identity_seed(
     .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write member unlock: {e}"))))
 }
 
+/// Validate a self-declared email: trimmed, single-line, no spaces or
+/// control characters, must contain one `@` with text on both sides,
+/// RFC length caps. Advisory data — the shape check keeps it renderable
+/// and sortable, it proves nothing about mailbox ownership. `None` for
+/// empty/whitespace input.
+pub fn normalize_email(raw: Option<&str>) -> Result<Option<String>, BaluardError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.contains(['\n', '\r', '\t'])
+        || trimmed.chars().any(char::is_control)
+        || trimmed.contains(' ')
+        || trimmed.len() > 254
+    {
+        return Err(BaluardError::from(VaultError::InvalidOperation(
+            "that does not look like an email address".into(),
+        )));
+    }
+    let parts: Vec<&str> = trimmed.split('@').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return Err(BaluardError::from(VaultError::InvalidOperation(
+            "that does not look like an email address".into(),
+        )));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
 /// Joiner: introduce yourself to a cloned vault. Verifies the invite
 /// code against the repo-side pending record, then writes DEVICE-LOCAL
 /// unlock material (own password, own device keys, own KDF salt). No
@@ -1175,6 +1223,21 @@ pub fn create_introduction(
     password: &str,
     device_name: &str,
 ) -> Result<String, BaluardError> {
+    create_introduction_with_email(vault_path, code, password, device_name, None)
+}
+
+/// Joiner: introduce yourself, declaring an email (advisory, shown to
+/// the approving admin and frozen into the member row at approval).
+pub fn create_introduction_with_email(
+    vault_path: &Path,
+    code: &str,
+    password: &str,
+    device_name: &str,
+    email: Option<&str>,
+) -> Result<String, BaluardError> {
+    // Deterministic refusals first: a bad email must not consume the
+    // one-time invite.
+    let email = normalize_email(email)?;
     let code_bytes = b64_decode(code)?;
     let invite_json = std::str::from_utf8(&code_bytes)
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("bad code: {e}"))))?;
@@ -1252,6 +1315,17 @@ pub fn create_introduction(
     )
     .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write member unlock: {e}"))))?;
 
+    let contact_card = crate::vault::contacts::SignedContactCard::sign(
+        device_name,
+        &identity_vk_hex,
+        &hex::encode(identity.wrapping_pub_bytes()),
+        email.as_deref(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        identity.signing_key(),
+    )?;
     let intro = Introduction {
         vault_id: invite.vault_id,
         invite_id: invite.invite_id,
@@ -1260,16 +1334,8 @@ pub fn create_introduction(
         encryption_public_key: hex::encode(x25519_public.as_bytes()),
         signing_public_key: hex::encode(ed25519_verifying.as_bytes()),
         display_name: device_name.to_string(),
-        contact_card: Some(crate::vault::contacts::SignedContactCard::sign(
-            device_name,
-            &identity_vk_hex,
-            &hex::encode(identity.wrapping_pub_bytes()),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            identity.signing_key(),
-        )?),
+        email,
+        contact_card: Some(contact_card),
         // S1a-3: the identity key signs the device-key payload, binding
         // the introduced device to the verified identity (the gate for
         // elevated roles).
@@ -1638,6 +1704,26 @@ mod tests {
     }
 
     #[test]
+    fn normalize_email_shapes() {
+        assert_eq!(
+            normalize_email(Some("  Bob@Example.IO ")).unwrap(),
+            Some("Bob@Example.IO".to_string())
+        );
+        assert_eq!(normalize_email(Some("   ")).unwrap(), None);
+        assert_eq!(normalize_email(None).unwrap(), None);
+        for bad in [
+            "no-at-sign",
+            "two@@ats.io",
+            "has space@x.io",
+            "newline@x.io\nmore",
+            "@local-only.io",
+            "nodomain@",
+        ] {
+            assert!(normalize_email(Some(bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn create_invite_respects_pair_space_policy() {
         let temp = tempfile::tempdir().unwrap();
         let vault = temp.path();
@@ -1653,6 +1739,7 @@ mod tests {
         let owner = MemberFile {
             id: Uuid::new_v4(),
             display_name: "Owner".into(),
+            email: None,
             role: MemberRole::Owner,
             trust: TrustLevel::SelfTrust,
             identity_signing_pubkey: None,
@@ -1677,6 +1764,7 @@ mod tests {
         let member = MemberFile {
             id: Uuid::new_v4(),
             display_name: "Pair".into(),
+            email: None,
             role: MemberRole::Editor,
             trust: TrustLevel::Channel,
             identity_signing_pubkey: None,
@@ -1711,6 +1799,7 @@ mod tests {
         let owner = MemberFile {
             id: Uuid::new_v4(),
             display_name: "Owner".into(),
+            email: None,
             role: MemberRole::Owner,
             trust: TrustLevel::SelfTrust,
             identity_signing_pubkey: None,
@@ -1725,6 +1814,7 @@ mod tests {
         let partner = MemberFile {
             id: Uuid::new_v4(),
             display_name: "Partner".into(),
+            email: None,
             role: MemberRole::Editor,
             trust: TrustLevel::Channel,
             identity_signing_pubkey: None,

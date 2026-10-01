@@ -900,6 +900,7 @@ async fn unlock_sweeps_expired_grants_and_route_can_invoke() {
     let row = baluard_core::vault::members::MemberFile {
         id: member,
         display_name: "Contractor".into(),
+        email: None,
         role: baluard_core::vault::members::MemberRole::Editor,
         trust: baluard_core::vault::members::TrustLevel::Verified,
         identity_signing_pubkey: None,
@@ -984,6 +985,7 @@ async fn collections_state_lifecycle_and_locked_rejection() {
         &baluard_core::vault::members::MemberFile {
             id: member,
             display_name: "Alicia".into(),
+            email: None,
             role: baluard_core::vault::members::MemberRole::Editor,
             trust: baluard_core::vault::members::TrustLevel::Verified,
             identity_signing_pubkey: None,
@@ -2234,6 +2236,7 @@ async fn space_settings_lifecycle_and_locked_rejection() {
         let member = MemberFile {
             id: uuid::Uuid::new_v4(),
             display_name: "Struck viewer".into(),
+            email: None,
             role: baluard_core::vault::members::MemberRole::Viewer,
             trust: TrustLevel::Channel,
             identity_signing_pubkey: None,
@@ -2716,6 +2719,7 @@ fn rebind_device(
     let member = MemberFile {
         id: uuid::Uuid::new_v4(),
         display_name: "Test Member".into(),
+        email: None,
         role,
         trust: TrustLevel::Channel,
         identity_signing_pubkey: carried_pubkey,
@@ -3039,7 +3043,8 @@ async fn join_introduce_validates_consumes_and_polls() {
                 "slug": slug,
                 "code": code,
                 "password": "joiner-pass-123",
-                "device_name": "Joiner Device"
+                "device_name": "Joiner Device",
+                "email": "joiner@example.com"
             }),
         ),
         &host,
@@ -3057,6 +3062,13 @@ async fn join_introduce_validates_consumes_and_polls() {
             .unwrap_or_default()
             .is_empty()
     );
+
+    // The claimed email rides the introduction (the queue row and the
+    // approval screen surface it).
+    let intro =
+        baluard_core::vault::members::Introduction::decode(payload["intro_code"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(intro.email.as_deref(), Some("joiner@example.com"));
 
     // Re-introducing the consumed invite fails.
     let resp = route_host_request(

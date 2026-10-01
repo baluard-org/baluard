@@ -151,6 +151,6 @@ open class StubVault(
     override suspend fun `collectionRequestsMine`(): String = err()
     override suspend fun `collectionRequestsWithdraw`(payload: String): String = err()
     override suspend fun `collectionsList`(): String = err()
-    override suspend fun `joinIntroduce`(code: String, password: String, deviceName: String): String = err()
+    override suspend fun `joinIntroduce`(code: String, password: String, deviceName: String, email: String?): String = err()
     override suspend fun `joinPoll`(): String = err()
 }
