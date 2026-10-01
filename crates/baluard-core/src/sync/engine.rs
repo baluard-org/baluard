@@ -5692,6 +5692,103 @@ mod tests {
     /// and clone from a provider-hinted source. file:// is permitted under
     /// #[cfg(test)], so a local repo stands in for a remote provider.
     #[test]
+    fn fresh_cloned_history_passes_signature_walk() {
+        // Regression (demo-vault phone clone): a vault created entirely by
+        // the current build must clone clean. The P2 walk runs over the
+        // whole fetched history, so any unsigned enrolled-era commit
+        // refuses at clone time.
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("walk_vault");
+        let (_handle, _secrets) = crate::vault::creation::VaultCreator::new(
+            &path,
+            "walk-test-pass",
+            "WalkDevice",
+        )
+        .kdf_profile(crate::types::KdfProfile::MobileLow)
+        .execute()
+        .unwrap();
+
+        // Bare stand-in for the provider remote; push the signed history.
+        let bare = tempfile::tempdir().unwrap();
+        git2::Repository::init_bare(bare.path()).unwrap();
+        let vengine = SyncEngine::new(&path, "walk-device", None);
+        let vrepo = vengine.open_repo().unwrap();
+        vrepo
+            .remote(
+                "origin",
+                &format!("file://{}", bare.path().display()),
+            )
+            .unwrap();
+        vrepo
+            .find_remote("origin")
+            .unwrap()
+            .push(&["refs/heads/main"], None)
+            .unwrap();
+
+        // The clone path runs verify_fetched_history internally.
+        let clone_dir = tempfile::tempdir().unwrap();
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(
+            CloneProgress::default(),
+        ));
+        SyncEngine::clone_remote(
+            &format!("file://{}", bare.path().display()),
+            clone_dir.path(),
+            Some(crate::providers::types::Provider::GitHub),
+            progress,
+        )
+        .expect("fresh signed history must pass the clone signature walk");
+
+        // Negative: an unsigned commit riding the enrolled history refuses.
+        let neg_dir = tempfile::tempdir().unwrap();
+        let rogue = git2::Repository::clone(
+            &format!("file://{}", bare.path().display()),
+            neg_dir.path(),
+        )
+        .unwrap();
+        {
+            let mut index = rogue.index().unwrap();
+            std::fs::write(neg_dir.path().join("rogue.txt"), b"x").unwrap();
+            index.add_path(std::path::Path::new("rogue.txt")).unwrap();
+            index.write().unwrap();
+            let tree_id = index.write_tree().unwrap();
+            let tree = rogue.find_tree(tree_id).unwrap();
+            let sig = git2::Signature::now("Rogue", "rogue@example.com").unwrap();
+            let parent = rogue.head().unwrap().peel_to_commit().unwrap();
+            rogue
+                .commit(
+                    Some("HEAD"),
+                    &sig,
+                    &sig,
+                    "unsigned",
+                    &tree,
+                    &[&parent],
+                )
+                .unwrap();
+        }
+        rogue
+            .find_remote("origin")
+            .unwrap()
+            .push(&["refs/heads/main"], None)
+            .unwrap();
+        drop(rogue);
+
+        let clone2 = tempfile::tempdir().unwrap();
+        let progress2 = std::sync::Arc::new(std::sync::Mutex::new(
+            CloneProgress::default(),
+        ));
+        let result = SyncEngine::clone_remote(
+            &format!("file://{}", bare.path().display()),
+            clone2.path(),
+            Some(crate::providers::types::Provider::GitHub),
+            progress2,
+        );
+        assert!(
+            result.is_err(),
+            "unsigned enrolled-era commit must refuse at clone"
+        );
+    }
+
+    #[test]
     fn clone_remote_updates_progress() {
         let (dir, engine) = make_test_repo();
         std::fs::write(dir.path().join("cipher.enc"), b"\x01\x02\x03").unwrap();

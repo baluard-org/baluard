@@ -502,7 +502,9 @@ seed-demo: build-release
 
 	# Look up a folder id by name from the current vault's folder list.
 	map_folder_id() {
-		baluard folders list | awk -v name="$1" '$0 ~ name { print $1; exit }'
+		# awk must drain the pipe: an early `exit` closes it and the CLI
+		# panics on EPIPE (Rust ignores SIGPIPE).
+		baluard folders list | awk -v name="$1" '$0 ~ name && !found { print $1; found = 1 }'
 	}
 
 	# Inject a folder id into a passkey fixture and add it as JSON.
