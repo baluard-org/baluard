@@ -6,6 +6,7 @@ import { consumeVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { toastError, toastWarning } from "./toastSignal.js";
 import { setTheme as setAppTheme } from "./themeSignal.js";
 import { makeTransitionGuard } from "../lib/transitionGuard.js";
+import { clearHeldPhrase } from "../lib/heldPhrase.js";
 
 const VaultContext = createContext(null);
 
@@ -79,6 +80,9 @@ function VaultProvider(props) {
     setSelectedCollection(null);
     setSearchQuery("");
     setActivePane("welcome");
+    // A shown-once phrase held for one vault must never resurface on
+    // another; the ceremony re-holds it if the user switches back.
+    clearHeldPhrase();
     // Vault-scoped data must not bleed across switches: stale admin
     // state would show admin controls on a member vault (and the ask
     // button on an admin vault) until the refresh lands.

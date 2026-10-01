@@ -409,12 +409,16 @@ impl VaultHandle {
     /// sync row, so every admin device sees the ask on its next pull.
     fn quorum_gate(&self, kind: &str, params: &serde_json::Value) -> Result<(), BaluardError> {
         let required = self.get_settings()?.quorum_admin_ops.unwrap_or(1).max(1);
-        if required <= 1 {
-            // The knob dropped below the ask: nothing stays pending.
-            crate::vault::approvals::consume_matching(&self.path, kind, params);
-            return Ok(());
-        }
+        // The role gate runs at EVERY threshold: the required<=1 early
+        // return used to skip it, which made root rotation (via the new
+        // space.rotate_root surface) available to any unlocked session at
+        // the default knob — a latent hole the surface exposed
+        // (2026-10-01 fix-7 review). Legacy founder: no member directory
+        // means the founding device is the admin by construction.
         if !self.path.join(crate::vault::members::MEMBERS_DIR).exists() {
+            if required <= 1 {
+                crate::vault::approvals::consume_matching(&self.path, kind, params);
+            }
             return Ok(());
         }
         let is_admin = matches!(
@@ -426,6 +430,11 @@ impl VaultHandle {
             return Err(
                 VaultError::InvalidOperation("only admins can approve this change".into()).into(),
             );
+        }
+        if required <= 1 {
+            // The knob dropped below the ask: nothing stays pending.
+            crate::vault::approvals::consume_matching(&self.path, kind, params);
+            return Ok(());
         }
         let Some(member_id) =
             crate::vault::members::member_id_for_device(&self.path, self.device_id)
@@ -459,6 +468,18 @@ impl VaultHandle {
             Some(op) => (op.initiated_at, false),
             None => (now, false),
         };
+        // The ask's nonce binds every signature to one concrete record:
+        // confirming signs the record's own nonce; a fresh (or stale-
+        // consumed) ask mints a new one, so a consumed record's harvested
+        // signatures never verify against the re-raise.
+        let ask_nonce = match existing.as_ref().filter(|_| !stale) {
+            Some(op) => op.nonce.clone().unwrap_or_default(),
+            None => {
+                let mut b = [0u8; 16];
+                rand::Rng::fill(&mut rand::rngs::OsRng, &mut b);
+                hex::encode(b)
+            }
+        };
         if stale {
             crate::vault::approvals::consume_matching(&self.path, kind, params);
         }
@@ -467,7 +488,13 @@ impl VaultHandle {
                 "this device cannot sign approvals; unlock with your identity".into(),
             )
         })?;
-        let msg = crate::vault::approvals::approval_message(kind, &digest, self.vault_id, ask_time);
+        let msg = crate::vault::approvals::approval_message(
+            kind,
+            &digest,
+            self.vault_id,
+            ask_time,
+            &ask_nonce,
+        );
         let sig = hex::encode(
             crate::crypto::signature::sign(identity.signing_key(), &msg)
                 .map_err(BaluardError::Crypto)?
@@ -477,41 +504,49 @@ impl VaultHandle {
             member: member_id,
             sig,
         };
-        let verify_entry = |candidate: &crate::vault::approvals::ApprovalEntry| -> bool {
-            let Some(row) = crate::vault::members::member_file_by_id(&self.path, candidate.member)
-            else {
-                return false;
-            };
-            // Only live Owner/Admin rows count toward an admin quorum:
-            // a Viewer's yes or an evicted admin's old key never does.
-            if !matches!(
-                row.role,
-                crate::vault::members::MemberRole::Owner | crate::vault::members::MemberRole::Admin
-            ) || row.reset.is_some()
-                || row.removed.is_some()
-            {
-                return false;
-            }
-            let Some(pub_hex) = row.identity_signing_pubkey.as_deref() else {
-                return false;
-            };
-            let (Ok(pk_bytes), Ok(sig_bytes)) = (hex::decode(pub_hex), hex::decode(&candidate.sig))
-            else {
-                return false;
-            };
-            let (Ok(pk_arr), Ok(sig_arr)) = (
-                <[u8; 32]>::try_from(pk_bytes.as_slice()),
-                <[u8; 64]>::try_from(sig_bytes.as_slice()),
-            ) else {
-                return false;
-            };
-            let Ok(pk) = crate::crypto::signature::verifying_key_from_bytes(&pk_arr) else {
-                return false;
-            };
-            let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
-            crate::crypto::signature::verify(&pk, &msg, &sig).is_ok()
+        let verify_entry = crate::vault::approvals::EntryVerifier {
+            nonce: ask_nonce.clone(),
+            verify: Box::new(
+                |candidate: &crate::vault::approvals::ApprovalEntry| -> bool {
+                    let Some(row) =
+                        crate::vault::members::member_file_by_id(&self.path, candidate.member)
+                    else {
+                        return false;
+                    };
+                    // Only live Owner/Admin rows count toward an admin quorum:
+                    // a Viewer's yes or an evicted admin's old key never does.
+                    if !matches!(
+                        row.role,
+                        crate::vault::members::MemberRole::Owner
+                            | crate::vault::members::MemberRole::Admin
+                    ) || row.reset.is_some()
+                        || row.removed.is_some()
+                    {
+                        return false;
+                    }
+                    let Some(pub_hex) = row.identity_signing_pubkey.as_deref() else {
+                        return false;
+                    };
+                    let (Ok(pk_bytes), Ok(sig_bytes)) =
+                        (hex::decode(pub_hex), hex::decode(&candidate.sig))
+                    else {
+                        return false;
+                    };
+                    let (Ok(pk_arr), Ok(sig_arr)) = (
+                        <[u8; 32]>::try_from(pk_bytes.as_slice()),
+                        <[u8; 64]>::try_from(sig_bytes.as_slice()),
+                    ) else {
+                        return false;
+                    };
+                    let Ok(pk) = crate::crypto::signature::verifying_key_from_bytes(&pk_arr) else {
+                        return false;
+                    };
+                    let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+                    crate::crypto::signature::verify(&pk, &msg, &sig).is_ok()
+                },
+            ),
         };
-        if !verify_entry(&entry) {
+        if !(verify_entry.verify)(&entry) {
             return Err(VaultError::InvalidOperation(
                 "this device's identity does not match its member record; unlock again before approving"
                     .into(),
@@ -537,6 +572,12 @@ impl VaultHandle {
             crate::vault::approvals::ApprovalOutcome::AlreadyApproved => {
                 Err(VaultError::InvalidOperation(
                     "you already approved this change — a different admin must confirm it".into(),
+                )
+                .into())
+            }
+            crate::vault::approvals::ApprovalOutcome::Consumed => {
+                Err(VaultError::InvalidOperation(
+                    "this exact ask was already executed; raise a fresh one".into(),
                 )
                 .into())
             }
@@ -2093,7 +2134,172 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        crate::vault::collections::sweep_expired_grants(&self.path, self.unlocked().sgk()?)
+        let sgk = self.unlocked().sgk()?.clone();
+        // Converge a crash-interrupted sweep first: rotations recorded on
+        // the pending marker are carried only when the live def actually
+        // holds the new CK (a rotation whose def never flipped is dropped —
+        // its files are still old-keyed and the fresh sweep below will
+        // rotate again). The marker clears only after the carry pass.
+        let pending_rotations = crate::vault::collections::read_sweep_pending(&self.path);
+        if !pending_rotations.is_empty() {
+            for rot in &pending_rotations {
+                let flipped = crate::vault::collections::open_collection(
+                    &self.path,
+                    &sgk,
+                    &rot.collection_id,
+                )
+                .ok()
+                .and_then(|(def, _)| {
+                    crate::vault::collections::unwrap_ck(&def, &sgk)
+                        .ok()
+                        .map(|ck| ck.as_ref() == rot.new_ck.as_ref())
+                })
+                .unwrap_or(false);
+                if flipped {
+                    self.reencrypt_after_sweep(rot);
+                }
+            }
+            crate::vault::collections::clear_sweep_pending(&self.path);
+        }
+        let swept = crate::vault::collections::sweep_expired_grants(&self.path, &sgk)?;
+        // Carry each key rotation into the entry files. Their item keys
+        // derive from the CK (S3-7c path-derived domains), so a rotated CK
+        // without this pass destroys every entry in the collection.
+        for rot in &swept.rotations {
+            self.reencrypt_after_sweep(rot);
+        }
+        crate::vault::collections::clear_sweep_pending(&self.path);
+        Ok(swept.removed)
+    }
+
+    /// Re-encrypt every entry and trash item under one swept collection's
+    /// directory from the outgoing CK's item key to the new CK's, at the
+    /// envelope's own epoch and seq (content unchanged). Per-file
+    /// best-effort: one corrupt entry must not wedge the sweep — it is
+    /// named loudly and left behind instead.
+    fn reencrypt_after_sweep(&self, rot: &crate::vault::collections::SweptRotation) {
+        let Some(dir) = &rot.dir else {
+            return;
+        };
+        for sub in ["ciphers", "trash"] {
+            let dir_path = self.path.join(sub).join(dir);
+            let Ok(entries) = std::fs::read_dir(&dir_path) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("enc") {
+                    continue;
+                }
+                let result = self.reencrypt_one_after_sweep(rot, &path);
+                if let Err(e) = result {
+                    eprintln!(
+                        "sweep: could not carry {} into the collection's new key ({e}); the entry is left behind",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    fn reencrypt_one_after_sweep(
+        &self,
+        rot: &crate::vault::collections::SweptRotation,
+        path: &std::path::Path,
+    ) -> Result<(), BaluardError> {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| VaultError::Corrupt("entry path has no name".into()))?;
+        let cipher_id: Uuid = stem
+            .parse()
+            .map_err(|e| VaultError::Corrupt(format!("entry name is not an id: {e}")))?;
+        let envelope_bytes = std::fs::read(path)?;
+        let envelope = crate::vault::envelope::deserialize(&envelope_bytes)?;
+        let key_epoch = envelope.header.key_epoch;
+        let old_item = crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
+            &rot.old_ck,
+            cipher_id,
+            key_epoch,
+        );
+        let file = crate::vault::cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes,
+        };
+        let mut existing =
+            crate::vault::cipher::decrypt_cipher(self.vault_id, cipher_id, &file, &old_item)?;
+        let input = CipherInput {
+            name: existing.name.clone(),
+            folder_id: existing.folder_id,
+            collection_id: None,
+            kind: existing.kind.clone(),
+            favorite: existing.favorite,
+            reprompt: existing.reprompt,
+            notes: existing.notes.clone(),
+            custom_fields: existing.custom_fields.clone(),
+            created_at: Some(existing.created_at),
+            password_history: existing.password_history.clone(),
+            attachments: existing.attachments.clone(),
+            archived: existing.archived,
+            tags: existing.tags.clone(),
+        };
+        let new_item = crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
+            &rot.new_ck,
+            cipher_id,
+            key_epoch,
+        );
+        // Attachment blobs are encrypted with the cipher's item key, so
+        // they ride the same CK rotation (the mirror of the rotation
+        // twins' attachment block — without this every blob is stranded).
+        for attach_meta in &existing.attachments {
+            let attach_path = self
+                .path
+                .join("entries")
+                .join(cipher_id.to_string())
+                .join("attachments")
+                .join(format!("{}.enc", attach_meta.id));
+            if !attach_path.exists() {
+                continue;
+            }
+            let attach_uuid: Uuid = attach_meta
+                .id
+                .parse()
+                .map_err(|e| VaultError::Corrupt(format!("attachment id not a uuid: {e}")))?;
+            let enc_blob = std::fs::read(&attach_path)?;
+            let mut plaintext = crate::vault::attachment::decrypt_attachment(
+                self.vault_id,
+                cipher_id,
+                attach_uuid,
+                old_item.as_bytes(),
+                &enc_blob,
+            )?;
+            let new_enc = crate::vault::attachment::encrypt_attachment(
+                self.vault_id,
+                cipher_id,
+                attach_uuid,
+                new_item.as_bytes(),
+                &plaintext,
+                key_epoch,
+                existing.update_seq,
+            )?;
+            plaintext.zeroize();
+            let attach_tmp = attach_path.with_extension("enc.tmp");
+            std::fs::write(&attach_tmp, &new_enc)?;
+            std::fs::rename(&attach_tmp, &attach_path)?;
+        }
+        let new_file = crate::vault::cipher::encrypt_cipher(
+            self.vault_id,
+            cipher_id,
+            &input,
+            &new_item,
+            key_epoch,
+            existing.update_seq,
+        )?;
+        Self::zeroize_decrypted_cipher(&mut existing);
+        let tmp_path = path.with_extension("enc.tmp");
+        std::fs::write(&tmp_path, &new_file.envelope_bytes)?;
+        std::fs::rename(&tmp_path, path)?;
+        Ok(())
     }
 
     // ── S3-7a: Space Meta Key groundwork ──
@@ -2118,7 +2324,13 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        crate::vault::space_meta::status(&self.path, self.unlocked().root()?)
+        let mut st = crate::vault::space_meta::status(&self.path, self.unlocked().root()?)?;
+        // S3-7b completion: the rotation reminder is PERSISTENT — a flip
+        // without a following rotation leaves pre-flip members' historical
+        // keywraps able to unwrap the current root, so status says so
+        // until an epoch bump proves the rotation ran.
+        st.needs_rotation = st.flipped_epoch == Some(self.unlocked().current_epoch);
+        Ok(st)
     }
 
     /// S3-7b: flip the vault to team shape. After this commit:
@@ -2205,7 +2417,7 @@ impl VaultHandle {
         // Point of no return: the marker switches every device's unlock
         // and meta derivation. Files converge after (crash-safe: the next
         // admin unlock re-runs convergence).
-        crate::vault::space_meta::write_shape_marker(&self.path)?;
+        crate::vault::space_meta::write_shape_marker(&self.path, self.unlocked().current_epoch)?;
         let smk = crate::vault::space_meta::open_store(&self.path, self.unlocked().root()?)?;
         self.unlocked_mut().smk = Some(smk);
 
@@ -2252,6 +2464,16 @@ impl VaultHandle {
     /// S3-7b: whether this device belongs to an Owner/Admin member (or
     /// to no member row — legacy/founding devices are admin-equivalent).
     fn device_maps_to_admin(&self, dev_id: Uuid) -> bool {
+        // Legacy founder: no member directory at all — the founding device
+        // is the admin by construction. With a directory present, ANY
+        // unresolvable device (no binding, tombstoned row, ambiguous
+        // bindings) is NOT admin-mapped: the unwrap_or(true) fallback here
+        // let a reset admin's tombstoned resolution ride the admin unlock
+        // path again (the 2026-10-01 fix round; same class as the
+        // bc38e16 tombstone fix).
+        if !self.path.join(crate::vault::members::MEMBERS_DIR).exists() {
+            return true;
+        }
         crate::vault::members::member_id_for_device(&self.path, dev_id)
             .and_then(|m| {
                 crate::vault::members::list_members(&self.path)
@@ -2273,7 +2495,7 @@ impl VaultHandle {
                         })
                     })
             })
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     /// Delete the device keywraps of non-admin members' devices (S3-7b:
@@ -2806,7 +3028,20 @@ impl VaultHandle {
             .map(|s| s.prepared)
             .unwrap_or(false)
         {
-            let _ = crate::vault::space_meta::rotate(&self.path, self.unlocked().root()?);
+            // Crash recovery: record the OUTGOING SMK before the store
+            // flips, so a crash between the rotation and the meta re-seal
+            // converges at the next admin unlock. Local-only, gitignored,
+            // carries the retired key until the re-seal is confirmed.
+            if let Some(old_smk) = self.unlocked().smk.clone() {
+                let _ = crate::vault::space_meta::write_smk_pending(&self.path, &old_smk);
+            }
+            if let Ok((_, new_smk)) =
+                crate::vault::space_meta::rotate(&self.path, self.unlocked().root()?)
+            {
+                if self.reseal_meta_after_smk_rotate(new_smk) {
+                    crate::vault::space_meta::clear_smk_pending(&self.path);
+                }
+            }
         }
         let new_epoch = match &self.state {
             VaultState::Unlocked(u) => u.current_epoch,
@@ -3933,6 +4168,133 @@ impl VaultHandle {
         self.strip_member_keywraps();
     }
 
+    /// Re-seal the member-visible meta artifacts under a freshly rotated
+    /// SMK and adopt that SMK in memory. The load pass runs while the
+    /// OUTGOING SMK is still in `u.smk` (the files are old-keyed); the
+    /// save pass runs after the swap, so everything re-seals under the
+    /// new key. Returns false when any re-save failed — the caller keeps
+    /// the pending marker so the next admin unlock retries the heal.
+    fn reseal_meta_after_smk_rotate(&mut self, new_smk: zeroize::Zeroizing<[u8; 32]>) -> bool {
+        let folders = self.list_folders().ok();
+        let tags = self.list_tags().ok();
+        let profile = self.load_profile().ok();
+        let settings = self.get_settings().ok();
+        let contacts = self.load_contacts().ok();
+        let avatar_path = self.path.join("meta/avatar.enc");
+        let avatar_bytes = avatar_path
+            .exists()
+            .then(|| std::fs::read(&avatar_path).ok())
+            .flatten()
+            .and_then(|blob| self.decrypt_avatar_blob(&blob).ok());
+        if let VaultState::Unlocked(u) = &mut self.state {
+            u.smk = Some(new_smk);
+        }
+        let mut ok = true;
+        if let Some(f) = folders {
+            ok &= self.save_folders(&f).is_ok();
+        }
+        if let Some(names) = tags {
+            let index = crate::vault::manifest::TagIndex {
+                tags: names,
+                updated_at: crate::vault::templates::now_secs(),
+            };
+            ok &= self.save_tags_enc(&index).is_ok();
+        }
+        if let Some(p) = profile {
+            ok &= self.save_profile(&p).is_ok();
+        }
+        if let Some(s) = settings {
+            ok &= self.save_settings(&s).is_ok();
+        }
+        if let Some(c) = contacts {
+            ok &= self.save_contacts(&c).is_ok();
+        }
+        if let Some(bytes) = avatar_bytes {
+            if let Ok(key) = self.derive_avatar_key() {
+                if let Ok(new_blob) =
+                    crate::vault::avatar::encrypt_avatar(&zeroize::Zeroizing::new(key), &bytes)
+                {
+                    ok &= super::write_vault_file(&avatar_path, &new_blob).is_ok();
+                }
+            }
+        }
+        ok
+    }
+
+    /// Unlock-tail heal for a removal's interrupted SMK rotation: the
+    /// pending marker carries the OUTGOING SMK, so the old-keyed meta
+    /// files load under it and re-seal under the current one. Any load
+    /// or save failure keeps the marker for the next attempt.
+    fn heal_smk_pending_after_unlock(&mut self) {
+        let Some(old_hex) = crate::vault::space_meta::read_smk_pending(&self.path) else {
+            return;
+        };
+        let old = match hex::decode(&old_hex)
+            .ok()
+            .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+        {
+            Some(arr) => zeroize::Zeroizing::new(arr),
+            None => {
+                crate::vault::space_meta::clear_smk_pending(&self.path);
+                return;
+            }
+        };
+        let saved = match &mut self.state {
+            VaultState::Unlocked(u) => u.smk.replace(old),
+            VaultState::Locked => return,
+        };
+        let folders = self.list_folders().ok();
+        let tags = self.list_tags().ok();
+        let profile = self.load_profile().ok();
+        let settings = self.get_settings().ok();
+        let contacts = self.load_contacts().ok();
+        let avatar_path = self.path.join("meta/avatar.enc");
+        let avatar_bytes = avatar_path
+            .exists()
+            .then(|| std::fs::read(&avatar_path).ok())
+            .flatten()
+            .and_then(|blob| self.decrypt_avatar_blob(&blob).ok());
+        if let VaultState::Unlocked(u) = &mut self.state {
+            u.smk = saved;
+        }
+        let mut ok = folders.is_some()
+            || tags.is_some()
+            || profile.is_some()
+            || settings.is_some()
+            || contacts.is_some();
+        if let Some(f) = folders {
+            ok &= self.save_folders(&f).is_ok();
+        }
+        if let Some(names) = tags {
+            let index = crate::vault::manifest::TagIndex {
+                tags: names,
+                updated_at: crate::vault::templates::now_secs(),
+            };
+            ok &= self.save_tags_enc(&index).is_ok();
+        }
+        if let Some(p) = profile {
+            ok &= self.save_profile(&p).is_ok();
+        }
+        if let Some(s) = settings {
+            ok &= self.save_settings(&s).is_ok();
+        }
+        if let Some(c) = contacts {
+            ok &= self.save_contacts(&c).is_ok();
+        }
+        if let Some(bytes) = avatar_bytes {
+            if let Ok(key) = self.derive_avatar_key() {
+                if let Ok(new_blob) =
+                    crate::vault::avatar::encrypt_avatar(&zeroize::Zeroizing::new(key), &bytes)
+                {
+                    ok &= super::write_vault_file(&avatar_path, &new_blob).is_ok();
+                }
+            }
+        }
+        if ok {
+            crate::vault::space_meta::clear_smk_pending(&self.path);
+        }
+    }
+
     pub fn unlock_with_kek(&mut self, kek: &[u8; 32]) -> Result<(), BaluardError> {
         self.unlock_tail(kek, None)
     }
@@ -4124,6 +4486,10 @@ impl VaultHandle {
             // file re-encryption leaves old-keyed files behind. Heal them
             // now (read with the Root Key derivation, re-save under the
             // new one), so the post-unlock session never sees a mix.
+            // A removal's interrupted SMK rotation heals before the flip
+            // convergence (the marker's outgoing key opens the stranded
+            // meta; both then re-seal under the live key).
+            self.heal_smk_pending_after_unlock();
             self.converge_meta_after_flip();
         }
 
@@ -7914,7 +8280,19 @@ impl VaultHandle {
                 new_epoch,
                 &new_root_key,
             )?;
-            let mut existing = self.try_decrypt_cipher_at(unlocked, &file_path, &file)?;
+            // A corrupt entry must not abort the rotation mid-offboarding:
+            // after the tombstone there is no retry, so the damaged file is
+            // named loudly and left behind instead (2026-10-01 review).
+            let mut existing = match self.try_decrypt_cipher_at(unlocked, &file_path, &file) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "rotation: could not decrypt {} ({e}); the entry is left behind at the old key",
+                        file_path.display()
+                    );
+                    continue;
+                }
+            };
 
             // P4: re-encrypt attachment blobs with the new item key (mirrors
             // revoke_device_and_rekey). Attachments live outside the cipher
@@ -8527,7 +8905,18 @@ impl VaultHandle {
                 new_epoch,
                 &new_root_key,
             )?;
-            let mut existing = self.try_decrypt_cipher_at(unlocked, &file_path, &file)?;
+            // Same corrupt-entry skip as the twin loop above: one garbage
+            // file must not brick a removal's rotation.
+            let mut existing = match self.try_decrypt_cipher_at(unlocked, &file_path, &file) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "rotation: could not decrypt {} ({e}); the entry is left behind at the old key",
+                        file_path.display()
+                    );
+                    continue;
+                }
+            };
             for attach_meta in &existing.attachments {
                 let attach_dir = self
                     .path
@@ -9917,6 +10306,21 @@ mod tests {
             },
         )
         .unwrap();
+        // Strip the genesis owner binding first: a device bound in two
+        // subtrees now fails closed (2026-10-01 review blocker), so the
+        // planted Editor binding must be the only one.
+        for entry in std::fs::read_dir(dir.path().join("meta/members"))
+            .unwrap()
+            .flatten()
+        {
+            let stale = entry
+                .path()
+                .join("devices")
+                .join(format!("{}.json", h.device_id));
+            if stale.exists() {
+                std::fs::remove_file(stale).unwrap();
+            }
+        }
         crate::vault::members::write_device_binding(
             dir.path(),
             &crate::vault::members::DeviceBinding {
@@ -10133,7 +10537,21 @@ mod tests {
                 None,
             )
             .unwrap();
-        // Rebind the session device to the Editor/manager member.
+        // Rebind the session device to the Editor/manager member. Strip
+        // the genesis binding first: duplicate device bindings fail closed
+        // now (2026-10-01 review blocker).
+        for entry in std::fs::read_dir(dir_a.path().join("meta/members"))
+            .unwrap()
+            .flatten()
+        {
+            let stale = entry
+                .path()
+                .join("devices")
+                .join(format!("{device_id}.json"));
+            if stale.exists() {
+                std::fs::remove_file(stale).unwrap();
+            }
+        }
         crate::vault::members::write_device_binding(
             dir_a.path(),
             &crate::vault::members::DeviceBinding {
@@ -10598,7 +11016,7 @@ mod tests {
         // A flipped (team) Space refuses: its recovery contract is the
         // Space Recovery Kit, and the personal recovery would reset the
         // roster (review F6/F4).
-        crate::vault::space_meta::write_shape_marker(dir.path()).unwrap();
+        crate::vault::space_meta::write_shape_marker(dir.path(), 1).unwrap();
         let err = handle.rotate_recovery_phrase(&password).unwrap_err();
         assert!(
             format!("{err}").contains("Space Recovery Kit"),
@@ -11524,6 +11942,169 @@ mod tests {
             }
             CipherRead::Decrypted(_) => panic!("expected locked metadata"),
         }
+    }
+
+    #[test]
+    fn sweep_keeps_collection_entries_readable() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let cid = handle.collection_create("Expiry").unwrap();
+        let mk_input = |name: &str| CipherInput {
+            name: name.into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::SecureNote,
+            favorite: false,
+            notes: Some("carry me".into()),
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+        let live = handle
+            .add_cipher_in_collection(&mk_input("InSweep"), Some(cid))
+            .unwrap();
+        let trashed = handle
+            .add_cipher_in_collection(&mk_input("Trashed"), Some(cid))
+            .unwrap();
+        handle.delete_cipher(trashed).unwrap();
+
+        // Plant a past-dated member grant at the file level (time passage,
+        // not mint-expired). The grantee's wrap pubkey is synthetic: the
+        // sweep only needs the grant row to expire.
+        let gone = Uuid::new_v4();
+        let mut row = crate::vault::members::MemberFile {
+            id: gone,
+            display_name: "Gone".into(),
+            role: crate::vault::members::MemberRole::Viewer,
+            trust: crate::vault::members::TrustLevel::Channel,
+            ..serde_default_member_row()
+        };
+        row.identity_signing_pubkey = Some(hex::encode([9u8; 32]));
+        crate::vault::members::write_member(dir.path(), &row).unwrap();
+        {
+            let sgk = handle.unlocked().sgk().unwrap().clone();
+            let (mut seeded, _) =
+                crate::vault::collections::open_collection(dir.path(), &sgk, &cid).unwrap();
+            seeded
+                .grants
+                .push(crate::vault::collections::CollectionGrant {
+                    target: crate::vault::collections::GrantTarget::Member { id: gone },
+                    access: crate::vault::collections::CollectionAccess::Read,
+                    expires_at: Some(1),
+                });
+            crate::vault::collections::save_collection(dir.path(), &seeded).unwrap();
+        }
+
+        let removed = handle.collections_sweep().unwrap();
+        assert_eq!(removed.len(), 1);
+
+        // Without the re-encryption pass both entries are sealed under
+        // item keys derived from the dead CK and unreadable.
+        match handle.get_cipher(live).unwrap() {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.name, "InSweep");
+                assert_eq!(c.notes.as_deref(), Some("carry me"));
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted entry after sweep"),
+        }
+        match handle.get_cipher(trashed).unwrap() {
+            CipherRead::Decrypted(c) => assert_eq!(c.name, "Trashed"),
+            CipherRead::Locked(_) => panic!("expected decrypted trash after sweep"),
+        }
+    }
+
+    fn serde_default_member_row() -> crate::vault::members::MemberFile {
+        serde_json::from_str(
+            r#"{"id":"00000000-0000-0000-0000-000000000000","display_name":"x","role":"viewer","trust":"channel"}"#,
+        )
+        .unwrap()
+    }
+
+    /// 2026-10-01 review: one corrupt entry must not abort a rotation
+    /// mid-offboarding (after the tombstone there is no retry). The
+    /// damaged file is skipped loudly; honest entries re-key normally.
+    #[test]
+    fn rotation_survives_a_corrupt_entry() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let cid = handle.collection_create("Work").unwrap();
+        let mk = |name: &str| CipherInput {
+            name: name.into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::SecureNote,
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+        let good = handle
+            .add_cipher_in_collection(&mk("Good"), Some(cid))
+            .unwrap();
+        let bad = handle
+            .add_cipher_in_collection(&mk("Bad"), Some(cid))
+            .unwrap();
+        let bad_path = handle.cipher_file_path(bad).unwrap();
+        std::fs::write(&bad_path, b"garbage bytes").unwrap();
+
+        handle.rotate_root_key().unwrap();
+
+        match handle.get_cipher(good).unwrap() {
+            CipherRead::Decrypted(c) => assert_eq!(c.name, "Good"),
+            CipherRead::Locked(_) => panic!("expected the honest entry readable"),
+        }
+        assert!(handle.get_cipher(bad).is_err());
+    }
+
+    /// 2026-10-01 review: a removal on a flipped vault rotates the SMK;
+    /// the member-visible meta must re-seal under the rotated key or the
+    /// actor's next unlock reads empty folders/tags/profile.
+    #[test]
+    fn removal_on_flipped_vault_reseals_meta() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        handle.space_prepare().unwrap();
+        handle.space_flip().unwrap();
+        let folder = handle.create_folder("Keep").unwrap();
+        let gone = uuid::Uuid::new_v4();
+        std::fs::create_dir_all(dir.path().join("meta/members")).unwrap();
+        crate::vault::members::write_member(
+            dir.path(),
+            &crate::vault::members::MemberFile {
+                id: gone,
+                display_name: "Gone".into(),
+                role: crate::vault::members::MemberRole::Viewer,
+                trust: crate::vault::members::TrustLevel::Channel,
+                identity_signing_pubkey: None,
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                transport_username: None,
+                identity_wrap_pubkey: None,
+            },
+        )
+        .unwrap();
+
+        handle.member_remove(&[gone]).unwrap();
+
+        let folders = handle.list_folders().unwrap();
+        assert!(folders.iter().any(|f| f.id == folder));
+        assert!(handle.get_settings().is_ok());
     }
 
     #[test]
