@@ -434,6 +434,7 @@ impl<'a> VaultCreator<'a> {
                 let owner_member = crate::vault::members::MemberFile {
                     id: owner_member_id,
                     display_name: self.display_name.clone().unwrap_or_else(|| "Owner".into()),
+                    email: None,
                     role: crate::vault::members::MemberRole::Owner,
                     trust: crate::vault::members::TrustLevel::SelfTrust,
                     identity_signing_pubkey: None,

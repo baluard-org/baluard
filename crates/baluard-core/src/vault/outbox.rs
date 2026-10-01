@@ -939,6 +939,7 @@ mod tests {
             "Owner",
             &hex::encode(signing.verifying_key().as_bytes()),
             &hex::encode(wrap_pub),
+            None,
             1_700_000_000,
             signing,
         )
@@ -948,6 +949,7 @@ mod tests {
     fn recipient_card(recipient: &IdentityKeys) -> ContactCard {
         ContactCard {
             display_name: "Recip".into(),
+            email: None,
             identity_signing_pubkey: hex::encode(
                 recipient.signing_key().verifying_key().as_bytes(),
             ),

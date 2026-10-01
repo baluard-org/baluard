@@ -72,6 +72,7 @@ data class MobileCatalogEntry(
 data class MobileMemberInfo(
     val id: String,
     val name: String,
+    val email: String? = null,
     val role: String = "editor",
     val trust: String = "",
     val reset: Boolean = false,
@@ -83,6 +84,7 @@ data class MobileMemberInfo(
 data class MobileJoinRequest(
     val reqId: String,
     val displayName: String,
+    val email: String? = null,
     val secretOk: Boolean = true,
 )
 
@@ -300,8 +302,13 @@ class VaultRepository {
         vault.collectionCatalogList()
 
     /** Member-side join: {code, password, device_name} → {intro_code}. */
-    suspend fun joinIntroduce(vault: MobileVault, code: String, password: String, deviceName: String): String =
-        vault.joinIntroduce(code, password, deviceName)
+    suspend fun joinIntroduce(
+        vault: MobileVault,
+        code: String,
+        password: String,
+        deviceName: String,
+        email: String? = null,
+    ): String = vault.joinIntroduce(code, password, deviceName, email)
 
     /** Join status poll: {introduced, approved}. */
     suspend fun joinPoll(vault: MobileVault): String = vault.joinPoll()
@@ -632,6 +639,7 @@ class VaultRepository {
             if (id != null && name != null) MobileMemberInfo(
                 id = id,
                 name = name,
+                email = o.str("email"),
                 role = (o["role"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "editor",
                 trust = (o["trust"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
                 reset = (o["reset"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
@@ -694,6 +702,7 @@ class VaultRepository {
             if (reqId != null && name != null) MobileJoinRequest(
                 reqId = reqId,
                 displayName = name,
+                email = o.str("email"),
                 secretOk = (o["secret_ok"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "false",
             ) else null
         }

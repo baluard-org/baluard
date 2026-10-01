@@ -504,6 +504,7 @@ mod tests {
         MemberFile {
             id,
             display_name: format!("m-{id}"),
+            email: None,
             role,
             trust: members::TrustLevel::Channel,
             identity_signing_pubkey: None,

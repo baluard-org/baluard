@@ -313,6 +313,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "members.reset",
     "members.transfer",
     "members.claim",
+    "members.set_email",
     "requests.approve",
     "requests.deny",
     "tag.create",
@@ -2818,6 +2819,9 @@ async fn handle_join_introduce(
     let password = v["password"]
         .as_str()
         .map(|p| zeroize::Zeroizing::new(p.to_string()));
+    // The joiner's optional self-declared email (advisory: shown to the
+    // approving admin, frozen into the member row at approval).
+    let email = v["email"].as_str().map(str::to_string);
     let Some(device_name) = v["device_name"].as_str().map(str::to_string) else {
         req.payload.zeroize();
         return err_response("Missing 'device_name' in join payload".to_string());
@@ -2831,11 +2835,15 @@ async fn handle_join_introduce(
         return err_response(format!("Unknown vault: {slug}"));
     };
     let result = match password {
-        Some(password) => {
-            baluard_core::vault::members::create_introduction(&path, &code, &password, &device_name)
-                .map(|intro_code| serde_json::json!({ "intro_code": intro_code }).to_string())
-                .map_err(|e| e.to_string())
-        }
+        Some(password) => baluard_core::vault::members::create_introduction_with_email(
+            &path,
+            &code,
+            &password,
+            &device_name,
+            email.as_deref(),
+        )
+        .map(|intro_code| serde_json::json!({ "intro_code": intro_code }).to_string())
+        .map_err(|e| e.to_string()),
         None => Err("Missing 'password' in join payload".to_string()),
     };
     req.payload.zeroize();
@@ -4767,6 +4775,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+        "members.set_email" => match state.members_set_email(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
         "members.claim" => match state.members_claim(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
@@ -4994,7 +5006,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                             };
                             match prov.validate_token(&token).await {
                                 Ok(valid_info) => ok_resp(
-                                    serde_json::json!({"valid": true, "username": valid_info.username}).to_string(),
+                                    serde_json::json!({"valid": true, "username": valid_info.username, "email": valid_info.email}).to_string(),
                                     token_str,
                                 ),
                                 Err(e) => ok_resp(
