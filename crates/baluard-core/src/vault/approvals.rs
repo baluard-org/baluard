@@ -63,13 +63,19 @@ pub struct ApprovalEntry {
 pub const APPROVAL_STALE_SECS: u64 = 7 * 24 * 3600;
 
 /// The message every approval signature covers: the op kind, the
-/// params digest, the vault it belongs to, and the ask timestamp —
-/// domain-separated and bound to one concrete ask in one vault.
+/// params digest, the vault it belongs to, the ask timestamp, and the
+/// ask's random nonce — domain-separated and bound to one concrete
+/// record in one vault. The nonce is what makes a consumed record's
+/// harvested signatures useless on a fresh re-ask: fresh asks mint a
+/// new nonce, so old entries never verify against the new record
+/// (Ed25519 signatures are deterministic — without the nonce a
+/// same-second re-ask would be byte-identical to the superseded ask).
 pub fn approval_message(
     kind: &str,
     params_digest: &str,
     vault_id: Uuid,
     initiated_at: u64,
+    nonce: &str,
 ) -> Vec<u8> {
     let mut msg = b"baluard-approval-v1/".to_vec();
     msg.extend_from_slice(kind.as_bytes());
@@ -79,6 +85,8 @@ pub fn approval_message(
     msg.extend_from_slice(vault_id.as_bytes());
     msg.push(b'/');
     msg.extend_from_slice(initiated_at.to_le_bytes().as_slice());
+    msg.push(b'/');
+    msg.extend_from_slice(nonce.as_bytes());
     msg
 }
 
@@ -104,6 +112,12 @@ pub struct PendingOp {
     /// read as None).
     #[serde(default)]
     pub params: Option<serde_json::Value>,
+    /// Random per-ask nonce bound into every approval signature. Fresh
+    /// asks mint one; it makes a consumed record's harvested signatures
+    /// useless on a fresh re-ask (serde default: legacy format-2 records
+    /// without a nonce parse and verify under the empty-nonce message).
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 /// Outcome of presenting an op at the gate.
@@ -116,6 +130,10 @@ pub enum ApprovalOutcome {
     Pending,
     /// This admin already approved; a DIFFERENT admin must confirm.
     AlreadyApproved,
+    /// This exact ask (kind + digest + ask time) was already executed —
+    /// the on-disk record is a git-history restoration, deleted on
+    /// sight. Raise a fresh ask instead.
+    Consumed,
 }
 
 /// Stable digest binding an approval set to one concrete ask.
@@ -180,12 +198,69 @@ pub fn list_pending(vault_path: &Path) -> Vec<PendingOp> {
 /// Remove every record file matching one ask, by its discovered path —
 /// never by reconstructing the filename, so renamed or concurrently
 /// raised duplicates cannot linger and replay their entries later.
+/// Each removal leaves a `.consumed` tombstone: the records are
+/// git-tracked, so deleting one does not erase it — a record restored
+/// from history must hit the tombstone barrier and die on sight
+/// (2026-10-01 review: a replayed ask could re-execute within the
+/// staleness window). Tombstones are plaintext, carry no keys, and
+/// ride the same Admin sync row.
 fn remove_matching(vault_path: &Path, kind: &str, digest: &str) {
+    let consumed_at = crate::vault::collections::now_secs_pub();
     for (path, op) in list_pending_paths(vault_path) {
         if op.kind == kind && op.params_digest == digest {
+            // The barrier keys on (kind, digest, nonce): the nonce is
+            // inside every approval signature, so tampering with it
+            // invalidates the entries, while a verbatim restoration keeps
+            // it and dies on sight. Fresh asks mint distinct nonces, so
+            // legitimate re-asks never match (a raw-byte content hash was
+            // malleable: serde ignores whitespace, so a trailing newline
+            // changed the hash and slipped the barrier).
+            let tomb = serde_json::json!({
+                "format": 1,
+                "kind": op.kind,
+                "params_digest": op.params_digest,
+                "nonce": op.nonce,
+                "initiated_at": op.initiated_at,
+                "initiated_by": op.initiated_by.to_string(),
+                "consumed_at": consumed_at,
+            });
+            let tomb_path = path.with_extension("json.consumed");
+            let _ = std::fs::write(&tomb_path, tomb.to_string().as_bytes());
             let _ = std::fs::remove_file(path);
         }
     }
+}
+
+/// True when a consumed tombstone matches this exact ask. The tombstone
+/// keys on (kind, digest, nonce): restored records die on sight; fresh
+/// re-asks mint a new nonce and pass.
+fn tombstoned(vault_path: &Path, kind: &str, digest: &str, nonce: &str) -> bool {
+    let dir = approvals_dir(vault_path);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("consumed") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        if v["format"].as_u64() != Some(1) {
+            continue;
+        }
+        if v["kind"].as_str() == Some(kind)
+            && v["params_digest"].as_str() == Some(digest)
+            && v["nonce"].as_str() == Some(nonce)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn record_path(vault_path: &Path, op: &PendingOp) -> std::path::PathBuf {
@@ -209,13 +284,20 @@ fn write_record(vault_path: &Path, op: &PendingOp) -> std::io::Result<()> {
     std::fs::rename(&tmp, &path)
 }
 
+/// The signature verifier + its ask's nonce, travelling together: the
+/// nonce binds every counted entry to one concrete record, and the
+/// same nonce is stored on the record a fresh ask mints.
+pub struct EntryVerifier<'a> {
+    pub nonce: String,
+    pub verify: Box<dyn Fn(&ApprovalEntry) -> bool + 'a>,
+}
+
 /// Present a sensitive op at the gate. See the module docs for the
-/// flow. `entry` is the acting admin's signed approval (the caller has
-/// already verified the member row is an admin and signed with the
-/// member identity key); `verify_entry` checks each recorded entry's
-/// signature against the approver's member row — entries failing it
-/// are dropped and never counted, so a hand-written record cannot
-/// forge a yes.
+/// flow. `verify` carries the acting admin's pre-verified entry check
+/// (the caller has already verified the member row is an admin and
+/// signed with the member identity key over the ask's nonce) and the
+/// ask's nonce; entries failing the check are dropped and never
+/// counted, so a hand-written record cannot forge a yes.
 pub fn present(
     vault_path: &Path,
     kind: &str,
@@ -223,7 +305,7 @@ pub fn present(
     entry: ApprovalEntry,
     required: u8,
     now: u64,
-    verify_entry: &dyn Fn(&ApprovalEntry) -> bool,
+    verify: &EntryVerifier,
 ) -> ApprovalOutcome {
     let digest = op_digest(kind, params);
     // Same ask already on record? Append (or short-circuit).
@@ -231,6 +313,15 @@ pub fn present(
         .into_iter()
         .find(|op| op.kind == kind && op.params_digest == digest);
     if let Some(mut op) = existing {
+        // A consumed tombstone for this exact ask (kind + digest + nonce)
+        // means the on-disk record is a git-history restoration (the
+        // consumption deleted it once already): delete it again and
+        // refuse.
+        let record_nonce = op.nonce.clone().unwrap_or_default();
+        if tombstoned(vault_path, kind, &digest, &record_nonce) {
+            remove_matching(vault_path, kind, &digest);
+            return ApprovalOutcome::Consumed;
+        }
         // A stale ask is no longer confirmable: consume it and treat
         // this call as a fresh ask (the confirming admin re-raises).
         // The ask timestamp is inside the signed message, so a stale
@@ -238,12 +329,21 @@ pub fn present(
         // a fresh ask either way.
         if now.saturating_sub(op.initiated_at) >= APPROVAL_STALE_SECS {
             remove_matching(vault_path, kind, &digest);
-            return fresh_ask(vault_path, kind, params, entry, required, now, digest);
+            return fresh_ask(
+                vault_path,
+                kind,
+                params,
+                entry,
+                required,
+                now,
+                digest,
+                &verify.nonce,
+            );
         }
         // Drop entries whose signature does not verify (a forged or
         // torn record cannot approve anything), then dedupe by member:
         // duplicated valid entries count once.
-        op.approvals.retain(|e| verify_entry(e));
+        op.approvals.retain(|e| (verify.verify)(e));
         let mut seen = std::collections::HashSet::new();
         op.approvals.retain(|e| seen.insert(e.member));
         if op.approvals.iter().any(|e| e.member == entry.member) {
@@ -262,12 +362,23 @@ pub fn present(
         let _ = write_record(vault_path, &op);
         return ApprovalOutcome::Pending;
     }
-    fresh_ask(vault_path, kind, params, entry, required, now, digest)
+    fresh_ask(
+        vault_path,
+        kind,
+        params,
+        entry,
+        required,
+        now,
+        digest,
+        &verify.nonce,
+    )
 }
 
 /// Fresh ask (or a stale record of the same kind — the newest ask
 /// replaces it because stale records carry a different digest and
-/// simply stop matching; nothing inherits old approvals).
+/// simply stop matching; nothing inherits old approvals). The caller
+/// minted `nonce` for this ask and signed its entry over it.
+#[allow(clippy::too_many_arguments)]
 fn fresh_ask(
     vault_path: &Path,
     kind: &str,
@@ -276,6 +387,7 @@ fn fresh_ask(
     required: u8,
     now: u64,
     digest: String,
+    nonce: &str,
 ) -> ApprovalOutcome {
     let op = PendingOp {
         format: 2,
@@ -286,6 +398,7 @@ fn fresh_ask(
         required: required.clamp(2, MAX_QUORUM),
         approvals: vec![entry],
         params: Some(params.clone()),
+        nonce: Some(nonce.to_string()),
     };
     let _ = write_record(vault_path, &op);
     ApprovalOutcome::Pending
@@ -302,8 +415,22 @@ pub fn consume_matching(vault_path: &Path, kind: &str, params: &serde_json::Valu
 /// `keep_digest` — a fresh ask supersedes older asks of the same kind
 /// (a new transfer target invalidates the old one).
 pub fn consume_other_of_kind(vault_path: &Path, kind: &str, keep_digest: &str) {
+    let consumed_at = crate::vault::collections::now_secs_pub();
     for (path, op) in list_pending_paths(vault_path) {
         if op.kind == kind && op.params_digest != keep_digest {
+            // Same tombstone discipline as remove_matching: a superseded
+            // ask restored from git history must die on sight too.
+            let tomb = serde_json::json!({
+                "format": 1,
+                "kind": op.kind,
+                "params_digest": op.params_digest,
+                "nonce": op.nonce,
+                "initiated_at": op.initiated_at,
+                "initiated_by": op.initiated_by.to_string(),
+                "consumed_at": consumed_at,
+            });
+            let tomb_path = path.with_extension("json.consumed");
+            let _ = std::fs::write(&tomb_path, tomb.to_string().as_bytes());
             let _ = std::fs::remove_file(path);
         }
     }
@@ -331,6 +458,10 @@ mod tests {
     /// verifier build the same message.
     const VAULT: Uuid = uuid::uuid!("00000000-0000-0000-0000-000000000001");
     const TS: u64 = 1_700_000_000;
+    /// The one test nonce: fresh asks and their confirmations must sign
+    /// (and verify) the same ask's nonce, mirroring the gate's mint-and-
+    /// resolve flow.
+    const NONCE: &str = "test-nonce";
 
     fn signed_entry(
         key: &ed25519_dalek::SigningKey,
@@ -338,36 +469,42 @@ mod tests {
         kind: &str,
         digest: &str,
     ) -> ApprovalEntry {
-        let sig = crate::crypto::signature::sign(key, &approval_message(kind, digest, VAULT, TS))
-            .unwrap();
+        let sig =
+            crate::crypto::signature::sign(key, &approval_message(kind, digest, VAULT, TS, NONCE))
+                .unwrap();
         ApprovalEntry {
             member,
             sig: hex::encode(sig.to_bytes()),
         }
     }
 
-    /// Verifier over the given member keys for one concrete ask.
+    /// Verifier over the given member keys for one concrete ask, as the
+    /// context struct present consumes (nonce travels with the closure,
+    /// mirroring the gate's construction).
     fn verifier<'a>(
         members: &'a [(Uuid, ed25519_dalek::SigningKey)],
         kind: &'static str,
         digest: &'a str,
-    ) -> impl Fn(&ApprovalEntry) -> bool + 'a {
-        move |e| {
-            let Some((_, key)) = members.iter().find(|(m, _)| *m == e.member) else {
-                return false;
-            };
-            let Ok(sig_bytes) = hex::decode(&e.sig) else {
-                return false;
-            };
-            let Ok(arr) = <[u8; 64]>::try_from(sig_bytes.as_slice()) else {
-                return false;
-            };
-            crate::crypto::signature::verify(
-                &key.verifying_key(),
-                &approval_message(kind, digest, VAULT, TS),
-                &ed25519_dalek::Signature::from_bytes(&arr),
-            )
-            .is_ok()
+    ) -> crate::vault::approvals::EntryVerifier<'a> {
+        crate::vault::approvals::EntryVerifier {
+            nonce: NONCE.to_string(),
+            verify: Box::new(move |e| {
+                let Some((_, key)) = members.iter().find(|(m, _)| *m == e.member) else {
+                    return false;
+                };
+                let Ok(sig_bytes) = hex::decode(&e.sig) else {
+                    return false;
+                };
+                let Ok(arr) = <[u8; 64]>::try_from(sig_bytes.as_slice()) else {
+                    return false;
+                };
+                crate::crypto::signature::verify(
+                    &key.verifying_key(),
+                    &approval_message(kind, digest, VAULT, TS, NONCE),
+                    &ed25519_dalek::Signature::from_bytes(&arr),
+                )
+                .is_ok()
+            }),
         }
     }
 
@@ -461,6 +598,88 @@ mod tests {
         assert!(rows.iter().any(|r| r.params_digest == d1
             && r.approvals.len() == 1
             && r.approvals[0].member == a));
+    }
+
+    /// 2026-10-01 review: a consumed record restored from git history
+    /// must hit the tombstone barrier and die on sight — never re-execute
+    /// within the staleness window (quorum_lower would defeat the
+    /// ratchet; rotate_root_key has empty params).
+    #[test]
+    fn consumed_ask_restored_from_history_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let (a, a_key) = member_key();
+        let (b, b_key) = member_key();
+        let (c, c_key) = member_key();
+        let members = vec![(a, a_key.clone()), (b, b_key.clone()), (c, c_key.clone())];
+        let digest = op_digest("op", &params(1));
+        assert_eq!(
+            present(
+                path,
+                "op",
+                &params(1),
+                signed_entry(&a_key, a, "op", &digest),
+                2,
+                100,
+                &verifier(&members, "op", &digest)
+            ),
+            ApprovalOutcome::Pending
+        );
+        let record_path = path.join(APPROVALS_DIR).join(format!(
+            "{}-{}.json",
+            digest,
+            &a.simple().to_string()[..8]
+        ));
+        let record_bytes = std::fs::read(&record_path).unwrap();
+        assert_eq!(
+            present(
+                path,
+                "op",
+                &params(1),
+                signed_entry(&b_key, b, "op", &digest),
+                2,
+                100,
+                &verifier(&members, "op", &digest)
+            ),
+            ApprovalOutcome::Approved
+        );
+        // Consumption deleted the record and left exactly one tombstone.
+        let tombstones: Vec<_> = std::fs::read_dir(path.join(APPROVALS_DIR))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().extension().and_then(|e| e.to_str()) == Some("consumed"))
+            .collect();
+        assert_eq!(tombstones.len(), 1);
+        // Replay: restore the consumed record verbatim from "history".
+        std::fs::write(&record_path, &record_bytes).unwrap();
+        assert_eq!(
+            present(
+                path,
+                "op",
+                &params(1),
+                signed_entry(&c_key, c, "op", &digest),
+                2,
+                100,
+                &verifier(&members, "op", &digest)
+            ),
+            ApprovalOutcome::Consumed
+        );
+        // The restored record died again on sight.
+        assert!(list_pending(path).is_empty());
+        // A fresh ask with different params is unaffected.
+        let d2 = op_digest("op", &params(2));
+        assert_eq!(
+            present(
+                path,
+                "op",
+                &params(2),
+                signed_entry(&a_key, a, "op", &d2),
+                2,
+                100,
+                &verifier(&members, "op", &d2)
+            ),
+            ApprovalOutcome::Pending
+        );
     }
 
     #[test]
@@ -657,9 +876,12 @@ mod tests {
         let rows = list_pending(path);
         let mut hostile = rows[0].clone();
         hostile.approvals[0].sig = hex::encode(
-            crate::crypto::signature::sign(&b_key, &approval_message("op", &digest, VAULT, TS))
-                .unwrap()
-                .to_bytes(),
+            crate::crypto::signature::sign(
+                &b_key,
+                &approval_message("op", &digest, VAULT, TS, NONCE),
+            )
+            .unwrap()
+            .to_bytes(),
         );
         let _ = std::fs::write(
             path.join(APPROVALS_DIR).join(format!(

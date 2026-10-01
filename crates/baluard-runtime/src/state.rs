@@ -3641,6 +3641,7 @@ impl VaultState {
             "missing_wrap_pubkey": st.missing_wrap_pubkey,
             "pending_wrap": st.pending_wrap,
             "flipped": baluard_core::vault::space_meta::shape_flipped(&self.vault_path),
+            "needs_rotation": st.needs_rotation,
         })
         .to_string())
     }
@@ -3659,6 +3660,21 @@ impl VaultState {
             "keywraps_removed": r.keywraps_removed,
         })
         .to_string())
+    }
+
+    /// S3-7b completion: rotate the Root Key on an admin device. The flip
+    /// strips member keywraps at HEAD, but pre-flip members' keywraps in
+    /// git history still unwrap the CURRENT root until a rotation bumps
+    /// it — the flip surface prompts this immediately after a fresh flip.
+    /// Admin + quorum gates live in the core op.
+    pub async fn space_rotate_root(&self) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle.rotate_root_key().map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
     }
 
     /// S4-7: kit surfaces (admin, per the core gate). Enable returns the

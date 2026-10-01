@@ -4,6 +4,7 @@ import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
+import { holdPhrase, takeHeldPhrase, clearHeldPhrase } from "../lib/heldPhrase.js";
 import FocusTrap from "./FocusTrap.jsx";
 import { Transition } from "../lib/transition";
 import { Button } from "./Primitives.jsx";
@@ -32,6 +33,9 @@ export default function RecoveryPhraseCard() {
         setStored(false);
         setCopied(false);
         setPhrase(parsed.phrase || "");
+        // Blur-lock can unmount the modal mid-showing; the phrase stays
+        // recoverable in process memory until the user confirms storage.
+        holdPhrase("recovery", parsed.phrase || "");
         toastSuccess(t("recovery.rotatedToast"));
       } catch (e) {
         toastError(sanitizeError(e, t));
@@ -66,7 +70,15 @@ export default function RecoveryPhraseCard() {
     if (!stored()) return;
     setPhrase("");
     setStored(false);
+    clearHeldPhrase("recovery");
   };
+
+  // A blur-lock unmounted the ceremony before the phrase was confirmed:
+  // re-show it (still gated on the stored checkbox).
+  if (!phrase() && stored() === false) {
+    const held = takeHeldPhrase("recovery");
+    if (held) setPhrase(held);
+  }
 
   return (
     <div class="space-y-2">

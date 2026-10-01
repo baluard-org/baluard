@@ -192,6 +192,10 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "bridge.revoke",
     // ciphers
     "cipher.totp_code",
+    // login-screen join flow (host-level, pre-token): without these the
+    // desktop joiner can never produce an intro code (2026-10-01 review).
+    "join.introduce",
+    "join.poll",
     "vault.active",
     "vault.add",
     "vault.archive",
@@ -253,6 +257,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "space.prepare",
         "space.status",
         "space.flip",
+        "space.rotate_root",
         "space.migrate",
         "space.remote",
         "space.settings",

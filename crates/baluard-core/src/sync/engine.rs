@@ -244,6 +244,12 @@ impl SyncEngine {
             "meta/index.enc.*",
             // P8b: local revocation verification tracker.
             "meta/revocations-verified.json",
+            // S4 hardening: the grant-expiry sweep's crash-recovery marker
+            // carries content keys — local-only by construction.
+            "meta/.sweep-pending.json",
+            // S4 hardening: the removal SMK rotation's crash-recovery
+            // marker carries the retired key — local-only by construction.
+            "meta/.smk-pending.json",
             // S1b-1: local refusal log (this device's own detection).
             "meta/refusals.log",
             // S1b-1: the activity log is per-device (multi-writer union
@@ -820,6 +826,12 @@ impl SyncEngine {
             "meta/index.enc",
             // P8b: local revocation verification tracker.
             "meta/revocations-verified.json",
+            // S4 hardening: the grant-expiry sweep's crash-recovery marker
+            // carries content keys — local-only by construction.
+            "meta/.sweep-pending.json",
+            // S4 hardening: the removal SMK rotation's crash-recovery
+            // marker carries the retired key — local-only by construction.
+            "meta/.smk-pending.json",
             // S1b-1: per-device activity log.
             "meta/share-events.enc",
             // S1b-1: local refusal log — never counts as dirty.
@@ -3723,6 +3735,7 @@ impl SyncEngine {
         let mut member_by_device: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         let mut tombstoned: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut all_bindings: Vec<(String, String)> = Vec::new();
         let mut parse_err: Option<String> = None;
         tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
             if parse_err.is_some() {
@@ -3818,8 +3831,12 @@ impl SyncEngine {
                     ));
                     return -1;
                 }
-                member_by_device
-                    .insert(binding.device_id.to_string(), binding.member_id.to_string());
+                // Collect every binding; uniqueness among LIVE rows is
+                // validated after the walk (tombstone visibility is only
+                // complete then). Bindings under tombstoned subtrees are
+                // inert by design — reset re-enrollment legitimately
+                // carries the old binding (2026-10-01 review blocker).
+                all_bindings.push((binding.device_id.to_string(), binding.member_id.to_string()));
             } else {
                 // Other artifacts in a member's own subtree (identity
                 // escrow, requests) are not role data — skip them.
@@ -3831,9 +3848,34 @@ impl SyncEngine {
         if let Some(e) = parse_err {
             return Err(SyncError::Git(format!("member directory: {e}")).into());
         }
-        // Drop bindings that point at tombstoned rows (walk order makes
+        // Duplicate-binding containment among LIVE rows: a device bound in
+        // two live subtrees is a forgery attempt (any member can write a
+        // binding for someone else's device into their own subtree) —
+        // refuse the whole commit instead of letting walk order pick a
+        // winner. Bindings under tombstoned subtrees are inert (reset
+        // re-enrollment keeps the old binding), so they never count.
+        {
+            let mut live_per_device: std::collections::BTreeMap<&str, usize> =
+                std::collections::BTreeMap::new();
+            for (device, member) in &all_bindings {
+                if !tombstoned.contains(member) {
+                    *live_per_device.entry(device.as_str()).or_default() += 1;
+                }
+            }
+            if let Some((device, _)) = live_per_device.iter().find(|(_, n)| **n > 1) {
+                return Err(SyncError::Git(format!(
+                    "device {device} is bound in more than one live member subtree"
+                ))
+                .into());
+            }
+        }
+        // Build the device table from live bindings only (walk order makes
         // the row's tombstone flag visible only after the full walk).
-        member_by_device.retain(|_, member| !tombstoned.contains(member));
+        for (device, member) in &all_bindings {
+            if !tombstoned.contains(member) {
+                member_by_device.insert(device.clone(), member.clone());
+            }
+        }
         let mut roles: std::collections::BTreeMap<String, crate::sync::policy::CommitRole> =
             std::collections::BTreeMap::new();
         let mut member_of: std::collections::BTreeMap<String, String> =
@@ -4842,7 +4884,14 @@ impl SyncEngine {
                             .find(|(id, _)| *id == gid)
                             .map(|(_, ms)| ms)
                     };
-                    let now = crate::vault::collections::now_secs_pub();
+                    // Clock-free verification (2026-10-01 review): the
+                    // peer walk must judge the commit by the grants that
+                    // existed when it was made, never by the verifying
+                    // device's wall clock — now = 0 treats every grant in
+                    // the tree as unexpired. Expiry stays a local
+                    // enforcement concern (write gates + the staging
+                    // filter still use the live clock).
+                    let now = 0u64;
                     if crate::vault::groups::effective_access(&file.grants, m, &group_members, now)
                         == Some(crate::vault::collections::CollectionAccess::Write)
                     {
@@ -5356,6 +5405,14 @@ meta/index.enc.*
 # P8b: local revocation verification tracker (blob id + applied list).
 meta/revocations-verified.json
 
+# S4 hardening: the grant-expiry sweep's crash-recovery marker carries
+# content keys — local-only by construction.
+meta/.sweep-pending.json
+
+# S4 hardening: the removal SMK rotation's crash-recovery marker
+# carries the retired key — local-only by construction.
+meta/.smk-pending.json
+
 # S1b-1: local refusal log — this device's own detection of refused
 # commits. Local-only by design: each honest client records what IT saw.
 meta/refusals.log
@@ -5468,6 +5525,61 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let engine = SyncEngine::new(dir.path(), "test-device", None);
         (dir, engine)
+    }
+
+    /// 2026-10-01 review: the peer verification walk must judge a commit
+    /// by the grants that existed when it was made, never by the
+    /// verifying device's wall clock. A grant that has since expired
+    /// still verifies its historical commits (expiry is a local
+    /// enforcement concern: write gates + the staging filter).
+    #[test]
+    fn commit_verification_is_clock_free_on_expired_grants() {
+        let (_dir, engine) = make_test_repo();
+        engine.init_repo().unwrap();
+        let repo = engine.open_repo().unwrap();
+        let member = uuid::Uuid::new_v4();
+        let col = uuid::Uuid::new_v4();
+        let def = serde_json::json!({
+            "format": 1,
+            "id": col.to_string(),
+            "created_at": 1,
+            "ck_wrapped": {},
+            "name_enc": {},
+            "grants": [{
+                "target": {"kind": "member", "id": member.to_string()},
+                "access": "write",
+                "expires_at": 1,
+            }],
+            "dir_salt": "abcd",
+        });
+        let blob_id = repo.blob(def.to_string().as_bytes()).unwrap();
+        let mut col_tb = repo.treebuilder(None).unwrap();
+        col_tb
+            .insert(format!("{col}.json"), blob_id, git2::FileMode::Blob.into())
+            .unwrap();
+        let col_oid = col_tb.write().unwrap();
+        let mut meta_tb = repo.treebuilder(None).unwrap();
+        meta_tb
+            .insert("collections", col_oid, git2::FileMode::Tree.into())
+            .unwrap();
+        let meta_oid = meta_tb.write().unwrap();
+        let mut root_tb = repo.treebuilder(None).unwrap();
+        root_tb
+            .insert("meta", meta_oid, git2::FileMode::Tree.into())
+            .unwrap();
+        let root_oid = root_tb.write().unwrap();
+        let tree = repo.find_tree(root_oid).unwrap();
+        let sig = git2::Signature::now("t", "t@example").unwrap();
+        // The commit object only needs to exist in the odb — the scope
+        // walk reads trees, never refs.
+        repo.commit(None, &sig, &sig, "expired grant", &tree, &[])
+            .unwrap();
+
+        let scope =
+            SyncEngine::collection_scope_for_tree(&repo, &tree, None, Some(&member.to_string()))
+                .unwrap();
+        assert_eq!(scope.dirs.len(), 1);
+        assert_eq!(scope.writable, vec![col]);
     }
 
     /// fetch_locked (mobile background sync): fetches objects but never moves

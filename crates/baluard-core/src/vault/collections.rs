@@ -962,11 +962,34 @@ pub fn is_grant_expired(grant: &CollectionGrant, now: u64) -> bool {
 /// passed, and rotate the collection key for any collection whose
 /// grants changed. Runs on the admin client after unlock's pull; other
 /// members converge on pull. Returns one row per removed grant.
+/// One collection whose content key the sweep rotated. The caller must
+/// re-encrypt every entry and trash item under the collection's directory:
+/// since S3-7c their item keys derive from the CK, so a rotated CK without
+/// re-encryption destroys the entries (the 2026-10-01 review blocker).
+#[derive(Debug, Clone)]
+pub struct SweptRotation {
+    pub collection_id: Uuid,
+    pub old_ck: Zeroizing<[u8; 32]>,
+    pub new_ck: Zeroizing<[u8; 32]>,
+    /// Hex directory under ciphers/ and trash/; None when the def has no
+    /// dir salt (no cipher paths can exist).
+    pub dir: Option<String>,
+}
+
+/// The sweep's full result: expired grants removed plus every key rotation
+/// the caller must carry into the entry files.
+#[derive(Debug, Clone, Default)]
+pub struct SweptGrants {
+    pub removed: Vec<ExpiredGrant>,
+    pub rotations: Vec<SweptRotation>,
+}
+
 pub fn sweep_expired_grants(
     vault_path: &Path,
     sgk: &SpaceGroupKey,
-) -> Result<Vec<ExpiredGrant>, BaluardError> {
-    let mut removed = Vec::new();
+) -> Result<SweptGrants, BaluardError> {
+    let mut swept = SweptGrants::default();
+    let mut pending: Vec<SweptRotation> = Vec::new();
     let now = now_secs();
     for (file, name) in list_collections(vault_path, sgk)? {
         let expired: Vec<GrantTarget> = file
@@ -982,14 +1005,29 @@ pub fn sweep_expired_grants(
         // (the departing grantee's derived item keys must stop matching
         // anything minted later; knowledge of what they already read is
         // the accepted eventual-revocation boundary).
+        // Capture the OUTGOING CK first: the caller needs it to re-encrypt
+        // the collection's entries (their item keys derive from it).
+        let old_ck = unwrap_ck(&file, sgk)?;
         let mut updated = file;
         updated.grants.retain(|g| !is_grant_expired(g, now));
         let mut new_ck = Zeroizing::new([0u8; 32]);
         rand::rngs::OsRng.fill_bytes(new_ck.as_mut());
         updated.ck_wrapped = wrap_ck(sgk, &new_ck, &updated.id)?;
         updated.name_enc = seal_name(&new_ck, &updated.id, &name)?;
+        let rotation = SweptRotation {
+            collection_id: updated.id,
+            old_ck,
+            new_ck: new_ck.clone(),
+            dir: collection_dir(&updated),
+        };
+        pending.push(rotation.clone());
+        // Marker before the def flips: any crash after this point
+        // converges on the next sweep (the carry only fires when the live
+        // def actually holds the new CK).
+        write_sweep_pending(vault_path, &pending)?;
         save_collection(vault_path, &updated)?;
         let collection_id = updated.id;
+        swept.rotations.push(rotation);
         for target in &expired {
             // The expired grantee must not keep a path to the NEW key.
             match target {
@@ -1000,14 +1038,120 @@ pub fn sweep_expired_grants(
                     crate::vault::groups::grant_revoked_for_group(vault_path, id, &collection_id)?;
                 }
             }
-            removed.push(ExpiredGrant {
+            swept.removed.push(ExpiredGrant {
                 collection_id,
                 target: target.clone(),
             });
         }
         rewrap_grant_wraps(vault_path, &collection_id, &new_ck, &updated.grants)?;
+        // Surviving GROUP grants re-mint their ckwrap against the new CK
+        // (grant_minted_for_group is idempotent and refreshes gkwraps);
+        // rewrap_grant_wraps above only covers per-member wraps.
+        // Best-effort: a broken group def must not wedge the sweep and
+        // strand the already-rotated entries (fix-round F2) — the broken
+        // group's access fails closed at open instead.
+        for grant in &updated.grants {
+            if is_grant_expired(grant, now) {
+                continue;
+            }
+            if let GrantTarget::Group { id } = &grant.target {
+                if let Err(e) = crate::vault::groups::grant_minted_for_group(
+                    vault_path,
+                    sgk,
+                    id,
+                    &collection_id,
+                    &new_ck,
+                ) {
+                    eprintln!(
+                        "sweep: could not refresh group {id}'s key for collection {collection_id} ({e}); its members cannot open this collection until the grant is re-saved"
+                    );
+                }
+            }
+        }
     }
-    Ok(removed)
+    Ok(swept)
+}
+
+impl SweptRotation {
+    fn marker_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "collection_id": self.collection_id.to_string(),
+            "dir": self.dir,
+            "old_ck": hex::encode(self.old_ck.as_ref()),
+            "new_ck": hex::encode(self.new_ck.as_ref()),
+        })
+    }
+
+    fn from_marker_json(v: &serde_json::Value) -> Option<Self> {
+        let collection_id = Uuid::parse_str(v["collection_id"].as_str()?).ok()?;
+        let dir = v["dir"].as_str().map(|s| s.to_string());
+        let old_bytes = hex::decode(v["old_ck"].as_str()?).ok()?;
+        let new_bytes = hex::decode(v["new_ck"].as_str()?).ok()?;
+        let old_ck = Zeroizing::new(<[u8; 32]>::try_from(old_bytes).ok()?);
+        let new_ck = Zeroizing::new(<[u8; 32]>::try_from(new_bytes).ok()?);
+        Some(Self {
+            collection_id,
+            old_ck,
+            new_ck,
+            dir,
+        })
+    }
+}
+
+const SWEEP_PENDING_PATH: &str = "meta/.sweep-pending.json";
+
+fn sweep_pending_path(vault_path: &Path) -> std::path::PathBuf {
+    vault_path.join(SWEEP_PENDING_PATH)
+}
+
+/// Record rotations on disk BEFORE their defs flip, so a crash in the
+/// window between def save and entry re-encryption converges on the next
+/// sweep: the carry re-checks each live def and only carries rotations
+/// whose def actually holds the new CK. Local-only (gitignored), 0600 via
+/// write_vault_file — it carries key material.
+pub(crate) fn write_sweep_pending(
+    vault_path: &Path,
+    rotations: &[SweptRotation],
+) -> Result<(), BaluardError> {
+    if rotations.is_empty() {
+        return Ok(());
+    }
+    let doc = serde_json::json!({
+        "format": 1,
+        "rotations": rotations.iter().map(|r| r.marker_json()).collect::<Vec<_>>(),
+    });
+    let bytes = serde_json::to_vec_pretty(&doc)
+        .map_err(|e| VaultError::Metadata(format!("sweep marker: {e}")))?;
+    write_vault_file(&sweep_pending_path(vault_path), &bytes)
+        .map_err(|e| VaultError::Metadata(format!("sweep marker write: {e}")))?;
+    Ok(())
+}
+
+/// Read (without removing) the pending rotations; malformed rows are
+/// skipped inert. Removal is the caller's job AFTER a successful carry.
+pub(crate) fn read_sweep_pending(vault_path: &Path) -> Vec<SweptRotation> {
+    let Ok(bytes) = std::fs::read(sweep_pending_path(vault_path)) else {
+        return Vec::new();
+    };
+    let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Vec::new();
+    };
+    if doc["format"].as_u64() != Some(1) {
+        return Vec::new();
+    }
+    doc["rotations"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(SweptRotation::from_marker_json)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Remove the pending marker after a successful carry.
+pub(crate) fn clear_sweep_pending(vault_path: &Path) {
+    let _ = std::fs::remove_file(sweep_pending_path(vault_path));
 }
 
 /// One removed grant from the expiry sweep.
@@ -1383,18 +1527,32 @@ mod tests {
             },
         )
         .unwrap();
-        let removed = sweep_expired_grants(&path, &sgk).unwrap();
-        assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0].target.member_id(), Some(gone));
-        assert_eq!(removed[0].collection_id, file.id);
+        let old_ck = {
+            let (f, _) = open_collection(&path, &sgk, &file.id).unwrap();
+            unwrap_ck(&f, &sgk).unwrap()
+        };
+        let swept = sweep_expired_grants(&path, &sgk).unwrap();
+        assert_eq!(swept.removed.len(), 1);
+        assert_eq!(swept.removed[0].target.member_id(), Some(gone));
+        assert_eq!(swept.removed[0].collection_id, file.id);
         // The surviving grant is intact and the name still decrypts
         // under the rotated key.
         let (updated, name) = open_collection(&path, &sgk, &file.id).unwrap();
         assert_eq!(name, "Servers");
         assert_eq!(updated.grants.len(), 1);
         assert_eq!(updated.grants[0].target.member_id(), Some(staying));
+        // The caller learns the rotation (old CK captured above) so the
+        // entries can be carried into the new key.
+        assert_eq!(swept.rotations.len(), 1);
+        assert_eq!(swept.rotations[0].collection_id, file.id);
+        assert_eq!(swept.rotations[0].old_ck.as_ref(), old_ck.as_ref());
         // Idempotent: a second sweep removes nothing.
-        assert!(sweep_expired_grants(&path, &sgk).unwrap().is_empty());
+        assert!(
+            sweep_expired_grants(&path, &sgk)
+                .unwrap()
+                .removed
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1724,8 +1882,20 @@ mod tests {
             &ck_now,
         )
         .unwrap();
-        let removed = sweep_expired_grants(&path, &sgk).unwrap();
-        assert_eq!(removed.len(), 1);
+        // A surviving GROUP grant: its ckwrap must re-mint to the new CK
+        // during the same sweep, or every group member loses the collection.
+        let g = crate::vault::groups::create_group(&path, &sgk, "Crew").unwrap();
+        crate::vault::groups::add_group_member(&path, &sgk, &g.id, &stays).unwrap();
+        let (mut seeded2, _) = open_collection(&path, &sgk, &file.id).unwrap();
+        seeded2.grants.push(CollectionGrant {
+            target: GrantTarget::Group { id: g.id },
+            access: CollectionAccess::Write,
+            expires_at: None,
+        });
+        save_collection(&path, &seeded2).unwrap();
+        let swept = sweep_expired_grants(&path, &sgk).unwrap();
+        assert_eq!(swept.removed.len(), 1);
+        assert_eq!(swept.rotations.len(), 1);
         // The expired grantee's wrap is gone; the survivor's opens to
         // the rotated CK.
         assert!(!grant_wrap_path(&path, &file.id, &gone).exists());
@@ -1733,6 +1903,20 @@ mod tests {
         let (on_disk, _) = open_collection(&path, &sgk, &file.id).unwrap();
         assert_eq!(
             via_wrap.as_ref(),
+            unwrap_ck(&on_disk, &sgk).unwrap().as_ref()
+        );
+        // The surviving group's ckwrap opened the OLD CK at mint time; the
+        // sweep re-minted it, so the member still opens the collection.
+        let through = crate::vault::groups::open_ck_through_group(
+            &path,
+            &g.id,
+            &file.id,
+            &stays,
+            bob.wrapping_secret(),
+        )
+        .unwrap();
+        assert_eq!(
+            through.as_ref(),
             unwrap_ck(&on_disk, &sgk).unwrap().as_ref()
         );
     }
