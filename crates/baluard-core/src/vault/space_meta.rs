@@ -79,6 +79,12 @@ pub struct SpaceStatus {
     pub missing_wrap_pubkey: usize,
     /// Live members with a wrap pubkey but no wrap file yet.
     pub pending_wrap: usize,
+    /// The epoch recorded at flip time; None on legacy markers.
+    pub flipped_epoch: Option<u64>,
+    /// Flipped and no rotation has run since (flipped_epoch == current
+    /// epoch): pre-flip members still hold the old key. Computed by the
+    /// handle against the live epoch, not by status().
+    pub needs_rotation: bool,
 }
 
 fn space_store_path(vault_path: &Path) -> PathBuf {
@@ -140,7 +146,7 @@ pub fn shape_flipped(vault_path: &Path) -> bool {
 /// Write the team-shape marker (the flip's commit point). Fails when
 /// the file already exists with a different mode so a foreign marker
 /// never gets silently overwritten.
-pub fn write_shape_marker(vault_path: &Path) -> Result<(), BaluardError> {
+pub fn write_shape_marker(vault_path: &Path, flipped_epoch: u64) -> Result<(), BaluardError> {
     let path = vault_path.join(SHAPE_PATH);
     if path.exists() {
         // Idempotent for an existing team marker.
@@ -158,6 +164,10 @@ pub fn write_shape_marker(vault_path: &Path) -> Result<(), BaluardError> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
+        // The epoch at flip time: a rotation bumps the epoch, so
+        // flipped_epoch == current epoch means the post-flip rotation
+        // never happened (pre-flip members still hold the old key).
+        "flipped_epoch": flipped_epoch,
     });
     super::write_vault_file(
         &path,
@@ -287,7 +297,20 @@ pub fn status(vault_path: &Path, root: &RootKey) -> Result<SpaceStatus, BaluardE
         wrapped,
         missing_wrap_pubkey,
         pending_wrap,
+        flipped_epoch: marker_flipped_epoch(vault_path),
+        needs_rotation: false,
     })
+}
+
+/// The epoch recorded at flip time; None when unflipped or on legacy
+/// markers (pre-dating the rotation reminder).
+pub fn marker_flipped_epoch(vault_path: &Path) -> Option<u64> {
+    let text = std::fs::read_to_string(vault_path.join(SHAPE_PATH)).ok()?;
+    let v = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    if v["mode"].as_str() != Some("team") {
+        return None;
+    }
+    v["flipped_epoch"].as_u64()
 }
 
 /// Seal the SMK to one member's identity wrap pubkey.
@@ -401,7 +424,10 @@ pub fn rewrap_own_space_wrap(
 /// F4): a removed member knew the old SMK, so removal must retire it.
 /// In this additive slice nothing is SMK-encrypted yet, so the call is
 /// best-effort at the caller; the 7b flip makes it authoritative.
-pub fn rotate(vault_path: &Path, root: &RootKey) -> Result<PrepareReport, BaluardError> {
+pub fn rotate(
+    vault_path: &Path,
+    root: &RootKey,
+) -> Result<(PrepareReport, Zeroizing<[u8; 32]>), BaluardError> {
     let mut key = Zeroizing::new([0u8; 32]);
     use rand::RngCore;
     rand::rngs::OsRng.fill_bytes(key.as_mut());
@@ -418,11 +444,46 @@ pub fn rotate(vault_path: &Path, root: &RootKey) -> Result<PrepareReport, Baluar
         }
     }
     missing_wrap_pubkey.sort();
-    Ok(PrepareReport {
+    let report = PrepareReport {
         smk_fresh: true,
         wrapped,
         missing_wrap_pubkey,
-    })
+    };
+    Ok((report, key))
+}
+
+const SMK_PENDING_PATH: &str = "meta/.smk-pending.json";
+
+/// Record the OUTGOING SMK before a removal's rotation flips the store,
+/// so a crash in the re-seal window converges at the next admin unlock.
+/// Local-only (gitignored), 0600 — it carries the retired key.
+pub fn write_smk_pending(
+    vault_path: &Path,
+    old_smk: &Zeroizing<[u8; 32]>,
+) -> Result<(), BaluardError> {
+    let doc = serde_json::json!({
+        "format": 1,
+        "smk": hex::encode(old_smk.as_ref()),
+    });
+    let bytes = serde_json::to_vec_pretty(&doc)
+        .map_err(|e| VaultError::Metadata(format!("smk marker: {e}")))?;
+    write_vault_file(&vault_path.join(SMK_PENDING_PATH), &bytes)
+        .map_err(|e| VaultError::Metadata(format!("smk marker write: {e}")))?;
+    Ok(())
+}
+
+/// Read the recorded outgoing SMK hex; None when absent or malformed.
+pub fn read_smk_pending(vault_path: &Path) -> Option<String> {
+    let bytes = std::fs::read(vault_path.join(SMK_PENDING_PATH)).ok()?;
+    let doc = serde_json::from_slice::<serde_json::Value>(&bytes).ok()?;
+    if doc["format"].as_u64() != Some(1) {
+        return None;
+    }
+    doc["smk"].as_str().map(|s| s.to_string())
+}
+
+pub fn clear_smk_pending(vault_path: &Path) {
+    let _ = std::fs::remove_file(vault_path.join(SMK_PENDING_PATH));
 }
 
 #[cfg(test)]
@@ -748,10 +809,10 @@ mod tests {
     fn shape_marker_read_write_and_damaged() {
         let (_d, path) = temp_vault();
         assert!(!shape_flipped(&path));
-        write_shape_marker(&path).unwrap();
+        write_shape_marker(&path, 1).unwrap();
         assert!(shape_flipped(&path));
         // Idempotent.
-        write_shape_marker(&path).unwrap();
+        write_shape_marker(&path, 1).unwrap();
         // Damaged marker reads false (fail toward the legacy path).
         std::fs::write(path.join(SHAPE_PATH), b"{not json").unwrap();
         assert!(!shape_flipped(&path));
@@ -776,11 +837,12 @@ mod tests {
         let old_smk = open_store(&path, &root).unwrap();
 
         // Offboarding primitive: fresh SMK, survivors re-wrapped.
-        let report = rotate(&path, &root).unwrap();
+        let (report, rotated_smk) = rotate(&path, &root).unwrap();
         assert!(report.smk_fresh);
         assert_eq!(report.wrapped, 1);
         let new_smk = open_store(&path, &root).unwrap();
         assert_ne!(*new_smk, *old_smk);
+        assert_eq!(*new_smk, *rotated_smk);
         assert_eq!(
             *open_space_wrap(&path, &alice, alice_id.wrapping_secret()).unwrap(),
             *new_smk

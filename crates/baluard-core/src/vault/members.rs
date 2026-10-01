@@ -427,21 +427,39 @@ pub fn commit_ownership_swap(
 /// unbound, legacy (no member directory), or bound to a TOMBSTONED row
 /// (S1a-5: reset kills the member's device bindings).
 pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<MemberRole> {
+    // Scan every member subtree. A binding counts only when its payload
+    // agrees with its directory AND the row is live; a device counted in
+    // MORE THAN ONE subtree is a forgery attempt (any member can write a
+    // binding for someone else's device into their own subtree), so the
+    // device resolves to NOTHING — fail closed and deterministic, never
+    // read_dir order (2026-10-01 review blocker + agy fix round).
+    let mut found: Option<MemberRole> = None;
     let dir = vault_path.join(MEMBERS_DIR);
     let entries = std::fs::read_dir(&dir).ok()?;
     for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        // Bindings live at meta/members/<member_id>/devices/<device_id>.json
-        // — resolve the member DIRECTORY from the row file's stem, never
-        // join under the file itself.
-        let Some(stem) = name.strip_suffix(".json") else {
+        // Row FILES carry the stem (<uuid>.json); binding-subtree
+        // DIRECTORIES have no .json and are skipped here.
+        let raw = entry.file_name().to_string_lossy().to_string();
+        let Some(stem) = raw.strip_suffix(".json") else {
             continue;
         };
-        let binding = dir
-            .join(stem)
+        let stem = stem.to_string();
+        // The binding lives under the sibling DIRECTORY (meta/members/
+        // <uuid>/devices/), never under the row file's own path.
+        let binding_path = dir
+            .join(stem.clone())
             .join("devices")
             .join(format!("{device_id}.json"));
-        if !binding.exists() {
+        if !binding_path.exists() {
+            continue;
+        }
+        let Ok(binding_json) = std::fs::read_to_string(&binding_path) else {
+            continue;
+        };
+        let Ok(b) = serde_json::from_str::<DeviceBinding>(&binding_json) else {
+            continue;
+        };
+        if b.member_id.to_string() != stem || b.device_id != device_id {
             continue;
         }
         if let Ok(json) = std::fs::read_to_string(entry.path()) {
@@ -450,12 +468,15 @@ pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<Memb
                     && member.reset.is_none()
                     && member.removed.is_none()
                 {
-                    return Some(member.role);
+                    if found.is_some() {
+                        return None;
+                    }
+                    found = Some(member.role);
                 }
             }
         }
     }
-    None
+    found
 }
 
 /// The member file for the member `device_id` is bound to, plus its
@@ -1066,23 +1087,56 @@ pub fn consume_request(vault_path: &Path, req_id: Uuid) -> Result<(), BaluardErr
 /// The member id `device_id` is bound to (scans device bindings).
 /// `None` when unbound or legacy (no member directory).
 pub fn member_id_for_device(vault_path: &Path, device_id: Uuid) -> Option<Uuid> {
+    // Same counting rule as member_role_for_device: payload agrees with
+    // its directory, the row is live, and a device counted in more than
+    // one subtree resolves to NOTHING, deterministically (2026-10-01
+    // review blocker + agy fix round).
+    let mut found: Option<Uuid> = None;
     let dir = vault_path.join(MEMBERS_DIR);
     let entries = std::fs::read_dir(&dir).ok()?;
     for entry in entries.flatten() {
-        let binding = entry
-            .path()
+        // Row FILES carry the stem (<uuid>.json); binding-subtree
+        // DIRECTORIES have no .json and are skipped here.
+        let raw = entry.file_name().to_string_lossy().to_string();
+        let Some(stem) = raw.strip_suffix(".json") else {
+            continue;
+        };
+        let stem = stem.to_string();
+        // The binding lives under the sibling DIRECTORY (meta/members/
+        // <uuid>/devices/), never under the row file's own path.
+        let binding_path = dir
+            .join(stem.clone())
             .join("devices")
             .join(format!("{device_id}.json"));
-        if !binding.exists() {
+        if !binding_path.exists() {
             continue;
         }
-        if let Ok(json) = std::fs::read_to_string(binding) {
-            if let Ok(b) = serde_json::from_str::<DeviceBinding>(&json) {
-                return Some(b.member_id);
-            }
+        let Ok(binding_json) = std::fs::read_to_string(&binding_path) else {
+            continue;
+        };
+        let Ok(b) = serde_json::from_str::<DeviceBinding>(&binding_json) else {
+            continue;
+        };
+        if b.member_id.to_string() != stem || b.device_id != device_id {
+            continue;
         }
+        // The row must be live: bindings under tombstoned subtrees are
+        // inert by design (reset re-enrollment keeps the old binding).
+        let Ok(row_json) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(row) = serde_json::from_str::<MemberFile>(&row_json) else {
+            continue;
+        };
+        if row.reset.is_some() || row.removed.is_some() {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(b.member_id);
     }
-    None
+    found
 }
 
 /// Update the device-local member unlock file's sealed identity seed
@@ -1298,6 +1352,183 @@ mod tests {
         // Legacy vault: no directory at all.
         let empty = tempfile::tempdir().unwrap();
         assert!(list_members(empty.path()).unwrap().is_empty());
+    }
+
+    /// 2026-10-01 review blocker: any member can write a binding for
+    /// SOMEONE ELSE'S device into their own subtree. A device bound in two
+    /// subtrees resolves to NOTHING (fail closed, deterministic), a
+    /// payload that disagrees with its directory is skipped, and removing
+    /// the hostile binding restores resolution.
+    #[test]
+    fn ambiguous_device_bindings_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path();
+        let admin = uuid::Uuid::new_v4();
+        let mallory = uuid::Uuid::new_v4();
+        let device = uuid::Uuid::new_v4();
+        let row = |id: uuid::Uuid, name: &str, role: &str| {
+            serde_json::json!({
+                "id": id.to_string(),
+                "display_name": name,
+                "role": role,
+                "trust": "channel",
+            })
+        };
+        std::fs::create_dir_all(
+            vault
+                .join("meta/members")
+                .join(admin.to_string())
+                .join("devices"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(
+            vault
+                .join("meta/members")
+                .join(mallory.to_string())
+                .join("devices"),
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join(format!("meta/members/{admin}.json")),
+            row(admin, "Owner", "owner").to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join(format!("meta/members/{mallory}.json")),
+            row(mallory, "Mallory", "viewer").to_string(),
+        )
+        .unwrap();
+        // The legitimate binding.
+        let binding_json = serde_json::json!({
+            "device_id": device.to_string(),
+            "member_id": admin.to_string(),
+        })
+        .to_string();
+        std::fs::write(
+            vault
+                .join("meta/members")
+                .join(admin.to_string())
+                .join("devices")
+                .join(format!("{device}.json")),
+            &binding_json,
+        )
+        .unwrap();
+        assert_eq!(
+            member_role_for_device(vault, device),
+            Some(MemberRole::Owner)
+        );
+        assert_eq!(member_id_for_device(vault, device), Some(admin));
+
+        // The hostile copy in Mallory's own subtree (policy-legal write,
+        // the attack from the review): an AGREEING binding — payload names
+        // Mallory, file sits in Mallory's subtree — which the sync walk's
+        // path check alone would accept. Resolution must fail CLOSED for
+        // both resolvers — never read_dir order, never a Viewer downgrade
+        // of the admin.
+        let hostile = serde_json::json!({
+            "device_id": device.to_string(),
+            "member_id": mallory.to_string(),
+        })
+        .to_string();
+        std::fs::write(
+            vault
+                .join("meta/members")
+                .join(mallory.to_string())
+                .join("devices")
+                .join(format!("{device}.json")),
+            hostile,
+        )
+        .unwrap();
+        assert_eq!(member_role_for_device(vault, device), None);
+        assert_eq!(member_id_for_device(vault, device), None);
+
+        // Repair: delete the hostile binding, resolution returns.
+        std::fs::remove_file(
+            vault
+                .join("meta/members")
+                .join(mallory.to_string())
+                .join("devices")
+                .join(format!("{device}.json")),
+        )
+        .unwrap();
+        assert_eq!(
+            member_role_for_device(vault, device),
+            Some(MemberRole::Owner)
+        );
+
+        // A payload that disagrees with its directory is a forgery, not a
+        // resolution: BOTH resolvers skip it (the role resolver parses the
+        // binding too, so a junk second binding cannot DoS role resolution
+        // into an ambiguity).
+        let foreign = serde_json::json!({
+            "device_id": device.to_string(),
+            "member_id": mallory.to_string(),
+        })
+        .to_string();
+        std::fs::write(
+            vault
+                .join("meta/members")
+                .join(admin.to_string())
+                .join("devices")
+                .join(format!("{device}.json")),
+            foreign,
+        )
+        .unwrap();
+        assert_eq!(member_id_for_device(vault, device), None);
+        assert_eq!(member_role_for_device(vault, device), None);
+
+        // Reset re-enrollment: the SAME device legitimately carries an
+        // inert binding under the tombstoned old row plus a live binding
+        // under the successor. The tombstoned binding never counts.
+        let old_row = uuid::Uuid::new_v4();
+        std::fs::create_dir_all(
+            vault
+                .join("meta/members")
+                .join(old_row.to_string())
+                .join("devices"),
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join(format!("meta/members/{old_row}.json")),
+            serde_json::json!({
+                "id": old_row.to_string(),
+                "display_name": "Old",
+                "role": "viewer",
+                "trust": "channel",
+                "reset": {"successor": admin.to_string()},
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            vault
+                .join("meta/members")
+                .join(old_row.to_string())
+                .join("devices")
+                .join(format!("{device}.json")),
+            serde_json::json!({
+                "device_id": device.to_string(),
+                "member_id": old_row.to_string(),
+            })
+            .to_string(),
+        )
+        .unwrap();
+        // Restore the legit binding in the admin's dir (the foreign one
+        // above replaced it).
+        std::fs::write(
+            vault
+                .join("meta/members")
+                .join(admin.to_string())
+                .join("devices")
+                .join(format!("{device}.json")),
+            &binding_json,
+        )
+        .unwrap();
+        assert_eq!(member_id_for_device(vault, device), Some(admin));
+        assert_eq!(
+            member_role_for_device(vault, device),
+            Some(MemberRole::Owner)
+        );
     }
 
     /// §4.8-2: the joiner-side status checks. introduced = device-local

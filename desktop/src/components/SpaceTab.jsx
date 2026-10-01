@@ -4,6 +4,7 @@ import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
+import { holdPhrase, takeHeldPhrase, clearHeldPhrase } from "../lib/heldPhrase.js";
 import ConfirmModal from "./ConfirmModal.jsx";
 import TypedConfirmModal from "./TypedConfirmModal.jsx";
 
@@ -27,6 +28,8 @@ export default function SpaceTab() {
   const [spaceTeam, setSpaceTeam] = createSignal(null);
   const [teamBusy, setTeamBusy] = createSignal(false);
   const [showFlipConfirm, setShowFlipConfirm] = createSignal(false);
+  // Session-scoped dismissal of the persistent rotate reminder.
+  const [rotateDismissed, setRotateDismissed] = createSignal(false);
   // S4-6: advisory org policies. null = nothing published.
   const [policies, setPolicies] = createSignal(null);
   const [policiesBusy, setPoliciesBusy] = createSignal(false);
@@ -34,6 +37,12 @@ export default function SpaceTab() {
   const [kitEnabled, setKitEnabled] = createSignal(null);
   const [kitBusy, setKitBusy] = createSignal(false);
   const [kitPhrase, setKitPhrase] = createSignal(null);
+  // A blur-lock unmounted the panel before the phrase was confirmed:
+  // re-show it from the process-memory holder.
+  if (kitPhrase() === null) {
+    const heldKit = takeHeldPhrase("kit");
+    if (heldKit) setKitPhrase(heldKit);
+  }
   const [showKitConfirm, setShowKitConfirm] = createSignal(false);
 
   onSettled(() => {
@@ -59,6 +68,9 @@ export default function SpaceTab() {
     try {
       const r = JSON.parse(await daemon("space.kit_enable", {}));
       setKitPhrase(r.phrase);
+      // Blur-lock can unmount the panel mid-showing; the phrase stays
+      // recoverable in process memory until re-shown and confirmed.
+      holdPhrase("kit", r.phrase);
       setKitEnabled(true);
       toastSuccess(t("space.kitEnabled"));
     } catch (e) {
@@ -281,6 +293,23 @@ export default function SpaceTab() {
     }
   }
 
+  async function runRotateRoot() {
+    if (teamBusy()) return;
+    setTeamBusy(true);
+    try {
+      await daemon("space.rotate_root", {});
+      setRotatePrompt(false);
+      toastSuccess(t("space.rotateDone"));
+      await loadTeam();
+    } catch (e) {
+      // Above the quorum threshold this refuses with the pending-ask
+      // message; the ask ships to the pending card for a co-admin.
+      toastError(sanitizeError(e, t));
+    } finally {
+      setTeamBusy(false);
+    }
+  }
+
   function toggleViewerExport() {
     if (busy()) return;
     const next = !viewerExport();
@@ -344,6 +373,25 @@ export default function SpaceTab() {
           </span>
         </Show>
       </div>
+
+      {/* S3-7b completion: the flip alone retires keywraps at HEAD; the
+          rotation is what retires the keys pre-flip members hold (and
+          their copies in git history). The reminder is PERSISTENT — the
+          daemon computes needs_rotation from the flip marker's epoch
+          until a rotation bumps it. */}
+      <Show when={spaceTeam()?.needs_rotation && !rotateDismissed()}>
+        <div class="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-amber-400/60 bg-amber-400/10">
+          <span class="text-xs text-amber-700 dark:text-amber-300">{t("space.rotatePrompt")}</span>
+          <div class="flex gap-2">
+            <button disabled={teamBusy()} class={chip(false)} onClick={runRotateRoot}>
+              {t("space.rotateNow")}
+            </button>
+            <button disabled={teamBusy()} class={chip(false)} onClick={() => setRotateDismissed(true)}>
+              {t("settings.disabled")}
+            </button>
+          </div>
+        </div>
+      </Show>
 
       {/* Who may invite members */}
       <div class="flex items-center justify-between">
@@ -605,7 +653,10 @@ export default function SpaceTab() {
             </button>
             <button
               class="text-[11px] font-bold text-[var(--color-text)] cursor-pointer"
-              onClick={() => setKitPhrase(null)}
+              onClick={() => {
+                setKitPhrase(null);
+                clearHeldPhrase("kit");
+              }}
             >
               {t("space.kitStored")}
             </button>

@@ -337,6 +337,10 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     // S3-7a: prepare writes the sealed store + per-member wraps.
     "space.prepare",
     "space.flip",
+    // S3-7b completion: the rotation commit must reach the remote
+    // promptly — until it does, pre-flip members' historical keywraps
+    // still unwrap the current root.
+    "space.rotate_root",
     // S4-7: kit enable/disable write the git-tracked
     // meta/recovery-kit.json (meta/** Admin row).
     "space.kit_enable",
@@ -3780,6 +3784,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(v) => ok_resp(v, token_str),
             Err(e) => err_response(e),
         },
+        // S3-7b completion: the flip surface's rotate-now step. The core
+        // op carries the admin + quorum gates.
+        "space.rotate_root" => match state.space_rotate_root().await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
         // ── S4-7: Space Recovery Kit (admin; the core gate is the same
         // one policies uses) ──
         "space.kit_enable" => match state.space_kit_enable().await {
@@ -6030,6 +6040,7 @@ mod tests {
             "groups.member_remove",
             "space.prepare",
             "space.flip",
+            "space.rotate_root",
             "space.kit_enable",
             "space.kit_disable",
             "space.kit_status",

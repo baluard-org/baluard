@@ -208,7 +208,6 @@ export default function PeopleTab() {
         requester_member_id: r.requester_member_id,
         access,
       };
-      if (expiryDays) payload.expires_in_days = expiryDays;
       await daemon("collections.requests_approve", payload);
       toastSuccess(t("shared.approvedToast", { name: r.requester_name }));
       await Promise.all([loadAsks(), loadMembers()]);
