@@ -13,6 +13,7 @@ import AskAccessModal from "./AskAccessModal.jsx";
 import OpenSharedModal from "./OpenSharedModal.jsx";
 import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconSwitch, IconBaluardLogo, IconUsers } from "./Icon.jsx";
 import ConflictBanner from "./ConflictBanner.jsx";
+import RemovalBanner from "./RemovalBanner.jsx";
 import CipherRow from "./CipherRow.jsx";
 import CipherDetail from "./CipherDetail.jsx";
 import AddEditCipherForm from "./AddEditCipherForm.jsx";
@@ -428,6 +429,7 @@ export default function VaultView() {
       {/* Column 2: Vault Items List Pane */}
       <div class={`vault__list w-[360px] bg-[var(--color-list)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
         <ConflictBanner />
+        <RemovalBanner />
         <div class="flex-1 flex flex-col min-h-0">
 
           {/* Header Action Bar */}

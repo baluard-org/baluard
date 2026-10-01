@@ -1009,5 +1009,13 @@
     "remove": "Remove",
     "add": "Add",
     "removeNote": "Removing someone re-keys the group: what they already opened stays open to them, but future group access ends."
+  },
+  "removal": {
+    "bodyConfirmed": "You were removed from this Space. It no longer syncs on this device.",
+    "bodyReset": "The owner reset this device's access. It no longer syncs on this device.",
+    "bodyProbable": "This Space may have removed this device — sync keeps failing with an access error.",
+    "cliHint": "To also delete the files: baluard vaults detach {slug} --delete-from-disk",
+    "detachAction": "Remove from this app (keep the files)",
+    "detachedToast": "Removed from this app. The files stay on disk."
   }
 }

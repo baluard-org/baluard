@@ -72,6 +72,21 @@ pub enum AutoSyncState {
     NeedsDecision,
 }
 
+/// Consecutive access-denied sync cycles after which the removal-notice
+/// surface reports "you may have been removed". Deliberately above one:
+/// a single rejected fetch can be an expired token or an MFA prompt;
+/// persistence across cycles is the kicked signal.
+pub const ACCESS_DENIED_STREAK_FOR_REMOVAL: u32 = 3;
+
+/// Outcome of a background pull. `AccessDenied` means the remote refused
+/// THIS device's credentials (seat strike / revoked token) — distinct
+/// from `Offline` (transport failure) so the removal notice can fire.
+pub enum PullOutcome {
+    Fresh,
+    Offline,
+    AccessDenied,
+}
+
 /// Snapshot of coordinator status, returned by the `sync.autosync_status` route.
 #[derive(Debug, Clone, Serialize)]
 pub struct AutoSyncStatus {
@@ -84,6 +99,9 @@ pub struct AutoSyncStatus {
     pub pending: u32,
     /// Count of conflicts auto-resolved (newest kept) since unlock.
     pub conflicts_resolved: u32,
+    /// Consecutive pulls refused by the remote (auth-class failures).
+    /// Reset to zero by any success. Feeds the removal notice.
+    pub access_denied_streak: u32,
 }
 
 /// Internal mutable state behind the handle lock.
@@ -93,6 +111,8 @@ struct Inner {
     last_sync: Option<u64>,
     pending: u32,
     conflicts_resolved: u32,
+    /// Consecutive access-denied pulls (see [`PullOutcome::AccessDenied`]).
+    access_denied_streak: u32,
     /// Phase 2b: conflicts paused for field-level resolution. Populated when
     /// `run_sync_cycle` returns `NeedsDecision`; drained by `sync.conflict`
     /// (read) and `sync.conflict.resolve` (consume + finalize). Empty in all
@@ -137,6 +157,7 @@ impl AutoSyncHandle {
                 last_sync: None,
                 pending: 0,
                 conflicts_resolved: 0,
+                access_denied_streak: 0,
                 pending_conflicts: Vec::new(),
                 device_id: String::new(),
                 devkey_seal: None,
@@ -157,6 +178,7 @@ impl AutoSyncHandle {
             last_sync: g.last_sync,
             pending: g.pending,
             conflicts_resolved: g.conflicts_resolved,
+            access_denied_streak: g.access_denied_streak,
         }
     }
 
@@ -363,6 +385,9 @@ impl AutoSyncHandle {
         g.active = false;
         g.state = AutoSyncState::Idle;
         g.pending = 0;
+        // A fresh session starts with a clean slate: a denial streak from
+        // the previous unlock must not survive a lock/relock (review F6).
+        g.access_denied_streak = 0;
         g.pending_conflicts.clear();
         // C1: drop the devkey seal subkey with the session.
         if let Some(mut k) = g.devkey_seal.take() {
@@ -434,14 +459,22 @@ impl AutoSyncHandle {
             return;
         }
         match outcome {
-            Ok(Ok(true)) => {
+            Ok(Ok(PullOutcome::Fresh)) => {
+                g.access_denied_streak = 0;
                 g.last_sync = Some(now_secs());
                 // Don't clobber Dirty/Syncing; only settle to Idle from Offline.
                 if g.state == AutoSyncState::Offline {
                     g.state = AutoSyncState::Idle;
                 }
             }
-            Ok(Ok(false)) => g.state = AutoSyncState::Offline,
+            Ok(Ok(PullOutcome::Offline)) => g.state = AutoSyncState::Offline,
+            Ok(Ok(PullOutcome::AccessDenied)) => {
+                // The remote refuses this device's credentials. Keep the
+                // state machine calm (Offline-like cadence) and let the
+                // streak feed the removal-notice surface.
+                g.access_denied_streak = g.access_denied_streak.saturating_add(1);
+                g.state = AutoSyncState::Offline;
+            }
             _ => {}
         }
     }
@@ -549,6 +582,10 @@ impl AutoSyncHandle {
         }
         match outcome {
             Ok(Ok(Ok(SyncOutcome::Synced { conflicts }))) => {
+                // A successful full cycle (manual sync, mutation push) is
+                // proof the remote accepts this device: clear the streak
+                // here too, not only on background pulls (review F6).
+                g.access_denied_streak = 0;
                 g.conflicts_resolved = g.conflicts_resolved.saturating_add(conflicts);
                 g.last_sync = Some(now_secs());
                 g.state = AutoSyncState::Idle;
@@ -649,11 +686,16 @@ impl AutoSyncHandle {
                 return;
             }
             match outcome {
-                Ok(Ok(Ok(true))) => {
+                Ok(Ok(Ok(PullOutcome::Fresh))) => {
+                    g.access_denied_streak = 0;
                     g.last_sync = Some(now_secs());
                     g.state = AutoSyncState::Idle;
                 }
-                Ok(Ok(Ok(false))) => {
+                Ok(Ok(Ok(PullOutcome::Offline))) => {
+                    g.state = AutoSyncState::Offline;
+                }
+                Ok(Ok(Ok(PullOutcome::AccessDenied))) => {
+                    g.access_denied_streak = g.access_denied_streak.saturating_add(1);
                     g.state = AutoSyncState::Offline;
                 }
                 _ => {}
@@ -721,14 +763,19 @@ fn run_pull_only(
     vault_path: &Path,
     device_id: &str,
     devkey_seal: Option<&[u8; 32]>,
-) -> Result<bool, String> {
-    use baluard_core::sync::engine::is_network_error;
-    use baluard_core::sync::engine::{PullResult, SyncEngine};
+) -> Result<PullOutcome, String> {
+    use baluard_core::sync::engine::{
+        PullResult, SyncEngine, is_access_denied_error, is_network_error,
+    };
 
     let engine = SyncEngine::new(vault_path, device_id, devkey_seal);
     let repo = match engine.open_repo() {
         Ok(r) => r,
-        Err(ref e) if is_network_error(e) => return Ok(false),
+        // Access-denied FIRST: a provider strike surfaces as an HTTP
+        // status inside a Network-class error, so the network arm would
+        // shadow it if it came first (review F1).
+        Err(ref e) if is_access_denied_error(e) => return Ok(PullOutcome::AccessDenied),
+        Err(ref e) if is_network_error(e) => return Ok(PullOutcome::Offline),
         Err(e) => return Err(format!("{e}")),
     };
     match engine.pull(&repo, "origin") {
@@ -746,7 +793,7 @@ fn run_pull_only(
             // next cycle retries instead of pushing a corrupt tree.
             engine
                 .resolve_conflict_keep_local(&repo, local_oid, remote_oid, &files)
-                .map(|_| true)
+                .map(|_| PullOutcome::Fresh)
                 .map_err(|e| format!("conflict resolution failed: {e}"))
         }
         // P5b: the pull wrote cipher files through the engine, bypassing
@@ -756,10 +803,12 @@ fn run_pull_only(
         // force a full O(N) re-decrypt at the next list.
         Ok(PullResult::FastForward) | Ok(PullResult::Merged) => {
             SyncEngine::invalidate_local_index(vault_path);
-            Ok(true)
+            Ok(PullOutcome::Fresh)
         }
-        Ok(_) => Ok(true),
-        Err(ref e) if is_network_error(e) => Ok(false),
+        Ok(_) => Ok(PullOutcome::Fresh),
+        // Access-denied before network: same shadowing rule as above.
+        Err(ref e) if is_access_denied_error(e) => Ok(PullOutcome::AccessDenied),
+        Err(ref e) if is_network_error(e) => Ok(PullOutcome::Offline),
         Err(e) => Err(format!("{e}")),
     }
 }
@@ -769,8 +818,8 @@ fn run_pull_only(
     _vault_path: &Path,
     _device_name: &str,
     _devkey_seal: Option<&[u8; 32]>,
-) -> Result<bool, String> {
-    Ok(true)
+) -> Result<PullOutcome, String> {
+    Ok(PullOutcome::Fresh)
 }
 
 fn now_secs() -> u64 {

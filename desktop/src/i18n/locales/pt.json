@@ -1009,5 +1009,13 @@
     "remove": "Remover",
     "add": "Adicionar",
     "removeNote": "Remover alguém regenera a chave do grupo: o que a pessoa já abriu continua aberto para ela, mas o acesso futuro ao grupo termina."
+  },
+  "removal": {
+    "bodyConfirmed": "Você foi removido deste Space. Ele não sincroniza mais neste dispositivo.",
+    "bodyReset": "O dono restabeleceu o acesso deste dispositivo. Ele não sincroniza mais neste dispositivo.",
+    "bodyProbable": "Este Space pode ter removido este dispositivo: a sincronização falha com um erro de acesso.",
+    "cliHint": "Para apagar também os arquivos: baluard vaults detach {slug} --delete-from-disk",
+    "detachAction": "Remover deste app (manter os arquivos)",
+    "detachedToast": "Removido deste app. Os arquivos permanecem no disco."
   }
 }

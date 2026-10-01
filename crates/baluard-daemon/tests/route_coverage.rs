@@ -1431,6 +1431,36 @@ async fn groups_lifecycle_and_locked_rejection() {
 // Debt: the desktop admin marker asks the daemon (holds_root) instead
 // of counting admin rows — it holds for zero-collection vaults, and a
 // locked vault reports no powers.
+// Removal-notice route: none on a fresh member, confirmed on a locally
+// tombstoned row, none on a personal vault (no members directory).
+#[tokio::test]
+async fn removal_notice_reports_tombstone_and_personal_guard() {
+    let (_dir, vault_path) = make_vault("removal-notice");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    state.unlock(MASTER).await.expect("vault unlock");
+    // Owner genesis: live row, no tombstone, streak zero → none.
+    let none = state.removal_notice().await.expect("notice");
+    assert!(none.contains("\"none\""), "{none}");
+
+    // Tombstone the acting device's row: confirmed removal.
+    let device = uuid::Uuid::parse_str(&state.device_id().await).expect("device uuid");
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        device,
+        Some(1),
+    );
+    let removed = state.removal_notice().await.expect("notice");
+    assert!(removed.contains("\"removed\""), "{removed}");
+    assert!(removed.contains("local-tombstone"), "{removed}");
+
+    // Personal-vault guard: no members directory, never a notice.
+    std::fs::remove_dir_all(vault_path.join("meta").join("members")).unwrap();
+    let personal = state.removal_notice().await.expect("notice");
+    assert!(personal.contains("\"none\""), "{personal}");
+}
+
 #[tokio::test]
 async fn is_admin_device_reports_the_managing_marker() {
     let (_dir, vault_path) = make_vault("is-admin");
