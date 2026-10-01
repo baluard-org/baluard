@@ -4165,6 +4165,89 @@ impl VaultHandle {
     /// access. Password change alone does NOT protect against an attacker who holds
     /// the device private key. For post-compromise remediation, call `rotate_root_key()`
     /// or `revoke_device_and_rekey()` after changing the password.
+    /// Replace the vault's recovery phrase with a fresh one. The current
+    /// Root Key is re-wrapped under the new phrase, so the old phrase can
+    /// no longer unwrap anything the moment this write lands. Gated on the
+    /// current master password, never the old phrase: the owner holds the
+    /// password, a phrase thief holds only the phrase, and rotation must
+    /// be the owner's move (the change_master_password canary pattern).
+    /// The new phrase is returned exactly once for immediate storage.
+    pub fn rotate_recovery_phrase(&mut self, old_password: &str) -> Result<String, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+
+        // Step 1: the password proves the caller is the owner (same canary
+        // check change_master_password runs before touching anything).
+        // Fail closed when the canary is absent: unlock guarantees a canary
+        // somewhere, so a missing one means this device cannot verify the
+        // password at all (review F2 — the old exists()-skip copied from
+        // change_master_password would let a deleted canary wave any
+        // string through).
+        let old_kek = kdf::derive_kek(old_password, &self.kdf_params)?;
+        let old_session_key = hkdf_derive::derive_session_key(&old_kek)?;
+        let canary_path = self.path.join("meta/kek-canary.enc");
+        if !canary_path.exists() {
+            return Err(VaultError::Corrupt(
+                "this device cannot verify the master password (password canary missing); unlock again on the device that created the vault".into(),
+            )
+            .into());
+        }
+        let canary_data = std::fs::read(&canary_path)?;
+        super::canary::verify_kek_canary(&old_session_key, &canary_data)
+            .map_err(|_| VaultError::Corrupt("old master password incorrect".into()))?;
+
+        // A flipped (team) Space recovers with its Space Recovery Kit, not
+        // a personal phrase; the destructive personal recovery would reset
+        // the device roster here (review F6/F4).
+        if crate::vault::space_meta::shape_flipped(&self.path) {
+            return Err(VaultError::Metadata(
+                "This Space recovers with its Space Recovery Kit, not a personal phrase.".into(),
+            )
+            .into());
+        }
+
+        // Step 2: fresh phrase, fresh wrap key (creation Step 7 shape).
+        let phrase = crate::recovery::RecoveryPhrase::generate()?;
+        let seed = phrase.derive_key();
+        let recovery_x25519_secret = Zeroizing::new(x25519_dalek::StaticSecret::from(
+            <[u8; 32]>::try_from(&seed[..32])
+                .map_err(|_| VaultError::Corrupt("recovery key too short".into()))?,
+        ));
+        // PublicKey::from resolves a trait bound on &StaticSecret, so the
+        // Zeroizing wrapper needs an explicit deref here (plain reference
+        // coercion does not apply to trait-bound arguments).
+        let recovery_x25519_public = x25519_dalek::PublicKey::from(&*recovery_x25519_secret);
+
+        // Step 3: re-wrap the LIVE Root Key for the new phrase.
+        let root_key = match &self.state {
+            VaultState::Unlocked(u) => u.root()?.clone(),
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+            root_key.as_bytes(),
+            &recovery_x25519_public,
+            "recovery-keywrap",
+        )?;
+
+        // Step 4: overwrite the escrow; the old phrase is dead here.
+        let recovery_data = serde_json::json!({
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+            "recovery_x25519_pubkey": hex::encode(recovery_x25519_public.as_bytes()),
+            "rotated_at": crate::vault::collections::now_secs_pub(),
+        });
+        super::write_vault_file(
+            &self.path.join("meta/recovery.json"),
+            serde_json::to_string_pretty(&recovery_data)
+                .unwrap()
+                .as_bytes(),
+        )?;
+
+        Ok(phrase.phrase())
+    }
+
     pub fn change_master_password(
         &mut self,
         old_password: &str,
@@ -10458,6 +10541,69 @@ mod tests {
         let text = serde_json::to_string(&report).unwrap();
         assert!(!text.contains("content_key"));
         assert!(!text.contains("ck_wrapped"));
+    }
+
+    #[test]
+    fn rotate_recovery_phrase_replaces_the_escrow() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Wrong password refuses before anything is written.
+        let err = handle
+            .rotate_recovery_phrase("not-the-password")
+            .unwrap_err();
+        assert!(format!("{err}").contains("old master password incorrect"));
+
+        // A correct rotation returns 24 words and the escrow opens for it.
+        let phrase1 = handle.rotate_recovery_phrase(&password).unwrap();
+        assert_eq!(phrase1.split_whitespace().count(), 24);
+
+        fn unwrap_root_with(vault_path: &std::path::Path, phrase: &str) -> Result<Vec<u8>, String> {
+            let parsed =
+                crate::recovery::RecoveryPhrase::from_phrase(phrase).map_err(|e| format!("{e}"))?;
+            let seed = parsed.derive_key();
+            let secret = Zeroizing::new(x25519_dalek::StaticSecret::from(
+                <[u8; 32]>::try_from(&seed[..32]).map_err(|_| "short seed".to_string())?,
+            ));
+            let json: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(vault_path.join("meta/recovery.json"))
+                    .map_err(|e| format!("{e}"))?,
+            )
+            .map_err(|e| format!("{e}"))?;
+            let eph = hex::decode(json["ephemeral_public"].as_str().unwrap_or(""))
+                .map_err(|e| format!("{e}"))?;
+            let ct = hex::decode(json["encrypted_key"].as_str().unwrap_or(""))
+                .map_err(|e| format!("{e}"))?;
+            let tag =
+                hex::decode(json["tag"].as_str().unwrap_or("")).map_err(|e| format!("{e}"))?;
+            let tag: [u8; 16] = tag.try_into().map_err(|_| "tag length".to_string())?;
+            crate::crypto::hpke_wrap::unwrap_key(&eph, &ct, &tag, &secret, "recovery-keywrap")
+                .map(|k| k.to_vec())
+                .map_err(|e| format!("{e}"))
+        }
+
+        let root_before = handle_root_key_for_test(&handle);
+        let opened = unwrap_root_with(&handle.path, &phrase1).unwrap();
+        assert_eq!(opened, root_before);
+
+        // A second rotation invalidates the first phrase: the old words no
+        // longer unwrap the escrow, the new words do.
+        let phrase2 = handle.rotate_recovery_phrase(&password).unwrap();
+        assert_ne!(phrase1, phrase2);
+        assert!(unwrap_root_with(&handle.path, &phrase1).is_err());
+        let opened2 = unwrap_root_with(&handle.path, &phrase2).unwrap();
+        assert_eq!(opened2, handle_root_key_for_test(&handle));
+
+        // A flipped (team) Space refuses: its recovery contract is the
+        // Space Recovery Kit, and the personal recovery would reset the
+        // roster (review F6/F4).
+        crate::vault::space_meta::write_shape_marker(dir.path()).unwrap();
+        let err = handle.rotate_recovery_phrase(&password).unwrap_err();
+        assert!(
+            format!("{err}").contains("Space Recovery Kit"),
+            "team refusal: {err}"
+        );
     }
 
     #[test]

@@ -333,8 +333,10 @@ all. This closes the last open P item; the sharing plan carries nothing
 pending.
 
 **Parked past 1.0 (tracked in progress.md, listed for completeness)**:
-iOS Phase 7 + sharing parity, recovery-key export (TXT/MD/PDF), browser
-extension Phase 2, 2FA tiers 2-5.
+iOS Phase 7 + sharing parity, browser extension Phase 2, 2FA tiers 2-5.
+Recovery-key export (TXT/MD) shipped 2026-10-01 inside the
+recovery-phrase rotation ceremony (D74); PDF/print stays parked with the
+other format work.
 
 ## 12. Suggested build order (updated for the 2026-09-28 resolutions)
 

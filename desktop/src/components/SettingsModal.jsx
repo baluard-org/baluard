@@ -21,6 +21,7 @@ import GroupsTab from "./GroupsTab.jsx";
 import ContactsTab from "./ContactsTab.jsx";
 import OutboxesTab from "./OutboxesTab.jsx";
 import BridgeTab from "./BridgeTab.jsx";
+import RecoveryPhraseCard from "./RecoveryPhraseCard.jsx";
 
 function TabButton(props) {
   return (
@@ -802,6 +803,11 @@ export default function SettingsModal() {
               </Show>
 
               <Show when={activeTab() === "data"}>
+                {/* Recovery phrase exit path */}
+                <div class="space-y-3 mb-6">
+                  <RecoveryPhraseCard />
+                </div>
+
                 {/* Import Section */}
                 <div class="space-y-3">
                   <div class="flex flex-col">
