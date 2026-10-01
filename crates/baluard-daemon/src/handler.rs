@@ -4257,6 +4257,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(_) => err_response("sync.status timed out".to_string()),
             }
         }
+        "sync.removal_notice" => match state.removal_notice().await {
+            Ok(msg) => ok_resp(msg, token_str),
+            Err(e) => err_response(e),
+        },
         "sync.log" => {
             let limit: usize = if req.payload.is_empty() {
                 10

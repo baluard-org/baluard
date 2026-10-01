@@ -5409,10 +5409,60 @@ pub fn is_network_error(e: &BaluardError) -> bool {
     matches!(e, BaluardError::Sync(SyncError::Network(_)))
 }
 
+/// Heuristic: does this sync error look like the remote refused THIS
+/// device's access (an HTTP 401/403/404 on a fetch, or an authentication
+/// rejection) rather than a transport failure or a data error? After a
+/// provider seat strike, a removed member's device sees exactly these on
+/// every pull. Message patterns are the only signal available: libgit2
+/// reports an HTTP 403 under the same Http error class as a connect
+/// failure, so status text is matched inside the (already
+/// credential-scrubbed) message. Deliberately conservative wording —
+/// bare "403" or "not found" never match, so an unrelated message that
+/// merely contains those digits cannot read as access denial.
+pub fn is_access_denied_error(e: &BaluardError) -> bool {
+    let msg = match e {
+        BaluardError::Sync(SyncError::Network(m)) | BaluardError::Sync(SyncError::Git(m)) => m,
+        _ => return false,
+    };
+    let low = msg.to_lowercase().replace("status code:", "status code");
+    // Status codes arrive as "unexpected HTTP status code: 403" or
+    // "request failed with status code 404" depending on transport —
+    // the colon is normalized away above so both shapes match.
+    let status_denied = ["status code 401", "status code 403", "status code 404"]
+        .iter()
+        .any(|p| low.contains(p));
+    let auth_denied = [
+        "unauthorized",
+        "forbidden",
+        "authentication failed",
+        "access denied",
+    ]
+    .iter()
+    .any(|p| low.contains(p));
+    status_denied || auth_denied
+}
+
 #[cfg(test)]
 #[cfg(feature = "git-sync")]
 mod tests {
     use super::*;
+
+    #[test]
+    fn access_denied_classification_is_conservative() {
+        let denied = |m: &str| {
+            is_access_denied_error(&BaluardError::Sync(SyncError::Network(m.to_string())))
+        };
+        assert!(denied("unexpected HTTP status code: 403"));
+        assert!(denied("request failed with status code 404"));
+        assert!(!denied("Connection refused"));
+        assert!(!denied("failed to resolve address for github.com"));
+        // A missing remote ref is a data error, not access denial: bare
+        // "not found" never matches, only status-code text does.
+        assert!(!denied("reference 'refs/heads/main' not found"));
+        assert!(is_access_denied_error(&BaluardError::Sync(SyncError::Git(
+            "authentication failed".into()
+        ))));
+    }
 
     fn make_test_repo() -> (tempfile::TempDir, SyncEngine) {
         let dir = tempfile::tempdir().unwrap();

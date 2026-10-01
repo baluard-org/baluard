@@ -35,6 +35,10 @@ export function AutoSyncProvider(props) {
   const [conflictsResolved, setConflictsResolved] = createSignal(0);
   // Tracks whether the banner for the latest conflict batch was dismissed.
   const [bannerDismissed, setBannerDismissed] = createSignal(true);
+  // Removal notice: null | {status: "removed"|"probable", reason}. The
+  // device looks removed from this Space (local tombstone or a persistent
+  // access-denied sync streak). Cleared on vault switch like conflicts.
+  const [removalNotice, setRemovalNotice] = createSignal(null);
 
   let poll;
   let lastSeenConflicts = 0;
@@ -61,6 +65,7 @@ export function AutoSyncProvider(props) {
         setConflictsResolved(0);
         setBannerDismissed(true);
         conflicts.clear();
+        setRemovalNotice(null);
       }
       lastSeenActive = slug;
     },
@@ -105,6 +110,16 @@ export function AutoSyncProvider(props) {
           // Best-effort: the next poll retries. Don't crash the status poll.
         }
       }
+
+      // Removal notice: keyless and cheap — one route answering a status
+      // word. Same slug re-check as the conflict fetch above.
+      try {
+        const rn = JSON.parse(await daemon("sync.removal_notice"));
+        if (switcher.activeSlug() !== targetSlug) return;
+        setRemovalNotice(rn.status && rn.status !== "none" ? rn : null);
+      } catch {
+        // Best-effort: the next poll retries.
+      }
     } catch {
       // Daemon unreachable or not connected to a remote — leave signals as-is.
     }
@@ -112,6 +127,10 @@ export function AutoSyncProvider(props) {
 
   function dismissBanner() {
     setBannerDismissed(true);
+  }
+
+  function dismissRemoval() {
+    setRemovalNotice(null);
   }
 
   // Fire a focus-triggered pull on window focus / tab becoming visible. The
@@ -145,8 +164,10 @@ export function AutoSyncProvider(props) {
     pending,
     conflictsResolved,
     bannerDismissed,
+    removalNotice,
     refresh,
     dismissBanner,
+    dismissRemoval,
   };
 
   return (

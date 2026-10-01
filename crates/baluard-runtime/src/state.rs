@@ -4332,6 +4332,85 @@ impl VaultState {
         Ok(handle.holds_root())
     }
 
+    /// Removal-notice check: does THIS device look removed from the
+    /// Space? Two signals, strongest first: a local tombstone (the own
+    /// member row on disk carries removed/reset — the removal commit
+    /// reached this clone before access died) is CONFIRMED; a streak of
+    /// consecutive access-denied syncs (the provider seat was struck) is
+    /// PROBABLE. Personal vaults (no meta/members) are always none.
+    /// Keyless and read-only — the session-token gate is the only guard,
+    /// and the answer leaks nothing but a status word.
+    pub async fn removal_notice(&self) -> Result<String, String> {
+        let members_dir = self.vault_path.join("meta").join("members");
+        if !members_dir.is_dir() {
+            // Personal vault: no membership, nothing to be removed from.
+            return Ok(serde_json::json!({ "status": "none" }).to_string());
+        }
+        let device = uuid::Uuid::parse_str(&self.device_id().await)
+            .map_err(|_| "device identity is not a uuid".to_string())?;
+        // Deterministic own-row resolution (review F5): a device can carry
+        // a binding to a tombstoned row AND to a live successor row (reset
+        // plus same-device re-enrollment), and read_dir order must never
+        // decide the answer. Scan every member row bound to this device;
+        // liveness wins, otherwise the tombstone kind names the reason.
+        let mut bound_live = false;
+        let mut bound_tombstone: Option<&'static str> = None;
+        if let Ok(rows) = std::fs::read_dir(&members_dir) {
+            for entry in rows.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let binding = path
+                    .parent()
+                    .map(|p| {
+                        p.join(stem)
+                            .join("devices")
+                            .join(format!("{device}.json"))
+                            .is_file()
+                    })
+                    .unwrap_or(false);
+                if !binding {
+                    continue;
+                }
+                let row: Option<baluard_core::vault::members::MemberFile> = std::fs::read(&path)
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok());
+                let Some(row) = row else { continue };
+                if row.removed.is_some() || row.reset.is_some() {
+                    // The removal (or reset) commit reached this clone:
+                    // confirmed, no guessing needed. Reset keeps its own
+                    // reason so the copy can say reset, not removed (F8).
+                    bound_tombstone = Some(if row.removed.is_some() {
+                        "local-tombstone"
+                    } else {
+                        "local-reset"
+                    });
+                } else {
+                    bound_live = true;
+                }
+            }
+        }
+        if !bound_live {
+            if let Some(reason) = bound_tombstone {
+                return Ok(serde_json::json!({ "status": "removed", "reason": reason }).to_string());
+            }
+        }
+        let streak = self.autosync.status().await.access_denied_streak;
+        if streak >= crate::autosync::ACCESS_DENIED_STREAK_FOR_REMOVAL {
+            return Ok(serde_json::json!({
+                "status": "probable",
+                "reason": "persistent-auth-failures",
+                "streak": streak,
+            })
+            .to_string());
+        }
+        Ok(serde_json::json!({ "status": "none" }).to_string())
+    }
+
     /// Mint a collection (admin-gated).
     pub async fn collection_create(&self, name: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;
