@@ -1497,6 +1497,13 @@ pub fn handle_sync_push(
     }
 }
 
+/// Commit pending local changes without touching the network. Deliberately
+/// direct-only: there is no daemon route because committing is local-only
+/// state, and the seed/demo flow needs it headless.
+pub fn handle_sync_commit(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    sync_commit_direct(vault_path)
+}
+
 pub fn handle_sync_pull(
     mode: ConnectMode,
     vault_path: &str,
@@ -1825,6 +1832,28 @@ fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[cfg(feature = "git-sync")]
+fn sync_commit_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    // P2: committing requires the signing key — unlock first.
+    let handle = unlock_vault_direct(vault_path)?;
+    let seal = handle.devkey_seal();
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        path,
+        &first_device_id(vault_path),
+        seal.as_ref(),
+    );
+    let repo = engine.open_repo()?;
+    let status = engine.status(&repo)?;
+    if status.is_dirty() {
+        engine.commit_all(&repo, "")?;
+        println!("Committed pending changes.");
+    } else {
+        println!("Nothing to commit.");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "git-sync")]
 fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
     // P2: a pull may write a signed merge commit — unlock first. Also
@@ -1923,6 +1952,10 @@ fn sync_remote_direct(_: &str, _u: &str) -> Result<(), Box<dyn std::error::Error
 }
 #[cfg(not(feature = "git-sync"))]
 fn sync_push_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("git-sync feature not enabled".into())
+}
+#[cfg(not(feature = "git-sync"))]
+fn sync_commit_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> {
     Err("git-sync feature not enabled".into())
 }
 #[cfg(not(feature = "git-sync"))]
