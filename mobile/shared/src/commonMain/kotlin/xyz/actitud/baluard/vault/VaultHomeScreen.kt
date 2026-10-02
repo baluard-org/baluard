@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Folder
@@ -394,36 +395,7 @@ fun VaultHomeScreen(
             // ── Favorites (entries inline, capped) ──
             HomeSectionHeader(t("home.favorites"), favorites.size)
             if (favorites.isEmpty()) {
-                SectionCard(
-                    title = "",
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    contentPadding = PaddingValues(14.dp),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            text = t("home.noneYet"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                HubEmptyCard(Icons.Default.Star)
             }
             favorites.take(25).forEach { meta ->
                 CipherRowCard(
@@ -448,26 +420,30 @@ fun VaultHomeScreen(
             Spacer(Modifier.height(14.dp))
 
             // ── Types ──
-            SectionCard(
-                title = "${t("home.types")} (${typeRows.size})",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(vertical = 4.dp),
-            ) {
-                typeRows.forEachIndexed { index, (raw, count) ->
-                    val (icon, color) = cipherTypeTheme(raw)
-                    SectionLinkRow(
-                        label = t(typeLabelKey(normalizeTypeTag(raw))),
-                        count = count,
-                        icon = icon,
-                        iconColor = color,
-                        onClick = { onOpenKind(EntryListKind.Type(raw)) },
-                    )
-                    if (index < typeRows.size - 1) {
-                        BaluardDivider(
-                            modifier = Modifier.padding(start = 58.dp, end = 14.dp),
-                            thickness = 0.7.dp,
-                            alpha = 0.35f,
+            if (typeRows.isEmpty()) {
+                HubEmptyCard(Icons.Default.Category)
+            } else {
+                SectionCard(
+                    title = "${t("home.types")} (${typeRows.size})",
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                ) {
+                    typeRows.forEachIndexed { index, (raw, count) ->
+                        val (icon, color) = cipherTypeTheme(raw)
+                        SectionLinkRow(
+                            label = t(typeLabelKey(normalizeTypeTag(raw))),
+                            count = count,
+                            icon = icon,
+                            iconColor = color,
+                            onClick = { onOpenKind(EntryListKind.Type(raw)) },
                         )
+                        if (index < typeRows.size - 1) {
+                            BaluardDivider(
+                                modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                                thickness = 0.7.dp,
+                                alpha = 0.35f,
+                            )
+                        }
                     }
                 }
             }
@@ -475,27 +451,31 @@ fun VaultHomeScreen(
             Spacer(Modifier.height(14.dp))
 
             // ── Folders ──
-            SectionCard(
-                title = "${t("home.folders")} (${folders.size})",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(vertical = 4.dp),
-            ) {
-                val sorted = folders.sortedBy { it.name.lowercase() }
-                sorted.forEachIndexed { index, folder ->
-                    val count = ciphers.count { it.folderId == folder.id }
-                    SectionLinkRow(
-                        label = folder.name,
-                        count = count,
-                        icon = Icons.Default.Folder,
-                        iconColor = MaterialTheme.colorScheme.secondary,
-                        onClick = { onOpenKind(EntryListKind.Folder(folder.id)) },
-                    )
-                    if (index < sorted.size - 1) {
-                        BaluardDivider(
-                            modifier = Modifier.padding(start = 58.dp, end = 14.dp),
-                            thickness = 0.7.dp,
-                            alpha = 0.35f,
+            if (folders.isEmpty()) {
+                HubEmptyCard(Icons.Default.Folder)
+            } else {
+                SectionCard(
+                    title = "${t("home.folders")} (${folders.size})",
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                ) {
+                    val sorted = folders.sortedBy { it.name.lowercase() }
+                    sorted.forEachIndexed { index, folder ->
+                        val count = ciphers.count { it.folderId == folder.id }
+                        SectionLinkRow(
+                            label = folder.name,
+                            count = count,
+                            icon = Icons.Default.Folder,
+                            iconColor = MaterialTheme.colorScheme.secondary,
+                            onClick = { onOpenKind(EntryListKind.Folder(folder.id)) },
                         )
+                        if (index < sorted.size - 1) {
+                            BaluardDivider(
+                                modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                                thickness = 0.7.dp,
+                                alpha = 0.35f,
+                            )
+                        }
                     }
                 }
             }
@@ -737,6 +717,41 @@ private fun HubEmptyText(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
     )
+}
+
+/** Empty-section card: muted icon badge + "Nothing here yet." Reuses the
+ * Favorites empty state so an empty hub section never renders a bare
+ * outline. */
+@Composable
+private fun HubEmptyCard(icon: ImageVector) {
+    SectionCard(
+        title = "",
+        modifier = Modifier.padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = t("home.noneYet"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 /** Hub-wide data loader: all five sets feed the counts and cards. */
