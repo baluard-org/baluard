@@ -5,6 +5,7 @@ export const ERROR_PATTERNS = [
   { pattern: /timeout/i, key: "errors.timeout" },
   { pattern: /Frame too large/i, key: "errors.responseTooLarge" },
   { pattern: /Invalid session token/i, key: "errors.sessionExpired" },
+  { pattern: /no longer paired with this vault/i, key: "errors.deviceUnpaired" },
   { pattern: /identity mismatch/i, key: "errors.integrityFailed" },
   { pattern: /invalid password|incorrect password|password incorrect/i, key: "errors.invalidPassword" },
   { pattern: /corrupt(ed|ion)?/i, key: "errors.corrupted" },

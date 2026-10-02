@@ -23,6 +23,7 @@ internal val EN: Map<String, String> = mapOf(
     // login / unlock
     "login.passwordPlaceholder" to "Master password",
     "login.wrongPassword" to "Wrong password or corrupt vault",
+    "login.deviceMismatch" to "This device lost its vault connection. Reconnect it from your main device, or use the recovery phrase.",
     "login.unlock" to "Unlock",
     "login.biometricTitle" to "Unlock Baluard",
     "login.unlockBiometric" to "Unlock with biometrics",

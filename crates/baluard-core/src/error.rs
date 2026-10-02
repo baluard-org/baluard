@@ -121,6 +121,16 @@ pub enum VaultError {
     #[error("crypto error: {0}")]
     Crypto(String),
 
+    /// The device's local keystore no longer matches any key wrap the
+    /// vault holds (reinstalled or re-cloned app, stale pairing). NOT a
+    /// wrong-password case and must never share its error: the remedy is
+    /// re-pairing the device from one that can open the vault, or the
+    /// recovery phrase. Raised at the keywrap HPKE open.
+    #[error(
+        "this device is no longer paired with this vault: {0}. reconnect it from a device that can open the vault, or use the recovery phrase"
+    )]
+    DeviceUnpaired(String),
+
     /// The cipher envelope is at a key epoch the held key material cannot
     /// reach (e.g. a remote pre-rotation blob received while the local
     /// device holds the post-rotation RootKey, or vice-versa). Returned by

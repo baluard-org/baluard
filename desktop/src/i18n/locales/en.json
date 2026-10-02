@@ -446,6 +446,7 @@
     "responseTooLarge": "Response too large",
     "sessionExpired": "Session expired. Please unlock again.",
     "integrityFailed": "Data integrity check failed",
+    "deviceUnpaired": "This device lost its vault connection. Reconnect it from your main device, or use the recovery phrase.",
     "corrupted": "Vault data is corrupted",
     "invalidPassword": "Incorrect master password",
     "alreadyExists": "Vault already exists at this location",

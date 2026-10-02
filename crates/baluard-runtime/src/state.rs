@@ -337,7 +337,10 @@ impl VaultState {
     /// KDF derivation (Argon2id) runs OUTSIDE the write lock to avoid
     /// blocking all reads during the expensive derivation (~300ms-1s).
     /// Opens the vault once, unlocks it, then swaps it in.
-    pub async fn unlock(self: &Arc<Self>, master_password: &str) -> Result<(), String> {
+    pub async fn unlock(
+        self: &Arc<Self>,
+        master_password: &str,
+    ) -> Result<(), baluard_core::error::BaluardError> {
         // Quick check: already unlocked?
         {
             let guard = self.inner.read().await;
@@ -349,12 +352,11 @@ impl VaultState {
         }
 
         // Open a fresh handle and derive KEK outside any lock (expensive Argon2id)
-        let mut new_handle = VaultHandle::open(&self.vault_path)
-            .map_err(|e| format!("Failed to open vault for unlock: {e}"))?;
+        // Typed error: DeviceUnpaired must reach the FFI as a variant, not a
+        // string the mobile side cannot classify.
+        let mut new_handle = VaultHandle::open(&self.vault_path)?;
 
-        new_handle
-            .unlock(master_password)
-            .map_err(|e| format!("Unlock failed: {e}"))?;
+        new_handle.unlock(master_password)?;
 
         // Swap in the unlocked handle under write lock
         let mut guard = self.inner.write().await;
@@ -742,14 +744,15 @@ impl VaultState {
     /// `unlock_with_kek` (keywrap HPKE unwrap + canaries), mints a session
     /// token. A stale/corrupted keywrap fails closed (a password changed on
     /// another device invalidates the retained KEK).
-    pub async fn unlock_with_kek(self: &Arc<Self>, kek: &[u8; 32]) -> Result<(), String> {
+    pub async fn unlock_with_kek(
+        self: &Arc<Self>,
+        kek: &[u8; 32],
+    ) -> Result<(), baluard_core::error::BaluardError> {
         // unlock_with_kek runs outside the lock (no KDF, but the HPKE unwrap
-        // + canary check still touch the keywrap).
-        let mut new_handle = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)
-            .map_err(|e| format!("Failed to open vault for KEK unlock: {e}"))?;
-        new_handle
-            .unlock_with_kek(kek)
-            .map_err(|e| format!("KEK unlock failed: {e}"))?;
+        // + canary check still touch the keywrap). Typed error: same reason
+        // as unlock().
+        let mut new_handle = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)?;
+        new_handle.unlock_with_kek(kek)?;
         let mut guard = self.inner.write().await;
         *guard = Some(new_handle);
         drop(guard);
@@ -5972,7 +5975,9 @@ impl VaultState {
     pub async fn biometric_unlock(self: &Arc<Self>) -> Result<String, String> {
         let vault_id = self.vault_id_str().await?;
         let master_password = baluard_core::biometric::unlock(&vault_id)?;
-        self.unlock(&master_password).await?;
+        self.unlock(&master_password)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(serde_json::json!({"success": true}).to_string())
     }
 

@@ -446,6 +446,7 @@
     "responseTooLarge": "Resposta muito grande",
     "sessionExpired": "Sessão expirada. Desbloqueie novamente.",
     "integrityFailed": "Falha na verificação de integridade dos dados",
+    "deviceUnpaired": "Este dispositivo perdeu a conexão com o cofre. Reconecte-o pelo dispositivo principal ou use a frase de recuperação.",
     "corrupted": "Os dados do cofre estão corrompidos",
     "invalidPassword": "Senha mestra incorreta",
     "alreadyExists": "Já existe um cofre neste local",

@@ -2,6 +2,7 @@ package xyz.actitud.baluard.auth
 
 import xyz.actitud.baluard.data.UnlockResult
 import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.BaluardException
 import xyz.actitud.baluard.MobileVault
 /**
  * Drives the unlock flow over the multi-Space session (plan-power-pack S4-9):
@@ -41,6 +42,8 @@ class AuthViewModel(private val repo: VaultRepository) {
             v.unlock(password)
             session.adopt(path, MobileSessionVault(v), kek = null)
             UnlockResult.Success
+        } catch (e: BaluardException.DeviceUnpaired) {
+            UnlockResult.DeviceMismatch
         } catch (e: Exception) {
             UnlockResult.Failure(e.message ?: "unlock failed")
         }
@@ -57,6 +60,8 @@ class AuthViewModel(private val repo: VaultRepository) {
             v.unlockWithKek(kek)
             session.adopt(path, MobileSessionVault(v), kek = kek)
             UnlockResult.Success
+        } catch (e: BaluardException.DeviceUnpaired) {
+            UnlockResult.DeviceMismatch
         } catch (e: Exception) {
             UnlockResult.Failure(e.message ?: "unlock failed")
         }
