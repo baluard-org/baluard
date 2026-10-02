@@ -425,6 +425,9 @@ enum SyncAction {
     },
     /// Push local changes to remote.
     Push,
+    /// Commit pending local changes (no network). The signer is this
+    /// device's key; peers verify the commit on their next pull.
+    Commit,
     /// Pull remote changes.
     Pull,
     /// Revoke a bad commit via an append-only signed manifest (works
@@ -1217,6 +1220,7 @@ fn main() {
             SyncAction::Push => {
                 commands::handle_sync_push(mode, &vault_path, cli.socket.as_deref())
             }
+            SyncAction::Commit => commands::handle_sync_commit(&vault_path),
             SyncAction::Pull => {
                 commands::handle_sync_pull(mode, &vault_path, cli.socket.as_deref())
             }

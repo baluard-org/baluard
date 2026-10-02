@@ -448,6 +448,8 @@ app-icons:
 # Used for multi-vault switch testing. Password for both: baluard99
 # Each vault gets a mix: logins, cards, notes, identities, passkeys, banks,
 # plus folders and tags. Removes existing demo vaults first (preserves others).
+# Seeded data is committed to each vault's git history (baluard sync commit),
+# so a manual push carries the entries — not just meta.
 seed-demo: build-release
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -746,6 +748,10 @@ seed-demo: build-release
 	baluard add identity --name "Esteban Forge (Work)" --title "Mr" --first-name "Esteban Andrés" --last-name "Forge Muñoz" --username "eforge" --email "e.forge@actitud.xyz" --phone "+56 9 5555 0180" --address1 "Av. Providencia 1234" --city "Santiago" --state "RM" --postal-code "7500000" --country "CL" --tags personal,shared --folder "$PERSONAL" >/dev/null
 	baluard add license --name "CL Motorcycle License" --first-name "Esteban" --last-name "Forge" --date-of-birth "1990-06-15" --license-number "C5588991" --issuing-country "CL" --issue-date "2023-05-12" --expiration-date "2033-05-11" --tags personal --folder "$PERSONAL" >/dev/null
 	baluard add passport --name "US Passport (Expired)" --surname "Forge" --given-name "Esteban" --date-of-birth "1990-06-15" --sex "M" --birth-place "San Francisco" --nationality "US" --passport-number "P09876543" --issuing-country "US" --issue-date "2013-02-10" --expiration-date "2023-02-09" --notes "Expired — kept for records" --tags personal,backup --folder "$TRAVEL" >/dev/null
+
+		echo ""
+		echo "[personal] Committing seeded data to git ==="
+		baluard sync commit
 	}
 
 	seed_work() {
@@ -823,6 +829,10 @@ seed-demo: build-release
 		echo ""
 		echo "[work] Seeding national ID (empresa) ==="
 		baluard add note --name "Chile RUT (Empresa)" --notes $'RUT: 76.321.456-K\nRazón social: Actitud Studio SpA\nTipo entidad: Sociedad por Acciones\nActividad: Desarrollo de software\nFecha de inicio: 2023-03-15\nSII: Registro Vigente' --tags work,important --folder "$WORK"
+
+		echo ""
+		echo "[work] Committing seeded data to git ==="
+		baluard sync commit
 	}
 
 	seed_personal
