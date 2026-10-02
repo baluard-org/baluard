@@ -18,6 +18,7 @@ internal val PT: Map<String, String> = mapOf(
     "common.saving" to "Salvando…",
     "login.passwordPlaceholder" to "Senha mestra",
     "login.wrongPassword" to "Senha incorreta ou cofre corrompido",
+    "login.deviceMismatch" to "Este dispositivo perdeu a conexão com o cofre. Reconecte-o pelo dispositivo principal ou use a frase de recuperação.",
     "login.unlock" to "Desbloquear",
     "login.biometricTitle" to "Desbloquear Baluard",
     "login.unlockBiometric" to "Desbloquear com biometria",

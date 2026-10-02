@@ -5979,6 +5979,20 @@ sealed class BaluardException: kotlin.Exception() {
     }
     
     /**
+     * Device keystore no longer matches the vault (reinstalled or
+     * re-cloned app, stale pairing). Re-pair the device from one that can
+     * open the vault, or unlock with the recovery phrase. This is NOT a
+     * wrong-password case.
+     */
+    class DeviceUnpaired(
+        
+        val `detail`: kotlin.String
+        ) : BaluardException() {
+        override val message
+            get() = "detail=${ `detail` }"
+    }
+    
+    /**
      * Target resource or key not found.
      */
     class NotFound(
@@ -6059,19 +6073,22 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
                 FfiConverterString.read(buf),
                 )
             4 -> BaluardException.WrongPassword()
-            5 -> BaluardException.NotFound(
+            5 -> BaluardException.DeviceUnpaired(
                 FfiConverterString.read(buf),
                 )
-            6 -> BaluardException.Crypto(
+            6 -> BaluardException.NotFound(
                 FfiConverterString.read(buf),
                 )
-            7 -> BaluardException.Vault(
+            7 -> BaluardException.Crypto(
                 FfiConverterString.read(buf),
                 )
-            8 -> BaluardException.Creation(
+            8 -> BaluardException.Vault(
                 FfiConverterString.read(buf),
                 )
-            9 -> BaluardException.InvalidInput(
+            9 -> BaluardException.Creation(
+                FfiConverterString.read(buf),
+                )
+            10 -> BaluardException.InvalidInput(
                 FfiConverterString.read(buf),
                 )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
@@ -6098,6 +6115,11 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
             is BaluardException.WrongPassword -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
+            )
+            is BaluardException.DeviceUnpaired -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is BaluardException.NotFound -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
@@ -6148,28 +6170,33 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
                 buf.putInt(4)
                 Unit
             }
-            is BaluardException.NotFound -> {
+            is BaluardException.DeviceUnpaired -> {
                 buf.putInt(5)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
-            is BaluardException.Crypto -> {
+            is BaluardException.NotFound -> {
                 buf.putInt(6)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
-            is BaluardException.Vault -> {
+            is BaluardException.Crypto -> {
                 buf.putInt(7)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
-            is BaluardException.Creation -> {
+            is BaluardException.Vault -> {
                 buf.putInt(8)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
-            is BaluardException.InvalidInput -> {
+            is BaluardException.Creation -> {
                 buf.putInt(9)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is BaluardException.InvalidInput -> {
+                buf.putInt(10)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }

@@ -416,6 +416,7 @@
     "responseTooLarge": "La respuesta es demasiado grande",
     "sessionExpired": "La sesión ha expirado. Por favor, desbloquea de nuevo.",
     "integrityFailed": "La comprobación de integridad de los datos falló",
+    "deviceUnpaired": "Este dispositivo perdió la conexión con la bóveda. Reconéctalo desde tu dispositivo principal o usa la frase de recuperación.",
     "corrupted": "Los datos de la bóveda están dañados",
     "invalidPassword": "Contraseña maestra incorrecta",
     "alreadyExists": "Ya existe una bóveda en esta ubicación",

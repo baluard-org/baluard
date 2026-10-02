@@ -22,5 +22,8 @@ sealed interface AuthState {
  */
 sealed interface UnlockResult {
     data object Success : UnlockResult
+
+    /** Keystore no longer matches the vault: re-pair, do not retry the password. */
+    data object DeviceMismatch : UnlockResult
     data class Failure(val message: String) : UnlockResult
 }

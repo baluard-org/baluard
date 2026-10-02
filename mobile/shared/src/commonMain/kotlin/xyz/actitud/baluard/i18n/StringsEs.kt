@@ -23,6 +23,7 @@ internal val ES: Map<String, String> = mapOf(
     // login / unlock
     "login.passwordPlaceholder" to "Contraseña maestra",
     "login.wrongPassword" to "Contraseña incorrecta o bóveda dañada",
+    "login.deviceMismatch" to "Este dispositivo perdió la conexión con la bóveda. Reconéctalo desde tu dispositivo principal o usa la frase de recuperación.",
     "login.unlock" to "Desbloquear",
     "login.biometricTitle" to "Desbloquear Baluard",
     "login.unlockBiometric" to "Desbloquear con biometría",

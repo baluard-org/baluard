@@ -89,6 +89,9 @@ fun UnlockScreen(
                             state = AuthState.Unlocked
                             finishUnlock()
                         }
+                        is UnlockResult.DeviceMismatch -> {
+                            state = AuthState.Error(t("login.deviceMismatch"))
+                        }
                         is UnlockResult.Failure -> {
                             // Stale KEK (password changed elsewhere) fails closed.
                             state = AuthState.Error(t("login.biometricStale"))
@@ -168,6 +171,9 @@ fun UnlockScreen(
                                     } else {
                                         finishUnlock()
                                     }
+                                }
+                                is UnlockResult.DeviceMismatch -> {
+                                    state = AuthState.Error(t("login.deviceMismatch"))
                                 }
                                 is UnlockResult.Failure -> {
                                     state = AuthState.Error(t("login.wrongPassword"))
