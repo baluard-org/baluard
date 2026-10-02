@@ -4395,13 +4395,22 @@ impl VaultHandle {
                     .map_err(|e| VaultError::Metadata(format!("reading keywrap: {e}")))?;
                 let parsed_kw = super::keywrap::parse_keywrap_json(&kw_json)?;
                 let privs = load_device_privkeys(&self.path, dev_id, Some(&devkey_seal))?;
+                // A keystore that opens but does not match any keywrap is a
+                // stale/reinstalled device, not a wrong password: label it
+                // so surfaces can offer re-pairing instead of retrying the
+                // password field.
                 let unwrapped = hpke_wrap::unwrap_key(
                     &parsed_kw.ephemeral_public,
                     &parsed_kw.encrypted_key,
                     &parsed_kw.tag,
                     &privs.x25519,
                     "root-key-keywrap",
-                )?;
+                )
+                .map_err(|_| {
+                    VaultError::DeviceUnpaired(format!(
+                        "the connection key for device {dev_id} does not match this vault"
+                    ))
+                })?;
                 let rk_bytes: [u8; 64] = unwrapped
                     .try_into()
                     .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
@@ -9584,30 +9593,12 @@ struct DevicePrivKeys {
     ed25519: ed25519_dalek::SigningKey,
 }
 
-/// Build a stable keyring service name from vault salt.
-/// Uses first 8 bytes of salt to avoid collisions between multiple vaults.
-fn keyring_service(vault_path: &Path) -> String {
-    // Read salt from kdf-params.json for a stable fingerprint
-    let kdf_path = vault_path.join("meta/kdf-params.json");
-    if let Ok(data) = std::fs::read_to_string(&kdf_path) {
-        if let Ok(params) = serde_json::from_str::<serde_json::Value>(&data) {
-            if let Some(salt_hex) = params["salt"].as_str() {
-                if salt_hex.len() >= 16 {
-                    return format!("baluard-{}", &salt_hex[..16]);
-                }
-            }
-        }
-    }
-    // Fallback: hash the vault path
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    vault_path.hash(&mut hasher);
-    format!("baluard-fallback-{:016x}", hasher.finish())
-}
-
-/// Load device private keys from OS keyring, falling back to plaintext file.
-/// The file is retained as a fallback (never deleted): the keyring may be
-/// unavailable on a later unlock, and losing the keystore bricks the device.
+/// Load device private keys: injected keystore first (mobile), then the
+/// sealed device-privkey file. The file is the durable source of truth.
+/// The OS keyring is deliberately NOT consulted on this path: a locked
+/// Secret Service collection answers with an interactive prompt, and a
+/// headless daemon or autostarted unlock would block forever inside a
+/// dbus poll — the old code ignored keyring errors but not freezes.
 fn load_device_privkeys(
     vault_path: &Path,
     device_id: Uuid,
@@ -9628,39 +9619,14 @@ fn load_device_privkeys(
         }
     }
 
-    let service = keyring_service(vault_path);
-    let account = device_id.to_string();
-
-    // 1. Try OS keyring first (skipped in tests: unsigned binaries trigger
-    // interactive keychain prompts on macOS; see `keyring_disabled`).
-    if !crate::keyring_disabled() {
-        if let Ok(entry) = keyring::Entry::new(&service, &account) {
-            if let Ok(json) = entry.get_password() {
-                return parse_privkey_json(&json);
-            }
-        }
-    }
-
-    // 2. Fall back to the device-privkey file. Since the C1 fix the file
-    // is an AES-256-GCM envelope sealed under a KEK-derived subkey;
-    // legacy plaintext (phrase-flow writes, pre-seal vaults) is still
-    // readable here and gets re-sealed lazily on the next successful
-    // unlock.
+    // 1. The device-privkey file. Since the C1 fix the file is an
+    // AES-256-GCM envelope sealed under a KEK-derived subkey; legacy
+    // plaintext (phrase-flow writes, pre-seal vaults) is still readable
+    // here and gets re-sealed lazily on the next successful unlock.
     let privkey_path = vault_path.join("meta/device-privkey.json");
     if privkey_path.exists() {
         let json = crate::vault::device_privkey::read_privkey_file(&privkey_path, seal_key)?;
-        let keys = parse_privkey_json(&json)?;
-
-        // Migration attempt: store in keyring for future use
-        // Keep the file as fallback -- don't delete it.
-        // Keyring may not persist reliably in all environments (CI, headless).
-        if !crate::keyring_disabled() {
-            if let Ok(entry) = keyring::Entry::new(&service, &account) {
-                let _ = entry.set_password(&json);
-            }
-        }
-
-        return Ok(keys);
+        return parse_privkey_json(&json);
     }
 
     Err(VaultError::NotFound("device private key not found".into()).into())
@@ -10006,6 +9972,41 @@ mod tests {
         drop(handle); // Release locks so tests can re-open
 
         (dir, password.to_string())
+    }
+
+    #[test]
+    fn mismatched_keystore_reports_unpaired_not_wrong_password() {
+        // A keystore that opens but does not match the vault's keywrap is a
+        // stale/reinstalled device: the error must say so instead of
+        // collapsing into the generic wrong-password surface.
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        handle.lock();
+
+        // Overwrite the keystore with a foreign legacy-plaintext key: the
+        // file loader accepts it, the keywrap HPKE open cannot.
+        use rand::RngCore;
+        let mut x = [0u8; 32];
+        let mut e = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut x);
+        rand::rngs::OsRng.fill_bytes(&mut e);
+        let foreign = serde_json::json!({
+            "x25519_private": hex::encode(x),
+            "ed25519_private": hex::encode(e),
+        });
+        std::fs::write(
+            dir.path().join("meta/device-privkey.json"),
+            foreign.to_string(),
+        )
+        .unwrap();
+
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        let err = handle.unlock(&password).unwrap_err();
+        assert!(
+            err.to_string().contains("no longer paired"),
+            "expected the unpaired-device error, got: {err}"
+        );
     }
 
     #[test]

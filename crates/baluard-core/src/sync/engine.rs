@@ -3421,7 +3421,8 @@ impl SyncEngine {
         let _ = std::fs::write(&path, out);
     }
 
-    /// Build keyring service name for a vault path (mirrors handle.rs keyring_service).
+    /// Build keyring service name for a vault path (salt fingerprint; the
+    /// handle's unlock path no longer touches the keyring).
     fn keyring_service_for_vault(vault_path: &Path) -> String {
         let kdf_path = vault_path.join("meta/kdf-params.json");
         if let Ok(data) = std::fs::read_to_string(&kdf_path) {
@@ -5699,14 +5700,11 @@ mod tests {
         // refuses at clone time.
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("walk_vault");
-        let (_handle, _secrets) = crate::vault::creation::VaultCreator::new(
-            &path,
-            "walk-test-pass",
-            "WalkDevice",
-        )
-        .kdf_profile(crate::types::KdfProfile::MobileLow)
-        .execute()
-        .unwrap();
+        let (_handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&path, "walk-test-pass", "WalkDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .execute()
+                .unwrap();
 
         // Bare stand-in for the provider remote; push the signed history.
         let bare = tempfile::tempdir().unwrap();
@@ -5714,10 +5712,7 @@ mod tests {
         let vengine = SyncEngine::new(&path, "walk-device", None);
         let vrepo = vengine.open_repo().unwrap();
         vrepo
-            .remote(
-                "origin",
-                &format!("file://{}", bare.path().display()),
-            )
+            .remote("origin", &format!("file://{}", bare.path().display()))
             .unwrap();
         vrepo
             .find_remote("origin")
@@ -5727,9 +5722,7 @@ mod tests {
 
         // The clone path runs verify_fetched_history internally.
         let clone_dir = tempfile::tempdir().unwrap();
-        let progress = std::sync::Arc::new(std::sync::Mutex::new(
-            CloneProgress::default(),
-        ));
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(CloneProgress::default()));
         SyncEngine::clone_remote(
             &format!("file://{}", bare.path().display()),
             clone_dir.path(),
@@ -5740,11 +5733,9 @@ mod tests {
 
         // Negative: an unsigned commit riding the enrolled history refuses.
         let neg_dir = tempfile::tempdir().unwrap();
-        let rogue = git2::Repository::clone(
-            &format!("file://{}", bare.path().display()),
-            neg_dir.path(),
-        )
-        .unwrap();
+        let rogue =
+            git2::Repository::clone(&format!("file://{}", bare.path().display()), neg_dir.path())
+                .unwrap();
         {
             let mut index = rogue.index().unwrap();
             std::fs::write(neg_dir.path().join("rogue.txt"), b"x").unwrap();
@@ -5755,14 +5746,7 @@ mod tests {
             let sig = git2::Signature::now("Rogue", "rogue@example.com").unwrap();
             let parent = rogue.head().unwrap().peel_to_commit().unwrap();
             rogue
-                .commit(
-                    Some("HEAD"),
-                    &sig,
-                    &sig,
-                    "unsigned",
-                    &tree,
-                    &[&parent],
-                )
+                .commit(Some("HEAD"), &sig, &sig, "unsigned", &tree, &[&parent])
                 .unwrap();
         }
         rogue
@@ -5773,9 +5757,7 @@ mod tests {
         drop(rogue);
 
         let clone2 = tempfile::tempdir().unwrap();
-        let progress2 = std::sync::Arc::new(std::sync::Mutex::new(
-            CloneProgress::default(),
-        ));
+        let progress2 = std::sync::Arc::new(std::sync::Mutex::new(CloneProgress::default()));
         let result = SyncEngine::clone_remote(
             &format!("file://{}", bare.path().display()),
             clone2.path(),

@@ -46,6 +46,13 @@ pub enum BaluardError {
     #[error("wrong master password")]
     WrongPassword,
 
+    /// Device keystore no longer matches the vault (reinstalled or
+    /// re-cloned app, stale pairing). Re-pair the device from one that can
+    /// open the vault, or unlock with the recovery phrase. This is NOT a
+    /// wrong-password case.
+    #[error("device unpaired: {detail}")]
+    DeviceUnpaired { detail: String },
+
     /// Target resource or key not found.
     #[error("not found: {detail}")]
     NotFound { detail: String },
@@ -91,6 +98,9 @@ impl From<baluard_core::error::BaluardError> for BaluardError {
             },
             baluard_core::error::BaluardError::Vault(ve) => match ve {
                 baluard_core::error::VaultError::NotFound(msg) => Self::NotFound { detail: msg },
+                baluard_core::error::VaultError::DeviceUnpaired(msg) => {
+                    Self::DeviceUnpaired { detail: msg }
+                }
                 baluard_core::error::VaultError::Metadata(msg) => Self::Vault { detail: msg },
                 baluard_core::error::VaultError::Corrupt(msg) => Self::Vault { detail: msg },
                 baluard_core::error::VaultError::NotInitialized => Self::Vault {

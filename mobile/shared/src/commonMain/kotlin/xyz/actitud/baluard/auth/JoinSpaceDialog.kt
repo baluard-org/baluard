@@ -84,6 +84,7 @@ fun JoinSpaceDialog(
             // the password feeds the standard unlock path, then drops).
             when (authViewModel.openAndUnlock(vaultPath, password)) {
                 is UnlockResult.Success -> onApproved()
+                is UnlockResult.DeviceMismatch -> errorMsg = t("login.deviceMismatch")
                 is UnlockResult.Failure -> errorMsg = t("login.wrongPassword")
             }
         }
