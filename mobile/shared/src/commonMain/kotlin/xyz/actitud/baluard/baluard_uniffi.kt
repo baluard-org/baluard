@@ -939,6 +939,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1178,6 +1180,8 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_provider_disconnect(`provider`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_baluard_uniffi_fn_func_recovery_sheet_bytes(`format`: RustBuffer.ByValue,`title`: RustBuffer.ByValue,`warning`: RustBuffer.ByValue,`phrase`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_baluard_uniffi_fn_func_set_token_encryption_key(`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_baluard_uniffi_fn_func_spike_async_probe(
@@ -1327,6 +1331,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_func_open_vault(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_provider_disconnect(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_func_recovery_sheet_bytes(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_set_token_encryption_key(
     ): Short
@@ -1573,6 +1579,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_provider_disconnect() != 36787.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_func_recovery_sheet_bytes() != 63933.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_set_token_encryption_key() != 11628.toShort()) {
@@ -6742,6 +6751,23 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
         BaluardException.ErrorHandler,
     )
     }
+
+        /**
+         * Render the recovery sheet (TXT or one-page PDF) for the mobile export
+         * surface. Same renderer as desktop (D77): one writer, three consumers.
+         * `format` is "txt" or "pdf"; `phrase` is the space-separated 24 words.
+         * Returns raw file bytes — the platform side writes them through its
+         * document picker (SAF on Android), so no filesystem path crosses the FFI.
+         */
+    @Throws(BaluardException::class) fun `recoverySheetBytes`(`format`: kotlin.String, `title`: kotlin.String, `warning`: kotlin.String, `phrase`: kotlin.String): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCallWithError(BaluardException) { _status ->
+    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_recovery_sheet_bytes(
+        FfiConverterString.lower(`format`),FfiConverterString.lower(`title`),FfiConverterString.lower(`warning`),FfiConverterString.lower(`phrase`),_status)
+}
+    )
+    }
+    
 
         /**
          * Install the provider-token encryption key (M3). The mobile app calls

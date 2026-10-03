@@ -1325,7 +1325,7 @@ The parked recovery-key export item closes as a single Rust-side sheet renderer 
 
 The review also surfaced a latent desktop bug fixed in passing: all three locale files carried TWO top-level `"recovery"` objects (creation + rotation blocks from D74). JSON.parse keeps the last, so every creation-screen key under that namespace (`confirm`, `downloadTxt`, `whyTitle`, `verifyTitle`, `wordN`, `verified`, …) was silently dead in every locale while the parity test stayed green — identical breakage in all three files is invisible to key-set comparison. Rotation strings now nest under `recovery.rotation.*`. Rule recorded: a duplicate top-level key in a locale file is a silent renderer break, not a parse error; the parity test checks cross-locale sets, never intra-file duplicates.
 
-Boundaries: mobile keeps its display-only phrase screen (no filesystem export surface); the CLI prints the phrase on creation and gained no export flags; es/pt strings follow the dominant in-file terms (bóveda/cofre) rather than the older rotation warning's "vault".
+Boundaries: mobile joined the same renderer the same day — a thin UniFFI `recovery_sheet_bytes` hands the platform raw bytes (no filesystem path ever crosses the FFI) and Android writes them through the SAF document picker (`RecoverySheetSaver` expect/actual; iOS reports unsupported and stays silent until its picker slice); the CLI prints the phrase on creation and gained no export flags; es/pt strings follow the dominant in-file terms (bóveda/cofre) rather than the older rotation warning's "vault".
 
 ### D75. The Hardening Wave (Claude's full sharing review, seven fixes, agy after each) (2026-10-01)
 

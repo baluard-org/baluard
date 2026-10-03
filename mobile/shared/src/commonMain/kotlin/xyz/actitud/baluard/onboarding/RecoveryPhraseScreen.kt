@@ -40,12 +40,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import xyz.actitud.baluard.recoverySheetBytes
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.copyToClipboard
+import xyz.actitud.baluard.platform.rememberRecoverySheetSaver
 import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
+import xyz.actitud.baluard.ui.toast.Toast
 
 /**
  * Recovery-phrase display styled with numbered word cards and security alerts.
@@ -56,6 +59,25 @@ fun RecoveryPhraseScreen(
     onAcknowledged: () -> Unit,
 ) {
     var acknowledged by rememberSaveable { mutableStateOf(false) }
+
+    val saver = rememberRecoverySheetSaver()
+    val exportSheet = { mimeType: String, fileName: String, format: String ->
+        runCatching {
+            recoverySheetBytes(
+                format,
+                t("recovery.title"),
+                t("recovery.sheetWarning"),
+                words.joinToString(" "),
+            )
+        }.fold(
+            onSuccess = { bytes ->
+                saver(bytes, mimeType, fileName) { ok ->
+                    if (ok) Toast.success(t("recovery.savedToast"))
+                }
+            },
+            onFailure = { Toast.error(t("recovery.saveFailed")) },
+        )
+    }
 
     BaluardAmbientBackground {
         Column(
@@ -140,6 +162,31 @@ fun RecoveryPhraseScreen(
                     copyToClipboard(words.joinToString(" "))
                 },
                 leadingIcon = Icons.Default.ContentCopy,
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                BaluardOutlinedButton(
+                    text = t("recovery.saveTxt"),
+                    onClick = { exportSheet("text/plain", "baluard-recovery-phrase.txt", "txt") },
+                    modifier = Modifier.weight(1f),
+                )
+                BaluardOutlinedButton(
+                    text = t("recovery.savePdf"),
+                    onClick = { exportSheet("application/pdf", "baluard-recovery-phrase.pdf", "pdf") },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = t("recovery.fileRisk"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             Spacer(Modifier.height(16.dp))
