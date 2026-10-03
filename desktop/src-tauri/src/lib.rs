@@ -335,6 +335,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "tag.delete",
     // passkeys
     "passkey.delete",
+    "passkey.rename",
     // settings
     "settings.get",
     "settings.set",
