@@ -1,6 +1,6 @@
 # E2E Testing Plan
 
-Snapshot: main @ `2cbdb0f`, 2026-10-03. Companion to `docs/feature-parity.md`: the parity matrix is the feature inventory; this doc defines how every feature gets an end-to-end test path.
+Snapshot: main @ `e3a01ce`, 2026-10-03, third revision. Companion to `docs/feature-parity.md`: the parity matrix is the feature inventory; this doc defines how every feature gets an end-to-end test path. Two independent adversarial reviews against source are folded in; the enabling-work table below is the result.
 
 ## Goal
 
@@ -9,70 +9,82 @@ Unit tests prove parts work alone. E2E proves the product works as a whole: real
 Principles:
 
 - Synthetic data only. Test vaults, fake credentials, throwaway git remotes. No real secret ever enters a test, and no test artifact is ever sent to an external API.
-- Hermetic. Runs on a clean machine with `BALUARD_DISABLE_KEYRING=1` (existing keyring bypass), tempdir vaults, and local bare git repos as remotes. No network services beyond localhost.
+- Hermetic. `BALUARD_DISABLE_KEYRING=1`, tempdir vaults, local bare git repos as remotes, no network beyond localhost. See harness conventions for the `.env` and egress rules.
 - Deterministic first. Waits on assertions, never on sleeps. Zero-retry locally; a flaky test is a bug to fix, not a flag to set.
-- Fast enough to run on every push. Layer budgets: CLI/daemon under 5 min, desktop under 10, mobile under 15, extension under 10.
+- Fast enough to run on every push. Layer budgets (warm build cache): CLI/daemon under 5 min, desktop under 10, mobile under 15, extension under 10.
+- Platform scope: all four phases run on Linux (macOS largely untested). The CLI and desktop clients speak Unix sockets only; Windows named-pipe coverage is future work despite being a product floor.
 
-## Layers (chosen stack)
+## Harness conventions
 
-Four layers, one per surface. Each was chosen against alternatives; rejected options are listed at the end.
+- Spawn every child process with `current_dir(tempdir)` and a scrubbed environment (allowlist, not inherit). Both binaries call `dotenvy::dotenv()` at startup and would otherwise ingest the developer's repo-root `.env` (which lists real tokens) into test processes.
+- One daemon instance per test, fresh `BALUARD_DATA_DIR` per instance. This resets the in-memory unlock rate limiter and prevents cross-test state.
+- Socket paths stay short (Unix sockets cap at 104-108 bytes; long tempdir names overflow).
+- Wrong-password specs: at most one failed unlock per vault, wait out the 2s handler backoff before the retry, never loop toward lockout (10 failures = 1h lockout; failed attempts also persist in `meta/kdf-attempts.json`). Lockout itself is a unit-level test, not E2E.
+- `BALUARD_NO_PROMPT=1` currently answers an empty password, which burns a rate-limit failure. E3 changes it to fail loudly.
+- TOTP display specs assert format, or compare against an independent implementation inside one window; never race the 30s boundary.
+- Auto-lock E2E costs at least 60-90s (smallest policy is minutes, walker ticks every 30s); test the mechanism at the runtime level with paused time instead, and cover only the UI indicator in E2E.
+- `git` must be on PATH (vault creation shells out to it); CI installs it.
+- A settings spec that turns on `fetch_favicons` hits arbitrary external domains; assert persistence only, or run with egress blocked.
 
-### Prerequisite code changes (enabling work)
+## Enabling work (prerequisites)
 
-The plan assumes isolation and automation hooks that do not all exist yet. These are small, test-enabling changes to make first; each is verified against current source.
+Small, test-enabling changes, verified against current source. E1-E6 serve Phase 1; E7 Phase 3; E8/E12 Phase 4/2; E9-E11 cross-cutting.
 
 | # | Change | Where | Why |
 |---|---|---|---|
-| E1 | Accept `file://` and `http://127.0.0.1`/`localhost` remote URLs when `BALUARD_ALLOW_LOCAL_REMOTES=1` is set | `crates/baluard-core/src/sync/engine.rs` `validate_git_url` (local schemes are `cfg(test)`-only today; `http://` is always rejected in binaries) | The harness points vaults at local bare repos and a local fake-forge server |
-| E2 | `unlock_daemon` reads `BALUARD_PASSWORD` before prompting | `crates/baluard-cli/src/commands/mod.rs` (only `unlock_direct` checks it today; daemon mode always prompts and hangs in CI) | Unattended unlock against a test daemon |
-| E3 | Non-interactive confirmations: `--yes`/`-y` for `device enroll` and `vaults detach --delete-from-disk`, `--force` for `export` overwrite; `vaults recover-kit` and `vaults switch` honor `BALUARD_PASSWORD` (+ `BALUARD_RECOVERY_PHRASE` for the kit) | same file (stdin prompts today); document `BALUARD_NO_PROMPT=1` alongside | Harness cannot type confirmations; several flows would hang |
-| E4 | Expose a lib target in `baluard-cli` (or extract the socket client) so `tests/` can import the protocol client | `crates/baluard-cli/Cargo.toml` (binary-only today; integration tests cannot reach `client.rs`) | Phase 1 speaks the daemon protocol directly for sharing/space routes |
-| E5 | Parameterize the GitHub provider: device-flow endpoints off the configured instance URL, `Octocrab::builder().base_uri()` from it | `crates/baluard-core/src/providers/github.rs` (device-code/token URLs are hardcoded constants; the octocrab client ignores `instance_url`; GitLab and Codeberg already route via their base URL) | A fake-forge server must be able to serve the GitHub flow |
-| E6 | `BALUARD_SOCKET` env override in `paths::socket_path()` | `crates/baluard-core/src/paths.rs` (`BALUARD_DATA_DIR` exists; the socket path has no override) | NMH and the desktop app must reach a test daemon; also unblocks E7 |
-| E7 | Desktop escape hatch: when `BALUARD_SOCKET` is set, skip the `pgrep` kill of running daemons, skip the sidecar spawn, and connect to the given socket | `desktop/src-tauri/src/lib.rs` (startup today kills every `baluard-daemon` on the system, unlinks the default socket, and unconditionally spawns its sidecar) | Point the desktop app at the Phase 3 test daemon instead of fighting it |
-| E8 | Deterministic extension ID for E2E: ship a fixed `key` in the Chrome manifest (or rewrite the NMH manifest with the derived ID at test setup); seed the bridge pairing fixture; give the NMH the `BALUARD_SOCKET` override from E6 | `browser/chrome/` manifest, `crates/baluard-nmh/src/main.rs` (socket path hardcoded; pairing secret required from `bridge-pairings.json`) | Chrome derives the extension ID from the path, so the NMH `allowed_origins` registration cannot be pre-written otherwise |
+| E1 | Gate `file://` local remotes behind a cargo feature (`e2e-hooks`), not an env var: an env var relaxes transport policy in shipped binaries. Drop `http://` from the plan entirely: the fake forge hands out `file://` clone URLs, its API surface is already reachable (`instance_url` accepts `http://127.0.0.1`, and libgit2 only demands credentials after a 401, so unauthenticated local remotes work) | `crates/baluard-core/src/sync/engine.rs` `validate_git_url` (local schemes are `cfg(test)`-only today) | The harness points vaults at local bare repos |
+| E2 | One shared password helper: `ensure_unlocked_daemon` (24 call sites), `unlock_daemon`, and `vaults switch` all read `BALUARD_PASSWORD` first; `BALUARD_NO_PROMPT` fails loudly instead of answering an empty password | `crates/baluard-cli/src/commands/mod.rs` | Unattended daemon-mode operation; today only direct mode reads the env, everything else prompts and hangs |
+| E3 | Non-interactive confirmations, right-sized: stdin piping is the primary mechanism (prompts read piped stdin fine under `assert_cmd`). Add `--yes`/`--force` only for destructive commands (`device enroll-with-phrase`, `export` overwrite); `vaults detach --delete-from-disk` keeps the slug retype even with `--yes` | `crates/baluard-cli/src/commands/mod.rs` (`device enroll-with-phrase`, `export`, `vaults detach`, `vaults recover-kit`, `vaults switch`) | Deterministic flows; destructive actions keep their human-proof |
+| E4 | None needed. Reuse `baluard-daemon`'s exported proto types and the existing hand-rolled socket client in its test suite (`daemon_spawn.rs`, `socket_routes.rs`, ~250 KB of fixtures covering daemon spawn, routing, PIN, switching) | - | `baluard-cli` is binary-only, but the daemon crate is lib+bin and already publishes what a test client needs |
+| E5 | Parameterize the GitHub provider (defer until a GitHub-specific flow is scheduled): device-flow URLs are hardcoded constants and the octocrab client (used for PAT validation too) ignores `instance_url`; raw-reqwest calls already honor an `/api/v3` override, so a stub must serve both path shapes. GitLab and Codeberg already route via their base URL and need nothing | `crates/baluard-core/src/providers/github.rs` | A fake forge must serve the GitHub flow when tested |
+| E6 | `BALUARD_SOCKET` env override in `paths::socket_path()` | `crates/baluard-core/src/paths.rs` (`BALUARD_DATA_DIR` exists; the socket path has no override) | Desktop and NMH must reach a test daemon; NMH already calls `socket_path()`, so E6 alone covers it |
+| E7 | Desktop escape hatch: when `BALUARD_SOCKET` is set, skip the startup `pgrep` kill (which SIGTERMs every `baluard-daemon` on the system, including the developer's real daemon and any parallel test daemon), skip the sidecar spawn, and connect to the given socket | `desktop/src-tauri/src/lib.rs` (kill + unlink + sidecar today, no override) | Point the desktop app at the Phase 3 test daemon instead of fighting it |
+| E8 | Phase 4 setup mechanics: inject a fixed extension `key` into a copied `dist` at test setup (never into `manifest.base.json`, which Firefox and the store builds share); run the bridge pairing ceremony for real over the daemon socket (`pair_start`/`pair_approve`/`pair_complete`) instead of hand-seeding `bridge-pairings.json`; launch the NMH through a wrapper script exporting `BALUARD_DATA_DIR`/`BALUARD_SOCKET`/`BALUARD_DISABLE_KEYRING`; do not reuse `just install-nmh-manifest` (hardcodes `$HOME` and release paths) | `browser/`, `crates/baluard-nmh/`, new e2e fixtures | Chrome derives the extension ID from the key; the pairing state is daemon-owned |
+| E9 | Machine-readable `init` output (`--json`) including the recovery phrase, or a stable phrase-output convention | `crates/baluard-cli` | Phase 1 multi-device flows must feed clone B's `device enroll-with-phrase` from A's init; parsing the decorated stdout box is fragile |
+| E10 | Autosync off-switch (`BALUARD_AUTOSYNC=0`) or a rule to run sync scenarios `--direct`: autosync activates on unlock when a remote is configured and pushes with a 5s debounce, racing explicit `sync` commands in tests | `crates/baluard-runtime/src/autosync.rs`, `state.rs` | Deterministic sync/conflict scenarios |
+| E11 | Hermetic spawn discipline in the harness: cwd=tempdir + env allowlist for every spawned binary (both load `dotenvy` from cwd upward); optionally a `BALUARD_NO_DOTENV` hook | harness + both `main.rs` | The repo-root `.env` holds real tokens; the plan's own no-real-secrets rule demands this |
+| E12 | Skip `FLAG_SECURE` in debug/E2E builds | `mobile/.../platform/SecureFlag.android.kt` (set app-wide today) | Maestro screenshots and screenrecord return black frames otherwise; failure artifacts would be useless |
+| E13 | `just test-e2e` recipe: builds `baluard-cli`, `baluard-daemon`, `baluard-nmh`, then runs the e2e target; the e2e target is excluded from `just test`. `cargo test -p baluard-cli --test e2e` alone does NOT build the daemon binary (not a dependency) and would spawn a stale one | `justfile` | Correct test-target wiring |
 
-`BALUARD_DATA_DIR` already exists and isolates daemon and CLI processes; harness spawns pass it explicitly per subprocess.
+## Phase 1: CLI + daemon (Rust)
 
-### Phase 1: CLI + daemon (Rust)
+The highest-value layer and the cheapest. The CLI is the executable spec, so this layer IS the product E2E. It extends existing fixtures, it does not start from nothing: the daemon test suite already covers spawn/routing/PIN/switching, and its sync tests are explicitly waiting for the fake-remote fixture this plan delivers. Reuse the die-with-parent guard so orphan daemons never accumulate.
 
-The highest-value layer and the cheapest. The CLI is the executable spec (see the CLI-first-class principle in `docs/feature-parity.md`), so this layer IS the product E2E.
+- Tools: `assert_cmd` + `predicates` + `tempfile`, driven from `cargo test` integration tests at `crates/baluard-cli/tests/e2e/main.rs`.
+- Shape: tempdir vault, real daemon on a scratch socket, real `baluard` binary; assert on stdout, exit codes, and on-disk vault state (decrypted where the test owns the password). Daemon-only surface (sharing, spaces, groups, policies, approvals, reveals, escrow, activity, templates, packages, join, access, notices, contacts, bridge pairing) is exercised by speaking the protobuf protocol directly with the reused test client. Note: provider connect has no CLI command; those flows go through the socket client too.
+- Multi-device conflict flows: A `init`s and pushes; B clones, runs `device enroll-with-phrase` with the phrase from A's init output (E9), then unlocks. A fresh clone carries no device key and cannot open until enrolled. Run a spike first to confirm A verifies B's roster entries and signed commits over a `file://` remote before scoping the full matrix.
+- Performance: debug-mode Argon2id dominates (3.6s per unlock-class command vs 0.07s release). Add `[profile.dev.package."*"] opt-level` overrides for argon2/AEAD/hash crates, use the `mobile-low` KDF profile for harness vaults, and treat the 5-minute budget as warm-cache. CI needs rust-cache, `protoc`, and `libssl-dev`.
+- Fake forge: a small local HTTP stub for the provider API surface (reuse the shape of the scripted `cfg(test)` mock in `providers/types.rs`), handing out `file://` clone URLs (E1). GitHub flows wait for E5; GitLab/Codeberg work immediately.
 
-- Tools: `assert_cmd` + `predicates` + `tempfile`, all pre-1.0-stable crates, driven from `cargo test` integration tests.
-- Shape: each test builds a tempdir vault, spawns the real daemon binary on a scratch socket, runs the real `baluard` binary against it, and asserts on stdout, exit codes, and on-disk vault state (decrypted where the test owns the password).
-- Coverage targets: vault lifecycle (create/unlock/lock/autolock), cipher CRUD, folders, tags, trash (list/restore/purge), archive, attachments, import/export (all 8+2 formats), generator, SSH keygen, TOTP display, settings (client + space knobs), passkey routes, device enrollment/revocation, root-key rotation, recovery phrase + rotation, provider connect (against a local fake-forge server), sync cycles, and multi-device conflict flows (two clones of one bare remote, commit on both, resolve).
-- Daemon-only surface (sharing, spaces, groups, policies, approvals, reveals, escrow) is exercised through the same harness by speaking the protobuf socket protocol directly from a Rust test client, no UI required.
-- Unlock in tests via the existing `BALUARD_PASSWORD` env path and `--direct` mode for both-mode coverage of every command.
-- Home: `crates/baluard-cli/tests/e2e/` with `main.rs` as the cargo target, plus a `fake-forge` test server under `crates/` (a small local HTTP stub implementing the forge endpoints the providers actually call; requires E1 and E5).
+## Phase 2: Android (Maestro)
 
-### Phase 2: Android (Maestro)
+- Tools: Maestro, YAML flows, real device over adb in development, emulator in CI.
+- Build reality: the committed-`.so` premise is false (`*.so` is gitignored; `--skip-native` only works on a machine with prior builds). CI must run `cargo ndk -t x86_64` for the emulator ABI (the existing mobile-alpha workflow already does this for arm64 with a 20-minute budget). Wait for `sys.boot_completed` before install; verify nested virtualization on the chosen runner class before designing around KVM.
+- Selectors: the app has zero Compose test tags today. Add `testTag` + `testTagsAsResourceId` for Maestro `id:` selectors; pin the emulator to en-US since text selectors track the device locale.
+- Biometric: drive the system prompt with injected fingerprint events (`adb emu finger touch` after enrollment) or defer to the instrumentation follow-up; Maestro cannot press BiometricPrompt itself.
+- Coverage: creation wizard (recovery save sheet), unlock, list/search/detail, add/edit/delete, folders, tags, generator (with history), settings sub-pages (back gesture), vault switcher, equivalent-domains dialog. Cross-app autofill stays a UI-Automator follow-up.
+- Home: `e2e/mobile/`, one YAML per journey, shared helpers file.
 
-- Tools: Maestro, YAML flows, driving the real device over adb (the wireless debugging device) in development, and an emulator in CI.
-- Shape: build-install-launch via the existing `just android-install`; flows cover creation wizard (including the recovery-phrase save sheet), unlock (password and biometric-gated KEK), list/search/detail, add/edit/delete, folders, tags, generator (with history), settings sub-pages (with back gesture), vault switcher, and equivalent-domains dialog.
-- Out of first scope: system autofill and accessibility-tile cross-app flows (need separate instrumentation with UI Automator; tracked as a follow-up, not a Maestro job).
-- Home: `e2e/mobile/` with one YAML file per journey, shared seed commands in `e2e/mobile/helpers.yaml`.
+## Phase 3: Desktop (WebdriverIO + tauri-plugin-wdio)
 
-### Phase 3: Desktop (WebdriverIO + tauri-plugin-wdio)
+- Tools: real WebKitGTK webview, real daemon, real socket via the E6/E7 escape hatch. The plugin adds `browser.tauri.execute()` and IPC mocking; E2E specs never mock the daemon.
+- Prerequisites to schedule with this phase: only 11 `data-testid` attributes exist in `desktop/src` - add them along with specs; pin `LANG=en_US.UTF-8` because the UI language follows `navigator.language`.
+- Native GTK file dialogs (recovery-sheet save, import/export) cannot be driven by WebDriver; add a test hook that routes those to a fixed tempdir path in E2E builds.
+- Build wiring: stage the sidecar binaries (`binaries/baluard-daemon-<target-triple>`, as `linux-smoke.yml` does), build the frontend `dist` first, and carry the plugin capability via a separate E2E Tauri config (`tauri build --debug --no-bundle --config tauri.e2e.conf.json -- --features e2e`) since capabilities cannot be feature-conditional; verify the CSP `connect-src` does not block the plugin bridge.
+- Per-launch state: `render-watchdog.flag` and `desktop-prefs.json` persist in `BALUARD_DATA_DIR`; every launch gets a fresh data dir.
+- Coverage: setup wizard, login, unlock flows, vault view, folders/tags, generator, import/export, settings, vault switcher, sync tab (conflict banner + resolution), sharing suite, device fleet, passkey rename, password history.
+- Home: `e2e/desktop/`. Fallback if wdio fights WebKitGTK: `@srsholmes/tauri-playwright`.
 
-- Tools: the official Tauri path. `tauri-plugin-wdio` (Rust + JS) registered behind a cargo feature `e2e`, with the embedded WebDriver server plugin so no external `tauri-driver` process is needed, and the WebdriverIO Tauri service on the test side.
-- Shape: real WebKitGTK webview, real daemon, real socket (via the E6/E7 escape hatch: the app connects to the test daemon instead of killing it and spawning its sidecar). The plugin adds `browser.tauri.execute()` and IPC mocking; the E2E suites use execute for session setup (seed vault path) but never mock the daemon in E2E specs - mocking is reserved for a thin component-level layer if needed.
-- Prerequisite: the desktop crate must build on the dev machine. This box currently fails at `gdk-3.0` headers; `just sysdeps` prints the fix. CI (Linux + xvfb) carries the suite until then.
-- Coverage targets: setup wizard, login screen (locale from settings-pub), unlock flows (password, PIN status surface, biometric button states), vault view (list, search, detail, edit, delete, archive), folders/tags UI, generator modal (with history drawer), import/export, settings modal, vault switcher (switch/close/detach), sync tab (connect, status dot, conflict banner + resolution panel), sharing suite (people, groups, collections, outboxes, contacts, bridge), device fleet panel, passkey rename, password history.
-- Home: `e2e/desktop/` with `wdio.conf.ts` and one spec per modal/flow. The plugin stays out of release builds via the feature flag.
-- Fallback if wdio fights the WebKitGTK setup: `@srsholmes/tauri-playwright` (socket-bridge plugin + Playwright-compatible API, native screenshots/video). Same feature-flag pattern.
+## Phase 4: Browser extension (Playwright + real NMH)
 
-### Phase 4: Browser extension (Playwright + real NMH)
-
-- Tools: Playwright with its bundled Chromium (branded Chrome 137+ removed the extension side-load flag), persistent-context launch with `--load-extension` pointing at the built MV3 output.
-- Shape, two rings:
-  - Ring 1 (real NMH, real daemon, popup surface): register the native messaging host manifest pointing at the real `baluard-nmh` binary, run the real daemon, and exercise unlock, search, and fill-in-popup flows end to end. Requires E6 and E8.
-  - Ring 2 (full chain): add a live local test page and exercise the content-script inline autofill loop on it.
-- Firefox: Playwright cannot install extensions in Firefox; use Selenium + geckodriver with a temporary addon install, or defer Firefox ring 2 until Chromium coverage is green.
+- Tools: Playwright bundled Chromium (branded Chrome 137+ removed the side-load flag), persistent-context launch.
+- Ring 1 (real NMH, real daemon, popup surface): register the NMH manifest pointing at the real binary, run the real daemon, exercise unlock/search/fill-in-popup. Requires E6 and E8.
+- Ring 2 (full chain): add a live local test page for the content-script inline autofill loop.
+- Bridge read rate limits apply per pairing: one daemon plus one pairing per spec file, paced calls; pairing tokens live for hours, so ceremony setup is per-suite, not per-test.
+- Firefox: Selenium + geckodriver temporary addon install, or deferred until Chromium coverage is green.
 - Home: `e2e/extension/`.
 
 ## Feature-to-layer map
-
-Every parity-matrix feature lands in at least one layer:
 
 | Feature area | E2E layer |
 |---|---|
@@ -82,12 +94,11 @@ Every parity-matrix feature lands in at least one layer:
 | Generator, SSH keygen, TOTP display | Phase 1 + Phase 2/3 journeys |
 | Settings (client + space knobs) | Phase 1 + Phase 3 UI |
 | Passkeys (list/delete/rename) | Phase 1 + Phase 3 UI |
-| Git sync, providers, conflicts, multi-device | Phase 1 (two clones, bare remote, fake forge) |
+| Git sync, providers, conflicts, multi-device enrollment | Phase 1 (two clones, bare remote, fake forge) |
 | Sharing: spaces, members, groups, policies, approvals, reveals, escrow | Phase 1 daemon socket client |
+| Activity, notices, templates, packages, join, access review, contacts | Phase 1 daemon socket client |
 | Device fleet, enrollment, revocation, rotation | Phase 1 |
 | Quick unlock (PIN routes, biometric status) | Phase 1 routes + Phase 3 UI states |
-| Activity log, notices, templates, access review, join requests, packages | Phase 1 daemon socket client |
-| Contacts (card exchange) | Phase 1 daemon socket client |
 | Bridge pairing ceremony | Phase 1 socket client + Phase 4 rings |
 | Desktop UI journeys (all modals above) | Phase 3 |
 | Android UI journeys | Phase 2 |
@@ -96,13 +107,12 @@ Every parity-matrix feature lands in at least one layer:
 
 ## CI
 
-- One GitHub Actions workflow, four jobs, all triggered on push/PR to main.
-- CLI/daemon: ubuntu runner, `just build` + `cargo test -p baluard-cli --test e2e`. Needs no display.
-- Desktop: ubuntu + xvfb + the build dependency set from `just sysdeps` (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `pkg-config`; the deb runtime library list alone does not compile). Uploads videos/traces on failure.
-- Android: KVM-capable runner (standard ubuntu runners lack nested virtualization and emulator boot crawls), wait for `sys.boot_completed` before install, build with `--skip-native` (committed .so files cover all four ABIs). Artifacts: flow videos on failure.
-- Extension: ubuntu + Playwright bundled Chromium; ring 1 needs the NMH manifest registered and the pairing fixture seeded in the runner profile.
-- Failure artifacts (logs, screenshots, flow videos) upload on any failure; retention 14 days.
-- Biometric-gated unlock on the emulator is driven with injected fingerprint events (`adb emu finger touch` after enrollment) or the flow is deferred to the instrumentation follow-up; Maestro cannot press the system BiometricPrompt itself.
+- One workflow, four jobs, on push/PR to main; the existing extension workflow merges into it rather than duplicating.
+- CLI/daemon: ubuntu, rust-cache, `protoc`, `libssl-dev`, `just build` + the e2e target. No display needed.
+- Desktop: ubuntu + xvfb + the build dependency set from `just sysdeps` (dev headers; the deb runtime library list alone does not compile). Videos/traces on failure.
+- Android: KVM-capable runner (verify nested virtualization on the chosen runner class before committing), `sys.boot_completed` wait, `cargo ndk -t x86_64` native build (`.so` files are not committed), Maestro run. Flow videos on failure (meaningful only with E12).
+- Extension: ubuntu + Playwright Chromium; NMH manifest registered and pairing ceremony run in the runner profile.
+- Failure artifacts upload on any failure; retention 14 days.
 
 ## Rejected options, with reasons
 
@@ -114,15 +124,15 @@ Every parity-matrix feature lands in at least one layer:
 
 ## Status
 
-| Phase | State |
+| Item | State |
 |---|---|
-| Enabling work E1-E8 | Not started (blocks the phases below; E1, E2, E5, E6, E7 are small) |
-| 1 CLI + daemon | Not started |
-| 2 Android Maestro | Not started |
-| 3 Desktop wdio | Blocked on this box's GTK headers (`just sysdeps`); CI carries it; needs E6/E7 |
-| 4 Extension | Not started; needs E6/E8 |
+| Enabling work E1-E13 | Not started; E1-E6 ride with Phase 1, E10-E13 too |
+| Phase 1 CLI + daemon | Not started; multi-device flow gated on a spike |
+| Phase 2 Android Maestro | Not started; needs E12 + native-build CI |
+| Phase 3 Desktop wdio | Blocked on this box's GTK headers (`just sysdeps`); CI carries it; needs E6/E7 |
+| Phase 4 Extension | Not started; needs E6/E8 |
 
-Rollout order: the enabling work rides with Phase 1 (E1-E6 are Phase 1 needs; E7 unblocks Phase 3; E8 unblocks Phase 4). Phase 1 first: it needs no new runtime infrastructure and covers the largest feature surface.
+Rollout order: enabling work rides with its phase. Phase 1 first: no new runtime infrastructure, largest feature surface.
 
 ## Keeping this document current
 
