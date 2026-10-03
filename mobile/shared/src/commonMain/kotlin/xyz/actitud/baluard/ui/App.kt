@@ -92,7 +92,9 @@ private sealed interface Nav {
 
 private fun navDepth(nav: Nav): Int = when (nav) {
     is Nav.List -> 0
-    is Nav.Detail, Nav.Generator, Nav.Settings, Nav.People, Nav.Collections, Nav.Activity, is Nav.EntryList, Nav.TagList -> 1
+    is Nav.Detail, Nav.Generator, Nav.Settings, is Nav.EntryList, Nav.TagList -> 1
+    // Settings sub-pages sit one level below Settings: back animates a pop.
+    Nav.People, Nav.Collections, Nav.Activity -> 2
     is Nav.Edit -> 2
 }
 

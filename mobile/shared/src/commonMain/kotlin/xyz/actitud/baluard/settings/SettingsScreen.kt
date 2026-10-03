@@ -700,7 +700,8 @@ fun SettingsScreen(
                                     val group: List<String> = groupInput.split(',')
                                         .map { entry ->
                                             entry.trim().lowercase()
-                                                .removePrefix("https://").trimEnd('/')
+                                                .removePrefix("https://").removePrefix("http://")
+                                                .substringBefore('/').trimEnd('/')
                                         }
                                         .filter { entry -> entry.isNotBlank() && entry.contains('.') }
                                         .distinct()
