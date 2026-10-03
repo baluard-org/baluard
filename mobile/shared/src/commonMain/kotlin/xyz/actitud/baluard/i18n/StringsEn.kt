@@ -90,6 +90,12 @@ internal val EN: Map<String, String> = mapOf(
     "recovery.warning" to "Never store the phrase on this device or in the cloud.",
     "recovery.ack" to "I wrote it down on paper",
     "recovery.copyPhrase" to "Copy recovery phrase",
+    "recovery.saveTxt" to "Save as text file",
+    "recovery.savePdf" to "Save as PDF",
+    "recovery.sheetWarning" to "Anyone who can read these 24 words can open this vault. Store this file somewhere safe.",
+    "recovery.fileRisk" to "The file is saved without encryption. Keep it only on an encrypted or offline drive.",
+    "recovery.savedToast" to "File saved",
+    "recovery.saveFailed" to "Could not save the file",
     // provider connect (open existing vault)
     "provider.subtitle" to
         "Connect your account to open a vault synced from another device.",
