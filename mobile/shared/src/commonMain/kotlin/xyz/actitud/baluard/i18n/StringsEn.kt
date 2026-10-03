@@ -463,6 +463,8 @@ internal val EN: Map<String, String> = mapOf(
     "a11y.totpCopied" to "TOTP code copied",
     "settings.equivalentDomainsTitle" to "Equivalent domains",
     "settings.equivalentDomainsAdd" to "Add group",
+    "settings.equivalentDomainsAddHint" to "Two or more sites that share the same login, separated by commas.",
+    "settings.equivalentDomainsAddError" to "Enter at least two domains, separated by commas.",
     "settings.equivalentDomainsEmpty" to "No custom groups yet. Domains in a group autofill each other.",
     "settings.equivalentDomainsHint" to "Add groups of domains that share logins (e.g. your company portal and its public site).",
     "settings.suggestAppLogins" to "Suggest web logins in apps",
