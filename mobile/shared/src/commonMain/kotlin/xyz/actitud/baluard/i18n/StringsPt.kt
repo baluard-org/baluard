@@ -434,6 +434,8 @@ internal val PT: Map<String, String> = mapOf(
     "a11y.totpCopied" to "Código TOTP copiado para a área de transferência!",
     "settings.equivalentDomainsTitle" to "Domínios equivalentes",
     "settings.equivalentDomainsAdd" to "Adicionar domínio equivalente",
+    "settings.equivalentDomainsAddHint" to "Dois ou mais sites que compartilham a mesma conta, separados por vírgulas.",
+    "settings.equivalentDomainsAddError" to "Digite pelo menos dois domínios, separados por vírgulas.",
     "settings.equivalentDomainsEmpty" to "Nenhum domínio equivalente personalizado configurado.",
     "settings.equivalentDomainsHint" to "Associa diferentes endereços de um mesmo serviço para sugerir as mesmas senhas.",
     "settings.suggestAppLogins" to "Sugerir credenciais para aplicativos",

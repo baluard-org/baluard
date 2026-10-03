@@ -673,15 +673,27 @@ fun SettingsScreen(
                     )
                     if (showAddGroup) {
                         var groupInput by remember { mutableStateOf("") }
+                        var addError by remember { mutableStateOf(false) }
                         androidx.compose.material3.AlertDialog(
                             onDismissRequest = { showAddGroup = false },
                             title = { Text(t("settings.equivalentDomainsAdd")) },
                             text = {
-                                androidx.compose.material3.OutlinedTextField(
-                                    value = groupInput,
-                                    onValueChange = { groupInput = it },
-                                    singleLine = true,
-                                )
+                                androidx.compose.foundation.layout.Column {
+                                    androidx.compose.material3.OutlinedTextField(
+                                        value = groupInput,
+                                        onValueChange = { groupInput = it; addError = false },
+                                        singleLine = true,
+                                        isError = addError,
+                                        supportingText = { Text(t("settings.equivalentDomainsAddHint")) },
+                                    )
+                                    if (addError) {
+                                        Text(
+                                            text = t("settings.equivalentDomainsAddError"),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    }
+                                }
                             },
                             confirmButton = {
                                 TextButton(onClick = {
@@ -692,7 +704,11 @@ fun SettingsScreen(
                                         }
                                         .filter { entry -> entry.isNotBlank() && entry.contains('.') }
                                         .distinct()
-                                    if (group.size >= 2) {
+                                    // Fail visibly: fewer than two valid domains is a
+                                    // user-input problem, never a silent no-op.
+                                    if (group.size < 2) {
+                                        addError = true
+                                    } else {
                                         val next: List<List<String>> = domainGroups + listOf(group)
                                         val groupJsons = next.map { g ->
                                             val entries = g.map { entry ->
@@ -711,8 +727,8 @@ fun SettingsScreen(
                                                 }.toString(),
                                             )
                                         }
+                                        showAddGroup = false
                                     }
-                                    showAddGroup = false
                                 }) { Text(t("common.save")) }
                             },
                             dismissButton = {

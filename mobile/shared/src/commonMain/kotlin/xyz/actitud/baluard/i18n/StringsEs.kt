@@ -468,6 +468,8 @@ internal val ES: Map<String, String> = mapOf(
     "a11y.totpCopied" to "Código TOTP copiado",
     "settings.equivalentDomainsTitle" to "Dominios equivalentes",
     "settings.equivalentDomainsAdd" to "Añadir grupo",
+    "settings.equivalentDomainsAddHint" to "Dos o más sitios que comparten la misma cuenta, separados por comas.",
+    "settings.equivalentDomainsAddError" to "Escribe al menos dos dominios, separados por comas.",
     "settings.equivalentDomainsEmpty" to "Aún no hay grupos personalizados. Los dominios de un grupo se autocompletan entre sí.",
     "settings.equivalentDomainsHint" to "Añade grupos de dominios que comparten credenciales (p. ej. el portal de tu empresa y su sitio público).",
     "settings.suggestAppLogins" to "Sugerir credenciales web en apps",
