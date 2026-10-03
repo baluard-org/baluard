@@ -2022,7 +2022,8 @@ async fn space_settings_lifecycle_and_locked_rejection() {
         serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
     assert_eq!(get["space_invite_authority"], "admins");
     assert_eq!(get["allow_viewer_export"], false);
-    assert_eq!(get["guest_enabled"], true);
+    // Opt-in default (2026-10-03): fresh vaults read guest sharing OFF.
+    assert_eq!(get["guest_enabled"], false);
     assert_eq!(get["trash_policy"], "write_scope_can_trash");
     assert_eq!(get["restore_policy"], "admins_only");
     assert_eq!(get["join_approval"], "manual");
@@ -2035,7 +2036,7 @@ async fn space_settings_lifecycle_and_locked_rejection() {
     let get: serde_json::Value =
         serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
     assert_eq!(get["space_invite_authority"], "owners");
-    assert_eq!(get["guest_enabled"], true);
+    assert_eq!(get["guest_enabled"], false);
 
     state
         .space_settings_set(r#"{"guest_enabled":false,"allow_viewer_export":true}"#)
