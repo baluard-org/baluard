@@ -1,6 +1,6 @@
 # Feature parity: CLI / Desktop / Mobile
 
-Snapshot: 2026-10-03, main @ `92e91ae`, second audit pass (every cell re-verified against source, then cross-checked by an independent peer audit). Owner: Esteban.
+Snapshot: 2026-10-03, main @ `92e91ae`; second audit pass (every cell re-verified against source, then cross-checked by an independent peer audit), revised the same day with the CLI-first-class decision below. Owner: Esteban.
 
 ## Purpose
 
@@ -8,13 +8,21 @@ One place that states which features exist on which surface, so parity gaps can 
 
 ## Surfaces
 
-- CLI (`crates/baluard-cli`): daemon-first with `--direct` fallback. Power-user escape hatch, scriptable, English only.
+- CLI (`crates/baluard-cli`): daemon-first with `--direct` fallback. A first-class surface, not an escape hatch: scriptable, English only, and the first consumer of every new daemon route.
 - Desktop (Tauri v2 + SolidJS): the complete product. Windows, macOS, Linux.
 - Mobile (Kotlin Multiplatform, Compose): Android shipped, iOS pending platform work. Shares the Rust core through UniFFI.
 
 ## How to read this document
 
 Status words: **Yes** = shipped. **Partial** = shipped with a stated limit. **None** = absent. **n/a** = does not apply to that surface. Every cell was checked against source (CLI command enums and handlers, UniFFI exports, `VaultRepository` methods, desktop components and their daemon calls, i18n strings) on the snapshot date.
+
+## Product principle: CLI first-class, primitives jump
+
+The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are clients over it (socket IPC or UniFFI). Therefore:
+
+1. **Every daemon route must be reachable from all three surfaces.** A feature is not done while one surface cannot reach it. "None" cells in the matrix are debt, not scope choices.
+2. **New features land daemon + CLI first, then desktop, then mobile.** The CLI is the cheapest, most testable surface and doubles as the executable spec of the daemon route.
+3. **Primitives jump, flows do not.** A CLI command proves the logic and becomes the foundation the GUIs wrap; each UI still gets its own design pass. Proven already: the recovery sheet is one Rust renderer with three consumers, and `vault.health` + generator history are CLI-only primitives waiting for their GUI twins (G19, G20).
 
 ## Matrix
 
@@ -137,22 +145,27 @@ Surface: Mobile. Missing: escrow and kit surfaces. Effort: M. Value: full S4 lif
 Surface: CLI. Missing: password / passphrase generation, standalone TOTP code command, SSH key generation (storage exists), `list --search`. Effort: M (three command trees plus a filter flag; not a one-day bundle). Value: scripting and headless workflows. Decision: close.
 
 ### G8. CLI provider connect
-Surface: CLI. Missing: OAuth device flow and PAT connect. Cloning already works by provider + repo using daemon-stored tokens; what is missing is the interactive connect step, so a fresh headless machine cannot attach its own credentials. Effort: M. Value: headless sync setup without borrowing a desktop. Decision: close.
+Surface: CLI. Missing: OAuth device flow and PAT connect. Cloning already works by provider + repo using daemon-stored tokens; what is missing is the interactive connect step, so a fresh headless machine cannot attach its own credentials. Effort: M. Value: a first-class CLI must be self-sufficient on first run - setup cannot require borrowing a desktop. Decision: scheduled in the CLI parity track.
 
 ### G9. CLI rotation without revocation
-Surface: CLI. Missing: standalone `rotate_root_key`. Device revoke (which rotates as a side effect) already exists. Effort: M. Value: scheduled key rotation and incident response that keeps all devices enrolled. Decision: close.
+Surface: CLI. Missing: standalone `rotate_root_key`. Device revoke (which rotates as a side effect) already exists. Effort: M. Value: scheduled key rotation and incident response that keeps all devices enrolled - the headless machine stays the security console, not a second-class device. Decision: scheduled in the CLI parity track.
 
 ### G10. Mobile passkey ceremonies
 Surface: Mobile. Missing: register / assert. Platform WebAuthn APIs make this the hardest mobile item. Effort: L. Value: real, but display-only may be the right 1.0 scope. Decision: needed - park or schedule after 1.0.
 
-### G11. CLI sharing surface
-Surface: CLI. Missing: every sharing command (members, approvals, collections, groups, policies, activity). Effort: L. Value: only if the CLI is meant to administer shared spaces. Decision: needed - this decides what the CLI is for. If the CLI stays an escape hatch for personal vaults, declare out of scope.
+### G11. CLI sharing surface (phased)
+Surface: CLI. Missing: every sharing command (members, approvals, collections, groups, policies, activity). With the CLI first-class, this is in scope, in two phases:
+
+- **Phase 1 (M) - the Bitwarden shape:** share an item to a space, collection list/assign, member list, member confirm. The item-level ops people actually script.
+- **Phase 2 (L) - full admin:** invite, remove, roles, groups, policies, approvals, activity. Peer precedent: the 1Password CLI is a full admin surface (`user provision/confirm/suspend`, `group` CRUD, vault permission grants); the Bitwarden CLI deliberately keeps deep admin in the web console. A first-class Baluard CLI ships both phases - phase 2 may land just after 1.0.
+
+Decision: committed (2026-10-03, Esteban). Phase 1 in the CLI parity track; phase 2 first item after 1.0.
 
 ### G12. iOS depth
 Surface: Mobile. Missing: autofill provider (Phase 7) plus the iOS actuals behind several partial cells above. Effort: L. Value: the second mobile platform. Decision: already planned as Phase 7; the remaining iOS actuals ride along.
 
 ### G13. Space user groups on mobile
-Surface: Mobile. Missing: group CRUD and membership (desktop has the full GroupsTab). Effort: M. Value: batch access management for larger spaces on phones. Decision: close after G3/G5, or with G11's CLI part if the CLI becomes an admin surface.
+Surface: Mobile + CLI. Missing: group CRUD and membership (desktop has the full GroupsTab; CLI follows G11 phase 2). Effort: M. Value: batch access management for larger spaces on phones. Decision: close after G3/G5 on mobile; the CLI part rides with G11 phase 2.
 
 ### G14. CLI trash surface
 Surface: CLI. Missing: list trash, restore, purge. Effort: S. Value: scripting cleanup; parity with both GUIs. Decision: close.
@@ -160,8 +173,8 @@ Surface: CLI. Missing: list trash, restore, purge. Effort: S. Value: scripting c
 ### G15. Mobile vault detach / prune
 Surface: Mobile. Missing: drop a vault from the list, prune stale vaults (both GUIs have it; the destructive delete arm stays desktop/CLI by design). Effort: S. Value: unclutter the vault list after a vault is removed elsewhere. Decision: close.
 
-### G16. Repo creation on provider (mobile, then CLI)
-Surface: Mobile + CLI. Missing: `provider.create_repo` (desktop-only today). Effort: S on CLI (route + flag), M on mobile (wizard step). Value: first-run setup without a desktop. Decision: close; CLI part rides with G8.
+### G16. Repo creation on provider (mobile + CLI)
+Surface: Mobile + CLI. Missing: `provider.create_repo` (desktop-only today). Effort: S on CLI (route + flag), M on mobile (wizard step). Value: first-run setup without a desktop, on either client. Decision: close; CLI part rides with G8 in the CLI parity track.
 
 ### G17. Desktop passkey rename UI
 Surface: Desktop. Missing: rename exists on CLI only. Effort: S. Value: naming credentials is a daily-use nicety. Decision: close.
@@ -170,7 +183,7 @@ Surface: Desktop. Missing: rename exists on CLI only. Effort: S. Value: naming c
 Surface: Mobile. Missing: the flag saves but nothing enforces it on view or reveal. Effort: S to M. Value: security parity with desktop's RepromptModal; a silent unenforced security flag is worse than none. Decision: close.
 
 ### G19. Password health on desktop and mobile
-Surface: Desktop + Mobile. Missing: the `vault.health` report (weak, reused, old passwords) has no GUI surface anywhere. Effort: M. Value: the CLI should not be the only place users learn their passwords are weak. Decision: close after 1.0 or schedule with the 1.0 polish pass.
+Surface: Desktop + Mobile. Missing: the `vault.health` report (weak, reused, old passwords) has no GUI surface anywhere. Effort: M, cheapened by the CLI-first rule - the primitive exists (`vault.health` route + `baluard health`), so this is UI wiring, not new logic. Value: the CLI should not be the only place users learn their passwords are weak. Decision: close after 1.0 or schedule with the 1.0 polish pass.
 
 ### G20. Generator history on mobile
 Surface: Mobile. Missing: history drawer (UniFFI bindings already exist). Effort: S. Value: recovering a generated password you did not save yet. Decision: close.
@@ -186,12 +199,11 @@ Surface: Mobile. Missing: remote repoint and signed-manifest revocation. Effort:
 
 ## Recommended order
 
-1. G1 (S), G14 (S), G17 (S), G20 (S) - small closes, immediate parity wins.
-2. G2 (M) - largest user-facing gap.
-3. G4 (S), G15 (S), G18 (S-M) - the phone becomes self-sufficient for daily incidents and honest security flags.
-4. G7 (M), G16 (M) - completes the CLI toolkit and first-run setup.
-5. G3, G5, G8, G9 (M-L) - security lifecycle and headless setup parity.
-6. Decision items: G11 first (defines the CLI), then G6, G10, G12, G13, G19, G21, G22, G23.
+1. **Small closes (S batch):** G1, G14, G17, G20, G22.
+2. **Adoption (the phone stands alone):** G2 (import/export), G4 (open reveals), G15 (detach), G18 (reprompt enforcement).
+3. **CLI parity track:** G7 (utilities), G16-CLI + G8 (repo creation and connect), G9 (rotation), G11 phase 1 (sharing). Each gap lands a daemon + CLI primitive that the desktop and mobile twins then wrap.
+4. **Security lifecycle:** G3 (rotation ceremony), G5 + G23 (fleet and admin ops), G6 (escrow + kit).
+5. **Post-1.0:** G11 phase 2 (full CLI admin), G10 (mobile passkey ceremonies), G12 (iOS depth), G13 (groups on mobile + CLI), G19 (health GUI), G21 (avatar).
 
 ## Out of parity scope by design
 
@@ -199,7 +211,7 @@ Surface: Mobile. Missing: remote repoint and signed-manifest revocation. Effort:
 - Browser extension Phase 2 (passkey ceremony, QR cross-device assertion): tracked in the browser extension plan, not here.
 - Desktop-only platform features (Touch ID, Windows Hello, tray) stay platform features.
 - iOS lags Android until Phase 7 lands; rows already say so.
-- CLI-only by usefulness, not by omission: commit revocation lives where signed history is audited. If G11 makes the CLI an admin surface, revisit.
+- Commit revocation is CLI-first by usefulness, not by omission: signed history is audited where scripts run. G11 phase 1 brings the sharing item ops to the CLI; the full admin surface follows in phase 2.
 
 ## Keeping this document current
 
