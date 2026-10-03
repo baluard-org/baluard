@@ -52,3 +52,4 @@
 | [Plan: Android Accessibility Tile](plan-android-accessibility-tile.md) | Quick-settings tile accessibility fill implementation (Phase 6.5): opt-in tile trigger, browser URL-bar scraping, ACTION_SET_TEXT injection, clipboard-only TOTP. Complete. |
 | [Plan: Mobile Onboarding](plan-mobile-onboarding.md) | Onboarding root flow for mobile clients (create new vault, provider clone, device enrollment). Slices 0-C complete. |
 | [ADR 0007: passkey-rs Evaluation](plan-passkey-rs-evaluation.md) | Decision to adopt `passkey-rs` 0.5.x as the WebAuthn authenticator library |
+| [ADR 0008: Desktop UI Stack Evaluation](plan-desktop-ui-evaluation.md) | WebView exit analysis: GPUI-CE, Ely, GPUI Kit evaluated (2026-10-03). Stay on Tauri v2 + SolidJS through 1.0; GPUI Kit is the only credible exit path. Decision triggers recorded. |
