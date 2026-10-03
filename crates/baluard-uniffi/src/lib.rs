@@ -180,6 +180,51 @@ pub fn generate_recovery_phrase() -> Result<MobileRecoveryPhrase, BaluardError> 
     })
 }
 
+/// Render the recovery sheet (TXT or one-page PDF) for the mobile export
+/// surface. Same renderer as desktop (D77): one writer, three consumers.
+/// `format` is "txt" or "pdf"; `phrase` is the space-separated 24 words.
+/// Returns raw file bytes — the platform side writes them through its
+/// document picker (SAF on Android), so no filesystem path crosses the FFI.
+#[uniffi::export]
+pub fn recovery_sheet_bytes(
+    format: String,
+    title: String,
+    warning: String,
+    phrase: String,
+) -> Result<Vec<u8>, BaluardError> {
+    use baluard_core::recovery_sheet::{RecoverySheet, SheetFormat};
+
+    let sheet_format = match format.as_str() {
+        "txt" => SheetFormat::Txt,
+        "pdf" => SheetFormat::Pdf,
+        other => {
+            return Err(BaluardError::InvalidInput {
+                detail: format!("unknown recovery sheet format: {other}"),
+            })
+        }
+    };
+    let words: Vec<&str> = phrase.split_whitespace().collect();
+    // The sheet layout is a fixed 2x12 grid; fail closed on anything else
+    // (same gate as the desktop Tauri command).
+    if words.len() != 24 {
+        return Err(BaluardError::InvalidInput {
+            detail: format!(
+                "recovery phrase must have exactly 24 words, got {}",
+                words.len()
+            ),
+        });
+    }
+    let sheet = RecoverySheet {
+        title: &title,
+        warning: &warning,
+        words: &words,
+    };
+    Ok(match sheet_format {
+        SheetFormat::Txt => sheet.to_txt().into_bytes(),
+        SheetFormat::Pdf => sheet.to_pdf(),
+    })
+}
+
 /// Derive a 32-byte key-encryption key (KEK) from a master password + salt via
 /// Argon2id. Returns raw bytes for the FFI boundary. Runs off the UI thread via `spawn_blocking`.
 #[uniffi::export(async_runtime = "tokio")]
@@ -1542,6 +1587,38 @@ pub async fn background_fetch(path: String) -> Result<bool, BaluardError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_sheet_txt_routes_to_core() {
+        let phrase = generate_recovery_phrase().unwrap().phrase;
+        let bytes =
+            recovery_sheet_bytes("txt".into(), "T".into(), "W".into(), phrase.clone()).unwrap();
+        let txt = String::from_utf8(bytes).unwrap();
+        assert!(txt.starts_with("T\n"));
+        for word in phrase.split_whitespace() {
+            assert!(txt.contains(word));
+        }
+    }
+
+    #[test]
+    fn recovery_sheet_pdf_routes_to_core() {
+        let phrase = generate_recovery_phrase().unwrap().phrase;
+        let bytes =
+            recovery_sheet_bytes("pdf".into(), "T".into(), "W".into(), phrase).unwrap();
+        assert!(bytes.starts_with(b"%PDF-1.4\n"));
+        assert!(bytes.ends_with(b"%%EOF\n"));
+    }
+
+    #[test]
+    fn recovery_sheet_rejects_bad_format_and_word_count() {
+        let phrase = generate_recovery_phrase().unwrap().phrase;
+        let err = recovery_sheet_bytes("md".into(), "T".into(), "W".into(), phrase.clone())
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown recovery sheet format"));
+        let err = recovery_sheet_bytes("txt".into(), "T".into(), "W".into(), "one two three".into())
+            .unwrap_err();
+        assert!(err.to_string().contains("exactly 24 words, got 3"));
+    }
 
     // Mirrors the legacy core test that was removed when the FFI surface
     // consolidated into this crate. Proves the three consolidated fns still

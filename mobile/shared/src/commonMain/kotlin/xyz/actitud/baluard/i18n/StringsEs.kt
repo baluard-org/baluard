@@ -90,6 +90,12 @@ internal val ES: Map<String, String> = mapOf(
     "recovery.warning" to "Nunca guardes la frase en este dispositivo ni en la nube.",
     "recovery.ack" to "La escribí en papel",
     "recovery.copyPhrase" to "Copiar frase de recuperación",
+    "recovery.saveTxt" to "Guardar como archivo de texto",
+    "recovery.savePdf" to "Guardar como PDF",
+    "recovery.sheetWarning" to "Cualquiera que pueda leer estas 24 palabras puede abrir esta bóveda. Guarda este archivo en un lugar seguro.",
+    "recovery.fileRisk" to "El archivo se guarda sin cifrar. Consérvalo solo en un disco cifrado o externo.",
+    "recovery.savedToast" to "Archivo guardado",
+    "recovery.saveFailed" to "No se pudo guardar el archivo",
 
     // provider connect (open existing vault)
     "provider.subtitle" to
