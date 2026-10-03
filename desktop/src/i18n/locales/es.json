@@ -131,6 +131,10 @@
     "notesPlaceholder": "Notas",
     "user": "Usuario",
     "pass": "Contraseña",
+    "passwordHistory": "Historial de contraseñas ({count})",
+    "historyShow": "Mostrar contraseña",
+    "historyHide": "Ocultar contraseña",
+    "copyValue": "Copiar valor",
     "uri": "Sitio web",
     "notes": "Notas",
     "delete": "Eliminar",
@@ -581,7 +585,11 @@
     "deleteConfirm": "¿Eliminar la clave de acceso \"{name}\" de esta entrada? Esta acción no se puede deshacer.",
     "deleteWarningTitle": "Sin otros métodos de autenticación",
     "deleteOnlyAuth": "Esta entrada no tiene contraseña y esta es la única clave de acceso. Eliminarla significa que podrías perder el acceso a esta cuenta. Asegúrate de tener otra forma de iniciar sesión antes de eliminarla.",
-    "deleteError": "Error al eliminar la clave de acceso."
+    "deleteError": "Error al eliminar la clave de acceso.",
+    "renameBtn": "Renombrar",
+    "renameError": "No se pudo renombrar la clave de acceso.",
+    "saveRename": "Guardar",
+    "cancelRename": "Cancelar"
   },
   "relative": {
     "justNow": "justo ahora",
