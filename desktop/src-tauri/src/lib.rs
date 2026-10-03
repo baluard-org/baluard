@@ -558,28 +558,72 @@ fn show_window(window: tauri::WebviewWindow) {
     render::clear_marker();
 }
 
-/// D1: save the recovery phrase to a user-chosen file — dialog AND write
-/// both Rust-side. Replaces `write_text_file(path, contents)`, which
+/// D1 + D77: save the recovery-key sheet to a user-chosen file — dialog AND
+/// write both Rust-side. Replaces `write_text_file(path, contents)`, which
 /// accepted any path from the webview (the "scope" was a comment, not
-/// code). The webview now passes only the contents; it never holds a
-/// filesystem path, and no arbitrary-path write command exists at all.
-/// Written through `write_secret_file`: 0600 from the first byte, atomic
-/// rename, symlinks replaced not followed.
+/// code). The webview passes only the phrase + localized strings; it never
+/// holds a filesystem path, and no arbitrary-path write command exists.
+/// Rendering for both formats (txt, pdf) lives in baluard-core so every
+/// surface shares one implementation; the file lands via `write_secret_file`:
+/// 0600 from the first byte, atomic rename, symlinks replaced not followed.
 ///
 /// Returns `Ok(false)` when the user cancels the dialog (no file written,
-/// not an error). Peer-review follow-up: the blocking dialog + write run on
-/// the blocking pool (D5 consistency) so an open dialog parks no async
-/// worker for the full user-hesitation window.
+/// not an error). The blocking dialog + write run on the blocking pool
+/// (D5 consistency) so an open dialog parks no async worker for the full
+/// user-hesitation window.
 #[tauri::command]
-async fn save_recovery_phrase(app: AppHandle, contents: String) -> Result<bool, String> {
+async fn save_recovery_phrase(
+    app: AppHandle,
+    format: String,
+    title: String,
+    warning: String,
+    phrase: String,
+) -> Result<bool, String> {
     use tauri_plugin_dialog::DialogExt;
+
+    let sheet_format = match format.as_str() {
+        "txt" => baluard_core::recovery_sheet::SheetFormat::Txt,
+        "pdf" => baluard_core::recovery_sheet::SheetFormat::Pdf,
+        other => return Err(format!("Unknown recovery sheet format: {other}")),
+    };
+    let words: Vec<&str> = phrase.split_whitespace().collect();
+    // The sheet layout is a fixed 2x12 grid and phrases are exactly 24 words
+    // by construction (BIP-39 256-bit). Fail closed on anything else instead
+    // of misrendering or indexing out of bounds.
+    if words.len() != 24 {
+        return Err(format!(
+            "Recovery phrase must have exactly 24 words, got {}",
+            words.len()
+        ));
+    }
+    let sheet = baluard_core::recovery_sheet::RecoverySheet {
+        title: &title,
+        warning: &warning,
+        words: &words,
+    };
+    // Render BEFORE the blocking pool: spawn_blocking needs 'static and the
+    // sheet borrows this command's locals. Rendering is microseconds; only
+    // the dialog wait + file write belong on the pool. Bonus: the secret
+    // String is no longer moved into (and copied across) the closure.
+    let bytes = match sheet_format {
+        baluard_core::recovery_sheet::SheetFormat::Txt => sheet.to_txt().into_bytes(),
+        baluard_core::recovery_sheet::SheetFormat::Pdf => sheet.to_pdf(),
+    };
+    let (filter_name, ext, default_name) = match sheet_format {
+        baluard_core::recovery_sheet::SheetFormat::Txt => {
+            ("Text", "txt", "baluard-recovery-phrase.txt")
+        }
+        baluard_core::recovery_sheet::SheetFormat::Pdf => {
+            ("PDF", "pdf", "baluard-recovery-phrase.pdf")
+        }
+    };
 
     let saved = tauri::async_runtime::spawn_blocking(move || -> Result<bool, String> {
         let picked = app
             .dialog()
             .file()
-            .add_filter("Text", &["txt"])
-            .set_file_name("baluard-recovery-phrase.txt")
+            .add_filter(filter_name, &[ext])
+            .set_file_name(default_name)
             .blocking_save_file();
 
         let path = match picked {
@@ -589,8 +633,7 @@ async fn save_recovery_phrase(app: AppHandle, contents: String) -> Result<bool, 
             Some(_) => return Err("Unsupported save location".into()),
         };
 
-        baluard_core::secret_file::write_secret_file(&path, contents.as_bytes())
-            .map_err(|e| e.to_string())?;
+        baluard_core::secret_file::write_secret_file(&path, &bytes).map_err(|e| e.to_string())?;
         Ok(true)
     })
     .await

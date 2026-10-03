@@ -18,6 +18,7 @@ pub mod orgs;
 pub mod paths;
 pub mod providers;
 pub mod recovery;
+pub mod recovery_sheet;
 pub mod secret_file;
 pub mod sync;
 pub mod sysdeps;

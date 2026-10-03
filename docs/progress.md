@@ -241,7 +241,7 @@ Completed core, CLI, daemon, and desktop implementations.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| Recovery key export (TXT, MD, PDF) | Allow non-technical users to export their 24-word recovery key during vault creation as TXT, Markdown, or PDF. Warn users explicitly about plaintext risks if left in unprotected downloads or desktop folders. Advise storing the file on an encrypted disk (FileVault, BitLocker, LUKS) or on a dedicated external offline drive stored in a secure location. | **Planned** |
+| Recovery key export (TXT, PDF) | Shipped (D77): both vault-creation and rotation surfaces export the 24-word phrase as TXT or one-page PDF through one Rust-side renderer and one Tauri save-dialog command; files land owner-only 0600 via `write_secret_file`. The sheet warns in plain language and the UI notes the file is saved without encryption, advising an encrypted or offline drive. MD format retired by decision. Fixed en route: duplicate top-level `recovery` i18n keys had silently killed creation-screen strings in all three locales. | **Done** |
 
 ### Browser Extension (KeePassXC-Browser-style bridge)
 
