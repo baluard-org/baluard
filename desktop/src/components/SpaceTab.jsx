@@ -187,7 +187,7 @@ export default function SpaceTab() {
       const s = JSON.parse(await daemon("space.settings", {}));
       setAuthority(s.space_invite_authority === "owners" ? "owners" : "admins");
       setViewerExport(s.allow_viewer_export === true);
-      setGuestSharing(s.guest_enabled !== false);
+      setGuestSharing(s.guest_enabled === true);
       setTrashPolicy(s.trash_policy === "admins_only" ? "admins_only" : "write_scope_can_trash");
       setJoinApproval(s.join_approval === "code" ? "code" : "manual");
       setQuorum(Math.min(5, Math.max(1, Number(s.quorum_admin_ops) || 1)));

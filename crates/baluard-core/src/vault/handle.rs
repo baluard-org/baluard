@@ -10757,6 +10757,13 @@ mod tests {
         let mut b = VaultHandle::open(dir_b.path()).unwrap();
         b.unlock(&pw_b).unwrap();
 
+        // Guest sharing is opt-in (2026-10-03): this flavor test exercises
+        // the reveal machinery, not the door, so vault a opts in up front.
+        // The door itself is covered by space_settings_roundtrip_and_guest_gate.
+        let mut settings = a.get_settings().unwrap();
+        settings.guest_enabled = Some(true);
+        a.save_settings(&settings).unwrap();
+
         let source_id = a
             .add_cipher(&crate::types::CipherInput {
                 name: "Team login".into(),

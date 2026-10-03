@@ -409,7 +409,7 @@ class VaultRepository {
                 inviteAuthority =
                     (o["space_invite_authority"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "admins",
                 allowViewerExport = (o["allow_viewer_export"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
-                guestEnabled = (o["guest_enabled"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "false",
+                guestEnabled = (o["guest_enabled"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
                 trashPolicy =
                     (o["trash_policy"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "write_scope_can_trash",
                 joinApproval =
