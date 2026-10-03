@@ -85,7 +85,23 @@
     "writeItDown": "Escreva em um papel. Guarde em um local seguro (cofre, caixa de segurança, pasta à prova de fogo). Capturas de tela e gerenciadores de senhas NÃO são seguros o suficiente: eles também podem falhar.",
     "verifyTitle": "Confirme que você anotou",
     "wordN": "Palavra #{n}",
-    "verified": "Todas as palavras coincidem. Sua frase de recuperação está salva."
+    "verified": "Todas as palavras coincidem. Sua frase de recuperação está salva.",
+    "downloadPdf": "Baixar como PDF",
+    "sheetWarning": "Qualquer pessoa que possa ler estas 24 palavras pode abrir este cofre. Guarde este arquivo em um lugar seguro.",
+    "fileRisk": "O arquivo é salvo sem criptografia. Mantenha-o apenas em um disco criptografado ou externo.",
+    "rotation": {
+      "title": "Frase de recuperação",
+      "desc": "A frase de 24 palavras é a única forma de recuperar este vault se você perder sua senha. Guarde-a em um local seguro.",
+      "replace": "Substituir frase",
+      "replacedNote": "A nova frase é mostrada uma única vez; a antiga para de funcionar imediatamente.",
+      "ceremonyTitle": "Sua nova frase de recuperação",
+      "warning": "Qualquer pessoa que possa ler esta frase pode ler este vault. Guarde-a antes de fechar esta janela.",
+      "copy": "Copiar",
+      "copied": "Copiado",
+      "stored": "Guardei minha nova frase em um local seguro",
+      "done": "Pronto",
+      "rotatedToast": "Frase de recuperação substituída. A frase antiga não funciona mais."
+    }
   },
   "setup": {
     "title": "Sincronize seu cofre",
@@ -1020,21 +1036,7 @@
     "add": "Adicionar",
     "removeNote": "Remover alguém regenera a chave do grupo: o que a pessoa já abriu continua aberto para ela, mas o acesso futuro ao grupo termina."
   },
-  "recovery": {
-    "title": "Frase de recuperação",
-    "desc": "A frase de 24 palavras é a única forma de recuperar este vault se você perder sua senha. Guarde-a em um local seguro.",
-    "replace": "Substituir frase",
-    "replacedNote": "A nova frase é mostrada uma única vez; a antiga para de funcionar imediatamente.",
-    "ceremonyTitle": "Sua nova frase de recuperação",
-    "warning": "Qualquer pessoa que possa ler esta frase pode ler este vault. Guarde-a antes de fechar esta janela.",
-    "copy": "Copiar",
-    "copied": "Copiado",
-    "downloadTxt": "Baixar .txt",
-    "downloadMd": "Baixar .md",
-    "stored": "Guardei minha nova frase em um local seguro",
-    "done": "Pronto",
-    "rotatedToast": "Frase de recuperação substituída. A frase antiga não funciona mais."
-  },
+
   "removal": {
     "bodyConfirmed": "Você foi removido deste Space. Ele não sincroniza mais neste dispositivo.",
     "bodyReset": "O dono restabeleceu o acesso deste dispositivo. Ele não sincroniza mais neste dispositivo.",

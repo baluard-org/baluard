@@ -9,6 +9,7 @@ import FocusTrap from "./FocusTrap.jsx";
 import { Transition } from "../lib/transition";
 import { Button } from "./Primitives.jsx";
 import { requestReprompt } from "./RepromptModal.jsx";
+import { invoke } from "@tauri-apps/api/core";
 
 // Recovery-phrase exit path: replace the vault's 24-word phrase. Rotation
 // is master-password gated daemon-side (the daemon stays the validator);
@@ -36,7 +37,7 @@ export default function RecoveryPhraseCard() {
         // Blur-lock can unmount the modal mid-showing; the phrase stays
         // recoverable in process memory until the user confirms storage.
         holdPhrase("recovery", parsed.phrase || "");
-        toastSuccess(t("recovery.rotatedToast"));
+        toastSuccess(t("recovery.rotation.rotatedToast"));
       } catch (e) {
         toastError(sanitizeError(e, t));
       } finally {
@@ -45,19 +46,21 @@ export default function RecoveryPhraseCard() {
     });
   };
 
-  const download = (ext) => {
-    const wordsText = words().map((w, i) => `${i + 1}. ${w}`).join("\n");
-    const body =
-      ext === "md"
-        ? `# ${t("recovery.title")}\n\n${t("recovery.warning")}\n\n${wordsText}\n`
-        : `${t("recovery.title")}\n${t("recovery.warning")}\n\n${wordsText}\n`;
-    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `baluard-recovery-phrase.${ext}`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const download = async (format) => {
+    try {
+      // D77: same Rust-side save path as the creation wizard (dialog + 0600
+      // write in baluard-core). The old webview Blob download wrote the file
+      // world-readable-by-umask with no dialog; that path is gone.
+      const saved = await invoke("save_recovery_phrase", {
+        format,
+        title: t("recovery.title"),
+        warning: t("recovery.sheetWarning"),
+        phrase: phrase(),
+      });
+      if (saved) toastSuccess(t("recovery.downloadSuccess"));
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    }
   };
 
   const copy = async () => {
@@ -83,8 +86,8 @@ export default function RecoveryPhraseCard() {
   return (
     <div class="space-y-2">
       <div class="flex flex-col">
-        <span class="text-xs font-bold text-[var(--color-text)]">{t("recovery.title")}</span>
-        <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("recovery.desc")}</span>
+        <span class="text-xs font-bold text-[var(--color-text)]">{t("recovery.rotation.title")}</span>
+        <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("recovery.rotation.desc")}</span>
       </div>
       <div class="flex items-center gap-3">
         <Button
@@ -92,9 +95,9 @@ export default function RecoveryPhraseCard() {
           disabled={busy()}
           class="text-xs py-2 px-3 font-mono uppercase"
         >
-          {t("recovery.replace")}
+          {t("recovery.rotation.replace")}
         </Button>
-        <span class="text-[10px] text-[var(--color-muted)]">{t("recovery.replacedNote")}</span>
+        <span class="text-[10px] text-[var(--color-muted)]">{t("recovery.rotation.replacedNote")}</span>
       </div>
 
       <Transition name="fade">
@@ -109,32 +112,33 @@ export default function RecoveryPhraseCard() {
             >
               <FocusTrap containerRef={dialogRef} onEscape={close} />
                 <h3 id="recovery-ceremony-title" class="text-sm font-bold text-amber-400 font-mono uppercase tracking-wider">
-                  {t("recovery.ceremonyTitle")}
+                  {t("recovery.rotation.ceremonyTitle")}
                 </h3>
-                <p class="text-xs text-[var(--color-muted)]">{t("recovery.warning")}</p>
-                <div class="rounded-xl bg-[var(--color-sidebar)] border border-amber-500/30 p-4 font-mono text-sm leading-relaxed text-[var(--color-text)] break-words" aria-label={t("recovery.title")}>
+                <p class="text-xs text-[var(--color-muted)]">{t("recovery.rotation.warning")}</p>
+                <div class="rounded-xl bg-[var(--color-sidebar)] border border-amber-500/30 p-4 font-mono text-sm leading-relaxed text-[var(--color-text)] break-words" aria-label={t("recovery.rotation.title")}>
                   {words().map((w) => (
                     <span class="inline-block mr-3 mb-1">{w}</span>
                   ))}
                 </div>
                 <div class="flex flex-wrap gap-2">
                   <Button onClick={copy} class="text-xs py-2 px-3 font-mono uppercase">
-                    {copied() ? t("recovery.copied") : t("recovery.copy")}
+                    {copied() ? t("recovery.rotation.copied") : t("recovery.rotation.copy")}
                   </Button>
                   <Button onClick={() => download("txt")} class="text-xs py-2 px-3 font-mono uppercase">
                     {t("recovery.downloadTxt")}
                   </Button>
-                  <Button onClick={() => download("md")} class="text-xs py-2 px-3 font-mono uppercase">
-                    {t("recovery.downloadMd")}
+                  <Button onClick={() => download("pdf")} class="text-xs py-2 px-3 font-mono uppercase">
+                    {t("recovery.downloadPdf")}
                   </Button>
                 </div>
+                <p class="text-[10px] text-[var(--color-muted)]">{t("recovery.fileRisk")}</p>
                 <label class="flex items-center gap-2 text-xs text-[var(--color-text)] cursor-pointer">
                   <input
                     type="checkbox"
                     checked={stored()}
                     onChange={(e) => setStored(e.currentTarget.checked)}
                   />
-                  {t("recovery.stored")}
+                  {t("recovery.rotation.stored")}
                 </label>
                 <div class="flex justify-end">
                   <Button
@@ -143,7 +147,7 @@ export default function RecoveryPhraseCard() {
                     variant="primary"
                     class="text-xs py-2 px-4 font-mono uppercase"
                   >
-                    {t("recovery.done")}
+                    {t("recovery.rotation.done")}
                   </Button>
                 </div>
             </div>

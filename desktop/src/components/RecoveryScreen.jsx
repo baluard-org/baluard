@@ -71,12 +71,19 @@ export default function RecoveryScreen() {
     await copy(phrase());
   };
 
-  const handleDownload = async () => {
+  const handleDownload = async (format) => {
     try {
-      // D1: save dialog AND file write both run Rust-side. The webview passes
-      // only the phrase contents — it never holds a filesystem path, and no
-      // arbitrary-path write command exists anymore. Returns false on cancel.
-      const saved = await invoke("save_recovery_phrase", { contents: phrase() });
+      // D1/D77: dialog AND file write both run Rust-side. The webview passes
+      // the phrase + the localized sheet strings — it never holds a
+      // filesystem path, and no arbitrary-path write command exists anymore.
+      // Both formats (txt, pdf) render in baluard-core; the file lands 0600.
+      // Returns false on cancel.
+      const saved = await invoke("save_recovery_phrase", {
+        format,
+        title: t("recovery.title"),
+        warning: t("recovery.sheetWarning"),
+        phrase: phrase(),
+      });
       if (saved) toastSuccess(t("recovery.downloadSuccess"));
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -154,14 +161,25 @@ export default function RecoveryScreen() {
           {t("recovery.writeItDown")}
         </p>
 
-        <button
-          type="button"
-          onClick={handleDownload}
-          class="w-full mb-5 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-sm font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
-        >
-          <IconDownload class="w-4 h-4" />
-          {t("recovery.downloadTxt")}
-        </button>
+        <div class="flex gap-3 mb-2">
+          <button
+            type="button"
+            onClick={() => handleDownload("txt")}
+            class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-sm font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+          >
+            <IconDownload class="w-4 h-4" />
+            {t("recovery.downloadTxt")}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDownload("pdf")}
+            class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-sm font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+          >
+            <IconDownload class="w-4 h-4" />
+            {t("recovery.downloadPdf")}
+          </button>
+        </div>
+        <p class="text-xs text-[var(--color-muted)] text-center mb-5">{t("recovery.fileRisk")}</p>
 
         {/* Verification: re-enter 4 random words */}
         <form onSubmit={handleConfirm} class="space-y-4">
