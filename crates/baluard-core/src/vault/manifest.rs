@@ -353,10 +353,11 @@ pub struct VaultSettings {
     /// Space explicitly opts its viewers in.
     #[serde(default)]
     pub allow_viewer_export: bool,
-    /// Space policy (§6.5): whether passphrase-guest reveals may be
-    /// created. `None`/`Some(true)` = enabled (default); `Some(false)`
-    /// blocks new guest shares (already created reveal files stay openable
-    /// until expiry — they are self-contained, carried by the recipient).
+    /// Space policy (§6.5, flipped 2026-10-03): whether passphrase-guest
+    /// reveals may be created. Absent/`None`/`Some(false)` = OFF (the
+    /// default — guest sharing is opt-in); `Some(true)` allows new guest
+    /// shares. Already-created reveal files stay openable until expiry —
+    /// they are self-contained, carried by the recipient.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_enabled: Option<bool>,
     /// Space policy (§6.5): who may move entries to trash.
@@ -696,13 +697,14 @@ mod tests {
 
     #[test]
     fn space_settings_defaults_match_plan_table() {
-        // §6.5: invite_authority admins, viewer export off, guests on,
-        // trash write-scope, restore admin-only.
+        // §6.5 with the 2026-10-03 flip: invite_authority admins, viewer
+        // export off, guests OFF (sharing is opt-in), trash write-scope,
+        // restore admin-only.
         let settings = VaultSettings::default();
         assert_eq!(settings.space_invite_authority, InviteAuthority::Admins);
         assert!(!settings.allow_viewer_export);
-        // None = enabled (the Option-toggle convention).
-        assert!(settings.guest_enabled != Some(false));
+        // Absent/None = off (guest sharing is opt-in).
+        assert_ne!(settings.guest_enabled, Some(true));
         assert_eq!(settings.trash_policy, TrashPolicy::WriteScopeCanTrash);
         assert_eq!(settings.restore_policy, RestorePolicy::AdminsOnly);
         assert_eq!(settings.join_approval, JoinApproval::Manual);
@@ -723,7 +725,9 @@ mod tests {
         let settings: VaultSettings = serde_json::from_str(json).unwrap();
         assert_eq!(settings.space_invite_authority, InviteAuthority::Admins);
         assert!(!settings.allow_viewer_export);
-        assert!(settings.guest_enabled != Some(false));
+        // Legacy vaults with the field absent read OFF under the flipped
+        // default (2026-10-03): sharing is opt-in everywhere.
+        assert_ne!(settings.guest_enabled, Some(true));
         assert_eq!(settings.trash_policy, TrashPolicy::WriteScopeCanTrash);
         assert_eq!(settings.restore_policy, RestorePolicy::AdminsOnly);
         assert_eq!(settings.join_approval, JoinApproval::Manual);

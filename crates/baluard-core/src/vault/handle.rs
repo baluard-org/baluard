@@ -1461,10 +1461,11 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        // §6.5 guest_enabled: a Space can close the guest-sharing door for
-        // NEW reveals. Already-created reveal files stay openable until
+        // §6.5 guest_enabled, flipped 2026-10-03 by product decision: guest
+        // sharing is OFF by default — only Some(true) opens the guest door
+        // for NEW reveals. Already-created reveal files stay openable until
         // expiry — they are self-contained and carried by the recipient.
-        if self.get_settings()?.guest_enabled == Some(false) {
+        if self.get_settings()?.guest_enabled != Some(true) {
             return Err(BaluardError::from(VaultError::InvalidOperation(
                 "Guest sharing is turned off for this space.".into(),
             )));
@@ -10863,7 +10864,8 @@ mod tests {
             crate::vault::manifest::InviteAuthority::Admins
         );
         assert!(!settings.allow_viewer_export);
-        assert!(settings.guest_enabled != Some(false));
+        // 2026-10-03: guests OFF by default — sharing is opt-in now.
+        assert_ne!(settings.guest_enabled, Some(true));
 
         let source_id = handle
             .add_cipher(&crate::types::CipherInput {
@@ -10883,23 +10885,33 @@ mod tests {
             .as_secs()
             + 86_400;
 
-        // Default: guests on — a reveal exports.
+        // Default: guests OFF — new reveals refuse in plain language.
+        let err = handle
+            .export_guest_reveal(source_id, expires, false)
+            .unwrap_err();
+        assert!(format!("{err}").contains("Guest sharing is turned off"));
+
+        // Flip the door open; new reveals export.
+        let mut settings = handle.get_settings().unwrap();
+        settings.guest_enabled = Some(true);
+        settings.space_invite_authority = crate::vault::manifest::InviteAuthority::Owners;
+        settings.allow_viewer_export = true;
+        handle.save_settings(&settings).unwrap();
         let (guest_bytes, _passphrase) = handle
             .export_guest_reveal(source_id, expires, false)
             .unwrap();
 
-        // Flip the door closed; new reveals refuse in plain language.
+        // Close the door again: new reveals refuse.
         let mut settings = handle.get_settings().unwrap();
         settings.guest_enabled = Some(false);
-        settings.space_invite_authority = crate::vault::manifest::InviteAuthority::Owners;
-        settings.allow_viewer_export = true;
         handle.save_settings(&settings).unwrap();
         let err = handle
             .export_guest_reveal(source_id, expires, false)
             .unwrap_err();
         assert!(format!("{err}").contains("Guest sharing is turned off"));
 
-        // The pre-flip reveal still opens: the file is self-contained.
+        // The door is a policy, not a revocation: the reveal created while
+        // open still opens — the file is self-contained.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

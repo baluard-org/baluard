@@ -3908,7 +3908,7 @@ impl VaultState {
                 "admins"
             },
             "allow_viewer_export": s.allow_viewer_export,
-            "guest_enabled": s.guest_enabled != Some(false),
+            "guest_enabled": s.guest_enabled == Some(true),
             "trash_policy": if s.trash_policy
                 == baluard_core::vault::manifest::TrashPolicy::AdminsOnly
             {
