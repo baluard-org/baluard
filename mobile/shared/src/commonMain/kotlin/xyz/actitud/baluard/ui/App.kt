@@ -248,6 +248,10 @@ fun App(
                         nav = detailOrigin ?: Nav.List
                         detailOrigin = null
                     }
+                    // Settings sub-pages sit below Settings, not the list.
+                    unlocked && (nav is Nav.People || nav is Nav.Collections || nav is Nav.Activity) -> {
+                        nav = Nav.Settings
+                    }
                     unlocked && nav != Nav.List -> nav = Nav.List
                     showOpen -> flowVm.back()
                 }
