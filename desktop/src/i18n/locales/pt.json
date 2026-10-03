@@ -187,6 +187,10 @@
     "copyCode": "Copiar código",
     "user": "Usuário",
     "pass": "Senha",
+    "passwordHistory": "Histórico de senhas ({count})",
+    "historyShow": "Mostrar senha",
+    "historyHide": "Ocultar senha",
+    "copyValue": "Copiar valor",
     "launchWebsite": "Abrir site",
     "customFields": "Campos personalizados",
     "addField": "Adicionar campo",
@@ -611,7 +615,11 @@
     "deleteConfirm": "Remover chave de acesso \"{name}\" deste item? Esta ação não pode ser desfeita.",
     "deleteWarningTitle": "Nenhum outro método de autenticação",
     "deleteOnlyAuth": "Este item não possui senha e esta é a única chave de acesso. Removê-la pode fazer você perder o acesso a esta conta. Certifique-se de ter outra forma de login antes de remover.",
-    "deleteError": "Falha ao remover chave de acesso."
+    "deleteError": "Falha ao remover chave de acesso.",
+    "renameBtn": "Renomear",
+    "renameError": "Falha ao renomear a chave de acesso.",
+    "saveRename": "Salvar",
+    "cancelRename": "Cancelar"
   },
   "relative": {
     "justNow": "agora mesmo",

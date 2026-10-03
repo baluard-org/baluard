@@ -161,6 +161,10 @@
     "notesPlaceholder": "Notes",
     "user": "User",
     "pass": "Password",
+    "passwordHistory": "Password history ({count})",
+    "historyShow": "Show password",
+    "historyHide": "Hide password",
+    "copyValue": "Copy value",
     "uri": "Website",
     "notes": "Notes",
     "delete": "Delete",
@@ -611,7 +615,11 @@
     "deleteConfirm": "Remove passkey \"{name}\" from this entry? This cannot be undone.",
     "deleteWarningTitle": "No other authentication methods",
     "deleteOnlyAuth": "This entry has no password and this is the only passkey. Removing it means you may lose access to this account. Make sure you have another way to sign in before removing.",
-    "deleteError": "Failed to remove passkey."
+    "deleteError": "Failed to remove passkey.",
+    "renameBtn": "Rename",
+    "renameError": "Failed to rename passkey.",
+    "saveRename": "Save",
+    "cancelRename": "Cancel"
   },
   "relative": {
     "justNow": "just now",

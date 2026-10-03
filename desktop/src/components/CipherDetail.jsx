@@ -10,7 +10,7 @@ import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { uriStr, formatCardNumber, sanitizeError } from "../lib/utils.js";
 import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
-import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint } from "./Icon.jsx";
+import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint, IconEye, IconEyeOff } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
 import ShareDialog from "./ShareDialog.jsx";
 import { useCopyFeedback } from "../lib/useCopyFeedback.js";
@@ -100,6 +100,11 @@ export default function CipherDetail(props) {
   const [attachLoading, setAttachLoading] = createSignal(false);
   const [totpCopied, setTotpCopied] = createSignal(false);
   const [showPasskeyDelete, setShowPasskeyDelete] = createSignal(null); // { cipher_id, credential_id, name, isOnlyAuth }
+  const [renamingPk, setRenamingPk] = createSignal(null); // { credential_id, value }
+  const [renameSaving, setRenameSaving] = createSignal(false);
+  const [showHistory, setShowHistory] = createSignal(false);
+  const [revealedHistory, setRevealedHistory] = createSignal(null); // row index
+  const [copiedHistoryIdx, setCopiedHistoryIdx] = createSignal(null);
   const [showShare, setShowShare] = createSignal(false);
 
   async function deletePasskey() {
@@ -114,6 +119,30 @@ export default function CipherDetail(props) {
       if (updated) props.setViewCipher(updated);
     } catch (e) {
       toastError(t("passkey.deleteError"));
+    }
+  }
+
+  async function savePasskeyRename() {
+    const r = renamingPk();
+    if (!r || renameSaving()) return;
+    if (foreign()) return;
+    const name = r.value.trim();
+    if (!name) return;
+    const c = cipher();
+    setRenameSaving(true);
+    try {
+      await daemon("passkey.rename", JSON.stringify({ id: c.id || c._meta?.id, credential_id: r.credential_id, name }));
+      setRenamingPk(null);
+      await vault.refreshCiphers(t);
+      // Archived entries live in their own list (Review F2 pattern).
+      const updated =
+        vault.ciphers().find((cc) => (cc.id || cc._meta?.id) === (c.id || c._meta?.id)) ||
+        vault.archivedCiphers().find((cc) => (cc.id || cc._meta?.id) === (c.id || c._meta?.id));
+      if (updated) props.setViewCipher(updated);
+    } catch (e) {
+      toastError(t("passkey.renameError"));
+    } finally {
+      setRenameSaving(false);
     }
   }
 
@@ -218,6 +247,48 @@ export default function CipherDetail(props) {
               onToggleShow={() => setRevealPass(!revealPass())}
             />
 
+            {/* Password history (past values, masked until revealed) */}
+            <Show when={(cipher()?.password_history?.length || 0) > 0}>
+              <button
+                onClick={() => { setShowHistory(!showHistory()); setRevealedHistory(null); }}
+                class="text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer self-start"
+              >
+                {showHistory() ? "▾ " : "▸ "}{t("entry.passwordHistory", { count: cipher()?.password_history?.length ?? 0 })}
+              </button>
+              <Show when={showHistory()}>
+                <div class="space-y-1.5">
+                  <For each={cipher()?.password_history || []}>
+                    {(h, i) => (
+                      <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)]">
+                        <span class="text-[10px] text-[var(--color-muted)] shrink-0 w-20">{h.last_used_date ? new Date(h.last_used_date * 1000).toLocaleDateString() : "—"}</span>
+                        <span class="flex-1 font-mono text-xs text-[var(--color-text)] truncate select-all">
+                          {revealedHistory() === i() ? h.password : "••••••••"}
+                        </span>
+                        <button
+                          onClick={() => setRevealedHistory(revealedHistory() === i() ? null : i())}
+                          class="p-1 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                          title={revealedHistory() === i() ? t("entry.historyHide") : t("entry.historyShow")}
+                        >
+                          <Show when={revealedHistory() === i()} fallback={<IconEye class="w-3.5 h-3.5" />}>
+                            <IconEyeOff class="w-3.5 h-3.5" />
+                          </Show>
+                        </button>
+                        <button
+                          onClick={async () => { const idx = i(); await copyToClipboard(h.password); setCopiedHistoryIdx(idx); setTimeout(() => setCopiedHistoryIdx((v) => (v === idx ? null : v)), 1800); }}
+                          class="p-1 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                          title={t("entry.copyValue")}
+                        >
+                          <Show when={copiedHistoryIdx() === i()} fallback={<IconCopy class="w-3.5 h-3.5" />}>
+                            <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5 text-[var(--color-success)]" /></span>
+                          </Show>
+                        </button>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </Show>
+
             {/* TOTP code widget */}
             <Show when={totpCode()}>
               <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
@@ -253,9 +324,33 @@ export default function CipherDetail(props) {
                 return (
                   <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] space-y-2">
                     <div class="flex items-center justify-between">
-                      <div class="flex items-center gap-2 min-w-0">
+                      <div class="flex items-center gap-2 min-w-0 flex-1">
                         <IconFingerprint class="w-4 h-4 text-[var(--color-primary)] shrink-0" />
-                        <span class="text-sm font-semibold text-[var(--color-text)] truncate">{pk.name || pk.rp_name || pk.rp_id}</span>
+                        <Show when={renamingPk()?.credential_id === pk.credential_id} fallback={
+                          <span class="text-sm font-semibold text-[var(--color-text)] truncate">{pk.name || pk.rp_name || pk.rp_id}</span>
+                        }>
+                          <input
+                            class="text-sm font-semibold text-[var(--color-text)] bg-[var(--color-sidebar)] border border-[var(--color-primary)]/40 rounded-lg px-2 py-0.5 w-full min-w-0 focus:outline-none"
+                            value={renamingPk()?.value ?? ""}
+                            onInput={(e) => setRenamingPk((r) => (r ? { ...r, value: e.currentTarget.value } : r))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") savePasskeyRename();
+                              if (e.key === "Escape") setRenamingPk(null);
+                            }}
+                            ref={(el) => setTimeout(() => { if (el.isConnected) el.focus(); }, 0)}
+                            disabled={renameSaving()}
+                            aria-label={t("passkey.renameBtn")}
+                          />
+                        </Show>
+                        <Show when={!foreign() && renamingPk()?.credential_id !== pk.credential_id}>
+                          <button
+                            onClick={() => setRenamingPk({ credential_id: pk.credential_id, value: pk.name || "" })}
+                            class="p-1 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer shrink-0"
+                            title={t("passkey.renameBtn")}
+                          >
+                            <IconPencil class="w-3.5 h-3.5" />
+                          </button>
+                        </Show>
                       </div>
                       <Show when={isMissing}>
                         <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">{t("passkey.imported")}</span>
@@ -286,7 +381,18 @@ export default function CipherDetail(props) {
                     <Show when={isMissing}>
                       <p class="text-[10px] text-amber-600">{t("passkey.missingKeyWarning")}</p>
                     </Show>
-                    <div class="flex justify-end pt-1">
+                    <div class="flex justify-end items-center pt-1">
+                      <Show when={renamingPk()?.credential_id === pk.credential_id}>
+                        <button
+                          onClick={() => savePasskeyRename()}
+                          disabled={renameSaving() || !renamingPk()?.value.trim()}
+                          class="text-xs text-[var(--color-primary)] hover:underline mr-3 cursor-pointer disabled:opacity-50 disabled:no-underline"
+                        >{t("passkey.saveRename")}</button>
+                        <button
+                          onClick={() => setRenamingPk(null)}
+                          class="text-xs text-[var(--color-muted)] hover:underline mr-3 cursor-pointer"
+                        >{t("passkey.cancelRename")}</button>
+                      </Show>
                       <Show when={!foreign()}>
                       <button
                         onClick={() => {
