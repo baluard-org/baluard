@@ -54,6 +54,8 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
                 customFields = parseCustomFields(obj), // wire root, not kind.data
                 passkeys = parsePasskeys(data),
                 attachments = parseAttachments(data),
+                // password_history sits on the wire root, not inside kind.data
+                passwordHistory = parsePasswordHistory(obj),
             )
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e
@@ -129,6 +131,20 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
             }
             .orEmpty()
 
+    /** Password history under password_history: [{password, last_used_date}].
+     * Desktop parity: past values, masked until revealed. */
+    private fun parsePasswordHistory(data: JsonObject?): List<PasswordHistoryRow> =
+        (data?.get("password_history") as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { el ->
+                val o = el as? JsonObject ?: return@mapNotNull null
+                val pw = o.str("password") ?: return@mapNotNull null
+                PasswordHistoryRow(
+                    password = pw,
+                    usedOn = (o["last_used_date"] as? JsonPrimitive)?.content?.toLongOrNull()?.let(::formatEpochDate),
+                )
+            }
+            .orEmpty()
+
     /** Attachment metadata under attachments: [{filename, size, ...}]. */
     private fun parseAttachments(data: JsonObject?): List<AttachmentRow> =
         (data?.get("attachments") as? kotlinx.serialization.json.JsonArray)
@@ -156,6 +172,7 @@ data class DetailState(
     val customFields: List<CustomFieldRow> = emptyList(),
     val passkeys: List<PasskeyRow> = emptyList(),
     val attachments: List<AttachmentRow> = emptyList(),
+    val passwordHistory: List<PasswordHistoryRow> = emptyList(),
 )
 
 data class FieldRow(
@@ -187,6 +204,13 @@ data class PasskeyRow(
 data class AttachmentRow(
     val filename: String,
     val sizeLabel: String,
+)
+
+/** One past password (desktop parity: masked, reveal + copy per row). */
+data class PasswordHistoryRow(
+    val password: String,
+    /** "YYYY-MM-DD" of last use, or null when the timestamp is absent. */
+    val usedOn: String?,
 )
 
 /**

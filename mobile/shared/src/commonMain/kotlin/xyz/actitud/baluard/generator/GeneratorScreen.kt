@@ -44,9 +44,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.i18n.t
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,9 +58,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import xyz.actitud.baluard.ui.components.BaluardCard
+import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.BaluardTopBar
 import xyz.actitud.baluard.ui.components.CopiedBadge
@@ -69,10 +75,13 @@ import xyz.actitud.baluard.ui.components.rememberCopied
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
+fun GeneratorScreen(viewModel: GeneratorViewModel, vault: MobileVault?, onBack: () -> Unit = {}) {
     val state by viewModel.state.collectAsState()
+    val history by viewModel.history.collectAsState()
     val scope = rememberCoroutineScope()
     val copied = rememberCopied()
+
+    LaunchedEffect(vault) { vault?.let { viewModel.loadHistory(it) } }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -185,7 +194,7 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
                 ) {
                     BaluardPrimaryButton(
                         text = t("generator.generate"),
-                        onClick = { scope.launch { viewModel.generate() } },
+                        onClick = { scope.launch { viewModel.generate(vault) } },
                         leadingIcon = Icons.Default.Refresh,
                         modifier = Modifier.weight(1f),
                     )
@@ -228,6 +237,59 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
                     SectionCard(title = t("generator.passphraseSettings")) {
                         PassphraseControls(state, viewModel)
                     }
+                }
+            }
+
+            // History (desktop parity: past generated values, capped display)
+            if (history.isNotEmpty()) {
+                SectionCard(title = t("generator.historyTitle")) {
+                    var copiedIdx by remember { mutableStateOf(-1) }
+                    LaunchedEffect(copiedIdx) {
+                        if (copiedIdx >= 0) {
+                            delay(1800)
+                            copiedIdx = -1
+                        }
+                    }
+                    history.forEachIndexed { idx, entry ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = entry.value,
+                                    fontFamily = FontFamily.Monospace,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = if (entry.kind == "passphrase") t("generator.passphrase") else t("generator.password"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    copied.copy(entry.value)
+                                    copiedIdx = idx
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = if (copiedIdx == idx) Icons.Default.Check else Icons.Default.ContentCopy,
+                                    contentDescription = t("detail.copy"),
+                                    tint = if (copiedIdx == idx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    BaluardOutlinedButton(
+                        text = t("generator.historyClear"),
+                        onClick = { scope.launch { vault?.let { viewModel.clearHistory(it) } } },
+                    )
                 }
             }
 
