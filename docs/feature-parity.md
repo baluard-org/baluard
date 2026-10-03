@@ -53,13 +53,13 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Favorites | Yes (via edit) | Yes | Yes |
 | Folders | Yes | Yes | Yes |
 | Tags | Yes | Yes | Yes |
-| Trash + restore | Partial (no restore, no list-trash, no purge) | Yes | Yes |
-| Empty trash (purge all) | None | Yes | Yes |
+| Trash + restore | Yes (list, restore) | Yes | Yes |
+| Empty trash (purge all) | Yes (`trash purge --days 0`) | Yes | Yes |
 | Archive | Yes | Yes | Yes |
 | Attachments | Yes (upload, download, list, delete) | Yes | Partial (view only) |
 | TOTP code | Partial (code printed by `get` / `list` in daemon mode; no standalone command) | Yes | Yes |
 | Passkeys: view | Yes (list) | Yes | Yes |
-| Passkeys: delete / rename | Yes | Partial (delete only) | None |
+| Passkeys: delete / rename | Yes | Yes | None |
 | Passkey ceremonies (register / assert) | None | Partial (routes live, UI arrives with extension Phase 2) | None |
 | SSH key entry (store) | Yes | Yes | Yes |
 | SSH key generation | None | Yes | Yes |
@@ -67,8 +67,8 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Import (8 formats) | Yes (bw-json, bw-csv, chrome-csv, firefox-csv, lastpass-csv, 1password-1pux, 1password-csv, keepass-xml) | Yes | None |
 | Export (bw-json, bw-csv) | Yes | Yes | None |
 | Password + passphrase generator | None | Yes | Yes |
-| Generator history | None | Yes | None |
-| Password history view | Partial (present in `get --output json`) | None | None |
+| Generator history | None | Yes | Yes |
+| Password history view | Partial (present in `get --output json`) | Yes | Yes |
 | Re-prompt on sensitive fields | n/a | Yes | Partial (flag saved on edit, never enforced on view) |
 | Favicons (website icons) | None | Yes | Yes (opt-in, fetched on save) |
 | Vault avatar / profile picture | None | Yes | None |
@@ -101,7 +101,7 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Space user groups | None | Yes | None |
 | Collections CRUD + grants | None | Yes | Yes |
 | Access asks / requests | None | Yes | Yes |
-| Space settings (all knobs) | None (the `settings` keys are client preferences, not space knobs) | Yes | Yes |
+| Space settings (all knobs) | Yes (`settings space get` / `space-set`) | Yes | Yes |
 | Policies | None | Yes | Yes |
 | Approvals / quorum | None | Yes | Yes |
 | Activity log | None | Yes | Yes |
@@ -212,6 +212,16 @@ Surface: Mobile. Missing: remote repoint and signed-manifest revocation. Effort:
 - Desktop-only platform features (Touch ID, Windows Hello, tray) stay platform features.
 - iOS lags Android until Phase 7 lands; rows already say so.
 - Commit revocation is CLI-first by usefulness, not by omission: signed history is audited where scripts run. G11 phase 1 brings the sharing item ops to the CLI; the full admin surface follows in phase 2.
+
+## Closed
+
+| Gap | Closed in | Note |
+|---|---|---|
+| G1 | `1d691ba` | `settings space get` / `space-set`; whitelist mirrors the daemon, quorum bound enforced CLI-side |
+| G14 | `1d691ba` | `trash list` / `restore` / `purge --days`, daemon + `--direct` |
+| G17 | `d27eceb` | inline rename on the passkey card; the route was missing from the desktop host allowlist, now admitted |
+| G20 | `c0bc684` | generator history section over the existing UniFFI bindings |
+| G22 | `d27eceb` + `c0bc684` | password history on desktop (collapsible, masked rows) and mobile (masked field rows) |
 
 ## Keeping this document current
 
