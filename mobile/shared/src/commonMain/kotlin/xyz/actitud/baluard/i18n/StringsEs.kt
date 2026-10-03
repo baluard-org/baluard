@@ -154,6 +154,8 @@ internal val ES: Map<String, String> = mapOf(
     "generator.result" to "Resultado generado",
     "generator.passwordSettings" to "Opciones de contraseña",
     "generator.passphraseSettings" to "Opciones de frase de contraseña",
+    "generator.historyTitle" to "Historial",
+    "generator.historyClear" to "Borrar historial",
 
     // cipher detail
     "detail.edit" to "Editar",
@@ -169,6 +171,8 @@ internal val ES: Map<String, String> = mapOf(
     "detail.openExternalConfirm" to "Abrir",
     "detail.openInBrowser" to "Abrir en el navegador",
     "detail.sectionCredentials" to "Credenciales y datos",
+    "detail.passwordHistory" to "Historial de contraseñas",
+    "detail.passwordHistoryUnknown" to "Fecha desconocida",
     "detail.sectionWebsites" to "Sitios web",
     "detail.type.login" to "Inicio de sesión",
     "detail.type.card" to "Tarjeta",

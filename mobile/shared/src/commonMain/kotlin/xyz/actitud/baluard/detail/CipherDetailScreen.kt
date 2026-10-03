@@ -199,6 +199,26 @@ fun CipherDetailScreen(
                     }
                 }
             }
+            // Password History (desktop parity: past passwords, masked)
+            if (s.passwordHistory.isNotEmpty()) {
+                SectionCard(title = t("detail.passwordHistory")) {
+                    s.passwordHistory.forEachIndexed { index, h ->
+                        CopyableFieldRow(
+                            label = h.usedOn ?: t("detail.passwordHistoryUnknown"),
+                            value = h.password,
+                            mono = true,
+                            sensitive = true,
+                        )
+                        if (index < s.passwordHistory.size - 1) {
+                            BaluardDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                alpha = 0.5f,
+                            )
+                        }
+                    }
+                }
+            }
+
             // Custom Fields Section (desktop parity)
             if (s.customFields.isNotEmpty()) {
                 SectionCard(title = t("detail.customFields")) {
