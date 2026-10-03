@@ -949,6 +949,152 @@ fn list_direct(vault_path: &str, archived: bool) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+// ── Trash ──
+
+fn print_trash_row(c: &serde_json::Value) {
+    let id = c["_meta"]["id"].as_str().unwrap_or("?");
+    let name = c["_meta"]["name"].as_str().unwrap_or("?");
+    let ctype = c["_meta"]["cipher_type"].as_str().unwrap_or("login");
+    let username = c["_meta"]["username"].as_str().unwrap_or("");
+    println!("{id}  [{ctype:>10}]  {name}  {username}");
+}
+
+pub fn handle_trash_list(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("vault.list_full", "", socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
+            let trash = data["trash"].as_array();
+            match trash {
+                None => println!("Trash is empty."),
+                Some(entries) if entries.is_empty() => println!("Trash is empty."),
+                Some(entries) => {
+                    for c in entries {
+                        print_trash_row(c);
+                    }
+                    println!();
+                    println!("{} entr(y|ies) in trash", entries.len());
+                }
+            }
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            let path = Path::new(vault_path);
+            let handle = if std::env::var("BALUARD_PASSWORD").is_ok() {
+                unlock_vault_direct(vault_path)?
+            } else {
+                VaultHandle::open(path)?
+            };
+            if !handle.is_unlocked() {
+                let ids = handle.list_trash_ids()?;
+                for id in &ids {
+                    println!("{id}");
+                }
+                println!("{} entr(y|ies) (locked, unlock for details)", ids.len());
+                return Ok(());
+            }
+            let entries = handle.list_trash_entries()?;
+            if entries.is_empty() {
+                println!("Trash is empty.");
+                return Ok(());
+            }
+            for (id, _) in &entries {
+                if let Ok(baluard_core::vault::handle::CipherRead::Decrypted(ref c)) =
+                    handle.get_cipher(*id)
+                {
+                    let ctype = format!("{:?}", c.kind.cipher_type()).to_lowercase();
+                    let username = match &c.kind {
+                        baluard_core::types::CipherKind::Login(data) => {
+                            data.username.as_deref().unwrap_or("")
+                        }
+                        _ => "",
+                    };
+                    println!("{id}  [{ctype:>10}]  {}  {username}", c.name);
+                }
+            }
+            println!();
+            println!("{} entr(y|ies) in trash", entries.len());
+            Ok(())
+        }
+    }
+}
+
+pub fn handle_trash_restore(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let cipher_id = uuid::Uuid::parse_str(id).map_err(|_| "invalid UUID")?;
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("vault.trash.restore", id, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Restored.");
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            unlock_vault_direct(vault_path)?.restore_cipher(cipher_id)?;
+            println!("Restored.");
+            Ok(())
+        }
+    }
+}
+
+/// Purge scope phrasing: `--days 0` wipes everything (desktop Empty Trash
+/// parity); otherwise the daemon only removes trash older than N days.
+fn purge_scope(days: u32) -> String {
+    if days == 0 {
+        "entire trash".to_string()
+    } else {
+        format!("trash older than {days} day(s)")
+    }
+}
+
+pub fn handle_trash_purge(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    days: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("vault.trash.purge", &days.to_string(), socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            let count = serde_json::from_str::<serde_json::Value>(&resp.payload)?["purged_count"]
+                .as_u64()
+                .unwrap_or(0);
+            println!(
+                "{count} entr(y|ies) permanently deleted ({}).",
+                purge_scope(days)
+            );
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            let count = unlock_vault_direct(vault_path)?.purge_old_trash(days)?;
+            println!(
+                "{count} entr(y|ies) permanently deleted ({}).",
+                purge_scope(days)
+            );
+            Ok(())
+        }
+    }
+}
+
 // ── Delete cipher ──
 
 pub fn handle_delete(
@@ -2213,6 +2359,125 @@ pub fn handle_settings_set(
         }
         ConnectMode::Direct => {
             eprintln!("Settings requires daemon mode. Use --socket or start the daemon.");
+            std::process::exit(1);
+        }
+    }
+}
+
+// ── Space settings (sharing policy knobs) ──
+
+pub fn handle_space_settings_get(
+    mode: ConnectMode,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("space.settings", "", socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("{}", resp.payload);
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Space settings requires daemon mode. Use --socket or start the daemon.");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Space policy knobs accept a fixed vocabulary; validate values CLI-side
+/// so the daemon never sees garbage (same convention as handle_settings_set).
+fn parse_space_knob(key: &str, value: &str) -> Result<serde_json::Value, String> {
+    fn bool_val(v: &str) -> Result<bool, String> {
+        if v.eq_ignore_ascii_case("true") {
+            Ok(true)
+        } else if v.eq_ignore_ascii_case("false") {
+            Ok(false)
+        } else {
+            Err(String::from("expected true or false"))
+        }
+    }
+
+    let mut partial = serde_json::Map::new();
+    match key {
+        "guest_enabled" | "allow_viewer_export" => {
+            let b = bool_val(value).map_err(|e| format!("{key}: {e}"))?;
+            partial.insert(key.to_string(), serde_json::json!(b));
+        }
+        "space_invite_authority" => {
+            if !matches!(value, "owners" | "admins") {
+                return Err("space_invite_authority must be owners or admins".into());
+            }
+            partial.insert(key.to_string(), serde_json::json!(value));
+        }
+        "trash_policy" => {
+            if !matches!(value, "admins_only" | "write_scope_can_trash") {
+                return Err("trash_policy must be admins_only or write_scope_can_trash".into());
+            }
+            partial.insert(key.to_string(), serde_json::json!(value));
+        }
+        "join_approval" => {
+            if !matches!(value, "manual" | "code") {
+                return Err("join_approval must be manual or code".into());
+            }
+            partial.insert(key.to_string(), serde_json::json!(value));
+        }
+        "restore_policy" => {
+            if value != "admins_only" {
+                return Err("restore_policy must be admins_only".into());
+            }
+            partial.insert(key.to_string(), serde_json::json!(value));
+        }
+        "collection_create_authority" => {
+            if !matches!(value, "admins" | "editors") {
+                return Err("collection_create_authority must be admins or editors".into());
+            }
+            partial.insert(key.to_string(), serde_json::json!(value));
+        }
+        "quorum_admin_ops" => {
+            let n: u32 = value.parse().map_err(|_| {
+                String::from("quorum_admin_ops must be a whole number between 1 and 5")
+            })?;
+            // Mirror the daemon's S4-3 bound exactly; rejecting here gives a
+            // clearer error than a round-trip to space.settings_set.
+            if !(1..=5).contains(&n) {
+                return Err("quorum_admin_ops must be between 1 and 5".into());
+            }
+            partial.insert(key.to_string(), serde_json::json!(n));
+        }
+        _ => {
+            return Err(format!(
+                "Unknown space knob: {key}. Available: guest_enabled, allow_viewer_export, space_invite_authority, trash_policy, join_approval, restore_policy, collection_create_authority, quorum_admin_ops"
+            ));
+        }
+    }
+    Ok(serde_json::Value::Object(partial))
+}
+
+pub fn handle_space_settings_set(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    kv: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (key, value) = kv
+        .split_once('=')
+        .ok_or("Usage: baluard settings space-set key=value")?;
+    let payload = parse_space_knob(key, value)?;
+
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("space.settings_set", &payload.to_string(), socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Space setting updated.");
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Space settings requires daemon mode. Use --socket or start the daemon.");
             std::process::exit(1);
         }
     }

@@ -148,6 +148,12 @@ enum Commands {
         action: SettingsAction,
     },
 
+    /// Manage the trash.
+    Trash {
+        #[command(subcommand)]
+        action: TrashAction,
+    },
+
     /// Manage folders.
     Folders {
         #[command(subcommand)]
@@ -337,6 +343,30 @@ enum SettingsAction {
     Set {
         /// Setting key and value (e.g., default_uri_match=host).
         kv: String,
+    },
+    /// Show space policy knobs (sharing settings).
+    SpaceGet,
+    /// Set a space policy knob (key=value).
+    SpaceSet {
+        /// Knob key and value (e.g., guest_enabled=true).
+        kv: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TrashAction {
+    /// List entries in the trash.
+    List,
+    /// Restore a trashed entry.
+    Restore {
+        /// Cipher ID.
+        id: String,
+    },
+    /// Permanently delete trash older than N days (0 = everything).
+    Purge {
+        /// Age threshold in days.
+        #[arg(long, default_value_t = 30)]
+        days: u32,
     },
 }
 
@@ -1338,6 +1368,24 @@ fn main() {
             SettingsAction::Get => commands::handle_settings_get(mode, cli.socket.as_deref()),
             SettingsAction::Set { kv } => {
                 commands::handle_settings_set(mode, cli.socket.as_deref(), &kv)
+            }
+            SettingsAction::SpaceGet => {
+                commands::handle_space_settings_get(mode, cli.socket.as_deref())
+            }
+            SettingsAction::SpaceSet { kv } => {
+                commands::handle_space_settings_set(mode, cli.socket.as_deref(), &kv)
+            }
+        },
+
+        Commands::Trash { action } => match action {
+            TrashAction::List => {
+                commands::handle_trash_list(mode, &vault_path, cli.socket.as_deref())
+            }
+            TrashAction::Restore { id } => {
+                commands::handle_trash_restore(mode, &vault_path, cli.socket.as_deref(), &id)
+            }
+            TrashAction::Purge { days } => {
+                commands::handle_trash_purge(mode, &vault_path, cli.socket.as_deref(), days)
             }
         },
 
