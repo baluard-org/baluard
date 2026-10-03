@@ -55,7 +55,23 @@
     "writeItDown": "Escríbela en papel. Guárdala en un lugar seguro (caja fuerte, caja de seguridad, bolsa ignífuga). Las capturas de pantalla y los gestores de contraseñas NO son lo suficientemente seguros — también pueden fallar.",
     "verifyTitle": "Demuestra que la escribiste",
     "wordN": "Palabra #{n}",
-    "verified": "Todas las palabras coinciden. Tu frase de recuperación está guardada."
+    "verified": "Todas las palabras coinciden. Tu frase de recuperación está guardada.",
+    "downloadPdf": "Descargar como PDF",
+    "sheetWarning": "Cualquiera que pueda leer estas 24 palabras puede abrir esta bóveda. Guarda este archivo en un lugar seguro.",
+    "fileRisk": "El archivo se guarda sin cifrar. Consérvalo solo en un disco cifrado o externo.",
+    "rotation": {
+      "title": "Frase de recuperación",
+      "desc": "La frase de 24 palabras es la única forma de recuperar este vault si pierdes tu contraseña. Guárdala en un lugar seguro.",
+      "replace": "Reemplazar frase",
+      "replacedNote": "La frase nueva se muestra una sola vez; la anterior deja de funcionar de inmediato.",
+      "ceremonyTitle": "Tu nueva frase de recuperación",
+      "warning": "Cualquiera que pueda leer esta frase puede leer este vault. Guárdala antes de cerrar esta ventana.",
+      "copy": "Copiar",
+      "copied": "Copiado",
+      "stored": "Guardé mi nueva frase en un lugar seguro",
+      "done": "Listo",
+      "rotatedToast": "Frase de recuperación reemplazada. La frase anterior ya no funciona."
+    }
   },
   "setup": {
     "title": "Sincroniza tu bóveda",
@@ -1020,21 +1036,7 @@
     "add": "Añadir",
     "removeNote": "Quitar a alguien regenera la clave del grupo: lo que ya abrió sigue abierto para esa persona, pero el acceso futuro al grupo termina."
   },
-  "recovery": {
-    "title": "Frase de recuperación",
-    "desc": "La frase de 24 palabras es la única forma de recuperar este vault si pierdes tu contraseña. Guárdala en un lugar seguro.",
-    "replace": "Reemplazar frase",
-    "replacedNote": "La frase nueva se muestra una sola vez; la anterior deja de funcionar de inmediato.",
-    "ceremonyTitle": "Tu nueva frase de recuperación",
-    "warning": "Cualquiera que pueda leer esta frase puede leer este vault. Guárdala antes de cerrar esta ventana.",
-    "copy": "Copiar",
-    "copied": "Copiado",
-    "downloadTxt": "Descargar .txt",
-    "downloadMd": "Descargar .md",
-    "stored": "Guardé mi nueva frase en un lugar seguro",
-    "done": "Listo",
-    "rotatedToast": "Frase de recuperación reemplazada. La frase anterior ya no funciona."
-  },
+
   "removal": {
     "bodyConfirmed": "Te quitaron de este Space. Ya no sincroniza en este dispositivo.",
     "bodyReset": "El propietario restableció el acceso de este dispositivo. Ya no sincroniza en este dispositivo.",
