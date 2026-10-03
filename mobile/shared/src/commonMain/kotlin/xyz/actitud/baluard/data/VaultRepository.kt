@@ -177,6 +177,17 @@ class VaultRepository {
     suspend fun generatePassphrase(config: xyz.actitud.baluard.PassphraseConfig): Result<String> =
         runCatching { xyz.actitud.baluard.generatePassphrase(config) }
 
+    /** Generator history (display-capped, newest first). JSON array of
+     * {value, kind, params, created_at}. */
+    suspend fun generatorHistoryList(vault: MobileVault): String = vault.generatorHistoryList()
+
+    /** Persist one generated value. Payload {value, kind, params}; returns
+     * the updated history list JSON. */
+    suspend fun generatorHistoryAdd(vault: MobileVault, payload: String): String =
+        vault.generatorHistoryAdd(payload)
+
+    suspend fun generatorHistoryClear(vault: MobileVault): Unit = vault.generatorHistoryClear()
+
     suspend fun openVault(path: String): MobileVault = uniffiOpenVault(path)
 
     /**

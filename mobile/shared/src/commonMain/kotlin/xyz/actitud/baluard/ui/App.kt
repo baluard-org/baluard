@@ -531,6 +531,7 @@ fun App(
 
                                 Nav.Generator -> GeneratorScreen(
                                     viewModel = generatorVm,
+                                    vault = vault,
                                     onBack = { nav = Nav.List },
                                 )
 
