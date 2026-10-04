@@ -5115,10 +5115,18 @@ impl VaultHandle {
             rejected_app_packages: enc_fields
                 .as_ref()
                 .and_then(|e| e.rejected_app_packages.clone()),
-            enrollment_policy: enc_fields
-                .as_ref()
-                .map(|e| e.enrollment_policy)
-                .unwrap_or(crate::vault::manifest::EnrollmentPolicy::Strict),
+            enrollment_policy: enc_fields.as_ref().map(|e| e.enrollment_policy).unwrap_or(
+                // No encrypted settings and no legacy file (step 3 already
+                // handled the legacy case above, Strict for field-less old
+                // files): a fresh vault pre-first-save. New vaults are
+                // Personal (product intent); the old unconditional Strict
+                // fallback poisoned creation — save_settings persisted
+                // Strict, clones inherited it, and every phrase enrollment
+                // then correctly rejected (multi-device e2e spike,
+                // 2026-10-03). Creation now always saves settings, so this
+                // branch only serves pre-save reads.
+                crate::vault::manifest::EnrollmentPolicy::Personal,
+            ),
             space_invite_authority: enc_fields
                 .as_ref()
                 .map(|e| e.space_invite_authority)
@@ -17423,6 +17431,11 @@ mod tests {
     fn settings_legacy_json_migrates_on_read() {
         let (dir, password) = create_test_vault();
 
+        // Simulate a TRUE pre-split legacy vault: creation always writes the
+        // split files now, so drop them — a real legacy vault predates both.
+        std::fs::remove_file(dir.path().join("meta/settings.enc")).unwrap();
+        std::fs::remove_file(dir.path().join("meta/settings-pub.json")).unwrap();
+
         // Write a legacy plaintext settings.json with mixed fields.
         let legacy = serde_json::json!({
             "vault_timeout": "OnRestart",
@@ -17464,7 +17477,9 @@ mod tests {
         let path = dir.path();
         let password = "test-password-123!";
 
-        // 1. Create vault (device 1)
+        // 1. Create vault (device 1). Creation always persists settings
+        // (Personal defaults), so the phrase enrollment below resolves the
+        // real policy from settings.enc.
         let (_h, secrets) = creation::VaultCreator::new(path, password, "Desktop")
             .kdf_profile(crate::types::KdfProfile::MobileLow)
             .execute()
@@ -17499,7 +17514,6 @@ mod tests {
                 &secrets.recovery_phrase.phrase(),
                 x25519_secret,
                 ed25519_signing,
-                crate::vault::manifest::EnrollmentPolicy::Personal,
             )
             .unwrap();
 

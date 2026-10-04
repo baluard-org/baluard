@@ -6573,17 +6573,15 @@ impl VaultState {
             ));
         }
 
-        let guard = self.inner.read().await;
-        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
-        let vault_path = handle.path.clone();
-
-        // PR-3 fix: load policy and pass to the core method. The method
-        // enforces Strict rejection itself; no pre-check here (would be
-        // redundant and TOCTOU-prone). Read failures are fail-closed:
-        // we read settings ONCE and pass the loaded value.
-        let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
-        let policy = settings.enrollment_policy;
-        let _ = handle;
+        // A fresh clone is locked by definition ("device private key not
+        // found" until enrolled), so enrollment MUST NOT require an open
+        // handle. The vault path comes from this vault's state; core reads
+        // the real policy from settings.enc under the phrase-recovered
+        // root key. The read guard stays across the disk phase so a
+        // concurrent lock/unlock cannot interleave with the registry
+        // writes; it drops before the F3 write-lock update below.
+        let vault_path = self.vault_path.clone();
+        let state_guard = self.inner.read().await;
 
         // Build EnrollmentPayload for this device
         let (x25519_secret, x25519_public) =
@@ -6621,8 +6619,9 @@ impl VaultState {
         let mut dm = DeviceManager::load_from_vault(&vault_path)
             .map_err(|e| format!("load device manager: {e}"))?;
         let result = dm
-            .enroll_with_recovery_phrase(&payload, phrase, x25519_secret, ed25519_signing, policy)
+            .enroll_with_recovery_phrase(&payload, phrase, x25519_secret, ed25519_signing)
             .map_err(|e| format!("enroll: {e}"))?;
+        drop(state_guard);
 
         // Persist device-privkey for this device using the keys RETURNED
         // by the method (same keys the registry and keywrap were built

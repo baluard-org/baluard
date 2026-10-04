@@ -1367,7 +1367,13 @@ fn main() {
                 commands::handle_device_info(mode, &vault_path, cli.socket.as_deref())
             }
             DeviceCommands::EnrollWithPhrase { phrase, yes } => {
-                commands::handle_enroll_with_phrase(mode, &vault_path, phrase.as_deref(), yes)
+                commands::handle_enroll_with_phrase(
+                    mode,
+                    &vault_path,
+                    phrase.as_deref(),
+                    yes,
+                    cli.socket.as_deref(),
+                )
             }
             DeviceCommands::Revoke { device_id } => {
                 commands::handle_device_revoke(mode, &vault_path, cli.socket.as_deref(), &device_id)

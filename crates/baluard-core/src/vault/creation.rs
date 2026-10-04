@@ -970,10 +970,6 @@ impl<'a> VaultCreator<'a> {
     /// Apply wizard profile + preferences to a freshly created vault.
     fn apply_wizard_settings(&self, handle: &VaultHandle) -> Result<(), BaluardError> {
         let has_profile = self.display_name.is_some() || self.subtitle.is_some();
-        let has_prefs = self.theme.is_some()
-            || self.lang.is_some()
-            || self.vault_timeout.is_some()
-            || self.slug.is_some();
 
         if has_profile {
             let profile = crate::vault::manifest::UserProfile {
@@ -984,22 +980,26 @@ impl<'a> VaultCreator<'a> {
             handle.save_profile_and_strip_settings(&profile)?;
         }
 
-        if has_prefs {
-            let mut settings = handle.get_settings().unwrap_or_default();
-            if let Some(ref theme) = self.theme {
-                settings.theme = Some(*theme);
-            }
-            if let Some(ref lang) = self.lang {
-                settings.lang = Some(lang.clone());
-            }
-            if let Some(timeout) = self.vault_timeout {
-                settings.vault_timeout = timeout;
-            }
-            if let Some(ref slug) = self.slug {
-                settings.slug = Some(slug.clone());
-            }
-            handle.save_settings(&settings)?;
+        // Always persist settings on creation. A vault without
+        // settings.enc fail-closes to Strict at phrase-enrollment time,
+        // so a prefs-less `init` used to produce a vault whose clones
+        // could never phrase-enroll. Writing the product defaults
+        // (enrollment_policy Personal) here makes every fresh vault
+        // enrollable and removes the missing-file ambiguity entirely.
+        let mut settings = handle.get_settings().unwrap_or_default();
+        if let Some(ref theme) = self.theme {
+            settings.theme = Some(*theme);
         }
+        if let Some(ref lang) = self.lang {
+            settings.lang = Some(lang.clone());
+        }
+        if let Some(timeout) = self.vault_timeout {
+            settings.vault_timeout = timeout;
+        }
+        if let Some(ref slug) = self.slug {
+            settings.slug = Some(slug.clone());
+        }
+        handle.save_settings(&settings)?;
 
         if let Some(ref lang) = self.lang {
             handle.save_locale(lang)?;

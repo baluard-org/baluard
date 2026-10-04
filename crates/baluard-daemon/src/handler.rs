@@ -232,6 +232,13 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     "join.poll",
     "vault.recover_kit",
     "reveals.open_guest",
+    // Phrase enrollment is a pre-unlock surface: a fresh clone has no
+    // device key and can never unlock, so the session-token gate is a
+    // chicken-and-egg. Protection is the C22 rate limiter (Argon2id
+    // grindability, same as vault.unlock) + the phrase itself; policy
+    // enforcement happens in core against settings.enc decrypted with
+    // the phrase-recovered Root Key.
+    "vault.enroll_with_phrase",
 ];
 
 /// Default-deny gate for the per-vault dispatcher. Unknown actions require
@@ -1419,6 +1426,14 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     // crypto; the canary check gates the vault.
     if req.action.as_str() == "vault.recover_kit" {
         return handle_recover_kit(req);
+    }
+    // Phrase enrollment (host-level, pre-unlock): a fresh clone has no
+    // device key and can never unlock, so a per-vault session-token gate
+    // was a chicken-and-egg. Same protection class as recover_kit: the
+    // C22 rate limiter + the 24-word phrase; core enforces the vault's
+    // real policy from settings.enc decrypted with the recovered Root Key.
+    if req.action.as_str() == "vault.enroll_with_phrase" {
+        return handle_enroll_with_phrase(req, host).await;
     }
     // S2 IS-6 passphrase-guest reveal: host-level and vault-agnostic —
     // a guest has NO vault ("Open a shared file" on first-run). Pure
@@ -2850,6 +2865,79 @@ async fn handle_join_introduce(
     match result {
         Ok(payload) => ok_resp(payload, None),
         Err(e) => err_response(e),
+    }
+}
+
+/// Phrase enrollment (host-level, pre-unlock). Resolves the target vault
+/// from the request slug, falling back to the ACTIVE vault (the CLI posts
+/// only the phrase). The C22 rate limiter keys on the vault path — same
+/// budget as unlock attempts; the phrase is zeroized on every exit.
+async fn handle_enroll_with_phrase(
+    mut req: GatewayRequest,
+    host: &SharedVaultHost,
+) -> GatewayResponse {
+    let v: serde_json::Value = match serde_json::from_str(&req.payload) {
+        Ok(v) => v,
+        Err(e) => return err_response(format!("Invalid JSON: {e}")),
+    };
+    // PR-5: take ownership of the phrase so we can zeroize it after use.
+    use zeroize::Zeroize;
+    let mut phrase = match v["phrase"].as_str() {
+        Some(p) => p.to_string(),
+        None => return err_response("missing phrase".to_string()),
+    };
+    // The payload still carries the phrase; scrub it now that the owned
+    // copy exists (host-level routes bypass route_request's blanket
+    // payload zeroize).
+    req.payload.zeroize();
+    let target_slug = if req.slug.is_empty() {
+        match extract_slug(&req.payload) {
+            Some(s) => s,
+            None => match host.active_slug().await {
+                Some(s) => s,
+                None => {
+                    phrase.zeroize();
+                    return err_response("No active vault".to_string());
+                }
+            },
+        }
+    } else {
+        req.slug.clone()
+    };
+    let Some(state) = host.get(&target_slug).await else {
+        phrase.zeroize();
+        return err_response(format!("vault '{target_slug}' not found"));
+    };
+    let vault_key = state.vault_path.to_string_lossy().into_owned();
+    let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
+        crate::rate_limit::ClaimResult::Allowed(p) => p,
+        crate::rate_limit::ClaimResult::Backoff(d) => {
+            phrase.zeroize();
+            return err_response(format!(
+                "Too many failed attempts. Wait {}s before retrying.",
+                d.as_secs()
+            ));
+        }
+        crate::rate_limit::ClaimResult::LockedOut(d) => {
+            phrase.zeroize();
+            return err_response(format!(
+                "Vault locked due to too many failed attempts. Wait {}s.",
+                d.as_secs()
+            ));
+        }
+    };
+    let result = state.enroll_with_recovery_phrase(&phrase).await;
+    match result {
+        Ok(json) => {
+            permit.commit_success();
+            phrase.zeroize();
+            ok_resp(json, None)
+        }
+        Err(e) => {
+            permit.commit_failure();
+            phrase.zeroize();
+            err_response(e)
+        }
     }
 }
 
@@ -4572,54 +4660,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         // Requires the vault's `enrollment_policy` to be `Personal`.
         // C22: rate-limited — the phrase verify derives via Argon2id and is
         // grindable like any other secret verify.
-        "vault.enroll_with_phrase" => {
-            let v: serde_json::Value = match serde_json::from_str(&req.payload) {
-                Ok(v) => v,
-                Err(e) => return err_response(format!("Invalid JSON: {e}")),
-            };
-            // PR-5: take ownership of the phrase so we can zeroize it
-            // after use. Other sensitive routes (vault.unlock, etc.)
-            // zeroize req.payload; this one handles the phrase specifically.
-            let mut phrase = match v["phrase"].as_str() {
-                Some(p) => p.to_string(),
-                None => return err_response("missing phrase".to_string()),
-            };
-            let vault_key = state.vault_path.to_string_lossy().into_owned();
-            let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
-                crate::rate_limit::ClaimResult::Allowed(p) => p,
-                crate::rate_limit::ClaimResult::Backoff(d) => {
-                    use zeroize::Zeroize;
-                    phrase.zeroize();
-                    return err_response(format!(
-                        "Too many failed attempts. Wait {}s before retrying.",
-                        d.as_secs()
-                    ));
-                }
-                crate::rate_limit::ClaimResult::LockedOut(d) => {
-                    use zeroize::Zeroize;
-                    phrase.zeroize();
-                    return err_response(format!(
-                        "Vault locked due to too many failed attempts. Wait {}s.",
-                        d.as_secs()
-                    ));
-                }
-            };
-            let result = state.enroll_with_recovery_phrase(&phrase).await;
-            match result {
-                Ok(json) => {
-                    permit.commit_success();
-                    use zeroize::Zeroize;
-                    phrase.zeroize();
-                    ok_resp(json, token_str)
-                }
-                Err(e) => {
-                    permit.commit_failure();
-                    use zeroize::Zeroize;
-                    phrase.zeroize();
-                    err_response(e)
-                }
-            }
-        }
+        // MOVED: this route is host-level now (a fresh clone can never
+        // unlock to satisfy the token gate). See handle_enroll_with_phrase.
 
         // ── Device revocation (token required) ──
         "device.revoke" => {
@@ -6012,7 +6054,6 @@ mod tests {
             "vault.trash.purge",
             "vault.change_password",
             "vault.rotate_recovery",
-            "vault.enroll_with_phrase",
             "settings.get",
             "settings.set",
             "sync.pull",
