@@ -424,7 +424,9 @@ impl VaultState {
                 .open_repo()
                 .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
                 .unwrap_or(false);
-                if has_remote {
+                // E2E harness opt-out: explicit sync commands in tests must
+                // not race the debounced background push/pull.
+                if has_remote && std::env::var("BALUARD_AUTOSYNC").ok().as_deref() != Some("0") {
                     self.autosync.activate(device_id.clone(), devkey_seal).await;
                     // Pull remote changes the moment the vault opens so the UI
                     // reflects other-device edits immediately (event-driven,
