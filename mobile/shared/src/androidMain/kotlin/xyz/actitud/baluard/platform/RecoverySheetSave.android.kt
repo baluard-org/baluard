@@ -23,11 +23,19 @@ import kotlinx.coroutines.withContext
 actual fun rememberRecoverySheetSaver(): RecoverySheetSaver {
     var pending by remember { mutableStateOf<((Uri?) -> Unit)?>(null) }
     val scope = rememberCoroutineScope()
+    // One launcher per concrete MIME: the contract fixes the type at
+    // construction. JSON/CSV serve the G2 vault export (same saver).
     val createTxt = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain"),
     ) { uri -> pending?.invoke(uri) }
     val createPdf = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { uri -> pending?.invoke(uri) }
+    val createJson = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> pending?.invoke(uri) }
+    val createCsv = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv"),
     ) { uri -> pending?.invoke(uri) }
     return remember {
         RecoverySheetSaver { bytes, mimeType, suggestedName, onResult ->
@@ -41,7 +49,13 @@ actual fun rememberRecoverySheetSaver(): RecoverySheetSaver {
                     }
                 }
             }
-            (if (mimeType == "application/pdf") createPdf else createTxt).launch(suggestedName)
+            val launcher = when (mimeType) {
+                "application/pdf" -> createPdf
+                "application/json" -> createJson
+                "text/csv" -> createCsv
+                else -> createTxt
+            }
+            launcher.launch(suggestedName)
         }
     }
 }

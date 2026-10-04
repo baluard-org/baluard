@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.AlertDialog
@@ -30,6 +31,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,11 +49,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.KeyboardOptions
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.platform.Clock
 import xyz.actitud.baluard.platform.UriVerdict
 import xyz.actitud.baluard.platform.classifyUri
 import xyz.actitud.baluard.platform.openUrl
@@ -86,6 +93,21 @@ fun CipherDetailScreen(
     // M7: a non-browser URI waiting for the user's confirmation to launch.
     var pendingExternalUri by remember { mutableStateOf<String?>(null) }
 
+    // G18: per-cipher master-password re-prompt. The grant is a 30s window
+    // (matching the daemon reprompt grant); before it opens, sensitive rows
+    // render as a lock strip instead of their values. Fail-closed: the
+    // re-lock effect resets the grant at expiry, so a recomposition re-locks.
+    var repromptGrantedUntil by remember { mutableStateOf(0L) }
+    var showReprompt by remember { mutableStateOf(false) }
+    var repromptPw by remember { mutableStateOf("") }
+    var repromptError by remember { mutableStateOf(false) }
+    LaunchedEffect(repromptGrantedUntil) {
+        if (repromptGrantedUntil > 0L) {
+            delay((repromptGrantedUntil - Clock.currentTimeMillis()).coerceAtLeast(50L))
+            repromptGrantedUntil = 0L
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -93,7 +115,14 @@ fun CipherDetailScreen(
                 title = state?.name ?: "",
                 onBack = onBack,
                 actions = {
-                    IconButton(onClick = onEdit) {
+                    IconButton(onClick = {
+                        // G18: protected entries gate the edit flow too.
+                        if (state?.reprompt == true && Clock.currentTimeMillis() >= repromptGrantedUntil) {
+                            showReprompt = true
+                        } else {
+                            onEdit()
+                        }
+                    }) {
                         Icon(Icons.Default.Edit, contentDescription = t("detail.edit"))
                     }
                     IconButton(onClick = { confirmDelete = true }, enabled = state != null) {
@@ -183,14 +212,27 @@ fun CipherDetailScreen(
             // Credentials / Key Details Section
             if (s.fields.isNotEmpty()) {
                 SectionCard(title = t("detail.sectionCredentials")) {
+                    var lockStripShown = false
                     s.fields.forEachIndexed { index, row ->
-                        CopyableFieldRow(
-                            label = t(row.spec.labelKey),
-                            value = row.value,
-                            mono = row.spec.mono,
-                            sensitive = row.spec.sensitive,
-                        )
-                        if (index < s.fields.size - 1) {
+                        val locked = s.reprompt && row.spec.sensitive &&
+                            Clock.currentTimeMillis() >= repromptGrantedUntil
+                        var rendered = false
+                        if (locked) {
+                            if (!lockStripShown) {
+                                lockStripShown = true
+                                RepromptLockStrip(onClick = { showReprompt = true })
+                                rendered = true
+                            }
+                        } else {
+                            CopyableFieldRow(
+                                label = t(row.spec.labelKey),
+                                value = row.value,
+                                mono = row.spec.mono,
+                                sensitive = row.spec.sensitive,
+                            )
+                            rendered = true
+                        }
+                        if (rendered && index < s.fields.size - 1) {
                             BaluardDivider(
                                 modifier = Modifier.padding(vertical = 4.dp),
                                 alpha = 0.5f,
@@ -202,18 +244,22 @@ fun CipherDetailScreen(
             // Password History (desktop parity: past passwords, masked)
             if (s.passwordHistory.isNotEmpty()) {
                 SectionCard(title = t("detail.passwordHistory")) {
-                    s.passwordHistory.forEachIndexed { index, h ->
-                        CopyableFieldRow(
-                            label = h.usedOn ?: t("detail.passwordHistoryUnknown"),
-                            value = h.password,
-                            mono = true,
-                            sensitive = true,
-                        )
-                        if (index < s.passwordHistory.size - 1) {
-                            BaluardDivider(
-                                modifier = Modifier.padding(vertical = 4.dp),
-                                alpha = 0.5f,
+                    if (s.reprompt && Clock.currentTimeMillis() >= repromptGrantedUntil) {
+                        RepromptLockStrip(onClick = { showReprompt = true })
+                    } else {
+                        s.passwordHistory.forEachIndexed { index, h ->
+                            CopyableFieldRow(
+                                label = h.usedOn ?: t("detail.passwordHistoryUnknown"),
+                                value = h.password,
+                                mono = true,
+                                sensitive = true,
                             )
+                            if (index < s.passwordHistory.size - 1) {
+                                BaluardDivider(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    alpha = 0.5f,
+                                )
+                            }
                         }
                     }
                 }
@@ -251,11 +297,17 @@ fun CipherDetailScreen(
                                 }
                             }
                         } else {
-                            CopyableFieldRow(
-                                label = field.name,
-                                value = field.value,
-                                sensitive = field.hidden,
-                            )
+                            val locked = s.reprompt && field.hidden &&
+                                Clock.currentTimeMillis() >= repromptGrantedUntil
+                            if (locked) {
+                                RepromptLockStrip(onClick = { showReprompt = true })
+                            } else {
+                                CopyableFieldRow(
+                                    label = field.name,
+                                    value = field.value,
+                                    sensitive = field.hidden,
+                                )
+                            }
                         }
                         if (index < s.customFields.size - 1) {
                             BaluardDivider(
@@ -441,6 +493,73 @@ fun CipherDetailScreen(
         )
     }
 
+    // G18: master-password re-prompt for protected entries. Verify via the
+    // vault's own unlock (idempotent on an unlocked vault, desktop parity
+    // with RepromptModal); a wrong password leaves the current state intact.
+    if (showReprompt) {
+        AlertDialog(
+            onDismissRequest = { showReprompt = false; repromptPw = ""; repromptError = false },
+            title = { Text(t("detail.repromptTitle")) },
+            text = {
+                Column {
+                    Text(
+                        t("detail.repromptLocked"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = repromptPw,
+                        onValueChange = { repromptPw = it; repromptError = false },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        isError = repromptError,
+                        placeholder = { Text(t("login.passwordPlaceholder")) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (repromptError) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            t("login.wrongPassword"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            // repromptVerify opens a temporary handle and
+                            // truly checks the password; vault.unlock would
+                            // short-circuit on an already-unlocked vault.
+                            val ok = repromptPw.isNotEmpty() &&
+                                runCatching { vault.repromptVerify(repromptPw) }.isSuccess
+                            if (ok) {
+                                repromptGrantedUntil = Clock.currentTimeMillis() + 30_000L
+                                showReprompt = false
+                                repromptPw = ""
+                                repromptError = false
+                            } else {
+                                repromptError = true
+                            }
+                        }
+                    },
+                    enabled = repromptPw.isNotEmpty(),
+                ) {
+                    Text(t("common.continue"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReprompt = false; repromptPw = ""; repromptError = false }) {
+                    Text(t("common.cancel"))
+                }
+            },
+        )
+    }
+
     // M7: user-confirmed launch of a non-browser scheme (mailto:, ssh:, ...).
     pendingExternalUri?.let { uri ->
         val scheme = classifyUri(uri).let {
@@ -465,6 +584,33 @@ fun CipherDetailScreen(
                     Text(t("common.cancel"))
                 }
             },
+        )
+    }
+}
+
+/** G18: stand-in for a sensitive row while the master-password grant is
+ * closed. Tapping it opens the re-prompt dialog. */
+@Composable
+private fun RepromptLockStrip(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.Lock,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = t("detail.repromptLocked"),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

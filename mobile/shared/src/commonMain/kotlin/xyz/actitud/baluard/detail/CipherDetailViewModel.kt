@@ -56,6 +56,8 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
                 attachments = parseAttachments(data),
                 // password_history sits on the wire root, not inside kind.data
                 passwordHistory = parsePasswordHistory(obj),
+                // G18: re-prompt flag also lives on the wire root.
+                reprompt = (obj["reprompt"] as? JsonPrimitive)?.content == "true",
             )
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e
@@ -173,6 +175,9 @@ data class DetailState(
     val passkeys: List<PasskeyRow> = emptyList(),
     val attachments: List<AttachmentRow> = emptyList(),
     val passwordHistory: List<PasswordHistoryRow> = emptyList(),
+    /** Per-cipher master-password re-prompt flag (wire root). When set,
+     * sensitive rows stay behind a password grant (G18). */
+    val reprompt: Boolean = false,
 )
 
 data class FieldRow(

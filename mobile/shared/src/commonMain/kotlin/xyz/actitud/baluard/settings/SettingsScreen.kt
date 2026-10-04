@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -73,7 +74,10 @@ import xyz.actitud.baluard.platform.AccessibilityFill
 import xyz.actitud.baluard.platform.Biometric
 import xyz.actitud.baluard.platform.BrowserAutofillIntegration
 import xyz.actitud.baluard.platform.ClipboardPrefs
+import xyz.actitud.baluard.platform.PickedFile
 import xyz.actitud.baluard.platform.removeVaultDirectory
+import xyz.actitud.baluard.platform.rememberImportFilePicker
+import xyz.actitud.baluard.platform.rememberRecoverySheetSaver
 import xyz.actitud.baluard.platform.ScreenshotPrefs
 import xyz.actitud.baluard.platform.setSecureFlag
 import xyz.actitud.baluard.platform.clipboardClearLabel
@@ -1555,6 +1559,203 @@ fun SettingsScreen(
                     Text(
                         text = t("space.restoreAdminsOnly"),
                         style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            // ── Data: import / export (G2, one core parser set) ───────
+            SectionCard(title = t("settings.dataSection")) {
+                val importPicker = rememberImportFilePicker()
+                val saver = rememberRecoverySheetSaver()
+                val importFormats = listOf(
+                    "bw-json", "bw-csv", "chrome-csv", "firefox-csv",
+                    "lastpass-csv", "1password-1pux", "1password-csv", "keepass-xml",
+                )
+                var pendingImport by remember { mutableStateOf<PickedFile?>(null) }
+                var importFormat by remember { mutableStateOf("bw-json") }
+                var importBusy by remember { mutableStateOf(false) }
+                var exportDialog by remember { mutableStateOf(false) }
+                var exportFormat by remember { mutableStateOf("bw-json") }
+                var exportBusy by remember { mutableStateOf(false) }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !importBusy && !exportBusy) {
+                            importPicker(listOf("*/*")) { file ->
+                                if (file != null) {
+                                    importFormat = when {
+                                        file.name.endsWith(".1pux", ignoreCase = true) -> "1password-1pux"
+                                        file.name.endsWith(".json", ignoreCase = true) -> "bw-json"
+                                        file.name.endsWith(".xml", ignoreCase = true) -> "keepass-xml"
+                                        else -> "bw-csv"
+                                    }
+                                    pendingImport = file
+                                }
+                            }
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (importBusy) t("settings.importBusy") else t("settings.importTitle"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    text = t("settings.importDesc"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !importBusy && !exportBusy) { exportDialog = true },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (exportBusy) t("settings.exportBusy") else t("settings.exportTitle"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    text = t("settings.exportDesc"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+
+                // Import: format confirmation once a file is picked (the
+                // picker's extension guesses, the user confirms).
+                pendingImport?.let { file ->
+                    AlertDialog(
+                        onDismissRequest = { pendingImport = null },
+                        title = { Text(t("settings.importPickFormat")) },
+                        text = {
+                            Column(
+                                modifier = Modifier.verticalScroll(rememberScrollState()),
+                            ) {
+                                Text(
+                                    file.name,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                importFormats.forEach { fmt ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { importFormat = fmt }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        RadioButton(
+                                            selected = importFormat == fmt,
+                                            onClick = null,
+                                        )
+                                        Text(fmt, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                enabled = !importBusy,
+                                onClick = {
+                                    scope.launch {
+                                        importBusy = true
+                                        val raw = runCatching {
+                                            repo.importData(vault, importFormat, file.bytes)
+                                        }.getOrNull()
+                                        importBusy = false
+                                        pendingImport = null
+                                        if (raw == null) {
+                                            Toast.error(t("settings.importFailed"))
+                                        } else {
+                                            val s = runCatching {
+                                                Json.parseToJsonElement(raw) as JsonObject
+                                            }.getOrNull()
+                                            val imported = (s?.get("imported") as? JsonPrimitive)?.content ?: "?"
+                                            val skipped = (s?.get("skipped") as? JsonPrimitive)?.content ?: "?"
+                                            Toast.success(t("settings.importDone", imported, skipped))
+                                        }
+                                    }
+                                },
+                            ) { Text(t("common.continue")) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { pendingImport = null }) { Text(t("common.cancel")) }
+                        },
+                    )
+                }
+
+                // Export: format choice + the plaintext warning. The bytes
+                // ride the same SAF saver as the recovery sheet.
+                if (exportDialog) {
+                    AlertDialog(
+                        onDismissRequest = { exportDialog = false },
+                        title = { Text(t("settings.exportPickFormat")) },
+                        text = {
+                            Column {
+                                Text(
+                                    t("settings.exportWarn"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                listOf("bw-json", "bw-csv").forEach { fmt ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { exportFormat = fmt }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        RadioButton(
+                                            selected = exportFormat == fmt,
+                                            onClick = null,
+                                        )
+                                        Text(fmt, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                enabled = !exportBusy,
+                                onClick = {
+                                    scope.launch {
+                                        exportBusy = true
+                                        val content = runCatching {
+                                            repo.exportData(vault, exportFormat)
+                                        }.getOrNull()
+                                        exportBusy = false
+                                        exportDialog = false
+                                        if (content == null) {
+                                            Toast.error(t("settings.exportFailed"))
+                                        } else {
+                                            val json = exportFormat == "bw-json"
+                                            saver(
+                                                content.encodeToByteArray(),
+                                                if (json) "application/json" else "text/csv",
+                                                if (json) "baluard-export.json" else "baluard-export.csv",
+                                            ) { ok ->
+                                                if (ok) Toast.success(t("settings.exportDone"))
+                                            }
+                                        }
+                                    }
+                                },
+                            ) { Text(t("common.continue")) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { exportDialog = false }) { Text(t("common.cancel")) }
+                        },
                     )
                 }
             }
