@@ -7,8 +7,6 @@ import { Button, Input } from "./Primitives.jsx";
 
 let repromptCallback = null;
 
-export function requestReprompt(cb) { repromptCallback = cb; }
-
 export default function RepromptModal(props) {
   const { t } = useI18n();
   let dialogRef;
@@ -16,19 +14,26 @@ export default function RepromptModal(props) {
   const [password, setPassword] = createSignal("");
   const [failed, setFailed] = createSignal(false);
 
-  // Expose for parent to trigger the modal
-  window.__baluardReprompt = { show: () => { setShow(true); setPassword(""); setFailed(false); }, hide: () => setShow(false) };
+  // Expose for parents to trigger the modal. The callback is bound at
+  // SHOW time, not registration time — a stale registration from another
+  // component must never fire (e.g. a rotation callback running because a
+  // detail-view re-prompt was confirmed later).
+  window.__baluardReprompt = {
+    show: (cb) => { if (cb) repromptCallback = cb; setShow(true); setPassword(""); setFailed(false); },
+    hide: () => setShow(false),
+  };
 
   async function handleConfirm() {
     const pw = password();
     if (!pw) return;
     try {
-      // Verify the password against the daemon before granting access
-      await daemon("vault.unlock", pw);
-      // If we get here, password is correct. Re-lock since we were already unlocked.
-      // The daemon.unlock is idempotent if already unlocked with same password.
-      // The verified password is passed to the callback so flows that need
-      // it as a parameter (e.g. recovery-phrase rotation) can use it.
+      // Verify against the daemon's dedicated reprompt route: it opens a
+      // TEMPORARY handle and actually checks the password. vault.unlock
+      // would short-circuit Ok on an already-unlocked vault and accept
+      // anything. Failures share the unlock rate-limit budget (C23).
+      await daemon("vault.reprompt_verify", pw);
+      // Verified. The password is passed to the callback so flows that
+      // need it as a parameter (e.g. recovery-phrase rotation) can use it.
       if (repromptCallback) repromptCallback(pw);
       setShow(false);
       setPassword("");

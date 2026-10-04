@@ -120,6 +120,18 @@ describe("CipherDetail (Login)", () => {
     expect(container.textContent).toContain("hunter2");
   });
 
+  it("hides the password behind the re-prompt gate when reprompt is set", () => {
+    const { container } = render(() => (
+      <CipherDetail
+        cipher={{ ...LOGIN_CIPHER, reprompt: true }}
+        setViewCipher={vi.fn()}
+        onEdit={vi.fn()}
+      />
+    ));
+    expect(container.textContent).not.toContain("hunter2");
+    expect(container.textContent).toContain("entry.repromptLocked");
+  });
+
   it("edit button calls props.onEdit with the flattened cipher", () => {
     const onEdit = vi.fn();
     const { container } = render(() => (
