@@ -33,6 +33,10 @@ impl DaemonGuard {
     fn vault(&self) -> PathBuf {
         self._tmp.path().join("vault")
     }
+
+    fn path(&self) -> &Path {
+        self._tmp.path()
+    }
 }
 
 impl Drop for DaemonGuard {
@@ -371,4 +375,147 @@ fn e2e_space_settings_set_get() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("between 1 and 5"));
+}
+
+/// Parse daemon-mode `init --json`: the JSON object is its own stdout line
+/// after human progress lines.
+fn daemon_init_json(guard: &DaemonGuard, slug: &str) -> serde_json::Value {
+    let out = baluard_daemon(guard)
+        .args(["init", "--name", "Multi Device", "--slug", slug, "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).expect("utf8");
+    let json_line = text
+        .lines()
+        .find(|l| l.starts_with('{'))
+        .expect("init --json prints a JSON object line");
+    let v: serde_json::Value = serde_json::from_str(json_line).expect("valid init JSON");
+    assert_eq!(v["slug"], slug, "init --json echoes the slug");
+    v
+}
+
+/// Multi-device join over a file:// bare remote (the e2e-hooks transport).
+///
+/// Device A creates + pushes. Device B clones (the clone verifies A's full
+/// signed history — P2), phrase-enrolls while STILL LOCKED (a fresh clone
+/// has no device key, so the host-level enrollment route is the only way
+/// in), unlocks with the master password, adds an entry, and signs its own
+/// commit.
+///
+/// Pinned boundary: device A's pull REFUSES B's commit ("commit signature
+/// verification failed"). Rosters resolve from each commit's first-parent
+/// tree, and B's key only exists in B's own tree — no mechanism yet
+/// propagates a phrase-enrollment to the other devices' verified history.
+/// The refusal is the fail-closed correct behavior; when an enrollment-
+/// propagation design (existing-device roster commit or keywrap-backed
+/// enrollment commit) lands, this assertion flips deliberately.
+#[test]
+fn e2e_multi_device_join_and_refusal_boundary() {
+    let guard = spawn_daemon(tempfile::Builder::new().prefix("e2emd").tempdir().unwrap());
+    let pw = TEST_PASSWORD;
+
+    // Bare remote for the file:// transport.
+    let remote = guard.path().join("remote.git");
+    let st = Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&remote)
+        .status()
+        .expect("git must be on PATH (vault creation shells out to git)");
+    assert!(st.success(), "git init --bare failed");
+    let remote_url = format!("file://{}", remote.display());
+
+    // ── Device A: create, unlock, publish ──
+    let a = daemon_init_json(&guard, "baluard-deva");
+    let phrase = a["recovery_phrase"].as_str().expect("phrase").to_string();
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-deva"])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["unlock"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Vault unlocked (daemon)."));
+    baluard_daemon(&guard)
+        .args(["sync", "remote", &remote_url])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["sync", "push"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("pushed"));
+
+    // ── Device B: clone, enroll (locked), unlock ──
+    baluard_daemon(&guard)
+        .args(["sync", "clone-url", &remote_url, "--slug", "baluard-devb"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Cloned vault 'baluard-devb'"));
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-devb"])
+        .assert()
+        .success();
+    // Enrollment MUST work on the locked clone: unlocking is impossible
+    // until a device key exists (chicken-and-egg regression guard).
+    baluard_daemon(&guard)
+        .args([
+            "devices",
+            "enroll-with-phrase",
+            "--phrase",
+            &phrase,
+            "--yes",
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Device enrolled"));
+    baluard_daemon(&guard)
+        .args(["unlock"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Vault unlocked (daemon)."));
+
+    // ── Device B: write and sign its own commit ──
+    baluard_daemon(&guard)
+        .args([
+            "add",
+            "login",
+            "--name",
+            "FromDeviceB",
+            "--username",
+            "bob",
+            "--password",
+            &format!("{pw}-b"),
+        ])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["sync", "push"])
+        .assert()
+        .success();
+
+    // ── Boundary: A refuses B's commit (roster not propagated) ──
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-deva"])
+        .assert()
+        .success();
+    // Each CLI process starts tokenless; the switch back needs a fresh
+    // unlock before sync routes accept the session.
+    baluard_daemon(&guard).args(["unlock"]).assert().success();
+    baluard_daemon(&guard)
+        .args(["sync", "pull"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "commit signature verification failed",
+        ));
+    // Fail-closed: nothing from B is visible on A.
+    baluard_daemon(&guard)
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("FromDeviceB").not());
 }

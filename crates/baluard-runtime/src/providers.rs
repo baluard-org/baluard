@@ -19,7 +19,6 @@ use baluard_core::providers::{
 };
 use baluard_core::sync::engine::{CloneProgress, SyncEngine};
 use baluard_core::vault::handle::VaultHandle;
-use baluard_core::vault::manifest::EnrollmentPolicy;
 use zeroize::Zeroize;
 
 /// Process-global lock map for per-provider token refresh.
@@ -343,19 +342,10 @@ pub fn enroll_device_pre_unlock(
     let _kdf_params: baluard_core::types::KdfParams = serde_json::from_str(&kdf_json)
         .map_err(|e| VaultError::Corrupt(format!("kdf params: {e}")))?;
 
-    let settings_path = vault_path.join("meta/settings-pub.json");
-    let policy = if settings_path.exists() {
-        let s_json = std::fs::read_to_string(&settings_path)
-            .map_err(|e| VaultError::Metadata(format!("settings read: {e}")))?;
-        let v: serde_json::Value = serde_json::from_str(&s_json)
-            .map_err(|e| VaultError::Corrupt(format!("settings json: {e}")))?;
-        match v["enrollment_policy"].as_str() {
-            Some("strict") => EnrollmentPolicy::Strict,
-            _ => EnrollmentPolicy::Personal,
-        }
-    } else {
-        EnrollmentPolicy::Personal
-    };
+    // Policy is NOT read here: settings.enc is unreadable pre-unlock and
+    // settings-pub.json does not carry it. Core derives the real policy
+    // from settings.enc under the phrase-recovered root key (guessing
+    // Personal here would bypass Strict vaults).
 
     let (x25519_secret, x25519_public) = baluard_core::crypto::hpke_wrap::generate_x25519_keypair();
     let (ed25519_signing, ed25519_verifying) =
@@ -389,13 +379,7 @@ pub fn enroll_device_pre_unlock(
         .map_err(|e| VaultError::Metadata(format!("load device manager: {e}")))?;
 
     let result = dm
-        .enroll_with_recovery_phrase(
-            &payload,
-            recovery_phrase,
-            x25519_secret,
-            ed25519_signing,
-            policy,
-        )
+        .enroll_with_recovery_phrase(&payload, recovery_phrase, x25519_secret, ed25519_signing)
         .map_err(|e| VaultError::Metadata(format!("enroll failed: {e}")))?;
 
     let privkey_data = serde_json::json!({
