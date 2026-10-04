@@ -61,6 +61,9 @@ enum Commands {
         /// Auto-lock timeout in minutes.
         #[arg(long)]
         auto_lock: Option<u32>,
+        /// Machine-readable output for scripts and test harnesses.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Unlock vault in the daemon (verifies master password).
@@ -186,6 +189,9 @@ enum Commands {
         format: String,
         /// Output file path.
         path: String,
+        /// Overwrite an existing file without asking (scripting/E2E only).
+        #[arg(long)]
+        force: bool,
     },
 
     /// Show password health report (weak, reused, old passwords).
@@ -251,6 +257,9 @@ enum DeviceCommands {
         /// Will prompt if not provided.
         #[arg(long)]
         phrase: Option<String>,
+        /// Skip the typed 'enroll' confirmation (scripting/E2E only).
+        #[arg(long)]
+        yes: bool,
     },
     /// Revoke a device by UUID.
     Revoke {
@@ -1225,6 +1234,7 @@ fn main() {
             theme,
             lang,
             auto_lock,
+            json,
         } => commands::handle_init(
             &cli.vault_path,
             &profile,
@@ -1233,6 +1243,7 @@ fn main() {
             theme,
             lang,
             auto_lock,
+            json,
         ),
 
         // Vault lifecycle
@@ -1355,8 +1366,8 @@ fn main() {
             DeviceCommands::Info => {
                 commands::handle_device_info(mode, &vault_path, cli.socket.as_deref())
             }
-            DeviceCommands::EnrollWithPhrase { phrase } => {
-                commands::handle_enroll_with_phrase(mode, &vault_path, phrase.as_deref())
+            DeviceCommands::EnrollWithPhrase { phrase, yes } => {
+                commands::handle_enroll_with_phrase(mode, &vault_path, phrase.as_deref(), yes)
             }
             DeviceCommands::Revoke { device_id } => {
                 commands::handle_device_revoke(mode, &vault_path, cli.socket.as_deref(), &device_id)
@@ -1449,9 +1460,11 @@ fn main() {
             commands::handle_import(cli.socket.as_deref(), &format, &path)
         }
 
-        Commands::Export { format, path } => {
-            commands::handle_export(cli.socket.as_deref(), &format, &path)
-        }
+        Commands::Export {
+            format,
+            path,
+            force,
+        } => commands::handle_export(cli.socket.as_deref(), &format, &path, force),
 
         Commands::Health => commands::handle_health(cli.socket.as_deref()),
 

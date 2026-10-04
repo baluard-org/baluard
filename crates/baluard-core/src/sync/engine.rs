@@ -3217,13 +3217,14 @@ struct RevocationTracker {
 
 /// Validate that a git URL uses an allowed scheme.
 /// Permits: https://, ssh://, git@ (SSH shorthand).
-/// In tests only: also permits file:// and absolute paths.
+/// In core unit tests and under the e2e-hooks feature (E2E harness builds
+/// only, never shipped binaries): also permits file:// and absolute paths.
 /// Rejects: git://, and all other schemes.
 pub fn validate_git_url(url: &str) -> Result<(), BaluardError> {
     if url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("git@") {
         return Ok(());
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "e2e-hooks"))]
     if url.starts_with("file://") || (url.starts_with('/') && !url.contains("://")) {
         return Ok(());
     }

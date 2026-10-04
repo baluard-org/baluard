@@ -1,0 +1,374 @@
+//! E2E harness for docs/e2e-testing.md Phase 1 (CLI + daemon).
+//!
+//! Distinct from the direct-mode suites in `tests/*.rs`: every flow here
+//! spawns the real `baluard-daemon` binary on a scratch socket with its own
+//! `BALUARD_DATA_DIR`, then drives the real `baluard` binary in its default
+//! daemon-first mode. Nothing is mocked; assertions read process exit codes
+//! and stdout.
+//!
+//! Run via `just test-e2e` (builds the daemon with the e2e-hooks feature and
+//! sets BALUARD_E2E=1). Specs that need feature-gated behavior skip loudly
+//! when run outside that recipe, so a plain `cargo test` stays green.
+
+#![allow(dead_code)]
+
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use assert_cmd::Command as CliCommand;
+use predicates::prelude::*;
+use tempfile::TempDir;
+
+const TEST_PASSWORD: &str = "test-passw0rd-12chars";
+
+/// A running daemon bound to a scratch socket, killed on drop.
+struct DaemonGuard {
+    child: Child,
+    socket: PathBuf,
+    _tmp: TempDir,
+}
+
+impl DaemonGuard {
+    fn vault(&self) -> PathBuf {
+        self._tmp.path().join("vault")
+    }
+}
+
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Resolve the daemon binary the way `just test-e2e` builds it: workspace
+/// target dir next to this crate's manifest.
+fn daemon_bin() -> PathBuf {
+    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.pop();
+    p.pop();
+    p.push("target/debug/baluard-daemon");
+    assert!(
+        p.exists(),
+        "baluard-daemon binary not found at {} - run `just test-e2e`",
+        p.display()
+    );
+    p
+}
+
+/// Create a vault in direct mode via `init --json` (E9) and return the parsed
+/// output (vault_id, recovery_phrase, path, slug).
+fn init_vault_json(tmp: &TempDir, slug: &str) -> serde_json::Value {
+    let out = baluard_direct(&tmp.path().join("vault"), tmp)
+        .arg("init")
+        .arg("--name")
+        .arg("E2E Vault")
+        .arg("--slug")
+        .arg(slug)
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).expect("utf8");
+    // init prints a couple of human progress lines first; the JSON object is
+    // its own line (scripts take the last/only { line).
+    let json_line = text
+        .lines()
+        .find(|l| l.starts_with('{'))
+        .expect("init --json prints a JSON object line");
+    let v: serde_json::Value = serde_json::from_str(json_line).expect("valid init JSON");
+    assert_eq!(v["slug"], slug, "init --json echoes the slug");
+    assert_eq!(
+        v["recovery_phrase"]
+            .as_str()
+            .expect("phrase")
+            .split_whitespace()
+            .count(),
+        24,
+        "recovery phrase is 24 words"
+    );
+    v
+}
+
+fn baluard_direct(vault_path: &Path, tmp: &TempDir) -> CliCommand {
+    let mut cmd = base_cmd(tmp);
+    cmd.arg("--direct").arg("--vault-path").arg(vault_path);
+    cmd
+}
+
+/// CLI in daemon-first mode against the scratch socket. BALUARD_PASSWORD
+/// rides on every invocation so the E2 shared helper resolves unlocks.
+fn baluard_daemon(guard: &DaemonGuard) -> CliCommand {
+    let mut cmd = base_cmd(&guard._tmp);
+    cmd.arg("--socket").arg(&guard.socket);
+    cmd
+}
+
+/// Shared environment scrubbing for every spawned binary (E11): fresh data
+/// dir, keyring off, prompts resolved from BALUARD_PASSWORD, autosync off
+/// (E10) so explicit sync commands never race a background push.
+fn base_cmd(tmp: &TempDir) -> CliCommand {
+    let mut cmd = CliCommand::cargo_bin("baluard").expect("baluard binary not found");
+    cmd.env("BALUARD_PASSWORD", TEST_PASSWORD)
+        .env("BALUARD_DATA_DIR", tmp.path().join("data"))
+        .env("BALUARD_DISABLE_KEYRING", "1")
+        .env("BALUARD_NO_PROMPT", "1")
+        .env("BALUARD_AUTOSYNC", "0")
+        .current_dir(tmp.path())
+        .env_remove("BALUARD_SOCKET");
+    cmd
+}
+
+/// Spawn the daemon on a socket inside `tmp` and wait for it to accept
+/// connections. Takes ownership of `tmp` so daemon, CLI, and vault share one
+/// lifetime. The guard is built before the wait loop: a timeout or an early
+/// daemon crash drops the guard, which kills the child (no orphans).
+fn spawn_daemon(tmp: TempDir) -> DaemonGuard {
+    let vault = tmp.path().join("vault");
+    let socket = tmp.path().join("d.sock");
+    std::fs::create_dir_all(tmp.path().join("data")).expect("data dir");
+    let child = Command::new(daemon_bin())
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--vault-path")
+        .arg(&vault)
+        .env("BALUARD_DATA_DIR", tmp.path().join("data"))
+        .env("BALUARD_DISABLE_KEYRING", "1")
+        .env("BALUARD_AUTOSYNC", "0")
+        // Kernel kills the daemon if this test process dies first.
+        .env("BALUARD_DAEMON_DIE_WITH_PARENT", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .current_dir(tmp.path())
+        .spawn()
+        .expect("spawn baluard-daemon");
+
+    let mut guard = DaemonGuard {
+        child,
+        socket,
+        _tmp: tmp,
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        // bind() creates the socket file before the listener serves; a real
+        // connect is the readiness signal.
+        if std::os::unix::net::UnixStream::connect(&guard.socket).is_ok() {
+            return guard;
+        }
+        if let Ok(Some(status)) = guard.child.try_wait() {
+            panic!("daemon exited early with {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "daemon did not accept connections in 10s"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// First whitespace token on the row mentioning `name`. Both list rows
+/// (`{fav} {id}  [{type}]  {name}`) and trash rows (`{id}  [{type}]  {name}`)
+/// carry the id as token 0; the empty favorite renders as a leading space.
+fn row_id(stdout: &[u8], name: &str) -> String {
+    let text = String::from_utf8_lossy(stdout);
+    text.lines()
+        .find(|l| l.contains(name))
+        .and_then(|l| l.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no row for {name} in:\n{text}"))
+        .to_string()
+}
+
+// ── Flows ──
+
+/// init --json (E9) -> daemon spawn -> unlock -> lock, all through the real
+/// binaries and the real socket.
+#[test]
+fn e2e_init_unlock_lock_roundtrip() {
+    let tmp = TempDir::new().expect("tmp");
+    let created = init_vault_json(&tmp, "baluard-e2e-a");
+    let guard = spawn_daemon(tmp);
+
+    baluard_daemon(&guard)
+        .arg("unlock")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Vault unlocked (daemon)."));
+
+    baluard_daemon(&guard)
+        .arg("lock")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Vault locked."));
+
+    // The init phrase is real enrollment material for multi-device flows.
+    assert!(created["recovery_phrase"].as_str().unwrap().len() > 100);
+    assert!(guard.vault().join(".baluard").exists(), "vault marker");
+}
+
+/// Cipher CRUD entirely in daemon mode: add, list, get, rename, delete.
+#[test]
+fn e2e_cipher_crud_via_daemon() {
+    let tmp = TempDir::new().expect("tmp");
+    init_vault_json(&tmp, "baluard-e2e-b");
+    let guard = spawn_daemon(tmp);
+
+    baluard_daemon(&guard)
+        .args([
+            "add",
+            "login",
+            "--name",
+            "Bank",
+            "--username",
+            "me",
+            "--password",
+            "s3cret!pw",
+        ])
+        .assert()
+        .success();
+
+    let list_out = baluard_daemon(&guard)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Bank"))
+        .get_output()
+        .stdout
+        .clone();
+    let id = row_id(&list_out, "Bank");
+
+    // Daemon-mode get has no name lookup; use the UUID. Default get masks
+    // the secret; --decrypt reveals it.
+    baluard_daemon(&guard)
+        .args(["get", &id])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("s3cret!pw").not());
+    baluard_daemon(&guard)
+        .args(["get", &id, "--decrypt", "--output=text"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("s3cret!pw"));
+
+    // CLI edit has no password knob; rename via --name.
+    baluard_daemon(&guard)
+        .args(["edit", &id, "--name", "BankRenamed"])
+        .assert()
+        .success();
+
+    baluard_daemon(&guard)
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("BankRenamed"));
+
+    baluard_daemon(&guard)
+        .args(["delete", &id])
+        .assert()
+        .success();
+
+    baluard_daemon(&guard)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("BankRenamed").not());
+}
+
+/// Trash surface (G14): delete lands in trash, restore brings it back,
+/// purge --days 0 empties everything.
+#[test]
+fn e2e_trash_roundtrip() {
+    let tmp = TempDir::new().expect("tmp");
+    init_vault_json(&tmp, "baluard-e2e-c");
+    let guard = spawn_daemon(tmp);
+
+    baluard_daemon(&guard)
+        .args([
+            "add",
+            "login",
+            "--name",
+            "TrashMe",
+            "--username",
+            "u",
+            "--password",
+            "pw123456",
+        ])
+        .assert()
+        .success();
+    let list_out = baluard_daemon(&guard)
+        .arg("list")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let id = row_id(&list_out, "TrashMe");
+    baluard_daemon(&guard)
+        .args(["delete", &id])
+        .assert()
+        .success();
+
+    let trash_out = baluard_daemon(&guard)
+        .args(["trash", "list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("TrashMe"))
+        .get_output()
+        .stdout
+        .clone();
+    let trash_id = row_id(&trash_out, "TrashMe");
+
+    baluard_daemon(&guard)
+        .args(["trash", "restore", &trash_id])
+        .assert()
+        .success();
+
+    baluard_daemon(&guard)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("TrashMe"));
+
+    baluard_daemon(&guard)
+        .args(["delete", &id])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["trash", "purge", "--days", "0"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("entire trash"));
+    baluard_daemon(&guard)
+        .args(["trash", "list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("TrashMe").not());
+}
+
+/// Space knobs over the socket (G1): set then read back through the daemon.
+#[test]
+fn e2e_space_settings_set_get() {
+    let tmp = TempDir::new().expect("tmp");
+    init_vault_json(&tmp, "baluard-e2e-d");
+    let guard = spawn_daemon(tmp);
+
+    baluard_daemon(&guard)
+        .args(["settings", "space-set", "guest_enabled=true"])
+        .assert()
+        .success();
+
+    baluard_daemon(&guard)
+        .args(["settings", "space-get"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(r#""guest_enabled":true"#));
+
+    // The CLI validates the value vocabulary before any round trip.
+    baluard_daemon(&guard)
+        .args(["settings", "space-set", "quorum_admin_ops=9"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("between 1 and 5"));
+}

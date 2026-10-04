@@ -170,6 +170,14 @@ test-core:
 test-cli:
 	{{ linuxbrew_env }} cargo test -p baluard-cli
 
+# E2E harness (docs/e2e-testing.md Phase 1): builds the cli + daemon binaries
+# with the e2e-hooks transport relaxation, then runs the e2e integration
+# target against the real daemon. Excluded from `just test` by design:
+# `cargo test -p baluard-cli` alone leaves the daemon binary stale.
+test-e2e:
+	{{ linuxbrew_env }} cargo build -p baluard-cli -p baluard-daemon --features baluard-cli/e2e-hooks,baluard-daemon/e2e-hooks
+	BALUARD_DISABLE_KEYRING=1 BALUARD_E2E=1 {{ linuxbrew_env }} cargo test -p baluard-cli --test e2e --features baluard-cli/e2e-hooks
+
 # Run native messaging host tests (stdio<->daemon bridge)
 test-nmh:
 	{{ linuxbrew_env }} cargo test -p baluard-nmh

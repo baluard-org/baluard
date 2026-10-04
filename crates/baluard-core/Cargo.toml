@@ -79,6 +79,10 @@ passkey-ceremony = ["dep:passkey", "dep:url", "dep:public-suffix", "dep:coset", 
 # pulled by passkey-ceremony; regex-lite is matcher-only.
 uri-match = ["dep:url", "dep:public-suffix", "dep:regex-lite"]
 git-sync = ["dep:git2"]
+# Test-only transport relaxation: lets compiled binaries accept file:// (and
+# absolute-path) git remotes so the E2E harness can use local bare repos.
+# Never enabled in release builds; the just test-e2e recipe turns it on.
+e2e-hooks = []
 org = []
 emergency = []
 

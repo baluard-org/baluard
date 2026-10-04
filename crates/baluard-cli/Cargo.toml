@@ -36,6 +36,15 @@ predicates = { workspace = true }
 tempfile = "3"
 regex = "1"
 
+# The e2e harness lives in tests/e2e/main.rs and is excluded from plain
+# `cargo test` / `just test`: it only builds when the e2e-hooks feature is
+# on (see `just test-e2e`), so a fresh checkout never fails on a missing
+# daemon binary.
+[[test]]
+name = "e2e"
+required-features = ["e2e-hooks"]
+
 [features]
 default = ["git-sync"]
 git-sync = ["baluard-core/git-sync"]
+e2e-hooks = ["baluard-core/e2e-hooks"]
