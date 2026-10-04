@@ -153,4 +153,10 @@ open class StubVault(
     override suspend fun `collectionsList`(): String = err()
     override suspend fun `joinIntroduce`(code: String, password: String, deviceName: String, email: String?): String = err()
     override suspend fun `joinPoll`(): String = err()
+
+    // G2/G18 surfaces: the stub's tests never touch these; error on
+    // accidental use like every other unset method.
+    override suspend fun `importData`(format: String, data: ByteArray): String = err()
+    override suspend fun `exportData`(format: String): String = err()
+    override suspend fun `repromptVerify`(masterPassword: String): ULong = err()
 }

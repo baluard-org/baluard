@@ -200,7 +200,7 @@ pub fn recovery_sheet_bytes(
         other => {
             return Err(BaluardError::InvalidInput {
                 detail: format!("unknown recovery sheet format: {other}"),
-            })
+            });
         }
     };
     let words: Vec<&str> = phrase.split_whitespace().collect();
@@ -414,6 +414,87 @@ impl MobileVault {
     /// values (password, notes); false returns masked/placeholder values.
     pub async fn get_cipher(&self, id: String, decrypt: bool) -> Result<String, BaluardError> {
         Ok(self.state.get_cipher(&id, decrypt).await?)
+    }
+
+    /// Import entries from an external password manager (G2, one parser
+    /// set for every surface). [data] is the raw file payload — text
+    /// formats UTF-8, 1PUX binary. Returns the daemon-shaped summary
+    /// JSON: {imported, skipped, folders_created, errors}.
+    pub async fn import_data(&self, format: String, data: Vec<u8>) -> Result<String, BaluardError> {
+        use baluard_core::import::ImportFormat;
+        let fmt = ImportFormat::from_name(&format).ok_or_else(|| BaluardError::InvalidInput {
+            detail: format!("unknown import format: {format}"),
+        })?;
+        let parsed = match fmt {
+            ImportFormat::OnePassword1pux => baluard_core::import::onepassword_1pux::parse(&data),
+            _ => {
+                let text = String::from_utf8(data).map_err(|_| BaluardError::InvalidInput {
+                    detail: "import file is not valid UTF-8".to_string(),
+                })?;
+                match fmt {
+                    ImportFormat::BwJson => baluard_core::import::bw_json::parse(&text),
+                    ImportFormat::BwCsv => baluard_core::import::bw_csv::parse(&text),
+                    ImportFormat::ChromeCsv => baluard_core::import::chrome_csv::parse(&text),
+                    ImportFormat::FirefoxCsv => baluard_core::import::firefox_csv::parse(&text),
+                    ImportFormat::LastPassCsv => baluard_core::import::lastpass_csv::parse(&text),
+                    ImportFormat::OnePasswordCsv => {
+                        baluard_core::import::onepassword_csv::parse(&text)
+                    }
+                    ImportFormat::KeePassXml => baluard_core::import::keepass_xml::parse(&text),
+                    ImportFormat::OnePassword1pux => unreachable!("matched above"),
+                }
+            }
+        };
+        self.state
+            .import_ciphers(parsed)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Export every entry as Bitwarden JSON ("bw-json") or CSV ("bw-csv",
+    /// logins only). The returned string is UNENCRYPTED — the caller owns
+    /// where it lands. Space export policy (viewer rules) is enforced
+    /// runtime-side and fails closed.
+    pub async fn export_data(&self, format: String) -> Result<String, BaluardError> {
+        match format.as_str() {
+            "bw-json" => self
+                .state
+                .export_bw_json()
+                .await
+                .map_err(|e| BaluardError::Vault { detail: e }),
+            "bw-csv" => self
+                .state
+                .export_bw_csv()
+                .await
+                .map_err(|e| BaluardError::Vault { detail: e }),
+            other => Err(BaluardError::InvalidInput {
+                detail: format!("unknown export format: {other}"),
+            }),
+        }
+    }
+
+    /// Master-password re-prompt verification (G18). Opens a TEMPORARY
+    /// handle and actually verifies the password — unlike [Self::unlock],
+    /// which short-circuits Ok on an already-unlocked vault and would
+    /// accept ANY password here. Wrong password maps to
+    /// [BaluardError::WrongPassword]; failures burn the shared per-vault
+    /// rate-limit budget by design. Returns the grant expiry (unix
+    /// seconds) from the runtime's 30s window.
+    pub async fn reprompt_verify(&self, master_password: String) -> Result<u64, BaluardError> {
+        let json = self
+            .state
+            .reprompt_verify(&master_password)
+            .await
+            .map_err(|e| {
+                if e.contains("Incorrect master password") {
+                    BaluardError::WrongPassword
+                } else {
+                    BaluardError::Vault { detail: e }
+                }
+            })?;
+        let v: serde_json::Value =
+            serde_json::from_str(&json).map_err(|e| BaluardError::Vault { detail: e.to_string() })?;
+        Ok(v["expires_at"].as_u64().unwrap_or(0))
     }
 
     /// Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
@@ -1603,8 +1684,7 @@ mod tests {
     #[test]
     fn recovery_sheet_pdf_routes_to_core() {
         let phrase = generate_recovery_phrase().unwrap().phrase;
-        let bytes =
-            recovery_sheet_bytes("pdf".into(), "T".into(), "W".into(), phrase).unwrap();
+        let bytes = recovery_sheet_bytes("pdf".into(), "T".into(), "W".into(), phrase).unwrap();
         assert!(bytes.starts_with(b"%PDF-1.4\n"));
         assert!(bytes.ends_with(b"%%EOF\n"));
     }
@@ -1612,11 +1692,12 @@ mod tests {
     #[test]
     fn recovery_sheet_rejects_bad_format_and_word_count() {
         let phrase = generate_recovery_phrase().unwrap().phrase;
-        let err = recovery_sheet_bytes("md".into(), "T".into(), "W".into(), phrase.clone())
-            .unwrap_err();
+        let err =
+            recovery_sheet_bytes("md".into(), "T".into(), "W".into(), phrase.clone()).unwrap_err();
         assert!(err.to_string().contains("unknown recovery sheet format"));
-        let err = recovery_sheet_bytes("txt".into(), "T".into(), "W".into(), "one two three".into())
-            .unwrap_err();
+        let err =
+            recovery_sheet_bytes("txt".into(), "T".into(), "W".into(), "one two three".into())
+                .unwrap_err();
         assert!(err.to_string().contains("exactly 24 words, got 3"));
     }
 
@@ -1811,6 +1892,49 @@ mod tests {
             vault.list_ciphers().await.unwrap().is_empty(),
             "vault empty after delete"
         );
+    }
+
+    // ── G2: import/export through the FFI (real vault, real crypto) ─────
+    #[tokio::test]
+    async fn import_export_roundtrip_via_ffi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pw".to_string(), "dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pw".to_string()).await.unwrap();
+
+        // Import a minimal Bitwarden JSON payload (one folder, one login).
+        let bw = serde_json::json!({
+            "folders": [{"id": "f1", "name": "Work"}],
+            "items": [{
+                "id": "i1", "folderId": "f1", "type": 1, "name": "GH",
+                "login": {"username": "u", "password": "p", "uris": []}
+            }]
+        })
+        .to_string();
+        let summary = vault
+            .import_data("bw-json".into(), bw.into_bytes())
+            .await
+            .expect("bw-json import should succeed");
+        let s: serde_json::Value = serde_json::from_str(&summary).unwrap();
+        assert_eq!(s["imported"].as_u64(), Some(1), "summary: {summary}");
+        assert_eq!(vault.list_ciphers().await.unwrap().len(), 1);
+
+        // Export: Bitwarden JSON round-trips the entry (and its folder).
+        let exported = vault.export_data("bw-json".into()).await.unwrap();
+        let ex: serde_json::Value = serde_json::from_str(&exported).unwrap();
+        assert_eq!(ex["items"].as_array().unwrap().len(), 1);
+        assert_eq!(ex["items"][0]["name"], "GH");
+        assert_eq!(ex["folders"].as_array().unwrap().len(), 1);
+
+        // CSV export carries the login row.
+        let csv = vault.export_data("bw-csv".into()).await.unwrap();
+        assert!(csv.contains("GH"), "csv should carry the entry name");
+
+        // Unknown formats fail closed on both directions.
+        assert!(vault.import_data("md".into(), b"x".to_vec()).await.is_err());
+        assert!(vault.export_data("pdf".into()).await.is_err());
     }
 
     #[tokio::test]
