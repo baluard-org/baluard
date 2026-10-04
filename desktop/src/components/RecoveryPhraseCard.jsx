@@ -8,7 +8,6 @@ import { holdPhrase, takeHeldPhrase, clearHeldPhrase } from "../lib/heldPhrase.j
 import FocusTrap from "./FocusTrap.jsx";
 import { Transition } from "../lib/transition";
 import { Button } from "./Primitives.jsx";
-import { requestReprompt } from "./RepromptModal.jsx";
 import { invoke } from "@tauri-apps/api/core";
 
 // Recovery-phrase exit path: replace the vault's 24-word phrase. Rotation
@@ -26,7 +25,9 @@ export default function RecoveryPhraseCard() {
   const words = () => phrase().split(/\s+/).filter(Boolean);
 
   const replace = () => {
-    requestReprompt(async (password) => {
+    // Callback bound at show() time (see RepromptModal): a stale
+    // registration from another surface can never fire here.
+    window.__baluardReprompt?.show(async (password) => {
       setBusy(true);
       try {
         const r = await daemon("vault.rotate_recovery", { old_password: password });

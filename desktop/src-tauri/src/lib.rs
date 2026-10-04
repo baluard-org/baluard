@@ -220,6 +220,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.lock",
     "vault.open",
     "vault.unlock",
+    "vault.reprompt_verify",
     "vault.rotate_recovery",
     // quick unlock
     "vault.biometric_disable",

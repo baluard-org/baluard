@@ -188,6 +188,7 @@
     "user": "Usuário",
     "pass": "Senha",
     "passwordHistory": "Histórico de senhas ({count})",
+    "repromptLocked": "Esta entrada é protegida. Confirme sua senha mestra para mostrar os valores ocultos.",
     "historyShow": "Mostrar senha",
     "historyHide": "Ocultar senha",
     "copyValue": "Copiar valor",

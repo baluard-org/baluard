@@ -10,8 +10,34 @@ import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { uriStr, formatCardNumber, sanitizeError } from "../lib/utils.js";
 import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
-import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint, IconEye, IconEyeOff } from "./Icon.jsx";
+import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint, IconEye, IconEyeOff, IconLock } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
+
+/** G18: a sensitive CopyableField behind the re-prompt gate. While the
+ * entry's master-password grant is closed, renders the lock strip instead
+ * of the value. All non-gate props forward to CopyableField untouched. */
+function GatedField(props) {
+  const { t } = useI18n();
+  // No splitProps in this Solid build: forward the whole proxy — locked
+  // and onUnlock are ignored by CopyableField, everything else passes
+  // through untouched.
+  return (
+    <Show
+      when={!props.locked}
+      fallback={
+        <button
+          onClick={props.onUnlock}
+          class="flex items-center gap-2 w-full p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-400 hover:bg-amber-500/15 transition-colors cursor-pointer"
+        >
+          <IconLock class="w-3.5 h-3.5 shrink-0" />
+          {t("entry.repromptLocked")}
+        </button>
+      }
+    >
+      <CopyableField {...props} />
+    </Show>
+  );
+}
 import ShareDialog from "./ShareDialog.jsx";
 import { useCopyFeedback } from "../lib/useCopyFeedback.js";
 import FocusTrap from "./FocusTrap.jsx";
@@ -45,6 +71,31 @@ export default function CipherDetail(props) {
 
   const [revealPass, setRevealPass] = createSignal(false);
   const [moving, setMoving] = createSignal(false);
+
+  // G18: per-cipher master-password re-prompt. When the entry's reprompt
+  // flag is set, sensitive rows (password, history, hidden custom fields)
+  // stay behind a 30s grant, matching the daemon reprompt window and the
+  // mobile detail gate. The grant resets when the open cipher changes.
+  const [repromptOk, setRepromptOk] = createSignal(0);
+  const repromptLocked = () => cipher()?.reprompt === true && Date.now() >= repromptOk();
+  const openReprompt = () =>
+    window.__baluardReprompt?.show(() => {
+      const until = Date.now() + 30000;
+      setRepromptOk(until);
+      // Date.now() is not reactive: without this timer the gate would
+      // never re-evaluate at expiry and the grant would live forever.
+      setTimeout(() => {
+        setRepromptOk((v) => (v === until ? 0 : v));
+        setRevealPass(false);
+      }, 30000);
+    });
+  createEffect(
+    () => cipher()?.id,
+    () => {
+      setRepromptOk(0);
+      setRevealPass(false);
+    },
+  );
 
   // §4.8-5: move the open entry between collections. Admins can move
   // anywhere (and back out to personal); members only where they hold
@@ -194,6 +245,12 @@ export default function CipherDetail(props) {
   function startEdit() {
     const c = cipher();
     if (!c || foreign()) return;
+    // G18: a protected entry's edit flow goes through the same gate —
+    // editing reveals everything anyway.
+    if (repromptLocked()) {
+      openReprompt();
+      return;
+    }
     props.onEdit(cipherToFlat(c));
   }
 
@@ -239,18 +296,31 @@ export default function CipherDetail(props) {
           <div class="space-y-4">
             <h4 class={SECTION_LABEL}>{t("types.login")}</h4>
             <CopyableField label={t("entry.user")} value={cipher()?.username} />
-            <CopyableField
-              label={t("entry.pass")}
-              value={cipher()?.password}
-              isPassword={true}
-              showPassword={revealPass()}
-              onToggleShow={() => setRevealPass(!revealPass())}
-            />
+            <Show
+              when={!repromptLocked()}
+              fallback={
+                <button
+                  onClick={openReprompt}
+                  class="flex items-center gap-2 w-full p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-400 hover:bg-amber-500/15 transition-colors cursor-pointer"
+                >
+                  <IconLock class="w-3.5 h-3.5 shrink-0" />
+                  {t("entry.repromptLocked")}
+                </button>
+              }
+            >
+              <CopyableField
+                label={t("entry.pass")}
+                value={cipher()?.password}
+                isPassword={true}
+                showPassword={revealPass()}
+                onToggleShow={() => setRevealPass(!revealPass())}
+              />
+            </Show>
 
             {/* Password history (past values, masked until revealed) */}
             <Show when={(cipher()?.password_history?.length || 0) > 0}>
               <button
-                onClick={() => { setShowHistory(!showHistory()); setRevealedHistory(null); }}
+                onClick={() => { if (repromptLocked()) { openReprompt(); return; } setShowHistory(!showHistory()); setRevealedHistory(null); }}
                 class="text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer self-start"
               >
                 {showHistory() ? "▾ " : "▸ "}{t("entry.passwordHistory", { count: cipher()?.password_history?.length ?? 0 })}
@@ -462,9 +532,23 @@ export default function CipherDetail(props) {
               <CardBrandDisplay number={cipher()?.number || ""} />
             </Show>
             <CopyableField label={t("fields.cardholder")} value={cipher()?.cardholder_name} />
-            <CopyableField label={t("fields.cardNumber")} value={formatCardNumber(cipher()?.number)} copyValue={cipher()?.number} />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.cardNumber")}
+              value={formatCardNumber(cipher()?.number)}
+              copyValue={cipher()?.number}
+            />
             <CopyableField label={t("fields.expMonth") + " / " + t("fields.expYear")} value={cipher()?.exp_month && cipher()?.exp_year ? `${cipher()?.exp_month}/${cipher()?.exp_year}` : null} />
-            <CopyableField label={t("fields.cvv")} value={cipher()?.code} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.cvv")}
+              value={cipher()?.code}
+              isPassword={true}
+              showPassword={revealPass()}
+              onToggleShow={() => setRevealPass(!revealPass())}
+            />
           </div>
         </Show>
 
@@ -480,9 +564,33 @@ export default function CipherDetail(props) {
             <CopyableField label={t("fields.address")} value={[cipher()?.address1, cipher()?.address2, cipher()?.address3].filter(Boolean).join(", ") || null} />
             <CopyableField label={t("fields.cityStatePostal")} value={[cipher()?.city, cipher()?.state, cipher()?.postal_code].filter(Boolean).join(", ") || null} />
             <CopyableField label={t("fields.country")} value={cipher()?.country} />
-            <CopyableField label={t("fields.ssn")} value={cipher()?.ssn} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
-            <CopyableField label={t("fields.passportNumber")} value={cipher()?.passport_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
-            <CopyableField label={t("fields.licenseNumber")} value={cipher()?.license_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.ssn")}
+              value={cipher()?.ssn}
+              isPassword={true}
+              showPassword={revealPass()}
+              onToggleShow={() => setRevealPass(!revealPass())}
+            />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.passportNumber")}
+              value={cipher()?.passport_number}
+              isPassword={true}
+              showPassword={revealPass()}
+              onToggleShow={() => setRevealPass(!revealPass())}
+            />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.licenseNumber")}
+              value={cipher()?.license_number}
+              isPassword={true}
+              showPassword={revealPass()}
+              onToggleShow={() => setRevealPass(!revealPass())}
+            />
           </div>
         </Show>
 
@@ -492,7 +600,15 @@ export default function CipherDetail(props) {
             <h4 class={SECTION_LABEL}>{t("types.sshKey")}</h4>
             <CopyableField label={t("fields.publicKey")} value={cipher()?.public_key} />
             <CopyableField label={t("fields.fingerprint")} value={cipher()?.fingerprint} />
-            <CopyableField label={t("fields.privateKey")} value={cipher()?.private_key} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.privateKey")}
+              value={cipher()?.private_key}
+              isPassword={true}
+              showPassword={revealPass()}
+              onToggleShow={() => setRevealPass(!revealPass())}
+            />
           </div>
         </Show>
 
@@ -503,13 +619,36 @@ export default function CipherDetail(props) {
             <CopyableField label={t("fields.bankName")} value={cipher()?.bank_name} />
             <CopyableField label={t("fields.nameOnAccount")} value={cipher()?.name_on_account} />
             <CopyableField label={t("fields.accountType")} value={cipher()?.account_type} />
-            <CopyableField label={t("fields.accountNumber")} value={cipher()?.account_number} />
-            <CopyableField label={t("fields.routingNumber")} value={cipher()?.routing_number} />
-            <CopyableField label={t("fields.branchNumber")} value={cipher()?.branch_number} />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.accountNumber")}
+              value={cipher()?.account_number}
+            />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.routingNumber")}
+              value={cipher()?.routing_number}
+            />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.branchNumber")}
+              value={cipher()?.branch_number}
+            />
             <CopyableField label={t("fields.swiftCode")} value={cipher()?.swift_code} />
             <CopyableField label={t("fields.iban")} value={cipher()?.iban} />
             <CopyableField label={t("fields.bankPhone")} value={cipher()?.bank_contact_phone} />
-            <CopyableField label={t("fields.pin")} value={cipher()?.pin} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.pin")}
+              value={cipher()?.pin}
+              isPassword={true}
+              showPassword={revealPass()}
+              onToggleShow={() => setRevealPass(!revealPass())}
+            />
           </div>
         </Show>
 
@@ -519,7 +658,12 @@ export default function CipherDetail(props) {
             <h4 class={SECTION_LABEL}>{t("types.driversLicense")}</h4>
             <CopyableField label={t("fields.fullName")} value={[cipher()?.first_name, cipher()?.middle_name, cipher()?.last_name].filter(Boolean).join(" ") || null} />
             <CopyableField label={t("fields.dateOfBirth")} value={cipher()?.date_of_birth} />
-            <CopyableField label={t("fields.licenseNumber")} value={cipher()?.license_number} />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.licenseNumber")}
+              value={cipher()?.license_number}
+            />
             <CopyableField label={t("fields.issuingCountry")} value={cipher()?.issuing_country} />
             <CopyableField label={t("fields.issuingState")} value={cipher()?.issuing_state} />
             <CopyableField label={t("fields.issueDate")} value={cipher()?.issue_date} />
@@ -539,7 +683,12 @@ export default function CipherDetail(props) {
             <CopyableField label={t("fields.birthPlace")} value={cipher()?.birth_place} />
             <CopyableField label={t("fields.nationality")} value={cipher()?.nationality} />
             <CopyableField label={t("fields.issuingCountry")} value={cipher()?.issuing_country} />
-            <CopyableField label={t("fields.passportNumber")} value={cipher()?.passport_number} />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.passportNumber")}
+              value={cipher()?.passport_number}
+            />
             <CopyableField label={t("fields.passportType")} value={cipher()?.passport_type} />
             <CopyableField label={t("fields.nationalIdNumber")} value={cipher()?.national_identification_number} />
             <CopyableField label={t("fields.issuingAuthority")} value={cipher()?.issuing_authority} />
@@ -611,13 +760,26 @@ export default function CipherDetail(props) {
                       </span>
                     </div>
                   }>
-                    <CopyableField
+                    <Show
+                      when={!(isHidden() && repromptLocked())}
+                      fallback={
+                        <button
+                          onClick={openReprompt}
+                          class="flex items-center gap-2 w-full p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-400 hover:bg-amber-500/15 transition-colors cursor-pointer"
+                        >
+                          <IconLock class="w-3.5 h-3.5 shrink-0" />
+                          {t("entry.repromptLocked")}
+                        </button>
+                      }
+                    >
+                      <CopyableField
                       label={field.name}
                       value={field.value}
                       isPassword={isHidden()}
                       showPassword={revealCustom()}
                       onToggleShow={() => setRevealCustom(!revealCustom())}
                     />
+                    </Show>
                   </Show>
                 );
               }}

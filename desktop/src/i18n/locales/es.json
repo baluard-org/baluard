@@ -132,6 +132,7 @@
     "user": "Usuario",
     "pass": "Contraseña",
     "passwordHistory": "Historial de contraseñas ({count})",
+    "repromptLocked": "Esta entrada está protegida. Confirma tu contraseña maestra para mostrar los valores ocultos.",
     "historyShow": "Mostrar contraseña",
     "historyHide": "Ocultar contraseña",
     "copyValue": "Copiar valor",
