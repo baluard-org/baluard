@@ -179,8 +179,8 @@ Surface: Mobile + CLI. Missing: `provider.create_repo` (desktop-only today). Eff
 ### G17. Desktop passkey rename UI
 Surface: Desktop. Missing: rename exists on CLI only. Effort: S. Value: naming credentials is a daily-use nicety. Decision: close.
 
-### G18. Mobile re-prompt enforcement
-Surface: Mobile. Missing: the flag saves but nothing enforces it on view or reveal. Effort: S to M. Value: security parity with desktop's RepromptModal; a silent unenforced security flag is worse than none. Decision: close.
+### G18. Desktop + mobile re-prompt enforcement
+Surface: Desktop + Mobile. Missing: the flag saves but nothing enforces it on view or reveal on either GUI. Effort: S to M. Value: security parity; a silent unenforced security flag is worse than none. Decision: close.
 
 ### G19. Password health on desktop and mobile
 Surface: Desktop + Mobile. Missing: the `vault.health` report (weak, reused, old passwords) has no GUI surface anywhere. Effort: M, cheapened by the CLI-first rule - the primitive exists (`vault.health` route + `baluard health`), so this is UI wiring, not new logic. Value: the CLI should not be the only place users learn their passwords are weak. Decision: close after 1.0 or schedule with the 1.0 polish pass.
@@ -222,6 +222,8 @@ Surface: Mobile. Missing: remote repoint and signed-manifest revocation. Effort:
 | G17 | `d27eceb` | inline rename on the passkey card; the route was missing from the desktop host allowlist, now admitted |
 | G20 | `c0bc684` | generator history section over the existing UniFFI bindings |
 | G22 | `d27eceb` + `c0bc684` | password history on desktop (collapsible, masked rows) and mobile (masked field rows) |
+| G2 | this wave | mobile import (8 core formats via SAF open + format dialog) and export (bw-json / bw-csv via SAF create), bytes-only UniFFI wrappers over the same daemon-shaped runtime paths; review fixes: dedicated json/csv SAF contracts, scrolling format dialog |
+| G18 | this wave | re-prompt enforced on both GUIs behind a 30s master-password grant. Review round made the gate REAL: verification rides `vault.reprompt_verify` / a new `repromptVerify` FFI (opening a temp handle), because `vault.unlock` short-circuits Ok on an already-unlocked vault and would have accepted any password; desktop gates all sensitive field classes (not just logins), edit flows are gated, autofill refuses reprompt-protected entries, and the modal's show() binds its callback at confirm time (fixing a dead wiring where the rotation gate never fired) |
 
 ## Keeping this document current
 
