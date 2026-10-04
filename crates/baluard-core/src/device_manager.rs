@@ -1502,32 +1502,19 @@ impl DeviceManager {
     /// to persist. This ensures the registry, keywrap, and local
     /// `device-privkey.json` all agree.
     ///
-    /// **Policy enforcement (PR-3):** The caller MUST pass the vault's
-    /// current `EnrollmentPolicy`. In `Strict` mode, this method returns
-    /// an error and does not enroll. The caller is responsible for
-    /// loading the policy and passing it; this avoids a TOCTOU race
-    /// where the method re-reads policy from disk after the caller
-    /// already validated it.
+    /// **Policy enforcement:** the method derives the policy itself from
+    /// `meta/settings.enc`, decrypted with the phrase-recovered Root Key.
+    /// Callers must NOT pass a policy read from a locked vault — locked
+    /// reads cannot decrypt settings.enc and misreport Strict. In `Strict`
+    /// mode the method returns an error and does not enroll.
     pub fn enroll_with_recovery_phrase(
         &mut self,
         payload: &EnrollmentPayload,
         phrase: &str,
         x25519_secret: x25519_dalek::StaticSecret,
         ed25519_signing: ed25519_dalek::SigningKey,
-        policy: crate::vault::manifest::EnrollmentPolicy,
     ) -> Result<RecoveryResult, BaluardError> {
         use crate::recovery::RecoveryPhrase;
-
-        // PR-3 fix: enforce policy at the core level. Any direct caller
-        // (not just CLI/daemon wrappers) is protected.
-        if policy == crate::vault::manifest::EnrollmentPolicy::Strict {
-            return Err(DeviceError::EnrollmentRejected(
-                "recovery phrase enrollment is disabled in Strict mode; \
-                 use recover_from_phrase (destructive) or change the policy"
-                    .into(),
-            )
-            .into());
-        }
 
         // Step 1: Parse phrase
         let recovery_phrase = RecoveryPhrase::from_phrase(phrase).map_err(|e| {
@@ -1585,6 +1572,23 @@ impl DeviceManager {
             .try_into()
             .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
         let root_key = RootKey::from_bytes(rk_arr);
+
+        // Step 4b: Read the REAL enrollment policy, decrypted with the
+        // phrase-recovered Root Key. Callers may enroll a fresh clone that
+        // was never unlocked: a locked vault cannot decrypt settings.enc,
+        // and guessing the policy there reported Strict for Personal
+        // vaults, breaking every clone+phrase enrollment (e2e spike,
+        // 2026-10-03). Fail closed: a missing settings.enc (legacy vault)
+        // enforces Strict; a corrupt one aborts the enrollment.
+        let policy = Self::read_enrollment_policy(&vault_path, root_key.as_bytes())?;
+        if policy == crate::vault::manifest::EnrollmentPolicy::Strict {
+            return Err(DeviceError::EnrollmentRejected(
+                "recovery phrase enrollment is disabled in Strict mode; \
+                 use recover_from_phrase (destructive) or change the policy"
+                    .into(),
+            )
+            .into());
+        }
 
         // Step 5: Validate payload (timestamp, nonce, keys) — same as enroll()
         let now = std::time::SystemTime::now()
@@ -1683,13 +1687,52 @@ impl DeviceManager {
 
     // ── Enrollment Policy Enforcement ──
     //
-    // The CLI/daemon wrappers check the policy before calling the phrase
-    // enrollment method. Core-level enforcement is a defense-in-depth
-    // check: any direct caller of `enroll_with_recovery_phrase` must
-    // pass the vault's `EnrollmentPolicy` explicitly. The method itself
-    // does NOT re-read the policy from disk (that would be a TOCTOU
-    // race with the caller's check). The caller is responsible for
-    // loading the policy and passing it.
+    // `enroll_with_recovery_phrase` derives the policy itself: the phrase
+    // recovers the Root Key, the settings key derives from it, and
+    // meta/settings.enc carries the real policy. Callers must NOT pass a
+    // policy read from a locked vault — locked reads cannot decrypt
+    // settings.enc and misreport Strict. `read_enrollment_policy` fails
+    // closed: missing settings.enc (legacy vault) = Strict, corrupt
+    // settings.enc = error.
+
+    /// Decrypt meta/settings.enc with a recovered Root Key and return the
+    /// vault's enrollment policy. Free function so both enroll paths and
+    /// tests share one definition. Missing file enforces Strict (legacy
+    /// default); decrypt or parse failures are errors, not defaults.
+    fn read_enrollment_policy(
+        vault_path: &Path,
+        root_key: &[u8; 64],
+    ) -> Result<crate::vault::manifest::EnrollmentPolicy, BaluardError> {
+        let enc_path = vault_path.join("meta/settings.enc");
+        if !enc_path.exists() {
+            return Ok(crate::vault::manifest::EnrollmentPolicy::Strict);
+        }
+        let key = crate::crypto::hkdf_derive::derive_settings_key(root_key)
+            .map_err(|e| DeviceError::Keystore(format!("settings key derivation: {e}")))?;
+        let data = std::fs::read(&enc_path)
+            .map_err(|e| DeviceError::Keystore(format!("reading settings.enc: {e}")))?;
+        let envelope = crate::vault::envelope::deserialize(&data)
+            .map_err(|e| DeviceError::Keystore(format!("settings.enc envelope: {e}")))?;
+        let plain = crate::crypto::aead::decrypt(&key, &envelope).map_err(|_| {
+            if crate::vault::space_meta::shape_flipped(vault_path) {
+                // Post-flip vaults derive the settings key from HKDF(SMK);
+                // the phrase-recovered root key cannot decrypt them. That
+                // is fail-closed by design (D74: phrase operations are a
+                // personal-vault surface), so name the real reason.
+                DeviceError::EnrollmentRejected(
+                    "phrase enrollment is disabled on team-shape Spaces; use the Space Recovery Kit"
+                        .into(),
+                )
+            } else {
+                DeviceError::Keystore(
+                    "settings.enc decrypt failed for the phrase-recovered root key".into(),
+                )
+            }
+        })?;
+        let enc: crate::vault::manifest::EncryptedSettings = serde_json::from_slice(&plain)
+            .map_err(|e| DeviceError::Keystore(format!("settings.enc parse: {e}")))?;
+        Ok(enc.enrollment_policy)
+    }
 
     /// Determine current epoch from vault cipher headers or RK canary.
     fn determine_epoch_from_vault(vault_path: &Path) -> u64 {
@@ -2634,7 +2677,55 @@ mod tests {
         )
         .unwrap();
 
+        write_settings_enc(
+            &vault_path,
+            &ceremony.root_key,
+            crate::vault::manifest::EnrollmentPolicy::Personal,
+        );
+
         (dir, vault_path, phrase_str)
+    }
+
+    /// Write meta/settings.enc encrypted under `root_key`'s settings key,
+    /// mirroring VaultHandle::save_settings' envelope shape. The phrase
+    /// enrollment reads the policy from this file; the fixture must write
+    /// it or the enrollment fail-closes to Strict.
+    fn write_settings_enc(
+        vault_path: &std::path::Path,
+        root_key: &RootKey,
+        policy: crate::vault::manifest::EnrollmentPolicy,
+    ) {
+        use uuid::Uuid;
+        let key = crate::crypto::hkdf_derive::derive_settings_key(root_key.as_bytes()).unwrap();
+        let json = serde_json::to_vec(&serde_json::json!({
+            "vault_timeout": "15m",
+            "enrollment_policy": policy,
+        }))
+        .unwrap();
+        let nonce = [7u8; 12];
+        let header = crate::types::EnvelopeHeader {
+            version: crate::BALUARD_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
+            key_epoch: 1,
+            nonce_counter: u64::from_le_bytes(nonce[..8].try_into().unwrap()),
+            update_seq: 1,
+            tier: None,
+        };
+        let aad = crate::crypto::aead::build_aad(
+            Uuid::nil(),
+            crate::types::ObjectType::Meta,
+            Uuid::nil(),
+            None,
+            crate::ALG_AES_256_GCM,
+            1,
+            1,
+        );
+        let envelope = crate::crypto::aead::encrypt(&key, &json, &aad, &nonce, header).unwrap();
+        std::fs::write(
+            vault_path.join("meta/settings.enc"),
+            crate::vault::envelope::serialize(&envelope).unwrap(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -2656,13 +2747,7 @@ mod tests {
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (p2, x2_sk, e2_sk) = make_payload_with_keys("Device B (via phrase)");
         let result = mgr2
-            .enroll_with_recovery_phrase(
-                &p2,
-                &phrase_str,
-                x2_sk,
-                e2_sk,
-                crate::vault::manifest::EnrollmentPolicy::Personal,
-            )
+            .enroll_with_recovery_phrase(&p2, &phrase_str, x2_sk, e2_sk)
             .unwrap();
 
         // Verify: both devices in registry (old device preserved)
@@ -2696,13 +2781,7 @@ mod tests {
 
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (p2, x2_sk, e2_sk) = make_payload_with_keys("Attacker");
-        let result = mgr2.enroll_with_recovery_phrase(
-            &p2,
-            &wrong_phrase,
-            x2_sk,
-            e2_sk,
-            crate::vault::manifest::EnrollmentPolicy::Personal,
-        );
+        let result = mgr2.enroll_with_recovery_phrase(&p2, &wrong_phrase, x2_sk, e2_sk);
         assert!(result.is_err(), "wrong phrase must be rejected");
     }
 
@@ -2719,13 +2798,7 @@ mod tests {
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (mut stale, x_sk, e_sk) = make_payload_with_keys("Stale");
         stale.timestamp = 0; // ancient
-        let result = mgr2.enroll_with_recovery_phrase(
-            &stale,
-            &phrase_str,
-            x_sk,
-            e_sk,
-            crate::vault::manifest::EnrollmentPolicy::Personal,
-        );
+        let result = mgr2.enroll_with_recovery_phrase(&stale, &phrase_str, x_sk, e_sk);
         assert!(result.is_err(), "stale timestamp must be rejected");
     }
 
@@ -2742,23 +2815,11 @@ mod tests {
         // Use same nonce twice
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (p1, x1_sk, e1_sk) = make_payload_with_keys("Replay Test 1");
-        mgr2.enroll_with_recovery_phrase(
-            &p1,
-            &phrase_str,
-            x1_sk,
-            e1_sk,
-            crate::vault::manifest::EnrollmentPolicy::Personal,
-        )
-        .unwrap();
+        mgr2.enroll_with_recovery_phrase(&p1, &phrase_str, x1_sk, e1_sk)
+            .unwrap();
         let (mut p2, x2_sk, e2_sk) = make_payload_with_keys("Replay Test 2");
         p2.nonce = p1.nonce.clone(); // same nonce
-        let result = mgr2.enroll_with_recovery_phrase(
-            &p2,
-            &phrase_str,
-            x2_sk,
-            e2_sk,
-            crate::vault::manifest::EnrollmentPolicy::Personal,
-        );
+        let result = mgr2.enroll_with_recovery_phrase(&p2, &phrase_str, x2_sk, e2_sk);
         assert!(result.is_err(), "replayed nonce must be rejected");
     }
 
@@ -2775,13 +2836,7 @@ mod tests {
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (p2, x_sk, e_sk) = make_payload_with_keys("Phrase Device");
         let _ = mgr2
-            .enroll_with_recovery_phrase(
-                &p2,
-                &phrase_str,
-                x_sk,
-                e_sk,
-                crate::vault::manifest::EnrollmentPolicy::Personal,
-            )
+            .enroll_with_recovery_phrase(&p2, &phrase_str, x_sk, e_sk)
             .unwrap();
 
         // Verify: keywrap file written for new device
@@ -2807,13 +2862,7 @@ mod tests {
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (p2, x_sk, e_sk) = make_payload_with_keys("New Device (e2e)");
         let result = mgr2
-            .enroll_with_recovery_phrase(
-                &p2,
-                &phrase_str,
-                x_sk,
-                e_sk,
-                crate::vault::manifest::EnrollmentPolicy::Personal,
-            )
+            .enroll_with_recovery_phrase(&p2, &phrase_str, x_sk, e_sk)
             .unwrap();
 
         // The method returned the private keys — simulate the new device
@@ -2863,14 +2912,70 @@ mod tests {
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let mut p1_clone = make_payload_with_keys("Device A clone");
         p1_clone.0.device_id = p1.device_id; // same device_id
-        let result = mgr2.enroll_with_recovery_phrase(
-            &p1_clone.0,
-            &phrase_str,
-            p1_clone.1,
-            p1_clone.2,
-            crate::vault::manifest::EnrollmentPolicy::Personal,
-        );
+        let result =
+            mgr2.enroll_with_recovery_phrase(&p1_clone.0, &phrase_str, p1_clone.1, p1_clone.2);
         assert!(result.is_err(), "already-enrolled device must be rejected");
+    }
+
+    #[test]
+    fn enroll_with_phrase_strict_policy_rejected_with_real_settings() {
+        // The fixture writes Personal; rewrite it Strict. The policy must
+        // come from the decrypted settings, not from a locked-read default.
+        let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
+        // Recover the root key to re-encrypt settings: simplest is to redo
+        // the ceremony's unwrap via the phrase itself.
+        use crate::recovery::RecoveryPhrase;
+        let recovery = RecoveryPhrase::from_phrase(&phrase_str).unwrap();
+        let recovery_key = recovery.derive_key();
+        let recovery_x25519 =
+            x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(&recovery_key[..32]).unwrap());
+        let recovery_json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(vault_path.join("meta/recovery.json")).unwrap(),
+        )
+        .unwrap();
+        let eph_pub = hex::decode(recovery_json["ephemeral_public"].as_str().unwrap()).unwrap();
+        let ct = hex::decode(recovery_json["encrypted_key"].as_str().unwrap()).unwrap();
+        let mut tag = [0u8; 16];
+        tag.copy_from_slice(&hex::decode(recovery_json["tag"].as_str().unwrap()).unwrap());
+        let root_bytes = crate::crypto::hpke_wrap::unwrap_key(
+            &eph_pub,
+            &ct,
+            &tag,
+            &recovery_x25519,
+            "recovery-keywrap",
+        )
+        .unwrap();
+        write_settings_enc(
+            &vault_path,
+            &RootKey::from_bytes(root_bytes.try_into().unwrap()),
+            crate::vault::manifest::EnrollmentPolicy::Strict,
+        );
+
+        let mut mgr = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let (p, x_sk, e_sk) = make_payload_with_keys("Should Be Rejected");
+        let result = mgr.enroll_with_recovery_phrase(&p, &phrase_str, x_sk, e_sk);
+        let err = match result {
+            Ok(_) => panic!("Strict vault must reject phrase enrollment"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("Strict"),
+            "expected Strict rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn enroll_with_phrase_missing_settings_fails_closed_strict() {
+        // A vault without settings.enc (legacy/foreign) enforces Strict —
+        // the pre-fix behavior was to enroll with whatever the caller
+        // guessed.
+        let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
+        std::fs::remove_file(vault_path.join("meta/settings.enc")).unwrap();
+
+        let mut mgr = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let (p, x_sk, e_sk) = make_payload_with_keys("Should Be Rejected");
+        let result = mgr.enroll_with_recovery_phrase(&p, &phrase_str, x_sk, e_sk);
+        assert!(result.is_err(), "missing settings.enc must fail closed");
     }
 }
 
