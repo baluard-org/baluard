@@ -225,6 +225,27 @@ pub struct ApprovalSignature {
     pub signature: Vec<u8>,
 }
 
+/// Self-proving roster extension (multi-device e2e spike, 2026-10-03):
+/// authorization for a phrase-enrolled device's roster entry, committed
+/// alongside the entry in meta/enrollments/<device_id>.proof. The
+/// signature is an Ed25519 signature over the canonical JSON of `device`,
+/// keyed by HKDF(RootKey, "baluard-enroll-proof-v1") — producing or
+/// verifying one requires the Root Key, so the recovery phrase stays the
+/// sole trust anchor for self-enrollment commits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollmentProof {
+    /// Format version. Must be 1.
+    pub version: u32,
+    /// Root-key epoch the proof signature derives from. A rotation
+    /// invalidates outstanding proofs (the derived key changes with the
+    /// Root Key), which fail-closed at the next pull.
+    pub epoch: u64,
+    /// The roster entry this proof authorizes.
+    pub device: crate::vault::manifest::DeviceEntry,
+    /// Base64 Ed25519 signature over serde_json::to_vec(&device).
+    pub signature: String,
+}
+
 /// Authorization for enrolling a new device.
 ///
 /// Two paths, controlled by `VaultSettings::enrollment_policy`:
@@ -1668,6 +1689,36 @@ impl DeviceManager {
         // on legacy vaults without a member directory).
         crate::vault::members::bind_to_owner(&vault_path, payload.device_id)?;
 
+        // Self-proving roster extension: write the enrollment proof so THIS
+        // device's first signed commit is acceptable to every other device.
+        // Without it the first-parent roster on the other devices lacks this
+        // key and their pulls refuse the whole batch (multi-device e2e
+        // spike, 2026-10-03). The proof is a Root-Key-derived Ed25519
+        // signature over this device's roster entry — possession of the
+        // recovery phrase is the only way to produce one.
+        let proof_epoch = Self::determine_epoch_from_vault(&vault_path);
+        Self::write_enrollment_proof(&vault_path, &entry, root_key.as_bytes(), proof_epoch)?;
+
+        // Close the clone-time window: this history's enrollment proofs (if
+        // any) were only STRUCTURALLY checked at clone — the cloner had no
+        // Root Key. Now the phrase recovered it, so re-verify the whole
+        // fetched history with root-keyed checks; a forged CURRENT-epoch
+        // enrollment in the cloned line fails the enrollment here
+        // (fail-closed). Historical-epoch proofs (a rotation happened
+        // after that join) fall back to the structural checks: the current
+        // Root Key cannot testify about proofs minted under an earlier
+        // root. Errors propagate — a broken repo or a failed derivation
+        // fails the enrollment rather than skipping the screen.
+        // No-op on vaults without a git repo.
+        #[cfg(feature = "git-sync")]
+        if vault_path.join(".git").exists() {
+            use crate::sync::engine::{EnrollVerifyKey, ProofMode, SyncEngine};
+            let vk = EnrollVerifyKey::from_root_key(root_key.as_bytes(), proof_epoch)?;
+            let engine = SyncEngine::new(&vault_path, &payload.device_id.to_string(), None);
+            let repo = engine.open_repo()?;
+            SyncEngine::verify_fetched_history(&repo, ProofMode::RootAllowHistorical, Some(&vk))?;
+        }
+
         // Peer review fix: device-privkey.json is the CALLER's responsibility.
         // The method returns the private keys in RecoveryResult; the caller
         // persists them. Writing here too caused a second overwrite with
@@ -1732,6 +1783,48 @@ impl DeviceManager {
         let enc: crate::vault::manifest::EncryptedSettings = serde_json::from_slice(&plain)
             .map_err(|e| DeviceError::Keystore(format!("settings.enc parse: {e}")))?;
         Ok(enc.enrollment_policy)
+    }
+
+    /// Derive the Ed25519 signing key for enrollment proofs from the Root
+    /// Key. Writer and verifier share this single derivation.
+    pub(crate) fn derive_proof_signing_key(
+        root_key: &[u8; 64],
+    ) -> Result<ed25519_dalek::SigningKey, BaluardError> {
+        let seed = crate::crypto::hkdf_derive::derive_enrollment_proof_seed(root_key)
+            .map_err(|e| DeviceError::Keystore(format!("enroll-proof key derivation: {e}")))?;
+        Ok(ed25519_dalek::SigningKey::from_bytes(&seed))
+    }
+
+    /// Write `meta/enrollments/<device_id>.proof` for a phrase-enrolled
+    /// device. Called by `enroll_with_recovery_phrase` so the enrolling
+    /// device's FIRST signed commit can pass every other device's pull
+    /// verification despite being absent from their first-parent roster.
+    pub(crate) fn write_enrollment_proof(
+        vault_path: &Path,
+        entry: &crate::vault::manifest::DeviceEntry,
+        root_key: &[u8; 64],
+        epoch: u64,
+    ) -> Result<(), BaluardError> {
+        let signing = Self::derive_proof_signing_key(root_key)?;
+        use ed25519_dalek::Signer;
+        let canonical = serde_json::to_vec(entry)
+            .map_err(|e| DeviceError::Keystore(format!("enroll-proof canonical bytes: {e}")))?;
+        let signature = signing.sign(&canonical);
+        let proof = EnrollmentProof {
+            version: 1,
+            epoch,
+            device: entry.clone(),
+            signature: base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
+        };
+        let dir = vault_path.join("meta/enrollments");
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| DeviceError::Keystore(format!("enrollments dir: {e}")))?;
+        atomic_write(
+            &dir.join(format!("{}.proof", entry.device_id)),
+            &serde_json::to_string_pretty(&proof)
+                .map_err(|e| DeviceError::Keystore(format!("enroll-proof serialize: {e}")))?,
+        )?;
+        Ok(())
     }
 
     /// Determine current epoch from vault cipher headers or RK canary.
@@ -2976,6 +3069,51 @@ mod tests {
         let (p, x_sk, e_sk) = make_payload_with_keys("Should Be Rejected");
         let result = mgr.enroll_with_recovery_phrase(&p, &phrase_str, x_sk, e_sk);
         assert!(result.is_err(), "missing settings.enc must fail closed");
+    }
+
+    #[test]
+    fn enrollment_proof_written_and_self_consistent() {
+        // The self-proving roster extension: phrase enrollment must write
+        // meta/enrollments/<device_id>.proof whose Root-Key-derived
+        // signature verifies over exactly the roster entry it authorizes.
+        let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
+        let mut mgr = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let (p, x_sk, e_sk) = make_payload_with_keys("Proof Device");
+        let result = mgr
+            .enroll_with_recovery_phrase(&p, &phrase_str, x_sk, e_sk)
+            .unwrap();
+        let entry = result.entry.clone();
+        let root = result.root_key.clone();
+
+        let proof_path = vault_path
+            .join("meta/enrollments")
+            .join(format!("{}.proof", entry.device_id));
+        let raw = std::fs::read_to_string(&proof_path).unwrap();
+        let proof: EnrollmentProof = serde_json::from_str(&raw).unwrap();
+        assert_eq!(proof.version, 1);
+        assert_eq!(proof.device.device_id, entry.device_id);
+        assert_eq!(proof.device.signing_public_key, entry.signing_public_key);
+
+        use ed25519_dalek::Verifier;
+        let signing = DeviceManager::derive_proof_signing_key(root.as_bytes()).unwrap();
+        let canonical = serde_json::to_vec(&proof.device).unwrap();
+        let sig_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&proof.signature)
+            .unwrap();
+        let sig = ed25519_dalek::Signature::from_slice(&sig_bytes).unwrap();
+        signing
+            .verifying_key()
+            .verify(&canonical, &sig)
+            .expect("proof signature must verify under the Root-Key-derived key");
+
+        // A different Root Key must NOT verify the same proof (forgery).
+        let (other_signing, _) = crate::crypto::signature::generate_ed25519_keypair();
+        assert!(
+            other_signing
+                .verifying_key()
+                .verify(&canonical, &sig)
+                .is_err()
+        );
     }
 }
 

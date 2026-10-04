@@ -60,6 +60,61 @@ pub struct SyncEngine {
     /// (UnsignedCommitRefused); only pre-enrollment local vaults fall back
     /// to unsigned local commits.
     signing_key: Option<ed25519_dalek::SigningKey>,
+    /// Root-key-derived verifier for enrollment proofs (self-proving
+    /// roster extension, multi-device e2e spike 2026-10-03). None at
+    /// clone time (no Root Key yet): proofs pass the STRUCTURAL check
+    /// only; every unlocked device root-verifies them, and the post-enroll
+    /// full-history re-verification closes the clone window.
+    pub(crate) enroll_vk: Option<EnrollVerifyKey>,
+}
+
+/// Root-key-derived verification material for enrollment proofs: the
+/// Ed25519 verifying key from HKDF(RootKey, "baluard-enroll-proof-v1")
+/// plus the Root Key epoch it was derived at (epoch mismatch fail-closed).
+#[derive(Clone, Copy)]
+pub struct EnrollVerifyKey {
+    pub vk: ed25519_dalek::VerifyingKey,
+    pub epoch: u64,
+}
+
+impl std::fmt::Debug for EnrollVerifyKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnrollVerifyKey")
+            .field("epoch", &self.epoch)
+            .finish()
+    }
+}
+
+impl EnrollVerifyKey {
+    /// Derive from raw Root Key bytes (pull/verify paths on an unlocked
+    /// vault). The epoch pairs the key with its Root Key generation so a
+    /// proof from another epoch fails with a clear reason.
+    pub fn from_root_key(root_key: &[u8; 64], epoch: u64) -> Result<Self, BaluardError> {
+        let seed = crate::crypto::hkdf_derive::derive_enrollment_proof_seed(root_key)
+            .map_err(BaluardError::from)?;
+        let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+        Ok(Self {
+            vk: signing.verifying_key(),
+            epoch,
+        })
+    }
+}
+
+/// How strictly the enrollment-proof fallback verifies (D78). Structural:
+/// clone walk — the cloner has no Root Key, so only the proof's shape,
+/// the genuine-extension rule, and the commit signature under the claimed
+/// key apply (the documented TOFU envelope). Root: pull walk — a full
+/// Root-Keyed check; requires the verifier (team members hold no Root
+/// Key, so a None verifier means NO fallback at all, never a structural
+/// pass). RootAllowHistorical: post-enroll re-verification — same as
+/// Root, but a proof from an EARLIER epoch falls back to the structural
+/// checks: the current Root Key cannot testify about proofs minted under
+/// an earlier root that a legitimate rotation destroyed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ProofMode {
+    Structural,
+    Root,
+    RootAllowHistorical,
 }
 
 /// Fetch progress for a clone operation, surfaced from git2's
@@ -106,6 +161,13 @@ impl SyncEngine {
         self
     }
 
+    /// Attach the enrollment-proof verifier (pull/verify paths on an
+    /// unlocked vault). Callers without the Root Key (clone) omit it.
+    pub fn with_enroll_verify_key(mut self, key: EnrollVerifyKey) -> Self {
+        self.enroll_vk = Some(key);
+        self
+    }
+
     pub fn new(vault_path: &Path, device_id: &str, devkey_seal: Option<&[u8; 32]>) -> Self {
         let last_remote_head = Self::load_last_head(vault_path);
         let credential_config = CredentialConfig::load(vault_path);
@@ -128,6 +190,7 @@ impl SyncEngine {
             credential_config,
             state_machine,
             signing_key,
+            enroll_vk: None,
         }
     }
 
@@ -637,6 +700,22 @@ impl SyncEngine {
         };
         let disk_bytes =
             |p: &str| -> Option<Vec<u8>> { std::fs::read(self.vault_path.join(p)).ok() };
+        // Enrollment bootstrap (self-proving roster extension): when this
+        // device's own proof file exists on disk (just phrase-enrolled),
+        // admit the changed paths wholesale — staging mirrors the
+        // pull-side rule where the proof signature is the gate. Bootstrap
+        // ONLY: once the device is in the roster its commits verify
+        // normally, so the bypass disarms after the first commit and a
+        // planted fake proof file cannot disable staging policy forever.
+        if !roster.contains_key(&self.device_id)
+            && self
+                .vault_path
+                .join("meta/enrollments")
+                .join(format!("{}.proof", self.device_id))
+                .exists()
+        {
+            return true;
+        }
         // Structural rule 1: member records (flat meta/members/<id>.json)
         // written by a non-admin signer — own record, identity fields
         // only. Admins fall through to the table's meta/** row.
@@ -3060,7 +3139,7 @@ impl SyncEngine {
         })?;
         // P2: verify the fetched history before handing it out. Any failure
         // must not leave a checked-out unverified copy on disk.
-        if let Err(e) = Self::verify_fetched_history(&repo) {
+        if let Err(e) = Self::verify_fetched_history(&repo, ProofMode::Structural, None) {
             let _ = std::fs::remove_dir_all(target);
             return Err(e);
         }
@@ -3182,7 +3261,7 @@ impl SyncEngine {
             SyncError::Git(crate::sync::credentials::scrub_git_error(&msg))
         })?;
         // P2: verify the fetched history before handing it out.
-        if let Err(e) = Self::verify_fetched_history(&repo) {
+        if let Err(e) = Self::verify_fetched_history(&repo, ProofMode::Structural, None) {
             let _ = std::fs::remove_dir_all(target);
             return Err(e);
         }
@@ -3534,9 +3613,45 @@ impl SyncEngine {
                             &roster,
                             &signer,
                             &mut sticky_tombstoned,
+                            None,
                         )
                         .map(|_| signer)
                     });
+                // Self-proving roster extension: a signature failure against
+                // the first-parent roster may be a legitimately phrase-enrolled
+                // device's first commit. Fall back to its enrollment proof.
+                // Root mode, and never on a flipped (team-shape) vault —
+                // team members hold no Root Key, so a structural pass here
+                // would let any remote writer forge an admission.
+                let outcome = match outcome {
+                    Err(e)
+                        if matches!(&e, BaluardError::Sync(SyncError::InvalidCommitSignature))
+                            && !crate::vault::space_meta::shape_flipped(&self.vault_path) =>
+                    {
+                        match Self::enrollment_proof_fallback(
+                            repo,
+                            &commit,
+                            &roster,
+                            ProofMode::Root,
+                            self.enroll_vk.as_ref(),
+                        )? {
+                            Some((signer, extended)) => {
+                                let bootstrap_key = extended.get(&signer).copied();
+                                Self::check_commit_paths(
+                                    repo,
+                                    &commit,
+                                    &extended,
+                                    &signer,
+                                    &mut sticky_tombstoned,
+                                    bootstrap_key,
+                                )
+                                .map(|_| signer)
+                            }
+                            None => Err(e),
+                        }
+                    }
+                    other => other,
+                };
                 if let Err(e) = outcome {
                     // S1b-1: this client just DETECTED a refused commit —
                     // record it locally (best-effort, deduped per commit),
@@ -3550,6 +3665,65 @@ impl SyncEngine {
         Ok(ordered.len())
     }
 
+    /// devices.json delta for an enrollment bootstrap: every pre-existing
+    /// entry unchanged (own entry may epoch-bump), at most the signer's
+    /// own entry added, and that entry carries exactly the
+    /// proof-authorized signing key. Retained for a future narrowing of
+    /// the wholesale bootstrap admission; currently unused because the
+    /// proof signature alone is the gate.
+    #[allow(dead_code)]
+    fn registry_delta_is_own_enrollment(
+        old: Option<&[u8]>,
+        new: Option<&[u8]>,
+        signer: &str,
+        expected_pk: [u8; 32],
+    ) -> bool {
+        let (Some(old), Some(new)) = (old, new) else {
+            return false;
+        };
+        let (Ok(old_reg), Ok(new_reg)) = (
+            serde_json::from_str::<crate::devices::DeviceRegistry>(
+                std::str::from_utf8(old).unwrap_or(""),
+            ),
+            serde_json::from_str::<crate::devices::DeviceRegistry>(
+                std::str::from_utf8(new).unwrap_or(""),
+            ),
+        ) else {
+            return false;
+        };
+        let Ok(signer_id) = uuid::Uuid::parse_str(signer) else {
+            return false;
+        };
+        if old_reg.version != new_reg.version {
+            return false;
+        }
+        if new_reg.devices.len() > old_reg.devices.len() + 1 {
+            return false;
+        }
+        for (id, old_entry) in &old_reg.devices {
+            if *id == signer_id {
+                continue;
+            }
+            let Some(new_entry) = new_reg.devices.get(id) else {
+                return false;
+            };
+            if old_entry.encryption_public_key != new_entry.encryption_public_key
+                || old_entry.signing_public_key != new_entry.signing_public_key
+                || old_entry.enrolled_by != new_entry.enrolled_by
+                || old_entry.enrolled_at != new_entry.enrolled_at
+                || old_entry.name != new_entry.name
+            {
+                return false;
+            }
+        }
+        let Some(entry) = new_reg.devices.get(&signer_id) else {
+            return false;
+        };
+        hex::decode(&entry.signing_public_key)
+            .map(|pk| pk.as_slice() == expected_pk)
+            .unwrap_or(false)
+    }
+
     /// Verify an entire fetched history (clone path). Every commit is
     /// checked with the roster-snapshot rule: pre-enrollment commits (no
     /// registry on their parent line) are grandfathered; from the genesis
@@ -3558,7 +3732,16 @@ impl SyncEngine {
     /// stripped, signatures stripped) is accepted as "pre-enrollment" — an
     /// inherent TOFU limit at first clone, closed at pull time by head-anchored
     /// verification and later by P8 revocation manifests.
-    fn verify_fetched_history(repo: &Repository) -> Result<(), BaluardError> {
+    ///
+    /// `enroll_vk` enables ROOT-KEYED verification of enrollment proofs;
+    /// the clone path passes None (no Root Key yet) and proofs pass the
+    /// structural check only. The post-enroll re-verification closes that
+    /// window.
+    pub(crate) fn verify_fetched_history(
+        repo: &Repository,
+        mode: ProofMode,
+        enroll_vk: Option<&EnrollVerifyKey>,
+    ) -> Result<(), BaluardError> {
         let head = repo
             .head()
             .map_err(|e| SyncError::Git(format!("head: {e}")))?
@@ -3619,9 +3802,34 @@ impl SyncEngine {
                             &roster,
                             &signer,
                             &mut sticky_tombstoned,
+                            None,
                         )
                         .map(|_| signer)
                     });
+                let outcome = match outcome {
+                    Err(e)
+                        if matches!(&e, BaluardError::Sync(SyncError::InvalidCommitSignature)) =>
+                    {
+                        match Self::enrollment_proof_fallback(
+                            repo, &commit, &roster, mode, enroll_vk,
+                        )? {
+                            Some((signer, extended)) => {
+                                let bootstrap_key = extended.get(&signer).copied();
+                                Self::check_commit_paths(
+                                    repo,
+                                    &commit,
+                                    &extended,
+                                    &signer,
+                                    &mut sticky_tombstoned,
+                                    bootstrap_key,
+                                )
+                                .map(|_| signer)
+                            }
+                            None => Err(e),
+                        }
+                    }
+                    other => other,
+                };
                 // S1b-1: clone-path detection — NO local record here:
                 // the clone caller deletes the whole target directory on
                 // verification failure, so anything recorded would die
@@ -3631,6 +3839,120 @@ impl SyncEngine {
             }
         }
         Ok(())
+    }
+
+    /// Enrollment-proof fallback for the roster walk. When a commit's
+    /// signer is absent from its first-parent roster, accept the commit
+    /// only if its OWN tree carries a valid enrollment proof
+    /// (meta/enrollments/<device_id>.proof) whose Root-Key-derived
+    /// signature authorizes exactly the entry the commit adds to
+    /// meta/devices.json. With `enroll_vk = None` (clone path, no Root Key
+    /// yet) the Root-Key signature check is skipped — the STRUCTURAL check
+    /// (parse, genuine roster extension, commit signature under the
+    /// entry's key) still applies, and root-key authenticity is enforced
+    /// by every later pull plus the post-enroll full-history
+    /// re-verification. Returns (signer, extended roster).
+    fn enrollment_proof_fallback(
+        repo: &Repository,
+        commit: &git2::Commit<'_>,
+        parent_roster: &DeviceRoster,
+        mode: ProofMode,
+        enroll_vk: Option<&EnrollVerifyKey>,
+    ) -> Result<Option<(String, DeviceRoster)>, BaluardError> {
+        let tree = commit
+            .tree()
+            .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
+        let dir_entry = match tree.get_path(std::path::Path::new("meta/enrollments")) {
+            Ok(e) if e.kind() == Some(git2::ObjectType::Tree) => e,
+            _ => return Ok(None),
+        };
+        let dir = repo
+            .find_tree(dir_entry.id())
+            .map_err(|e| SyncError::Git(format!("enrollments tree: {e}")))?;
+        for i in 0..dir.len() {
+            let Some(te) = dir.get(i) else { continue };
+            let Some(name) = te.name() else { continue };
+            if !name.ends_with(".proof") || te.kind() != Some(git2::ObjectType::Blob) {
+                continue;
+            }
+            let blob = repo
+                .find_blob(te.id())
+                .map_err(|e| SyncError::Git(format!("proof blob: {e}")))?;
+            let Ok(proof) =
+                serde_json::from_slice::<crate::device_manager::EnrollmentProof>(blob.content())
+            else {
+                continue;
+            };
+            let entry = proof.device;
+            let entry_id = entry.device_id.to_string();
+            // Genuine extension: the entry must be absent from the parent
+            // roster and present (same signing key) in this commit's own
+            // devices.json — the proof authorizes what the commit adds.
+            if parent_roster.contains_key(&entry_id) {
+                continue;
+            }
+            let own_vk = match Self::roster_tree_lookup(repo, commit, &mut Default::default())? {
+                Some(own) => own.get(&entry_id).copied(),
+                None => None,
+            };
+            let Ok(entry_vk_bytes) = hex::decode(&entry.signing_public_key) else {
+                continue;
+            };
+            let entry_vk: [u8; 32] = match entry_vk_bytes.try_into() {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            if own_vk != Some(entry_vk) {
+                continue;
+            }
+            if proof.version != 1 {
+                continue;
+            }
+            // Root-Key verification by mode. Root and RootAllowHistorical
+            // REQUIRE a verifier: a None verifier means NO fallback at all
+            // (never a structural pass) — team members hold no Root Key, so
+            // an unverified fallback on a pull would admit forged proofs.
+            let skip_root_check = match (mode, enroll_vk) {
+                (ProofMode::Structural, _) => true,
+                (ProofMode::Root, None) | (ProofMode::RootAllowHistorical, None) => {
+                    return Ok(None);
+                }
+                (ProofMode::Root, Some(vk)) => {
+                    if proof.epoch != vk.epoch {
+                        continue;
+                    }
+                    false
+                }
+                (ProofMode::RootAllowHistorical, Some(vk)) => proof.epoch != vk.epoch,
+            };
+            if !skip_root_check {
+                let vk = enroll_vk.expect("mode match guarantees Some");
+                let sig_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&proof.signature)
+                    .ok()
+                    .and_then(|v| <[u8; 64]>::try_from(v).ok());
+                let Some(sig_bytes) = sig_bytes else { continue };
+                let canonical = serde_json::to_vec(&entry)
+                    .map_err(|e| SyncError::Git(format!("proof canonical: {e}")))?;
+                use ed25519_dalek::Verifier;
+                let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+                if vk.vk.verify(&canonical, &sig).is_err() {
+                    continue;
+                }
+            }
+            // The commit itself must be signed under the proof-authorized
+            // key — the proof admits the KEY, the signature binds the
+            // COMMIT to it.
+            let mut single: DeviceRoster = std::collections::BTreeMap::new();
+            single.insert(entry_id.clone(), entry_vk);
+            if Self::verify_commit_against_roster_static(repo, commit.id(), &single).is_err() {
+                continue;
+            }
+            let mut extended = parent_roster.clone();
+            extended.insert(entry_id.clone(), entry_vk);
+            return Ok(Some((entry_id, extended)));
+        }
+        Ok(None)
     }
 
     /// Roster in force for one commit, per the snapshot rule. `None` = the
@@ -4431,6 +4753,7 @@ impl SyncEngine {
         roster: &DeviceRoster,
         signer: &str,
         sticky_tombstoned: &mut std::collections::BTreeSet<String>,
+        bootstrap_key: Option<[u8; 32]>,
     ) -> Result<(), BaluardError> {
         // S1a: resolve the signer's role from the member directory
         // snapshot (first-parent rule). Legacy vaults (no meta/members
@@ -4511,7 +4834,16 @@ impl SyncEngine {
             let scope =
                 Self::collection_scope_for_tree(repo, &tree, parent_tree.as_ref(), member_id)?;
             for delta in diff.deltas() {
-                Self::check_delta_path(repo, &delta, roster, signer, member_id, role, &scope)?;
+                Self::check_delta_path(
+                    repo,
+                    &delta,
+                    roster,
+                    signer,
+                    member_id,
+                    role,
+                    &scope,
+                    bootstrap_key,
+                )?;
             }
         }
         if commit.parent_count() == 2 {
@@ -4624,7 +4956,16 @@ impl SyncEngine {
                 member_id,
             )?;
             for delta in residue_diff.deltas() {
-                Self::check_delta_path(repo, &delta, roster, signer, member_id, role, &scope)?;
+                Self::check_delta_path(
+                    repo,
+                    &delta,
+                    roster,
+                    signer,
+                    member_id,
+                    role,
+                    &scope,
+                    bootstrap_key,
+                )?;
             }
         }
         Ok(())
@@ -4644,11 +4985,23 @@ impl SyncEngine {
         member: Option<&str>,
         role: crate::sync::policy::CommitRole,
         scope: &crate::sync::policy::CollectionScope,
+        bootstrap_key: Option<[u8; 32]>,
     ) -> Result<(), BaluardError> {
         let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) else {
             return Ok(());
         };
         let path = path.to_string_lossy().to_string();
+        // Enrollment bootstrap (self-proving roster extension): the signer
+        // was admitted via a validated enrollment proof. The proof proves
+        // Root-Key possession, and the Root Key IS the personal vault's
+        // owner authority — a phrase holder can already decrypt and rewrite
+        // every byte of the vault. The proof signature is the gate, not the
+        // path table (which exists for team-vault role separation; team
+        // shapes refuse phrase enrollment outright). Admit the commit's
+        // paths wholesale.
+        if bootstrap_key.is_some() {
+            return Ok(());
+        }
         // S1a-4: member records (flat meta/members/<id>.json) written by a
         // non-admin signer: only the signer's OWN record, and only the
         // identity-rotation fields may change. Role, display name, and

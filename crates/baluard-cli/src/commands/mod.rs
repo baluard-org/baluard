@@ -2025,11 +2025,14 @@ fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
     // on disk without touching it.
     let handle = unlock_vault_direct(vault_path)?;
     let seal = handle.devkey_seal();
-    let engine = baluard_core::sync::engine::SyncEngine::new(
+    let mut engine = baluard_core::sync::engine::SyncEngine::new(
         path,
         &first_device_id(vault_path),
         seal.as_ref(),
     );
+    if let Some(vk) = handle.enroll_verify_key() {
+        engine = engine.with_enroll_verify_key(vk);
+    }
     engine.recover_state()?;
     let repo = engine.open_repo()?;
     let result = engine.pull(&repo, "origin")?;
