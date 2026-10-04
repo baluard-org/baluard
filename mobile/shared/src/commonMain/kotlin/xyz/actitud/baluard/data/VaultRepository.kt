@@ -823,6 +823,22 @@ class VaultRepository {
         vault.setSettings("""{"vault_timeout": "$token"}""")
     }
 
+    /** Import entries from an external password manager (G2). Returns the
+     * daemon-shaped summary JSON {imported, skipped, folders_created, errors}. */
+    suspend fun importData(vault: MobileVault, format: String, data: ByteArray): String =
+        vault.importData(format, data)
+
+    /** Export every entry as UNENCRYPTED Bitwarden JSON/CSV (G2). */
+    suspend fun exportData(vault: MobileVault, format: String): String =
+        vault.exportData(format)
+
+    /** Master-password re-prompt verification (G18): opens a temporary
+     * handle and actually checks the password (unlock() short-circuits Ok
+     * on an already-unlocked vault and would accept anything). Throws on
+     * wrong password; returns the daemon's grant expiry (unix seconds). */
+    suspend fun repromptVerify(vault: MobileVault, masterPassword: String): ULong =
+        vault.repromptVerify(masterPassword)
+
     companion object {
         const val DEFAULT_VAULT_TIMEOUT = "15m"
 

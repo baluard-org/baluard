@@ -191,12 +191,16 @@ object AutofillSession {
     /**
      * Full credential for a matched id: (username, password). Fetched only
      * here, only for entries about to be offered as datasets; passwords are
-     * never kept beyond the returned pair.
+     * never kept beyond the returned pair. Reprompt-protected entries are
+     * never autofilled (G18): the flag means every reveal demands the
+     * master password, which a background autofill flow cannot ask for.
      */
     suspend fun credential(id: String): Pair<String?, String?>? {
         val v = vault?.takeIf { it.isUnlocked() } ?: return null
         val raw = runCatching { v.getCipher(id, true) }.getOrNull() ?: return null
         val o = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        val reprompt = o.opt("reprompt")
+        if (reprompt == true || reprompt == "true") return null
         val username = o.opt("username") as? String
         val password = o.opt("password") as? String
         return username to password
