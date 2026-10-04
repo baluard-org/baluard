@@ -125,6 +125,10 @@ struct Inner {
     /// zeroized on `deactivate`. Opens the sealed devkey file for commit
     /// signing; the subkey, never the KEK, lives here.
     devkey_seal: Option<[u8; 32]>,
+    /// Enrollment-proof verifier (self-proving roster extension) captured
+    /// at `activate`; a plain verifying key, nothing secret. Threads
+    /// root-keyed proof checks into background pulls.
+    enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
     /// Live debounce task. Replaced on each mutation (timer reset).
     debounce: Option<JoinHandle<()>>,
     /// Live background loop (pull + offline retry). One per coordinator.
@@ -161,6 +165,7 @@ impl AutoSyncHandle {
                 pending_conflicts: Vec::new(),
                 device_id: String::new(),
                 devkey_seal: None,
+                enroll_vk: None,
                 debounce: None,
                 loop_handle: None,
                 generation: 0,
@@ -344,7 +349,12 @@ impl AutoSyncHandle {
     /// `on_background` (lifecycle hooks fire without device context). It is
     /// fixed for the coordinator's lifetime; a host that renames its device
     /// must `deactivate`/`activate` to update it (peer review 2026-07-23).
-    pub async fn activate(&self, device_id: String, devkey_seal: Option<[u8; 32]>) {
+    pub async fn activate(
+        &self,
+        device_id: String,
+        devkey_seal: Option<[u8; 32]>,
+        enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
+    ) {
         let mut g = self.inner.lock().await;
         if g.active {
             return;
@@ -352,6 +362,7 @@ impl AutoSyncHandle {
         g.active = true;
         g.device_id = device_id.clone();
         g.devkey_seal = devkey_seal;
+        g.enroll_vk = enroll_vk;
         g.state = AutoSyncState::Idle;
         let me = self.clone();
         let gen_id = g.generation;
@@ -379,6 +390,18 @@ impl AutoSyncHandle {
     /// index, silently wedging auto-sync). The on-disk merge conflict is NOT
     /// touched here; the next activate + sync cycle re-detects it and
     /// re-surfaces it as NeedsDecision.
+    /// Refresh the enrollment-proof verifier after a Root Key rotation:
+    /// background pulls keep refusing new-epoch proofs until this lands.
+    pub async fn refresh_enroll_vk(
+        &self,
+        enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
+    ) {
+        let mut g = self.inner.lock().await;
+        if g.active {
+            g.enroll_vk = enroll_vk;
+        }
+    }
+
     pub async fn deactivate(&self) {
         let mut g = self.inner.lock().await;
         g.generation = g.generation.wrapping_add(1);
@@ -394,6 +417,7 @@ impl AutoSyncHandle {
             use zeroize::Zeroize;
             k.zeroize();
         }
+        g.enroll_vk = None;
         if let Some(h) = g.debounce.take() {
             h.abort();
         }
@@ -419,7 +443,7 @@ impl AutoSyncHandle {
     /// as the shared body of the focus trigger. Respects the cycle_lock so it
     /// can't race a debounce push. No-op if inactive or a cycle is in flight.
     pub async fn pull_only(&self, device_id: String) {
-        let (generation, devkey_seal) = {
+        let (generation, devkey_seal, enroll_vk) = {
             let g = self.inner.lock().await;
             if !g.active {
                 return;
@@ -436,7 +460,7 @@ impl AutoSyncHandle {
                 log::debug!("[autosync] pull_only skipped: conflict paused (NeedsDecision)");
                 return;
             }
-            (g.generation, g.devkey_seal)
+            (g.generation, g.devkey_seal, g.enroll_vk)
         };
         // Don't race a debounce push or another cycle.
         let lock_guard = match self.cycle_lock.try_lock() {
@@ -450,7 +474,7 @@ impl AutoSyncHandle {
         };
         let vault_path = self.vault_path.clone();
         let outcome = tokio::task::spawn_blocking(move || {
-            run_pull_only(&vault_path, &device_id, devkey_seal.as_ref())
+            run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
         })
         .await;
         drop(lock_guard);
@@ -541,14 +565,14 @@ impl AutoSyncHandle {
     /// passes a shorter budget ([`BG_FLUSH_TIMEOUT`]) so a mobile OS
     /// background-task kill doesn't leak the pool thread against a 60s wall.
     async fn fire_sync(&self, device_id: String, generation: u64, timeout: std::time::Duration) {
-        let devkey_seal = {
+        let (devkey_seal, enroll_vk) = {
             let mut g = self.inner.lock().await;
             if !g.active || g.generation != generation {
                 return;
             }
             g.state = AutoSyncState::Syncing;
             g.pending = 0;
-            g.devkey_seal
+            (g.devkey_seal, g.enroll_vk)
         };
 
         // C3 fix: hold the cycle lock across the blocking work so two cycles
@@ -570,7 +594,7 @@ impl AutoSyncHandle {
             timeout,
             tokio::task::spawn_blocking({
                 let vault_path = self.vault_path.clone();
-                move || run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref())
+                move || run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
             }),
         )
         .await;
@@ -664,19 +688,19 @@ impl AutoSyncHandle {
             // Pull-only cycle (no commit/push): just reconcile remote changes.
             // C1: read the devkey seal under the same lock as the liveness
             // check above it.
-            let devkey_seal = {
+            let (devkey_seal, enroll_vk) = {
                 let g = self.inner.lock().await;
                 if !g.active || g.generation != generation {
                     return;
                 }
-                g.devkey_seal
+                (g.devkey_seal, g.enroll_vk)
             };
             let vault_path = self.vault_path.clone();
             let dn = device_id.clone();
             let outcome = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
-                    run_pull_only(&vault_path, &dn, devkey_seal.as_ref())
+                    run_pull_only(&vault_path, &dn, devkey_seal.as_ref(), enroll_vk)
                 }),
             )
             .await;
@@ -727,10 +751,14 @@ fn run_sync_cycle(
     vault_path: &Path,
     device_id: &str,
     devkey_seal: Option<&[u8; 32]>,
+    enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
 ) -> Result<SyncOutcome, String> {
     use baluard_core::sync::engine::{ConflictResolution, SyncCycleOutcome, SyncEngine};
 
-    let engine = SyncEngine::new(vault_path, device_id, devkey_seal);
+    let mut engine = SyncEngine::new(vault_path, device_id, devkey_seal);
+    if let Some(vk) = enroll_vk {
+        engine = engine.with_enroll_verify_key(vk);
+    }
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     // Phase 2b: opt in to field-level resolution. On conflict, PAUSE the cycle
     // (no merge commit, no push) and surface the PendingConflictState to the
@@ -752,6 +780,7 @@ fn run_sync_cycle(
     _vault_path: &Path,
     _device_name: &str,
     _devkey_seal: Option<&[u8; 32]>,
+    _enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
 ) -> Result<SyncOutcome, String> {
     Err("git-sync feature disabled".into())
 }
@@ -763,12 +792,16 @@ fn run_pull_only(
     vault_path: &Path,
     device_id: &str,
     devkey_seal: Option<&[u8; 32]>,
+    enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
 ) -> Result<PullOutcome, String> {
     use baluard_core::sync::engine::{
         PullResult, SyncEngine, is_access_denied_error, is_network_error,
     };
 
-    let engine = SyncEngine::new(vault_path, device_id, devkey_seal);
+    let mut engine = SyncEngine::new(vault_path, device_id, devkey_seal);
+    if let Some(vk) = enroll_vk {
+        engine = engine.with_enroll_verify_key(vk);
+    }
     let repo = match engine.open_repo() {
         Ok(r) => r,
         // Access-denied FIRST: a provider strike surfaces as an HTTP
@@ -818,6 +851,7 @@ fn run_pull_only(
     _vault_path: &Path,
     _device_name: &str,
     _devkey_seal: Option<&[u8; 32]>,
+    _enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
 ) -> Result<PullOutcome, String> {
     Ok(PullOutcome::Fresh)
 }
@@ -856,7 +890,7 @@ mod tests {
 
         // activate is a no-op without a real remote, but should not populate
         // pending_conflicts either.
-        h.activate("test-device".to_string(), None).await;
+        h.activate("test-device".to_string(), None, None).await;
         assert_eq!(h.pending_conflict_count().await, 0);
 
         // deactivate must reset to Idle + drain any pending conflicts.
@@ -912,7 +946,7 @@ mod tests {
         // because it only checks `active`, not remote reachability.
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string(), None).await;
+        h.activate("test-device".to_string(), None, None).await;
 
         h.on_mutation("test-device".to_string()).await;
         let s = h.status().await;
@@ -942,7 +976,7 @@ mod tests {
         // 5s-wait path would still show pending > 0 and Dirty here.
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string(), None).await;
+        h.activate("test-device".to_string(), None, None).await;
         h.on_mutation("test-device".to_string()).await;
         assert_eq!(h.status().await.state, AutoSyncState::Dirty);
 
@@ -967,7 +1001,7 @@ mod tests {
         // mobile from firing empty push cycles every time the app backgrounds.
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string(), None).await;
+        h.activate("test-device".to_string(), None, None).await;
         assert_eq!(h.status().await.state, AutoSyncState::Idle);
 
         h.on_background().await; // must not panic, must not change state
@@ -985,7 +1019,7 @@ mod tests {
         // requires a real two-device git fixture; here we prove the guard.)
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string(), None).await;
+        h.activate("test-device".to_string(), None, None).await;
         assert_eq!(h.status().await.state, AutoSyncState::Idle);
 
         // Idle: no-op. We can't observe "did not pull" directly without a
@@ -1017,7 +1051,7 @@ mod tests {
         // than running and settling to Idle/Offline).
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string(), None).await;
+        h.activate("test-device".to_string(), None, None).await;
         h.force_state_for_test(AutoSyncState::NeedsDecision).await;
         assert_eq!(h.status().await.state, AutoSyncState::NeedsDecision);
 

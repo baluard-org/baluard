@@ -332,6 +332,14 @@ impl VaultState {
         g.as_ref().and_then(|h| h.devkey_seal())
     }
 
+    /// Enrollment-proof verifier from the unlocked handle; `None` while
+    /// locked. Threads root-keyed proof verification into sync paths the
+    /// same way devkey_seal threads commit signing.
+    pub async fn enroll_verify_key(&self) -> Option<baluard_core::sync::engine::EnrollVerifyKey> {
+        let g = self.inner.read().await;
+        g.as_ref().and_then(|h| h.enroll_verify_key())
+    }
+
     /// Unlock the vault with the master password.
     ///
     /// KDF derivation (Argon2id) runs OUTSIDE the write lock to avoid
@@ -411,6 +419,8 @@ impl VaultState {
                 .unwrap_or_default();
             // C1: seal subkey from the just-unlocked handle (never the KEK).
             let devkey_seal = guard.as_ref().and_then(|h| h.devkey_seal());
+            // Enrollment-proof verifier (public key material only).
+            let enroll_vk = guard.as_ref().and_then(|h| h.enroll_verify_key());
             // Drop the handle guard before the post-unlock tail: the
             // no-remote expiry sweep takes the write lock and would
             // self-deadlock behind it.
@@ -427,7 +437,9 @@ impl VaultState {
                 // E2E harness opt-out: explicit sync commands in tests must
                 // not race the debounced background push/pull.
                 if has_remote && std::env::var("BALUARD_AUTOSYNC").ok().as_deref() != Some("0") {
-                    self.autosync.activate(device_id.clone(), devkey_seal).await;
+                    self.autosync
+                        .activate(device_id.clone(), devkey_seal, enroll_vk)
+                        .await;
                     // Pull remote changes the moment the vault opens so the UI
                     // reflects other-device edits immediately (event-driven,
                     // not waiting on the 30-min idle cadence). Spawned off the
@@ -3701,6 +3713,12 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
         handle.rotate_root_key().map_err(|e| e.to_string())?;
+        // D78: the autosync coordinator caches the enrollment-proof
+        // verifier at activation; rotation invalidates it. Refresh so
+        // background pulls accept new-epoch proofs without a relock.
+        let enroll_vk = handle.enroll_verify_key();
+        drop(guard);
+        self.autosync.refresh_enroll_vk(enroll_vk).await;
         Ok(serde_json::json!({ "ok": true }).to_string())
     }
 
@@ -4132,21 +4150,28 @@ impl VaultState {
             return;
         }
         let vault_path = self.vault_path.clone();
-        let (device_id, seal) = {
+        let (device_id, seal, enroll_vk) = {
             let g = self.inner.read().await;
             match g.as_ref() {
-                Some(h) if h.is_unlocked() => (h.device_id.to_string(), h.devkey_seal()),
+                Some(h) if h.is_unlocked() => (
+                    h.device_id.to_string(),
+                    h.devkey_seal(),
+                    h.enroll_verify_key(),
+                ),
                 _ => return,
             }
         };
         let _ = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || {
-                let engine = baluard_core::sync::engine::SyncEngine::new(
+                let mut engine = baluard_core::sync::engine::SyncEngine::new(
                     &vault_path,
                     &device_id,
                     seal.as_ref(),
                 );
+                if let Some(vk) = enroll_vk {
+                    engine = engine.with_enroll_verify_key(vk);
+                }
                 if let Ok(repo) = engine.open_repo() {
                     let _ = engine.run_sync_cycle(&repo);
                 }
@@ -6472,6 +6497,12 @@ impl VaultState {
             "revoked_name": result.revoked_name,
             "new_epoch": result.new_epoch,
         });
+        // D78: rekey bumped the Root Key epoch — refresh the autosync
+        // coordinator's cached enrollment-proof verifier so background
+        // pulls accept new-epoch proofs.
+        let enroll_vk = handle.enroll_verify_key();
+        drop(guard);
+        self.autosync.refresh_enroll_vk(enroll_vk).await;
         Ok(json.to_string())
     }
 

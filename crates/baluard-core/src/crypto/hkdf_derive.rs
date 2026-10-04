@@ -10,6 +10,7 @@ use crate::error::CryptoError;
 
 const SESSION_INFO: &[u8] = b"baluard-session-v1";
 const SYNC_INFO: &[u8] = b"baluard-sync-v1";
+const ENROLL_PROOF_INFO: &[u8] = b"baluard-enroll-proof-v1";
 /// Domain separation for the device-privkey seal subkey (C1).
 /// Derives from the KEK so the seal opens exactly when master-password
 /// material is present (creation, unlock, PIN-escrowed KEK).
@@ -127,6 +128,19 @@ pub fn derive_settings_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
     let mut key = [0u8; 32];
     hkdf.expand(SETTINGS_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
+/// Derive the 32-byte Ed25519 seed for enrollment-proof signatures.
+///
+/// Only holders of the Root Key can produce (or verify) the signature that
+/// authorizes a phrase-enrolled device's roster entry, so the recovery
+/// phrase remains the sole trust anchor for self-enrollment commits.
+pub fn derive_enrollment_proof_seed(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(ENROLL_PROOF_INFO, &mut key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }

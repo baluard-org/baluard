@@ -4339,9 +4339,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // pool, bounded by SYNC_OP_TIMEOUT (see sync.remote).
             let vault_path = state.vault_path.clone();
             let seal = state.devkey_seal().await;
+            let enroll_vk = state.enroll_verify_key().await;
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
-                tokio::task::spawn_blocking(move || sync_pull(&vault_path, seal.as_ref())),
+                tokio::task::spawn_blocking(move || {
+                    sync_pull(&vault_path, seal.as_ref(), enroll_vk)
+                }),
             )
             .await;
             match joined {
@@ -4428,7 +4431,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     let dn = first_device_id(&state.vault_path);
                     // C1: seal subkey for the coordinator's signed commits.
                     let seal = state.devkey_seal().await;
-                    state.autosync.activate(dn, seal).await;
+                    let enroll_vk = state.enroll_verify_key().await;
+                    state.autosync.activate(dn, seal, enroll_vk).await;
                 }
             }
             let status = state.autosync.status().await;
@@ -5512,12 +5516,16 @@ fn sync_push(
 fn sync_pull(
     vault_path: &std::path::Path,
     devkey_seal: Option<&[u8; 32]>,
+    enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
 ) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(
+    let mut engine = baluard_core::sync::engine::SyncEngine::new(
         vault_path,
         &first_device_id(vault_path),
         devkey_seal,
     );
+    if let Some(vk) = enroll_vk {
+        engine = engine.with_enroll_verify_key(vk);
+    }
     engine.recover_state().map_err(|e| format!("{e}"))?;
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
@@ -5918,7 +5926,11 @@ fn sync_push(_p: &std::path::Path) -> Result<String, String> {
     Err("git-sync feature not enabled".into())
 }
 #[cfg(not(feature = "git-sync"))]
-fn sync_pull(_p: &std::path::Path) -> Result<String, String> {
+fn sync_pull(
+    _p: &std::path::Path,
+    _s: Option<&[u8; 32]>,
+    _vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
+) -> Result<String, String> {
     Err("git-sync feature not enabled".into())
 }
 #[cfg(not(feature = "git-sync"))]
