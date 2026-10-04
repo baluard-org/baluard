@@ -88,6 +88,7 @@ pub fn handle_init(
     flag_theme: Option<String>,
     flag_lang: Option<String>,
     flag_auto_lock: Option<u32>,
+    json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let profile = parse_profile(profile_str)?;
 
@@ -208,7 +209,9 @@ pub fn handle_init(
         None => None, // use creator default (15m)
     };
 
-    println!("Creating vault...");
+    if !json {
+        println!("Creating vault...");
+    }
 
     // Pre-flight: check slug collision before writing any files
     let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
@@ -227,7 +230,9 @@ pub fn handle_init(
                 eprintln!("error: vault directory already exists: {}", p.display());
                 std::process::exit(1);
             }
-            println!("Vault path: {}", p.display());
+            if !json {
+                println!("Vault path: {}", p.display());
+            }
             p
         } else {
             std::path::PathBuf::from(vault_path)
@@ -259,6 +264,24 @@ pub fn handle_init(
         })?;
         reg.set_active(s)?;
         reg.save_locked()?;
+    }
+
+    // Scripting/harness mode: one JSON line, no decorated output, no
+    // interactive verification. Callers parse the phrase to enroll other
+    // devices (multi-device E2E flows).
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "vault_id": secrets.vault_id.to_string(),
+                "device_id": secrets.device_id.to_string(),
+                "path": resolved_path.display().to_string(),
+                "slug": slug,
+                "trust_fingerprint": hex::encode(secrets.trust_fingerprint),
+                "recovery_phrase": secrets.recovery_phrase.phrase(),
+            })
+        );
+        return Ok(());
     }
 
     println!();
@@ -449,7 +472,7 @@ fn unlock_daemon(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>>
     }
 
     // Prompt and unlock
-    let mut password = prompt_password("Master password: ")?;
+    let mut password = daemon_master_password("Master password: ")?;
     let resp = client::request_to("vault.unlock", &password, socket)?;
     password.zeroize();
     if !resp.success {
@@ -1438,6 +1461,7 @@ pub fn handle_enroll_with_phrase(
     mode: ConnectMode,
     vault_path: &str,
     phrase: Option<&str>,
+    yes: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use baluard_core::device_manager::{DeviceManager, EnrollmentPayload};
     use baluard_core::vault::handle::VaultHandle;
@@ -1469,17 +1493,19 @@ pub fn handle_enroll_with_phrase(
     }
 
     // Warn the user about what this does
-    eprintln!("⚠️  WARNING: This will add this device to an existing vault.");
-    eprintln!("    The recovery phrase is the vault's root authority.");
-    eprintln!("    Anyone with this phrase has full access to the vault.");
-    eprintln!("    Only proceed if you trust the source of this phrase.");
-    eprint!("Type 'enroll' to confirm: ");
-    use std::io::Write;
-    std::io::stderr().flush()?;
-    let mut confirm = String::new();
-    std::io::stdin().read_line(&mut confirm)?;
-    if confirm.trim() != "enroll" {
-        return Err("Aborted.".into());
+    if !yes {
+        eprintln!("⚠️  WARNING: This will add this device to an existing vault.");
+        eprintln!("    The recovery phrase is the vault's root authority.");
+        eprintln!("    Anyone with this phrase has full access to the vault.");
+        eprintln!("    Only proceed if you trust the source of this phrase.");
+        eprint!("Type 'enroll' to confirm: ");
+        use std::io::Write;
+        std::io::stderr().flush()?;
+        let mut confirm = String::new();
+        std::io::stdin().read_line(&mut confirm)?;
+        if confirm.trim() != "enroll" {
+            return Err("Aborted.".into());
+        }
     }
 
     match mode {
@@ -2121,6 +2147,23 @@ fn sync_log_direct(_: &str, _n: usize) -> Result<(), Box<dyn std::error::Error>>
 
 /// Ensure vault is opened and unlocked in the daemon.
 /// Prompts for master password if needed. Zeroizes password after use.
+/// Master password for daemon-mode operations. Resolution order:
+/// BALUARD_PASSWORD env, piped stdin, TTY prompt. Under BALUARD_NO_PROMPT
+/// an empty answer would burn a server-side rate-limit failure, so it is
+/// an error instead of a silent empty string.
+fn daemon_master_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+    if let Ok(pw) = std::env::var("BALUARD_PASSWORD") {
+        return Ok(pw);
+    }
+    if std::env::var_os("BALUARD_NO_PROMPT").is_some() {
+        return Err(
+            "BALUARD_NO_PROMPT is set but BALUARD_PASSWORD is not; refusing to send an empty master password"
+                .into(),
+        );
+    }
+    prompt_password(prompt)
+}
+
 fn ensure_unlocked_daemon(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     // Check current state
     let info_resp = client::request_to("vault.info", "", socket)?;
@@ -2138,7 +2181,7 @@ fn ensure_unlocked_daemon(socket: Option<&str>) -> Result<(), Box<dyn std::error
         }
     }
 
-    let mut password = prompt_password("Master password: ")?;
+    let mut password = daemon_master_password("Master password: ")?;
     let unlock_resp = client::request_to("vault.unlock", &password, socket)?;
     password.zeroize();
     if !unlock_resp.success {
@@ -2682,6 +2725,7 @@ pub fn handle_export(
     socket: Option<&str>,
     format: &str,
     path: &str,
+    force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     ensure_unlocked_daemon(socket)?;
 
@@ -2692,7 +2736,7 @@ pub fn handle_export(
     eprintln!("         Delete the file after use. Do not upload to cloud storage.");
 
     // Confirm overwrite if file exists
-    if std::path::Path::new(path).exists() {
+    if std::path::Path::new(path).exists() && !force {
         println!("File '{path}' already exists. Overwrite? [y/N] ");
         let mut answer = String::new();
         std::io::stdin().read_line(&mut answer)?;
@@ -3322,8 +3366,13 @@ fn vaults_recover_kit(
     if !vault_path.is_dir() {
         return Err(format!("vault directory missing: {}", entry.path.display()).into());
     }
-    let phrase = prompt_password("Recovery phrase (24 words): ")?;
-    let password = prompt_password("Master password: ")?;
+    // Harness/scripting overrides: BALUARD_RECOVERY_PHRASE and
+    // BALUARD_PASSWORD (via the shared helper) keep this flow unattended.
+    let phrase = match std::env::var("BALUARD_RECOVERY_PHRASE") {
+        Ok(p) => p,
+        Err(_) => prompt_password("Recovery phrase (24 words): ")?,
+    };
+    let password = daemon_master_password("Master password: ")?;
     let device_name = match device_name {
         Some(name) => name.to_string(),
         None => {
@@ -3554,7 +3603,7 @@ fn vaults_switch(slug: &str, cli: &Cli) -> Result<(), Box<dyn std::error::Error>
         || resp.error_message.contains("locked")
         || resp.error_message.contains("No active")
     {
-        let mut password = prompt_password(&format!("Master password for '{slug}': "))?;
+        let mut password = daemon_master_password(&format!("Master password for '{slug}': "))?;
         let unlock_payload = serde_json::json!({ "slug": slug, "password": password }).to_string();
         password.zeroize();
         let unlock_resp =
