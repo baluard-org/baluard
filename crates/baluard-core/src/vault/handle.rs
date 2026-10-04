@@ -6907,6 +6907,19 @@ impl VaultHandle {
         }
     }
 
+    /// Enrollment-proof verifier for this vault's current Root Key epoch
+    /// (self-proving roster extension). None while locked.
+    pub fn enroll_verify_key(&self) -> Option<crate::sync::engine::EnrollVerifyKey> {
+        let epoch = self.current_epoch()?;
+        match &self.state {
+            VaultState::Unlocked(u) => {
+                let root = u.root_key.as_ref()?;
+                crate::sync::engine::EnrollVerifyKey::from_root_key(root.as_bytes(), epoch).ok()
+            }
+            VaultState::Locked => None,
+        }
+    }
+
     /// Get a cipher (decrypts if unlocked, returns metadata only if locked).
     /// Looks up in both active ciphers and trash.
     pub fn get_cipher(&self, cipher_id: Uuid) -> Result<CipherRead, BaluardError> {

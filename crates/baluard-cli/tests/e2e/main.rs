@@ -409,11 +409,14 @@ fn daemon_init_json(guard: &DaemonGuard, slug: &str) -> serde_json::Value {
 /// verification failed"). Rosters resolve from each commit's first-parent
 /// tree, and B's key only exists in B's own tree — no mechanism yet
 /// propagates a phrase-enrollment to the other devices' verified history.
-/// The refusal is the fail-closed correct behavior; when an enrollment-
-/// propagation design (existing-device roster commit or keywrap-backed
-/// enrollment commit) lands, this assertion flips deliberately.
+/// Multi-device join: B phrase-enrolls the LOCKED clone (chicken-and-egg
+/// regression guard), signs its first commit, and — via the self-proving
+/// enrollment proof (meta/enrollments/<device_id>.proof, Root-Key-derived
+/// signature) — A's pull accepts the commit that its first-parent roster
+/// cannot yet vouch for. The old refusal boundary flipped deliberately
+/// when enrollment propagation shipped.
 #[test]
-fn e2e_multi_device_join_and_refusal_boundary() {
+fn e2e_multi_device_join_and_sync() {
     let guard = spawn_daemon(tempfile::Builder::new().prefix("e2emd").tempdir().unwrap());
     let pw = TEST_PASSWORD;
 
@@ -497,7 +500,7 @@ fn e2e_multi_device_join_and_refusal_boundary() {
         .assert()
         .success();
 
-    // ── Boundary: A refuses B's commit (roster not propagated) ──
+    // ── Propagation: A accepts B's self-proving first commit ──
     baluard_daemon(&guard)
         .args(["vaults", "switch", "baluard-deva"])
         .assert()
@@ -508,14 +511,124 @@ fn e2e_multi_device_join_and_refusal_boundary() {
     baluard_daemon(&guard)
         .args(["sync", "pull"])
         .assert()
-        .failure()
-        .stderr(predicates::str::contains(
-            "commit signature verification failed",
-        ));
-    // Fail-closed: nothing from B is visible on A.
+        .success();
+    // The enrollment proof carried B's entry into A's verified history.
     baluard_daemon(&guard)
         .args(["list"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("FromDeviceB").not());
+        .stdout(predicates::str::contains("FromDeviceB"));
+}
+
+/// Enrollment-proof forgery: a proof whose signature does not verify under
+/// the Root-Key-derived key must not smuggle an unknown signer past A's
+/// pull verification. Tamper B's proof file BEFORE B commits, so the
+/// forged proof rides B's first commit to the remote.
+#[test]
+fn e2e_multi_device_enrollment_proof_forgery_refused() {
+    let guard = spawn_daemon(tempfile::Builder::new().prefix("e2emf").tempdir().unwrap());
+    let pw = TEST_PASSWORD;
+
+    let remote = guard.path().join("remote.git");
+    let st = Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&remote)
+        .status()
+        .expect("git must be on PATH (vault creation shells out to git)");
+    assert!(st.success(), "git init --bare failed");
+    let remote_url = format!("file://{}", remote.display());
+
+    let a = daemon_init_json(&guard, "baluard-deva");
+    let phrase = a["recovery_phrase"].as_str().expect("phrase").to_string();
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-deva"])
+        .assert()
+        .success();
+    baluard_daemon(&guard).args(["unlock"]).assert().success();
+    baluard_daemon(&guard)
+        .args(["sync", "remote", &remote_url])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["sync", "push"])
+        .assert()
+        .success();
+
+    baluard_daemon(&guard)
+        .args(["sync", "clone-url", &remote_url, "--slug", "baluard-devb"])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-devb"])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args([
+            "devices",
+            "enroll-with-phrase",
+            "--phrase",
+            &phrase,
+            "--yes",
+        ])
+        .assert()
+        .success();
+
+    // Forge the proof: keep the structure (parses, epoch intact) but
+    // replace the Root-Key-derived signature with garbage of equal shape.
+    let enroll_dir = guard
+        .path()
+        .join("data/vaults/baluard-devb/meta/enrollments");
+    let mut forged = None;
+    for entry in std::fs::read_dir(&enroll_dir).expect("enrollments dir") {
+        let p = entry.unwrap().path();
+        if p.extension().is_some_and(|e| e == "proof") {
+            let raw = std::fs::read_to_string(&p).unwrap();
+            let mut json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            // 64 zero bytes, base64: decodes cleanly, so ed25519
+            // verification itself must reject it (not just the length
+            // check).
+            json["signature"] = serde_json::Value::String("A".repeat(84) + "AA==");
+            std::fs::write(&p, json.to_string()).unwrap();
+            forged = Some(p);
+            break;
+        }
+    }
+    assert!(forged.is_some(), "enrollment proof not found for tampering");
+
+    baluard_daemon(&guard)
+        .args([
+            "add",
+            "login",
+            "--name",
+            "ForgedDeviceB",
+            "--username",
+            "bob",
+            "--password",
+            &format!("{pw}-b"),
+        ])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["sync", "push"])
+        .assert()
+        .success();
+
+    // A refuses: the proof does not carry Root-Key authority.
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-deva"])
+        .assert()
+        .success();
+    baluard_daemon(&guard).args(["unlock"]).assert().success();
+    baluard_daemon(&guard)
+        .args(["sync", "pull"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "commit signature verification failed",
+        ));
+    baluard_daemon(&guard)
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("ForgedDeviceB").not());
 }
