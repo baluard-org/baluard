@@ -162,6 +162,7 @@
     "user": "User",
     "pass": "Password",
     "passwordHistory": "Password history ({count})",
+    "repromptLocked": "This entry is protected. Confirm your master password to show hidden values.",
     "historyShow": "Show password",
     "historyHide": "Hide password",
     "copyValue": "Copy value",
