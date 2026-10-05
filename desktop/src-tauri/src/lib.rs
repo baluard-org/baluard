@@ -379,7 +379,15 @@ fn payload_has_desktop_forbidden_keys(payload: &str) -> bool {
         .ok()
         .and_then(|v| {
             v.as_object().map(|o| {
-                o.contains_key("delete_from_disk") || o.contains_key("force")
+                // in_path/out_path: the path-based backup transport is a
+                // daemon/CLI capability. The webview uses the dedicated
+                // save/open Tauri commands, never raw paths — admitting
+                // them here would hand a compromised webview an arbitrary
+                // file write and read oracle.
+                o.contains_key("delete_from_disk")
+                    || o.contains_key("force")
+                    || o.contains_key("in_path")
+                    || o.contains_key("out_path")
             })
         })
         .unwrap_or(false)
@@ -870,13 +878,18 @@ async fn backup_save_encrypted(
             Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
             Some(_) => return Err("Unsupported save location".to_string()),
         };
+        // The passphrase lives only in a zeroized wrapper and the payload
+        // carrying it is scrubbed after the request (§8).
+        let passphrase = zeroize::Zeroizing::new(passphrase);
         let payload = serde_json::json!({
             "format": "baluard-encrypted",
-            "passphrase": passphrase,
+            "passphrase": passphrase.as_str(),
             "out_path": out_path.to_string_lossy(),
         })
         .to_string();
         let (data, _) = send_request_with_token("vault.export", &payload, &token, &slug)?;
+        let mut payload = payload;
+        payload.zeroize();
         let v: serde_json::Value = serde_json::from_str(&data)
             .map_err(|e| format!("Unexpected export response: {e}"))?;
         Ok(BackupSaveResult {
@@ -908,13 +921,18 @@ async fn backup_import_encrypted(app: AppHandle, passphrase: String) -> Result<O
             Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
             Some(_) => return Err("Unsupported file location".to_string()),
         };
+        // The passphrase lives only in a zeroized wrapper and the payload
+        // carrying it is scrubbed after the request (§8).
+        let passphrase = zeroize::Zeroizing::new(passphrase);
         let payload = serde_json::json!({
             "format": "baluard-encrypted",
-            "passphrase": passphrase,
+            "passphrase": passphrase.as_str(),
             "in_path": in_path.to_string_lossy(),
         })
         .to_string();
         let (data, _) = send_request_with_token("vault.import", &payload, &token, &slug)?;
+        let mut payload = payload;
+        payload.zeroize();
         Ok(Some(data))
     })
     .await
@@ -1564,6 +1582,12 @@ mod tests {
         ));
         assert!(payload_has_desktop_forbidden_keys(
             "{\"slug\":\"a\",\"force\":true}"
+        ));
+        assert!(payload_has_desktop_forbidden_keys(
+            "{\"format\":\"baluard-encrypted\",\"out_path\":\"/home/u/.bashrc\",\"passphrase\":\"x\"}"
+        ));
+        assert!(payload_has_desktop_forbidden_keys(
+            "{\"format\":\"baluard-encrypted\",\"in_path\":\"/home/u/vault.bldbak\",\"passphrase\":\"x\"}"
         ));
         // The safe arm the UI actually sends passes.
         assert!(!payload_has_desktop_forbidden_keys("{\"slug\":\"a\"}"));
