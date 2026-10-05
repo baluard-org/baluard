@@ -426,6 +426,11 @@ impl MobileVault {
             detail: format!("unknown import format: {format}"),
         })?;
         let parsed = match fmt {
+            ImportFormat::BaluardEncrypted => {
+                return Err(BaluardError::InvalidInput {
+                    detail: "use import_encrypted_backup for .bldbak containers".to_string(),
+                });
+            }
             ImportFormat::OnePassword1pux => baluard_core::import::onepassword_1pux::parse(&data),
             _ => {
                 let text = String::from_utf8(data).map_err(|_| BaluardError::InvalidInput {
@@ -448,6 +453,7 @@ impl MobileVault {
                             }
                         }
                     }
+                    ImportFormat::BaluardEncrypted => unreachable!("handled above"),
                     ImportFormat::BwJson => baluard_core::import::bw_json::parse(&text),
                     ImportFormat::BwCsv => baluard_core::import::bw_csv::parse(&text),
                     ImportFormat::ChromeCsv => baluard_core::import::chrome_csv::parse(&text),
@@ -494,6 +500,37 @@ impl MobileVault {
                 detail: format!("unknown export format: {other}"),
             }),
         }
+    }
+
+    /// Export the vault as an ENCRYPTED backup (.bldbak container,
+    /// docs/plan-encrypted-backup.md): the full-fidelity v1 payload inside a
+    /// passphrase-protected AES-256-GCM/Argon2id container. The file key
+    /// derives ONLY from the passphrase — no vault key material enters the
+    /// file — so the bytes restore into ANY Baluard vault. Auto-verifies in
+    /// memory before returning.
+    pub async fn export_encrypted_backup(
+        &self,
+        passphrase: String,
+    ) -> Result<EncryptedBackup, BaluardError> {
+        let (container, entries) = self
+            .state
+            .export_backup_encrypted(&passphrase)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })?;
+        Ok(EncryptedBackup { container, entries })
+    }
+
+    /// Decrypt + import an encrypted backup. Wrong passphrase and corruption
+    /// are one error by design ("wrong password or damaged file").
+    pub async fn import_encrypted_backup(
+        &self,
+        passphrase: String,
+        container: Vec<u8>,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .import_backup_encrypted(&passphrase, &container)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
     }
 
     /// Master-password re-prompt verification (G18). Opens a TEMPORARY
@@ -1304,6 +1341,14 @@ pub async fn create_vault(
     Ok(std::sync::Arc::new(MobileVault { state }))
 }
 
+/// Encrypted backup container bytes plus the verified entry count (for the
+/// "Backup checked: N entries" toast).
+#[derive(uniffi::Record)]
+pub struct EncryptedBackup {
+    pub container: Vec<u8>,
+    pub entries: u32,
+}
+
 /// Result of creating a vault with recovery phrase returned.
 #[derive(uniffi::Record)]
 pub struct MobileCreateResult {
@@ -1975,6 +2020,50 @@ mod tests {
         // Unknown formats fail closed on both directions.
         assert!(vault.import_data("md".into(), b"x".to_vec()).await.is_err());
         assert!(vault.export_data("pdf".into()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn encrypted_backup_roundtrip_via_ffi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pw".to_string(), "dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pw".to_string()).await.unwrap();
+
+        let bw = serde_json::json!({
+            "items": [{
+                "id": "i1", "type": 1, "name": "GH",
+                "login": {"username": "u", "password": "p", "uris": []}
+            }]
+        })
+        .to_string();
+        vault
+            .import_data("bw-json".into(), bw.into_bytes())
+            .await
+            .unwrap();
+
+        // Encrypted export: container carries the magic, entries verified.
+        let backup = vault
+            .export_encrypted_backup("backup-phrase-2026".to_string())
+            .await
+            .expect("encrypted export");
+        assert_eq!(&backup.container[..6], b"BLDBAK");
+        assert_eq!(backup.entries, 1);
+
+        // Wrong passphrase fails with the single generic error; right one
+        // restores the entry into the same vault (fresh UUIDs double it).
+        let wrong = vault
+            .import_encrypted_backup("not-the-passphrase".to_string(), backup.container.clone())
+            .await
+            .expect_err("wrong passphrase");
+        assert!(matches!(wrong, BaluardError::Vault { .. }));
+        let summary = vault
+            .import_encrypted_backup("backup-phrase-2026".to_string(), backup.container)
+            .await
+            .expect("encrypted import");
+        let s: serde_json::Value = serde_json::from_str(&summary).unwrap();
+        assert_eq!(s["imported"].as_u64(), Some(1), "summary: {summary}");
     }
 
     #[tokio::test]

@@ -947,6 +947,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1048,6 +1052,8 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_export_data(`ptr`: Pointer,`format`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_export_encrypted_backup(`ptr`: Pointer,`passphrase`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_fetch_favicon(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_generator_history_add(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
@@ -1063,6 +1069,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_get_settings(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_import_data(`ptr`: Pointer,`format`: RustBuffer.ByValue,`data`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_import_encrypted_backup(`ptr`: Pointer,`passphrase`: RustBuffer.ByValue,`container`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_is_admin_device(`ptr`: Pointer,
     ): Long
@@ -1422,6 +1430,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_export_data(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_export_encrypted_backup(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_fetch_favicon(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_generator_history_add(
@@ -1437,6 +1447,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_get_settings(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_import_data(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_import_encrypted_backup(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_is_admin_device(
     ): Short
@@ -1713,7 +1725,10 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_device_name() != 63685.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_export_data() != 720.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_export_data() != 22198.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_export_encrypted_backup() != 44131.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_fetch_favicon() != 64896.toShort()) {
@@ -1738,6 +1753,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_import_data() != 4508.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_import_encrypted_backup() != 49590.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_is_admin_device() != 20077.toShort()) {
@@ -2977,12 +2995,24 @@ public interface MobileVaultInterface {
     suspend fun `deviceName`(): kotlin.String
     
     /**
-     * Export every entry as Bitwarden JSON ("bw-json") or CSV ("bw-csv",
-     * logins only). The returned string is UNENCRYPTED — the caller owns
-     * where it lands. Space export policy (viewer rules) is enforced
-     * runtime-side and fails closed.
+     * Export the vault in one of three shapes: "baluard" (the Baluard
+     * backup — full-fidelity JSON in our own format, the default),
+     * "bw-json" (Bitwarden JSON, for moving to other apps) or "bw-csv"
+     * (Bitwarden CSV, logins only). All returned strings are UNENCRYPTED —
+     * the caller owns where they land. Space export policy (viewer rules)
+     * is enforced runtime-side and fails closed.
      */
     suspend fun `exportData`(`format`: kotlin.String): kotlin.String
+    
+    /**
+     * Export the vault as an ENCRYPTED backup (.bldbak container,
+     * docs/plan-encrypted-backup.md): the full-fidelity v1 payload inside a
+     * passphrase-protected AES-256-GCM/Argon2id container. The file key
+     * derives ONLY from the passphrase — no vault key material enters the
+     * file — so the bytes restore into ANY Baluard vault. Auto-verifies in
+     * memory before returning.
+     */
+    suspend fun `exportEncryptedBackup`(`passphrase`: kotlin.String): EncryptedBackup
     
     /**
      * Fetch a favicon for a login's domain. Payload is the URI or bare
@@ -3030,6 +3060,12 @@ public interface MobileVaultInterface {
      * JSON: {imported, skipped, folders_created, errors}.
      */
     suspend fun `importData`(`format`: kotlin.String, `data`: kotlin.ByteArray): kotlin.String
+    
+    /**
+     * Decrypt + import an encrypted backup. Wrong passphrase and corruption
+     * are one error by design ("wrong password or damaged file").
+     */
+    suspend fun `importEncryptedBackup`(`passphrase`: kotlin.String, `container`: kotlin.ByteArray): kotlin.String
     
     /**
      * Whether this device manages the space (holds the Root Key) —
@@ -4158,10 +4194,12 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
-     * Export every entry as Bitwarden JSON ("bw-json") or CSV ("bw-csv",
-     * logins only). The returned string is UNENCRYPTED — the caller owns
-     * where it lands. Space export policy (viewer rules) is enforced
-     * runtime-side and fails closed.
+     * Export the vault in one of three shapes: "baluard" (the Baluard
+     * backup — full-fidelity JSON in our own format, the default),
+     * "bw-json" (Bitwarden JSON, for moving to other apps) or "bw-csv"
+     * (Bitwarden CSV, logins only). All returned strings are UNENCRYPTED —
+     * the caller owns where they land. Space export policy (viewer rules)
+     * is enforced runtime-side and fails closed.
      */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -4178,6 +4216,35 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Export the vault as an ENCRYPTED backup (.bldbak container,
+     * docs/plan-encrypted-backup.md): the full-fidelity v1 payload inside a
+     * passphrase-protected AES-256-GCM/Argon2id container. The file key
+     * derives ONLY from the passphrase — no vault key material enters the
+     * file — so the bytes restore into ANY Baluard vault. Auto-verifies in
+     * memory before returning.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `exportEncryptedBackup`(`passphrase`: kotlin.String) : EncryptedBackup {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_export_encrypted_backup(
+                thisPtr,
+                FfiConverterString.lower(`passphrase`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeEncryptedBackup.lift(it) },
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
@@ -4371,6 +4438,31 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_import_data(
                 thisPtr,
                 FfiConverterString.lower(`format`),FfiConverterByteArray.lower(`data`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Decrypt + import an encrypted backup. Wrong passphrase and corruption
+     * are one error by design ("wrong password or damaged file").
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `importEncryptedBackup`(`passphrase`: kotlin.String, `container`: kotlin.ByteArray) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_import_encrypted_backup(
+                thisPtr,
+                FfiConverterString.lower(`passphrase`),FfiConverterByteArray.lower(`container`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5645,6 +5737,42 @@ public object FfiConverterTypeMobileVault: FfiConverter<MobileVault, Pointer> {
         // The Rust code always expects pointers written as 8 bytes,
         // and will fail to compile if they don't fit.
         buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+
+/**
+ * Encrypted backup container bytes plus the verified entry count (for the
+ * "Backup checked: N entries" toast).
+ */
+data class EncryptedBackup (
+    var `container`: kotlin.ByteArray, 
+    var `entries`: kotlin.UInt
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeEncryptedBackup: FfiConverterRustBuffer<EncryptedBackup> {
+    override fun read(buf: ByteBuffer): EncryptedBackup {
+        return EncryptedBackup(
+            FfiConverterByteArray.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: EncryptedBackup) = (
+            FfiConverterByteArray.allocationSize(value.`container`) +
+            FfiConverterUInt.allocationSize(value.`entries`)
+    )
+
+    override fun write(value: EncryptedBackup, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`container`, buf)
+            FfiConverterUInt.write(value.`entries`, buf)
     }
 }
 
