@@ -27,7 +27,11 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -79,6 +83,9 @@ import xyz.actitud.baluard.platform.removeVaultDirectory
 import xyz.actitud.baluard.platform.rememberImportFilePicker
 import xyz.actitud.baluard.platform.rememberRecoverySheetSaver
 import xyz.actitud.baluard.platform.ScreenshotPrefs
+import xyz.actitud.baluard.PassphraseConfig
+import xyz.actitud.baluard.detail.formatEpochDate
+import xyz.actitud.baluard.platform.copyToClipboard
 import xyz.actitud.baluard.platform.setSecureFlag
 import xyz.actitud.baluard.platform.clipboardClearLabel
 import xyz.actitud.baluard.platform.clipboardClearPresets
@@ -1596,27 +1603,66 @@ fun SettingsScreen(
                 var exportFormat by remember { mutableStateOf("baluard") }
                 var exportBusy by remember { mutableStateOf(false) }
 
+                // Encrypted backup (docs/plan-encrypted-backup.md §7): one
+                // passphrase dialog serving both directions. Generated
+                // 6-word default; the master password is never offered.
+                val bakMagic = byteArrayOf(0x42, 0x4C, 0x44, 0x42, 0x41, 0x4B) // "BLDBAK"
+                var backupMode by remember { mutableStateOf<String?>(null) }
+                var backupPw by remember { mutableStateOf("") }
+                var backupPwConfirm by remember { mutableStateOf("") }
+                var backupPwSaved by remember { mutableStateOf(false) }
+                var backupBusy by remember { mutableStateOf(false) }
+                var encFile by remember { mutableStateOf<PickedFile?>(null) }
+
+                // Master-password gate before ENCRYPTED EXPORT (§7: same
+                // credential, not a new one; import stays ungated). Reuses
+                // the detail-screen reprompt strings.
+                var showReprompt by remember { mutableStateOf(false) }
+                var repromptPw by remember { mutableStateOf("") }
+                var repromptError by remember { mutableStateOf(false) }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable(enabled = !importBusy && !exportBusy) {
                             importPicker(listOf("*/*")) { file ->
                                 if (file != null) {
-                                    // Auto-detect our own backup first: the
-                                    // header identifies it with no collision
-                                    // risk, so restoring a Baluard backup
-                                    // never needs a format answer.
-                                    val sniffed = file.bytes
-                                        .decodeToString(0, minOf(file.bytes.size, 512))
-                                        .contains("baluard.vault")
-                                    importFormat = when {
-                                        sniffed -> "baluard"
-                                        file.name.endsWith(".1pux", ignoreCase = true) -> "1password-1pux"
-                                        file.name.endsWith(".json", ignoreCase = true) -> "bw-json"
-                                        file.name.endsWith(".xml", ignoreCase = true) -> "keepass-xml"
-                                        else -> "bw-csv"
+                                    val isEncBackup =
+                                        file.bytes.size >= 6 && bakMagic.indices.all { file.bytes[it] == bakMagic[it] }
+                                    when {
+                                        // Encrypted container: the passphrase
+                                        // dialog decides everything else.
+                                        isEncBackup -> {
+                                            encFile = file
+                                            backupMode = "import"
+                                        }
+                                        // Auto-detect our own backup first: the
+                                        // header identifies it with no collision
+                                        // risk, so restoring a Baluard backup
+                                        // never needs a format answer.
+                                        file.bytes
+                                            .decodeToString(0, minOf(file.bytes.size, 512))
+                                            .contains("baluard.vault") -> {
+                                            importFormat = "baluard"
+                                            pendingImport = file
+                                        }
+                                        file.name.endsWith(".1pux", ignoreCase = true) -> {
+                                            importFormat = "1password-1pux"
+                                            pendingImport = file
+                                        }
+                                        file.name.endsWith(".json", ignoreCase = true) -> {
+                                            importFormat = "bw-json"
+                                            pendingImport = file
+                                        }
+                                        file.name.endsWith(".xml", ignoreCase = true) -> {
+                                            importFormat = "keepass-xml"
+                                            pendingImport = file
+                                        }
+                                        else -> {
+                                            importFormat = "bw-csv"
+                                            pendingImport = file
+                                        }
                                     }
-                                    pendingImport = file
                                 }
                             }
                         },
@@ -1653,6 +1699,32 @@ fun SettingsScreen(
                 }
                 Text(
                     text = t("settings.exportDesc"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !importBusy && !exportBusy && !backupBusy) {
+                            // Encrypted export sits behind the master-password
+                            // re-prompt gate (§7).
+                            showReprompt = true
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (backupBusy) t("settings.exportBusy") else t("settings.backupExport"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    text = t("settings.backupExportHint"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
@@ -1788,6 +1860,209 @@ fun SettingsScreen(
                         },
                         dismissButton = {
                             TextButton(onClick = { exportDialog = false }) { Text(t("common.cancel")) }
+                        },
+                    )
+                }
+
+                // Encrypted-backup passphrase dialog (§7). Export prefills a
+                // generated 6-word passphrase and requires the saved
+                // acknowledgment; import explains this is the backup's
+                // password, not the master password.
+                LaunchedEffect(backupMode) {
+                    // Reset stale state on every open: a cancelled export
+                    // must not leave a checked ack or half-typed confirm
+                    // behind, and import must not inherit an export's
+                    // generated passphrase.
+                    backupPwConfirm = ""
+                    backupPwSaved = false
+                    if (backupMode == "export") {
+                        repo?.generatePassphrase(
+                            PassphraseConfig(
+                                wordCount = 6u,
+                                separator = "-",
+                                upper = false,
+                                number = false,
+                                symbol = false,
+                            ),
+                        )?.getOrNull()?.let { backupPw = it }
+                    } else if (backupMode == "import") {
+                        backupPw = ""
+                    }
+                }
+                if (backupMode != null) {
+                    AlertDialog(
+                        onDismissRequest = { if (!backupBusy) backupMode = null },
+                        title = {
+                            Text(
+                                t(
+                                    if (backupMode == "export") "settings.backupPassTitleExport"
+                                    else "settings.backupPassTitleImport",
+                                ),
+                            )
+                        },
+                        text = {
+                            Column {
+                                Text(
+                                    t(
+                                        if (backupMode == "export") "settings.backupPassDesc"
+                                        else "settings.backupPassImportDesc",
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = backupPw,
+                                    onValueChange = { backupPw = it },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                if (backupMode == "export") {
+                                    Spacer(Modifier.height(6.dp))
+                                    Row {
+                                        TextButton(onClick = { copyToClipboard(backupPw) }) {
+                                            Text(t("common.copy"))
+                                        }
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                repo?.generatePassphrase(
+                                                    PassphraseConfig(
+                                                        wordCount = 6u,
+                                                        separator = "-",
+                                                        upper = false,
+                                                        number = false,
+                                                        symbol = false,
+                                                    ),
+                                                )?.getOrNull()?.let { backupPw = it }
+                                            }
+                                        }) { Text(t("settings.backupRegenerate")) }
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    OutlinedTextField(
+                                        value = backupPwConfirm,
+                                        onValueChange = { backupPwConfirm = it },
+                                        singleLine = true,
+                                        label = { Text(t("settings.backupPassConfirmLabel")) },
+                                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.clickable { backupPwSaved = !backupPwSaved },
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        RadioButton(selected = backupPwSaved, onClick = null)
+                                        Text(
+                                            t("settings.backupSavedAck"),
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                enabled = !backupBusy && backupPw.length >= 8 &&
+                                    (backupMode != "export" || (backupPw == backupPwConfirm && backupPwSaved)),
+                                onClick = {
+                                    scope.launch {
+                                        backupBusy = true
+                                        if (backupMode == "export") {
+                                            val r = runCatching { vault.exportEncryptedBackup(backupPw) }.getOrNull()
+                                            if (r == null) {
+                                                backupBusy = false
+                                                Toast.error(t("settings.backupFailed"))
+                                            } else {
+                                                val entries = r.entries.toString()
+                                                backupMode = null
+                                                saver(
+                                                    r.container,
+                                                    "application/octet-stream",
+                                                    "baluard-backup-${formatEpochDate(System.currentTimeMillis() / 1000)}.bldbak",
+                                                ) { ok ->
+                                                    if (ok) Toast.success(t("settings.backupChecked", entries))
+                                                }
+                                                backupBusy = false
+                                            }
+                                        } else {
+                                            val f = encFile
+                                            val raw = f?.let {
+                                                runCatching { vault.importEncryptedBackup(backupPw, it.bytes) }.getOrNull()
+                                            }
+                                            backupBusy = false
+                                            backupMode = null
+                                            encFile = null
+                                            if (raw == null) {
+                                                Toast.error(t("settings.importFailed"))
+                                            } else {
+                                                val s = runCatching {
+                                                    Json.parseToJsonElement(raw) as JsonObject
+                                                }.getOrNull()
+                                                val imported = (s?.get("imported") as? JsonPrimitive)?.content ?: "?"
+                                                val skipped = (s?.get("skipped") as? JsonPrimitive)?.content ?: "?"
+                                                Toast.success(t("settings.importDone", imported, skipped))
+                                            }
+                                        }
+                                    }
+                                },
+                            ) {
+                                Text(t(if (backupMode == "export") "settings.exportBackup" else "settings.import"))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(enabled = !backupBusy, onClick = { backupMode = null }) {
+                                Text(t("common.cancel"))
+                            }
+                        },
+                    )
+                }
+
+                if (showReprompt) {
+                    AlertDialog(
+                        onDismissRequest = {
+                            showReprompt = false
+                            repromptPw = ""
+                            repromptError = false
+                        },
+                        title = { Text(t("detail.repromptTitle")) },
+                        text = {
+                            OutlinedTextField(
+                                value = repromptPw,
+                                onValueChange = {
+                                    repromptPw = it
+                                    repromptError = false
+                                },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                isError = repromptError,
+                                supportingText = if (repromptError) {
+                                    { Text(t("login.wrongPassword")) }
+                                } else null,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                scope.launch {
+                                    val ok = runCatching { vault.repromptVerify(repromptPw) }.isSuccess
+                                    if (ok) {
+                                        showReprompt = false
+                                        repromptPw = ""
+                                        repromptError = false
+                                        backupMode = "export"
+                                    } else {
+                                        repromptError = true
+                                    }
+                                }
+                            }) { Text(t("common.continue")) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = {
+                                showReprompt = false
+                                repromptPw = ""
+                                repromptError = false
+                            }) { Text(t("common.cancel")) }
                         },
                     )
                 }

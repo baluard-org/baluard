@@ -12,6 +12,7 @@ internal val ES: Map<String, String> = mapOf(
     "vault.noMatch" to "Ningún elemento coincide con los criterios",
     "common.cancel" to "Cancelar",
     "common.continue" to "Continuar",
+    "common.copy" to "Copiar",
     "common.search" to "Buscar",
     "common.clear" to "Limpiar",
     "common.copied" to "Copiado",
@@ -405,6 +406,28 @@ internal val ES: Map<String, String> = mapOf(
     "settings.exportWarn" to "El archivo contendrá secretos sin cifrar. Bórralo después de usarlo.",
     "settings.exportDone" to "Exportación guardada",
     "settings.exportFailed" to "Error al exportar",
+
+    "settings.backupExport" to "Copia cifrada",
+
+    "settings.backupExportHint" to "Protegida con contraseña (.bldbak)",
+
+    "settings.backupPassTitleExport" to "Protege tu copia",
+
+    "settings.backupPassTitleImport" to "Copia cifrada",
+
+    "settings.backupPassDesc" to "Esta frase de contraseña es la única forma de abrir el archivo. Si la pierdes, pierdes la copia para siempre. No es tu contraseña maestra, y Baluard nunca la guarda.",
+
+    "settings.backupPassImportDesc" to "Introduce la frase que guardaste al crear esta copia. No es tu contraseña maestra.",
+
+    "settings.backupPassConfirmLabel" to "Confirma la frase",
+
+    "settings.backupSavedAck" to "He guardado esta frase en un lugar seguro",
+
+    "settings.backupRegenerate" to "Nueva frase",
+
+    "settings.backupChecked" to "Copia verificada: {0} entradas.",
+
+    "settings.backupFailed" to "La copia cifrada falló",
     "settings.removeVaultTitle" to "¿Quitar la bóveda de este dispositivo?",
     "settings.removeVaultBody" to "Esto borra los datos de la bóveda en este dispositivo, incluida su clave. Tus datos permanecen a salvo en tu copia remota sincronizada: puedes añadir la bóveda de nuevo cuando quieras.",
     "settings.removeVaultConfirm" to "Quitar",

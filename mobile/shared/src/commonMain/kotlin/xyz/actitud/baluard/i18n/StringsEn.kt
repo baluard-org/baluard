@@ -12,6 +12,7 @@ internal val EN: Map<String, String> = mapOf(
     "common.back" to "Back",
     "common.cancel" to "Cancel",
     "common.continue" to "Continue",
+    "common.copy" to "Copy",
     "common.search" to "Search",
     "common.clear" to "Clear",
     "common.copied" to "Copied",
@@ -388,6 +389,28 @@ internal val EN: Map<String, String> = mapOf(
     "settings.exportWarn" to "The file will contain unencrypted secrets. Delete it after use.",
     "settings.exportDone" to "Export saved",
     "settings.exportFailed" to "Export failed",
+
+    "settings.backupExport" to "Encrypted backup",
+
+    "settings.backupExportHint" to "Password-protected (.bldbak)",
+
+    "settings.backupPassTitleExport" to "Protect your backup",
+
+    "settings.backupPassTitleImport" to "Encrypted backup",
+
+    "settings.backupPassDesc" to "This passphrase is the only way to open the backup file. Losing it loses the backup forever. It is not your master password, and Baluard never stores it.",
+
+    "settings.backupPassImportDesc" to "Enter the passphrase you saved when you created this backup. It is not your master password.",
+
+    "settings.backupPassConfirmLabel" to "Confirm passphrase",
+
+    "settings.backupSavedAck" to "I saved this passphrase somewhere safe",
+
+    "settings.backupRegenerate" to "New passphrase",
+
+    "settings.backupChecked" to "Backup checked: {0} entries.",
+
+    "settings.backupFailed" to "Encrypted backup failed",
     "settings.removeVaultTitle" to "Remove vault from this device?",
     "settings.removeVaultBody" to "This deletes the vault's data on this device, including this device's key. Your data stays safe in your synced remote copy; you can add the vault back anytime.",
     "settings.removeVaultConfirm" to "Remove",
