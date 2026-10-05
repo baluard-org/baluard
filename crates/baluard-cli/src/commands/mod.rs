@@ -2659,18 +2659,40 @@ pub fn handle_import(
         },
     )?;
 
+    let encrypted = import_format == baluard_core::import::ImportFormat::BaluardEncrypted;
+
+    // Binary sniff before any text read: a .bldbak container fed to a text
+    // parser would fail with a confusing decode error instead of a hint.
+    if !encrypted {
+        use std::io::Read;
+        let mut head = [0u8; 6];
+        let got = std::fs::File::open(path)
+            .and_then(|mut f| f.read_exact(&mut head))
+            .ok();
+        if got == Some(()) && &head == baluard_core::import::backup_container::MAGIC {
+            return Err(format!(
+                "{path} is an encrypted Baluard backup. Use: baluard import baluard-encrypted {path}"
+            )
+            .into());
+        }
+    }
+
     ensure_unlocked_daemon(socket)?;
 
-    // Pre-read file size check (prevent OOM on large files)
-    const MAX_IMPORT_SIZE: u64 = 50 * 1024 * 1024; // 50MB
-    let file_meta = std::fs::metadata(path).map_err(|e| format!("Failed to stat {path}: {e}"))?;
-    if file_meta.len() > MAX_IMPORT_SIZE {
-        return Err(format!(
-            "Import file too large: {} bytes (max {} bytes)",
-            file_meta.len(),
-            MAX_IMPORT_SIZE
-        )
-        .into());
+    // Pre-read file size check (prevent OOM on large files). Path-passthrough
+    // formats (encrypted backups) skip it: the daemon reads the file itself.
+    if !encrypted {
+        const MAX_IMPORT_SIZE: u64 = 50 * 1024 * 1024; // 50MB
+        let file_meta =
+            std::fs::metadata(path).map_err(|e| format!("Failed to stat {path}: {e}"))?;
+        if file_meta.len() > MAX_IMPORT_SIZE {
+            return Err(format!(
+                "Import file too large: {} bytes (max {} bytes)",
+                file_meta.len(),
+                MAX_IMPORT_SIZE
+            )
+            .into());
+        }
     }
 
     // For 1PUX, read as binary and base64-encode
@@ -2679,6 +2701,12 @@ pub fn handle_import(
             let bytes = std::fs::read(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             serde_json::json!({"format": format, "data": b64}).to_string()
+        }
+        baluard_core::import::ImportFormat::BaluardEncrypted => {
+            // Path passthrough: the file never crosses the socket (§8).
+            let passphrase = backup_passphrase(false)?;
+            serde_json::json!({"format": format, "passphrase": passphrase, "in_path": path})
+                .to_string()
         }
         _ => {
             let file_data =
@@ -2716,19 +2744,50 @@ pub fn handle_import(
 
 // ── Export ──
 
+/// Backup-passphrase resolution (docs/plan-encrypted-backup.md §8):
+/// BALUARD_BACKUP_PASSPHRASE env first (scripting/E2E), else --generate
+/// prints a fresh 6-word passphrase once, else the user types it.
+fn backup_passphrase(generate: bool) -> Result<String, Box<dyn std::error::Error>> {
+    if let Ok(pw) = std::env::var("BALUARD_BACKUP_PASSPHRASE") {
+        if !pw.is_empty() {
+            return Ok(pw);
+        }
+    }
+    if generate {
+        let opts = baluard_core::generator::PassphraseOptions {
+            word_count: 6,
+            ..Default::default()
+        };
+        let pw = baluard_core::generator::generate_passphrase(&opts).map_err(|e| e.to_string())?;
+        println!("Backup passphrase (shown once — save it now): {pw}");
+        return Ok(pw);
+    }
+    prompt_password("Backup passphrase: ")
+}
+
 pub fn handle_export(
     socket: Option<&str>,
     format: &str,
     path: &str,
+    encrypted: bool,
+    generate: bool,
     force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     ensure_unlocked_daemon(socket)?;
 
-    // Warn about plaintext secrets
-    eprintln!(
-        "WARNING: Export file will contain UNENCRYPTED secrets (passwords, cards, SSH keys)."
-    );
-    eprintln!("         Delete the file after use. Do not upload to cloud storage.");
+    let passphrase = if encrypted {
+        Some(backup_passphrase(generate)?)
+    } else {
+        None
+    };
+
+    if passphrase.is_none() {
+        // Warn about plaintext secrets
+        eprintln!(
+            "WARNING: Export file will contain UNENCRYPTED secrets (passwords, cards, SSH keys)."
+        );
+        eprintln!("         Delete the file after use. Do not upload to cloud storage.");
+    }
 
     // Confirm overwrite if file exists
     if std::path::Path::new(path).exists() && !force {
@@ -2739,6 +2798,32 @@ pub fn handle_export(
             println!("Export cancelled.");
             return Ok(());
         }
+    }
+
+    if let Some(pw) = &passphrase {
+        // Path-based transport (§8): the daemon writes the container
+        // itself; only the summary rides back over the socket.
+        println!("Exporting encrypted backup...");
+        let payload = serde_json::json!({
+            "format": "baluard-encrypted",
+            "passphrase": pw,
+            "out_path": path,
+        })
+        .to_string();
+        let resp = client::request_to("vault.export", &payload, socket)?;
+        if !resp.success {
+            return Err(resp.error_message.into());
+        }
+        let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
+        println!(
+            "Encrypted backup written: {path} ({} bytes)",
+            result["written_bytes"].as_u64().unwrap_or(0)
+        );
+        println!(
+            "Backup checked: {} entries.",
+            result["entries"].as_u64().unwrap_or(0)
+        );
+        return Ok(());
     }
 
     println!("Exporting vault as {format}...");
