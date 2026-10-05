@@ -117,6 +117,7 @@ export default function SettingsModal() {
   const [avatarExt, setAvatarExt] = createSignal("png");
 
   const formats = [
+    { id: "baluard", label: t("settings.formatBaluard") },
     { id: "bw-json", label: t("settings.formatBwJson") },
     { id: "bw-csv", label: t("settings.formatBwCsv") },
     { id: "chrome-csv", label: t("settings.formatChromeCsv") },
@@ -405,6 +406,12 @@ export default function SettingsModal() {
           data = btoa(binary);
         } else {
           data = await file.text();
+          // Auto-detect our own backup: the header identifies it with no
+          // collision risk, so a user restoring a Baluard backup never
+          // needs to know what format their file is.
+          if (data.slice(0, 512).includes("baluard.vault")) {
+            format = "baluard";
+          }
         }
         const payload = JSON.stringify(buildImportPayload(format, data));
         const resp = await daemon("vault.import", payload);
@@ -435,7 +442,8 @@ export default function SettingsModal() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `baluard_export.${isCsv ? "csv" : "json"}`;
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.download = isCsv ? `baluard-logins-${stamp}.csv` : `baluard-backup-${stamp}.json`;
       a.click();
       URL.revokeObjectURL(url);
       setMessage(t("settings.exportComplete"));
@@ -842,20 +850,26 @@ export default function SettingsModal() {
                   <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.exportTitle")}</label>
                   <div class="grid grid-cols-2 gap-3">
                     <button
-                      onClick={() => doExport("bw-json")}
+                      onClick={() => doExport("baluard")}
                       disabled={exporting()}
-                      class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
+                      class="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary)]/10 hover:bg-[var(--color-primary)]/20 text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
                     >
-                      <IconDownload class="w-4 h-4 text-[var(--color-muted)]" />
-                      JSON
+                      <span class="flex items-center gap-2">
+                        <IconDownload class="w-4 h-4 text-[var(--color-primary)]" />
+                        {t("settings.exportBackup")}
+                      </span>
+                      <span class="text-[10px] font-normal text-[var(--color-muted)]">{t("settings.exportBackupHint")}</span>
                     </button>
                     <button
                       onClick={() => doExport("bw-csv")}
                       disabled={exporting()}
-                      class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
+                      class="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
                     >
-                      <IconDownload class="w-4 h-4 text-[var(--color-muted)]" />
-                      CSV
+                      <span class="flex items-center gap-2">
+                        <IconDownload class="w-4 h-4 text-[var(--color-muted)]" />
+                        {t("settings.exportSpreadsheet")}
+                      </span>
+                      <span class="text-[10px] font-normal text-[var(--color-muted)]">{t("settings.exportSpreadsheetHint")}</span>
                     </button>
                   </div>
                 </div>
