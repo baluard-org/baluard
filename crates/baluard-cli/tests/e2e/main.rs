@@ -675,24 +675,34 @@ fn e2e_encrypted_backup_cross_vault_restore() {
         .stdout(predicates::str::contains("Backup checked:"));
     assert!(backup.exists(), "daemon must write the container itself");
 
-    // Vault B: a different vault restores the same file.
+    // Vault B: a different vault restores the same file. Listed FIRST to
+    // prove it is a distinct, empty vault ("Imported: 1" would print
+    // equally if the switch had silently failed back to A).
     daemon_init_json(&guard, "baluard-vaultb");
     baluard_daemon(&guard)
         .args(["vaults", "switch", "baluard-vaultb"])
         .assert()
         .success();
     baluard_daemon(&guard).args(["unlock"]).assert().success();
+    baluard_daemon(&guard)
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("FromBackup").not());
 
-    // Wrong passphrase: one generic error, indistinguishable from corruption.
+    // Wrong passphrase: one generic error, indistinguishable from corruption,
+    // and never an import summary on stdout.
     baluard_daemon(&guard)
         .env("BALUARD_BACKUP_PASSPHRASE", "not-the-passphrase")
         .args(["import", "baluard-encrypted"])
         .arg(&backup)
         .assert()
         .failure()
-        .stderr(predicates::str::contains("wrong password or damaged file"));
+        .stderr(predicates::str::contains("wrong password or damaged file"))
+        .stdout(predicates::str::contains("Imported:").not());
 
-    // Right passphrase: entries land in vault B (fresh UUIDs, B's keys).
+    // Right passphrase: entries land in vault B (fresh UUIDs, B's keys), and
+    // the secret itself survived the roundtrip.
     baluard_daemon(&guard)
         .env("BALUARD_BACKUP_PASSPHRASE", "backup-phrase-2026")
         .args(["import", "baluard-encrypted"])
@@ -700,9 +710,17 @@ fn e2e_encrypted_backup_cross_vault_restore() {
         .assert()
         .success()
         .stdout(predicates::str::contains("Imported: 1"));
-    baluard_daemon(&guard)
+    let listing = baluard_daemon(&guard)
         .args(["list"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("FromBackup"));
+        .get_output()
+        .stdout
+        .clone();
+    let id = row_id(&listing, "FromBackup");
+    baluard_daemon(&guard)
+        .args(["get", &id, "--decrypt", "--output=text"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("backup-pw-123"));
 }
