@@ -1,9 +1,9 @@
 # Plan: Merged Search and Autofill Across Personal Vault and Spaces (G24)
 
-Status: In review (one external review round folded in)
+Status: In review (two external review rounds folded in)
 Date: 2026-10-05
 Author: Esteban
-Reviewers: external peer review (round 1: FIX-FIRST, folded; verdicts below)
+Reviewers: external peer review (round 1: FIX-FIRST, folded; round 2: family/organization split, AGREE with the two-layer consent model, folded)
 
 ## 1. Problem
 
@@ -36,8 +36,23 @@ Where Baluard actually stands today:
 ## 2. Scope and non-goals
 
 In scope: merged autofill (extension, Android) and merged search
-(mobile app, CLI) across unlocked vaults the user has opted in, with
+(mobile app, CLI) across unlocked, consent-cleared vaults, with
 per-result vault attribution and a locked-vault affordance.
+
+Product rule (round 2): merge spans the personal vault plus
+merge-eligible Spaces only. Organization Spaces keep the vault-switch
+friction on purpose: companies do not want personal and company items
+mixed, so their entries never surface in a member's personal search or
+autofill. Family Spaces default to mergeable. There is no "Space
+kind" field modeling this; section 4.2 defines the two-layer consent
+that decides eligibility.
+
+A round-2 consequence: the already-shipped desktop merge (D31) mixes
+every unlocked vault today, including organization Spaces. It is
+retrofitted to the same eligibility predicate, so an organization
+Space disappears from the member's personal list the same way it
+stays out of the extension. Without that, org members get friction on
+the extension and none on the desktop, which is incoherent.
 
 Out of scope, deliberately:
 
@@ -92,24 +107,51 @@ Out of scope, deliberately:
 The daemon already has the fan-out loop: `vaults.list_full_all`
 iterates `host.list()`, snapshots each unlocked row, tags slug, name,
 presence, and degrades a vault that locks mid-scan to a locked row.
-Extract that loop into a shared helper and reuse it. Do not write a
-second loop.
+The helper takes the eligibility predicate from 4.2 and returns
+eligible vaults only. `vaults.list_full_all` is gated by the same
+predicate: an ineligible Space keeps its metadata row (slug, name,
+lock state) but carries no ciphers.
 
-### 4.2 Per-vault "available to browser and autofill" consent
+### 4.2 Consent: an admin ceiling plus a device-local opt-in
 
-Fan-out silently widens what a paired browser can see: today the
-bridge token snapshots the active vault the user had in mind when
-pairing; tomorrow a work Space becomes browser-readable too. That is
-a trust-model change and needs consent:
+The family-versus-organization rule needs a trust decision from two
+sides: the Space's admins and the member on this device. Two knobs,
+one decision function:
 
-- A device-local flag in the vault registry (not synced
-  `settings.enc`): `browser_enabled`.
-- Default: on for the personal vault; asked explicitly at Space join
-  and in Space settings.
-- A decision record documents the model change.
-- The extension's merged match route returns match metadata only,
-  never whole-vault payloads; it must not become a path to
-  `list_full_all`-shaped data.
+- `personal_merge: Option<bool>` on `VaultSettings` — the synced
+  admin ceiling. Written by owner/admin through the existing space
+  settings plumbing; absent means off (fail closed). Family Spaces
+  ship with it on; organization Spaces off.
+- `merge_opt_in: Option<bool>` — device-local, in the vault registry
+  entry. Defaults to on at join when the ceiling is on, so family UX
+  has zero friction; unset otherwise. The member can turn it off per
+  device at any time.
+- `merge_ceiling_seen: bool` — device-local cache of the last
+  observed ceiling, refreshed at every unlock and settings pull, so
+  a locked vault can still be classified without decrypting it.
+
+`merge_eligible(slug)` is the single predicate every consumer calls
+(fan-out helper, `vaults.list_full_all`, the `vaults` array, chips,
+CLI, mobile search, Android autofill): the personal vault is always
+eligible; a Space is eligible only when the ceiling is true (live
+value if unlocked, cache if locked), the opt-in is on, and no removal
+notice (D73) stands against the device. A Space never unlocked on
+this device has no cache, so it is ineligible: it fails closed and
+never nags.
+
+Why not a Space kind: the creation wizard asks one plain-language
+line ("Who is this space for? Family or home / Work or organization")
+and that answer only sets the default of `personal_merge`. No kind
+is stored, so there is exactly one source of truth; families can
+change their answer later; and a company that never flipped its Space
+shape is still protected. Honest framing for org admins, recorded in
+the decision record: this is a guardrail for honest clients, not DLP.
+A member already holds the bytes; the real org controls are
+`allow_viewer_export`, `guest_enabled`, and quorum.
+
+The extension's merged match route returns match metadata only,
+never whole-vault payloads; it must not become a path to
+`list_full_all`-shaped data.
 
 ### 4.3 Extension autofill: `bridge.match` fans out over `autofill_query`
 
@@ -122,16 +164,16 @@ handler retires in favor of `UriMatchStrategy` (the same matcher
 Android and the daemon's fill-time check use).
 
 Response shape: each match gains `vault_slug` and `vault_name`; the
-top level gains a `vaults` array with slug, display name, and lock
-state, so surfaces render unlock chips without a second call. Match
-metadata only; still no passwords; still no session token required
-(bridge pairing token only).
+top level gains a `vaults` array listing only eligible vaults with
+slug, display name, and lock state, so surfaces render unlock chips
+without a second call. Match metadata only; still no passwords; still
+no session token required (bridge pairing token only).
 
 Gate change: today the bridge gate requires the ACTIVE vault
 unlocked (`route_bridge_request` returns `locked` otherwise), which
 would report "locked" whenever the personal vault sleeps even if the
-family vault is open. The gate becomes: at least one
-browser-enabled vault unlocked.
+family vault is open. The gate becomes: at least one merge-eligible
+vault unlocked.
 
 Ordering: slug resolution must happen before per-vault matching and
 before the delegated token stamp binds the active state
@@ -151,7 +193,9 @@ The extension popup currently calls `vault.get {id}` with no url
 (`browser/shared/src/popup.jsx:348`, `:398`), which skips URL
 matching for URI-less entries. Slug-scoped reads always carry the tab
 URL, so a compromised extension page cannot read an arbitrary entry
-from any enabled vault by id alone.
+from any enabled vault by id alone. A slug that fails
+`merge_eligible` (locked, never-classified, or under a removal
+notice) is refused exactly like an unknown one.
 
 ### 4.5 Service-worker payload projection (B4 rule)
 
@@ -164,14 +208,19 @@ show only in the popup, an extension-owned page. The inline menu gets
 a neutral "from another vault" marker only when two or more vaults
 contribute to the match set.
 
-### 4.6 Bridge writes stay active-vault
+### 4.6 Bridge writes stay active-vault in v1
 
 `vault.add` and `vault.update` are bridge-allowlisted (field-gated).
 Rule: bridge writes target the active vault only. Updating a
 foreign-vault match is refused in v1 (the popup switches to that
-vault first, an explicit act). Slug-routed writes with the
-`bridge_write_allowed` role check are a later slice if capture UI
-ever lands.
+vault first, an explicit act).
+
+Known consequence, accepted for v1 and fixed in the first follow-up:
+for a family Space this fails the common case — someone rotates the
+Wi-Fi password in the browser and the capture cannot update the
+shared entry, so it goes stale. Slug-routed update (Editor and above,
+with the `bridge_write_allowed` role check; Viewer refused) is
+scheduled as v1.1, not "later".
 
 ### 4.7 Locked-vault affordance in the extension
 
@@ -179,7 +228,10 @@ V1 is a text-only chip: "Family is locked. Open Baluard." There is no
 unlock route in the bridge allowlist and none is added; a master
 password never enters the extension. A future `bridge.request_unlock
 {slug}` that raises the desktop unlock dialog with pairing-style
-user approval is the candidate for v2.
+user approval is the candidate for v2. Chips list eligible vaults
+only: an organization Space never renders an unlock chip in a
+member's personal surface, and a Space under a removal notice reads
+"You may no longer have access to this space", offering detach.
 
 ### 4.8 Android autofill
 
@@ -206,27 +258,31 @@ suggestions appear.
 ### 4.9 Android app search
 
 The main-process list search fans out over its unlocked sessions
-(here `MAX_UNLOCKED = 3` applies), badges results with the vault
-name, and opens the owning vault on tap. Folders and tags stay
-per-vault in their own screens.
+(here `MAX_UNLOCKED = 3` applies), keeps only merge-eligible vaults,
+badges results with the vault name, and opens the owning vault on
+tap. Folders and tags stay per-vault in their own screens.
 
 ### 4.10 CLI search
 
-`baluard search --all` fans out over unlocked vaults and prints
-slug-tagged rows, per the CLI-first-class principle: the command is
-the executable spec of the fan-out contract and the e2e vehicle for
-it.
+`baluard search --all` fans out over unlocked merge-eligible vaults
+and prints slug-tagged rows, per the CLI-first-class principle: the
+command is the executable spec of the fan-out contract and the e2e
+vehicle for it. `baluard search --vault <slug>` is the CLI form of
+"switch vaults": explicit single-vault search, including an
+organization Space.
 
 ### 4.11 Ranking and display
 
-Order: exact host match first, then the personal vault, then
-favorite, then name, then vault slug as a stable tiebreak. Favorite
-is a shared field inside a Space, so a stranger's favorite must not
-outrank the user's own login. No dedupe: two logins for the same
-site from personal and family both show, and the user picks (nothing
-autofills on load). Badges render only when two or more vaults
-contribute, so single-vault users see no machinery. The toolbar
-badge count counts across browser-enabled vaults.
+Order: exact host match first, then the personal vault, then merged
+Spaces (favorite, then name, then vault slug as the stable
+tiebreak). Favorite is a shared field inside a Space, so a
+stranger's favorite must not outrank the user's own login; Spaces
+rank below personal for the same reason. No dedupe: two logins for
+the same site from personal and family both show, and the user picks
+(nothing autofills on load). Badges render only when two or more
+eligible vaults contribute, so a personal-only user and an org-Space
+user see no merge machinery. The toolbar badge count counts across
+eligible vaults.
 
 ## 5. Failure modes and product behavior
 
@@ -244,40 +300,66 @@ badge count counts across browser-enabled vaults.
   not hidden.
 - A vault with a stale keywrap (password changed elsewhere) fails
   closed at unlock and contributes nothing.
+- Ceiling changes ride sync: an admin turning `personal_merge` off
+  reaches a device only at its next pull, so a stale device keeps
+  merging until then. Accepted and documented, because the member
+  holds the keys anyway. Exception: a removal notice (D73) is local
+  and immediate — it makes the Space ineligible at once, with the
+  detach-offering chip.
+- The ceiling is a guardrail for honest clients, not data-loss
+  prevention. A member with the keys can always read and copy their
+  Space's items inside the app; merge only decides what surfaces
+  next to personal items.
 - No new rate limits: match and search are local reads.
-- Nothing from a locked or not-enabled vault ever crosses: no names,
-  no usernames, no counts beyond the registered-vault lock-state
-  array the chips need.
+- Nothing from a locked, ineligible, or not-enabled vault ever
+  crosses: no names, no usernames, no counts beyond the eligible
+  vault lock-state array the chips need.
 
 ## 6. Test plan
 
 Daemon: fan-out helper unit tests (unlocked mix, locked skip,
 mid-scan lock following the `vaults.list_full_all` pattern at
-`route_coverage.rs:425`, empty map, slug/name tagging). Route tests:
-merged `bridge.match` shape; gate passes with active locked plus a
-browser-enabled sibling unlocked; slug-scoped `vault.get` rejects
-URL mismatch, unknown slug, locked vault, not-enabled vault; viewer
-and pending-join vaults excluded; match payloads never contain
-passwords. Extension: vitest for popup badges and slug pass-through
-on all three call sites (`popup.jsx:348`, `:356`, `:398`) and the
-background call sites (`background.js:230`, `:249`); a projection
-test asserting the `vaults` array never reaches the inline
-connection. Android: merged ranking, dataset labels, two-vault
-prompt flow, stale-KEK failure, process death, inline cap. CLI: e2e
-`search --all` across two vaults with one locked.
+`route_coverage.rs:425`, empty map, slug/name tagging, ineligible
+Space rows carry metadata but no ciphers). Route tests: merged
+`bridge.match` shape; gate passes with active locked plus a
+merge-eligible sibling unlocked; org-Space entries absent from the
+`vaults` array and chips; slug-scoped `vault.get` rejects URL
+mismatch, unknown slug, locked vault, ineligible vault, and a vault
+under a removal notice; viewer and pending-join vaults excluded;
+match payloads never contain passwords. Consent: ceiling off at join
+(no prompt, no merge); ceiling turned on later (one-time ask, never
+auto-on); ceiling turned off (ineligible after the next pull);
+removal notice drops eligibility immediately; shape flip dialog
+shows the merge row; `personal_merge` survives the
+`policies.rs::validate_value` roundtrip and rides the four daemon
+integration lists (cover-mutations, token-gate pins, desktop
+allowlist, `daemon.js` mutations). Extension: vitest for popup
+badges and slug pass-through on all three call sites
+(`popup.jsx:348`, `:356`, `:398`) and the background call sites
+(`background.js:230`, `:249`); a projection test asserting the
+`vaults` array never reaches the inline connection. Android: merged
+ranking, dataset labels, two-vault prompt flow, stale-KEK failure,
+process death, inline cap. CLI: e2e `search --all` across two
+vaults with one locked, and `search --vault` against an org Space.
 
 ## 7. Landing order
 
 1. Extract the shared fan-out helper from `vaults.list_full_all`.
-2. `browser_enabled` registry flag, join-time ask, D-record.
+2. The consent model: `personal_merge` on `VaultSettings`, the two
+   device-local registry fields, the `merge_eligible` predicate, the
+   wizard question, the join notice, and the D31 desktop retrofit —
+   all gated behind the predicate — plus the decision record.
 3. `bridge.match` fan-out over `autofill_query`, gate change,
    matcher unification.
 4. Slug-scoped `vault.get` / `cipher.totp_code`, route reorder,
    popup URL fix.
 5. Service-worker projection, popup badges, locked chips.
-6. CLI `search --all`.
+6. CLI `search --all` and `search --vault`.
 7. Android autofill (per-handle design above).
 8. Android app search merge.
+9. Follow-up: slug-routed capture updates for merge-eligible Spaces
+   (Editor and above), then `bridge.request_unlock` as the v2 chip.
 
 Steps 1 through 6 land value for every extension user before the
-Android slice begins. The desktop needs nothing; it shipped in D31.
+Android slice begins. The desktop needs no merge work; it ships in
+D31 and only gains the eligibility predicate.
