@@ -3,6 +3,7 @@
 //! Parsers for external password manager formats, outputting `CipherInput` for batch-create.
 //! Export functions produce BW-compatible JSON/CSV and encrypted JSON.
 
+pub mod backup_container;
 pub mod baluard_json;
 pub mod bw_csv;
 pub mod bw_json;
@@ -58,6 +59,7 @@ impl ImportResult {
 /// Supported import formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportFormat {
+    BaluardEncrypted,
     BaluardJson,
     BwJson,
     BwCsv,
@@ -72,6 +74,7 @@ pub enum ImportFormat {
 impl ImportFormat {
     pub fn from_name(s: &str) -> Option<Self> {
         match s {
+            "baluard-encrypted" | "bldbak" => Some(Self::BaluardEncrypted),
             "baluard" | "baluard-json" | "baluard-backup" | "baluard.vault" => {
                 Some(Self::BaluardJson)
             }
@@ -90,6 +93,7 @@ impl ImportFormat {
     /// All supported format names for CLI help.
     pub fn all_names() -> &'static [&'static str] {
         &[
+            "baluard-encrypted",
             "baluard",
             "bw-json",
             "bw-csv",

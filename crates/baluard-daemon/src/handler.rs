@@ -4539,6 +4539,35 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
 
             let import_result = match format {
+                baluard_core::import::ImportFormat::BaluardEncrypted => {
+                    // Path-based transport (§8): the daemon reads the file;
+                    // container bytes never ride the frame. Wrong passphrase
+                    // is an err_response — never a skipped-entry summary,
+                    // which would render the failure as "Imported 0".
+                    let path = parsed["in_path"].as_str().unwrap_or("");
+                    if path.is_empty() {
+                        req.payload.zeroize();
+                        return err_response("Missing in_path for encrypted backup import");
+                    }
+                    let passphrase = zeroize::Zeroizing::new(
+                        parsed["passphrase"].as_str().unwrap_or("").to_string(),
+                    );
+                    if passphrase.is_empty() {
+                        req.payload.zeroize();
+                        return err_response("Missing passphrase for encrypted backup import");
+                    }
+                    // Extract-then-zero (§8): scrub the raw payload before
+                    // the fallible body, mirroring the recovery routes.
+                    req.payload.zeroize();
+                    let bytes = match std::fs::read(path) {
+                        Ok(b) => b,
+                        Err(e) => return err_response(format!("Failed to read {path}: {e}")),
+                    };
+                    return match state.import_backup_encrypted(&passphrase, &bytes).await {
+                        Ok(json) => ok_resp(json, token_str),
+                        Err(e) => err_response(e),
+                    };
+                }
                 baluard_core::import::ImportFormat::BaluardJson => {
                     let data = parsed["data"].as_str().unwrap_or("");
                     let result = match baluard_core::import::baluard_json::parse_backup(data) {
@@ -4621,6 +4650,55 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 payload
             };
             match format {
+                "baluard-encrypted" => {
+                    // Path-based transport (§8): the daemon builds and writes
+                    // the container itself; only a summary rides back. The
+                    // passphrase is extracted into a Zeroizing copy — a
+                    // serde_json::Value's strings cannot be zeroized, so
+                    // extract-then-zero is the compliant pattern.
+                    let parsed: serde_json::Value = match serde_json::from_str(payload) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            req.payload.zeroize();
+                            return err_response(format!("Invalid JSON: {e}"));
+                        }
+                    };
+                    let out_path = parsed["out_path"].as_str().unwrap_or("").to_string();
+                    if out_path.is_empty() {
+                        req.payload.zeroize();
+                        return err_response("Missing out_path for encrypted backup export");
+                    }
+                    let passphrase = zeroize::Zeroizing::new(
+                        parsed["passphrase"].as_str().unwrap_or("").to_string(),
+                    );
+                    if passphrase.is_empty() {
+                        req.payload.zeroize();
+                        return err_response("Missing passphrase for encrypted backup export");
+                    }
+                    // Extract-then-zero (§8): the fields are copied out, so
+                    // the raw payload carrying the passphrase is scrubbed on
+                    // every remaining path — mirroring the recovery routes.
+                    req.payload.zeroize();
+                    let (container, entries) =
+                        match state.export_backup_encrypted(&passphrase).await {
+                            Ok(r) => r,
+                            Err(e) => return err_response(e),
+                        };
+                    match baluard_core::secret_file::write_secret_file(
+                        std::path::Path::new(&out_path),
+                        &container,
+                    ) {
+                        Ok(()) => ok_resp(
+                            serde_json::json!({
+                                "written_bytes": container.len(),
+                                "entries": entries,
+                            })
+                            .to_string(),
+                            token_str,
+                        ),
+                        Err(e) => err_response(format!("Failed to write {out_path}: {e}")),
+                    }
+                }
                 "baluard" | "baluard-backup" | "baluard.vault" => {
                     match state.export_backup_json().await {
                         Ok(json) => ok_resp(json, token_str),

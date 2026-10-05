@@ -1,0 +1,15 @@
+baluard.backup v1 golden vector (docs/plan-encrypted-backup.md section 9)
+
+File: backup-v1.bldbak (262273 bytes, 256 KiB bucket, 4 chunks)
+Passphrase: correct horse battery staple
+Salt (hex): a5 repeated 32 bytes
+Nonce prefix (hex): 5a repeated 7 bytes
+KDF: Argon2id m=65536 KiB t=3 p=1
+AEAD: AES-256-GCM, chunk 65536
+Header (hex):
+424c4442414b01010100000001000300000001000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a55a5a5a5a5a5a5a00000100
+SHA-256 (whole file):
+547ea1d64c122b352ca86c436a4f05f7e5e8b4af5611178df9ce11302eb027a2
+
+Regenerate with scripts/decrypt_backup.py (needs argon2-cffi + cryptography):
+  python3 scripts/decrypt_backup.py crates/baluard-core/tests/golden/backup-v1.bldbak
