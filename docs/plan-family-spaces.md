@@ -39,6 +39,8 @@ Member files gain `minor: bool` (default false; a breaking format change). It is
 
 A minor member cannot be promoted, cannot claim ownership, cannot use the kit, cannot approve asks, and cannot transfer-own (the transfer route refuses minor targets — round-2 review caught the gap). Children join as Viewers by default; Editor is a deliberate parent choice, made with the knowledge that on an unflipped vault an Editor can modify and trash any family cipher. A minor files a leave request, but nothing executes without an Admin approving it (section 6).
 
+Scoped child editors (planned): the product owner asked for children who can edit the entries they can see, with permissions. Today the cipher-write role floor blocks it - a Viewer with a write grant still cannot write ciphers (policy.rs:464 pins the rule), so the only choice is all-or-nothing Editor. Family purpose adds one policy rule: a write grant on a collection lifts the role floor for cipher writes inside that collection only. The child's own entries live in a Kids collection; a parent grants Write; the child edits there and nowhere else. Grants stay admin-minted, so no self-escalation exists, and the read side changes nothing - the child already sees everything on the unflipped shape, as every member does.
+
 The orphan escape: possession of the kit phrase clears the minor flag. If both parents are gone, the adult child recovers a device with the safe-deposit phrase and the flag falls with it — a forgotten flag can never trap anyone who holds the phrase, and the phrase was already the family's root authority by D64's design.
 
 ## 6. Departure: an approved leave record
@@ -109,4 +111,4 @@ E2E: the widow journey (claim, remove, kit re-issue, migrate); the divorce journ
 3. Kit work: phrase-only family recovery, live-admin confirmations, departure-forced re-issue, kit-mandatory creation step.
 4. Family creation wizard (purpose question, Admin co-parent invite, children as Viewers, kit, notices) + personal-vault flip refusal.
 5. G24 wiring: purpose sets the `personal_merge` default; the plan-merged-search consent section amended to record purpose.
-6. v1.1: the D61 contest window, unlocking quorum 2, the claim notice window against live Owners, and the selective item-copy departure flow.
+6. v1.1: the D61 contest window, unlocking quorum 2, the claim notice window against live Owners, the selective item-copy departure flow, and scoped child editors (collection write grants lifting the role floor on family purpose, with policy tests pinning the scope).
