@@ -17,7 +17,44 @@ use bytes::{Buf, BytesMut};
 use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
+
+/// Secret-free format peek used before any payload with a passphrase is
+/// parsed into a serde_json::Value (§8).
+#[derive(serde::Deserialize)]
+struct ImportFormatOnly {
+    #[serde(default)]
+    format: String,
+}
+
+/// Largest legal encrypted container: 65-byte header + the 256 MiB bucket
+/// as 64 KiB chunks (65 + 4096 x 65552), with slack. Imports above this are
+/// refused before any read so a FIFO-sized or sparse monster file cannot
+/// exhaust the daemon.
+const MAX_BACKUP_CONTAINER_BYTES: u64 = 300 * 1024 * 1024;
+
+/// Typed extraction for the vault.export JSON payload. serde deserializes
+/// straight into these fields, so no serde_json::Value ever holds the
+/// passphrase (a Value's strings cannot be zeroized) — §8. The passphrase
+/// is moved into a Zeroizing wrapper by the caller right after the parse.
+#[derive(serde::Deserialize)]
+struct ExportPayload {
+    #[serde(default)]
+    format: String,
+    #[serde(default)]
+    out_path: Option<String>,
+    #[serde(default)]
+    passphrase: Option<String>,
+}
+
+/// Typed extraction for the vault.import baluard-encrypted payload (§8).
+#[derive(serde::Deserialize)]
+struct EncryptedImportPayload {
+    #[serde(default)]
+    in_path: Option<String>,
+    #[serde(default)]
+    passphrase: Option<String>,
+}
 
 /// Maximum frame size: 4MB (largest bucket is 1MB, leave headroom)
 const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
@@ -4522,12 +4559,62 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         // ── Import (token required) ──
         "vault.import" => {
             // Payload: JSON {"format": "bw-json", "data": "..."}
-            // OR for file-based: JSON {"format": "keepass-xml", "path": "/path/to/file"}
+            // OR for file-based: JSON {"format": "baluard-encrypted",
+            // "in_path": ..., "passphrase": ...}. The format is peeked with
+            // a secret-free struct first: the encrypted path parses straight
+            // into typed fields (§8) so no serde_json::Value — whose strings
+            // cannot be zeroized — ever holds the passphrase.
+            let peeked: ImportFormatOnly = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(e) => return err_response(format!("Invalid JSON: {e}")),
+            };
+            if baluard_core::import::ImportFormat::from_name(&peeked.format)
+                == Some(baluard_core::import::ImportFormat::BaluardEncrypted)
+            {
+                let parsed: EncryptedImportPayload = match serde_json::from_str(&req.payload) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        req.payload.zeroize();
+                        return err_response(format!("Invalid encrypted backup payload: {e}"));
+                    }
+                };
+                req.payload.zeroize();
+                let Some(in_path) = parsed.in_path.filter(|s| !s.is_empty()) else {
+                    return err_response("Missing in_path for encrypted backup import");
+                };
+                let Some(passphrase) = parsed
+                    .passphrase
+                    .filter(|s| !s.is_empty())
+                    .map(Zeroizing::new)
+                else {
+                    return err_response("Missing passphrase for encrypted backup import");
+                };
+                // Only regular files, size-capped: a device node or FIFO
+                // could hang or exhaust the daemon.
+                let meta = match std::fs::metadata(in_path.as_str()) {
+                    Ok(m) => m,
+                    Err(e) => return err_response(format!("Cannot read backup file: {e}")),
+                };
+                if !meta.is_file() {
+                    return err_response("Backup path is not a regular file");
+                }
+                if meta.len() > MAX_BACKUP_CONTAINER_BYTES {
+                    return err_response("Backup file is too large");
+                }
+                let bytes = match std::fs::read(in_path.as_str()) {
+                    Ok(b) => b,
+                    Err(e) => return err_response(format!("Failed to read {in_path}: {e}")),
+                };
+                return match state.import_backup_encrypted(&passphrase, &bytes).await {
+                    Ok(json) => ok_resp(json, token_str),
+                    Err(e) => err_response(e),
+                };
+            }
             let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
                 Ok(v) => v,
                 Err(e) => return err_response(format!("Invalid JSON: {e}")),
             };
-            let format_str = parsed["format"].as_str().unwrap_or("");
+            let format_str = peeked.format.as_str();
             let format = match baluard_core::import::ImportFormat::from_name(format_str) {
                 Some(f) => f,
                 None => {
@@ -4540,33 +4627,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
             let import_result = match format {
                 baluard_core::import::ImportFormat::BaluardEncrypted => {
-                    // Path-based transport (§8): the daemon reads the file;
-                    // container bytes never ride the frame. Wrong passphrase
-                    // is an err_response — never a skipped-entry summary,
-                    // which would render the failure as "Imported 0".
-                    let path = parsed["in_path"].as_str().unwrap_or("");
-                    if path.is_empty() {
-                        req.payload.zeroize();
-                        return err_response("Missing in_path for encrypted backup import");
-                    }
-                    let passphrase = zeroize::Zeroizing::new(
-                        parsed["passphrase"].as_str().unwrap_or("").to_string(),
-                    );
-                    if passphrase.is_empty() {
-                        req.payload.zeroize();
-                        return err_response("Missing passphrase for encrypted backup import");
-                    }
-                    // Extract-then-zero (§8): scrub the raw payload before
-                    // the fallible body, mirroring the recovery routes.
-                    req.payload.zeroize();
-                    let bytes = match std::fs::read(path) {
-                        Ok(b) => b,
-                        Err(e) => return err_response(format!("Failed to read {path}: {e}")),
-                    };
-                    return match state.import_backup_encrypted(&passphrase, &bytes).await {
-                        Ok(json) => ok_resp(json, token_str),
-                        Err(e) => err_response(e),
-                    };
+                    // Handled above, before any serde Value could hold the
+                    // passphrase — unreachable.
+                    unreachable!("baluard-encrypted import is handled pre-dispatch")
                 }
                 baluard_core::import::ImportFormat::BaluardJson => {
                     let data = parsed["data"].as_str().unwrap_or("");
@@ -4636,56 +4699,56 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         // ── Export (token required) ──
         "vault.export" => {
             // Payload: the format token raw ("baluard", "bw-json", ...)
-            // or as JSON {"format": "..."} (desktop). Accept both.
-            let payload = req.payload.trim();
-            let format_owned;
-            let format = if payload.starts_with('{') {
-                let parsed: Result<serde_json::Value, _> = serde_json::from_str(payload);
-                format_owned = parsed
-                    .ok()
-                    .and_then(|v| v["format"].as_str().map(str::to_string))
-                    .unwrap_or_default();
-                format_owned.as_str()
+            // or as JSON {"format", "out_path", "passphrase"} (desktop).
+            // Parsed once, straight into typed fields: serde builds the
+            // passphrase String directly into the struct, where it is moved
+            // into a Zeroizing wrapper — no serde_json::Value ever holds a
+            // copy (§8). The raw payload is zeroized right after the parse.
+            let is_json = req.payload.trim().starts_with('{');
+            let parsed = if is_json {
+                match serde_json::from_str::<ExportPayload>(&req.payload) {
+                    Ok(p) => {
+                        req.payload.zeroize();
+                        Some(p)
+                    }
+                    Err(e) => {
+                        req.payload.zeroize();
+                        return err_response(format!("Invalid JSON: {e}"));
+                    }
+                }
             } else {
-                payload
+                None
             };
-            match format {
+            let format = match &parsed {
+                Some(p) => p.format.clone(),
+                None => req.payload.trim().to_string(),
+            };
+            match format.as_str() {
                 "baluard-encrypted" => {
                     // Path-based transport (§8): the daemon builds and writes
-                    // the container itself; only a summary rides back. The
-                    // passphrase is extracted into a Zeroizing copy — a
-                    // serde_json::Value's strings cannot be zeroized, so
-                    // extract-then-zero is the compliant pattern.
-                    let parsed: serde_json::Value = match serde_json::from_str(payload) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            req.payload.zeroize();
-                            return err_response(format!("Invalid JSON: {e}"));
-                        }
+                    // the container itself; only a summary rides back.
+                    let Some(parsed) = parsed else {
+                        return err_response(
+                            "encrypted export needs the JSON payload with out_path and passphrase",
+                        );
                     };
-                    let out_path = parsed["out_path"].as_str().unwrap_or("").to_string();
-                    if out_path.is_empty() {
-                        req.payload.zeroize();
+                    let Some(out_path) = parsed.out_path.filter(|s| !s.is_empty()) else {
                         return err_response("Missing out_path for encrypted backup export");
-                    }
-                    let passphrase = zeroize::Zeroizing::new(
-                        parsed["passphrase"].as_str().unwrap_or("").to_string(),
-                    );
-                    if passphrase.is_empty() {
-                        req.payload.zeroize();
+                    };
+                    let Some(passphrase) = parsed
+                        .passphrase
+                        .filter(|s| !s.is_empty())
+                        .map(Zeroizing::new)
+                    else {
                         return err_response("Missing passphrase for encrypted backup export");
-                    }
-                    // Extract-then-zero (§8): the fields are copied out, so
-                    // the raw payload carrying the passphrase is scrubbed on
-                    // every remaining path — mirroring the recovery routes.
-                    req.payload.zeroize();
+                    };
                     let (container, entries) =
                         match state.export_backup_encrypted(&passphrase).await {
                             Ok(r) => r,
                             Err(e) => return err_response(e),
                         };
                     match baluard_core::secret_file::write_secret_file(
-                        std::path::Path::new(&out_path),
+                        std::path::Path::new(out_path.as_str()),
                         &container,
                     ) {
                         Ok(()) => ok_resp(
