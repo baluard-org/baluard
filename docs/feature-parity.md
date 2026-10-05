@@ -197,10 +197,13 @@ Surface: Desktop + Mobile. Missing: no GUI renders `password_history` (CLI expos
 ### G23. Mobile admin ops: repoint / migrate, commit revocation
 Surface: Mobile. Missing: remote repoint and signed-manifest revocation. Effort: S each. Value: recovery from a bad remote without a desktop. Decision: fold into G5's admin surface or park.
 
+### G24. Merged search and autofill across personal vault and Spaces
+Surface: Extension + Android + Mobile + CLI (the desktop app is already merged via `vaults.list_full_all`, D31). Missing: extension autofill, Android autofill, mobile search, and the CLI each read one active vault, so family or organization items are invisible until a vault switch. Effort: M. Value: the 1Password/Bitwarden expectation — one list, one badge per origin vault. Decision: planned. Spec: docs/plan-merged-search.md (fan-out over unlocked, browser-consented vaults; per-vault quick unlock instead of a shared secret).
+
 ## Recommended order
 
 1. **Small closes (S batch):** G1, G14, G17, G20, G22.
-2. **Adoption (the phone stands alone):** G2 (import/export), G4 (open reveals), G15 (detach), G18 (reprompt enforcement).
+2. **Adoption (the phone stands alone):** G2 (import/export), G4 (open reveals), G15 (detach), G18 (reprompt enforcement), G24 (merged search and autofill).
 3. **CLI parity track:** G7 (utilities), G16-CLI + G8 (repo creation and connect), G9 (rotation), G11 phase 1 (sharing). Each gap lands a daemon + CLI primitive that the desktop and mobile twins then wrap.
 4. **Security lifecycle:** G3 (rotation ceremony), G5 + G23 (fleet and admin ops), G6 (escrow + kit).
 5. **Post-1.0:** G11 phase 2 (full CLI admin), G10 (mobile passkey ceremonies), G12 (iOS depth), G13 (groups on mobile + CLI), G19 (health GUI), G21 (avatar).
