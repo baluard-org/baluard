@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Folder
@@ -106,6 +107,7 @@ fun VaultHomeScreen(
     vaultName: String,
     vaultPath: String,
     onSwitchVault: (String) -> Unit = {},
+    onDetachVault: suspend (String) -> Unit = {},
     onAddVault: () -> Unit = {},
     revision: Int = 0,
 ) {
@@ -120,6 +122,10 @@ fun VaultHomeScreen(
 
     var switchOpen by remember { mutableStateOf(false) }
     var showAsk by remember { mutableStateOf(false) }
+    // G15: vault pending a detach confirmation inside the switch dialog.
+    // The discovered list lives here so both dialogs share it.
+    var pendingDetach by remember { mutableStateOf<DiscoveredVault?>(null) }
+    var discovered by remember { mutableStateOf<List<DiscoveredVault>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
     val favorites = ciphers.filter { it.favorite }
@@ -225,7 +231,6 @@ fun VaultHomeScreen(
             }
 
             if (switchOpen) {
-                var discovered by remember { mutableStateOf<List<DiscoveredVault>>(emptyList()) }
                 LaunchedEffect(Unit) {
                     discovered = VaultRegistry.listVaults()
                 }
@@ -272,6 +277,19 @@ fun VaultHomeScreen(
                                             tint = MaterialTheme.colorScheme.tertiary,
                                             modifier = Modifier.size(18.dp),
                                         )
+                                    } else {
+                                        // G15: detach = drop from the list
+                                        // without deleting anything.
+                                        androidx.compose.material3.IconButton(onClick = {
+                                            pendingDetach = v
+                                        }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = t("home.detach"),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -306,6 +324,35 @@ fun VaultHomeScreen(
                     },
                     confirmButton = {
                         androidx.compose.material3.TextButton(onClick = { switchOpen = false }) {
+                            Text(t("common.cancel"))
+                        }
+                    },
+                )
+            }
+
+            // G15 detach confirmation: plain language about what happens
+            // (dropped from the list, files stay on the device).
+            pendingDetach?.let { target ->
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { pendingDetach = null },
+                    title = { Text(t("home.detachTitle", target.name)) },
+                    text = { Text(t("home.detachDesc")) },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = {
+                            scope.launch {
+                                onDetachVault(target.path)
+                                pendingDetach = null
+                                discovered = VaultRegistry.listVaults()
+                            }
+                        }) {
+                            Text(
+                                t("home.detach"),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { pendingDetach = null }) {
                             Text(t("common.cancel"))
                         }
                     },

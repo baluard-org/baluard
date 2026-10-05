@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Shield
@@ -45,6 +46,7 @@ import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.GitExplainerDialog
 import xyz.actitud.baluard.ui.components.GitWhatLink
+import xyz.actitud.baluard.ui.components.rememberShareOpenFlow
 /**
  * First-launch root styled with Baluard brand cards and feature highlights.
  */
@@ -116,6 +118,17 @@ fun OnboardingScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             GitWhatLink(onOpen = { gitHelpOpen = true })
+
+            Spacer(Modifier.height(12.dp))
+
+            // G4: pre-vault guest flow — a recipient without an account
+            // opens a passphrase share straight from onboarding.
+            val shareOpen = rememberShareOpenFlow(guestOnly = true, vault = null, repo = null)
+            BaluardOutlinedButton(
+                text = t("share.openRow"),
+                onClick = shareOpen.open,
+                leadingIcon = Icons.Default.Folder,
+            )
         }
     }
     if (gitHelpOpen) {

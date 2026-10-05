@@ -839,6 +839,16 @@ class VaultRepository {
     suspend fun repromptVerify(vault: MobileVault, masterPassword: String): ULong =
         vault.repromptVerify(masterPassword)
 
+    /** One-shot shared package (S2 IS-3): imports the entry. b64 in,
+     * import-summary JSON out. */
+    suspend fun importSharedPackage(vault: MobileVault, packageB64: String): String =
+        vault.importSharedPackage(packageB64)
+
+    /** Contact-key reveal (S2 IS-6): view-only, nothing added.
+     * b64 in, OpenedReveal JSON out. */
+    suspend fun openSharedContact(vault: MobileVault, revealB64: String): String =
+        vault.openSharedContact(revealB64)
+
     companion object {
         const val DEFAULT_VAULT_TIMEOUT = "15m"
 
