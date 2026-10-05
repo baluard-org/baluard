@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// UI-facing masked conflict. NO secret values; field labels + a sensitive
 /// flag only. Mirrors `PendingConflict` in the frontend contract
@@ -5324,16 +5324,31 @@ impl VaultState {
         passphrase: &str,
     ) -> Result<(Vec<u8>, u32), String> {
         use baluard_core::import::backup_container;
-        let payload = self.export_backup_json().await?;
-        let container =
-            backup_container::encrypt(payload.as_bytes(), passphrase).map_err(|e| e.to_string())?;
-        backup_container::verify(&container, passphrase, payload.as_bytes())
-            .map_err(|e| e.to_string())?;
-        let entries = serde_json::from_str::<serde_json::Value>(&payload)
-            .ok()
-            .and_then(|v| v["manifest"]["cipher_count"].as_u64())
-            .unwrap_or(0) as u32;
-        Ok((container, entries))
+        if passphrase.len() < 8 {
+            return Err("Use at least 8 characters for the backup passphrase".to_string());
+        }
+        // The plaintext JSON holds every secret in the vault: it lives only
+        // in zeroized buffers, and the Argon2id + AES work runs on the
+        // blocking pool like the unlock path (spawn_blocking per D5).
+        let payload = Zeroizing::new(self.export_backup_json().await?);
+        let pw = Zeroizing::new(passphrase.to_string());
+        tokio::task::spawn_blocking(move || {
+            let container =
+                backup_container::encrypt(payload.as_bytes(), &pw).map_err(|e| e.to_string())?;
+            backup_container::verify(&container, &pw, payload.as_bytes())
+                .map_err(|e| e.to_string())?;
+            // The manifest count feeds the "Backup checked" toast. A payload
+            // that cannot be parsed is an internal bug, never a silent 0.
+            let entries = serde_json::from_str::<serde_json::Value>(&payload)
+                .map_err(|e| format!("backup manifest unreadable: {e}"))?;
+            let entries = entries["manifest"]["cipher_count"]
+                .as_u64()
+                .ok_or_else(|| "backup manifest unreadable".to_string())?
+                as u32;
+            Ok((container, entries))
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     /// Decrypt + import an encrypted backup. Wrong passphrase and corruption
@@ -5345,11 +5360,19 @@ impl VaultState {
         container: &[u8],
     ) -> Result<String, String> {
         use baluard_core::import::backup_container;
-        let payload =
-            backup_container::decrypt(container, passphrase).map_err(|e| e.to_string())?;
-        let text = String::from_utf8(payload.to_vec())
+        // Argon2id + AES run on the blocking pool (spawn_blocking per D5);
+        // the decrypted plaintext stays in its zeroized buffer and is
+        // borrowed as &str, never copied out.
+        let pw = Zeroizing::new(passphrase.to_string());
+        let owned = container.to_vec();
+        let payload = tokio::task::spawn_blocking(move || {
+            backup_container::decrypt(&owned, &pw).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        let text = std::str::from_utf8(&payload)
             .map_err(|_| backup_container::ContainerError::Damaged.to_string())?;
-        let backup = baluard_core::import::baluard_json::parse_backup(&text)?;
+        let backup = baluard_core::import::baluard_json::parse_backup(text)?;
         self.import_ciphers(baluard_core::import::baluard_json::backup_to_import(backup))
             .await
     }

@@ -19,7 +19,7 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// ASCII file magic. Offsets and layout are pinned by tests; keep them in
 /// sync with the spec table before changing anything.
@@ -201,9 +201,9 @@ fn derive_file_key(
 
     let pwd = normalize_passphrase(passphrase);
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let dk = Zeroizing::new([0u8; 32]);
-    // SAFETY-free fill: hash_password_into writes the full 32-byte slice.
-    let mut dk = dk;
+    // hash_password_into overwrites the full 32-byte slice, so the zeroized
+    // initial value is replaced by key material in place.
+    let mut dk = Zeroizing::new([0u8; 32]);
     argon2
         .hash_password_into(&pwd, &header.salt, dk.as_mut())
         .map_err(|_| ContainerError::Damaged)?;
@@ -244,10 +244,11 @@ pub fn encrypt(payload: &[u8], passphrase: &str) -> Result<Vec<u8>, ContainerErr
     encrypt_with_entropy(payload, passphrase, salt, nonce_prefix)
 }
 
-/// Deterministic encryption: same inputs, byte-identical container. Used by
-/// the golden test vector and the reference decryptor's cross-check, never
-/// by user-facing flows (a fixed salt in production would be catastrophic).
-pub fn encrypt_with_entropy(
+/// Deterministic encryption: same inputs, byte-identical container. Private:
+/// only [encrypt] (fresh randomness) and the in-module golden-vector tests
+/// may use it — a fixed salt in user-facing flows would reuse GCM nonces
+/// under one key.
+fn encrypt_with_entropy(
     payload: &[u8],
     passphrase: &str,
     salt: [u8; 32],
@@ -335,11 +336,16 @@ pub fn decrypt(container: &[u8], passphrase: &str) -> Result<Zeroizing<Vec<u8>>,
             )
             .map_err(|_| ContainerError::Damaged)?;
         padded.extend_from_slice(&pt);
+        // Each decrypted chunk is plaintext vault material; scrub it once
+        // it has been copied into the zeroized padded buffer.
+        let mut pt = pt;
+        pt.zeroize();
     }
 
     // In-band length: bound-checked, never used to allocate.
     let len_bytes: [u8; 8] = padded[..8].try_into().expect("padded >= 8");
-    let payload_len = u64::from_be_bytes(len_bytes) as usize;
+    let payload_len =
+        usize::try_from(u64::from_be_bytes(len_bytes)).map_err(|_| ContainerError::Damaged)?;
     if payload_len > padded.len().saturating_sub(8) {
         return Err(ContainerError::Damaged);
     }
@@ -471,14 +477,75 @@ mod tests {
 
     #[test]
     fn removed_middle_chunk_fails() {
-        let payload = vec![0x42u8; 4 * 1024 * 1024]; // needs 2 chunks (bucket 4 MiB)
+        // 4 MiB of payload spills into the 16 MiB bucket (256 chunks), so
+        // removing one chunk yields 255 chunks, which is not a bucket: the
+        // structural modulo/membership rules refuse it before any key
+        // derivation.
+        let payload = vec![0x42u8; 4 * 1024 * 1024];
         let ct = encrypt(&payload, PASS).expect("encrypt");
-        // Drop the second chunk: last chunk still ends the file with the
-        // final flag, but its counter no longer matches position 1.
         let mut bad = Vec::new();
         bad.extend_from_slice(&ct[..HEADER_LEN + CHUNK_ON_DISK]);
         bad.extend_from_slice(&ct[HEADER_LEN + 2 * CHUNK_ON_DISK..]);
         assert!(matches!(decrypt(&bad, PASS), Err(ContainerError::Damaged)));
+    }
+
+    #[test]
+    fn swapped_chunks_fail_authentication() {
+        // Swap two non-final chunks of a 4 MiB container: the chunk count
+        // stays a legal bucket and the framing stays intact, so only the
+        // counter-position mismatch (chunk 0's ciphertext at nonce 1 and
+        // vice versa) can catch it — this is the case that exercises the
+        // STREAM counter and final-flag logic for real.
+        let payload = vec![0x42u8; 4 * 1024 * 1024];
+        let ct = encrypt(&payload, PASS).expect("encrypt");
+        let mut bad = ct.clone();
+        let a = HEADER_LEN..HEADER_LEN + CHUNK_ON_DISK;
+        let b = HEADER_LEN + CHUNK_ON_DISK..HEADER_LEN + 2 * CHUNK_ON_DISK;
+        bad[a.clone()].copy_from_slice(&ct[b.clone()]);
+        bad[b].copy_from_slice(&ct[a]);
+        assert!(matches!(decrypt(&bad, PASS), Err(ContainerError::Damaged)));
+    }
+
+    #[test]
+    fn non_zero_padding_fails() {
+        // encrypt() can never produce non-zero padding, but a hostile file
+        // can carry a validly authenticated plaintext whose padding bytes are
+        // set. The padding rule must reject it AFTER successful
+        // authentication (the only check that can catch it).
+        let payload = sample_payload();
+        let mut padded = build_padded(&payload).expect("padded").to_vec();
+        let last = padded.len() - 1;
+        padded[last] = 0xAB;
+        let salt = [0x11u8; 32];
+        let prefix = [0x22u8; 7];
+        let header = ContainerHeader {
+            salt,
+            nonce_prefix: prefix,
+            ..ContainerHeader::new_export()
+        };
+        let header_bytes = header.encode();
+        let key = derive_file_key(PASS, &header, &header_bytes).expect("key");
+        let cipher = Aes256Gcm::new_from_slice(key.as_slice()).expect("cipher");
+        let mut ct = header_bytes.to_vec();
+        let chunks: Vec<&[u8]> = padded.chunks(CHUNK_SIZE as usize).collect();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let final_chunk = i + 1 == chunks.len();
+            let mut nonce = [0u8; 12];
+            nonce[..7].copy_from_slice(&prefix);
+            nonce[7..11].copy_from_slice(&(i as u32).to_be_bytes());
+            nonce[11] = if final_chunk { 1 } else { 0 };
+            let sealed = cipher
+                .encrypt(
+                    Nonce::from_slice(&nonce),
+                    Payload {
+                        msg: chunk,
+                        aad: &header_bytes,
+                    },
+                )
+                .expect("seal");
+            ct.extend_from_slice(&sealed);
+        }
+        assert!(matches!(decrypt(&ct, PASS), Err(ContainerError::Damaged)));
     }
 
     #[test]
@@ -629,7 +696,11 @@ mod tests {
     /// independently — see scripts/decrypt_backup.py.
     #[test]
     fn golden_vector_is_reproducible() {
-        let payload = br#"{"format":"baluard.vault","version":1,"app_version":"0.1.0","exported_at":1760000000,"manifest":{"cipher_count":1,"folder_count":1},"folders":[{"id":"3f2b8a64-1111-4111-8111-111111111111","name":"Work","parent_id":null,"icon":null}],"ciphers":[{"id":"9a1c2b3d-2222-4222-8222-222222222222","name":"Golden login","folder_id":"3f2b8a64-1111-4111-8111-111111111111","cipher_type":"login","data":{"password":"golden-secret","uris":[]},"favorite":true,"reprompt":false,"archived":false,"tags":[],"created_at":1760000000,"updated_at":1760000000}]}"#;
+        // A REAL baluard.vault v1 payload (parse_backup accepts it), not an
+        // arbitrary byte string: the vector doubles as a format specimen.
+        let payload = br#"{"format":"baluard.vault","version":1,"app_version":"0.1.0","exported_at":1760000000,"manifest":{"cipher_count":1,"folder_count":1},"folders":[{"id":"3f2b8a64-1111-4111-8111-111111111111","name":"Work"}],"ciphers":[{"id":"9a1c2b3d-2222-4222-8222-222222222222","name":"Golden login","folder_id":"3f2b8a64-1111-4111-8111-111111111111","kind":{"type":"login","data":{"password":"golden-secret","uris":[]}},"favorite":true,"reprompt":false,"archived":false,"tags":[],"created_at":1760000000,"updated_at":1760000000}]}"#;
+        crate::import::baluard_json::parse_backup(std::str::from_utf8(payload).expect("utf8"))
+            .expect("golden payload must be a valid backup");
         let ct = encrypt_with_entropy(
             payload,
             "correct horse battery staple",
@@ -643,5 +714,28 @@ mod tests {
         // against the file being hand-edited without the test catching it).
         let back = decrypt(golden, "correct horse battery staple").expect("golden decrypt");
         assert_eq!(back.as_slice(), payload.as_slice());
+    }
+
+    // Temporary: regenerates the committed golden file after payload/
+    // layout changes. Removed immediately after running.
+    #[test]
+    fn zz_tmp_write_golden() {
+        let payload = br#"{"format":"baluard.vault","version":1,"app_version":"0.1.0","exported_at":1760000000,"manifest":{"cipher_count":1,"folder_count":1},"folders":[{"id":"3f2b8a64-1111-4111-8111-111111111111","name":"Work"}],"ciphers":[{"id":"9a1c2b3d-2222-4222-8222-222222222222","name":"Golden login","folder_id":"3f2b8a64-1111-4111-8111-111111111111","kind":{"type":"login","data":{"password":"golden-secret","uris":[]}},"favorite":true,"reprompt":false,"archived":false,"tags":[],"created_at":1760000000,"updated_at":1760000000}]}"#;
+        let ct = encrypt_with_entropy(
+            payload,
+            "correct horse battery staple",
+            [0xA5u8; 32],
+            [0x5Au8; 7],
+        )
+        .expect("golden encrypt");
+        std::fs::write("/tmp/golden-v1.bldbak", &ct).expect("write golden");
+        let sha: String = {
+            use sha2::Digest;
+            let mut h = sha2::Sha256::new();
+            h.update(&ct);
+            h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+        };
+        println!("SHA256={sha}");
+        println!("LEN={}", ct.len());
     }
 }

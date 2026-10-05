@@ -19,6 +19,7 @@ Exit codes: 0 = decrypted and verified; 1 = wrong password or damaged file;
 import hashlib
 import hmac
 import json
+import os
 import struct
 import sys
 
@@ -82,9 +83,14 @@ def main():
     if plaintext_len not in BUCKETS:
         die("wrong password or damaged file", 1)
 
-    passphrase = getpass.getpass("Backup passphrase: ")
+    passphrase = os.environ.get("BALUARD_BACKUP_PASSPHRASE") or getpass.getpass("Backup passphrase: ")
     norm = __import__("unicodedata").normalize("NFKC", passphrase)
-    dk = hash_secret_raw(norm.encode(), salt, mem_kib, iters, parall, 32, Type.ID)
+    try:
+        dk = hash_secret_raw(norm.encode(), salt, mem_kib, iters, parall, 32, Type.ID)
+    except Exception:
+        # Over-cap or sub-floor parameters: treat like an undecryptable file
+        # rather than dumping a library traceback.
+        die("wrong password or damaged file", 1)
     key = hkdf_sha256(dk, HKDF_SALT, buf[:HEADER_LEN])
 
     aead = AESGCM(key)

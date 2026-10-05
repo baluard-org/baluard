@@ -14,7 +14,7 @@ use std::path::Path;
 use baluard_core::types::{CipherInput, KdfProfile};
 use baluard_core::vault::handle::{CipherRead, VaultHandle};
 use base64::Engine;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 // ── Direct-mode helpers ──
 
@@ -2705,8 +2705,24 @@ pub fn handle_import(
         baluard_core::import::ImportFormat::BaluardEncrypted => {
             // Path passthrough: the file never crosses the socket (§8).
             let passphrase = backup_passphrase(false)?;
-            serde_json::json!({"format": format, "passphrase": passphrase, "in_path": path})
-                .to_string()
+            let payload = serde_json::json!({
+                "format": format,
+                "passphrase": passphrase.as_str(),
+                "in_path": path,
+            })
+            .to_string();
+            println!("Importing from {path} (format: {format})...");
+            let resp = client::request_to("vault.import", &payload, socket)?;
+            let mut payload = payload;
+            payload.zeroize();
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
+            println!("Import complete:");
+            println!("  Imported: {}", result["imported"].as_u64().unwrap_or(0));
+            println!("  Skipped:  {}", result["skipped"].as_u64().unwrap_or(0));
+            return Ok(());
         }
         _ => {
             let file_data =
@@ -2745,12 +2761,19 @@ pub fn handle_import(
 // ── Export ──
 
 /// Backup-passphrase resolution (docs/plan-encrypted-backup.md §8):
-/// BALUARD_BACKUP_PASSPHRASE env first (scripting/E2E), else --generate
-/// prints a fresh 6-word passphrase once, else the user types it.
-fn backup_passphrase(generate: bool) -> Result<String, Box<dyn std::error::Error>> {
+/// BALUARD_BACKUP_PASSPHRASE env first (scripting/E2E; --generate is then
+/// ignored with a note), else --generate prints a fresh 6-word passphrase
+/// once, else the user types it twice — a typo would produce a backup that
+/// passes auto-verify but that nobody can ever open.
+fn backup_passphrase(generate: bool) -> Result<Zeroizing<String>, Box<dyn std::error::Error>> {
     if let Ok(pw) = std::env::var("BALUARD_BACKUP_PASSPHRASE") {
         if !pw.is_empty() {
-            return Ok(pw);
+            if generate {
+                eprintln!(
+                    "Note: --generate ignored; BALUARD_BACKUP_PASSPHRASE is set (scripting mode)."
+                );
+            }
+            return Ok(Zeroizing::new(pw));
         }
     }
     if generate {
@@ -2760,9 +2783,22 @@ fn backup_passphrase(generate: bool) -> Result<String, Box<dyn std::error::Error
         };
         let pw = baluard_core::generator::generate_passphrase(&opts).map_err(|e| e.to_string())?;
         println!("Backup passphrase (shown once — save it now): {pw}");
-        return Ok(pw);
+        return Ok(Zeroizing::new(pw));
     }
-    prompt_password("Backup passphrase: ")
+    if std::env::var("BALUARD_NO_PROMPT").as_deref() == Ok("1") {
+        return Err(
+            "No BALUARD_BACKUP_PASSPHRASE set and prompts are disabled (BALUARD_NO_PROMPT=1)"
+                .into(),
+        );
+    }
+    let pw = prompt_password("Backup passphrase: ")?;
+    let confirm = prompt_password("Confirm backup passphrase: ")?;
+    if pw != confirm {
+        return Err("Backup passphrases do not match".into());
+    }
+    let mut confirm = confirm;
+    confirm.zeroize();
+    Ok(Zeroizing::new(pw))
 }
 
 pub fn handle_export(
@@ -2774,6 +2810,12 @@ pub fn handle_export(
     force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     ensure_unlocked_daemon(socket)?;
+
+    if encrypted && format != "baluard" {
+        eprintln!(
+            "Note: --format is ignored with --encrypted (the container wraps a baluard backup)."
+        );
+    }
 
     let passphrase = if encrypted {
         Some(backup_passphrase(generate)?)
@@ -2806,19 +2848,37 @@ pub fn handle_export(
         println!("Exporting encrypted backup...");
         let payload = serde_json::json!({
             "format": "baluard-encrypted",
-            "passphrase": pw,
+            "passphrase": pw.as_str(),
             "out_path": path,
         })
         .to_string();
         let resp = client::request_to("vault.export", &payload, socket)?;
+        let mut payload = payload;
+        payload.zeroize();
         if !resp.success {
             return Err(resp.error_message.into());
         }
         let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
-        println!(
-            "Encrypted backup written: {path} ({} bytes)",
-            result["written_bytes"].as_u64().unwrap_or(0)
-        );
+        let written = result["written_bytes"].as_u64().unwrap_or(0);
+        println!("Encrypted backup written: {path} ({written} bytes)");
+        // The daemon's check covers the bytes it built; re-read the file
+        // from disk so a truncated or clobbered write cannot pass silently.
+        let meta = std::fs::metadata(path)?;
+        if meta.len() != written {
+            return Err(format!(
+                "Backup verification failed: file holds {} bytes, expected {written}",
+                meta.len()
+            )
+            .into());
+        }
+        let mut head = [0u8; 6];
+        {
+            use std::io::Read;
+            std::fs::File::open(path)?.read_exact(&mut head)?;
+        }
+        if &head != b"BLDBAK" {
+            return Err("Backup verification failed: file is not a Baluard backup".into());
+        }
         println!(
             "Backup checked: {} entries.",
             result["entries"].as_u64().unwrap_or(0)
