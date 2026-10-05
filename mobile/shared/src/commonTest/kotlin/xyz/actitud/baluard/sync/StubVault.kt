@@ -158,5 +158,7 @@ open class StubVault(
     // accidental use like every other unset method.
     override suspend fun `importData`(format: String, data: ByteArray): String = err()
     override suspend fun `exportData`(format: String): String = err()
+    override suspend fun `exportEncryptedBackup`(passphrase: String): xyz.actitud.baluard.EncryptedBackup = err()
+    override suspend fun `importEncryptedBackup`(passphrase: String, container: kotlin.ByteArray): String = err()
     override suspend fun `repromptVerify`(masterPassword: String): ULong = err()
 }
