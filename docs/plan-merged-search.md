@@ -149,6 +149,15 @@ the decision record: this is a guardrail for honest clients, not DLP.
 A member already holds the bytes; the real org controls are
 `allow_viewer_export`, `guest_enabled`, and quorum.
 
+Update (family-spaces planning, 2026-10-05): purpose became a stored
+field (`"purpose": "family" | "org"` in plaintext
+`meta/settings-pub.json`) once it gained consumers beyond merge
+defaults — minors, kits, departure, the pair-gate split. This section
+supersedes the "no kind is stored" sentence: purpose sets DEFAULTS,
+`personal_merge` remains the enforcement knob and an optional
+override whose absence follows the purpose. See
+docs/plan-family-spaces.md.
+
 The extension's merged match route returns match metadata only,
 never whole-vault payloads; it must not become a path to
 `list_full_all`-shaped data.
