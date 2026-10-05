@@ -46,12 +46,42 @@ actual object VaultRegistry {
         return found.values.toList()
     }
 
-    actual fun loadActiveVault(): String? =
-        prefs().getString(KEY, null)
+    actual fun loadActiveVault(): String? {
+        val path = prefs().getString(KEY, null) ?: return null
+        // Stale-pointer self-heal (the prune equivalent on a filesystem-
+        // scanned list): a directory that vanished can never come back,
+        // so forget it instead of launching into a missing vault.
+        if (!File(path).hasMarker()) {
+            prefs().edit().remove(KEY).apply()
+            return null
+        }
+        return path
+    }
 
     actual fun saveActiveVault(path: String) {
         prefs().edit().putString(KEY, path).apply()
     }
+
+    actual fun detach(path: String): Boolean {
+        val src = File(path)
+        if (!src.hasMarker()) return false
+        val detachedRoot = File(AppContextHolder.require().filesDir, "detached")
+        if (!detachedRoot.exists() && !detachedRoot.mkdirs()) return false
+        // Collision-guard: appending keeps every detached copy on disk.
+        var target = File(detachedRoot, src.name)
+        var n = 1
+        while (target.exists()) {
+            target = File(detachedRoot, "${src.name}-$n")
+            n += 1
+        }
+        if (!src.renameTo(target)) return false
+        if (prefs().getString(KEY, null) == path) {
+            prefs().edit().remove(KEY).apply()
+        }
+        return true
+    }
+
+    private fun File.hasMarker(): Boolean = File(this, ".baluard").exists()
 
     private const val KEY = "activeVaultPath"
 }

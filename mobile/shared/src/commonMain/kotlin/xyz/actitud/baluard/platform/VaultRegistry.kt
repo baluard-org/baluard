@@ -20,4 +20,13 @@ expect object VaultRegistry {
 
     /** Persist the active vault path for the next cold start. */
     fun saveActiveVault(path: String)
+
+    /**
+     * Detach a vault from the switcher list WITHOUT deleting it: the
+     * directory moves aside (data preserved, never auto-deleted) so the
+     * list stays clean and a future clone of the same slug cannot
+     * collide with stale files. Returns false when the path is unknown
+     * or the move failed.
+     */
+    fun detach(path: String): Boolean
 }

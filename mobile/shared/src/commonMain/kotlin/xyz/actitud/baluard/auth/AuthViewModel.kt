@@ -104,6 +104,15 @@ class AuthViewModel(private val repo: VaultRepository) {
         session.forgetActive()
     }
 
+    /**
+     * Drop ONE vault's session by path (vault detached from the switcher):
+     * lock + wipe its KEK + free the slot. No-op when the vault has no
+     * cached session.
+     */
+    suspend fun forgetSession(path: String) {
+        session.forget(path)
+    }
+
     /** The active vault's handle, or null if nothing is unlocked. */
     fun vault(): MobileVault? = session.activeEntry()?.vault?.mobile
 

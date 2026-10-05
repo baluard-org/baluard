@@ -161,4 +161,6 @@ open class StubVault(
     override suspend fun `exportEncryptedBackup`(passphrase: String): xyz.actitud.baluard.EncryptedBackup = err()
     override suspend fun `importEncryptedBackup`(passphrase: String, container: kotlin.ByteArray): String = err()
     override suspend fun `repromptVerify`(masterPassword: String): ULong = err()
+    override suspend fun `importSharedPackage`(packageB64: String): String = err()
+    override suspend fun `openSharedContact`(revealB64: String): String = err()
 }
