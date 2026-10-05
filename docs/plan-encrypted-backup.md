@@ -3,7 +3,7 @@
 **Status**: Design approved. Not started.
 **Date**: 2026-10-05
 **Author**: Esteban
-**Reviewers**: External peer review (crypto design round, FIX-FIRST verdict; all findings folded in)
+**Reviewers**: External peer review (crypto design round, FIX-FIRST verdict; all findings folded in). Plan-doc review: external adversarial pass (FIX-FIRST, ten findings, all adopted — header length leak removed, daemon base64 contract, in-memory auto-verify, crash-guard caps, reserved-byte enforcement, bucket arithmetic, dependency note, test additions).
 **Goal**: A single-file, passphrase-encrypted backup of a whole vault that ANY Baluard vault can adopt on import. Backups are never locked to the vault, account, or device that made them.
 
 ---
@@ -54,7 +54,7 @@ This backup is for portability and cold storage. It is not a replacement for the
 
 **age.** The strongest alternative: reviewed spec, STREAM chunked payload, header MAC, and `age -d` as the universal escape hatch. Rejected for v1 on invariants — age uses scrypt and ChaCha20-Poly1305, we standardize on Argon2id and AES-256-GCM — and it has no Unicode normalization rule. We steal its construction instead: STREAM chunking, header bytes bound into key derivation and AAD, and a final-chunk flag. If the product ever values "opens with a stock tool" over the invariants, age is the answer.
 
-**Zip/7z containers.** Rejected on every axis that matters. Legacy ZipCrypto is broken (known-plaintext). WinZip AES keys derive from PBKDF2-HMAC-SHA1 at a fixed 1000 iterations — not memory-hard, not raisable, orders of magnitude weaker than Argon2id against GPU guessing. 7z's KDF is iterated SHA-256, also not memory-hard (its cipher mode is reported as AES-CBC with only a CRC; verify before quoting publicly). Archive listings leak names and sizes unless header encryption is explicitly enabled. Stock Explorer/Finder cannot open encrypted archives, so the non-technical user gains nothing. And archive parsers bring their own attack surface (zip-slip, bombs) that a fixed 73-byte header reader does not have.
+**Zip/7z containers.** Rejected on every axis that matters. Legacy ZipCrypto is broken (known-plaintext). WinZip AES keys derive from PBKDF2-HMAC-SHA1 at a fixed 1000 iterations — not memory-hard, not raisable, orders of magnitude weaker than Argon2id against GPU guessing. 7z's KDF is iterated SHA-256, also not memory-hard (its cipher mode is reported as AES-CBC with only a CRC; verify before quoting publicly). Archive listings leak names and sizes unless header encryption is explicitly enabled. Stock Explorer/Finder cannot open encrypted archives, so the non-technical user gains nothing. And archive parsers bring their own attack surface (zip-slip, bombs) that a fixed 65-byte header reader does not have.
 
 **Recipient-vault public key.** Rejected: it re-creates exactly the lock-in this format exists to prevent, and it fails the total-loss scenario where the target vault no longer exists.
 
@@ -66,7 +66,7 @@ This backup is for portability and cold storage. It is not a replacement for the
 
 All integers little-endian. One file, no compression.
 
-### 5.1 Header (73 bytes, plaintext)
+### 5.1 Header (65 bytes, plaintext)
 
 | Offset | Size | Field | v1 value |
 |---|---|---|---|
@@ -81,37 +81,38 @@ All integers little-endian. One file, no compression.
 | 22 | 32 | KDF salt | random |
 | 54 | 7 | nonce prefix | random |
 | 61 | 4 | chunk size | 65536 |
-| 65 | 8 | payload length (true inner length) | — |
 
-The header must never carry: vault id, slug, epoch, device id, entry or folder counts, timestamps, app version, hostname, or a passphrase hint.
+Total header: 65 bytes. There is deliberately NO payload-length field in the header: the true inner length rides in-band inside the ciphertext (§5.3), authenticated by GCM. Printing the length in the clear would hand every observer the exact vault size down to the byte and defeat the padding entirely — an observer watching backups over time could count individual entries appearing and disappearing.
+
+The header must never carry: vault id, slug, epoch, device id, entry or folder counts, timestamps, app version, hostname, or a passphrase hint. The reserved byte is part of that rule: it must be zero in v1, and importers reject any non-zero value with "update Baluard to open this backup" so a future v1.x flag can never be silently misread by an old reader.
 
 ### 5.2 Key derivation
 
 1. Normalize the passphrase with NFKC. Never trim. The normalization is part of the spec because an es/pt accented wordlist word can arrive in different Unicode forms from different keyboards; a mismatch must be impossible, not rare.
 2. Derive `dk = Argon2id(NFKC(passphrase), salt, memory_kib, iterations, parallelism)`, 32 bytes.
-3. Derive the file key with HKDF-SHA256: extract with salt `b"baluard.backup.v1"` over `dk`, expand with the **exact 73 header bytes** as `info`. The header is therefore key-committing: any change to version, ids, or parameters changes the key, and a tampered header fails authentication rather than decrypting garbage.
+3. Derive the file key with HKDF-SHA256: extract with salt `b"baluard.backup.v1"` over `dk`, expand with the **exact 65 header bytes** as `info`. The header is therefore key-committing: any change to version, ids, or parameters changes the key, and a tampered header fails authentication rather than decrypting garbage.
 
 ### 5.3 Payload framing
 
-The inner plaintext is: `u64 payload_length` (again, in-band) followed by the `baluard.vault` v1 JSON bytes, followed by zero padding up to the next **padding bucket**. Buckets: 256 KiB, 1 MiB, 4 MiB, 16 MiB, 64 MiB, 256 MiB. The bucket round-up hides the vault's true size, the same metadata-minimalism thesis as the vault's per-entry padded buckets, applied to the whole file. Payloads above 256 MiB fail closed on export (attachments are capped at 2 MiB each; multi-gigabyte vaults do not exist in this product).
+The inner plaintext is: a `u64 payload_length` prefix (the ONLY place the true length exists — inside the ciphertext, authenticated), followed by the `baluard.vault` v1 JSON bytes, followed by zero padding so that **8 + payload_length + padding equals exactly the chosen bucket size**. Buckets: 256 KiB, 1 MiB, 4 MiB, 16 MiB, 64 MiB, 256 MiB. The bucket round-up hides the vault's true size, the same metadata-minimalism thesis as the vault's per-entry padded buckets, applied to the whole file. Payloads above 256 MiB minus the 8-byte prefix fail closed on export. The payload is metadata-only JSON (baluard.vault v1 carries no attachment blobs), where 256 MiB comfortably represents hundreds of thousands of entries.
 
 ### 5.4 Encryption: STREAM chunks
 
 The padded plaintext is encrypted in 64 KiB chunks with AES-256-GCM:
 
 - Chunk nonce (12 bytes): the 7-byte header prefix, then the chunk counter as `u32` starting at 0, then a 1-byte final flag (0 for all chunks, 1 for exactly the last one).
-- AAD for every chunk: the full 73-byte header.
+- AAD for every chunk: the full 65-byte header.
 - Each chunk on disk: ciphertext followed by its 16-byte GCM tag.
 
 This is the STREAM construction (Hoang et al.) as used by age and Tink. It gives chunk-level integrity, truncation and reordering detection (the counter and final flag are inside the nonce, so a removed tail leaves a file whose last chunk lacks the final flag, and the GCM tag fails), and constant memory on decrypt regardless of vault size.
 
-Export writes the 73-byte header, then the chunks, in one pass, straight to the destination. No plaintext temp file ever exists.
+Export writes the 65-byte header, then the chunks, in one pass, straight to the destination. No plaintext temp file ever exists. Before the bytes are handed to any save surface, the exporter runs an **in-memory verify**: it decrypts the container it just built, strips the padding via the in-band length, parses the JSON, and counts entries. This catches container and encoding bugs at their source. It is a check on the bytes we produced, not on the file after it reached disk — the webview Blob download and the Android SAF document picker both hand bytes to the platform without a path back, so no surface can re-open the written file, and the plan does not claim to detect cloud-sync truncation.
 
 ### 5.5 Parameter rules
 
 - Export uses the fixed constants above (64 MiB / 3 / 1), never machine-calibrated parameters. A calibrated desktop would write files a phone cannot open, and calibration breaks reproducible test vectors.
-- Import accepts parameters within caps and fails closed outside them: `memory_kib <= 1048576` (1 GiB), `iterations <= 16`, `parallelism <= 8`, chunk size must be exactly 65536, KDF and AEAD ids must be 1, major version must be 1. Out-of-range values produce the plain-language error "this backup needs more memory than this device has" for the memory case and "update Baluard to open this backup" for an unknown major version.
-- Rising KDF defaults in a future release need no version bump: the parameters ride in the header.
+- Import accepts parameters within caps and fails closed outside them: `memory_kib <= 262144` (256 MiB), `iterations <= 6`, `parallelism <= 4`, chunk size must be exactly 65536, KDF and AEAD ids must be 1, major version must be 1, reserved byte must be 0. The memory cap is a crash guard, not a policy statement: Argon2id allocations cannot be made fallible, and an over-cap header that passed a looser check would OOM-kill an Android process (SIGKILL is uncatchable) before any error handler ran. Out-of-range values produce the plain-language error "this backup needs more memory than this device has" for the memory case and "update Baluard to open this backup" for an unknown version, id, flag, or chunk size.
+- Rising KDF defaults in a future release need no version bump: the parameters ride in the header, and the caps leave room above the export constants.
 
 ### 5.6 Sniffing
 
@@ -128,13 +129,13 @@ Import auto-detection order: first 6 bytes equal `BLDBAK` → encrypted backup, 
 
 **Export (all surfaces).** Behind the existing master-password re-prompt gate (same credential, not a new one). The passphrase dialog then:
 
-- Defaults to a generated passphrase: 6 words from the EFF wordlist, shown in plain text, with Copy, Regenerate, and (desktop) Print.
+- Defaults to a generated passphrase: 6 words from the EFF wordlist, shown in plain text, with Copy and Regenerate. (Desktop printing is deliberately absent from v1: the webview print path is unreliable across Tauri platforms, and the recovery-sheet precedent is a Rust-side renderer, which is follow-up scope here, not v1.)
 - Allows typing a custom passphrase with a confirm field. Hard floor: 8 characters, matching the master-password rule. Strength meter advisory below that.
 - Never offers or prefills the master password. Typing the master password into a second dialog is exactly the phishing shape the product forbids, it turns a leaked file into an offline brute-force oracle for the master password, and it fails the scenario the backup exists for — the master password being the lost thing.
 - Requires an explicit "I saved this password somewhere safe" acknowledgment before Export enables. Losing the passphrase loses the backup forever; the dialog says so.
 - Copies clear automatically per the existing clipboard auto-clear, and the mobile screen showing the passphrase carries the secure flag.
 - Writes `baluard-backup-YYYY-MM-DD.baluard` — generic, dated, no slug. MIME `application/octet-stream`.
-- Auto-verifies after writing: re-opens the file, decrypts, parses, counts. Toast: "Backup checked: N entries." This catches truncated writes to cloud-folder sync targets for the cost of one local decrypt.
+- Auto-verifies in memory before the save surface opens: decrypt, strip padding, parse, count. Toast: "Backup checked: N entries." This catches container and encoding defects at the source. It cannot catch cloud-folder write truncation, because no surface holds a path back to the written file; that residual risk is stated here rather than papered over.
 
 **Import (all surfaces).** File picker (or `baluard import`), sniff detects the magic, dialog prompts: "This backup is protected. Enter the password you saved when you created it — it is not your master password." The dialog names the file. No autofill from the vault, no reprompt coupling. Success reports the same imported/skipped/folders summary as plaintext import.
 
@@ -142,9 +143,9 @@ Import auto-detection order: first 6 bytes equal `BLDBAK` → encrypted backup, 
 
 ## 8. Platform wiring
 
-- **Core** (`crates/baluard-core/src/import/backup_container.rs`): header build/parse, key derivation, chunked encrypt/decrypt, padding, sniffing, parameter caps. Zero new dependencies (`argon2`, `aes-gcm`, `hkdf`, `rand` are all in-tree).
+- **Core** (`crates/baluard-core/src/import/backup_container.rs`): header build/parse, key derivation, chunked encrypt/decrypt, padding, sniffing, parameter caps. One new direct dependency: `unicode-normalization` (NFKC is not in `std`; the crate is already in the tree transitively). `argon2`, `aes-gcm`, `hkdf`, and `rand` are existing dependencies.
 - **Runtime** (`VaultState::export_backup_encrypted(passphrase) -> Vec<u8>`): v1 JSON assembly (existing `export_backup`) wrapped by the container, behind `assert_export_allowed`. Import path symmetric: `import_backup_encrypted(bytes, passphrase)` decrypts then rides the existing pipeline.
-- **Daemon**: `vault.export` payload gains `{"format": "baluard-encrypted", "passphrase": "..."}`; response carries the container bytes. `vault.import` gains the same format id with base64 container bytes. Both token-gated like today; the passphrase field is zeroized on the daemon side after use.
+- **Daemon**: `GatewayResponse.payload` is a Protobuf `string`, so raw container bytes cannot ride it. `vault.export` payload gains `{"format": "baluard-encrypted", "passphrase": "..."}` and responds `{"format": "baluard-encrypted", "data_b64": "..."}` — base64 container bytes inside the JSON payload. `vault.import` accepts the same format id with `data_b64` container bytes and returns the usual import summary. Both token-gated like today; the passphrase is zeroized on the daemon side after use. The CLI in `--direct` mode builds the container locally and writes binary straight to disk with no base64 anywhere.
 - **UniFFI**: `MobileVault.export_encrypted_backup(passphrase) -> Vec<u8>` and `import_encrypted_backup(bytes, passphrase) -> String`. Bytes only across the FFI; no path ever crosses.
 - **CLI**: `baluard export --encrypted <path>` prompts for the backup passphrase (generator printed with `--generate`); `baluard import` auto-detects the magic and prompts. `BALUARD_BACKUP_PASSPHRASE` env override for the e2e harness, mirroring the established env-first pattern.
 - **Desktop**: passphrase dialog in the Settings export flow, `.baluard` filter on the save dialog, magic sniff in the import flow, auto-verify toast.
@@ -152,8 +153,8 @@ Import auto-detection order: first 6 bytes equal `BLDBAK` → encrypted backup, 
 
 ## 9. Test plan
 
-- **Unit (core)**: header round-trip with byte-exact layout assertions; key derivation reproducibility (same inputs, same key) and header-tamper sensitivity (flip one header bit, decryption must fail); NFKC normalization of an accented es/pt passphrase (composed and decomposed forms both open the file); chunk counter/final-flag enforcement (truncated file, removed middle chunk, duplicated chunk all fail); padding bucket round-trip and the 256 MiB fail-closed cap; parameter caps (at-bound pass, over-cap fail); wrong-passphrase generic error; sniff precedence over the v1 plaintext sniff.
-- **Published vectors**: one golden file with fixed salt, nonce prefix, fixed 64 MiB/3/1 parameters, and a tiny fixed payload, generated once and committed with its full derivation transcript (passphrase, header hex, expected ciphertext SHA-256). Third parties implement against it; our own future refactors must reproduce it byte-for-byte.
+- **Unit (core)**: header round-trip with byte-exact layout assertions (65 bytes, no length field); key derivation reproducibility (same inputs, same key) and header-tamper sensitivity (flip one header bit, decryption must fail); NFKC normalization of an accented es/pt passphrase (composed and decomposed forms both open the file); chunk counter/final-flag enforcement (truncated file, removed middle chunk, duplicated chunk, and trailing garbage appended after the final chunk all fail); padding bucket round-trip and the 256 MiB fail-closed cap; parameter caps (at-bound pass, over-cap fail, including the reserved-byte and chunk-size checks); wrong-passphrase generic error; sniff precedence over the v1 plaintext sniff.
+- **Published vectors**: one golden file with fixed salt, nonce prefix, fixed 64 MiB/3/1 parameters, and a tiny fixed payload, generated once and committed with its full derivation transcript (passphrase, header hex, expected ciphertext SHA-256). Alongside it, a minimal standalone reference decryptor script (Python or Node, no dependencies beyond the platform crypto) proving a third party can implement the format from the spec alone. Our own future refactors must reproduce the vector byte-for-byte.
 - **Roundtrip (core)**: all 8 cipher kinds through export → encrypt → decrypt → import, semantic-equality assertions, passkey private keys and TOTP seeds intact.
 - **E2E (CLI layer, existing harness)**: init → entries → `export --encrypted` with `BALUARD_BACKUP_PASSPHRASE` → wrong passphrase refused → second vault created → `import` with the passphrase → entries present; auto-verify output asserted.
 - **Surface tests**: desktop vitest for the passphrase dialog states (generated default, saved-checkbox gating, custom-passphrase floor), mobile compile + manual checklist for the secure-flag passphrase screen.
