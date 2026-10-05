@@ -4539,6 +4539,23 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
 
             let import_result = match format {
+                baluard_core::import::ImportFormat::BaluardJson => {
+                    let data = parsed["data"].as_str().unwrap_or("");
+                    let result = match baluard_core::import::baluard_json::parse_backup(data) {
+                        Ok(backup) => {
+                            Ok(baluard_core::import::baluard_json::backup_to_import(backup))
+                        }
+                        Err(e) => Err(e),
+                    };
+                    match result {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let mut r = baluard_core::import::ImportResult::new();
+                            r.skip(e);
+                            r
+                        }
+                    }
+                }
                 baluard_core::import::ImportFormat::BwJson => {
                     let data = parsed["data"].as_str().unwrap_or("");
                     baluard_core::import::bw_json::parse(data)
@@ -4589,9 +4606,27 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         // ── Export (token required) ──
         "vault.export" => {
-            // Payload: "bw-json" or "bw-csv"
-            let format = req.payload.trim();
+            // Payload: the format token raw ("baluard", "bw-json", ...)
+            // or as JSON {"format": "..."} (desktop). Accept both.
+            let payload = req.payload.trim();
+            let format_owned;
+            let format = if payload.starts_with('{') {
+                let parsed: Result<serde_json::Value, _> = serde_json::from_str(payload);
+                format_owned = parsed
+                    .ok()
+                    .and_then(|v| v["format"].as_str().map(str::to_string))
+                    .unwrap_or_default();
+                format_owned.as_str()
+            } else {
+                payload
+            };
             match format {
+                "baluard" | "baluard-backup" | "baluard.vault" => {
+                    match state.export_backup_json().await {
+                        Ok(json) => ok_resp(json, token_str),
+                        Err(e) => err_response(e),
+                    }
+                }
                 "bw-json" => match state.export_bw_json().await {
                     Ok(json) => ok_resp(json, token_str),
                     Err(e) => err_response(e),
@@ -4601,7 +4636,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     Err(e) => err_response(e),
                 },
                 _ => err_response(format!(
-                    "Unknown export format: {format}. Use bw-json or bw-csv"
+                    "Unknown export format: {format}. Use baluard, bw-json or bw-csv"
                 )),
             }
         }
