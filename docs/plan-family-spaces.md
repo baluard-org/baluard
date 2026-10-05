@@ -1,6 +1,6 @@
 # Plan: Family Spaces
 
-Status: In review (one external review round folded in)
+Status: In review (two external review rounds folded in)
 Date: 2026-10-05
 Author: Esteban
 Related: docs/plan-sharing.md (closed design record), docs/plan-merged-search.md (G24), D59-D78 in docs/software-architecture-decisions.md
@@ -11,97 +11,102 @@ A family Space is not a small organization. Treating it like one makes the produ
 
 The events a family Space must survive, from the product owner: couples separating or divorcing while shared items outlive the relationship; members who no longer want to be part; children growing up, leaving, and founding their own family; a parent passing away with uninterrupted control for the survivor; adoption and new members arriving; and two main admins — both parents controlling the family vault as equals.
 
-Breaking changes are explicitly permitted. Baluard is pre-release with a single dogfooder: vault format, markers, member files, the index, and the creation flow may all break.
+Breaking changes are explicitly permitted. Baluard is pre-release with a single dogfooder: vault format, flags, member files, the pair gate, and the creation flow may all break.
 
-## 2. Model: a purpose flag on the unflipped shape
+## 2. Model: a purpose flag and a decoupled pair gate
 
-A family Space is a vault that has NOT flipped to team shape, carrying a recorded purpose. The round-1 review caught the plan's deepest error here: a flipped team shape puts flat entries behind admin-only policy and takes the Root Key away from member devices entirely, so a kid could never read the Wi-Fi password and the G24 merge set would be nearly empty. The intended family default is the unflipped shape, where every member holds the Root Key and can decrypt everything — which is exactly what a family is.
+A family Space is a vault that has NOT flipped to team shape, carrying a recorded purpose. Round-1 review established why the shape is unflipped: a flip takes the Root Key from member devices and hides flat entries behind admin-only policy, so a kid could never read the Wi-Fi password. Every family member holds the Root Key and can decrypt everything — which is what a family is, stated plainly: there is no cryptographic compartmentalization inside the family vault. Collections organize; they never conceal. Private items live in the personal vault, and custody boundaries that must be cryptographically real need separate Spaces.
 
-Purpose lives in plaintext `meta/settings-pub.json` beside the existing `"space": true` pair flag (`space.rs:45`), not in the shape marker: it must be readable while locked (G24 chips classify without decrypting), it is admin-write enforced by the existing `meta/**` sync row, and the shape marker file does not exist before a flip. The field is `"purpose": "family" | "org"`. `"space": true` stays what it is today — the two-person couple cap (`space.rs:119` refuses a third member and Owner/Admin invites); a family vault is not a pair vault.
+Round-2 review caught the flag collision: the existing `"space": true` plaintext flag means the two-person couple (`pair_gate` caps live members at 2 and refuses Owner/Admin invites, `space.rs:119`), and `is_space_vault` drives registry metadata and transfer demotion (`host.rs:323`, `members.rs:418`). Reusing it for family is impossible; ignoring it makes the family vault invisible as a Space. The break: `"space": true` comes to mean any shared vault, the two-person cap moves under `purpose: "pair"`, and family and org set `purpose: "family" | "org"` in the same file. Purpose lives in plaintext `meta/settings-pub.json` because locked surfaces (G24 chips) must classify without decrypting.
 
-Purpose changes are Owner-initiated and quorum-gated — a purpose any admin could flip is a policy-downgrade path. The round-1 review corrected its own G24 advice: purpose is now justified to store because it has four consumers (merge defaults, minors, kit, departure), and `personal_merge` becomes an optional override whose absence follows the purpose. Changing purpose never rewrites an explicitly set knob.
+Purpose is written by an Owner-only route — the round-2 review correctly rejected calling this quorum-gated, because `settings-pub.json` carries no approval envelope a quorum gate could check; the honest v1 enforcement is the route's role gate, with structural delta validation as future work. `personal_merge` (G24) stays the enforcement knob and remains an optional override: absent, it follows the purpose.
 
 ## 3. Two main admins: the second parent at Admin rank
 
-The plan dropped true co-ownership after pricing it. The single-owner invariant is load-bearing in six places the round-1 review verified: `remove_member` refuses Owner rows outright (`members.rs:324`, "the owner row cannot be removed"), two Owner rows are treated as a crash artifact (`transfer_ownership` heals them by demoting, `handle.rs:3079`), `commit_ownership_swap` is hard-wired to one old and one new row, kit recovery binds to the first live Owner row it finds (`handle.rs:733`), provider seat logic assumes the Owner row owns the repo (`state.rs:2851`), and there is no role-change route to mint a second seat with. Owner rank over Admin adds only: removal protection (weaker than it looks — `member_reset` accepts Owner targets and the successor inherits the role, D61), transfer initiation, the `space_invite_authority = owners` check, and the repo-owner assumption.
+The plan dropped true co-ownership after pricing it against the single-owner invariant, which round-1 review verified as load-bearing in six places: Owner rows refuse removal (`members.rs:324`), two Owner rows are healed as a crash artifact (`handle.rs:3079`), the ownership swap is hard-wired 1:1, kit recovery binds to the first live Owner row, provider seat logic equates the Owner row with the repo owner, and no role-change route exists. Admin rank already manages members, the kit, rotation, space settings, collections, migration, and quorum asks — both parents hold full practical control. Family purpose also maps `space_invite_authority = owners` to admit Admins, so the Admin co-parent can always invite the children.
 
-Admin rank already delivers "two main admins" in every way that matters: both parents manage members, the kit, root rotation, space settings, collections, migration, and quorum asks. So the family model is: the founding parent is Owner; the co-parent is invited as Admin (Admin invites exist today, `members_invite`); the D61 succession path — admin reset of the Owner row, successor inheriting the role — is the takeover story. The asymmetry that remains (only the Owner row initiates transfer) is acceptable until it bites; revisit then.
+Round-2 review corrected the succession mechanism, overturning round 1: `member_reset` is NOT takeover. It tombstones the target row and mints a successor row carrying the TARGET's role for the target to rejoin as themselves — the caller's role never changes (`members.rs:274`). Resetting a dead parent would leave a dangling unbound Owner invite. The real takeover is `ownership_claim(survivor_id)` (Admin-only, `handle.rs:3190`), which swaps the roles, after which the deceased's demoted row can be removed normally. The widow journey is: claim, remove, re-issue the kit, migrate the repo if needed.
+
+One asymmetry is accepted and documented: at quorum 1 an Admin can claim ownership from a live Owner without consent, and an Owner can remove an Admin outright — in a hostile separation, whoever acts first wins. The round-2 mitigation (a notice window on claims against a live Owner) ships with the v1.1 contest window; until then the family purpose surfaces a plain warning on the claim screen, matching the honest-client posture recorded in D63.
 
 ## 4. Quorum: default 1, opt-in 2 only after the contest window
 
-The round-1 review killed the plan's quorum-2 default with the widow journey: `quorum_gate` reads the stored knob with no cap by live admins (`handle.rs:414`, `required = quorum_admin_ops.unwrap_or(1).max(1)`), so at 2 a dead parent's seat blocks every gated op — removal, reset, transfer, claim, rotation, revocation, even lowering the threshold itself — and the kit cannot rescue it because approvals are signed by the member identity key a recovered device does not hold. D61 recorded exactly this boundary and deferred the fix.
-
-Family default: `quorum_admin_ops = 1`. A parent acts alone; the surviving-parent journey runs `member_reset` on the deceased's row at quorum 1 and inherits the seat. Raising the bar to 2 becomes available only once the D61 contest window ships (a raised ask notifies all target devices and executes after roughly 30 days unless vetoed — explicit action plus notice, not liveness tracking). Contest window: v1.1, with quorum 2 as the opt-in it unlocks.
+`quorum_gate` reads the stored knob with no cap by live admins (`handle.rs:414`), so a quorum-2 default deadlocks the widow journey at the plan's own settings — and the kit cannot rescue it, because round-2 review verified kit recovery demands the vault master password against the KEK canary. Family default: `quorum_admin_ops = 1`, and `space_settings_set` refuses values above 1 on a family Space until the contest window ships, so the deadlock cannot be configured today. Raising to 2 unlocks in v1.1 behind the contest window (an ask notifies all target devices and executes after roughly 30 days unless vetoed — explicit action plus notice, never liveness tracking).
 
 ## 5. Membership states: the minor flag
 
-Member files gain `minor: bool` (default false; a breaking format change is fine). It is a guardian-controlled flag, never an age claim: no birthdates, no verification, ever.
+Member files gain `minor: bool` (default false; a breaking format change). It is a guardian-controlled flag, never an age claim: no birthdates, no verification, ever. A new Admin-only route `members.set_minor` flips it, and the sync member-record validator pins the flag (`minor` may not change during routine identity rotations) so no non-admin signer can self-clear it.
 
-A minor member cannot self-leave without an Admin confirming the request, cannot be promoted to Admin, cannot claim ownership, cannot use the kit, and cannot approve quorum asks. A minor can always file a leave request — it executes when a parent confirms, so a forgotten flag cannot trap an adult child. Joining rides the existing invite flow; `transport_username` is already optional, so a child without email joins by code alone. The G24 join notice about merged family items applies to minors too.
+A minor member cannot be promoted, cannot claim ownership, cannot use the kit, cannot approve asks, and cannot transfer-own (the transfer route refuses minor targets — round-2 review caught the gap). Children join as Viewers by default; Editor is a deliberate parent choice, made with the knowledge that on an unflipped vault an Editor can modify and trash any family cipher. A minor files a leave request, but nothing executes without an Admin approving it (section 6).
 
-## 6. Departure: a leave record executed by an admin
+The orphan escape: possession of the kit phrase clears the minor flag. If both parents are gone, the adult child recovers a device with the safe-deposit phrase and the flag falls with it — a forgotten flag can never trap anyone who holds the phrase, and the phrase was already the family's root authority by D64's design.
 
-There is no `members.leave` today, and the round-1 review showed the naive route cannot work: `member_remove` requires an Owner/Admin caller, refuses self-removal (`handle.rs:2936`), runs under the quorum role gate, and in flipped shapes a plain member holds no keys to rotate. If the leaver authored the rotation they would author the new keys — the remaining admins must run it.
+## 6. Departure: an approved leave record
 
-Design: the departing member writes a signed leave record into their own member subtree (`meta/members/<id>/`, the policy row whose writer is `Any`), then their surfaces show "waiting for a parent to finish". Any admin device executes the standard removal on its next unlock or sync: provider seat strike, SGK rotation, tombstone with reason `left`. The D73 notice wording differs by reason: "you left" versus "you were removed". Minors file the same record; the admin confirmation is the parent's say. Enrollment proofs and old-epoch keys die at the rotation (D78 proofs are epoch-matched). Org Spaces keep admin-only removal.
+There is no self-leave today, and both review rounds converged on why the naive designs fail: `member_remove` requires an Owner/Admin caller and refuses self-removal; a leaver must never author the next epoch's keys; and round-2 review killed silent background execution — two admin devices auto-executing the same leave record would run competing root rotations (split-brain), and an offline unlock would hang on the 20-second seat strike.
 
-## 7. Kit and repo rules
+Design: the departing member writes a signed leave record into their own member subtree (`meta/members/<id>/`, the Any-writer policy row). Every admin surface shows a pending-departure notification; an Admin explicitly approves, and that single execution runs the standard ceremony: seat strike, SGK rotation, tombstone with a coarse reason (`left` versus `removed` — reasons stay neutral by design; git history is forever). Until approval, the leaver sees "waiting for a parent to finish". Minors file the same record; the Admin approval is the parental say — one flow, no contradiction. `members.leave` refuses the Owner row until ownership is transferred, so an approval can never die on the "owner rows cannot be removed" guard. Org Spaces keep admin-only removal, which is the friction the product wants.
 
-Two round-1 findings need rules because the kit bypasses quorum by design and the repo outlives people:
+## 7. Kits and the repo
 
-- The kit is permanent possession of whoever holds the phrase (D64), and kit enable-over-existing and kit disable are today only role-gated (`handle.rs:604-628`) — one parent could silently replace the family's only kit with a phrase only they know. Rule: kit disable and kit enable-over-existing require both parents' confirmation once a second admin exists (a quorum-style ask), and any parent's departure or death forces kit re-issue — a brand-new phrase, not a rewrap — so a leaver never retains a permanent backdoor.
-- Provider seats and strikes act with the acting device's token, and the repo lives in someone's account. When the repo-owning parent departs or dies, the survivor runs `space.migrate` (exists, admin-gated) to move the Space to their own account; the departure checklist and the succession checklist both name it.
+Round-2 review found the current kit recovery cannot serve the family as built: it derives the KEK from a typed master password and verifies the KEK canary before anything (`handle.rs:714-730`), so a grandparent holding only the safe-deposit phrase fails — and recovery binds to the first live Owner row, refusing when that row is gone (`handle.rs:735`). The family redesign: phrase-only recovery for family Spaces. The 24 words unwrap the Root Key (they already are the root authority, D64); the recovering device mints its own fresh master password and keystore, binds to any live Admin row (or, with none, takes the Owner seat as the personal-vault recovery path already does), and clears the minor flag per section 5. The KEK-canary check exists to catch a mistyped password before minting a keystore; phrase-only recovery replaces that gate with the phrase itself and is strictly for the family purpose.
+
+Kit rules: enabling over an existing kit or disabling one requires confirmation from the other admin once a second admin exists, with confirmations counted over currently-live non-tombstoned rows only — the widow journey (claim, remove, re-issue) reduces the live-admin count to 1 before the re-issue, so no deadlock. Any parent's approved departure or the succession journey forces a kit re-issue with a brand-new phrase, so a leaver never retains a permanent backdoor.
+
+The repo outlives people: seats and strikes act with the acting device's token, so when the repo-owning parent departs or dies, the survivor runs `space.migrate` (exists, admin-gated) to move the Space to their own account. Both the departure and succession checklists name it.
 
 ## 8. Lifecycle matrix
 
-Arrival (a new spouse, an adopted child, a grandparent): the existing invite code, join queue, and `join_approval: manual|code` cover it unchanged. Minors join with the flag set by the inviting parent.
+Arrival (a new spouse, an adopted child, a grandparent): the existing invite flow, join queue, and `join_approval: manual|code` unchanged. Minors join flagged by the inviting parent; the family purpose ensures the Admin co-parent can invite regardless of `space_invite_authority`.
 
-Growing up: a parent flips `minor` to false. No crypto event.
+Growing up: a parent flips `minor` off via `members.set_minor`. No crypto event.
 
-Founding their own family: create a new family Space, copy out what is yours (section 9), then file the leave record.
+Founding their own family: create a new family Space, copy out what is yours (section 9), file the leave record.
 
-Separation or divorce: no automatic split — shared encrypted blobs do not divide, and pretending otherwise sells a false settlement. The leaving parent transfers ownership first if they are the Owner (`transfer_ownership` exists), then files the leave record; the rotation removes their access and the notice says "you left". Kids' shared logins live in a collection or a small kids Space granted to both parents, so custody of access is a grant question, not a membership question. A new partner after a death or a divorce is a normal invite; the ex's departure follows the same record.
+Separation or divorce: no automatic split — shared encrypted blobs do not divide, and the whole vault is visible to both parents by design, which the creation flow states. The leaving parent transfers ownership first if they hold it, files the leave record, and the other parent approves; rotation removes access and the notice says "you left". Both-stay co-parenting is the parents' call. Collections do not guard items from a member (section 2), so custody of kids' logins that must be cryptographically separated means a separate kids Space granted to both parents — a grant question across Spaces, never a membership flag inside one.
 
-Death of a parent: co-admin family — the survivor acts alone at quorum 1: `member_reset` on the deceased's row (the successor inherits the role, D61), kit re-issue, and `space.migrate` if the repo was the deceased's account. Sole-parent family — the kit is the answer, which is why family creation makes it mandatory: the 24-word phrase in the safe, shown once, surviving root rotation by rewrap (`recovery_kit.rs:151`). A relative holding the kit recovers a device bound to the deceased's Owner row, then transfers ownership to their own row (the grandparent journey, documented in the kit flow). Both parents gone: the kit phrase lives wherever the family's most important paper lives. Baluard makes the kit excellent; it does not detect death.
+Death of a parent: the survivor claims ownership, removes the deceased row, re-issues the kit, and migrates the repo if the deceased owned it — all at quorum 1, all with keys the survivor already holds. Sole-parent family: the phrase-only kit recovery of section 7 is the path, and family creation makes the kit mandatory. A relative recovering binds to a live Admin row or takes the Owner seat, then may claim. Both parents gone: the kit phrase lives wherever the family's most important paper lives.
 
-Stolen device (the most common real event, not a departure): `member_reset` for a lost member device, `device_revoke` for a lost admin device — both exist, both are quorum-gated, both run at quorum 1.
+Stolen device: `member_reset` for a lost member device, `device_revoke` for a lost admin device — both quorum-gated, both fine at quorum 1.
 
-An invited co-parent who never joins: the quorum and admin-count assumptions rise only when the second admin actually joins, never at invite time; unclaimed invites expire.
-
-Private items inside a family vault: not possible by construction — unflipped members all hold the Root Key. The creation flow says so plainly: what must stay private lives in the personal vault.
-
-A personal vault never converts into a family Space: `space_flip` is refused for the personal vault (the round-1 review flagged the plan's earlier flip-row as converting private items into family items); the path is "create a Space and copy what you choose".
+An invited co-parent who never joins: admin-count and kit-confirm assumptions rise only when the second admin actually joins; unclaimed invites expire.
 
 ## 9. Taking your things
 
-The departure UX (self-leave and admin removal dialogs) carries a checklist step: copy what is yours before you go. Family purpose defaults `allow_viewer_export` to true so a departing member can run the encrypted `.bldbak` export of what their keys reach; guest reveals remain available for one-off handovers (`guest_enabled` stays opt-in as shipped). After the rotation lands, copies are the leaver's and the family's items stop updating for them — stated in the dialog.
+Round-2 review rejected the plan's export default: `.bldbak` and JSON export dump the entire vault, so `allow_viewer_export` must NOT default true for family — a departing member would walk away with the parents' banking logins. Departure offers instead: per-item handovers through guest reveals (opt-in as shipped), and a one-time admin-granted full export only with a prominent whole-vault warning. A selective "copy these items to my vault" flow is future work and the real answer; the checklist names it as such.
 
 ## 10. Creation flow
 
-1. Name the Space and pick the purpose (family highlighted alongside org; the pair flag keeps its own two-person flow).
-2. Invite the co-parent as Admin (code plus display name; skippable — a single parent runs the family alone, with the kit carrying the succession).
-3. Recovery kit: mandatory for family purpose. Show 24 words once, require the saved acknowledgment.
+1. Name the Space and pick the purpose (family highlighted; org beside it; the couple keeps its two-person flow under `purpose: "pair"`).
+2. Invite the co-parent as Admin (code plus display name; skippable for a single parent, with the kit carrying the succession).
+3. Recovery kit: mandatory for family purpose. Show 24 words once, require the saved acknowledgment; the phrase-only recovery semantics of section 7 apply.
 4. Quorum stays 1; the settings row explains that 2 arrives with the contest window.
-5. `personal_merge` follows the purpose default with the G24 join notice; every member sees it.
-6. Members: children with the minor flag (Viewer or Editor), other adults as needed, each with the same join notice.
+5. `personal_merge` follows the purpose default with the G24 join notice for every member.
+6. Members: children as Viewers with the minor flag; other adults as needed.
+
+A personal vault never converts into a family Space: the flip is refused, and the path is "create a Space and copy what you choose".
 
 ## 11. Non-goals
 
-No death detection, inactivity triggers, or automatic succession — any liveness tracking is surveillance of family members; co-admin plus kit are the answers. No automatic asset division on divorce; the product provides departure, rotation, and copies, and stays out of the settlement. No age verification — `minor` is a parent-managed flag. No new cryptographic primitives: the key hierarchy, kit escrow, quorum asks, reset path, and removal rotation carry everything. No changes to org Spaces beyond what G24 already plans. No private items inside the family vault, stated rather than built.
+No death detection, inactivity triggers, or automatic succession — any liveness tracking is surveillance of family members; co-admin plus kit are the answers. No automatic asset division on divorce. No age verification — `minor` is a parent-managed flag. No new cryptographic primitives: the key hierarchy, kit escrow, quorum asks, reset path, and removal rotation carry everything; the only cryptographic change is gating the D78 enrollment-proof fallback to genuine single-admin personal vaults (section 12). No private items inside the family vault, stated rather than built. No changes to org Spaces beyond what G24 already plans.
 
-## 12. Tests
+## 12. Sync and enrollment safety
 
-Core: purpose flag roundtrip in `settings-pub.json` (and its relationship to `is_space_vault`); owner reset with successor inheritance on a family vault; kit re-issue forced by parent departure; kit disable/enable-over confirmation with a second admin; leave record written, executed by an admin, refused for a minor without confirmation; rotation after leave with reason `left` in the notice; minor gates (promotion, claim, kit, quorum); unflipped-shape merge set equals full member reads; `allow_viewer_export` purpose default; personal-vault flip refusal.
+Round-2 review caught a live hole the family model would have widened: the D78 enrollment-proof fallback admits a commit's paths wholesale once the proof authenticates against the Root Key (`engine.rs:3629`, the `bootstrap_key.is_some()` early return), and its pull-path guard checks only the shape, not the member count. On an unflipped five-member family vault, any Root-Key holder — a Viewer child included — could phrase-enroll a device and then write any path, bypassing the `meta/**` Admin row. Fix: the fallback requires an absent member directory (a genuine single-admin personal vault). Family and org Spaces fail closed to the ordinary role table; phrase enrollment of new devices on shared vaults runs through the explicit invite flow, which is what a family wants anyway.
 
-Route coverage: `members.leave` (record write), leave execution on admin unlock/sync, purpose in `space.status`, the kit confirmation ask, `space.migrate` on the succession checklist path.
+## 13. Tests
 
-E2E: the widow journey — survivor resets the deceased's seat at quorum 1, kit re-issued, family continues; the divorce journey — transfer ownership, leave record, admin executes, seat struck, "you left" notice on next pull; the growing-up journey — flag flip, leave request, confirmation, new family Space creation; the stolen-tablet journey — member reset by one parent alone.
+Core: purpose flag roundtrip and the decoupled pair gate (family invites a third member; pair still caps at two); ownership-claim succession on a family vault (claim, demoted-row removal, kit re-issue with live-admin counting); phrase-only kit recovery binding to an Admin row and clearing the minor flag; kit enable-over/disable confirmation with live-admin counting; leave record write, explicit approval execution, minor leave requiring approval, Owner leave refused until transfer; minor gates (promotion, claim, kit, quorum, transfer); `members.set_minor` route auth and the member-record delta pin; enrollment fallback refused when a member directory exists; children-as-Viewer default; personal-vault flip refusal; `space_settings_set` refusing quorum > 1 on family.
 
-## 13. Landing order
+Route coverage: `members.leave`, leave approval execution, `members.set_minor`, purpose in `space.status`, kit confirmation ask, `space.migrate` checklist path.
 
-1. Purpose flag in `settings-pub.json` + member `minor` flag (format breaks, migration-free).
-2. `members.leave` record route + admin-side execution + notice wording by reason.
-3. Kit rules: confirmation ask, departure-forced re-issue, kit-mandatory creation step.
-4. Family creation wizard (purpose question, Admin co-parent invite, kit, notices) + personal-vault flip refusal.
-5. G24 wiring: purpose sets the `personal_merge` default and the family default export permission.
-6. v1.1: the D61 contest window, unlocking quorum 2 as a family opt-in.
+E2E: the widow journey (claim, remove, kit re-issue, migrate); the divorce journey (transfer, leave record, approval, "you left" notice); the growing-up journey (flag flip, leave request, approval, new family Space); the stolen-tablet journey (reset by one parent); the grandparent journey (phrase-only recovery with no prior vault password).
+
+## 14. Landing order
+
+1. Flags: purpose + minor + the decoupled pair gate; `members.set_minor`; the minor delta pin; enrollment-fallback gating (format breaks, migration-free).
+2. `members.leave` record route + pending-departure surface + admin approval execution + reason-based notices.
+3. Kit work: phrase-only family recovery, live-admin confirmations, departure-forced re-issue, kit-mandatory creation step.
+4. Family creation wizard (purpose question, Admin co-parent invite, children as Viewers, kit, notices) + personal-vault flip refusal.
+5. G24 wiring: purpose sets the `personal_merge` default; the plan-merged-search consent section amended to record purpose.
+6. v1.1: the D61 contest window, unlocking quorum 2, the claim notice window against live Owners, and the selective item-copy departure flow.
