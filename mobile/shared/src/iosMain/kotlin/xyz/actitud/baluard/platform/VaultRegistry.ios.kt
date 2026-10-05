@@ -15,4 +15,10 @@ actual object VaultRegistry {
     actual fun saveActiveVault(path: String) {
         active = path
     }
+
+    actual fun detach(path: String): Boolean {
+        val removed = vaults.removeAll { it.path == path }
+        if (active == path) active = null
+        return removed
+    }
 }

@@ -460,6 +460,16 @@ fun App(
                                     vaultName = vaultDisplayName,
                                     vaultPath = path,
                                     onSwitchVault = switchVault,
+                                    onDetachVault = { targetPath ->
+                                        // Drop the vault's cached session
+                                        // and biometric KEK before the
+                                        // directory moves aside.
+                                        scope.launch {
+                                            auth.forgetSession(targetPath)
+                                            xyz.actitud.baluard.platform.Biometric().disenroll(targetPath)
+                                            VaultRegistry.detach(targetPath)
+                                        }
+                                    },
                                     onAddVault = {
                                         // Stage flip only — the current vault
                                         // stays unlocked so cancel returns to

@@ -69,6 +69,7 @@ import xyz.actitud.baluard.data.MobileSpaceSettings
 import xyz.actitud.baluard.data.MobileSpaceStatus
 import xyz.actitud.baluard.data.MobilePendingOp
 import xyz.actitud.baluard.ui.components.BaluardTextField
+import xyz.actitud.baluard.ui.components.rememberShareOpenFlow
 import xyz.actitud.baluard.ui.toast.Toast
 import xyz.actitud.baluard.data.vaultTimeoutLabel
 import xyz.actitud.baluard.detail.str
@@ -1622,110 +1623,24 @@ fun SettingsScreen(
                 var repromptPw by remember { mutableStateOf("") }
                 var repromptError by remember { mutableStateOf(false) }
 
+                // G4: open a shared file someone sent (Settings entry;
+                // the onboarding screen carries the pre-vault guest flow).
+                val shareOpen = rememberShareOpenFlow(guestOnly = false, vault = vault, repo = repo)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(enabled = !importBusy && !exportBusy) {
-                            importPicker(listOf("*/*")) { file ->
-                                if (file != null) {
-                                    val isEncBackup =
-                                        file.bytes.size >= 6 && bakMagic.indices.all { file.bytes[it] == bakMagic[it] }
-                                    when {
-                                        // Encrypted container: the passphrase
-                                        // dialog decides everything else.
-                                        isEncBackup -> {
-                                            encFile = file
-                                            backupMode = "import"
-                                        }
-                                        // Auto-detect our own backup first: the
-                                        // header identifies it with no collision
-                                        // risk, so restoring a Baluard backup
-                                        // never needs a format answer.
-                                        file.bytes
-                                            .decodeToString(0, minOf(file.bytes.size, 512))
-                                            .contains("baluard.vault") -> {
-                                            importFormat = "baluard"
-                                            pendingImport = file
-                                        }
-                                        file.name.endsWith(".1pux", ignoreCase = true) -> {
-                                            importFormat = "1password-1pux"
-                                            pendingImport = file
-                                        }
-                                        file.name.endsWith(".json", ignoreCase = true) -> {
-                                            importFormat = "bw-json"
-                                            pendingImport = file
-                                        }
-                                        file.name.endsWith(".xml", ignoreCase = true) -> {
-                                            importFormat = "keepass-xml"
-                                            pendingImport = file
-                                        }
-                                        else -> {
-                                            importFormat = "bw-csv"
-                                            pendingImport = file
-                                        }
-                                    }
-                                }
-                            }
-                        },
+                        .clickable(enabled = !shareOpen.busy) { shareOpen.open() },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = if (importBusy) t("settings.importBusy") else t("settings.importTitle"),
+                        text = t("share.openRow"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                     )
                 }
                 Text(
-                    text = t("settings.importDesc"),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = !importBusy && !exportBusy) { exportDialog = true },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = if (exportBusy) t("settings.exportBusy") else t("settings.exportTitle"),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Text(
-                    text = t("settings.exportDesc"),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = !importBusy && !exportBusy && !backupBusy) {
-                            // Encrypted export sits behind the master-password
-                            // re-prompt gate (§7).
-                            showReprompt = true
-                        },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = if (backupBusy) t("settings.exportBusy") else t("settings.backupExport"),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Text(
-                    text = t("settings.backupExportHint"),
+                    text = t("share.openDesc"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
