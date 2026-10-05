@@ -5312,6 +5312,48 @@ impl VaultState {
         )
     }
 
+    /// Encrypted backup (docs/plan-encrypted-backup.md §7–§8): the same v1
+    /// payload inside the passphrase-protected container. The file key
+    /// derives ONLY from the passphrase — no vault key material enters the
+    /// file — so the result is vault-independent and any Baluard vault can
+    /// re-import it under its own keys. Auto-verifies in memory before
+    /// returning (re-derives from the passphrase string, so a normalization
+    /// bug cannot hide) and yields the entry count for the "checked" toast.
+    pub async fn export_backup_encrypted(
+        &self,
+        passphrase: &str,
+    ) -> Result<(Vec<u8>, u32), String> {
+        use baluard_core::import::backup_container;
+        let payload = self.export_backup_json().await?;
+        let container =
+            backup_container::encrypt(payload.as_bytes(), passphrase).map_err(|e| e.to_string())?;
+        backup_container::verify(&container, passphrase, payload.as_bytes())
+            .map_err(|e| e.to_string())?;
+        let entries = serde_json::from_str::<serde_json::Value>(&payload)
+            .ok()
+            .and_then(|v| v["manifest"]["cipher_count"].as_u64())
+            .unwrap_or(0) as u32;
+        Ok((container, entries))
+    }
+
+    /// Decrypt + import an encrypted backup. Wrong passphrase and corruption
+    /// are one error by design ("wrong password or damaged file") and reach
+    /// the user as a route error, never a skipped-entry summary.
+    pub async fn import_backup_encrypted(
+        &self,
+        passphrase: &str,
+        container: &[u8],
+    ) -> Result<String, String> {
+        use baluard_core::import::backup_container;
+        let payload =
+            backup_container::decrypt(container, passphrase).map_err(|e| e.to_string())?;
+        let text = String::from_utf8(payload.to_vec())
+            .map_err(|_| backup_container::ContainerError::Damaged.to_string())?;
+        let backup = baluard_core::import::baluard_json::parse_backup(&text)?;
+        self.import_ciphers(baluard_core::import::baluard_json::backup_to_import(backup))
+            .await
+    }
+
     /// Delete a folder. Unassigns all ciphers in that folder.
     pub async fn delete_folder(&self, id_str: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;
