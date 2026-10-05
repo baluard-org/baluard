@@ -177,7 +177,7 @@ enum Commands {
 
     /// Import entries from external format.
     Import {
-        /// Format: bw-json, bw-csv, chrome-csv, firefox-csv, lastpass-csv, 1password-1pux, 1password-csv, keepass-xml.
+        /// Format: baluard, bw-json, bw-csv, chrome-csv, firefox-csv, lastpass-csv, 1password-1pux, 1password-csv, keepass-xml.
         format: String,
         /// Path to import file.
         path: String,
@@ -185,7 +185,8 @@ enum Commands {
 
     /// Export vault entries.
     Export {
-        /// Format: bw-json, bw-csv.
+        /// Format: baluard (full backup, default), bw-json, bw-csv.
+        #[arg(short, long, default_value = "baluard")]
         format: String,
         /// Output file path.
         path: String,
