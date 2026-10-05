@@ -130,12 +130,24 @@ export default function SettingsModal() {
   let backupDialogRef;
 
   function openBackupPass(mode) {
-    setBackupPw(generatePassphrase(6, "-"));
+    // Export prefills a generated passphrase; import expects the one the
+    // user saved when they made the backup — never a fresh random value.
+    setBackupPw(mode === "export" ? generatePassphrase(6, "-") : "");
     setBackupPwConfirm("");
     setBackupPwSaved(false);
     setBackupBusy(false);
     setBackupMode(mode);
     setTimeout(() => backupDialogRef?.querySelector("input")?.focus(), 0);
+  }
+
+  // Every dismissal path (cancel, backdrop, Escape, post-action) scrubs the
+  // dialog state so a stale passphrase or ack never survives a re-open.
+  function closeBackupPass() {
+    setBackupMode(null);
+    setBackupPw("");
+    setBackupPwConfirm("");
+    setBackupPwSaved(false);
+    setBackupBusy(false);
   }
 
   const formats = [
@@ -507,14 +519,14 @@ export default function SettingsModal() {
         // stay silent (desktop parity with the recovery sheet).
         if (r && r.saved) {
           setMessage(t("settings.backupChecked", { n: r.entries }));
-          setBackupMode(null);
+          closeBackupPass();
         }
       } else {
         const resp = await invoke("backup_import_encrypted", { passphrase: backupPw() });
         if (resp !== null) {
           const result = JSON.parse(resp);
           setMessage(t("settings.importSuccess", { imported: result.imported || 0 }));
-          setBackupMode(null);
+          closeBackupPass();
           await vault.refreshCiphers(t);
         }
       }
@@ -1003,9 +1015,9 @@ export default function SettingsModal() {
               <div
                 ref={backupDialogRef}
                 class="fixed inset-0 bg-black/60 flex items-center justify-center z-[110]"
-                onClick={() => !backupBusy() && setBackupMode(null)}
+                onClick={() => !backupBusy() && closeBackupPass()}
               >
-                <FocusTrap containerRef={backupDialogRef} onEscape={() => !backupBusy() && setBackupMode(null)} />
+                <FocusTrap containerRef={backupDialogRef} onEscape={() => !backupBusy() && closeBackupPass()} />
                 <div
                   class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[460px] max-w-[92vw] p-5 space-y-3"
                   onClick={(e) => e.stopPropagation()}
@@ -1020,6 +1032,7 @@ export default function SettingsModal() {
                     <input
                       value={backupPw()}
                       onInput={(e) => setBackupPw(e.currentTarget.value)}
+                      type={backupMode() === "export" ? "text" : "password"}
                       spellcheck={false}
                       autocomplete="off"
                       class="flex-1 px-3 py-2 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs font-mono text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
@@ -1062,7 +1075,7 @@ export default function SettingsModal() {
                   </Show>
                   <div class="flex justify-end gap-2 pt-1">
                     <button
-                      onClick={() => setBackupMode(null)}
+                      onClick={closeBackupPass}
                       disabled={backupBusy()}
                       class="px-4 py-2 rounded-xl text-xs text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-40"
                     >

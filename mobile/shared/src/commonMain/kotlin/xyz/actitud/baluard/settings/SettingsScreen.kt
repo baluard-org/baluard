@@ -28,10 +28,10 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
@@ -1915,6 +1916,14 @@ fun SettingsScreen(
                                     value = backupPw,
                                     onValueChange = { backupPw = it },
                                     singleLine = true,
+                                    // Export shows the generated passphrase
+                                    // for verification; import masks what
+                                    // the user types.
+                                    visualTransformation = if (backupMode == "export") {
+                                        VisualTransformation.None
+                                    } else {
+                                        PasswordVisualTransformation()
+                                    },
                                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                                     modifier = Modifier.fillMaxWidth(),
                                 )
@@ -1969,7 +1978,16 @@ fun SettingsScreen(
                                     scope.launch {
                                         backupBusy = true
                                         if (backupMode == "export") {
-                                            val r = runCatching { vault.exportEncryptedBackup(backupPw) }.getOrNull()
+                                            // CancellationException must
+                                            // keep propagating: runCatching
+                                            // would swallow coroutine cancel.
+                                            val r = try {
+                                                vault.exportEncryptedBackup(backupPw)
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (_: Exception) {
+                                                null
+                                            }
                                             if (r == null) {
                                                 backupBusy = false
                                                 Toast.error(t("settings.backupFailed"))
@@ -1988,7 +2006,13 @@ fun SettingsScreen(
                                         } else {
                                             val f = encFile
                                             val raw = f?.let {
-                                                runCatching { vault.importEncryptedBackup(backupPw, it.bytes) }.getOrNull()
+                                                try {
+                                                    vault.importEncryptedBackup(backupPw, it.bytes)
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (_: Exception) {
+                                                    null
+                                                }
                                             }
                                             backupBusy = false
                                             backupMode = null
@@ -2045,7 +2069,14 @@ fun SettingsScreen(
                         confirmButton = {
                             TextButton(onClick = {
                                 scope.launch {
-                                    val ok = runCatching { vault.repromptVerify(repromptPw) }.isSuccess
+                                    val ok = try {
+                                        vault.repromptVerify(repromptPw)
+                                        true
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (_: Exception) {
+                                        false
+                                    }
                                     if (ok) {
                                         showReprompt = false
                                         repromptPw = ""
