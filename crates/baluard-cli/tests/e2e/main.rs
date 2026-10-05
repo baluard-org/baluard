@@ -632,3 +632,77 @@ fn e2e_multi_device_enrollment_proof_forgery_refused() {
         .success()
         .stdout(predicates::str::contains("ForgedDeviceB").not());
 }
+
+/// Encrypted backup (docs/plan-encrypted-backup.md): vault A exports a
+/// passphrase-protected .bldbak container; a wrong passphrase fails with the
+/// single generic error (never an import summary); then a DIFFERENT vault B
+/// restores the same file under its own keys — the not-locked-in guarantee,
+/// since the file key derives only from the passphrase. All surfaces ride
+/// the path-based daemon transport (§8): the daemon builds and reads the
+/// file itself, so no bucket is capped by frame limits.
+#[test]
+fn e2e_encrypted_backup_cross_vault_restore() {
+    let guard = spawn_daemon(tempfile::Builder::new().prefix("e2ebk").tempdir().unwrap());
+
+    // Vault A: create, unlock, add one entry, export encrypted.
+    daemon_init_json(&guard, "baluard-vaulta");
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-vaulta"])
+        .assert()
+        .success();
+    baluard_daemon(&guard).args(["unlock"]).assert().success();
+    baluard_daemon(&guard)
+        .args([
+            "add",
+            "login",
+            "--name",
+            "FromBackup",
+            "--username",
+            "u",
+            "--password",
+            "backup-pw-123",
+        ])
+        .assert()
+        .success();
+
+    let backup = guard.path().join("backup.bldbak");
+    baluard_daemon(&guard)
+        .env("BALUARD_BACKUP_PASSPHRASE", "backup-phrase-2026")
+        .args(["export", "--encrypted", "--force"])
+        .arg(&backup)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Backup checked:"));
+    assert!(backup.exists(), "daemon must write the container itself");
+
+    // Vault B: a different vault restores the same file.
+    daemon_init_json(&guard, "baluard-vaultb");
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-vaultb"])
+        .assert()
+        .success();
+    baluard_daemon(&guard).args(["unlock"]).assert().success();
+
+    // Wrong passphrase: one generic error, indistinguishable from corruption.
+    baluard_daemon(&guard)
+        .env("BALUARD_BACKUP_PASSPHRASE", "not-the-passphrase")
+        .args(["import", "baluard-encrypted"])
+        .arg(&backup)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("wrong password or damaged file"));
+
+    // Right passphrase: entries land in vault B (fresh UUIDs, B's keys).
+    baluard_daemon(&guard)
+        .env("BALUARD_BACKUP_PASSPHRASE", "backup-phrase-2026")
+        .args(["import", "baluard-encrypted"])
+        .arg(&backup)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Imported: 1"));
+    baluard_daemon(&guard)
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("FromBackup"));
+}

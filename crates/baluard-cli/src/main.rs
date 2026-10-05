@@ -177,7 +177,7 @@ enum Commands {
 
     /// Import entries from external format.
     Import {
-        /// Format: baluard, bw-json, bw-csv, chrome-csv, firefox-csv, lastpass-csv, 1password-1pux, 1password-csv, keepass-xml.
+        /// Format: baluard-encrypted, baluard, bw-json, bw-csv, chrome-csv, firefox-csv, lastpass-csv, 1password-1pux, 1password-csv, keepass-xml.
         format: String,
         /// Path to import file.
         path: String,
@@ -185,11 +185,17 @@ enum Commands {
 
     /// Export vault entries.
     Export {
-        /// Format: baluard (full backup, default), bw-json, bw-csv.
+        /// Format: baluard (full backup, default), baluard-encrypted (with --encrypted), bw-json, bw-csv.
         #[arg(short, long, default_value = "baluard")]
         format: String,
         /// Output file path.
         path: String,
+        /// Encrypt the backup with a passphrase (.bldbak, restorable into any Baluard vault).
+        #[arg(long)]
+        encrypted: bool,
+        /// Generate a 6-word backup passphrase and print it once (with --encrypted).
+        #[arg(long)]
+        generate: bool,
         /// Overwrite an existing file without asking (scripting/E2E only).
         #[arg(long)]
         force: bool,
@@ -1470,8 +1476,17 @@ fn main() {
         Commands::Export {
             format,
             path,
+            encrypted,
+            generate,
             force,
-        } => commands::handle_export(cli.socket.as_deref(), &format, &path, force),
+        } => commands::handle_export(
+            cli.socket.as_deref(),
+            &format,
+            &path,
+            encrypted,
+            generate,
+            force,
+        ),
 
         Commands::Health => commands::handle_health(cli.socket.as_deref()),
 
