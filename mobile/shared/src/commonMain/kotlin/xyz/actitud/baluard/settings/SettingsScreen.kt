@@ -1567,14 +1567,33 @@ fun SettingsScreen(
                 val importPicker = rememberImportFilePicker()
                 val saver = rememberRecoverySheetSaver()
                 val importFormats = listOf(
-                    "bw-json", "bw-csv", "chrome-csv", "firefox-csv",
+                    "baluard", "bw-json", "bw-csv", "chrome-csv", "firefox-csv",
                     "lastpass-csv", "1password-1pux", "1password-csv", "keepass-xml",
                 )
+                // Human labels per format id: raw enum strings never render.
+                // Import and export need SEPARATE maps — "bw-csv" means
+                // Bitwarden CSV on the import side but renders as
+                // "Spreadsheet" on export.
+                val formatLabels = mapOf(
+                    "baluard" to "settings.formatBaluard",
+                    "bw-json" to "settings.formatBwJson",
+                    "bw-csv" to "settings.formatBwCsv",
+                    "chrome-csv" to "settings.formatChromeCsv",
+                    "firefox-csv" to "settings.formatFirefoxCsv",
+                    "lastpass-csv" to "settings.formatLastpassCsv",
+                    "1password-1pux" to "settings.format1password1pux",
+                    "1password-csv" to "settings.format1passwordCsv",
+                    "keepass-xml" to "settings.formatKeePassXml",
+                )
+                val exportLabels = mapOf(
+                    "baluard" to "settings.exportBackup",
+                    "bw-csv" to "settings.exportSpreadsheet",
+                )
                 var pendingImport by remember { mutableStateOf<PickedFile?>(null) }
-                var importFormat by remember { mutableStateOf("bw-json") }
+                var importFormat by remember { mutableStateOf("baluard") }
                 var importBusy by remember { mutableStateOf(false) }
                 var exportDialog by remember { mutableStateOf(false) }
-                var exportFormat by remember { mutableStateOf("bw-json") }
+                var exportFormat by remember { mutableStateOf("baluard") }
                 var exportBusy by remember { mutableStateOf(false) }
 
                 Row(
@@ -1583,7 +1602,15 @@ fun SettingsScreen(
                         .clickable(enabled = !importBusy && !exportBusy) {
                             importPicker(listOf("*/*")) { file ->
                                 if (file != null) {
+                                    // Auto-detect our own backup first: the
+                                    // header identifies it with no collision
+                                    // risk, so restoring a Baluard backup
+                                    // never needs a format answer.
+                                    val sniffed = file.bytes
+                                        .decodeToString(0, minOf(file.bytes.size, 512))
+                                        .contains("baluard.vault")
                                     importFormat = when {
+                                        sniffed -> "baluard"
                                         file.name.endsWith(".1pux", ignoreCase = true) -> "1password-1pux"
                                         file.name.endsWith(".json", ignoreCase = true) -> "bw-json"
                                         file.name.endsWith(".xml", ignoreCase = true) -> "keepass-xml"
@@ -1659,7 +1686,10 @@ fun SettingsScreen(
                                             selected = importFormat == fmt,
                                             onClick = null,
                                         )
-                                        Text(fmt, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            t(formatLabels[fmt] ?: fmt),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
                                     }
                                 }
                             }
@@ -1709,7 +1739,7 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.error,
                                 )
                                 Spacer(Modifier.height(8.dp))
-                                listOf("bw-json", "bw-csv").forEach { fmt ->
+                                listOf("baluard", "bw-csv").forEach { fmt ->
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1721,7 +1751,10 @@ fun SettingsScreen(
                                             selected = exportFormat == fmt,
                                             onClick = null,
                                         )
-                                        Text(fmt, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            t(exportLabels[fmt] ?: fmt),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
                                     }
                                 }
                             }
@@ -1740,11 +1773,11 @@ fun SettingsScreen(
                                         if (content == null) {
                                             Toast.error(t("settings.exportFailed"))
                                         } else {
-                                            val json = exportFormat == "bw-json"
+                                            val csv = exportFormat == "bw-csv"
                                             saver(
                                                 content.encodeToByteArray(),
-                                                if (json) "application/json" else "text/csv",
-                                                if (json) "baluard-export.json" else "baluard-export.csv",
+                                                if (csv) "text/csv" else "application/json",
+                                                if (csv) "baluard-logins.csv" else "baluard-backup.json",
                                             ) { ok ->
                                                 if (ok) Toast.success(t("settings.exportDone"))
                                             }
