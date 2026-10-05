@@ -226,6 +226,48 @@ pub fn recovery_sheet_bytes(
 }
 
 /// Derive a 32-byte key-encryption key (KEK) from a master password + salt via
+/// Open a passphrase-guest reveal (S2 IS-6, G4): the host-level,
+/// vault-agnostic shared-file leg. Pure compute — bytes in, an Argon2id
+/// derivation over the user-supplied passphrase, fields out; nothing on
+/// disk is touched and no vault is needed (the crypto gates the payload:
+/// a wrong passphrase is a GCM failure). `reveal_b64` is the base64 of
+/// the .baluard-share file. Returns the OpenedReveal JSON. Runs off the
+/// UI thread via `spawn_blocking`.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn open_shared_guest(
+    reveal_b64: String,
+    passphrase: String,
+) -> Result<String, BaluardError> {
+    tokio::task::spawn_blocking(move || {
+        if reveal_b64.len() > baluard_core::vault::reveals::MAX_REVEAL_FILE_BYTES * 2 {
+            return Err(BaluardError::Vault {
+                detail: "That file is too large to be a shared item.".to_string(),
+            });
+        }
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(reveal_b64.trim())
+            .map_err(|_| BaluardError::InvalidInput {
+                detail: "Not a valid shared file.".to_string(),
+            })?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let opened = baluard_core::vault::reveals::open_guest_reveal(&bytes, &passphrase, now)
+            .map_err(|e| BaluardError::Vault {
+                detail: e.to_string(),
+            })?;
+        serde_json::to_string(&opened).map_err(|e| BaluardError::Vault {
+            detail: e.to_string(),
+        })
+    })
+    .await
+    .map_err(|e| BaluardError::Vault {
+        detail: format!("shared-file task failed: {e}"),
+    })?
+}
+
 /// Argon2id. Returns raw bytes for the FFI boundary. Runs off the UI thread via `spawn_blocking`.
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn derive_kek(password: String, salt: Vec<u8>) -> Result<Vec<u8>, BaluardError> {
@@ -557,6 +599,27 @@ impl MobileVault {
                 detail: e.to_string(),
             })?;
         Ok(v["expires_at"].as_u64().unwrap_or(0))
+    }
+
+    /// Open a one-shot shared package (S2 IS-3): imports the entry into
+    /// this vault. `package_b64` is the base64 of the .baluard-share file.
+    /// Returns the import summary JSON ({item_name, sender, ...}).
+    pub async fn import_shared_package(&self, package_b64: String) -> Result<String, BaluardError> {
+        self.state
+            .import_item_package(&package_b64)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Open a contact-key reveal (S2 IS-6): view-only, nothing is added
+    /// to the vault. `reveal_b64` is the base64 of the .baluard-share
+    /// file. Returns the OpenedReveal JSON (TOTP seed never crosses this
+    /// boundary; only the current code does).
+    pub async fn open_shared_contact(&self, reveal_b64: String) -> Result<String, BaluardError> {
+        self.state
+            .open_contact_reveal(&reveal_b64)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
     }
 
     /// Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
@@ -2064,6 +2127,73 @@ mod tests {
             .expect("encrypted import");
         let s: serde_json::Value = serde_json::from_str(&summary).unwrap();
         assert_eq!(s["imported"].as_u64(), Some(1), "summary: {summary}");
+    }
+
+    #[tokio::test]
+    async fn shared_reveal_opening_via_ffi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pw".to_string(), "dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pw".to_string()).await.unwrap();
+
+        let payload = serde_json::json!({
+            "name": "GitHub",
+            "kind": {"type": "login", "data": {
+                "username": "esteban",
+                "password": "hunter2",
+                "uris": [],
+                "totp_uri": null,
+                "autofill_on_page_load": false,
+                "password_revision_date": null,
+                "favicon": null,
+                "fido2_credentials": null
+            }}
+        })
+        .to_string();
+        let id = vault.add_cipher(payload).await.unwrap();
+
+        // Guest reveals ride the opt-in door: enable guest sharing for this
+        // personal vault before exporting (2026-10-03 default-off flip).
+        vault
+            .space_settings_set(None, None, Some(true), None, None, None, None)
+            .await
+            .unwrap();
+
+        // Export a passphrase-guest reveal through the runtime state (the
+        // export side is desktop-shaped; the open side is the new FFI).
+        let exported = vault
+            .state
+            .export_guest_reveal(&id, 4_102_444_800, false)
+            .await
+            .unwrap();
+        let ex: serde_json::Value = serde_json::from_str(&exported).unwrap();
+        let reveal_b64 = ex["reveal"].as_str().unwrap().to_string();
+        let pass = ex["passphrase"].as_str().unwrap().to_string();
+
+        // Guest open: vault-agnostic free function, wrong passphrase
+        // rejected with the generic vault error, garbage refused cleanly.
+        let opened = open_shared_guest(reveal_b64.clone(), pass).await.unwrap();
+        let o: serde_json::Value = serde_json::from_str(&opened).unwrap();
+        assert_eq!(o["item_name"].as_str(), Some("GitHub"));
+        assert_eq!(o["password"].as_str(), Some("hunter2"));
+
+        let wrong = open_shared_guest(reveal_b64.clone(), "not-it".to_string())
+            .await
+            .unwrap_err();
+        assert!(matches!(wrong, BaluardError::Vault { .. }));
+
+        let bad = open_shared_guest("not-base64!!".to_string(), "x".to_string())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(bad, BaluardError::InvalidInput { .. }),
+            "bad b64 must be InvalidInput, got {bad:?}"
+        );
+
+        // The guest open is view-only: nothing landed in the vault.
+        assert_eq!(vault.list_ciphers().await.unwrap().len(), 1);
     }
 
     #[tokio::test]

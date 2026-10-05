@@ -951,6 +951,12 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1072,6 +1078,8 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_import_encrypted_backup(`ptr`: Pointer,`passphrase`: RustBuffer.ByValue,`container`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_import_shared_package(`ptr`: Pointer,`packageB64`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_is_admin_device(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_is_unlocked(`ptr`: Pointer,
@@ -1113,6 +1121,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_members_list(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_notices_list(`ptr`: Pointer,`refreshTransport`: Byte,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_open_shared_contact(`ptr`: Pointer,`revealB64`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_policies_list(`ptr`: Pointer,
     ): Long
@@ -1196,6 +1206,8 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_mobile_version(uniffi_out_err: UniffiRustCallStatus, 
     ): Int
+    fun uniffi_baluard_uniffi_fn_func_open_shared_guest(`revealB64`: RustBuffer.ByValue,`passphrase`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_baluard_uniffi_fn_func_open_vault(`path`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_provider_disconnect(`provider`: RustBuffer.ByValue,
@@ -1348,6 +1360,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_mobile_version(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_func_open_shared_guest(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_func_open_vault(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_provider_disconnect(
@@ -1450,6 +1464,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_import_encrypted_backup(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_import_shared_package(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_is_admin_device(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_is_unlocked(
@@ -1491,6 +1507,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_members_list(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_notices_list(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_open_shared_contact(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_policies_list(
     ): Short
@@ -1578,7 +1596,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_func_create_vault_with_recovery() != 64431.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_func_derive_kek() != 28519.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_func_derive_kek() != 45663.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_derive_kek_for_vault() != 44722.toShort()) {
@@ -1603,6 +1621,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_mobile_version() != 3142.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_func_open_shared_guest() != 11254.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_open_vault() != 29550.toShort()) {
@@ -1758,6 +1779,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_import_encrypted_backup() != 49590.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_import_shared_package() != 29109.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_is_admin_device() != 20077.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1819,6 +1843,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_notices_list() != 44938.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_open_shared_contact() != 22263.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_policies_list() != 28869.toShort()) {
@@ -3068,6 +3095,13 @@ public interface MobileVaultInterface {
     suspend fun `importEncryptedBackup`(`passphrase`: kotlin.String, `container`: kotlin.ByteArray): kotlin.String
     
     /**
+     * Open a one-shot shared package (S2 IS-3): imports the entry into
+     * this vault. `package_b64` is the base64 of the .baluard-share file.
+     * Returns the import summary JSON ({item_name, sender, ...}).
+     */
+    suspend fun `importSharedPackage`(`packageB64`: kotlin.String): kotlin.String
+    
+    /**
      * Whether this device manages the space (holds the Root Key) —
      * the admin marker that stays true for zero-collection vaults.
      */
@@ -3200,6 +3234,14 @@ public interface MobileVaultInterface {
      * optional best-effort forge seat check; the phone passes false.
      */
     suspend fun `noticesList`(`refreshTransport`: kotlin.Boolean): kotlin.String
+    
+    /**
+     * Open a contact-key reveal (S2 IS-6): view-only, nothing is added
+     * to the vault. `reveal_b64` is the base64 of the .baluard-share
+     * file. Returns the OpenedReveal JSON (TOTP seed never crosses this
+     * boundary; only the current code does).
+     */
+    suspend fun `openSharedContact`(`revealB64`: kotlin.String): kotlin.String
     
     /**
      * Published advisory org policies (S4-6): {policies: {knob:
@@ -4477,6 +4519,32 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * Open a one-shot shared package (S2 IS-3): imports the entry into
+     * this vault. `package_b64` is the base64 of the .baluard-share file.
+     * Returns the import summary JSON ({item_name, sender, ...}).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `importSharedPackage`(`packageB64`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_import_shared_package(
+                thisPtr,
+                FfiConverterString.lower(`packageB64`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Whether this device manages the space (holds the Root Key) —
      * the admin marker that stays true for zero-collection vaults.
      */
@@ -4996,6 +5064,33 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_notices_list(
                 thisPtr,
                 FfiConverterBoolean.lower(`refreshTransport`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Open a contact-key reveal (S2 IS-6): view-only, nothing is added
+     * to the vault. `reveal_b64` is the base64 of the .baluard-share
+     * file. Returns the OpenedReveal JSON (TOTP seed never crosses this
+     * boundary; only the current code does).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `openSharedContact`(`revealB64`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_open_shared_contact(
+                thisPtr,
+                FfiConverterString.lower(`revealB64`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6849,7 +6944,6 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
     }
 
         /**
-         * Derive a 32-byte key-encryption key (KEK) from a master password + salt via
          * Argon2id. Returns raw bytes for the FFI boundary. Runs off the UI thread via `spawn_blocking`.
          */
     @Throws(BaluardException::class)
@@ -6980,6 +7074,31 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
     )
     }
     
+
+        /**
+         * Derive a 32-byte key-encryption key (KEK) from a master password + salt via
+         * Open a passphrase-guest reveal (S2 IS-6, G4): the host-level,
+         * vault-agnostic shared-file leg. Pure compute — bytes in, an Argon2id
+         * derivation over the user-supplied passphrase, fields out; nothing on
+         * disk is touched and no vault is needed (the crypto gates the payload:
+         * a wrong passphrase is a GCM failure). `reveal_b64` is the base64 of
+         * the .baluard-share file. Returns the OpenedReveal JSON. Runs off the
+         * UI thread via `spawn_blocking`.
+         */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `openSharedGuest`(`revealB64`: kotlin.String, `passphrase`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_open_shared_guest(FfiConverterString.lower(`revealB64`),FfiConverterString.lower(`passphrase`),),
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
 
         /**
          * Open an existing local vault directory (must already be initialized on

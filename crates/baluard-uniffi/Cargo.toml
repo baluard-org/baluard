@@ -18,6 +18,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macr
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 zeroize = { workspace = true }
+base64 = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Vendored OpenSSL: lets git2/libgit2 cross-compile for Android ABIs
