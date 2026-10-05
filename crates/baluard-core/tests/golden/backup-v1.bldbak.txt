@@ -9,7 +9,7 @@ AEAD: AES-256-GCM, chunk 65536
 Header (hex):
 424c4442414b01010100000001000300000001000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a55a5a5a5a5a5a5a00000100
 SHA-256 (whole file):
-547ea1d64c122b352ca86c436a4f05f7e5e8b4af5611178df9ce11302eb027a2
+4cad37d4ee77d1670f49a9461330e58ce80151c9d74caa771567200f96d81a26
 
-Regenerate with scripts/decrypt_backup.py (needs argon2-cffi + cryptography):
+Decode with the reference decryptor (needs argon2-cffi + cryptography):
   python3 scripts/decrypt_backup.py crates/baluard-core/tests/golden/backup-v1.bldbak
