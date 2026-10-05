@@ -9,6 +9,7 @@ internal val PT: Map<String, String> = mapOf(
     "common.back" to "Voltar",
     "common.cancel" to "Cancelar",
     "common.continue" to "Continuar",
+    "common.copy" to "Copiar",
     "common.search" to "Pesquisar",
     "common.clear" to "Limpar",
     "common.copied" to "Copiado",
@@ -354,6 +355,28 @@ internal val PT: Map<String, String> = mapOf(
     "settings.exportWarn" to "O arquivo conterá segredos não criptografados. Apague-o após o uso.",
     "settings.exportDone" to "Exportação salva",
     "settings.exportFailed" to "Falha na exportação",
+
+    "settings.backupExport" to "Backup criptografado",
+
+    "settings.backupExportHint" to "Protegido por senha (.bldbak)",
+
+    "settings.backupPassTitleExport" to "Proteja seu backup",
+
+    "settings.backupPassTitleImport" to "Backup criptografado",
+
+    "settings.backupPassDesc" to "Esta frase-senha é a única forma de abrir o arquivo. Se você a perder, o backup se perde para sempre. Não é sua senha mestra, e o Baluard nunca a armazena.",
+
+    "settings.backupPassImportDesc" to "Digite a frase que você salvou ao criar este backup. Não é sua senha mestra.",
+
+    "settings.backupPassConfirmLabel" to "Confirme a frase",
+
+    "settings.backupSavedAck" to "Eu salvei esta frase em um lugar seguro",
+
+    "settings.backupRegenerate" to "Nova frase",
+
+    "settings.backupChecked" to "Backup verificado: {0} entradas.",
+
+    "settings.backupFailed" to "Falha no backup criptografado",
     "settings.removeVaultTitle" to "Remover cofre?",
     "settings.removeVaultBody" to
         "O cofre será removido deste dispositivo. Você pode abri-lo novamente a " +
