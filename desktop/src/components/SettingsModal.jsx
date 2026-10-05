@@ -5,12 +5,14 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon, getDesktopPrefs, setTrayOnly, getRenderState, setCompatibleRendering } from "../lib/daemon.js";
-import { sanitizeError } from "../lib/utils.js";
+import { sanitizeError, generatePassphrase } from "../lib/utils.js";
+import { copyToClipboard } from "../lib/clipboard.js";
+import { invoke } from "@tauri-apps/api/core";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 import { biometryAvailable } from "../lib/biometry.js";
-import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil } from "./Icon.jsx";
+import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 import SyncTab from "./SyncTab.jsx";
@@ -116,7 +118,28 @@ export default function SettingsModal() {
   const [avatarB64, setAvatarB64] = createSignal("");
   const [avatarExt, setAvatarExt] = createSignal("png");
 
+  // Encrypted backup (docs/plan-encrypted-backup.md §7): one passphrase
+  // dialog serving both directions. The default is a generated 6-word
+  // passphrase; the master password is NEVER offered (§7: a second dialog
+  // asking for it is the phishing shape the product forbids).
+  const [backupMode, setBackupMode] = createSignal(null); // null | "export" | "import"
+  const [backupPw, setBackupPw] = createSignal("");
+  const [backupPwConfirm, setBackupPwConfirm] = createSignal("");
+  const [backupPwSaved, setBackupPwSaved] = createSignal(false);
+  const [backupBusy, setBackupBusy] = createSignal(false);
+  let backupDialogRef;
+
+  function openBackupPass(mode) {
+    setBackupPw(generatePassphrase(6, "-"));
+    setBackupPwConfirm("");
+    setBackupPwSaved(false);
+    setBackupBusy(false);
+    setBackupMode(mode);
+    setTimeout(() => backupDialogRef?.querySelector("input")?.focus(), 0);
+  }
+
   const formats = [
+    { id: "baluard-encrypted", label: t("settings.backupImportOption") },
     { id: "baluard", label: t("settings.formatBaluard") },
     { id: "bw-json", label: t("settings.formatBwJson") },
     { id: "bw-csv", label: t("settings.formatBwCsv") },
@@ -388,6 +411,12 @@ export default function SettingsModal() {
   }
 
   async function doImport(format) {
+    if (format === "baluard-encrypted") {
+      // Encrypted backups go through the Rust-side open dialog; the
+      // container never rides the webview file input.
+      openBackupPass("import");
+      return;
+    }
     const input = document.createElement("input");
     input.type = "file";
     input.accept = format === "1password-1pux" ? ".1pux" : ".csv,.json,.xml,.txt";
@@ -405,6 +434,15 @@ export default function SettingsModal() {
           bytes.forEach(b => binary += String.fromCharCode(b));
           data = btoa(binary);
         } else {
+          const buf = await file.arrayBuffer();
+          const head = new Uint8Array(buf, 0, Math.min(6, buf.byteLength));
+          if (String.fromCharCode(...head) === "BLDBAK") {
+            // An encrypted container chosen as a plain file: route it to
+            // the passphrase dialog instead of dead-ending on a message.
+            setImporting(false);
+            openBackupPass("import");
+            return;
+          }
           data = await file.text();
           // Auto-detect our own backup: the header identifies it with no
           // collision risk, so a user restoring a Baluard backup never
@@ -451,6 +489,39 @@ export default function SettingsModal() {
       setMessage(t("settings.exportFailed", { error: sanitizeError(e, t) }));
     } finally {
       setExporting(false);
+    }
+  }
+
+  function regenBackupPw() {
+    setBackupPw(generatePassphrase(6, "-"));
+  }
+
+  async function confirmBackup() {
+    const mode = backupMode();
+    setBackupBusy(true);
+    setMessage(null);
+    try {
+      if (mode === "export") {
+        const r = await invoke("backup_save_encrypted", { passphrase: backupPw() });
+        // saved=false is the user cancelling the save dialog: stay open,
+        // stay silent (desktop parity with the recovery sheet).
+        if (r && r.saved) {
+          setMessage(t("settings.backupChecked", { n: r.entries }));
+          setBackupMode(null);
+        }
+      } else {
+        const resp = await invoke("backup_import_encrypted", { passphrase: backupPw() });
+        if (resp !== null) {
+          const result = JSON.parse(resp);
+          setMessage(t("settings.importSuccess", { imported: result.imported || 0 }));
+          setBackupMode(null);
+          await vault.refreshCiphers(t);
+        }
+      }
+    } catch (e) {
+      setMessage(t("settings.backupFailed", { error: sanitizeError(e, t) }));
+    } finally {
+      setBackupBusy(false);
     }
   }
 
@@ -848,7 +919,7 @@ export default function SettingsModal() {
                 {/* Export Section */}
                 <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
                   <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.exportTitle")}</label>
-                  <div class="grid grid-cols-2 gap-3">
+                  <div class="grid grid-cols-3 gap-3">
                     <button
                       onClick={() => doExport("baluard")}
                       disabled={exporting()}
@@ -859,6 +930,17 @@ export default function SettingsModal() {
                         {t("settings.exportBackup")}
                       </span>
                       <span class="text-[10px] font-normal text-[var(--color-muted)]">{t("settings.exportBackupHint")}</span>
+                    </button>
+                    <button
+                      onClick={() => window.__baluardReprompt?.show(() => openBackupPass("export"))}
+                      disabled={exporting()}
+                      class="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <span class="flex items-center gap-2">
+                        <IconDownload class="w-4 h-4 text-[var(--color-muted)]" />
+                        {t("settings.backupExport")}
+                      </span>
+                      <span class="text-[10px] font-normal text-[var(--color-muted)]">{t("settings.backupExportHint")}</span>
                     </button>
                     <button
                       onClick={() => doExport("bw-csv")}
@@ -912,6 +994,96 @@ export default function SettingsModal() {
                 <BridgeTab />
               </Show>
             </div>
+
+            {/* Encrypted-backup passphrase dialog (§7). One dialog, both
+                directions. Export prefills a generated 6-word passphrase and
+                requires the saved acknowledgment; import explains this is the
+                backup's password, not the master password. */}
+            <Show when={backupMode()}>
+              <div
+                ref={backupDialogRef}
+                class="fixed inset-0 bg-black/60 flex items-center justify-center z-[110]"
+                onClick={() => !backupBusy() && setBackupMode(null)}
+              >
+                <FocusTrap containerRef={backupDialogRef} onEscape={() => !backupBusy() && setBackupMode(null)} />
+                <div
+                  class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[460px] max-w-[92vw] p-5 space-y-3"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <label class="text-sm font-bold text-[var(--color-text)]">
+                    {backupMode() === "export" ? t("settings.backupPassTitleExport") : t("settings.backupPassTitleImport")}
+                  </label>
+                  <p class="text-xs text-[var(--color-muted)]">
+                    {backupMode() === "export" ? t("settings.backupPassDesc") : t("settings.backupPassImportDesc")}
+                  </p>
+                  <div class="flex gap-2">
+                    <input
+                      value={backupPw()}
+                      onInput={(e) => setBackupPw(e.currentTarget.value)}
+                      spellcheck={false}
+                      autocomplete="off"
+                      class="flex-1 px-3 py-2 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs font-mono text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
+                    />
+                    <Show when={backupMode() === "export"}>
+                      <button
+                        onClick={regenBackupPw}
+                        title={t("settings.backupRegenerate")}
+                        class="px-2.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] transition-all cursor-pointer"
+                      >
+                        <IconRefresh class="w-4 h-4 text-[var(--color-muted)]" />
+                      </button>
+                      <button
+                        onClick={() => copyToClipboard(backupPw())}
+                        title={t("common.copy")}
+                        class="px-2.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] transition-all cursor-pointer"
+                      >
+                        <IconCopy class="w-4 h-4 text-[var(--color-muted)]" />
+                      </button>
+                    </Show>
+                  </div>
+                  <Show when={backupMode() === "export"}>
+                    <input
+                      value={backupPwConfirm()}
+                      onInput={(e) => setBackupPwConfirm(e.currentTarget.value)}
+                      placeholder={t("settings.backupPassConfirmLabel")}
+                      spellcheck={false}
+                      autocomplete="off"
+                      class="w-full px-3 py-2 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs font-mono text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
+                    />
+                    <label class="flex items-start gap-2 text-xs text-[var(--color-text)] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={backupPwSaved()}
+                        onChange={(e) => setBackupPwSaved(e.currentTarget.checked)}
+                        class="mt-0.5 accent-[var(--color-primary)]"
+                      />
+                      {t("settings.backupSavedAck")}
+                    </label>
+                  </Show>
+                  <div class="flex justify-end gap-2 pt-1">
+                    <button
+                      onClick={() => setBackupMode(null)}
+                      disabled={backupBusy()}
+                      class="px-4 py-2 rounded-xl text-xs text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-40"
+                    >
+                      {t("common.cancel")}
+                    </button>
+                    <button
+                      onClick={confirmBackup}
+                      disabled={
+                        backupBusy() ||
+                        backupPw().length < 8 ||
+                        (backupMode() === "export" &&
+                          (backupPw() !== backupPwConfirm() || !backupPwSaved()))
+                      }
+                      class="px-5 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {backupMode() === "export" ? t("settings.exportBackup") : t("settings.import")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Show>
           </div>
         </div>
       </Show>

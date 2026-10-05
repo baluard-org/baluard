@@ -791,6 +791,136 @@ struct SessionStore {
     active_slug: Option<String>,
 }
 
+/// Days-since-epoch to (year, month, day), Howard Hinnant's civil_from_days.
+/// No chrono dependency for one filename date stamp.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+fn today_stamp() -> String {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64 / 86_400)
+        .unwrap_or(0);
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Resolve the active vault's session material for a direct Rust-side daemon
+/// call (the backup commands below). Errors when nothing is unlocked — the
+/// dialogs only make sense inside an open vault anyway.
+fn active_session(app: &AppHandle) -> Result<(String, String), String> {
+    let store = app.state::<Mutex<SessionStore>>();
+    let st = store.lock().unwrap();
+    let slug = st.active_slug.clone().ok_or("No active vault")?;
+    let token = st
+        .tokens
+        .get(&slug)
+        .map(|z| z.as_str().to_owned())
+        .unwrap_or_default();
+    Ok((token, slug))
+}
+
+/// Encrypted backup result for the webview: whether a file landed, how many
+/// bytes, and the auto-verify entry count for the "checked" toast.
+#[derive(serde::Serialize)]
+struct BackupSaveResult {
+    saved: bool,
+    written_bytes: u64,
+    entries: u32,
+}
+
+/// D1/D77 pattern for backups: the save dialog AND the daemon round-trip AND
+/// the file write all happen Rust-side. The webview passes only the
+/// passphrase; it never holds a filesystem path and never receives container
+/// bytes. Container bytes returned by the daemon are written 0600 via
+/// write_secret_file; a user cancel is Ok(saved=false), not an error.
+#[tauri::command]
+async fn backup_save_encrypted(
+    app: AppHandle,
+    passphrase: String,
+) -> Result<BackupSaveResult, String> {
+    let (token, slug) = active_session(&app)?;
+    let default_name = format!("baluard-backup-{}.bldbak", today_stamp());
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let picked = app
+            .dialog()
+            .file()
+            .add_filter("Baluard backup", &["bldbak"])
+            .set_file_name(&default_name)
+            .blocking_save_file();
+        let out_path = match picked {
+            None => {
+                return Ok(BackupSaveResult {
+                    saved: false,
+                    written_bytes: 0,
+                    entries: 0,
+                })
+            }
+            Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
+            Some(_) => return Err("Unsupported save location".to_string()),
+        };
+        let payload = serde_json::json!({
+            "format": "baluard-encrypted",
+            "passphrase": passphrase,
+            "out_path": out_path.to_string_lossy(),
+        })
+        .to_string();
+        let (data, _) = send_request_with_token("vault.export", &payload, &token, &slug)?;
+        let v: serde_json::Value = serde_json::from_str(&data)
+            .map_err(|e| format!("Unexpected export response: {e}"))?;
+        Ok(BackupSaveResult {
+            saved: true,
+            written_bytes: v["written_bytes"].as_u64().unwrap_or(0),
+            entries: v["entries"].as_u64().unwrap_or(0) as u32,
+        })
+    })
+    .await
+    .map_err(|e| format!("Backup task failed: {e}"))?
+}
+
+/// Encrypted-backup import: Rust-side open dialog, daemon reads the file
+/// from the path. Returns None when the user cancels the dialog; otherwise
+/// the daemon import summary JSON. Errors carry the daemon message — the
+/// generic "wrong password or damaged file" among them.
+#[tauri::command]
+async fn backup_import_encrypted(app: AppHandle, passphrase: String) -> Result<Option<String>, String> {
+    let (token, slug) = active_session(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let picked = app
+            .dialog()
+            .file()
+            .add_filter("Baluard backup", &["bldbak"])
+            .blocking_pick_file();
+        let in_path = match picked {
+            None => return Ok(None),
+            Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
+            Some(_) => return Err("Unsupported file location".to_string()),
+        };
+        let payload = serde_json::json!({
+            "format": "baluard-encrypted",
+            "passphrase": passphrase,
+            "in_path": in_path.to_string_lossy(),
+        })
+        .to_string();
+        let (data, _) = send_request_with_token("vault.import", &payload, &token, &slug)?;
+        Ok(Some(data))
+    })
+    .await
+    .map_err(|e| format!("Import task failed: {e}"))?
+}
+
 /// Phase 6 / T15 / M4: blur-lock debounce state.
 ///
 /// `WindowEvent::Focused(false)` fires on every focus loss (alt-tab, native
@@ -1377,6 +1507,8 @@ pub fn run() {
             show_window,
             update_tray_icon,
             save_recovery_phrase,
+            backup_save_encrypted,
+            backup_import_encrypted,
             clipboard_mark_concealed,
             get_desktop_prefs,
             set_tray_only,

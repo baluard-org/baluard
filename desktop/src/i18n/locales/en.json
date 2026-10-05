@@ -308,6 +308,18 @@
     "exportBackupHint": "Everything, for backup or moving devices",
     "exportSpreadsheet": "Spreadsheet",
     "exportSpreadsheetHint": "Logins only (.csv), for printing or other apps",
+    "backupExport": "Encrypted backup",
+    "backupExportHint": "Password-protected (.bldbak)",
+    "backupImportOption": "Encrypted backup (.bldbak)",
+    "backupPassTitleExport": "Protect your backup",
+    "backupPassTitleImport": "Encrypted backup",
+    "backupPassDesc": "This passphrase is the only way to open the backup file. Losing it loses the backup forever. It is not your master password, and Baluard never stores it.",
+    "backupPassImportDesc": "Enter the passphrase you saved when you created this backup. It is not your master password.",
+    "backupPassConfirmLabel": "Confirm passphrase",
+    "backupSavedAck": "I saved this passphrase somewhere safe",
+    "backupRegenerate": "Generate a new passphrase",
+    "backupChecked": "Backup checked: {n} entries.",
+    "backupFailed": "Encrypted backup failed: {error}",
     "importSuccess": "Imported {imported} entries",
     "importSuccessSkipped": "Imported {imported} entries, skipped {skipped}",
     "importFailed": "Import failed: {error}",
@@ -1050,7 +1062,6 @@
     "add": "Add",
     "removeNote": "Removing someone re-keys the group: what they already opened stays open to them, but future group access ends."
   },
-
   "removal": {
     "bodyConfirmed": "You were removed from this Space. It no longer syncs on this device.",
     "bodyReset": "The owner reset this device's access. It no longer syncs on this device.",
