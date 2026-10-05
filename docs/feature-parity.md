@@ -133,7 +133,7 @@ Surface: Mobile. Missing: no import of the 8 formats, no export. Effort: M (pars
 Surface: Mobile. Missing: no rotation UI, no Recovery Kit surface. A user who created a vault on a phone must rotate on desktop. Effort: M to L (ceremony flow + kit export reuse). Value: security lifecycle parity; recovery independence per platform. Decision: close.
 
 ### G4. Mobile open shared reveals
-Surface: Mobile. Missing: cannot open a guest or contact reveal file. Effort: S. Value: a phone receives the share file; it should open it. Decision: close.
+Surface: Mobile. Missing: cannot open a guest or contact reveal file. Effort: S. Value: a phone receives the share file; it should open it. Decision: close. CLOSED: shipped — see the Closed table.
 
 ### G5. Mobile device fleet management
 Surface: Mobile. Missing: fleet list, revoke, rotate (enrollment exists). Revocation triggers a full rekey on-device, so the crypto path is heavy and the flow needs care. Effort: M to L. Value: lost-phone response without a desktop. Decision: close.
@@ -171,7 +171,7 @@ Surface: Mobile + CLI. Missing: group CRUD and membership (desktop has the full 
 Surface: CLI. Missing: list trash, restore, purge. Effort: S. Value: scripting cleanup; parity with both GUIs. Decision: close.
 
 ### G15. Mobile vault detach / prune
-Surface: Mobile. Missing: drop a vault from the list, prune stale vaults (both GUIs have it; the destructive delete arm stays desktop/CLI by design). Effort: S. Value: unclutter the vault list after a vault is removed elsewhere. Decision: close.
+Surface: Mobile. Missing: drop a vault from the list, prune stale vaults (both GUIs have it; the destructive delete arm stays desktop/CLI by design). Effort: S. Value: unclutter the vault list after a vault is removed elsewhere. Decision: close. CLOSED: detach shipped; prune has no mobile shape (the list is a filesystem scan and cannot go stale) — the stale-active-pointer self-heal is its equivalent. See the Closed table.
 
 ### G16. Repo creation on provider (mobile + CLI)
 Surface: Mobile + CLI. Missing: `provider.create_repo` (desktop-only today). Effort: S on CLI (route + flag), M on mobile (wizard step). Value: first-run setup without a desktop, on either client. Decision: close; CLI part rides with G8 in the CLI parity track.
@@ -224,6 +224,8 @@ Surface: Mobile. Missing: remote repoint and signed-manifest revocation. Effort:
 | G22 | `d27eceb` + `c0bc684` | password history on desktop (collapsible, masked rows) and mobile (masked field rows) |
 | G2 | this wave | mobile import (8 core formats via SAF open + format dialog) and export, bytes-only UniFFI wrappers over the same daemon-shaped runtime paths; review fixes: dedicated json/csv SAF contracts, scrolling format dialog. Follow-up wave: the Baluard backup (baluard.vault v1) — a first-party, versioned, full-fidelity JSON export (folders with hierarchy, tags, re-prompt, history, passkey private keys) with a roundtrip guarantee, auto-detected on import by its header; export surfaces now say "Baluard backup" and "Spreadsheet (logins only)" with zero Bitwarden branding; the desktop export route was found broken (it sent JSON while the daemon raw-matched the payload) and now accepts both shapes; CLI `baluard export` defaults to `--format baluard` |
 | G18 | this wave | re-prompt enforced on both GUIs behind a 30s master-password grant. Review round made the gate REAL: verification rides `vault.reprompt_verify` / a new `repromptVerify` FFI (opening a temp handle), because `vault.unlock` short-circuits Ok on an already-unlocked vault and would have accepted any password; desktop gates all sensitive field classes (not just logins), edit flows are gated, autofill refuses reprompt-protected entries, and the modal's show() binds its callback at confirm time (fixing a dead wiring where the rotation gate never fired) |
+| G4 | this wave | mobile opens shared `.baluard-share` files: one reusable flow composable serves the full chain (one-shot package import → view-only contact reveal → passphrase guest leg, surfacing the contact leg's error when the guest open also fails) from Settings > Data, and a guest-only entry on the onboarding screen so a recipient without an account can open a passphrase share — the S2 IS-6 core promise; new FFI: `import_shared_package`, `open_shared_contact`, and a vault-agnostic `open_shared_guest` mirroring the daemon's host-level route; secrets masked with copy, everything selectable |
+| G15 | this wave | detach drops a vault from the switcher without deleting anything: the directory moves aside under a detached folder (collision-counted, never auto-deleted), the cached session and biometric KEK are dropped first, and the active pointer self-heals when its directory is gone. Prune is deliberately not a button on mobile — the list is a filesystem scan and entries cannot go stale |
 
 ## Keeping this document current
 
