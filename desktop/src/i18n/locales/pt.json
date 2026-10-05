@@ -308,6 +308,18 @@
     "exportBackupHint": "Tudo, para backup ou trocar de dispositivo",
     "exportSpreadsheet": "Planilha",
     "exportSpreadsheetHint": "Apenas logins (.csv), para imprimir ou outros apps",
+    "backupExport": "Backup criptografado",
+    "backupExportHint": "Protegido por senha (.bldbak)",
+    "backupImportOption": "Backup criptografado (.bldbak)",
+    "backupPassTitleExport": "Proteja seu backup",
+    "backupPassTitleImport": "Backup criptografado",
+    "backupPassDesc": "Esta frase-senha é a única forma de abrir o arquivo. Se você a perder, o backup se perde para sempre. Não é sua senha mestra, e o Baluard nunca a armazena.",
+    "backupPassImportDesc": "Digite a frase que você salvou ao criar este backup. Não é sua senha mestra.",
+    "backupPassConfirmLabel": "Confirme a frase",
+    "backupSavedAck": "Eu salvei esta frase em um lugar seguro",
+    "backupRegenerate": "Gerar uma nova frase",
+    "backupChecked": "Backup verificado: {n} entradas.",
+    "backupFailed": "Falha no backup criptografado: {error}",
     "importSuccess": "{imported} itens importados",
     "importSuccessSkipped": "{imported} itens importados, {skipped} ignorados",
     "importFailed": "Falha na importação: {error}",
@@ -1050,7 +1062,6 @@
     "add": "Adicionar",
     "removeNote": "Remover alguém regenera a chave do grupo: o que a pessoa já abriu continua aberto para ela, mas o acesso futuro ao grupo termina."
   },
-
   "removal": {
     "bodyConfirmed": "Você foi removido deste Space. Ele não sincroniza mais neste dispositivo.",
     "bodyReset": "O dono restabeleceu o acesso deste dispositivo. Ele não sincroniza mais neste dispositivo.",
