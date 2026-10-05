@@ -5271,6 +5271,47 @@ impl VaultState {
         baluard_core::import::export::export_bw_csv(&ciphers)
     }
 
+    /// Export the whole vault as a Baluard backup (baluard.vault v1):
+    /// full-fidelity JSON in Baluard's own domain model — folders with
+    /// hierarchy, tags, re-prompt flags, history and passkey private keys
+    /// all survive a roundtrip. Returned string is UNENCRYPTED.
+    pub async fn export_backup_json(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        self.assert_export_allowed(handle)?;
+
+        let metas = handle.list_cipher_meta_full().map_err(|e| format!("{e}"))?;
+        let mut ciphers = Vec::new();
+        for meta in &metas {
+            match handle.get_cipher(meta.id) {
+                Ok(CipherRead::Decrypted(c)) => ciphers.push(*c),
+                Ok(CipherRead::Locked(_)) => continue,
+                Err(e) => log::warn!("[export] skipping {}: {e}", meta.id),
+            }
+        }
+
+        let folders = handle.list_folders().map_err(|e| format!("{e}"))?;
+        let folder_tuples: Vec<(uuid::Uuid, String, Option<uuid::Uuid>, Option<String>)> = folders
+            .into_iter()
+            .map(|f| (f.id, f.name, f.parent_id, f.icon))
+            .collect();
+
+        baluard_core::import::baluard_json::export_backup(
+            &ciphers,
+            &folder_tuples,
+            None,
+            env!("CARGO_PKG_VERSION"),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        )
+    }
+
     /// Delete a folder. Unassigns all ciphers in that folder.
     pub async fn delete_folder(&self, id_str: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;

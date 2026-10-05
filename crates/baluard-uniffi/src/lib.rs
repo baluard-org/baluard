@@ -432,6 +432,22 @@ impl MobileVault {
                     detail: "import file is not valid UTF-8".to_string(),
                 })?;
                 match fmt {
+                    ImportFormat::BaluardJson => {
+                        let result = match baluard_core::import::baluard_json::parse_backup(&text) {
+                            Ok(backup) => {
+                                Ok(baluard_core::import::baluard_json::backup_to_import(backup))
+                            }
+                            Err(e) => Err(e),
+                        };
+                        match result {
+                            Ok(r) => r,
+                            Err(e) => {
+                                let mut r = baluard_core::import::ImportResult::new();
+                                r.skip(e);
+                                r
+                            }
+                        }
+                    }
                     ImportFormat::BwJson => baluard_core::import::bw_json::parse(&text),
                     ImportFormat::BwCsv => baluard_core::import::bw_csv::parse(&text),
                     ImportFormat::ChromeCsv => baluard_core::import::chrome_csv::parse(&text),
@@ -451,12 +467,19 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
-    /// Export every entry as Bitwarden JSON ("bw-json") or CSV ("bw-csv",
-    /// logins only). The returned string is UNENCRYPTED — the caller owns
-    /// where it lands. Space export policy (viewer rules) is enforced
-    /// runtime-side and fails closed.
+    /// Export the vault in one of three shapes: "baluard" (the Baluard
+    /// backup — full-fidelity JSON in our own format, the default),
+    /// "bw-json" (Bitwarden JSON, for moving to other apps) or "bw-csv"
+    /// (Bitwarden CSV, logins only). All returned strings are UNENCRYPTED —
+    /// the caller owns where they land. Space export policy (viewer rules)
+    /// is enforced runtime-side and fails closed.
     pub async fn export_data(&self, format: String) -> Result<String, BaluardError> {
         match format.as_str() {
+            "baluard" | "baluard-backup" | "baluard.vault" => self
+                .state
+                .export_backup_json()
+                .await
+                .map_err(|e| BaluardError::Vault { detail: e }),
             "bw-json" => self
                 .state
                 .export_bw_json()
@@ -493,7 +516,9 @@ impl MobileVault {
                 }
             })?;
         let v: serde_json::Value =
-            serde_json::from_str(&json).map_err(|e| BaluardError::Vault { detail: e.to_string() })?;
+            serde_json::from_str(&json).map_err(|e| BaluardError::Vault {
+                detail: e.to_string(),
+            })?;
         Ok(v["expires_at"].as_u64().unwrap_or(0))
     }
 
@@ -1927,6 +1952,21 @@ mod tests {
         assert_eq!(ex["items"].as_array().unwrap().len(), 1);
         assert_eq!(ex["items"][0]["name"], "GH");
         assert_eq!(ex["folders"].as_array().unwrap().len(), 1);
+
+        // Export: the Baluard backup format carries our own header and the
+        // entry in the domain model; re-importing it must also work.
+        let backup = vault.export_data("baluard".into()).await.unwrap();
+        let b: serde_json::Value = serde_json::from_str(&backup).unwrap();
+        assert_eq!(b["format"], "baluard.vault");
+        assert_eq!(b["version"], 1);
+        assert_eq!(b["manifest"]["cipher_count"], 1);
+        assert_eq!(b["ciphers"][0]["name"], "GH");
+        let re = vault
+            .import_data("baluard".into(), backup.into_bytes())
+            .await
+            .expect("baluard import should succeed");
+        let rs: serde_json::Value = serde_json::from_str(&re).unwrap();
+        assert_eq!(rs["imported"].as_u64(), Some(1), "summary: {re}");
 
         // CSV export carries the login row.
         let csv = vault.export_data("bw-csv".into()).await.unwrap();
