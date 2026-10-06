@@ -356,7 +356,7 @@ impl VaultHandle {
     ///
     /// Note: In CLI mode, the device X25519 private key is stored in the
     /// keywrap JSON for simplicity. In production, this lives in OS keystore.
-    fn assert_can_manage_members(&self) -> Result<(), BaluardError> {
+    pub fn assert_can_manage_members(&self) -> Result<(), BaluardError> {
         // Legacy vault (no member directory): the founder manages.
         if !self.path.join(crate::vault::members::MEMBERS_DIR).exists() {
             return Ok(());
@@ -705,9 +705,16 @@ impl VaultHandle {
     /// multi-device roster is what peers verify signatures against).
     /// Path-only BY DESIGN: a fresh clone of a multi-device Space cannot
     /// open() a handle (no local keystore to resolve the device keywrap
-    /// against), so the ceremony must never require one. The recovered
-    /// device adopts the owner identity through the existing cross-device
-    /// heal at first unlock.
+    /// against), so the ceremony must never require one. Family-spaces
+    /// §7: the password parameter is the recoverer's OWN new master
+    /// password (it becomes this device's member unlock; the founding
+    /// password is never demanded), and the ceremony always ends in a
+    /// fresh member row — Owner when no live admin row exists,
+    /// otherwise Admin beside the survivor. The fresh row is unflagged
+    /// by construction: possession of the phrase IS the orphan escape,
+    /// so a recovered former minor acts as an adult. Legacy personal
+    /// vaults (no member directory) keep refusing: there is no row to
+    /// bind and the kit targets shared vaults.
     pub fn recover_device_with_kit(
         vault_path: &Path,
         phrase: &str,
@@ -717,6 +724,15 @@ impl VaultHandle {
         if device_name.contains(['\n', '\r']) {
             return Err(VaultError::InvalidOperation(
                 "device name must not contain newlines".into(),
+            )
+            .into());
+        }
+        // The chosen password becomes this device's master password, so
+        // it carries the same floor as creation — a weak one would make
+        // the recovered device the vault's weakest door.
+        if password.chars().count() < 8 {
+            return Err(VaultError::InvalidOperation(
+                "password must be at least 8 characters".into(),
             )
             .into());
         }
@@ -760,39 +776,56 @@ impl VaultHandle {
             .map_err(|e| VaultError::Metadata(format!("kdf params: {e}")))?;
         let kdf_params: crate::types::KdfParams = serde_json::from_str(&kdf_raw)
             .map_err(|e| VaultError::Metadata(format!("kdf params: {e}")))?;
+        // The supplied password is the recoverer's OWN new master
+        // password: it seeds this device's member unlock (per-device
+        // canary), never the founding credential. Phrase-only by design.
         let kek = Zeroizing::new(crate::crypto::kdf::derive_kek(password, &kdf_params)?);
-        // KEK canary: a mistyped master password would mint a keystore
-        // this device could never unlock with the real password. Verify
-        // BEFORE anything is written.
-        let kek_canary_data = std::fs::read(vault_path.join("meta/kek-canary.enc")).map_err(
-            |_| {
-                BaluardError::from(VaultError::InvalidOperation(
-                    "This vault has no master-password canary; the recovery kit cannot verify the password.".into(),
-                ))
-            },
-        )?;
         let session_key = crate::crypto::hkdf_derive::derive_session_key(&kek)?;
-        crate::vault::canary::verify_kek_canary(&session_key, &kek_canary_data).map_err(|_| {
-            BaluardError::from(VaultError::InvalidOperation(
-                "That master password does not open this vault.".into(),
-            ))
-        })?;
+        let kek_canary = crate::vault::canary::create_kek_canary(&session_key, vault_id)?;
 
-        // Resolve the Owner row BEFORE any disk mutation: a failure here
-        // must not strand a half-written keystore that trips the brick
-        // guard on retry.
-        let owner = crate::vault::members::list_members(vault_path)?
+        // Resolve the fresh row's role BEFORE any disk mutation: a
+        // failure here must not strand a half-written keystore that
+        // trips the brick guard on retry. Owner only when NO live admin
+        // row exists (every guardian gone); otherwise Admin beside the
+        // survivor. Legacy personal vaults (no member directory) refuse.
+        if !vault_path.join(crate::vault::members::MEMBERS_DIR).exists() {
+            return Err(VaultError::InvalidOperation(
+                "kit recovery needs a vault with members (shared vaults); this vault has none"
+                    .into(),
+            )
+            .into());
+        }
+        let any_live_admin = crate::vault::members::list_members(vault_path)?
             .into_iter()
-            .find(|m| {
-                m.role == crate::vault::members::MemberRole::Owner
-                    && m.removed.is_none()
+            .any(|m| {
+                matches!(
+                    m.role,
+                    crate::vault::members::MemberRole::Owner
+                        | crate::vault::members::MemberRole::Admin
+                ) && m.removed.is_none()
                     && m.reset.is_none()
-            })
-            .ok_or_else(|| {
-                BaluardError::from(VaultError::InvalidOperation(
-                    "No live owner member row was found to bind the recovered device to.".into(),
-                ))
-            })?;
+            });
+        let role = if any_live_admin {
+            crate::vault::members::MemberRole::Admin
+        } else {
+            crate::vault::members::MemberRole::Owner
+        };
+        let new_member = crate::vault::members::MemberFile {
+            id: Uuid::new_v4(),
+            display_name: device_name.to_string(),
+            email: None,
+            role,
+            trust: crate::vault::members::TrustLevel::Channel,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            removed_reason: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
 
         // Fresh device identity (mirrors create_introduction). The KEK
         // derives from the VAULT-level KDF params with no fresh salt —
@@ -866,13 +899,32 @@ impl VaultHandle {
         )?;
         dm.save_to_vault()?;
 
+        // The fresh member row + binding: the recovered device is a
+        // first-class member (Owner in the every-guardian-gone case,
+        // Admin beside a survivor), unflagged by construction.
+        crate::vault::members::write_member(vault_path, &new_member)?;
         crate::vault::members::write_device_binding(
             vault_path,
             &crate::vault::members::DeviceBinding {
                 device_id,
-                member_id: owner.id,
+                member_id: new_member.id,
             },
         )?;
+        // Device-local member unlock: this device unlocks with the
+        // recoverer's own password through the member path.
+        let unlock = crate::vault::members::MemberUnlock {
+            device_id,
+            kdf_params,
+            kek_canary: hex::encode(&kek_canary),
+            identity_seed_sealed: None,
+        };
+        super::write_vault_file(
+            &vault_path.join("meta/member-unlock.json"),
+            serde_json::to_string_pretty(&unlock).unwrap().as_bytes(),
+        )
+        .map_err(|e| {
+            BaluardError::from(VaultError::Metadata(format!("write member unlock: {e}")))
+        })?;
         Ok(device_id)
     }
 
@@ -1652,6 +1704,39 @@ impl VaultHandle {
     /// grants are embedded in the invite at MINT time so approval
     /// applies exactly what the admin picked — even if the template is
     /// deleted before the joiner approves.
+    /// Family-spaces §8: mint an invite carrying an inline template (the
+    /// family default embeds Shared Read without a stored template). The
+    /// same gates and validation as `invite_create_with_template`, with
+    /// the grant structure resolved by the caller.
+    pub fn invite_create_with_embedded_grants(
+        &mut self,
+        role: crate::vault::members::MemberRole,
+        transport_username: Option<String>,
+        embedded: crate::vault::templates::EmbeddedTemplate,
+    ) -> Result<String, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        self.assert_invite_authority()?;
+        // The same mint-time bound the stored-template path enforces at
+        // approval: more grants than the cap in an invite means tampering.
+        if embedded.grants.len() > crate::vault::templates::MAX_GRANTS_PER_TEMPLATE {
+            return Err(VaultError::InvalidOperation(
+                "That template has too many collection entries.".into(),
+            )
+            .into());
+        }
+        crate::vault::members::create_invite(
+            &self.path,
+            self.vault_id,
+            role,
+            None,
+            transport_username,
+            Some(embedded),
+        )
+    }
+
     pub fn invite_create_with_template(
         &mut self,
         role: crate::vault::members::MemberRole,
@@ -3199,6 +3284,17 @@ impl VaultHandle {
         &mut self,
         member_ids: &[uuid::Uuid],
     ) -> Result<MemberRemovalReport, BaluardError> {
+        self.member_remove_with_reason(member_ids, "removed")
+    }
+
+    /// Family-spaces §6: the tombstone reason distinguishes an approved
+    /// departure ("left") from an admin removal ("removed"); it rides the
+    /// plaintext row and the activity log.
+    pub fn member_remove_with_reason(
+        &mut self,
+        member_ids: &[uuid::Uuid],
+        reason: &str,
+    ) -> Result<MemberRemovalReport, BaluardError> {
         // Quorum: satisfied when THIS handle's precheck already consumed
         // the approval (the strike-ordering chain); a direct core caller
         // without that chain gates here. Either way exactly one gate.
@@ -3236,7 +3332,7 @@ impl VaultHandle {
         // activity.enc history on the next load.
         let mut activity = self.load_activity_enc()?;
         for id in member_ids {
-            let devices = crate::vault::members::remove_member(&self.path, *id)?;
+            let devices = crate::vault::members::remove_member(&self.path, *id, reason)?;
             removed_members.push(*id);
             // S4-2 (review F3): group memberships die with the removal —
             // each affected group's GK rotates while the CURRENT SGK is
@@ -3840,6 +3936,7 @@ impl VaultHandle {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                removed_reason: None,
                 // P8c: the seat rides the record so offboarding can strike
                 // it without asking anyone.
                 transport_username: invite.transport_username.clone(),
@@ -10187,6 +10284,7 @@ mod tests {
             identity_rotated_at: None,
             reset: None,
             removed: None,
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         };
@@ -10626,6 +10724,7 @@ mod tests {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                removed_reason: None,
                 transport_username: None,
                 identity_wrap_pubkey: None,
             },
@@ -10725,6 +10824,7 @@ mod tests {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                removed_reason: None,
                 transport_username: None,
                 identity_wrap_pubkey: None,
             },
@@ -10784,6 +10884,7 @@ mod tests {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                removed_reason: None,
                 transport_username: None,
                 identity_wrap_pubkey: None,
             },
@@ -10852,6 +10953,7 @@ mod tests {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                removed_reason: None,
                 transport_username: None,
                 identity_wrap_pubkey: None,
             },
@@ -10906,6 +11008,7 @@ mod tests {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                removed_reason: None,
                 transport_username: None,
                 identity_wrap_pubkey: None,
             },
@@ -11251,6 +11354,7 @@ mod tests {
             identity_rotated_at: None,
             reset: None,
             removed,
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         };
@@ -11412,18 +11516,21 @@ mod tests {
         }
         assert!(!clone_path.join("meta/device-privkey.json").exists());
 
-        // Recover: phrase + master password + device name -> a device
-        // bound to the live Owner row. Path-only: no handle open before
-        // the ceremony (a multi-device clone cannot open()).
+        // Recover: phrase + the recoverer's OWN new master password +
+        // device name -> a fresh member row. The founder Owner row is
+        // alive, so the recovered device lands as Admin beside it
+        // (family-spaces §7); phrase-only, no founding password.
         let device_id =
             VaultHandle::recover_device_with_kit(&clone_path, &phrase, &password, "Recovered Mac")
                 .expect("recovery on a fresh clone");
         assert_eq!(
             crate::vault::members::member_role_for_device(&clone_path, device_id),
-            Some(crate::vault::members::MemberRole::Owner)
+            Some(crate::vault::members::MemberRole::Admin)
         );
 
-        // The recovered device unlocks through the admin path.
+        // The recovered device unlocks through the member path with ITS
+        // OWN password and still reaches the Root Key (the keywrap the
+        // ceremony wrote unwraps under its device key).
         let mut clone = VaultHandle::open(&clone_path).unwrap();
         clone.unlock(&password).unwrap();
         assert!(clone.holds_root());
@@ -11465,16 +11572,14 @@ mod tests {
         );
         drop(wrong);
 
-        // Wrong master password refuses at the KEK canary — a typo would
-        // otherwise mint an un-unlockable keystore.
-        let err =
-            VaultHandle::recover_device_with_kit(&clone2_path, &phrase, "not-the-password", "nope")
-                .unwrap_err()
-                .to_string();
-        assert!(
-            err.contains("master password does not open this vault"),
-            "err: {err}"
-        );
+        // A weak chosen password refuses at the floor — under the
+        // phrase-only contract there is no "wrong" password to reject,
+        // so the floor is what keeps the recovered device from becoming
+        // the vault's weakest door.
+        let err = VaultHandle::recover_device_with_kit(&clone2_path, &phrase, "short", "nope")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("at least 8 characters"), "err: {err}");
         assert!(!clone2_path.join("meta/device-privkey.json").exists());
 
         // No kit refuses in plain language (remove the kit from the
@@ -11670,6 +11775,7 @@ mod tests {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                removed_reason: None,
                 transport_username: None,
                 identity_wrap_pubkey: None,
             },
@@ -11764,6 +11870,7 @@ mod tests {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                removed_reason: None,
                 transport_username: None,
                 identity_wrap_pubkey: None,
             },
@@ -12566,6 +12673,7 @@ mod tests {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                removed_reason: None,
                 transport_username: None,
                 identity_wrap_pubkey: None,
             },
@@ -15211,6 +15319,7 @@ mod tests {
             identity_rotated_at: None,
             reset: None,
             removed: None,
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         };
