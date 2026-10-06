@@ -909,6 +909,7 @@ async fn unlock_sweeps_expired_grants_and_route_can_invoke() {
         identity_rotated_at: None,
         reset: None,
         removed: None,
+        removed_reason: None,
         transport_username: None,
         identity_wrap_pubkey: None,
     };
@@ -994,6 +995,7 @@ async fn collections_state_lifecycle_and_locked_rejection() {
             identity_rotated_at: None,
             reset: None,
             removed: None,
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         },
@@ -2007,6 +2009,182 @@ async fn recover_kit_route_parses_and_resolves_slug() {
 }
 
 #[tokio::test]
+async fn family_leave_journey_files_lists_and_approves() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("fam-leave");
+    let (mut handle, _secrets) = VaultCreator::new(&vault_path, MASTER, "route-leave")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle.unlock(MASTER).unwrap();
+    let shared = handle
+        .get_settings()
+        .unwrap()
+        .family_shared_collection
+        .unwrap();
+    // Enable the kit so the approval must re-issue it.
+    let _old_phrase = handle.space_recovery_kit_enable().unwrap();
+    // A live Editor leaver with a device binding and a Shared Read grant.
+    let leaver_id = uuid::Uuid::new_v4();
+    let mut leaver = baluard_core::vault::members::MemberFile {
+        id: leaver_id,
+        display_name: "Uncle Rob".into(),
+        email: None,
+        role: baluard_core::vault::members::MemberRole::Editor,
+        trust: baluard_core::vault::members::TrustLevel::Channel,
+        identity_signing_pubkey: None,
+        identity_signing_pubkey_previous: None,
+        identity_rotation_signature: None,
+        identity_rotated_at: None,
+        reset: None,
+        removed: None,
+        removed_reason: None,
+        transport_username: None,
+        identity_wrap_pubkey: None,
+    };
+    baluard_core::vault::members::write_member(&vault_path, &leaver).unwrap();
+    let leaver_device = uuid::Uuid::new_v4();
+    baluard_core::vault::members::write_device_binding(
+        &vault_path,
+        &baluard_core::vault::members::DeviceBinding {
+            device_id: leaver_device,
+            member_id: leaver_id,
+        },
+    )
+    .unwrap();
+    let sgk = handle.unlocked().sgk().unwrap().clone();
+    baluard_core::vault::collections::upsert_grant(
+        &vault_path,
+        &sgk,
+        &shared,
+        baluard_core::vault::collections::CollectionGrant {
+            target: baluard_core::vault::collections::GrantTarget::Member { id: leaver_id },
+            access: baluard_core::vault::collections::CollectionAccess::Read,
+            expires_at: None,
+        },
+    )
+    .unwrap();
+    // The leaver files; the owner's device refuses (transfer first).
+    baluard_core::vault::members::file_leave_record(&vault_path, leaver_device).unwrap();
+    drop(handle);
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    state.unlock(MASTER).await.expect("vault unlock");
+    let owner_file = state.members_leave_file().await.unwrap_err();
+    assert!(owner_file.contains("transfer ownership"), "{owner_file}");
+
+    // List: exactly the leaver.
+    let listed: serde_json::Value =
+        serde_json::from_str(&state.members_leave_list().await.unwrap()).unwrap();
+    assert_eq!(listed["pending"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        listed["pending"][0]["member_id"],
+        serde_json::json!(leaver_id.to_string())
+    );
+
+    // Approve: strike + tombstone left + rotation + kit re-issue.
+    let report: serde_json::Value = serde_json::from_str(
+        &state
+            .members_leave_approve(&format!(r#"{{"member_id":"{leaver_id}"}}"#))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["reason"], "left");
+    assert_eq!(report["collections_rotated"], 1);
+    assert!(report["new_kit_phrase"].is_string());
+    assert!(
+        report["removed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m == &serde_json::json!(leaver_id.to_string()))
+    );
+    // The tombstone row carries the coarse reason.
+    let row = baluard_core::vault::members::member_file_by_id(&vault_path, leaver_id).unwrap();
+    assert_eq!(row.removed_reason.as_deref(), Some("left"));
+    // The pending list is empty and the leaver's grant died with the
+    // rotation.
+    let listed: serde_json::Value =
+        serde_json::from_str(&state.members_leave_list().await.unwrap()).unwrap();
+    assert!(listed["pending"].as_array().unwrap().is_empty());
+    let cols: serde_json::Value =
+        serde_json::from_str(&state.collections_list().await.unwrap()).unwrap();
+    let shared_grants = cols["collections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == serde_json::json!(shared.to_string()))
+        .map(|c| c["grants"].clone())
+        .expect("shared collection in listing");
+    assert!(
+        !shared_grants
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g["target"]["id"] == serde_json::json!(leaver_id.to_string())),
+        "leaver grant survived: {shared_grants}"
+    );
+}
+
+#[tokio::test]
+async fn family_add_cipher_defaults_route_by_type() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("fam-adds");
+    let (mut handle, _secrets) = VaultCreator::new(&vault_path, MASTER, "route-fam")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle.unlock(MASTER).unwrap();
+    let shared = handle
+        .get_settings()
+        .unwrap()
+        .family_shared_collection
+        .unwrap();
+    drop(handle);
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    state.unlock(MASTER).await.expect("vault unlock");
+
+    // Admin login: routed to Shared (family default).
+    let login_id = state
+        .add_cipher(
+            r#"{"name":"Wifi","kind":{"type":"login","data":{"username":"u","password":"p"}}}"#,
+        )
+        .await
+        .unwrap();
+    let meta_of = |id: &str, envelope: &serde_json::Value| {
+        envelope["ciphers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["_meta"]["id"] == serde_json::json!(id))
+            .unwrap()["_meta"]["collection_id"]
+            .clone()
+    };
+    let envelope: serde_json::Value = state.full_envelope().await.unwrap();
+    assert_eq!(
+        meta_of(&login_id, &envelope),
+        serde_json::json!(shared.to_string()),
+        "admin login should land in Shared"
+    );
+
+    // Admin card: stays flat (admin-only namespace) — the sensitive
+    // default keeps cards out of the household-shared collection.
+    let card_id = state
+        .add_cipher(
+            r#"{"name":"Bank card","kind":{"type":"card","data":{"cardholder":"A","number":"4111111111111111","brand":"visa","exp_month":"1","exp_year":"2030","cvv":"123"}}}"#,
+        )
+        .await
+        .unwrap();
+    let envelope: serde_json::Value = state.full_envelope().await.unwrap();
+    assert!(
+        meta_of(&card_id, &envelope).is_null(),
+        "admin card should stay flat, got {:?}",
+        meta_of(&card_id, &envelope)
+    );
+}
+
 async fn space_settings_lifecycle_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("space-settings");
     let state = Arc::new(VaultState::new(vault_path.clone()));
@@ -2249,6 +2427,7 @@ async fn space_settings_lifecycle_and_locked_rejection() {
             identity_rotated_at: None,
             reset: None,
             removed: Some(1),
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         };
@@ -2732,6 +2911,7 @@ fn rebind_device(
         identity_rotated_at: None,
         reset: None,
         removed,
+        removed_reason: None,
         transport_username: None,
         identity_wrap_pubkey: None,
     };
