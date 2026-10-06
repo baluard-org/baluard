@@ -155,8 +155,13 @@ field (`"purpose": "family" | "org"` in plaintext
 defaults — minors, kits, departure, the pair-gate split. This section
 supersedes the "no kind is stored" sentence: purpose sets DEFAULTS,
 `personal_merge` remains the enforcement knob and an optional
-override whose absence follows the purpose. See
-docs/plan-family-spaces.md.
+override whose absence follows the purpose. Classification is the
+union, not one signal: a vault is a Space when it carries a purpose,
+a flipped team shape, or the legacy `space: true` flag. The flipped
+arm matters for organizations, which are created as plain vaults and
+flipped today, carrying neither purpose nor the flag; classifying on
+the flag alone would silently make every organization merge-eligible.
+See docs/plan-family-spaces.md section 2.
 
 The extension's merged match route returns match metadata only,
 never whole-vault payloads; it must not become a path to
