@@ -245,6 +245,9 @@ pub struct VaultCreator<'a> {
     theme: Option<crate::types::ThemeMode>,
     lang: Option<String>,
     vault_timeout: Option<crate::vault::manifest::VaultTimeout>,
+    /// Family-spaces §13: create the vault AS a family vault (purpose,
+    /// Shared + Guardians, team-shape flip) in one transaction.
+    family: bool,
 }
 
 impl<'a> Drop for VaultCreator<'a> {
@@ -271,6 +274,7 @@ impl<'a> VaultCreator<'a> {
             theme: None,
             lang: None,
             vault_timeout: None,
+            family: false,
         }
     }
 
@@ -327,6 +331,16 @@ impl<'a> VaultCreator<'a> {
         self.theme = theme;
         self.lang = lang;
         self.vault_timeout = vault_timeout;
+        self
+    }
+
+    /// Create the vault as a FAMILY vault (plan-family-spaces): stamps
+    /// `purpose: family`, creates the `Shared` collection and the
+    /// `Guardians` group, and flips to team shape in the same
+    /// transaction. The purpose write hard-fails, so a crash never
+    /// leaves a team-shaped vault without its purpose.
+    pub fn family(mut self, family: bool) -> Self {
+        self.family = family;
         self
     }
 
@@ -666,7 +680,7 @@ impl<'a> VaultCreator<'a> {
                     ).map_err(|e| BaluardError::from(VaultError::Corrupt(format!("Write gitignore: {e}"))))?;
                 }
 
-                let handle = VaultHandle {
+                let mut handle = VaultHandle {
                     path: path.clone(),
                     vault_id,
                     kdf_params,
@@ -701,6 +715,14 @@ impl<'a> VaultCreator<'a> {
 
                 // Apply wizard profile + preferences
                 self.apply_wizard_settings(&handle)?;
+
+                // Family transaction runs LAST: purpose -> Shared +
+                // Guardians -> flip, so a failure above leaves a plain
+                // personal vault and a failure below leaves a resumable
+                // family vault (setup_family_vault is idempotent).
+                if self.family {
+                    super::family::setup_family_vault(&mut handle)?;
+                }
 
                 Ok((handle, secrets))
             }
@@ -926,7 +948,7 @@ impl<'a> VaultCreator<'a> {
                 // Persist DeviceManager state so VaultHandle::open() can reload it
                 device_manager.save_to_vault()?;
 
-                let handle = VaultHandle {
+                let mut handle = VaultHandle {
                     path: path.clone(),
                     vault_id,
                     kdf_params,
@@ -961,6 +983,14 @@ impl<'a> VaultCreator<'a> {
 
                 // Apply wizard profile + preferences
                 self.apply_wizard_settings(&handle)?;
+
+                // Family transaction runs LAST: purpose -> Shared +
+                // Guardians -> flip, so a failure above leaves a plain
+                // personal vault and a failure below leaves a resumable
+                // family vault (setup_family_vault is idempotent).
+                if self.family {
+                    super::family::setup_family_vault(&mut handle)?;
+                }
 
                 Ok((handle, secrets))
             }

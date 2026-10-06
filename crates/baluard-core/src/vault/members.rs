@@ -399,6 +399,18 @@ pub fn commit_ownership_swap(
     if new.reset.is_some() || new.removed.is_some() {
         return Err(deny("successor row is tombstoned"));
     }
+    // Family-spaces §5 target guard. Minors can never receive ownership
+    // (existence check: only an admin handle can create the sealed
+    // record, and only an Admin-rank commit can ship it). On family
+    // purpose the target must hold Admin rank — the plan's second
+    // guardian is an Admin — while pair/org vaults keep their existing
+    // transfer semantics (a pair Space has no Admin rank at all).
+    if super::family::minor_record_exists(vault_path, &new_member_id) {
+        return Err(deny("a minor cannot receive ownership"));
+    }
+    if super::space::is_family(vault_path) && new.role != MemberRole::Admin {
+        return Err(deny("on a family vault, ownership passes only to an admin"));
+    }
     // S1a-7 review: PROMOTE first, demote second. A crash between the
     // two writes must never leave ZERO owners (vault bricked); promote-
     // first leaves TWO owners at worst — an abnormal-but-recoverable
@@ -412,10 +424,13 @@ pub fn commit_ownership_swap(
         serde_json::to_string_pretty(&new).unwrap().as_bytes(),
     )
     .map_err(|e| BaluardError::from(VaultError::Metadata(format!("promote owner: {e}"))))?;
-    // S2 IS-5: a pair Space has no admins — the demoted owner stays an
-    // editor, or a later reset of their row would mint an Admin invite
-    // the pair gate refuses, wedging recovery permanently.
-    old.role = if super::space::is_space_vault(vault_path) {
+    // S2 IS-5 demote split (family-spaces §2): only a PAIR Space has no
+    // admins — the demoted owner stays an editor there, or a later reset
+    // of their row would mint an Admin invite the pair gate refuses,
+    // wedging recovery permanently. A family vault keeps the old Owner
+    // at Admin (co-guardian equality); org and personal vaults demote
+    // to Admin as before.
+    old.role = if super::space::is_pair(vault_path) {
         MemberRole::Editor
     } else {
         MemberRole::Admin
