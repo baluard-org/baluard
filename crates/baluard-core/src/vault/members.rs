@@ -94,6 +94,13 @@ pub struct MemberFile {
     /// dead. Value = unix seconds at removal.
     #[serde(default)]
     pub removed: Option<u64>,
+    /// Family-spaces §6: coarse tombstone reason — "left" (approved
+    /// leave record) or "removed" (admin removal). `None` on legacy
+    /// tombstones. Admin-authored only; the delta validator denies any
+    /// self-service edit of a tombstoned row, so this never rides a
+    /// member's own commit.
+    #[serde(default)]
+    pub removed_reason: Option<String>,
     /// P8c: the member's forge username for the transport seat, recorded
     /// at approval so offboarding can strike the seat without asking
     /// anyone. `None` = no managed seat.
@@ -155,6 +162,111 @@ pub fn write_device_binding(
         serde_json::to_string_pretty(binding).unwrap().as_bytes(),
     )
     .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write binding: {e}"))))
+}
+
+/// Family-spaces §6: the member-authored departure request. The carrying
+/// commit's device-key signature authenticates the writer; the record is
+/// inert until an admin explicitly approves it.
+pub const LEAVE_FORMAT: &str = "baluard.leave.v1";
+
+/// File (or re-confirm) the calling device's leave record. Refuses the
+/// Owner row (transfer first) and tombstoned rows; idempotent on re-file
+/// so a retry after a sync failure never errors.
+pub fn file_leave_record(vault_path: &Path, device_id: Uuid) -> Result<Uuid, BaluardError> {
+    let deny = |msg: &str| BaluardError::from(VaultError::InvalidOperation(msg.to_string()));
+    let (_, member) = member_file_for_device(vault_path, device_id)
+        .ok_or_else(|| deny("this device is not a live vault member"))?;
+    if member.role == MemberRole::Owner {
+        return Err(deny(
+            "transfer ownership before leaving (another guardian must hold the seat)",
+        ));
+    }
+    let path = vault_path
+        .join(MEMBERS_DIR)
+        .join(member.id.to_string())
+        .join("leave.json");
+    if path.exists() {
+        return Ok(member.id);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let record = serde_json::json!({
+        "format": LEAVE_FORMAT,
+        "requested_at": now,
+    });
+    super::write_vault_file(
+        &path,
+        serde_json::to_string_pretty(&record).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write leave record: {e}"))))?;
+    Ok(member.id)
+}
+
+/// A pending departure: the live row plus when the request was filed.
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingLeave {
+    pub member_id: Uuid,
+    pub display_name: String,
+    pub role: MemberRole,
+    pub requested_at: u64,
+}
+
+/// Every live member row carrying an unapproved leave record. Tombstoned
+/// rows never surface — their record died with the row.
+pub fn list_leave_records(vault_path: &Path) -> Result<Vec<PendingLeave>, BaluardError> {
+    let mut out = Vec::new();
+    for member in list_members(vault_path)? {
+        if member.reset.is_some() || member.removed.is_some() {
+            continue;
+        }
+        let path = vault_path
+            .join(MEMBERS_DIR)
+            .join(member.id.to_string())
+            .join("leave.json");
+        if !path.exists() {
+            continue;
+        }
+        let data = std::fs::read_to_string(&path)
+            .map_err(|e| BaluardError::from(VaultError::Metadata(format!("read leave: {e}"))))?;
+        let record: serde_json::Value = serde_json::from_str(&data).map_err(|_| {
+            BaluardError::from(VaultError::Corrupt("leave record malformed".into()))
+        })?;
+        if record["format"].as_str() != Some(LEAVE_FORMAT) {
+            return Err(BaluardError::from(VaultError::Corrupt(
+                "leave record format".into(),
+            )));
+        }
+        out.push(PendingLeave {
+            member_id: member.id,
+            display_name: member.display_name.clone(),
+            role: member.role,
+            requested_at: record["requested_at"].as_u64().unwrap_or(0),
+        });
+    }
+    Ok(out)
+}
+
+/// True when `member_id` carries a live leave record (the approval
+/// execution's precondition).
+pub fn leave_record_exists(vault_path: &Path, member_id: Uuid) -> bool {
+    vault_path
+        .join(MEMBERS_DIR)
+        .join(member_id.to_string())
+        .join("leave.json")
+        .exists()
+}
+
+/// Remove the leave record after its approval executed (or when the
+/// admin dismisses a stale request). NotFound tolerated.
+pub fn consume_leave_record(vault_path: &Path, member_id: Uuid) {
+    let _ = std::fs::remove_file(
+        vault_path
+            .join(MEMBERS_DIR)
+            .join(member_id.to_string())
+            .join("leave.json"),
+    );
 }
 
 /// Find the owner member id (role == Owner). `None` when the directory is
@@ -285,6 +397,7 @@ pub fn reset_member(
         identity_rotated_at: None,
         reset: None,
         removed: None,
+        removed_reason: None,
         transport_username: old.transport_username.clone(),
         // The successor re-introduces with a fresh card; approval
         // overwrites this from the card's wrap pubkey.
@@ -310,7 +423,11 @@ pub fn reset_member(
 /// and rotate the Root Key. Bindings stay on disk (inert: the row
 /// resolves no role and no bindings). Entries are preserved. Actor
 /// gating is the caller's job.
-pub fn remove_member(vault_path: &Path, member_id: Uuid) -> Result<Vec<Uuid>, BaluardError> {
+pub fn remove_member(
+    vault_path: &Path,
+    member_id: Uuid,
+    reason: &str,
+) -> Result<Vec<Uuid>, BaluardError> {
     let deny = |msg: &str| BaluardError::from(VaultError::InvalidOperation(msg.to_string()));
     let path = vault_path
         .join(MEMBERS_DIR)
@@ -335,6 +452,7 @@ pub fn remove_member(vault_path: &Path, member_id: Uuid) -> Result<Vec<Uuid>, Ba
     // P1: same as reset — no usable wrap identity past the tombstone.
     member.identity_wrap_pubkey = None;
     member.removed = Some(now);
+    member.removed_reason = Some(reason.to_string());
     super::write_vault_file(
         &path,
         serde_json::to_string_pretty(&member).unwrap().as_bytes(),
@@ -507,7 +625,7 @@ pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<Memb
 /// The member file for the member `device_id` is bound to, plus its
 /// on-disk path. `None` when unbound, legacy (no member directory), or
 /// bound to a tombstoned row.
-pub(crate) fn member_file_for_device(
+pub fn member_file_for_device(
     vault_path: &Path,
     device_id: Uuid,
 ) -> Option<(std::path::PathBuf, MemberFile)> {
@@ -1763,6 +1881,7 @@ mod tests {
             identity_rotated_at: None,
             reset: None,
             removed: None,
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         };
@@ -1788,6 +1907,7 @@ mod tests {
             identity_rotated_at: None,
             reset: None,
             removed: None,
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         };
@@ -1823,6 +1943,7 @@ mod tests {
             identity_rotated_at: None,
             reset: None,
             removed: None,
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         };
@@ -1838,6 +1959,7 @@ mod tests {
             identity_rotated_at: None,
             reset: None,
             removed: None,
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         };

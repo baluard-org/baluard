@@ -457,6 +457,7 @@ impl<'a> VaultCreator<'a> {
                     identity_rotated_at: None,
                     reset: None,
                     removed: None,
+                    removed_reason: None,
                     transport_username: None,
                     identity_wrap_pubkey: None,
                 };

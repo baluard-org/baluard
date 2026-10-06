@@ -241,6 +241,7 @@ mod tests {
             identity_rotated_at: None,
             reset: None,
             removed: None,
+            removed_reason: None,
             transport_username: None,
             identity_wrap_pubkey: None,
         };
@@ -309,6 +310,108 @@ mod tests {
             .unwrap();
         let err = handle.collection_delete(other).unwrap_err().to_string();
         assert!(err.contains("still has entries"), "{err}");
+    }
+
+    #[test]
+    fn leave_record_files_lists_and_execution_leaves_traces() {
+        let (_temp, mut handle, _pw) = family_vault();
+        let shared = setup_family_vault(&mut handle).unwrap();
+        let path = handle.path.clone();
+        // A live Editor member with a device binding, granted Write on
+        // their own collection plus Read on Shared.
+        let leaver_id = uuid::Uuid::new_v4();
+        let mut leaver = crate::vault::members::MemberFile {
+            id: leaver_id,
+            display_name: "Uncle Rob".into(),
+            email: None,
+            role: crate::vault::members::MemberRole::Editor,
+            trust: crate::vault::members::TrustLevel::Channel,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            removed_reason: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        crate::vault::members::write_member(&path, &leaver).unwrap();
+        let device_id = uuid::Uuid::new_v4();
+        crate::vault::members::write_device_binding(
+            &path,
+            &crate::vault::members::DeviceBinding {
+                device_id,
+                member_id: leaver_id,
+            },
+        )
+        .unwrap();
+        let sgk = handle.unlocked().sgk().unwrap().clone();
+        let kids_file = crate::vault::collections::create_collection(&path, &sgk, "Kids").unwrap();
+        let kids = kids_file.id;
+        let now = crate::vault::templates::now_secs();
+        for (cid, access) in [
+            (shared, crate::vault::collections::CollectionAccess::Read),
+            (kids, crate::vault::collections::CollectionAccess::Write),
+        ] {
+            crate::vault::collections::upsert_grant(
+                &path,
+                &sgk,
+                &cid,
+                crate::vault::collections::CollectionGrant {
+                    target: crate::vault::collections::GrantTarget::Member { id: leaver_id },
+                    access,
+                    expires_at: None,
+                },
+            )
+            .unwrap();
+        }
+        let _ = now;
+
+        // Owner file attempt: refused (transfer first).
+        let owner_device = handle.device_id;
+        let err = crate::vault::members::file_leave_record(&path, owner_device)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("transfer ownership"), "{err}");
+
+        // The leaver files; the record surfaces once; re-file is idempotent.
+        crate::vault::members::file_leave_record(&path, device_id).unwrap();
+        crate::vault::members::file_leave_record(&path, device_id).unwrap();
+        let pending = crate::vault::members::list_leave_records(&path).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].member_id, leaver_id);
+        assert_eq!(pending[0].display_name, "Uncle Rob");
+
+        // Execution: tombstone "left", grants rotated out, record consumed.
+        crate::vault::members::remove_member(&path, leaver_id, "left").unwrap();
+        let row = crate::vault::members::member_file_by_id(&path, leaver_id).unwrap();
+        assert_eq!(row.removed_reason.as_deref(), Some("left"));
+        assert!(row.removed.is_some());
+        for cid in [shared, kids] {
+            handle.collection_rotate_key(cid, Some(leaver_id)).unwrap();
+            let (_, _, grants) = handle
+                .collections_list()
+                .unwrap()
+                .into_iter()
+                .find(|(id, _, _)| *id == cid)
+                .unwrap();
+            assert!(
+                !grants.iter().any(
+                    |g| matches!(g.target, crate::vault::collections::GrantTarget::Member { id } if id == leaver_id)
+                ),
+                "leaver grant survived rotation"
+            );
+        }
+        crate::vault::members::consume_leave_record(&path, leaver_id);
+        assert!(
+            crate::vault::members::list_leave_records(&path)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!crate::vault::members::leave_record_exists(
+            &path, leaver_id
+        ));
     }
 
     #[test]

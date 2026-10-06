@@ -3514,7 +3514,7 @@ fn vaults_recover_kit(
         Ok(p) => p,
         Err(_) => prompt_password("Recovery phrase (24 words): ")?,
     };
-    let password = daemon_master_password("Master password: ")?;
+    let password = daemon_master_password("New master password for this device: ")?;
     let device_name = match device_name {
         Some(name) => name.to_string(),
         None => {

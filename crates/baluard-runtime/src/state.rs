@@ -2545,13 +2545,43 @@ impl VaultState {
             ),
             Some(_) => return Err("invalid 'template_id'; expected a UUID".to_string()),
         };
+        // Family-spaces §8: on a family vault an invite without an
+        // explicit template carries the family default — Read on the
+        // Shared collection — so every join lands with household basics
+        // without the admin hand-building a template first.
+        let family_shared = {
+            let s = handle.get_settings().map_err(|e| e.to_string())?;
+            if baluard_core::vault::space::read_purpose(&handle.path)
+                == baluard_core::vault::space::SpacePurpose::Family
+            {
+                s.family_shared_collection
+            } else {
+                None
+            }
+        };
         let code = match template_id {
             Some(template_id) => handle
                 .invite_create_with_template(role, transport_username.clone(), template_id)
                 .map_err(|e| e.to_string())?,
-            None => handle
-                .invite_create(role, transport_username.clone())
-                .map_err(|e| e.to_string())?,
+            None => match family_shared {
+                Some(shared_id) => handle
+                    .invite_create_with_embedded_grants(
+                        role,
+                        transport_username.clone(),
+                        baluard_core::vault::templates::EmbeddedTemplate {
+                            name: "Family member (Shared read)".into(),
+                            grants: vec![baluard_core::vault::templates::TemplateGrant {
+                                collection_id: shared_id,
+                                access: baluard_core::vault::collections::CollectionAccess::Read,
+                                expires_in_days: None,
+                            }],
+                        },
+                    )
+                    .map_err(|e| e.to_string())?,
+                None => handle
+                    .invite_create(role, transport_username.clone())
+                    .map_err(|e| e.to_string())?,
+            },
         };
         let vault_id = handle.vault_id;
         // P8c: the seat grant is network I/O — release the exclusive vault
@@ -3044,7 +3074,211 @@ impl VaultState {
             ids.push(uuid::Uuid::parse_str(s).map_err(|e| e.to_string())?);
         }
         let offline_override = v["offline_override"].as_bool().unwrap_or(false);
+        self.remove_members_exec(ids, offline_override, "removed")
+            .await
+    }
 
+    /// Family-spaces §6: file the calling device's departure request.
+    /// Any live member may file; the Owner row refuses until ownership
+    /// transfers. Idempotent on re-file.
+    pub async fn members_leave_file(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let member_id =
+            baluard_core::vault::members::file_leave_record(&handle.path, handle.device_id)
+                .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "member_id": member_id.to_string() }).to_string())
+    }
+
+    /// Pending departures for the admin surfaces (manage-gated).
+    pub async fn members_leave_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle
+            .assert_can_manage_members()
+            .map_err(|e| e.to_string())?;
+        let pending = baluard_core::vault::members::list_leave_records(&handle.path)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "pending": pending }).to_string())
+    }
+
+    /// Execute an approved departure: the standard removal ceremony
+    /// (strike, tombstone "left", rotation) plus the family extras —
+    /// collection-key rotation for every collection the leaver could
+    /// open, a kit re-issue whose new phrase returns exactly once, and
+    /// a refusal while the leaver still owns the transport repo.
+    pub async fn members_leave_approve(&self, payload: &str) -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let member_id = uuid::Uuid::parse_str(v["member_id"].as_str().ok_or("missing member_id")?)
+            .map_err(|e| e.to_string())?;
+        let offline_override = v["offline_override"].as_bool().unwrap_or(false);
+
+        // Pre-flight under a READ lock: the record must still be live,
+        // the actor must manage, the repo must not be the leaver's, and
+        // the collections to rotate are captured BEFORE the removal
+        // prunes the leaver's grants.
+        let (_vault_id, rotate_ids, had_kit) = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault is locked")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            handle
+                .assert_can_manage_members()
+                .map_err(|e| e.to_string())?;
+            if !baluard_core::vault::members::leave_record_exists(&handle.path, member_id) {
+                return Err("No pending departure for that member.".into());
+            }
+            // Repo ownership: the seat coordinate owner IS the leaver's
+            // transport username -> migration must come first or the
+            // vault's transport dies with their account.
+            let vault_id = handle.vault_id;
+            if let Some((_, username)) =
+                baluard_core::vault::members::member_file_by_id(&handle.path, member_id)
+                    .map(|m| ((), m.transport_username.clone()))
+            {
+                if let (Some(username), Some((_, owner, _))) = (
+                    username.filter(|u| !u.trim().is_empty()),
+                    self.vault_transport_coords(vault_id),
+                ) {
+                    if username.eq_ignore_ascii_case(&owner) {
+                        return Err(
+                            "This member owns the vault's repository. Move it to your own account first (vault migration), then approve the departure."
+                                .into(),
+                        );
+                    }
+                }
+            }
+            let leaver_collections = Self::leaver_openable_collections(handle, member_id)?;
+            let had_kit = baluard_core::vault::recovery_kit::kit_exists(&handle.path)
+                .map_err(|e| e.to_string())?;
+            (vault_id, leaver_collections, had_kit)
+        };
+        let drop_ids = rotate_ids;
+
+        // The removal ceremony (strike + tombstone "left" + rotation).
+        let mut report = self
+            .remove_members_exec(vec![member_id], offline_override, "left")
+            .await?;
+        let mut parsed: serde_json::Value =
+            serde_json::from_str(&report).map_err(|e| e.to_string())?;
+
+        // Family extras under a fresh write lock: rotate every
+        // collection the leaver could open (the CK survives the Root
+        // Key rotation — S3-7c) and re-issue the kit (the old phrase
+        // unwraps the fresh Root Key until replaced).
+        // The removal has already executed, so failures cannot abort.
+        // They surface in the response instead of vanishing:
+        // `rotation_failed` lists collections still keyed for the
+        // leaver, and `kit_reissue_failed` says the old phrase must be
+        // treated as live until a re-issue succeeds.
+        let mut kit_phrase = None;
+        let mut rotation_failed: Vec<String> = Vec::new();
+        let mut kit_reissue_failed: Option<String> = None;
+        {
+            let mut guard = self.inner.write().await;
+            let handle = guard.as_mut().ok_or("Vault is locked")?;
+            if handle.is_unlocked() {
+                for cid in &drop_ids {
+                    if let Err(e) = handle.collection_rotate_key(*cid, Some(member_id)) {
+                        rotation_failed.push(format!("{cid}: {e}"));
+                    }
+                }
+                if had_kit {
+                    match handle.space_recovery_kit_enable() {
+                        Ok(phrase) => kit_phrase = Some(phrase),
+                        Err(e) => kit_reissue_failed = Some(e.to_string()),
+                    }
+                }
+            }
+        }
+        {
+            let guard = self.inner.read().await;
+            if let Some(handle) = guard.as_ref() {
+                baluard_core::vault::members::consume_leave_record(&handle.path, member_id);
+            }
+        }
+        if let Some(obj) = parsed.as_object_mut() {
+            obj.insert("reason".into(), serde_json::Value::String("left".into()));
+            obj.insert(
+                "collections_rotated".into(),
+                serde_json::json!(drop_ids.len() - rotation_failed.len()),
+            );
+            if !rotation_failed.is_empty() {
+                obj.insert("rotation_failed".into(), serde_json::json!(rotation_failed));
+            }
+            if let Some(p) = kit_phrase {
+                obj.insert("new_kit_phrase".into(), serde_json::Value::String(p));
+            }
+            if let Some(e) = kit_reissue_failed {
+                obj.insert("kit_reissue_failed".into(), serde_json::Value::String(e));
+            }
+        }
+        report = parsed.to_string();
+        Ok(report)
+    }
+
+    /// Collections `member_id` could open pre-removal. An Admin (or the
+    /// Owner) holds the SGK, and resolve_ck unwraps ANY collection key
+    /// from it, so their openable set is ALL collections regardless of
+    /// grants (plan-family-spaces section 6). Everyone else: any grant
+    /// row that names them directly or through a group, EXPIRED ONES
+    /// INCLUDED: an expired grant still decrypts until a sweep rotates,
+    /// and the departure must prune the dead row either way.
+    fn leaver_openable_collections(
+        handle: &baluard_core::vault::VaultHandle,
+        member_id: uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, String> {
+        let role = baluard_core::vault::members::member_file_by_id(&handle.path, member_id)
+            .map(|row| row.role);
+        let is_admin = matches!(
+            role,
+            Some(baluard_core::vault::members::MemberRole::Owner)
+                | Some(baluard_core::vault::members::MemberRole::Admin)
+        );
+        if is_admin {
+            return Ok(handle
+                .collections_list()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|(id, _, _)| id)
+                .collect());
+        }
+        let groups: std::collections::HashSet<uuid::Uuid> = handle
+            .groups_list()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|(_, _, members)| members.contains(&member_id))
+            .map(|(id, _, _)| id)
+            .collect();
+        let mut out = Vec::new();
+        for (cid, _, grants) in handle.collections_list().map_err(|e| e.to_string())? {
+            let openable = grants.iter().any(|g| match &g.target {
+                baluard_core::vault::collections::GrantTarget::Member { id } => *id == member_id,
+                baluard_core::vault::collections::GrantTarget::Group { id } => groups.contains(id),
+            });
+            if openable {
+                out.push(cid);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Shared removal executor: pre-flight under a read lock, provider
+    /// strikes (bounded, overridable), then the rotation under the
+    /// write lock with the caller's tombstone reason.
+    async fn remove_members_exec(
+        &self,
+        ids: Vec<uuid::Uuid>,
+        offline_override: bool,
+        reason: &str,
+    ) -> Result<String, String> {
         // Pre-flight capture under a READ lock: authorization, batch
         // validation, and the seats to strike — via the SAME precheck
         // member_remove runs, so strikes can never happen for an
@@ -3107,7 +3341,9 @@ impl VaultState {
             if !handle.is_unlocked() {
                 return Err("Vault is locked. Unlock first.".into());
             }
-            handle.member_remove(&ids).map_err(|e| e.to_string())?
+            handle
+                .member_remove_with_reason(&ids, reason)
+                .map_err(|e| e.to_string())?
         };
         // P8c-2 review: a member added between the pre-flight and the
         // rotation would be offboarded with a seat no one struck —
@@ -3171,6 +3407,49 @@ impl VaultState {
         serde_json::to_string(&lines).map_err(|e| e.to_string())
     }
 
+    /// Family-spaces §3: the collections where `member_id` may write —
+    /// own unexpired Write+ grants plus Write+ grants through the
+    /// member's groups. Sorted and deduped so the caller's
+    /// zero/one/many decision is deterministic.
+    fn family_writable_collections(
+        handle: &baluard_core::vault::VaultHandle,
+        member_id: uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let groups: std::collections::HashSet<uuid::Uuid> = handle
+            .groups_list()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|(_, _, members)| members.contains(&member_id))
+            .map(|(id, _, _)| id)
+            .collect();
+        let mut out = std::collections::BTreeSet::new();
+        for (cid, _, grants) in handle.collections_list().map_err(|e| e.to_string())? {
+            let writable = grants.iter().any(|g| {
+                matches!(
+                    g.access,
+                    baluard_core::vault::collections::CollectionAccess::Write
+                        | baluard_core::vault::collections::CollectionAccess::Manage
+                ) && g.expires_at.map(|e| e > now).unwrap_or(true)
+                    && match &g.target {
+                        baluard_core::vault::collections::GrantTarget::Member { id } => {
+                            *id == member_id
+                        }
+                        baluard_core::vault::collections::GrantTarget::Group { id } => {
+                            groups.contains(id)
+                        }
+                    }
+            });
+            if writable {
+                out.insert(cid);
+            }
+        }
+        Ok(out.into_iter().collect())
+    }
+
     /// Add a new cipher. Requires vault to be unlocked.
     pub async fn add_cipher(&self, payload: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;
@@ -3187,7 +3466,69 @@ impl VaultState {
         // straight into the collection dir (the member path — flat
         // creation refuses on granted members, so there is no
         // create-then-move window).
-        let collection_id = input.collection_id;
+        let collection_id = match input.collection_id {
+            Some(id) => Some(id),
+            // Family-spaces §3 add-cipher defaults: on a family vault an
+            // unfiled entry lands somewhere shareable instead of the
+            // admin-only flat namespace. Logins and notes go to Shared;
+            // sensitive types (cards, identities, bank accounts, licenses,
+            // passports, SSH keys) stay admin-only by default. A member
+            // (non-admin) cannot write flat at all, so their unfiled
+            // create routes to their single Write-granted collection —
+            // the per-person collection — and refuses when zero or
+            // several qualify, asking them to pick explicitly.
+            None if baluard_core::vault::space::read_purpose(&handle.path)
+                == baluard_core::vault::space::SpacePurpose::Family =>
+            {
+                let actor_role = baluard_core::vault::members::member_role_for_device(
+                    &handle.path,
+                    handle.device_id,
+                );
+                let is_admin = matches!(
+                    actor_role,
+                    Some(baluard_core::vault::members::MemberRole::Owner)
+                        | Some(baluard_core::vault::members::MemberRole::Admin)
+                );
+                if is_admin {
+                    match input.kind {
+                        baluard_core::types::CipherKind::Login(_)
+                        | baluard_core::types::CipherKind::SecureNote => handle
+                            .get_settings()
+                            .ok()
+                            .and_then(|s| s.family_shared_collection),
+                        _ => None,
+                    }
+                } else {
+                    let member_id = actor_role.and_then(|_| {
+                        baluard_core::vault::members::member_file_for_device(
+                            &handle.path,
+                            handle.device_id,
+                        )
+                        .map(|(_, row)| row.id)
+                    });
+                    let Some(member_id) = member_id else {
+                        return Err("Join the vault before adding entries.".to_string());
+                    };
+                    let writable = Self::family_writable_collections(handle, member_id)?;
+                    match writable.as_slice() {
+                        [only] => Some(*only),
+                        [] => {
+                            return Err(
+                                "No collection is open for your edits. Ask a guardian to grant one, then file this entry there."
+                                    .to_string(),
+                            );
+                        }
+                        _ => {
+                            return Err(
+                                "Several collections accept your edits. Pick one for this entry."
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+            other => other,
+        };
         let cipher_id = handle
             .add_cipher_in_collection(&input, collection_id)
             .map_err(|e| format!("{e}"))?;
