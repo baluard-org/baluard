@@ -60,6 +60,15 @@ pub struct SyncEngine {
     /// (UnsignedCommitRefused); only pre-enrollment local vaults fall back
     /// to unsigned local commits.
     signing_key: Option<ed25519_dalek::SigningKey>,
+    /// True when `signing_key` came from meta/recovery-signer.key (the
+    /// kit phrase's Ed25519 half). A successful push clears the file so
+    /// later commits sign with the device key (roster-known by then).
+    signing_is_recovery: bool,
+    /// Retained so [`Self::effective_signing_key`] can re-derive the
+    /// device key once the recovery signer file is cleared; the engine
+    /// holds signing material in memory anyway, so this extends no
+    /// exposure class.
+    devkey_seal: Option<zeroize::Zeroizing<[u8; 32]>>,
     /// Root-key-derived verifier for enrollment proofs (self-proving
     /// roster extension, multi-device e2e spike 2026-10-03). None at
     /// clone time (no Root Key yet): proofs pass the STRUCTURAL check
@@ -172,16 +181,38 @@ impl SyncEngine {
         let last_remote_head = Self::load_last_head(vault_path);
         let credential_config = CredentialConfig::load(vault_path);
         let state_machine = RefCell::new(SyncStateMachine::load_from_file(vault_path));
-        // Load signing key — log warning on corrupt file but don't fail
-        let signing_key = match Self::load_signing_key(vault_path, devkey_seal) {
-            Ok(key) => key,
+        // Load signing key — log warning on corrupt file but don't fail.
+        // A kit-recovered device signs with the kit phrase's key until
+        // its first successful push (family-spaces §7): peers verify it
+        // under the kit file's verifier key because no roster carries
+        // the fresh device key yet.
+        let recovery_signer_path = vault_path.join("meta/recovery-signer.key");
+        let signing_key = match Self::load_recovery_signing_key(vault_path, devkey_seal) {
+            Ok(Some(key)) => Some(key),
+            Ok(None) => match Self::load_signing_key(vault_path, devkey_seal) {
+                Ok(key) => key,
+                Err(e) => {
+                    eprintln!("warning: failed to load signing key: {e}");
+                    None
+                }
+            },
             Err(e) => {
-                eprintln!("warning: failed to load signing key: {e}");
-                None
+                eprintln!("warning: failed to load recovery signing key: {e}");
+                match Self::load_signing_key(vault_path, devkey_seal) {
+                    Ok(key) => key,
+                    Err(e2) => {
+                        eprintln!("warning: failed to load signing key: {e2}");
+                        None
+                    }
+                }
             }
         };
+        let signing_is_recovery = signing_key.is_some() && recovery_signer_path.exists();
+        let devkey_seal = devkey_seal.map(|s| zeroize::Zeroizing::new(*s));
         if let Some(ref key) = signing_key {
-            Self::warn_on_signing_key_mismatch(vault_path, device_id, key);
+            if !signing_is_recovery {
+                Self::warn_on_signing_key_mismatch(vault_path, device_id, key);
+            }
         }
         Self {
             vault_path: vault_path.to_path_buf(),
@@ -190,6 +221,8 @@ impl SyncEngine {
             credential_config,
             state_machine,
             signing_key,
+            signing_is_recovery,
+            devkey_seal,
             enroll_vk: None,
         }
     }
@@ -319,6 +352,9 @@ impl SyncEngine {
             // merge is the S1b full build; syncing it today would wedge
             // non-admin committers).
             "meta/share-events.enc",
+            // Family-spaces: the kit phrase's signing half is
+            // device-local until the first successful push.
+            "meta/recovery-signer.key",
         ];
         let needs_update = match std::fs::read_to_string(&gitignore) {
             Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),
@@ -713,6 +749,21 @@ impl SyncEngine {
                 .join("meta/enrollments")
                 .join(format!("{}.proof", self.device_id))
                 .exists()
+        {
+            return true;
+        }
+        // Kit-recovery bootstrap (family-spaces §7): the same staging
+        // twin the enrollment bootstrap needed. A kit-recovered device
+        // is a fresh identity absent from the HEAD roster, so the P5
+        // admission would resolve it to a PendingJoiner and skip every
+        // path its commit must carry (registry entry, member binding,
+        // keywrap). While the kit signer is active on disk, admit the
+        // changed paths wholesale — staging mirrors the pull-side rule,
+        // where the commit signature under the kit file's verifier key
+        // is the gate. Disarms with the signer file (cleared on the
+        // first successful push).
+        if !roster.contains_key(&self.device_id)
+            && self.vault_path.join("meta/recovery-signer.key").exists()
         {
             return true;
         }
@@ -1176,7 +1227,7 @@ impl SyncEngine {
         tree: &git2::Tree<'_>,
         parents: &[&git2::Commit<'_>],
     ) -> Result<Oid, BaluardError> {
-        if let Some(ref signing_key) = self.signing_key {
+        if let Some(ref signing_key) = self.effective_signing_key() {
             let buf = repo
                 .commit_create_buffer(sig, sig, message, tree, parents)
                 .map_err(|e| SyncError::Git(format!("commit buffer: {e}")))?;
@@ -1481,6 +1532,24 @@ impl SyncEngine {
 
     /// Push to remote. Uses "origin" by default.
     pub fn push(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {
+        let out = self.push_inner(repo, remote_name);
+        if out.is_ok() && self.signing_is_recovery {
+            // Family-spaces §7: the first successful push published this
+            // device into the remote roster (its registry entry rode the
+            // kit-signed commit's tree), so later commits sign with the
+            // device key like any enrolled device.
+            match std::fs::remove_file(self.vault_path.join("meta/recovery-signer.key")) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => eprintln!(
+                    "warning: could not clear the recovery signer after push ({e}); the next commit may be refused by peers until it is removed"
+                ),
+            }
+        }
+        out
+    }
+
+    fn push_inner(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {
         let mut remote = repo
             .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
@@ -1534,7 +1603,7 @@ impl SyncEngine {
     /// later head existed. Never touches HEAD or the worktree.
     fn announce_head(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {
         use super::gossip::{GOSSIP_BRANCH, GOSSIP_DIR, HeadAnnouncement};
-        let Some(signing_key) = self.signing_key.clone() else {
+        let Some(signing_key) = self.effective_signing_key() else {
             return Ok(());
         };
         let branch_ref = format!("refs/heads/{GOSSIP_BRANCH}");
@@ -3407,6 +3476,57 @@ impl SyncEngine {
 
     /// Load Ed25519 signing key from OS keyring or meta/device-privkey.json.
     /// Returns None if no key found. Returns error if key is corrupt.
+    /// The signer for the NEXT commit: the kit phrase's key while the
+    /// recovery signer file is live, the device key once the first
+    /// push cleared it (family-spaces §7). `&self` cannot drop the
+    /// stale in-memory kit key, so the cleared-file check re-derives
+    /// from the retained seal at every signing site.
+    fn effective_signing_key(&self) -> Option<ed25519_dalek::SigningKey> {
+        if self.signing_is_recovery && !self.vault_path.join("meta/recovery-signer.key").exists() {
+            let seal = self.devkey_seal.as_ref()?;
+            return Self::load_signing_key(&self.vault_path, Some(seal))
+                .ok()
+                .flatten();
+        }
+        self.signing_key.clone()
+    }
+
+    /// The kit-recovered device's phrase-derived signing key
+    /// (family-spaces §7), from the device-local sealed file. Absent
+    /// file or no seal = None; a present-but-unreadable file is an
+    /// error so a damaged signer surfaces instead of silently switching
+    /// to the device key (whose first commit every peer would refuse).
+    fn load_recovery_signing_key(
+        vault_path: &Path,
+        devkey_seal: Option<&[u8; 32]>,
+    ) -> Result<Option<ed25519_dalek::SigningKey>, BaluardError> {
+        let path = vault_path.join("meta/recovery-signer.key");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let Some(seal) = devkey_seal else {
+            return Err(SyncError::Git(
+                "recovery signer present but no devkey seal to open it".into(),
+            )
+            .into());
+        };
+        let data = crate::vault::device_privkey::read_privkey_file(&path, Some(seal))
+            .map_err(|e| SyncError::Git(format!("read recovery signer: {e}")))?;
+        let v: serde_json::Value = serde_json::from_str(&data)
+            .map_err(|e| SyncError::Git(format!("parse recovery signer: {e}")))?;
+        let hex_str = v["ed25519_private"]
+            .as_str()
+            .ok_or_else(|| SyncError::Git("recovery signer missing key".into()))?;
+        let mut bytes: [u8; 32] = hex::decode(hex_str)
+            .map_err(|e| SyncError::Git(format!("decode recovery signer hex: {e}")))?
+            .try_into()
+            .map_err(|_| SyncError::Git("recovery signer wrong length".into()))?;
+        let key = ed25519_dalek::SigningKey::from_bytes(&bytes);
+        use zeroize::Zeroize;
+        bytes.zeroize();
+        Ok(Some(key))
+    }
+
     fn load_signing_key(
         vault_path: &Path,
         devkey_seal: Option<&[u8; 32]>,
@@ -3625,16 +3745,28 @@ impl SyncEngine {
                 // would let any remote writer forge an admission.
                 let outcome = match outcome {
                     Err(e)
-                        if matches!(&e, BaluardError::Sync(SyncError::InvalidCommitSignature))
-                            && !crate::vault::space_meta::shape_flipped(&self.vault_path) =>
+                        if matches!(&e, BaluardError::Sync(SyncError::InvalidCommitSignature)) =>
                     {
-                        match Self::enrollment_proof_fallback(
-                            repo,
-                            &commit,
-                            &roster,
-                            ProofMode::Root,
-                            self.enroll_vk.as_ref(),
-                        )? {
+                        // Two admission fallbacks, in order: the D78
+                        // enrollment proof (unflipped vaults only — team
+                        // members hold no Root Key to verify it), then
+                        // the kit-recovery fallback (family-spaces §7).
+                        let admitted = if !crate::vault::space_meta::shape_flipped(&self.vault_path)
+                        {
+                            match Self::enrollment_proof_fallback(
+                                repo,
+                                &commit,
+                                &roster,
+                                ProofMode::Root,
+                                self.enroll_vk.as_ref(),
+                            )? {
+                                Some(found) => Some(found),
+                                None => Self::kit_recovery_fallback(repo, &commit, &roster)?,
+                            }
+                        } else {
+                            Self::kit_recovery_fallback(repo, &commit, &roster)?
+                        };
+                        match admitted {
                             Some((signer, extended)) => {
                                 let bootstrap_key = extended.get(&signer).copied();
                                 Self::check_commit_paths(
@@ -3810,9 +3942,17 @@ impl SyncEngine {
                     Err(e)
                         if matches!(&e, BaluardError::Sync(SyncError::InvalidCommitSignature)) =>
                     {
-                        match Self::enrollment_proof_fallback(
+                        // Same pair as the pull walk: enrollment proof
+                        // first (structural mode on the clone walk — the
+                        // TOFU envelope), then the kit-recovery
+                        // fallback.
+                        let admitted = match Self::enrollment_proof_fallback(
                             repo, &commit, &roster, mode, enroll_vk,
                         )? {
+                            Some(found) => Some(found),
+                            None => Self::kit_recovery_fallback(repo, &commit, &roster)?,
+                        };
+                        match admitted {
                             Some((signer, extended)) => {
                                 let bootstrap_key = extended.get(&signer).copied();
                                 Self::check_commit_paths(
@@ -3839,6 +3979,119 @@ impl SyncEngine {
             }
         }
         Ok(())
+    }
+
+    /// Family-spaces §7/§10: the kit-recovery fallback. A kit-recovered
+    /// device is a fresh identity; its FIRST commit is signed with the
+    /// phrase-derived key whose public half the kit file carries, and
+    /// its own tree adds the device to the registry. Peers verify the
+    /// commit signature under the PARENT tree's kit verifier (the
+    /// committed pre-commit state), then run the path checks against
+    /// the roster extended by exactly one registry addition. Fires on
+    /// ANY vault with a kit: flipped vaults have no Root-Key verifier
+    /// path at all, and personal vaults fall here only after the D78
+    /// enrollment fallback declines (no proof file).
+    fn kit_recovery_fallback(
+        repo: &Repository,
+        commit: &git2::Commit<'_>,
+        roster: &DeviceRoster,
+    ) -> Result<Option<(String, DeviceRoster)>, BaluardError> {
+        let Ok(parent) = commit.parent(0) else {
+            return Ok(None);
+        };
+        let Ok(parent_tree) = parent.tree() else {
+            return Ok(None);
+        };
+        let Some(kit_bytes) = Self::tree_blob_bytes(repo, &parent_tree, "meta/recovery-kit.json")?
+        else {
+            return Ok(None);
+        };
+        let Ok(kit) =
+            serde_json::from_slice::<crate::vault::recovery_kit::RecoveryKitFile>(&kit_bytes)
+        else {
+            return Ok(None);
+        };
+        let Some(vk) = crate::vault::recovery_kit::kit_verifier(&kit) else {
+            return Ok(None);
+        };
+
+        let (sig_buf, content_buf) = repo
+            .extract_signature(&commit.id(), None)
+            .map_err(|_| SyncError::InvalidCommitSignature)?;
+        let sig_str = sig_buf.as_str().ok_or(SyncError::InvalidCommitSignature)?;
+        let signed_data = content_buf
+            .as_str()
+            .ok_or(SyncError::InvalidCommitSignature)?;
+        let sig_b64 = Self::extract_b64_from_sig_field(sig_str)?;
+        let sig_bytes = base64::engine::general_purpose::STANDARD
+            .decode(sig_b64)
+            .map_err(|_| SyncError::InvalidCommitSignature)?;
+        use ed25519_dalek::Verifier;
+        let sig: ed25519_dalek::Signature = ed25519_dalek::Signature::from_bytes(
+            &sig_bytes
+                .try_into()
+                .map_err(|_| SyncError::InvalidCommitSignature)?,
+        );
+        if vk.verify(signed_data.as_bytes(), &sig).is_err() {
+            return Err(SyncError::InvalidCommitSignature.into());
+        }
+
+        // Extend the roster with the commit's own registry additions.
+        let own_tree = commit
+            .tree()
+            .map_err(|e| SyncError::Git(format!("walk own tree: {e}")))?;
+        let Some(reg_bytes) = Self::tree_blob_bytes(repo, &own_tree, "meta/devices.json")? else {
+            return Ok(None);
+        };
+        let Ok(reg) = serde_json::from_str::<crate::devices::DeviceRegistry>(
+            std::str::from_utf8(&reg_bytes).unwrap_or(""),
+        ) else {
+            return Ok(None);
+        };
+        let mut extended = roster.clone();
+        let mut added: Vec<String> = Vec::new();
+        for (id, entry) in &reg.devices {
+            let id_str = id.to_string();
+            if roster.contains_key(&id_str) {
+                continue;
+            }
+            let Ok(pk) = hex::decode(&entry.signing_public_key) else {
+                continue;
+            };
+            let Ok(arr) = <[u8; 32]>::try_from(pk) else {
+                continue;
+            };
+            extended.insert(id_str.clone(), arr);
+            added.push(id_str);
+        }
+        if added.len() != 1 {
+            // Zero additions: a still-kit-signed commit AFTER the device
+            // is roster-known (the recovered device clears its signer on
+            // the first successful push). More than one: not a recovery
+            // bootstrap shape. Both refuse fail-closed.
+            return Ok(None);
+        }
+        Ok(Some((added.remove(0), extended)))
+    }
+
+    /// Small tree-blob reader (copies the bytes; kit and registry files
+    /// are small). A non-blob entry reads as absent.
+    fn tree_blob_bytes(
+        repo: &Repository,
+        tree: &git2::Tree<'_>,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, BaluardError> {
+        let entry = match tree.get_path(std::path::Path::new(path)) {
+            Ok(e) => e,
+            Err(_) => return Ok(None),
+        };
+        if entry.kind() != Some(git2::ObjectType::Blob) {
+            return Ok(None);
+        }
+        let blob = repo
+            .find_blob(entry.id())
+            .map_err(|e| SyncError::Git(format!("tree blob {path}: {e}")))?;
+        Ok(Some(blob.content().to_vec()))
     }
 
     /// Enrollment-proof fallback for the roster walk. When a commit's
@@ -5740,6 +5993,9 @@ const GITIGNORE_CONTENT: &str = "\
 meta/device-privkey.json
 meta/device-id
 meta/member-unlock.json
+# Family-spaces: the kit phrase's signing half, device-local until the
+# first successful push publishes the device into every roster.
+meta/recovery-signer.key
 meta/kdf-attempts.json
 meta/git-credentials.json
 

@@ -1527,6 +1527,9 @@ async fn space_meta_prepare_status_and_locked_rejection() {
     // (owner is admin; readiness passes) — assert the marker lands and
     // status reports it.
     let (_d2, vp2) = make_vault("space-flip");
+    // Family-spaces §2: the flip demands a purpose (org here).
+    baluard_core::vault::space::set_purpose(&vp2, baluard_core::vault::space::SpacePurpose::Org)
+        .unwrap();
     let state2 = Arc::new(VaultState::new(vp2.clone()));
     state2.open().await.expect("open");
     assert!(state2.space_flip().await.is_err(), "locked refusal");

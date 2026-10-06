@@ -54,6 +54,13 @@ pub struct RecoveryKitFile {
     pub ephemeral_pub: String,
     pub encrypted_key: String,
     pub tag: String,
+    /// Family-spaces §7/§10: the public half of an Ed25519 key derived
+    /// from the SAME phrase (the unused second half of the BIP-39
+    /// seed). A kit-recovered device signs its FIRST commit with the
+    /// private half so peers — who hold no Root Key on a flipped vault
+    /// — can verify it. `None` on kits written before this field.
+    #[serde(default)]
+    pub verifier_pub: Option<String>,
     pub created_at: u64,
 }
 
@@ -119,6 +126,10 @@ pub fn enable_kit(
     let (ephemeral_pub, ciphertext, tag) =
         hpke_wrap::wrap_key(root_key.as_bytes(), &recipient, KIT_CONTEXT)?;
 
+    // SigningKey::verifying_key is inherent in ed25519_dalek 2 (no
+    // trait import needed).
+    let verifier_pub = kit_signing_key(&phrase).verifying_key();
+
     let kit = RecoveryKitFile {
         format: 1,
         vault_id: vault_id.to_string(),
@@ -126,10 +137,29 @@ pub fn enable_kit(
         ephemeral_pub: hex::encode(&ephemeral_pub),
         encrypted_key: hex::encode(&ciphertext),
         tag: hex::encode(tag),
+        verifier_pub: Some(hex::encode(verifier_pub.as_bytes())),
         created_at: crate::vault::collections::now_secs_pub(),
     };
     save_kit(vault_path, &kit)?;
     Ok(phrase.phrase())
+}
+
+/// The kit's Ed25519 signing key, derived from the second half of the
+/// BIP-39 seed (the first half is the X25519 unwrap secret). Distinct
+/// purposes, one phrase.
+pub(crate) fn kit_signing_key(phrase: &RecoveryPhrase) -> ed25519_dalek::SigningKey {
+    let seed = phrase.derive_key();
+    let mut bytes = zeroize::Zeroizing::new([0u8; 32]);
+    bytes.copy_from_slice(&seed[32..]);
+    ed25519_dalek::SigningKey::from_bytes(&bytes)
+}
+
+/// Parse the verifier out of a kit file. `None` on legacy kits.
+pub(crate) fn kit_verifier(kit: &RecoveryKitFile) -> Option<ed25519_dalek::VerifyingKey> {
+    let hex_pk = kit.verifier_pub.as_deref()?;
+    let bytes = hex::decode(hex_pk).ok()?;
+    let arr: [u8; 32] = bytes.try_into().ok()?;
+    ed25519_dalek::VerifyingKey::from_bytes(&arr).ok()
 }
 
 /// Whether a kit file exists (keyless filesystem check).

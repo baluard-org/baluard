@@ -94,6 +94,16 @@ struct PolicyRow {
 /// devices subtree of a member is self-service (device lifecycle is
 /// all-roles per §5.A).
 const TABLE: &[PolicyRow] = &[
+    // Family-spaces §5: the sealed minor record is Admin-only WRITE and
+    // DELETE even inside the signer's own subtree — without this row
+    // (and the first-match rule) a minor could overwrite or delete
+    // their own flag from a validly signed commit. Admins writing
+    // ANOTHER member's record fall through to the Admin-only
+    // meta/members/** row below.
+    PolicyRow {
+        pattern: "meta/members/{member}/minor.enc",
+        required: RequiredRole::Admin,
+    },
     // Self-service: a member's own subtree (device lifecycle, identity
     // rotation artifacts). §4.4 own_id/** any role; member RECORDS
     // (role/trust assignment) stay admin-only — the engine's structural

@@ -15,6 +15,7 @@ pub mod creation;
 pub mod device_privkey;
 pub mod envelope;
 pub mod events;
+pub mod family;
 pub mod groups;
 pub mod handle;
 pub mod identity;

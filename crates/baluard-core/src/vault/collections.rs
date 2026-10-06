@@ -984,6 +984,71 @@ pub struct SweptGrants {
     pub rotations: Vec<SweptRotation>,
 }
 
+/// Family-spaces §6: rotate one collection's key out-of-band, pruning
+/// the evicted member's grant rows. The expiry sweep prunes only
+/// EXPIRED grants and `rewrap_grant_wraps` cleans stale `.wrap` files
+/// only, so a removal rotation must also drop the definition rows or
+/// `meta/collections/<id>.json` keeps dead grant records. Crash
+/// convergence rides the same pending marker the sweep uses. Returns
+/// the rotation for the caller's entry re-encryption pass, or None
+/// when the collection does not exist.
+pub(crate) fn rotate_key_for_removal(
+    vault_path: &Path,
+    sgk: &SpaceGroupKey,
+    collection_id: &Uuid,
+    evict_member: Option<&Uuid>,
+) -> Result<Option<SweptRotation>, BaluardError> {
+    let Some((file, name)) = list_collections(vault_path, sgk)?
+        .into_iter()
+        .find(|(f, _)| f.id == *collection_id)
+    else {
+        return Ok(None);
+    };
+    let old_ck = unwrap_ck(&file, sgk)?;
+    let mut updated = file;
+    updated.grants.retain(|g| {
+        let expired = is_grant_expired(g, now_secs());
+        match &g.target {
+            GrantTarget::Member { id } => Some(id) != evict_member && !expired,
+            GrantTarget::Group { .. } => !expired,
+        }
+    });
+    let mut new_ck = Zeroizing::new([0u8; 32]);
+    rand::rngs::OsRng.fill_bytes(new_ck.as_mut());
+    updated.ck_wrapped = wrap_ck(sgk, &new_ck, &updated.id)?;
+    updated.name_enc = seal_name(&new_ck, &updated.id, &name)?;
+    let rotation = SweptRotation {
+        collection_id: updated.id,
+        old_ck,
+        new_ck: new_ck.clone(),
+        dir: collection_dir(&updated),
+    };
+    // Marker BEFORE the def flips, mirroring the sweep's crash window.
+    write_sweep_pending(vault_path, std::slice::from_ref(&rotation))?;
+    save_collection(vault_path, &updated)?;
+    if let Some(member) = evict_member {
+        remove_grant_wrap(vault_path, &updated.id, member)?;
+    }
+    rewrap_grant_wraps(vault_path, &updated.id, &new_ck, &updated.grants)?;
+    for grant in &updated.grants {
+        if let GrantTarget::Group { id } = &grant.target {
+            if let Err(e) = crate::vault::groups::grant_minted_for_group(
+                vault_path,
+                sgk,
+                id,
+                &updated.id,
+                &new_ck,
+            ) {
+                eprintln!(
+                    "rotate: could not refresh group {id}'s key for collection {} ({e})",
+                    updated.id
+                );
+            }
+        }
+    }
+    Ok(Some(rotation))
+}
+
 pub fn sweep_expired_grants(
     vault_path: &Path,
     sgk: &SpaceGroupKey,

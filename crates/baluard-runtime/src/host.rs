@@ -320,7 +320,10 @@ impl VaultHost {
                 } else {
                     String::new()
                 },
-                space: baluard_core::vault::space::is_space_vault(&entry.path),
+                // Family-spaces §2 classification union: purpose OR
+                // flipped shape OR the legacy pair flag. Flag-only would
+                // classify every flipped org as personal.
+                space: baluard_core::vault::space::is_space(&entry.path),
             });
         }
 

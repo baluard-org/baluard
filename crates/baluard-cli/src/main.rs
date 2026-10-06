@@ -61,6 +61,10 @@ enum Commands {
         /// Auto-lock timeout in minutes.
         #[arg(long)]
         auto_lock: Option<u32>,
+        /// Create the vault as a FAMILY vault (plan-family-spaces):
+        /// purpose, Shared collection, Guardians group, team shape.
+        #[arg(long)]
+        family: bool,
         /// Machine-readable output for scripts and test harnesses.
         #[arg(long)]
         json: bool,
@@ -1241,6 +1245,7 @@ fn main() {
             theme,
             lang,
             auto_lock,
+            family,
             json,
         } => commands::handle_init(
             &cli.vault_path,
@@ -1250,6 +1255,7 @@ fn main() {
             theme,
             lang,
             auto_lock,
+            family,
             json,
         ),
 
