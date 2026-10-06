@@ -120,6 +120,9 @@ open class StubVault(
     override suspend fun `memberTransfer`(memberId: String): String = err()
     override suspend fun `memberClaim`(memberId: String): String = err()
     override suspend fun `memberRemove`(memberIds: List<String>, offlineOverride: Boolean): String = err()
+    override suspend fun `memberLeaveFile`(): String = err()
+    override suspend fun `memberLeaveList`(): String = err()
+    override suspend fun `memberLeaveApprove`(memberId: String, offlineOverride: Boolean): String = err()
     // §4.8-9 collection CRUD: same err() discipline.
     override suspend fun `collectionCreate`(name: String): String = err()
     override suspend fun `collectionRename`(id: String, name: String): String = err()

@@ -957,6 +957,12 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1111,6 +1117,12 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_claim(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_invite(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_leave_approve(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,`offlineOverride`: Byte,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_leave_file(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_leave_list(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_remove(`ptr`: Pointer,`memberIds`: RustBuffer.ByValue,`offlineOverride`: Byte,
     ): Long
@@ -1498,6 +1510,12 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_invite(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_leave_approve(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_leave_file(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_leave_list(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_remove(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_reset(
@@ -1828,6 +1846,15 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_invite() != 53433.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_leave_approve() != 48635.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_leave_file() != 30956.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_leave_list() != 43185.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_remove() != 46301.toShort()) {
@@ -3201,6 +3228,26 @@ public interface MobileVaultInterface {
      * Returns `{code, seat_granted, seat_error}`.
      */
     suspend fun `memberInvite`(`payload`: kotlin.String): kotlin.String
+    
+    /**
+     * Execute an approved departure: strike + tombstone "left" + Root
+     * Key rotation + collection-key rotation for everything the leaver
+     * could open + a kit re-issue whose new phrase returns exactly
+     * once (`new_kit_phrase`). Refuses while the leaver owns the repo.
+     */
+    suspend fun `memberLeaveApprove`(`memberId`: kotlin.String, `offlineOverride`: kotlin.Boolean): kotlin.String
+    
+    /**
+     * Family-spaces §6: file this device's departure request. Refuses
+     * the Owner row (transfer first); idempotent on re-file.
+     */
+    suspend fun `memberLeaveFile`(): kotlin.String
+    
+    /**
+     * Pending departures for the admin surfaces (manage-gated).
+     * Returns `{pending: [{member_id, display_name, role, requested_at}]}`.
+     */
+    suspend fun `memberLeaveList`(): kotlin.String
     
     /**
      * Remove members and rotate the root key so their key material is
@@ -4936,6 +4983,83 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_invite(
                 thisPtr,
                 FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Execute an approved departure: strike + tombstone "left" + Root
+     * Key rotation + collection-key rotation for everything the leaver
+     * could open + a kit re-issue whose new phrase returns exactly
+     * once (`new_kit_phrase`). Refuses while the leaver owns the repo.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberLeaveApprove`(`memberId`: kotlin.String, `offlineOverride`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_leave_approve(
+                thisPtr,
+                FfiConverterString.lower(`memberId`),FfiConverterBoolean.lower(`offlineOverride`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Family-spaces §6: file this device's departure request. Refuses
+     * the Owner row (transfer first); idempotent on re-file.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberLeaveFile`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_leave_file(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Pending departures for the admin surfaces (manage-gated).
+     * Returns `{pending: [{member_id, display_name, role, requested_at}]}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberLeaveList`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_leave_list(
+                thisPtr,
+                
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },

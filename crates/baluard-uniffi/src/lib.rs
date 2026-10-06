@@ -1312,6 +1312,44 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Family-spaces §6: file this device's departure request. Refuses
+    /// the Owner row (transfer first); idempotent on re-file.
+    pub async fn member_leave_file(&self) -> Result<String, BaluardError> {
+        self.state
+            .members_leave_file()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Pending departures for the admin surfaces (manage-gated).
+    /// Returns `{pending: [{member_id, display_name, role, requested_at}]}`.
+    pub async fn member_leave_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .members_leave_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Execute an approved departure: strike + tombstone "left" + Root
+    /// Key rotation + collection-key rotation for everything the leaver
+    /// could open + a kit re-issue whose new phrase returns exactly
+    /// once (`new_kit_phrase`). Refuses while the leaver owns the repo.
+    pub async fn member_leave_approve(
+        &self,
+        member_id: String,
+        offline_override: bool,
+    ) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({
+            "member_id": member_id,
+            "offline_override": offline_override,
+        })
+        .to_string();
+        self.state
+            .members_leave_approve(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Join a shared space (member side of the join ceremony). The vault
     /// must already be cloned locally (see `clone_vault_start`). Payload
     /// fields: `code` (the invite code), `password` (the joiner's chosen
