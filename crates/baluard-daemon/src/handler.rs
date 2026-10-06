@@ -358,6 +358,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "members.transfer",
     "members.claim",
     "members.set_email",
+    "members.set_minor",
     "requests.approve",
     "requests.deny",
     "tag.create",
@@ -4973,6 +4974,18 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+        // Family-spaces §5: the guardian-controlled minor flag.
+        "members.set_minor" => match state.member_set_minor(&req.payload).await {
+            Ok(()) => ok_resp("{}", token_str),
+            Err(e) => err_response(e),
+        },
+        // Family-spaces §2: purpose is set once — org from a personal
+        // vault (the flip journey's first step), family only through
+        // creation.
+        "space.set_purpose" => match state.space_set_purpose(&req.payload).await {
+            Ok(()) => ok_resp("{}", token_str),
+            Err(e) => err_response(e),
+        },
         "requests.list" => match state.requests_list().await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
@@ -6286,6 +6299,8 @@ mod tests {
             "space.kit_disable",
             "space.kit_status",
             "space.settings_set",
+            "space.set_purpose",
+            "members.set_minor",
             "policies.set",
             "collections.request_access",
             "collections.requests_withdraw",

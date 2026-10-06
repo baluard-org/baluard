@@ -3706,6 +3706,45 @@ impl VaultState {
     /// git history still unwrap the CURRENT root until a rotation bumps
     /// it — the flip surface prompts this immediately after a fresh flip.
     /// Admin + quorum gates live in the core op.
+    /// Family-spaces §5: set or clear the guardian-controlled minor
+    /// flag on a live member row (admin-only, family vaults only).
+    pub async fn member_set_minor(&self, payload: &str) -> Result<(), String> {
+        let partial: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let member_id = partial["member_id"]
+            .as_str()
+            .ok_or("member_id is required")?;
+        let minor = partial["minor"]
+            .as_bool()
+            .ok_or("minor must be a boolean")?;
+        let uuid =
+            uuid::Uuid::parse_str(member_id).map_err(|e| format!("Invalid member id: {e}"))?;
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle
+            .member_set_minor(uuid, minor)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Family-spaces §2: record the vault's purpose — `org` from a
+    /// personal vault (the flip journey's first step) or `family`
+    /// through creation only. Core gates both; the route exists so the
+    /// flip UI has a single call.
+    pub async fn space_set_purpose(&self, payload: &str) -> Result<(), String> {
+        let partial: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let purpose = partial["purpose"].as_str().ok_or("purpose is required")?;
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle.space_set_purpose(purpose).map_err(|e| e.to_string())
+    }
+
     pub async fn space_rotate_root(&self) -> Result<String, String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;

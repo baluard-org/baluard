@@ -88,6 +88,7 @@ pub fn handle_init(
     flag_theme: Option<String>,
     flag_lang: Option<String>,
     flag_auto_lock: Option<u32>,
+    family: bool,
     json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let profile = parse_profile(profile_str)?;
@@ -247,6 +248,7 @@ pub fn handle_init(
             .profile(display_name.clone(), None)
             .slug(slug.clone())
             .preferences(theme, lang.clone(), vault_timeout)
+            .family(family)
             .execute()?;
 
     // Register vault in registry (fatal on failure)

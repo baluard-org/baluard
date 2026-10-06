@@ -137,6 +137,19 @@ pub fn derive_settings_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
 /// Only holders of the Root Key can produce (or verify) the signature that
 /// authorizes a phrase-enrolled device's roster entry, so the recovery
 /// phrase remains the sole trust anchor for self-enrollment commits.
+/// Admin-only sealed records on a family vault (plan-family-spaces):
+/// derived from the ROOT key so flipped-vault members (no Root Key)
+/// can neither read nor write them. Deliberately a different info from
+/// every member-visible meta key.
+pub fn derive_minor_record_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    const MINOR_INFO: &[u8] = b"baluard-minor-record-v1";
+    let hk = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hk.expand(MINOR_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
 pub fn derive_enrollment_proof_seed(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
     let mut key = [0u8; 32];

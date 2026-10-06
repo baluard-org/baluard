@@ -18,6 +18,112 @@ use crate::vault::members::{MEMBERS_DIR, MemberFile, MemberRole};
 /// Slug prefix forced on every Space vault (plan §4.6 repo naming).
 pub const SPACE_SLUG_PREFIX: &str = "baluard-space-";
 
+/// The vault's recorded purpose (plan-family-spaces §2). Plaintext in
+/// `meta/settings-pub.json` beside the legacy pair flag, because it has
+/// consumers beyond merge defaults (the pair-gate split, the flip
+/// refusal, family creation, G24 classification).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpacePurpose {
+    /// No purpose recorded. With the legacy `"space": true` flag this
+    /// classifies as a pair Space (every pre-purpose Space); with a
+    /// flipped shape marker it is a legacy organization.
+    #[default]
+    Absent,
+    /// Two-person Space: the pair gate caps it at its two people.
+    Pair,
+    /// Family vault: born team-shaped, quorum pinned to 1, minors and
+    /// family kit rules available.
+    Family,
+    /// Organization vault: switching vaults is expected friction.
+    Org,
+}
+
+impl SpacePurpose {
+    /// Parse the plaintext JSON value. Unknown strings read as Absent
+    /// so a corrupted file never silently changes access rules.
+    fn from_json(v: Option<&str>) -> Self {
+        match v {
+            Some("pair") => Self::Pair,
+            Some("family") => Self::Family,
+            Some("org") => Self::Org,
+            _ => Self::Absent,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Absent => "",
+            Self::Pair => "pair",
+            Self::Family => "family",
+            Self::Org => "org",
+        }
+    }
+}
+
+fn read_pub_setting(vault_path: &Path) -> Option<serde_json::Value> {
+    std::fs::read_to_string(vault_path.join("meta/settings-pub.json"))
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+}
+
+/// Read the recorded purpose. Absent file or field = [`SpacePurpose::Absent`].
+pub fn read_purpose(vault_path: &Path) -> SpacePurpose {
+    read_pub_setting(vault_path)
+        .and_then(|v| {
+            v.get("purpose")
+                .and_then(|p| p.as_str().map(str::to_string))
+        })
+        .as_deref()
+        .map(|s| SpacePurpose::from_json(Some(s)))
+        .unwrap_or(SpacePurpose::Absent)
+}
+
+/// Write the purpose, merging with the existing plaintext prefs so a
+/// purpose write never clobbers theme/lang/the pair flag.
+pub fn set_purpose(vault_path: &Path, purpose: SpacePurpose) -> Result<(), BaluardError> {
+    if purpose == SpacePurpose::Absent {
+        return Err(VaultError::InvalidOperation(
+            "purpose cannot be cleared; a vault keeps the purpose it was given".into(),
+        )
+        .into());
+    }
+    let path = vault_path.join("meta/settings-pub.json");
+    let mut obj: serde_json::Value =
+        read_pub_setting(vault_path).unwrap_or_else(|| serde_json::json!({}));
+    obj["purpose"] = serde_json::json!(purpose.as_str());
+    let body = serde_json::to_string_pretty(&obj)
+        .map_err(|e| VaultError::Metadata(format!("settings-pub serialization: {e}")))?;
+    super::write_vault_file(&path, body.as_bytes())?;
+    Ok(())
+}
+
+/// Pair classification: an explicit `purpose: "pair"` or the legacy
+/// `"space": true` flag without a purpose (every pre-purpose Space).
+/// A family or org vault never counts as pair, whatever flags it
+/// carries.
+pub fn is_pair(vault_path: &Path) -> bool {
+    match read_purpose(vault_path) {
+        SpacePurpose::Pair => true,
+        SpacePurpose::Absent => is_space_vault(vault_path),
+        SpacePurpose::Family | SpacePurpose::Org => false,
+    }
+}
+
+/// Space classification, the union the merge plan records: a purpose,
+/// a flipped team shape, or the legacy pair flag. Org vaults made by
+/// flipping plain vaults carry neither purpose nor flag, so flag-only
+/// classification would silently make every organization personal.
+pub fn is_space(vault_path: &Path) -> bool {
+    read_purpose(vault_path) != SpacePurpose::Absent
+        || crate::vault::space_meta::shape_flipped(vault_path)
+        || is_space_vault(vault_path)
+}
+
+/// Family classification: purpose only. There is no legacy family.
+pub fn is_family(vault_path: &Path) -> bool {
+    read_purpose(vault_path) == SpacePurpose::Family
+}
+
 /// Normalize a user-provided Space name into the forced-prefixed slug.
 /// Idempotent: an existing `baluard-space-` or personal `baluard-`
 /// prefix is stripped before the Space one is applied, so "Family",
@@ -50,14 +156,17 @@ pub fn is_space_vault(vault_path: &Path) -> bool {
 }
 
 /// Write the shape flag, merging with any existing plaintext prefs
-/// (theme, lang) so a Space marking never clobbers them.
+/// (theme, lang) so a Space marking never clobbers them. New Spaces
+/// also stamp `purpose: "pair"` so the pair gate reads explicitly;
+/// legacy flag-only vaults keep classifying as pair via the fallback.
 pub fn set_space_flag(vault_path: &Path, space: bool) -> Result<(), BaluardError> {
     let path = vault_path.join("meta/settings-pub.json");
-    let mut obj: serde_json::Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|data| serde_json::from_str(&data).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    let mut obj: serde_json::Value =
+        read_pub_setting(vault_path).unwrap_or_else(|| serde_json::json!({}));
     obj["space"] = serde_json::json!(space);
+    if space && read_purpose(vault_path) == SpacePurpose::Absent {
+        obj["purpose"] = serde_json::json!("pair");
+    }
     let body = serde_json::to_string_pretty(&obj)
         .map_err(|e| VaultError::Metadata(format!("settings-pub serialization: {e}")))?;
     super::write_vault_file(&path, body.as_bytes())?;
@@ -112,7 +221,10 @@ fn bound_live_member_count(vault_path: &Path) -> usize {
 /// most; viewer is the read-only grant variant) and refuses a second
 /// joiner once two bound members exist.
 pub fn pair_gate(vault_path: &Path, role: MemberRole) -> Result<(), BaluardError> {
-    if !is_space_vault(vault_path) {
+    // The pair cap is a pair-Space rule only: a family vault holds the
+    // whole household and an organization holds teams, so neither is
+    // capped at two (plan-family-spaces §2 flag split).
+    if !is_pair(vault_path) {
         return Ok(());
     }
     match role {
@@ -271,5 +383,83 @@ mod tests {
         bind(&vault, predecessor.id);
         write_member(&vault, &row(MemberRole::Editor, None)).unwrap();
         pair_gate(&vault, MemberRole::Editor).unwrap();
+    }
+
+    #[test]
+    fn family_purpose_exempts_the_pair_gate() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path();
+        super::set_purpose(vault, super::SpacePurpose::Family).unwrap();
+        // A family vault holds the whole household: admin roles and a
+        // third member both pass.
+        pair_gate(&vault, MemberRole::Admin).unwrap();
+        write_member(&vault, &row(MemberRole::Owner, None)).unwrap();
+        write_member(&vault, &row(MemberRole::Editor, None)).unwrap();
+        pair_gate(&vault, MemberRole::Viewer).unwrap();
+    }
+
+    #[test]
+    fn org_purpose_exempts_the_pair_gate() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path();
+        super::set_purpose(vault, super::SpacePurpose::Org).unwrap();
+        assert!(!super::is_pair(&vault));
+        pair_gate(&vault, MemberRole::Admin).unwrap();
+    }
+
+    #[test]
+    fn legacy_flag_without_purpose_still_classifies_pair() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path();
+        // Raw flag write, bypassing the purpose stamp a real set does.
+        std::fs::create_dir_all(vault.join("meta")).unwrap();
+        std::fs::write(vault.join("meta/settings-pub.json"), r#"{ "space": true }"#).unwrap();
+        assert_eq!(super::read_purpose(&vault), super::SpacePurpose::Absent);
+        assert!(super::is_pair(&vault));
+        assert!(super::is_space(&vault));
+        let err = pair_gate(&vault, MemberRole::Admin).unwrap_err();
+        assert!(err.to_string().contains("editor or viewer"), "{err}");
+    }
+
+    #[test]
+    fn org_purpose_classifies_as_space_without_any_flag() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path();
+        super::set_purpose(vault, super::SpacePurpose::Org).unwrap();
+        assert!(super::is_space(&vault));
+        assert!(!super::is_pair(&vault));
+        assert!(!super::is_space_vault(&vault));
+    }
+
+    #[test]
+    fn set_space_flag_stamps_pair_purpose_for_new_spaces() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path();
+        super::set_space_flag(&vault, true).unwrap();
+        assert_eq!(super::read_purpose(&vault), super::SpacePurpose::Pair);
+        // Clearing the flag later never invents or removes a purpose.
+        super::set_space_flag(&vault, false).unwrap();
+        assert_eq!(super::read_purpose(&vault), super::SpacePurpose::Pair);
+    }
+
+    #[test]
+    fn purpose_cannot_be_set_to_absent() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path();
+        let err = super::set_purpose(&vault, super::SpacePurpose::Absent).unwrap_err();
+        assert!(err.to_string().contains("cannot be cleared"), "{err}");
+    }
+
+    #[test]
+    fn unknown_purpose_string_reads_absent() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path();
+        std::fs::create_dir_all(vault.join("meta")).unwrap();
+        std::fs::write(
+            vault.join("meta/settings-pub.json"),
+            r#"{ "purpose": "commune" }"#,
+        )
+        .unwrap();
+        assert_eq!(super::read_purpose(&vault), super::SpacePurpose::Absent);
     }
 }

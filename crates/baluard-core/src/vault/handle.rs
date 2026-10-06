@@ -650,6 +650,55 @@ impl VaultHandle {
         Ok(())
     }
 
+    // ── Family: the sealed minor flag (plan-family-spaces §5) ─────────
+
+    /// Set or clear the guardian-controlled minor flag on a live member
+    /// row. Family vaults only: the flag is a family concept. The
+    /// record seals under a Root-Key-derived key, so flipped-vault
+    /// members can neither read nor write it, and the sync policy
+    /// table's Admin-only row keeps a minor from shipping changes to it.
+    pub fn member_set_minor(&mut self, member_id: Uuid, minor: bool) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        if !crate::vault::space::is_family(&self.path) {
+            return Err(VaultError::InvalidOperation(
+                "the minor flag exists only on family vaults".into(),
+            )
+            .into());
+        }
+        self.assert_can_manage_members()?;
+        let live = crate::vault::members::list_members(&self.path)?
+            .into_iter()
+            .find(|m| m.id == member_id)
+            .ok_or_else(|| VaultError::InvalidOperation("that member row does not exist".into()))?;
+        if live.reset.is_some() || live.removed.is_some() {
+            return Err(VaultError::InvalidOperation("that member row is gone".into()).into());
+        }
+        crate::vault::family::write_minor_record(
+            &self.path,
+            self.unlocked().root()?,
+            &member_id,
+            minor,
+        )
+    }
+
+    /// Read the minor flag back (admin surface; absence = false). A
+    /// damaged record errors instead of silently clearing the flag.
+    pub fn member_minor_status(&self, member_id: Uuid) -> Result<bool, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        if !crate::vault::space::is_family(&self.path) {
+            return Err(VaultError::InvalidOperation(
+                "the minor flag exists only on family vaults".into(),
+            )
+            .into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::family::read_minor_record(&self.path, self.unlocked().root()?, &member_id)
+    }
+
     /// Recover a lost admin device with the kit phrase: unwrap the Root
     /// Key, verify both canaries, enroll a fresh device, and bind it to
     /// the live Owner member row. Never resets the device registry (the
@@ -769,6 +818,26 @@ impl VaultHandle {
         )?;
         inner.zeroize();
         crate::vault::device_privkey::write_device_id(vault_path, device_id)?;
+
+        // The kit phrase's Ed25519 half, sealed device-local: this
+        // device signs its FIRST commit with it so peers can verify via
+        // the kit file's verifier key (the device key is not in any
+        // roster yet). The engine prefers this signer while the file
+        // exists and drops it after the first successful push.
+        let kit_phrase = crate::recovery::RecoveryPhrase::from_phrase(phrase)
+            .map_err(|e| VaultError::InvalidOperation(format!("invalid recovery phrase: {e}")))?;
+        let kit_signer = crate::vault::recovery_kit::kit_signing_key(&kit_phrase);
+        let mut rs = serde_json::json!({
+            "ed25519_private": hex::encode(kit_signer.to_bytes()),
+        })
+        .to_string();
+        crate::vault::device_privkey::seal_file(
+            &vault_path.join("meta/recovery-signer.key"),
+            &rs,
+            &devkey_seal,
+            Some(device_id),
+        )?;
+        rs.zeroize();
 
         // Keywrap carrying the recovered Root Key (the same shape the
         // rotation staging and approve_join write; the admin unlock tail
@@ -1979,11 +2048,39 @@ impl VaultHandle {
     }
 
     /// Delete a collection (admin-gated). Entries stay; grants die.
+    /// Family-spaces §3: the family `Shared` collection is a system
+    /// collection (its id lives in encrypted settings) and can never be
+    /// deleted, and a non-empty collection is refused so items cannot
+    /// be orphaned into the flat namespace by one click.
     pub fn collection_delete(&mut self, id: Uuid) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
+        if self.get_settings()?.family_shared_collection == Some(id) {
+            return Err(VaultError::InvalidOperation(
+                "Shared is the family's system collection and cannot be deleted".into(),
+            )
+            .into());
+        }
+        let occupied = self
+            .list_cipher_meta()?
+            .iter()
+            .any(|m| m.collection_id == Some(id))
+            || self
+                .list_archived_meta()?
+                .iter()
+                .any(|m| m.collection_id == Some(id))
+            || self
+                .list_trash_entries()?
+                .iter()
+                .any(|(_, cid)| *cid == Some(id));
+        if occupied {
+            return Err(VaultError::InvalidOperation(
+                "this collection still has entries; move or delete them before deleting the collection".into(),
+            )
+            .into());
+        }
         crate::vault::collections::delete_collection(&self.path, &id)
     }
 
@@ -2175,6 +2272,62 @@ impl VaultHandle {
         Ok(swept.removed)
     }
 
+    /// Family-spaces §6: rotate one collection's key now, optionally
+    /// evicting a member's grants and wrap in the same pass. Approval
+    /// execution runs this for every collection a departing member
+    /// could open; re-keying alone is NOT enough on a team vault (the
+    /// re-encryption under the new epoch reuses the SAME collection
+    /// key, so a thief who extracted it still decrypts everything).
+    /// Admin-gated like the sweep. Returns false when the collection
+    /// does not exist.
+    pub fn collection_rotate_key(
+        &mut self,
+        id: Uuid,
+        evict_member: Option<Uuid>,
+    ) -> Result<bool, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let sgk = self.unlocked().sgk()?.clone();
+        // Converge a crash-interrupted sweep first — this op rewrites
+        // the same pending marker, and dropping unconverged rotations
+        // would strand entries under a dead key.
+        let pending_rotations = crate::vault::collections::read_sweep_pending(&self.path);
+        if !pending_rotations.is_empty() {
+            for rot in &pending_rotations {
+                let flipped = crate::vault::collections::open_collection(
+                    &self.path,
+                    &sgk,
+                    &rot.collection_id,
+                )
+                .ok()
+                .and_then(|(def, _)| {
+                    crate::vault::collections::unwrap_ck(&def, &sgk)
+                        .ok()
+                        .map(|ck| ck.as_ref() == rot.new_ck.as_ref())
+                })
+                .unwrap_or(false);
+                if flipped {
+                    self.reencrypt_after_sweep(rot);
+                }
+            }
+            crate::vault::collections::clear_sweep_pending(&self.path);
+        }
+        let Some(rotation) = crate::vault::collections::rotate_key_for_removal(
+            &self.path,
+            &sgk,
+            &id,
+            evict_member.as_ref(),
+        )?
+        else {
+            return Ok(false);
+        };
+        self.reencrypt_after_sweep(&rotation);
+        crate::vault::collections::clear_sweep_pending(&self.path);
+        Ok(true)
+    }
+
     /// Re-encrypt every entry and trash item under one swept collection's
     /// directory from the outgoing CK's item key to the new CK's, at the
     /// envelope's own epoch and seq (content unchanged). Per-file
@@ -2347,11 +2500,95 @@ impl VaultHandle {
     /// the flip refuses (they would be locked out at the next unlock).
     /// Marker-first ordering keeps every crash window recoverable: the
     /// next admin unlock converges any half-flipped files.
+    /// Family-spaces §2: record the vault's purpose. `org` rides the
+    /// flip journey from a personal vault; `family` is creation-only
+    /// (empty vault) so an existing vault can never silently become
+    /// the family vault. Once set the purpose is immutable in v1 (the
+    /// plaintext settings-pub file carries no approval envelope).
+    pub fn space_set_purpose(&mut self, purpose: &str) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let parsed = match purpose {
+            "org" => crate::vault::space::SpacePurpose::Org,
+            "family" => crate::vault::space::SpacePurpose::Family,
+            other => {
+                return Err(VaultError::InvalidOperation(format!(
+                    "unknown purpose '{other}' (use 'family' or 'org')"
+                ))
+                .into());
+            }
+        };
+        let current = crate::vault::space::read_purpose(&self.path);
+        use crate::vault::space::SpacePurpose;
+        match (current, parsed) {
+            (SpacePurpose::Absent, SpacePurpose::Family) => {
+                let empty = self.list_cipher_meta()?.is_empty()
+                    && self.list_archived_meta()?.is_empty()
+                    && self.list_trash_entries()?.is_empty()
+                    && self.collections_list()?.is_empty();
+                if !empty {
+                    return Err(VaultError::InvalidOperation(
+                        "family purpose can only be set on a new, empty vault; create a dedicated family vault instead".into(),
+                    )
+                    .into());
+                }
+            }
+            (SpacePurpose::Absent, SpacePurpose::Org) => {
+                if crate::vault::space_meta::shape_flipped(&self.path)
+                    || crate::vault::space::is_space_vault(&self.path)
+                {
+                    return Err(VaultError::InvalidOperation(
+                        "this vault already carries a shape; purpose records a personal vault converting to an organization".into(),
+                    )
+                    .into());
+                }
+            }
+            _ => {
+                return Err(VaultError::InvalidOperation(format!(
+                    "purpose is already set to '{}'; it cannot change in this version",
+                    current.as_str()
+                ))
+                .into());
+            }
+        }
+        crate::vault::space::set_purpose(&self.path, parsed)
+    }
+
     pub fn space_flip(&mut self) -> Result<SpaceFlipReport, BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
+        // Family-spaces §2: the flip is how a vault becomes a family or
+        // organization vault, so it demands one of those purposes — a
+        // pair Space (two-person cap) must never reach this shape. A
+        // purpose-less PERSONAL vault flipping IS an organization
+        // conversion, so the org purpose is stamped here (the shipped
+        // desktop/mobile flip surfaces call space.flip directly); a
+        // legacy pair Space (space:true, no purpose) still refuses.
+        if crate::vault::space::read_purpose(&self.path)
+            == crate::vault::space::SpacePurpose::Absent
+            && !crate::vault::space_meta::shape_flipped(&self.path)
+            && !crate::vault::space::is_space_vault(&self.path)
+        {
+            crate::vault::space::set_purpose(&self.path, crate::vault::space::SpacePurpose::Org)?;
+        }
+        match crate::vault::space::read_purpose(&self.path) {
+            crate::vault::space::SpacePurpose::Family | crate::vault::space::SpacePurpose::Org => {}
+            other => {
+                let shown = if other == crate::vault::space::SpacePurpose::Absent {
+                    "none".to_string()
+                } else {
+                    other.as_str().to_string()
+                };
+                return Err(VaultError::InvalidOperation(format!(
+                    "flipping to team shape needs a family or organization purpose (this vault's purpose: {shown})"
+                ))
+                .into());
+            }
+        }
         let already = crate::vault::space_meta::shape_flipped(&self.path);
         if already {
             // Idempotent: report, converge leftovers, strip any re-grown
@@ -3214,6 +3451,23 @@ impl VaultHandle {
         if target.reset.is_some() || target.removed.is_some() {
             return Err(VaultError::InvalidOperation(
                 "that member row is gone; ownership cannot be claimed for it".into(),
+            )
+            .into());
+        }
+        // Family-spaces §5 target guard, shared with the swap: minors
+        // never receive ownership, and on family purpose the target
+        // must hold Admin rank. Pair/org vaults keep their existing
+        // semantics (the swap path carries them).
+        if crate::vault::family::minor_record_exists(&self.path, &new_owner_id) {
+            return Err(
+                VaultError::InvalidOperation("a minor cannot receive ownership".into()).into(),
+            );
+        }
+        if crate::vault::space::is_family(&self.path)
+            && target.role != crate::vault::members::MemberRole::Admin
+        {
+            return Err(VaultError::InvalidOperation(
+                "on a family vault, ownership passes only to an admin".into(),
             )
             .into());
         }
@@ -5076,6 +5330,7 @@ impl VaultHandle {
                         // These post-date the legacy settings.json split: a
                         // legacy file never carries them.
                         custom_equivalent_domains: None,
+                        family_shared_collection: None,
                         suggest_app_logins: None,
                         trusted_app_packages: None,
                         rejected_app_packages: None,
@@ -5108,6 +5363,7 @@ impl VaultHandle {
             custom_equivalent_domains: enc_fields
                 .as_ref()
                 .and_then(|e| e.custom_equivalent_domains.clone()),
+            family_shared_collection: enc_fields.as_ref().and_then(|e| e.family_shared_collection),
             suggest_app_logins: enc_fields.as_ref().and_then(|e| e.suggest_app_logins),
             trusted_app_packages: enc_fields
                 .as_ref()
@@ -5209,6 +5465,7 @@ impl VaultHandle {
             quorum_admin_ops: settings.quorum_admin_ops,
             collection_create_authority: settings.collection_create_authority,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
+            family_shared_collection: settings.family_shared_collection,
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
             rejected_app_packages: settings.rejected_app_packages.clone(),
@@ -5302,6 +5559,7 @@ impl VaultHandle {
             fetch_favicons: settings.fetch_favicons,
             slug: settings.slug.clone(),
             device_names: Some(names),
+            family_shared_collection: settings.family_shared_collection,
             enrollment_policy: settings.enrollment_policy,
             // The fold rewrite must carry every encrypted field or the
             // migration would silently wipe them (settings.enc is the
@@ -11229,6 +11487,125 @@ mod tests {
     }
 
     #[test]
+    fn kit_recovered_device_publishes_and_peers_accept() {
+        // Git-initialized vault (create_test_vault skips git; the sync
+        // flow under test needs a repo).
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("owner");
+        let password = "owner-pass-123".to_string();
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&dir, &password, "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock(&password).unwrap();
+        let phrase = handle.space_recovery_kit_enable().unwrap();
+        let owner_seal = handle.devkey_seal();
+        let device_o = handle.device_id.to_string();
+        let engine_o = crate::sync::engine::SyncEngine::new(&dir, &device_o, owner_seal.as_ref());
+        let mut repo_o = engine_o.open_repo().unwrap();
+        // The kit file must be committed BEFORE the clone, or the
+        // peers' parent-tree lookup finds no verifier.
+        engine_o.commit_all(&repo_o, "kit").unwrap();
+
+        // Bare remote; owner pushes.
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("remote.git");
+        git2::Repository::init_bare(&remote_path).unwrap();
+        repo_o
+            .remote("origin", remote_path.to_str().unwrap())
+            .unwrap();
+        engine_o.push(&repo_o, "origin").unwrap();
+
+        // A real fresh clone: origin = the bare remote, no device keys.
+        let clone_dir = tempfile::tempdir().unwrap();
+        let clone_path = clone_dir.path().join("clone");
+        git2::Repository::clone(remote_path.to_str().unwrap(), &clone_path).unwrap();
+        assert!(!clone_path.join("meta/device-privkey.json").exists());
+
+        // Recover on the clone (phrase + master password), unlock.
+        let device_id =
+            VaultHandle::recover_device_with_kit(&clone_path, &phrase, &password, "Recovered Mac")
+                .expect("recovery on a fresh clone");
+        let mut clone = VaultHandle::open(&clone_path).unwrap();
+        clone.unlock(&password).unwrap();
+
+        // The recovered device commits an entry. Its engine signs with
+        // the KIT phrase's key (the sealed recovery-signer.key), not
+        // the fresh device key no roster carries yet.
+        assert!(clone_path.join("meta/recovery-signer.key").exists());
+        let clone_seal = clone.devkey_seal();
+        let engine_r = crate::sync::engine::SyncEngine::new(
+            &clone_path,
+            &device_id.to_string(),
+            clone_seal.as_ref(),
+        );
+        let input = CipherInput {
+            name: "FromRecovered".into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("recovered@example.com".into()),
+                password: Some("kit-published".into()),
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+                fido2_credentials: None,
+                favicon: None,
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+        clone.add_cipher(&input).unwrap();
+        let repo_r = engine_r.open_repo().unwrap();
+        engine_r
+            .commit_all(&repo_r, "recovered device entry")
+            .unwrap();
+        engine_r.push(&repo_r, "origin").unwrap();
+        // First successful push publishes the device into the roster
+        // (its registry entry rode the commit) and clears the kit
+        // signer, so later commits sign with the device key.
+        assert!(
+            !clone_path.join("meta/recovery-signer.key").exists(),
+            "the recovery signer must clear after the first successful push"
+        );
+
+        // The OWNER pulls: the kit-signed commit verifies under the
+        // kit file's verifier key (the signing key is in no roster).
+        engine_o.pull(&repo_o, "origin").unwrap();
+        assert!(
+            handle
+                .list_cipher_meta()
+                .unwrap()
+                .iter()
+                .any(|m| m.name == "FromRecovered"),
+            "the owner must see the recovered device's entry"
+        );
+
+        // Clone-path verification: a FRESH clone of the remote verifies
+        // the whole history, kit-signed commit included.
+        let clone2 = clone_dir.path().join("clone2");
+        git2::Repository::clone(remote_path.to_str().unwrap(), &clone2).unwrap();
+        let engine_c2 = crate::sync::engine::SyncEngine::new(&clone2, "verify-only", None);
+        let repo_c2 = engine_c2.open_repo().unwrap();
+        crate::sync::engine::SyncEngine::verify_fetched_history(
+            &repo_c2,
+            crate::sync::engine::ProofMode::Structural,
+            None,
+        )
+        .expect("a fresh clone must verify history containing a kit-signed commit");
+    }
+
+    #[test]
     fn recovery_kit_survives_rotation_and_refuses_members() {
         let (dir, password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
@@ -12169,6 +12546,8 @@ mod tests {
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         handle.unlock(&password).unwrap();
         handle.space_prepare().unwrap();
+        crate::vault::space::set_purpose(dir.path(), crate::vault::space::SpacePurpose::Org)
+            .unwrap();
         handle.space_flip().unwrap();
         let folder = handle.create_folder("Keep").unwrap();
         let gone = uuid::Uuid::new_v4();
@@ -14298,6 +14677,8 @@ mod tests {
         // Flip. The joiner's device keywrap must leave the vault.
         let joiner_kw = owner_path.join(format!("meta/keywrap/{joiner_device}.json"));
         assert!(joiner_kw.exists());
+        crate::vault::space::set_purpose(&owner_path, crate::vault::space::SpacePurpose::Org)
+            .unwrap();
         let report = handle.space_flip().unwrap();
         assert!(!report.already_flipped);
         assert_eq!(report.files_reencrypted, 6);
@@ -14305,6 +14686,8 @@ mod tests {
         assert!(!joiner_kw.exists());
         assert!(crate::vault::space_meta::shape_flipped(&owner_path));
         // Idempotent re-run.
+        crate::vault::space::set_purpose(&owner_path, crate::vault::space::SpacePurpose::Org)
+            .unwrap();
         let again = handle.space_flip().unwrap();
         assert!(again.already_flipped);
 
@@ -14442,6 +14825,8 @@ mod tests {
         crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
 
         handle.space_prepare().unwrap();
+        crate::vault::space::set_purpose(&owner_path, crate::vault::space::SpacePurpose::Org)
+            .unwrap();
         handle.space_flip().unwrap();
 
         // Invite an ADMIN on the flipped vault.
@@ -14599,6 +14984,8 @@ mod tests {
         crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
 
         handle.space_prepare().unwrap();
+        crate::vault::space::set_purpose(&owner_path, crate::vault::space::SpacePurpose::Org)
+            .unwrap();
         handle.space_flip().unwrap();
 
         // Admin joiner ceremony (verified contact required for the role).
@@ -14688,6 +15075,8 @@ mod tests {
         owner_row.identity_wrap_pubkey = Some(card.card.identity_wrap_pubkey.clone());
         crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
         handle.space_prepare().unwrap();
+        crate::vault::space::set_purpose(&owner_path, crate::vault::space::SpacePurpose::Org)
+            .unwrap();
         handle.space_flip().unwrap();
 
         // Second admin through the standard verified-contact ceremony.
@@ -14833,6 +15222,8 @@ mod tests {
         std::fs::create_dir_all(wrap_file.parent().unwrap()).unwrap();
         std::fs::write(&wrap_file, b"stale").unwrap();
 
+        crate::vault::space::set_purpose(&owner_path, crate::vault::space::SpacePurpose::Org)
+            .unwrap();
         let err = handle.space_flip().unwrap_err();
         assert!(
             err.to_string().contains(&m.id.to_string()),
@@ -15072,6 +15463,8 @@ mod tests {
         let repo_j = engine_j.open_repo().unwrap();
         engine_j.pull(&repo_j, "origin").unwrap();
         drop(repo_j);
+        crate::vault::space::set_purpose(&owner_path, crate::vault::space::SpacePurpose::Org)
+            .unwrap();
         handle.space_flip().unwrap();
         engine_o.commit_all(&repo_o, "flip").unwrap();
 
@@ -17373,6 +17766,7 @@ mod tests {
 
         let settings = crate::vault::manifest::VaultSettings {
             vault_timeout: crate::vault::manifest::VaultTimeout::Minutes(15),
+            family_shared_collection: None,
             theme: Some(crate::types::ThemeMode::Dark),
             lang: Some("es".into()),
             default_uri_match: Some(crate::types::UriMatchStrategy::Exact),
