@@ -37,7 +37,10 @@ fn minor_record_path(vault_path: &Path, member_id: &Uuid) -> std::path::PathBuf 
 /// the guards (swap/claim targets, invites) call this without key
 /// material; a present file was written by an admin handle and can
 /// only travel through an Admin-rank commit, so existence is proof.
-pub(crate) fn minor_record_exists(vault_path: &Path, member_id: &Uuid) -> bool {
+/// Keyless filesystem check (path-only by design: only an admin
+/// handle can CREATE the sealed record, so existence leaks nothing
+/// that matters and guards can call it without key material).
+pub fn minor_record_exists(vault_path: &Path, member_id: &Uuid) -> bool {
     minor_record_path(vault_path, member_id).exists()
 }
 
@@ -112,7 +115,7 @@ use crate::keys::hierarchy::RootKey as RootKeyRef;
 /// Returns the Shared collection id.
 pub(crate) fn setup_family_vault(
     handle: &mut super::handle::VaultHandle,
-) -> Result<Uuid, BaluardError> {
+) -> Result<(Uuid, Option<String>), BaluardError> {
     let path = handle.path.clone();
     if crate::vault::space::read_purpose(&path) == crate::vault::space::SpacePurpose::Absent {
         crate::vault::space::set_purpose(&path, crate::vault::space::SpacePurpose::Family)
@@ -160,7 +163,17 @@ pub(crate) fn setup_family_vault(
         settings.family_shared_collection = Some(shared_id);
         handle.save_settings(&settings)?;
     }
-    Ok(shared_id)
+
+    // Kit mandatory at birth (section 7): a family vault without a kit
+    // has no phrase-only escape when guardians are gone. Idempotent —
+    // a resumed run keeps the existing kit and returns no phrase (the
+    // founders saw it at first creation).
+    let kit_phrase = if super::recovery_kit::kit_exists(&path)? {
+        None
+    } else {
+        Some(handle.space_recovery_kit_enable()?)
+    };
+    Ok((shared_id, kit_phrase))
 }
 
 #[cfg(test)]
@@ -186,7 +199,7 @@ mod tests {
     #[test]
     fn family_transaction_creates_shared_guardians_and_flips() {
         let (_temp, mut handle, password) = family_vault();
-        let shared = setup_family_vault(&mut handle).unwrap();
+        let (shared, _kit) = setup_family_vault(&mut handle).unwrap();
         assert!(
             crate::vault::space::read_purpose(&handle.path)
                 == crate::vault::space::SpacePurpose::Family
@@ -212,8 +225,10 @@ mod tests {
             Some(shared)
         );
         // Resumed run converges: same Shared id, idempotent flip.
-        let again = setup_family_vault(&mut handle).unwrap();
+        let (again, kit_again) = setup_family_vault(&mut handle).unwrap();
         assert_eq!(again, shared);
+        // A resumed run keeps the existing kit (no second phrase).
+        assert!(kit_again.is_none());
         drop(handle);
         let mut h2 = super::super::handle::VaultHandle::open(&_temp.path().join("fam")).unwrap();
         h2.unlock(&password).unwrap();
@@ -221,6 +236,79 @@ mod tests {
             h2.get_settings().unwrap().family_shared_collection,
             Some(shared)
         );
+    }
+
+    #[test]
+    fn minor_invites_and_flags_stay_non_admin() {
+        let (_temp, mut handle, _pw) = family_vault();
+        let (_shared, _kit) = setup_family_vault(&mut handle).unwrap();
+        // Mint gate: a minor invite can never carry admin rank.
+        let err = handle
+            .invite_create_with_embedded_grants(
+                crate::vault::members::MemberRole::Admin,
+                None,
+                crate::vault::templates::EmbeddedTemplate {
+                    name: "x".into(),
+                    grants: Vec::new(),
+                },
+                true,
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("editors or viewers"), "{err}");
+        // Editor rank is the wizard's child shape and works.
+        handle
+            .invite_create_with_embedded_grants(
+                crate::vault::members::MemberRole::Editor,
+                None,
+                crate::vault::templates::EmbeddedTemplate {
+                    name: "kid".into(),
+                    grants: Vec::new(),
+                },
+                true,
+            )
+            .unwrap();
+        // Flag gate: admins and owners cannot be flagged as minors.
+        let owner_id =
+            crate::vault::members::member_id_for_device(&handle.path, handle.device_id).unwrap();
+        let err = handle
+            .member_set_minor(owner_id, true)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cannot be flagged as minors"), "{err}");
+        // ...and a flagged editor can be unflagged (clearing stays open).
+        let editor = pending_editor_row(&handle.path);
+        handle.member_set_minor(editor, true).unwrap();
+        handle.member_set_minor(editor, false).unwrap();
+        assert!(!handle.member_minor_status(editor).unwrap());
+    }
+
+    /// A hand-written live Editor row for flag tests (no invite
+    /// ceremony needed; the row is local-only until committed).
+    fn pending_editor_row(path: &std::path::Path) -> uuid::Uuid {
+        use crate::vault::members::{MemberFile, MemberRole, TrustLevel};
+        let id = uuid::Uuid::new_v4();
+        crate::vault::members::write_member(
+            path,
+            &MemberFile {
+                id,
+                display_name: "Flag Editor".into(),
+                email: None,
+                role: MemberRole::Editor,
+                trust: TrustLevel::Channel,
+                identity_signing_pubkey: None,
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                removed_reason: None,
+                transport_username: None,
+                identity_wrap_pubkey: None,
+            },
+        )
+        .unwrap();
+        id
     }
 
     #[test]
@@ -279,7 +367,7 @@ mod tests {
     #[test]
     fn shared_system_collection_deletion_refused_and_empty_rule() {
         let (_temp, mut handle, _pw) = family_vault();
-        let shared = setup_family_vault(&mut handle).unwrap();
+        let (shared, _kit) = setup_family_vault(&mut handle).unwrap();
         // Shared is a system collection: deletion refused.
         let err = handle.collection_delete(shared).unwrap_err().to_string();
         assert!(err.contains("system collection"), "{err}");
@@ -315,7 +403,7 @@ mod tests {
     #[test]
     fn leave_record_files_lists_and_execution_leaves_traces() {
         let (_temp, mut handle, _pw) = family_vault();
-        let shared = setup_family_vault(&mut handle).unwrap();
+        let (shared, _kit) = setup_family_vault(&mut handle).unwrap();
         let path = handle.path.clone();
         // A live Editor member with a device binding, granted Write on
         // their own collection plus Read on Shared.

@@ -242,7 +242,7 @@ pub fn handle_init(
         std::path::PathBuf::from(vault_path)
     };
 
-    let (_handle, secrets) =
+    let (mut handle, secrets) =
         baluard_core::vault::creation::VaultCreator::new(&resolved_path, &password, "this-device")
             .kdf_profile(profile)
             .profile(display_name.clone(), None)
@@ -266,6 +266,13 @@ pub fn handle_init(
         })?;
         reg.set_active(s)?;
         reg.save_locked()?;
+    }
+
+    // Family wizard (interactive only; JSON mode stays one machine line
+    // and scripts mint invites through the daemon routes). The kit
+    // already exists at birth; the phrase prints exactly once.
+    if family && !json && is_tty() {
+        print_family_wizard(&mut handle, &secrets);
     }
 
     // Scripting/harness mode: one JSON line, no decorated output, no
@@ -381,6 +388,116 @@ fn prompt_password_optional(prompt: &str) -> String {
     let mut buf = String::new();
     let _ = std::io::stdin().read_line(&mut buf);
     buf.trim().to_string()
+}
+
+/// Family-spaces wizard (plan section 7): show the kit phrase once,
+/// then optionally mint the co-guardian invite and per-child invites
+/// with per-person collections. Interactive-only; every step after the
+/// kit display is skippable.
+fn print_family_wizard(
+    handle: &mut baluard_core::vault::VaultHandle,
+    secrets: &baluard_core::vault::creation::CeremonySecrets,
+) {
+    use baluard_core::vault::collections::CollectionAccess;
+    use baluard_core::vault::members::MemberRole;
+    use baluard_core::vault::templates::{EmbeddedTemplate, TemplateGrant};
+
+    if let Some(kit) = &secrets.kit_phrase {
+        println!();
+        println!("=== FAMILY RECOVERY KIT (write this down, separately!) ===");
+        let words: Vec<&str> = kit.split_whitespace().collect();
+        for (i, word) in words.iter().enumerate() {
+            if i % 8 != 0 {
+                print!(" ");
+            }
+            print!("{:>2}. {:<8}", i + 1, word);
+            if i % 8 == 7 || i == words.len() - 1 {
+                println!();
+            }
+        }
+        println!("=== END FAMILY RECOVERY KIT ===");
+        println!("This phrase recovers the FAMILY vault when no guardian");
+        println!("can act. Store it apart from the vault recovery phrase.");
+    }
+
+    let shared = handle
+        .get_settings()
+        .ok()
+        .and_then(|s| s.family_shared_collection);
+    let Some(shared_id) = shared else {
+        return; // not a family vault or setup incomplete: nothing to mint
+    };
+    let shared_grants = |name: &str| EmbeddedTemplate {
+        name: name.into(),
+        grants: vec![TemplateGrant {
+            collection_id: shared_id,
+            access: CollectionAccess::Read,
+            expires_in_days: None,
+        }],
+    };
+
+    // Co-guardian: Admin rank, the Level 2 code check happens during
+    // their own join (the wizard only mints the invite).
+    let guardian =
+        prompt_password_optional("Invite a co-guardian now? Their name (Enter to skip): ");
+    if !guardian.is_empty() {
+        let username =
+            prompt_password_optional("  Their forge username for repo access (Enter for none): ");
+        let username = (!username.is_empty()).then_some(username);
+        match handle.invite_create_with_embedded_grants(
+            MemberRole::Admin,
+            username,
+            shared_grants("Co-guardian (Shared read)"),
+            false,
+        ) {
+            Ok(code) => {
+                println!("  Co-guardian invite created.");
+                println!("  Code (send it to them): {code}");
+                println!("  They verify identity with the Level 2 code check");
+                println!("  during their own join - nothing to do here.");
+            }
+            Err(e) => eprintln!("  error: co-guardian invite failed: {e}"),
+        }
+    }
+
+    // Children and wards: Editor rank, flagged minor, one collection
+    // per child. Forge username optional - without one they sync
+    // through a guardian's pull (no repo seat).
+    loop {
+        let child = prompt_password_optional("Add a child or ward? Their name (Enter to finish): ");
+        if child.is_empty() {
+            break;
+        }
+        let username = prompt_password_optional(
+            "  Their forge username (Enter for none - they sync via a guardian): ",
+        );
+        let username = (!username.is_empty()).then_some(username);
+        let made = (|| -> Result<String, baluard_core::BaluardError> {
+            let collection = handle.collection_create(&child)?;
+            let mut grants = shared_grants(&format!("{child} (Shared read + own collection)"));
+            grants.grants.push(TemplateGrant {
+                collection_id: collection,
+                access: CollectionAccess::Write,
+                expires_in_days: None,
+            });
+            let code = handle.invite_create_with_embedded_grants(
+                MemberRole::Editor,
+                username,
+                grants,
+                true,
+            )?;
+            Ok(code)
+        })();
+        match made {
+            Ok(code) => {
+                println!("  Collection '{child}' created; invite minted.");
+                println!("  Code (send it to them): {code}");
+                println!("  They join as a flagged minor with Editor rank,");
+                println!("  Shared read, and their own collection.");
+            }
+            Err(e) => eprintln!("  error: invite for {child} failed: {e}"),
+        }
+    }
 }
 
 /// Interactive recovery phrase verification.

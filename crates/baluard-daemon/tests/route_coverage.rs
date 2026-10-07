@@ -2009,6 +2009,133 @@ async fn recover_kit_route_parses_and_resolves_slug() {
 }
 
 #[tokio::test]
+async fn family_replace_device_resets_rotates_and_carries_minor() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("fam-stolen");
+    let (mut handle, _secrets) = VaultCreator::new(&vault_path, MASTER, "route-stolen")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle.unlock(MASTER).unwrap();
+    let shared = handle
+        .get_settings()
+        .unwrap()
+        .family_shared_collection
+        .unwrap();
+    // A flagged minor Editor with a device binding and a Shared Read
+    // grant: the stolen-tablet member.
+    let member_id = uuid::Uuid::new_v4();
+    let member = baluard_core::vault::members::MemberFile {
+        id: member_id,
+        display_name: "Alex".into(),
+        email: None,
+        role: baluard_core::vault::members::MemberRole::Editor,
+        trust: baluard_core::vault::members::TrustLevel::Channel,
+        identity_signing_pubkey: None,
+        identity_signing_pubkey_previous: None,
+        identity_rotation_signature: None,
+        identity_rotated_at: None,
+        reset: None,
+        removed: None,
+        removed_reason: None,
+        transport_username: None,
+        identity_wrap_pubkey: None,
+    };
+    baluard_core::vault::members::write_member(&vault_path, &member).unwrap();
+    baluard_core::vault::members::write_device_binding(
+        &vault_path,
+        &baluard_core::vault::members::DeviceBinding {
+            device_id: uuid::Uuid::new_v4(),
+            member_id,
+        },
+    )
+    .unwrap();
+    let sgk = handle.unlocked().sgk().unwrap().clone();
+    baluard_core::vault::collections::upsert_grant(
+        &vault_path,
+        &sgk,
+        &shared,
+        baluard_core::vault::collections::CollectionGrant {
+            target: baluard_core::vault::collections::GrantTarget::Member { id: member_id },
+            access: baluard_core::vault::collections::CollectionAccess::Read,
+            expires_at: None,
+        },
+    )
+    .unwrap();
+    handle.member_set_minor(member_id, true).unwrap();
+    drop(handle);
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    state.unlock(MASTER).await.expect("vault unlock");
+
+    let report: serde_json::Value = serde_json::from_str(
+        &state
+            .members_replace_device(&format!(
+                r#"{{"member_id":"{member_id}","revoke_device":false}}"#
+            ))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let successor: uuid::Uuid = report["successor"].as_str().unwrap().parse().unwrap();
+    assert_ne!(successor, member_id);
+    assert!(!report["invite_code"].as_str().unwrap().is_empty());
+    assert_eq!(report["collections_rotated"], 1);
+    assert!(report["rotation_failed"].as_array().unwrap().is_empty());
+    // Family creation enables the kit at birth, so it is present.
+    assert_eq!(report["kit_present"], true);
+
+    // The successor row exists, carries the old role, and the minor
+    // flag travelled; the old row is tombstoned with a successor.
+    let row = baluard_core::vault::members::member_file_by_id(&vault_path, successor).unwrap();
+    assert_eq!(row.role, baluard_core::vault::members::MemberRole::Editor);
+    assert!(baluard_core::vault::family::minor_record_exists(
+        &vault_path,
+        &successor
+    ));
+    let old = baluard_core::vault::members::member_file_by_id(&vault_path, member_id).unwrap();
+    assert!(old.reset.is_some());
+
+    // The replacement invite restores the stolen member's grants:
+    // Shared Read rides the embedded template so the rejoining child
+    // keeps their access (family-spaces section 8).
+    let pending = baluard_core::vault::members::list_pending_invites(&vault_path).unwrap();
+    let replacement = pending
+        .iter()
+        .find(|p| p.target_member == Some(successor))
+        .expect("replacement invite pending");
+    let grants = replacement
+        .template
+        .as_ref()
+        .expect("embedded template")
+        .grants
+        .clone();
+    assert!(
+        grants.iter().any(|g| g.collection_id == shared),
+        "{grants:?}"
+    );
+
+    // The old grant died with the rotation (prune on rotate).
+    let cols: serde_json::Value =
+        serde_json::from_str(&state.collections_list().await.unwrap()).unwrap();
+    let grants = cols["collections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == serde_json::json!(shared.to_string()))
+        .map(|c| c["grants"].clone())
+        .expect("shared collection in listing");
+    assert!(
+        !grants
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g["id"] == serde_json::json!(member_id.to_string())),
+        "stolen member grant survived: {grants}"
+    );
+}
+
+#[tokio::test]
 async fn family_leave_journey_files_lists_and_approves() {
     let dir = tempfile::tempdir().unwrap();
     let vault_path = dir.path().join("fam-leave");
@@ -2026,7 +2153,7 @@ async fn family_leave_journey_files_lists_and_approves() {
     let _old_phrase = handle.space_recovery_kit_enable().unwrap();
     // A live Editor leaver with a device binding and a Shared Read grant.
     let leaver_id = uuid::Uuid::new_v4();
-    let mut leaver = baluard_core::vault::members::MemberFile {
+    let leaver = baluard_core::vault::members::MemberFile {
         id: leaver_id,
         display_name: "Uncle Rob".into(),
         email: None,
