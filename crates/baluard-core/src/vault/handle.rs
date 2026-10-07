@@ -435,8 +435,7 @@ impl VaultHandle {
                         )
                 })
                 .count()
-                .min(2)
-                .max(1) as u8
+                .clamp(1, 2) as u8
         };
         self.run_approval_gate(kind, params, required)
     }
@@ -3619,6 +3618,27 @@ impl VaultHandle {
     /// `new_owner_id` is explicit (the house re-call-to-confirm
     /// pattern): the co-approver repeats the SAME ask, so the params
     /// must not depend on who calls.
+    /// Date-only ISO 8601 UTC stamp for notice copy (Hinnant
+    /// civil_from_days; no chrono dependency in core).
+    fn iso_date_utc(secs: u64) -> String {
+        let days_since_epoch = (secs / 86400) as i64;
+        let z = days_since_epoch + 719468;
+        let era = if z >= 0 {
+            z / 146097
+        } else {
+            (z - 146096) / 146097
+        };
+        let doe = (z - era * 146097) as u32;
+        let yoe = (doe - doe / 4 + doe / 100 - doe / 400) / 365;
+        let y = (yoe as i64) + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if m <= 2 { y + 1 } else { y };
+        format!("{y:04}-{m:02}-{d:02}")
+    }
+
     pub fn ownership_claim(&mut self, new_owner_id: uuid::Uuid) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
@@ -3666,6 +3686,79 @@ impl VaultHandle {
             )
             .into());
         }
+        // D61 contest window (family-spaces v1.1 step 8a): on a family
+        // vault whose owner row is still live, a confirmed claim does
+        // not execute at once. The owner learns (synced record plus
+        // activity) and may cancel; the claim re-touch executes only
+        // after the window. A tombstoned owner row is succession, not
+        // contest - it executes immediately on every vault shape.
+        let old_row_live = crate::vault::members::member_file_by_id(&self.path, old_member_id)
+            .map(|f| f.removed.is_none() && f.reset.is_none())
+            .unwrap_or(false);
+        if crate::vault::space::is_family(&self.path) && old_row_live {
+            if let Some(record) = crate::vault::members::ownership_contest_elapsed(
+                &self.path,
+                old_member_id,
+                new_owner_id,
+            ) {
+                // The elapsed record is durable proof the quorum gate
+                // was satisfied for this exact ask - no second gate.
+                crate::vault::members::consume_ownership_contest(&self.path);
+                crate::vault::members::commit_ownership_swap(
+                    &self.path,
+                    old_member_id,
+                    new_owner_id,
+                )?;
+                self.emit_share_event(
+                    crate::vault::events::ShareEventKind::OwnershipClaimed,
+                    format!(
+                        "ownership claimed from member {old_member_id} by member {new_owner_id} after the contest window opened {} (confirmed {}); every device sees this on its next sync",
+                        Self::iso_date_utc(record.window_until),
+                        Self::iso_date_utc(record.confirmed_at),
+                    ),
+                );
+                return Ok(());
+            } else if let Some(pending) = crate::vault::members::load_ownership_contest(&self.path)
+            {
+                if pending.old_owner_id == old_member_id && pending.new_owner_id == new_owner_id {
+                    let left = pending
+                        .window_until
+                        .saturating_sub(crate::vault::members::unix_now_pub());
+                    return Err(VaultError::InvalidOperation(format!(
+                        "the claim is confirmed but not executed: the current owner may cancel it for {} more days; run the claim again after that to complete it",
+                        left / 86_400 + 1
+                    ))
+                    .into());
+                }
+                // A different ask is on file; fall through and let the
+                // fresh (gated) claim supersede it.
+            }
+            let record = {
+                self.quorum_gate(
+                    "ownership_claim",
+                    &serde_json::json!({
+                        "new_owner_id": new_owner_id,
+                        "old_owner_id": old_member_id,
+                    }),
+                )?;
+                crate::vault::members::write_ownership_contest(
+                    &self.path,
+                    old_member_id,
+                    new_owner_id,
+                )?
+            };
+            self.emit_share_event(
+                crate::vault::events::ShareEventKind::OwnershipClaimed,
+                format!(
+                    "ownership claim from member {new_owner_id} is pending; the current owner may cancel it until {} (claim again after that date to complete)",
+                    Self::iso_date_utc(record.window_until)
+                ),
+            );
+            return Err(VaultError::InvalidOperation(
+                "the claim is confirmed but not executed: the current owner may cancel it during the contest window; run the claim again after that to complete it".into(),
+            )
+            .into());
+        }
         self.quorum_gate(
             "ownership_claim",
             &serde_json::json!({
@@ -3682,6 +3775,54 @@ impl VaultHandle {
             ),
         );
         Ok(())
+    }
+
+    /// D61 contest window, owner side: the current owner cancels a
+    /// pending ownership claim, killing its contest record. Owner-only
+    /// by role; any pending record dies even if it names another
+    /// claimant (the owner's cancel is absolute while they hold the
+    /// chair). Admin-gated vaults only - there is nothing to cancel
+    /// elsewhere.
+    pub fn ownership_contest_cancel(&mut self) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let actor_role = crate::vault::members::member_role_for_device(&self.path, self.device_id);
+        if actor_role != Some(crate::vault::members::MemberRole::Owner) {
+            return Err(VaultError::InvalidOperation(
+                "only the current owner can cancel a claim".into(),
+            )
+            .into());
+        }
+        let Some(pending) = crate::vault::members::load_ownership_contest(&self.path) else {
+            return Err(
+                VaultError::InvalidOperation("no ownership claim is pending".into()).into(),
+            );
+        };
+        crate::vault::members::consume_ownership_contest(&self.path);
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::OwnershipClaimed,
+            format!(
+                "the current owner cancelled the pending ownership claim from member {}",
+                pending.new_owner_id
+            ),
+        );
+        Ok(())
+    }
+
+    /// D61 contest window, visibility: the pending claim (if any) for
+    /// owner-device notice surfaces. Returns (old_owner, new_owner,
+    /// window_until unix seconds).
+    pub fn ownership_contest_status(
+        &self,
+    ) -> Result<Option<(uuid::Uuid, uuid::Uuid, u64)>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        Ok(crate::vault::members::load_ownership_contest(&self.path)
+            .map(|p| (p.old_owner_id, p.new_owner_id, p.window_until)))
     }
 
     /// S1a-8: stage a received introduction into the repo-backed join
@@ -5541,6 +5682,7 @@ impl VaultHandle {
                         // legacy file never carries them.
                         custom_equivalent_domains: None,
                         family_shared_collection: None,
+                        default_add_collection: None,
                         personal_merge: None,
                         suggest_app_logins: None,
                         trusted_app_packages: None,
@@ -5575,6 +5717,7 @@ impl VaultHandle {
                 .as_ref()
                 .and_then(|e| e.custom_equivalent_domains.clone()),
             family_shared_collection: enc_fields.as_ref().and_then(|e| e.family_shared_collection),
+            default_add_collection: enc_fields.as_ref().and_then(|e| e.default_add_collection),
             personal_merge: enc_fields.as_ref().and_then(|e| e.personal_merge),
             suggest_app_logins: enc_fields.as_ref().and_then(|e| e.suggest_app_logins),
             trusted_app_packages: enc_fields
@@ -5678,6 +5821,7 @@ impl VaultHandle {
             collection_create_authority: settings.collection_create_authority,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             family_shared_collection: settings.family_shared_collection,
+            default_add_collection: settings.default_add_collection,
             personal_merge: settings.personal_merge,
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
@@ -5773,6 +5917,7 @@ impl VaultHandle {
             slug: settings.slug.clone(),
             device_names: Some(names),
             family_shared_collection: settings.family_shared_collection,
+            default_add_collection: settings.default_add_collection,
             personal_merge: settings.personal_merge,
             enrollment_policy: settings.enrollment_policy,
             // The fold rewrite must carry every encrypted field or the
@@ -17996,6 +18141,7 @@ mod tests {
         let settings = crate::vault::manifest::VaultSettings {
             vault_timeout: crate::vault::manifest::VaultTimeout::Minutes(15),
             family_shared_collection: None,
+            default_add_collection: None,
             personal_merge: None,
             theme: Some(crate::types::ThemeMode::Dark),
             lang: Some("es".into()),

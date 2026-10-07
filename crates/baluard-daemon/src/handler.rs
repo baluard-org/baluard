@@ -317,6 +317,7 @@ const HOST_ACTIONS: &[&str] = &[
     "vaults.switch",
     "vaults.set_active",
     "vaults.close",
+    "vaults.copy_items",
     "vaults.detach",
     "vaults.register_local",
     "vaults.lock_all",
@@ -362,6 +363,8 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "members.leave",
     // members.leave_list is a read query: no cover commit, no nudge.
     "members.leave_approve",
+    "members.contest_cancel",
+    // members.contest_status is a read query: no cover commit.
     "members.replace_device",
     "requests.approve",
     "requests.deny",
@@ -1083,6 +1086,74 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
                 err_response(format!(
                     "Vault '{slug}' was not open in the daemon (already closed)"
                 ))
+            };
+        }
+
+        // Family-spaces section 13 step 8b: the selective item-copy
+        // founding flow. Both vaults must already be unlocked on this
+        // daemon; the route moves no keys and mints no session.
+        "vaults.copy_items" => {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) else {
+                return err_response("vaults.copy_items needs a JSON payload");
+            };
+            let source_slug = v["source"]
+                .as_str()
+                .or_else(|| v["source_slug"].as_str())
+                .unwrap_or("")
+                .to_string();
+            let target_slug = v["target"]
+                .as_str()
+                .or_else(|| v["target_slug"].as_str())
+                .unwrap_or("")
+                .to_string();
+            if source_slug.is_empty() || target_slug.is_empty() {
+                return err_response("Missing 'source' or 'target' slug");
+            }
+            if source_slug == target_slug {
+                return err_response("the source and target vault are the same");
+            }
+            let Some(source_state) = host.get(&source_slug).await else {
+                return err_response(format!(
+                    "Source vault '{source_slug}' is not open in the daemon"
+                ));
+            };
+            let Some(target_state) = host.get(&target_slug).await else {
+                return err_response(format!(
+                    "Target vault '{target_slug}' is not open in the daemon"
+                ));
+            };
+            let ids = if v["all"].as_bool().unwrap_or(false) {
+                match baluard_runtime::founding::all_source_cipher_ids(&source_state).await {
+                    Ok(ids) => ids,
+                    Err(e) => return err_response(e),
+                }
+            } else {
+                let Some(list) = v["cipher_ids"].as_array() else {
+                    return err_response(
+                        "Missing 'cipher_ids' (array of cipher UUIDs) or 'all': true",
+                    );
+                };
+                let mut ids = Vec::with_capacity(list.len());
+                for item in list {
+                    let Some(s) = item.as_str() else {
+                        return err_response("cipher_ids entries must be UUID strings");
+                    };
+                    match uuid::Uuid::parse_str(s) {
+                        Ok(id) => ids.push(id),
+                        Err(_) => return err_response(format!("'{s}' is not a cipher UUID")),
+                    }
+                }
+                ids
+            };
+            return match baluard_runtime::founding::copy_items_between_states(
+                &source_state,
+                &target_state,
+                ids,
+            )
+            .await
+            {
+                Ok(json) => ok_resp(json, None),
+                Err(e) => err_response(e),
             };
         }
 
@@ -5038,6 +5109,16 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+        // D61 contest window (family-spaces v1.1): the owner cancels a
+        // pending claim; guardians read the pending window.
+        "members.contest_cancel" => match state.member_contest_cancel().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "members.contest_status" => match state.member_contest_status().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
         // Family-spaces section 8: stolen-device journey in one op.
         "members.replace_device" => match state.members_replace_device(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
@@ -6333,6 +6414,7 @@ mod tests {
             "members.leave",
             "members.leave_list",
             "members.leave_approve",
+            "members.contest_cancel",
             "members.replace_device",
             "policies.set",
             "collections.request_access",

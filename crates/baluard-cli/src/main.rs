@@ -337,6 +337,24 @@ enum VaultAction {
         #[arg(long)]
         delete_from_disk: bool,
     },
+    /// Copy selected entries from one unlocked vault into another
+    /// (family-spaces founding flow: bring items from a personal vault
+    /// into a new family vault). Both vaults must be unlocked in the
+    /// daemon. The target assigns fresh ids and re-encrypts under its
+    /// own keys; filing follows the target's defaults. Attachments are
+    /// not copied and are reported.
+    CopyItems {
+        /// Vault slug to copy FROM.
+        source: String,
+        /// Vault slug to copy INTO.
+        target: String,
+        /// Cipher UUID to copy (repeat for several).
+        #[arg(long = "cipher")]
+        ciphers: Vec<String>,
+        /// Copy every entry in the source vault.
+        #[arg(long)]
+        all: bool,
+    },
     /// Re-point a registered vault's sync origin to a new URL without
     /// announcing (S3-8 power-user escape hatch; the admin migrate in
     /// the app is the normal path and every device follows it

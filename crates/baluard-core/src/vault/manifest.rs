@@ -307,6 +307,11 @@ pub struct VaultSettings {
     /// is refused. `None` on every non-family vault.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family_shared_collection: Option<uuid::Uuid>,
+    /// Family-spaces step 8c: the guardian-designated default filing
+    /// target for member adds (sugar over the multi-writable refusal).
+    /// serde default: unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_add_collection: Option<uuid::Uuid>,
     /// G24 merge ceiling (family-spaces step 7): the synced admin
     /// answer to whether this Space's entries merge into the member's
     /// personal search and autofill. Absent follows the purpose
@@ -450,6 +455,11 @@ pub struct EncryptedSettings {
     /// Family vaults: the system `Shared` collection id (see VaultSettings).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family_shared_collection: Option<uuid::Uuid>,
+    /// Family-spaces step 8c: the guardian-designated default filing
+    /// target for member adds (sugar over the multi-writable refusal).
+    /// serde default: unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_add_collection: Option<uuid::Uuid>,
     /// G24 merge ceiling (family-spaces step 7): the synced admin
     /// answer to whether this Space's entries merge into the member's
     /// personal search and autofill. Absent follows the purpose
