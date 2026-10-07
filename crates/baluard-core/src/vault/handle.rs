@@ -5541,6 +5541,7 @@ impl VaultHandle {
                         // legacy file never carries them.
                         custom_equivalent_domains: None,
                         family_shared_collection: None,
+                        personal_merge: None,
                         suggest_app_logins: None,
                         trusted_app_packages: None,
                         rejected_app_packages: None,
@@ -5574,6 +5575,7 @@ impl VaultHandle {
                 .as_ref()
                 .and_then(|e| e.custom_equivalent_domains.clone()),
             family_shared_collection: enc_fields.as_ref().and_then(|e| e.family_shared_collection),
+            personal_merge: enc_fields.as_ref().and_then(|e| e.personal_merge),
             suggest_app_logins: enc_fields.as_ref().and_then(|e| e.suggest_app_logins),
             trusted_app_packages: enc_fields
                 .as_ref()
@@ -5676,6 +5678,7 @@ impl VaultHandle {
             collection_create_authority: settings.collection_create_authority,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             family_shared_collection: settings.family_shared_collection,
+            personal_merge: settings.personal_merge,
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
             rejected_app_packages: settings.rejected_app_packages.clone(),
@@ -5770,6 +5773,7 @@ impl VaultHandle {
             slug: settings.slug.clone(),
             device_names: Some(names),
             family_shared_collection: settings.family_shared_collection,
+            personal_merge: settings.personal_merge,
             enrollment_policy: settings.enrollment_policy,
             // The fold rewrite must carry every encrypted field or the
             // migration would silently wipe them (settings.enc is the
@@ -17992,6 +17996,7 @@ mod tests {
         let settings = crate::vault::manifest::VaultSettings {
             vault_timeout: crate::vault::manifest::VaultTimeout::Minutes(15),
             family_shared_collection: None,
+            personal_merge: None,
             theme: Some(crate::types::ThemeMode::Dark),
             lang: Some("es".into()),
             default_uri_match: Some(crate::types::UriMatchStrategy::Exact),

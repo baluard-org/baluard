@@ -504,6 +504,8 @@ mod real_vault {
             last_synced: None,
             last_opened: None,
             vault_id: Uuid::new_v4(),
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
         })
         .unwrap();
         reg.save_locked().unwrap();

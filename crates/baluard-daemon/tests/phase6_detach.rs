@@ -71,6 +71,8 @@ fn make_entry(slug: &str, path: &Path, vault_id: Uuid) -> VaultEntry {
         last_synced: None,
         last_opened: None,
         vault_id,
+        merge_opt_in: None,
+        merge_ceiling_seen: false,
     }
 }
 

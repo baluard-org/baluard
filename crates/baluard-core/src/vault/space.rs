@@ -120,6 +120,21 @@ pub fn is_space(vault_path: &Path) -> bool {
 }
 
 /// Family classification: purpose only. There is no legacy family.
+/// G24 merge ceiling default (family-spaces step 7): the explicit
+/// `personal_merge` knob wins; absent follows the purpose, so family
+/// Spaces merge by default and everything else stays out. Fail-closed
+/// for unknown or damaged purpose files: only an explicit Some(true)
+/// turns the ceiling on there.
+pub fn effective_personal_merge(
+    settings: &crate::vault::manifest::VaultSettings,
+    vault_path: &Path,
+) -> bool {
+    match settings.personal_merge {
+        Some(v) => v,
+        None => is_family(vault_path),
+    }
+}
+
 pub fn is_family(vault_path: &Path) -> bool {
     read_purpose(vault_path) == SpacePurpose::Family
 }
@@ -249,6 +264,62 @@ pub fn pair_gate(vault_path: &Path, role: MemberRole) -> Result<(), BaluardError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vault::manifest::VaultSettings;
+
+    // ── G24 merge ceiling (family-spaces step 7): org-regression suite ──
+
+    fn settings_with(personal_merge: Option<bool>) -> VaultSettings {
+        let mut s = VaultSettings::default();
+        s.personal_merge = personal_merge;
+        s
+    }
+
+    #[test]
+    fn merge_ceiling_defaults_follow_purpose() {
+        let t = tempfile::tempdir().unwrap();
+        // Personal (no purpose, no shape, no flag): off.
+        assert!(!effective_personal_merge(&settings_with(None), t.path()));
+        // Family: on by default.
+        set_purpose(t.path(), SpacePurpose::Family).unwrap();
+        assert!(effective_personal_merge(&settings_with(None), t.path()));
+        // Organization: off.
+        let t2 = tempfile::tempdir().unwrap();
+        set_purpose(t2.path(), SpacePurpose::Org).unwrap();
+        assert!(!effective_personal_merge(&settings_with(None), t2.path()));
+        // Legacy flipped org (shape marker, no purpose): still a Space,
+        // still off - the classification union keeps it out of merge.
+        let t3 = tempfile::tempdir().unwrap();
+        crate::vault::space_meta::write_shape_marker(t3.path(), 1).unwrap();
+        assert!(is_space(t3.path()));
+        assert!(!effective_personal_merge(
+            &settings_with(None),
+            &t3.path().join("fam")
+        ));
+        // Legacy pair Space (space flag, no purpose): off, and still
+        // pair-classified (the cap lives on).
+        let t4 = tempfile::tempdir().unwrap();
+        set_space_flag(t4.path(), true).unwrap();
+        assert!(is_pair(t4.path()));
+        assert!(!effective_personal_merge(&settings_with(None), t4.path()));
+    }
+
+    #[test]
+    fn merge_ceiling_explicit_overrides_purpose() {
+        let t = tempfile::tempdir().unwrap();
+        set_purpose(t.path(), SpacePurpose::Family).unwrap();
+        // An admin can turn a family Space's merge OFF.
+        assert!(!effective_personal_merge(
+            &settings_with(Some(false)),
+            t.path()
+        ));
+        // ...and turn merge ON for anything else.
+        let t2 = tempfile::tempdir().unwrap();
+        assert!(effective_personal_merge(
+            &settings_with(Some(true)),
+            t2.path()
+        ));
+    }
+
     use crate::vault::members::{TrustLevel, write_device_binding, write_member};
     use tempfile::TempDir;
     use uuid::Uuid;
