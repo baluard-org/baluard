@@ -12,7 +12,7 @@
 //! subtree is strict — an unbound device is a PendingJoiner.
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::error::{BaluardError, VaultError};
@@ -271,6 +271,100 @@ pub fn consume_leave_record(vault_path: &Path, member_id: Uuid) {
 
 /// Find the owner member id (role == Owner). `None` when the directory is
 /// absent (legacy vault) or carries no owner yet.
+/// D61 contest window (family-spaces v1.1 step 8a): a confirmed
+/// ownership claim against a LIVE owner on a family vault does not
+/// execute immediately. It writes a synced, plaintext contest record
+/// the owner can cancel; the claim re-touch executes only after the
+/// window passes (explicit action plus notice, never liveness
+/// tracking - a deceased owner's succession simply waits out the
+/// window). The record is the durable proof the quorum gate was
+/// satisfied, so the re-touch claim skips the gate.
+pub const OWNERSHIP_CONTEST_FORMAT: &str = "baluard.ownership-contest.v1";
+pub const OWNERSHIP_CONTEST_WINDOW_SECS: u64 = 30 * 24 * 3600;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct OwnershipContest {
+    pub format: String,
+    pub old_owner_id: Uuid,
+    pub new_owner_id: Uuid,
+    /// Unix seconds when the ask was confirmed at threshold.
+    pub confirmed_at: u64,
+    /// Unix seconds after which a re-touch claim executes.
+    pub window_until: u64,
+}
+
+fn contest_path(vault_path: &Path) -> PathBuf {
+    vault_path.join("meta/contests/ownership-claim.json")
+}
+
+pub fn unix_now_pub() -> u64 {
+    unix_now()
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+pub fn load_ownership_contest(vault_path: &Path) -> Option<OwnershipContest> {
+    let bytes = std::fs::read(contest_path(vault_path)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Writes (or supersedes) the pending contest record for a freshly
+/// confirmed claim. Admin-writable meta, so it rides the existing
+/// meta/** Admin sync row - every guardian device sees the pending
+/// window.
+pub fn write_ownership_contest(
+    vault_path: &Path,
+    old_owner_id: Uuid,
+    new_owner_id: Uuid,
+) -> Result<OwnershipContest, BaluardError> {
+    let now = unix_now();
+    let record = OwnershipContest {
+        format: OWNERSHIP_CONTEST_FORMAT.to_string(),
+        old_owner_id,
+        new_owner_id,
+        confirmed_at: now,
+        window_until: now + OWNERSHIP_CONTEST_WINDOW_SECS,
+    };
+    let path = contest_path(vault_path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| VaultError::Metadata(format!("contests dir: {e}")))?;
+    }
+    let body = serde_json::to_string_pretty(&record)
+        .map_err(|e| VaultError::Metadata(format!("contest serialization: {e}")))?;
+    crate::secret_file::write_secret_file(&path, body.as_bytes())
+        .map_err(|e| VaultError::Metadata(format!("contest write: {e}")))?;
+    Ok(record)
+}
+
+pub fn consume_ownership_contest(vault_path: &Path) {
+    let _ = std::fs::remove_file(contest_path(vault_path));
+}
+
+/// True when the pending record names this exact ask and the window
+/// has elapsed. A record naming a different ask never executes
+/// through this path; the fresh claim supersedes it instead.
+pub fn ownership_contest_elapsed(
+    vault_path: &Path,
+    old_owner_id: Uuid,
+    new_owner_id: Uuid,
+) -> Option<OwnershipContest> {
+    let record = load_ownership_contest(vault_path)?;
+    if record.old_owner_id == old_owner_id
+        && record.new_owner_id == new_owner_id
+        && unix_now() >= record.window_until
+    {
+        Some(record)
+    } else {
+        None
+    }
+}
+
 pub fn owner_member_id(vault_path: &Path) -> Option<Uuid> {
     let dir = vault_path.join(MEMBERS_DIR);
     let entries = std::fs::read_dir(&dir).ok()?;

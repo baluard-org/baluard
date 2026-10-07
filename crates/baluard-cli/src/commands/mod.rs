@@ -2589,6 +2589,14 @@ fn parse_space_knob(key: &str, value: &str) -> Result<serde_json::Value, String>
             }
             partial.insert(key.to_string(), serde_json::json!(value));
         }
+        "default_add_collection" => {
+            // A UUID string; existence is the daemon's check (the CLI
+            // has no collections view of the target vault).
+            uuid::Uuid::parse_str(value).map_err(|_| {
+                "default_add_collection must be a cipher-collection UUID".to_string()
+            })?;
+            partial.insert(key.to_string(), serde_json::json!(value));
+        }
         "collection_create_authority" => {
             if !matches!(value, "admins" | "editors") {
                 return Err("collection_create_authority must be admins or editors".into());
@@ -2608,7 +2616,7 @@ fn parse_space_knob(key: &str, value: &str) -> Result<serde_json::Value, String>
         }
         _ => {
             return Err(format!(
-                "Unknown space knob: {key}. Available: guest_enabled, allow_viewer_export, space_invite_authority, trash_policy, join_approval, restore_policy, collection_create_authority, quorum_admin_ops"
+                "Unknown space knob: {key}. Available: guest_enabled, allow_viewer_export, space_invite_authority, trash_policy, join_approval, restore_policy, collection_create_authority, quorum_admin_ops, default_add_collection"
             ));
         }
     }
@@ -3576,11 +3584,68 @@ pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std:
             slug,
             delete_from_disk,
         } => vaults_detach(slug, *delete_from_disk, cli),
+        VaultAction::CopyItems {
+            source,
+            target,
+            ciphers,
+            all,
+        } => vaults_copy_items(&source, &target, &ciphers, *all, cli),
         VaultAction::Repoint { slug, url } => vaults_repoint(slug, url),
         VaultAction::RecoverKit { slug, device_name } => {
             vaults_recover_kit(slug, device_name.as_deref())
         }
     }
+}
+
+/// `baluard vaults copy-items <source> <target>`: the founding flow
+/// (family-spaces step 8b). Daemon-only — both vaults must be unlocked
+/// in the daemon so the copy bridges two open sessions. Ids are
+/// validated CLI-side so a typo fails before any read.
+fn vaults_copy_items(
+    source: &str,
+    target: &str,
+    ciphers: &[String],
+    all: bool,
+    cli: &Cli,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !all && ciphers.is_empty() {
+        return Err("nothing to copy: pass --cipher <uuid> (repeatable) or --all".into());
+    }
+    let mut ids = Vec::with_capacity(ciphers.len());
+    for c in ciphers {
+        let id = uuid::Uuid::parse_str(c).map_err(|_| {
+            format!("'{c}' is not a cipher UUID (use 'baluard --vault {source} list' to find ids)")
+        })?;
+        ids.push(id.to_string());
+    }
+    let payload = serde_json::json!({
+        "source": source,
+        "target": target,
+        "cipher_ids": ids,
+        "all": all,
+    })
+    .to_string();
+    let resp = crate::client::request_to("vaults.copy_items", &payload, cli.socket.as_deref())?;
+    if !resp.success {
+        return Err(format!("copy failed: {}", resp.error_message).into());
+    }
+    let v: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    let copied = v["copied"].as_u64().unwrap_or(0);
+    println!("Copied {copied} entries into '{target}'.");
+    if let Some(failed) = v["failed"].as_array() {
+        for f in failed {
+            println!(
+                "  failed {}: {}",
+                f["cipher_id"].as_str().unwrap_or("?"),
+                f["error"].as_str().unwrap_or("unknown error")
+            );
+        }
+    }
+    let att = v["attachments_not_copied"].as_u64().unwrap_or(0);
+    if att > 0 {
+        println!("  {att} attachment(s) were not copied - re-add them from the original files.");
+    }
+    Ok(())
 }
 
 /// `baluard vaults repoint <slug> <url>`: re-point a registered vault's

@@ -506,6 +506,183 @@ mod tests {
     }
 
     #[test]
+    fn ownership_claim_on_family_enters_the_contest_window() {
+        let (_temp, mut handle, _pw) = family_vault();
+        setup_family_vault(&mut handle).unwrap();
+        let path = handle.path.clone();
+        // The acting device must be a live Admin claimant: hand-write
+        // the row and bind the handle's device to it.
+        let claimant = crate::vault::members::MemberFile {
+            id: uuid::Uuid::new_v4(),
+            display_name: "Dad".into(),
+            email: None,
+            role: crate::vault::members::MemberRole::Admin,
+            trust: crate::vault::members::TrustLevel::Verified,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            removed_reason: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        crate::vault::members::write_member(&path, &claimant).unwrap();
+        // The founder device is already bound to the founder Owner row;
+        // a device counted in two subtrees resolves to NOTHING (the
+        // forgery rule), so free it before binding it to the claimant.
+        let founder_id = crate::vault::members::owner_member_id(&path).unwrap();
+        std::fs::remove_file(
+            path.join("meta/members")
+                .join(founder_id.to_string())
+                .join("devices")
+                .join(format!("{}.json", handle.device_id)),
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            &path,
+            &crate::vault::members::DeviceBinding {
+                device_id: handle.device_id,
+                member_id: claimant.id,
+            },
+        )
+        .unwrap();
+        let owner = founder_id;
+
+        // First claim: confirmed, window armed, NOT executed.
+        let err = handle.ownership_claim(claimant.id).unwrap_err().to_string();
+        assert!(err.contains("contest window"), "{err}");
+        let pending = crate::vault::members::load_ownership_contest(&path).unwrap();
+        assert_eq!(pending.new_owner_id, claimant.id);
+        assert_eq!(pending.old_owner_id, owner);
+        assert!(pending.window_until > crate::vault::members::unix_now_pub());
+        assert_ne!(
+            crate::vault::members::owner_member_id(&path),
+            Some(claimant.id)
+        );
+
+        // Immediate re-touch: still inside the window.
+        let err = handle.ownership_claim(claimant.id).unwrap_err().to_string();
+        assert!(err.contains("more days"), "{err}");
+
+        // The acting device is the ADMIN claimant, so its cancel is
+        // refused: only the current owner may cancel.
+        let err = handle.ownership_contest_cancel().unwrap_err().to_string();
+        assert!(err.contains("only the current owner"), "{err}");
+
+        // Rebind the device to the founder Owner row and cancel: the
+        // record dies.
+        std::fs::remove_file(
+            path.join("meta/members")
+                .join(claimant.id.to_string())
+                .join("devices")
+                .join(format!("{}.json", handle.device_id)),
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            &path,
+            &crate::vault::members::DeviceBinding {
+                device_id: handle.device_id,
+                member_id: owner,
+            },
+        )
+        .unwrap();
+        handle.ownership_contest_cancel().unwrap();
+        assert!(crate::vault::members::load_ownership_contest(&path).is_none());
+        // With nothing pending, a second cancel is refused.
+        let err = handle.ownership_contest_cancel().unwrap_err().to_string();
+        assert!(err.contains("no ownership claim is pending"), "{err}");
+
+        // Back to the claimant: a fresh claim re-arms a new window
+        // (supersession).
+        std::fs::remove_file(
+            path.join("meta/members")
+                .join(owner.to_string())
+                .join("devices")
+                .join(format!("{}.json", handle.device_id)),
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            &path,
+            &crate::vault::members::DeviceBinding {
+                device_id: handle.device_id,
+                member_id: claimant.id,
+            },
+        )
+        .unwrap();
+        let _ = handle.ownership_claim(claimant.id).unwrap_err();
+        assert!(crate::vault::members::load_ownership_contest(&path).is_some());
+
+        // Expiry executes through the re-touch: rewind the record and
+        // claim again. The elapsed record is the gate proof, so no
+        // second approval is demanded.
+        let mut expired = crate::vault::members::load_ownership_contest(&path).unwrap();
+        expired.window_until = crate::vault::members::unix_now_pub().saturating_sub(1);
+        let contest_file = path.join("meta/contests/ownership-claim.json");
+        std::fs::write(&contest_file, serde_json::to_vec(&expired).unwrap()).unwrap();
+        handle.ownership_claim(claimant.id).unwrap();
+        assert_eq!(
+            crate::vault::members::owner_member_id(&path),
+            Some(claimant.id)
+        );
+        assert!(!contest_file.exists());
+    }
+
+    #[test]
+    fn deceased_owner_claim_skips_the_window() {
+        let (_temp, mut handle, _pw) = family_vault();
+        setup_family_vault(&mut handle).unwrap();
+        let path = handle.path.clone();
+        let claimant = crate::vault::members::MemberFile {
+            id: uuid::Uuid::new_v4(),
+            display_name: "Survivor".into(),
+            email: None,
+            role: crate::vault::members::MemberRole::Admin,
+            trust: crate::vault::members::TrustLevel::Verified,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            removed_reason: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        crate::vault::members::write_member(&path, &claimant).unwrap();
+        let founder_id = crate::vault::members::owner_member_id(&path).unwrap();
+        std::fs::remove_file(
+            path.join("meta/members")
+                .join(founder_id.to_string())
+                .join("devices")
+                .join(format!("{}.json", handle.device_id)),
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            &path,
+            &crate::vault::members::DeviceBinding {
+                device_id: handle.device_id,
+                member_id: claimant.id,
+            },
+        )
+        .unwrap();
+        // Death is not tracked: a deceased owner's row stays live on
+        // disk, so the window applies and succession waits it out
+        // (the honest cost the plan records). A TOMBSTONED owner row
+        // is the post-succession state: ownership_claim refuses
+        // outright because no owner row resolves at all.
+        let owner = crate::vault::members::owner_member_id(&path).unwrap();
+        let mut row = crate::vault::members::member_file_by_id(&path, owner).unwrap();
+        row.removed = Some(0);
+        row.removed_reason = None;
+        crate::vault::members::write_member(&path, &row).unwrap();
+        let err = handle.ownership_claim(claimant.id).unwrap_err().to_string();
+        assert!(err.contains("no owner member row"), "{err}");
+        assert!(crate::vault::members::load_ownership_contest(&path).is_none());
+    }
+
+    #[test]
     fn shared_system_collection_deletion_refused_and_empty_rule() {
         let (_temp, mut handle, _pw) = family_vault();
         let (shared, _kit) = setup_family_vault(&mut handle).unwrap();

@@ -2013,6 +2013,378 @@ async fn recover_kit_route_parses_and_resolves_slug() {
 }
 
 #[tokio::test]
+async fn vaults_copy_items_founds_a_family_vault() {
+    let _sandbox = sandboxed_host_env();
+    let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
+
+    // Personal source with one login.
+    let (_dir_s, path_s) = make_vault("copysrc");
+    let state_s = Arc::new(VaultState::new(path_s.clone()));
+    state_s.open().await.expect("open source");
+    state_s.unlock(MASTER).await.expect("unlock source");
+    state_s
+        .add_cipher(&serde_json::to_string(&login_input("Wi-Fi Router", "admin")).unwrap())
+        .await
+        .expect("add source");
+
+    // Family target, born team-shaped with Shared.
+    let dir_f = tempfile::tempdir().unwrap();
+    let path_f = dir_f.path().join("fam-copy");
+    let (mut handle, _secrets) = VaultCreator::new(&path_f, MASTER, "route-copy")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle.unlock(MASTER).unwrap();
+    let shared = handle
+        .get_settings()
+        .unwrap()
+        .family_shared_collection
+        .unwrap();
+    drop(handle);
+    let state_f = Arc::new(VaultState::new(path_f.clone()));
+    state_f.open().await.expect("open target");
+    state_f.unlock(MASTER).await.expect("unlock target");
+
+    host.insert("copysrc".into(), state_s.clone()).await;
+    host.insert("fam-copy".into(), state_f.clone()).await;
+
+    let req = GatewayRequest {
+        action: "vaults.copy_items".into(),
+        payload: serde_json::json!({ "source": "copysrc", "target": "fam-copy", "all": true })
+            .to_string(),
+        session_token: String::new(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "copy failed: {}", resp.error_message);
+    let v: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(v["copied"].as_u64(), Some(1), "{v}");
+
+    // The copied login filed into Shared (the family add default) and
+    // the secret survived the re-encryption.
+    let env = state_f.full_envelope().await.unwrap();
+    let cipher = &env["ciphers"][0];
+    assert_eq!(cipher["name"].as_str(), Some("Wi-Fi Router"));
+    assert_eq!(
+        cipher["_meta"]["collection_id"].as_str(),
+        Some(shared.to_string().as_str())
+    );
+    let id = cipher["_meta"]["id"].as_str().unwrap().to_string();
+    let got = state_f.get_cipher(&id, true).await.unwrap();
+    assert!(got.contains("Wi-Fi Router"), "{got}");
+
+    // Same-slug copy is refused outright.
+    let req = GatewayRequest {
+        action: "vaults.copy_items".into(),
+        payload: serde_json::json!({ "source": "copysrc", "target": "copysrc", "all": true })
+            .to_string(),
+        session_token: String::new(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success);
+    assert!(resp.error_message.contains("the same"));
+
+    // An unknown source slug refuses in plain language.
+    let req = GatewayRequest {
+        action: "vaults.copy_items".into(),
+        payload: serde_json::json!({ "source": "ghost", "target": "fam-copy", "all": true })
+            .to_string(),
+        session_token: String::new(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success);
+    assert!(resp.error_message.contains("not open in the daemon"));
+}
+
+#[tokio::test]
+async fn family_default_add_collection_sugar() {
+    let _sandbox = sandboxed_host_env();
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("fam-default");
+    let (mut handle, _secrets) = VaultCreator::new(&vault_path, MASTER, "route-default")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle.unlock(MASTER).unwrap();
+    let founder_device = handle.device_id;
+
+    // A member (Editor, live) with Write grants on TWO collections:
+    // the multi-writable refusal case.
+    let chores = handle.collection_create("Chores").unwrap();
+    let kids = handle.collection_create("Kids").unwrap();
+    let member_id = uuid::Uuid::new_v4();
+    let member = baluard_core::vault::members::MemberFile {
+        id: member_id,
+        display_name: "Alex".into(),
+        email: None,
+        role: baluard_core::vault::members::MemberRole::Editor,
+        trust: baluard_core::vault::members::TrustLevel::Channel,
+        identity_signing_pubkey: None,
+        identity_signing_pubkey_previous: None,
+        identity_rotation_signature: None,
+        identity_rotated_at: None,
+        reset: None,
+        removed: None,
+        removed_reason: None,
+        transport_username: None,
+        identity_wrap_pubkey: None,
+    };
+    baluard_core::vault::members::write_member(&vault_path, &member).unwrap();
+    let grant_target = baluard_core::vault::collections::GrantTarget::Member { id: member_id };
+    handle
+        .collection_grant(
+            chores,
+            grant_target.clone(),
+            baluard_core::vault::collections::CollectionAccess::Write,
+            None,
+        )
+        .unwrap();
+    handle
+        .collection_grant(
+            kids,
+            grant_target,
+            baluard_core::vault::collections::CollectionAccess::Write,
+            None,
+        )
+        .unwrap();
+    let _shared = handle
+        .get_settings()
+        .unwrap()
+        .family_shared_collection
+        .unwrap();
+    drop(handle);
+
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("open");
+    state.unlock(MASTER).await.expect("unlock");
+
+    // Set the knob (admin action) and verify the settings round-trip.
+    state
+        .space_settings_set(
+            &serde_json::json!({ "default_add_collection": chores.to_string() }).to_string(),
+        )
+        .await
+        .expect("set knob");
+    let got: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(
+        got["default_add_collection"].as_str(),
+        Some(chores.to_string().as_str())
+    );
+
+    // Unknown collection refused.
+    let err = state
+        .space_settings_set(
+            &serde_json::json!({ "default_add_collection": uuid::Uuid::new_v4().to_string() })
+                .to_string(),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("names no collection"), "{err}");
+
+    // End to end: rebind the in-process device to the member row (the
+    // two-subtree rule forbids double bindings), then an unfiled
+    // member add routes to the designated default instead of
+    // refusing on two writables.
+    std::fs::remove_file(
+        vault_path
+            .join("meta/members")
+            .join(
+                baluard_core::vault::members::member_file_for_device(&vault_path, founder_device)
+                    .unwrap()
+                    .1
+                    .id
+                    .to_string(),
+            )
+            .join("devices")
+            .join(format!("{founder_device}.json")),
+    )
+    .unwrap();
+    baluard_core::vault::members::write_device_binding(
+        &vault_path,
+        &baluard_core::vault::members::DeviceBinding {
+            device_id: founder_device,
+            member_id,
+        },
+    )
+    .unwrap();
+    let input = login_input("Chore Login", "alex");
+    state
+        .add_cipher(&serde_json::to_string(&input).unwrap())
+        .await
+        .expect("member add");
+    let env = state.full_envelope().await.unwrap();
+    let ciphers = env["ciphers"].as_array().unwrap();
+    assert_eq!(ciphers.len(), 1);
+    assert_eq!(
+        ciphers[0]["_meta"]["collection_id"].as_str(),
+        Some(chores.to_string().as_str()),
+        "{ciphers:?}"
+    );
+
+    // The multi-writable refusal still fires when NO default is set:
+    // a fresh family fixture, knob never touched.
+    drop(state);
+    let dir2 = tempfile::tempdir().unwrap();
+    let path2 = dir2.path().join("fam-default-b");
+    let (mut handle_b, _s) = VaultCreator::new(&path2, MASTER, "route-default-b")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle_b.unlock(MASTER).unwrap();
+    let device_b = handle_b.device_id;
+    let c1 = handle_b.collection_create("One").unwrap();
+    let c2 = handle_b.collection_create("Two").unwrap();
+    let member_b = uuid::Uuid::new_v4();
+    let mut row = member.clone();
+    row.id = member_b;
+    baluard_core::vault::members::write_member(&path2, &row).unwrap();
+    let grant_target_b = baluard_core::vault::collections::GrantTarget::Member { id: member_b };
+    handle_b
+        .collection_grant(
+            c1,
+            grant_target_b.clone(),
+            baluard_core::vault::collections::CollectionAccess::Write,
+            None,
+        )
+        .unwrap();
+    handle_b
+        .collection_grant(
+            c2,
+            grant_target_b,
+            baluard_core::vault::collections::CollectionAccess::Write,
+            None,
+        )
+        .unwrap();
+    let founder_b = baluard_core::vault::members::member_file_for_device(&path2, device_b)
+        .unwrap()
+        .1
+        .id;
+    drop(handle_b);
+    let state_b = Arc::new(VaultState::new(path2.clone()));
+    state_b.open().await.expect("open b");
+    state_b.unlock(MASTER).await.expect("unlock b");
+    std::fs::remove_file(
+        path2
+            .join("meta/members")
+            .join(founder_b.to_string())
+            .join("devices")
+            .join(format!("{device_b}.json")),
+    )
+    .unwrap();
+    baluard_core::vault::members::write_device_binding(
+        &path2,
+        &baluard_core::vault::members::DeviceBinding {
+            device_id: device_b,
+            member_id: member_b,
+        },
+    )
+    .unwrap();
+    let err = state_b
+        .add_cipher(&serde_json::to_string(&login_input("Second", "alex")).unwrap())
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("Several collections accept your edits"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn family_claim_arming_surfaces_as_success() {
+    // The review catch: the contest arming used to return Err, so the
+    // daemon skipped the cover commit and the record - the owner's
+    // only notice - never synced. The wrapper must surface arming as
+    // success-shaped JSON.
+    let _sandbox = sandboxed_host_env();
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("fam-arm");
+    let (mut handle, _secrets) = VaultCreator::new(&vault_path, MASTER, "route-arm")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle.unlock(MASTER).unwrap();
+    let claimant = baluard_core::vault::members::MemberFile {
+        id: uuid::Uuid::new_v4(),
+        display_name: "Dad".into(),
+        email: None,
+        role: baluard_core::vault::members::MemberRole::Admin,
+        trust: baluard_core::vault::members::TrustLevel::Verified,
+        identity_signing_pubkey: None,
+        identity_signing_pubkey_previous: None,
+        identity_rotation_signature: None,
+        identity_rotated_at: None,
+        reset: None,
+        removed: None,
+        removed_reason: None,
+        transport_username: None,
+        identity_wrap_pubkey: None,
+    };
+    baluard_core::vault::members::write_member(&vault_path, &claimant).unwrap();
+    let founder =
+        baluard_core::vault::members::member_file_for_device(&vault_path, handle.device_id)
+            .unwrap();
+    std::fs::remove_file(
+        vault_path
+            .join("meta/members")
+            .join(founder.1.id.to_string())
+            .join("devices")
+            .join(format!("{}.json", handle.device_id)),
+    )
+    .unwrap();
+    baluard_core::vault::members::write_device_binding(
+        &vault_path,
+        &baluard_core::vault::members::DeviceBinding {
+            device_id: handle.device_id,
+            member_id: claimant.id,
+        },
+    )
+    .unwrap();
+    drop(handle);
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("open");
+    state.unlock(MASTER).await.expect("unlock");
+
+    // Arming: success-shaped, carrying the window.
+    let resp = state
+        .members_claim(&serde_json::json!({ "member_id": claimant.id.to_string() }).to_string())
+        .await
+        .expect("arming must be success-shaped");
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["armed"].as_bool(), Some(true), "{v}");
+    assert!(v["window_until"].as_u64().unwrap() > 0);
+
+    // Re-touch inside the window: still a refusal (the record is
+    // unchanged, so no second cover is needed).
+    let err = state
+        .members_claim(&serde_json::json!({ "member_id": claimant.id.to_string() }).to_string())
+        .await
+        .unwrap_err();
+    assert!(err.contains("more days"), "{err}");
+
+    // Expiry executes: rewind the record, claim again, success.
+    let mut record: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(vault_path.join("meta/contests/ownership-claim.json")).unwrap(),
+    )
+    .unwrap();
+    record["window_until"] = serde_json::json!(1);
+    std::fs::write(
+        vault_path.join("meta/contests/ownership-claim.json"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    let resp = state
+        .members_claim(&serde_json::json!({ "member_id": claimant.id.to_string() }).to_string())
+        .await
+        .expect("expired execution");
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["executed"].as_bool(), Some(true), "{v}");
+    assert!(baluard_core::vault::members::load_ownership_contest(&vault_path).is_none());
+}
+
+#[tokio::test]
 async fn family_replace_device_resets_rotates_and_carries_minor() {
     let dir = tempfile::tempdir().unwrap();
     let vault_path = dir.path().join("fam-stolen");

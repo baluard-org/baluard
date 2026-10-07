@@ -2734,13 +2734,47 @@ impl VaultState {
         let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
         let member_id = uuid::Uuid::parse_str(v["member_id"].as_str().ok_or("missing member_id")?)
             .map_err(|e| e.to_string())?;
+        // D61 contest window: snapshot the pending record before the
+        // claim so an ARMED window can be told apart from a plain
+        // refusal after the call. The arming must surface as success,
+        // or the daemon skips the cover commit and the record - the
+        // owner's only notice - never syncs.
+        let before = handle.ownership_contest_status().ok().flatten();
         let outcome = handle.ownership_claim(member_id).map_err(|e| e.to_string());
+        let after = handle.ownership_contest_status().ok().flatten();
         drop(guard);
-        if let Err(e) = &outcome {
-            self.ship_pending_approval().await;
-            return Err(e.clone());
+        match outcome {
+            Ok(()) => Ok(serde_json::json!({ "executed": true }).to_string()),
+            Err(e) => {
+                // Armed iff a record exists after the call, names this
+                // ask, and DIFFERS from the before-snapshot (a fresh
+                // or superseded window). An unchanged record is the
+                // re-touch refusal - still an Err.
+                let armed = match &after {
+                    Some((old, new, until)) => {
+                        *new == member_id
+                            && old != new
+                            && before
+                                .as_ref()
+                                .map(|b| b.2 != *until || b.0 != *old || b.1 != *new)
+                                .unwrap_or(true)
+                    }
+                    None => false,
+                };
+                if armed {
+                    // A fresh (or superseded) contest record is on
+                    // disk: return success so COVER commits and the
+                    // autosync nudge ship the owner's notice.
+                    return Ok(serde_json::json!({
+                        "armed": true,
+                        "window_until": after.as_ref().unwrap().2,
+                    })
+                    .to_string());
+                }
+                self.ship_pending_approval().await;
+                Err(e)
+            }
         }
-        Ok("{}".into())
     }
 
     /// Screen 6: aggregated actionable notices for the People surface.
@@ -3118,6 +3152,45 @@ impl VaultState {
     }
 
     /// Pending departures for the admin surfaces (manage-gated).
+    /// D61 contest window (family-spaces v1.1): the current owner
+    /// cancels a pending ownership claim.
+    pub async fn member_contest_cancel(&self) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle
+            .ownership_contest_cancel()
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "cancelled": true }).to_string())
+    }
+
+    /// Pending ownership-claim contest (owner-device notice surface).
+    pub async fn member_contest_status(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle
+            .assert_can_manage_members()
+            .map_err(|e| e.to_string())?;
+        let pending = handle
+            .ownership_contest_status()
+            .map_err(|e| e.to_string())?;
+        Ok(match pending {
+            Some((old, new, until)) => serde_json::json!({
+                "pending": true,
+                "old_owner_id": old.to_string(),
+                "new_owner_id": new.to_string(),
+                "window_until": until,
+            })
+            .to_string(),
+            None => serde_json::json!({"pending": false}).to_string(),
+        })
+    }
+
     pub async fn members_leave_list(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault is locked")?;
@@ -3548,6 +3621,47 @@ impl VaultState {
         Ok(out.into_iter().collect())
     }
 
+    // ── founding.rs copy accessors (family-spaces step 8b) ──
+    // The copy flow reads decrypted ciphers out of one open vault and
+    // re-adds them into another through the ordinary add path. These
+    // accessors keep VaultState.inner private while exposing exactly
+    // the two operations the copy needs.
+
+    pub(crate) async fn read_decrypted_for_copy(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<baluard_core::types::Cipher>, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Source vault is not open")?;
+        if !handle.is_unlocked() {
+            return Err("Source vault is locked. Unlock it first.".into());
+        }
+        Ok(match handle.get_cipher(id) {
+            Ok(CipherRead::Decrypted(c)) => Some(*c),
+            Ok(CipherRead::Locked(_)) => {
+                return Err("Source vault is locked. Unlock it first.".into());
+            }
+            Err(baluard_core::error::BaluardError::Vault(
+                baluard_core::error::VaultError::CipherNotFound(_),
+            )) => None,
+            Err(e) => return Err(e.to_string()),
+        })
+    }
+
+    pub(crate) async fn list_cipher_ids_for_copy(&self) -> Result<Vec<uuid::Uuid>, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Source vault is not open")?;
+        if !handle.is_unlocked() {
+            return Err("Source vault is locked. Unlock it first.".into());
+        }
+        Ok(handle
+            .list_cipher_meta()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|m| m.id)
+            .collect())
+    }
+
     /// Add a new cipher. Requires vault to be unlocked.
     pub async fn add_cipher(&self, payload: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;
@@ -3616,12 +3730,22 @@ impl VaultState {
                                     .to_string(),
                             );
                         }
-                        _ => {
-                            return Err(
+                        // Step 8c sugar: with several writables, the
+                        // guardian-designated default wins when the
+                        // member can still write it (it is in the
+                        // writable set by construction here only if
+                        // granted - check explicitly).
+                        _ => match handle
+                            .get_settings()
+                            .ok()
+                            .and_then(|s| s.default_add_collection)
+                        {
+                            Some(d) if writable.contains(&d) => Some(d),
+                            _ => return Err(
                                 "Several collections accept your edits. Pick one for this entry."
                                     .to_string(),
-                            );
-                        }
+                            ),
+                        },
                     }
                 }
             }
@@ -4426,6 +4550,7 @@ impl VaultState {
             // None and Some(1) both render as the default: one admin.
             "personal_merge": s.personal_merge,
             "quorum_admin_ops": s.quorum_admin_ops.unwrap_or(1).max(1),
+            "default_add_collection": s.default_add_collection.map(|u| u.to_string()),
             "collection_create_authority": match s.collection_create_authority {
                 baluard_core::vault::manifest::CollectionCreateAuthority::Admins => "admins",
                 baluard_core::vault::manifest::CollectionCreateAuthority::Editors => "editors",
@@ -4533,6 +4658,25 @@ impl VaultState {
                 }
             }
             settings.quorum_admin_ops = Some(n as u8);
+        }
+        if let Some(v) = partial.get("default_add_collection") {
+            // Family-spaces step 8c: the guardian-designated member
+            // filing default. A UUID string; it must name a collection
+            // that exists (admins fix it by setting a new one).
+            let s = v
+                .as_str()
+                .ok_or("default_add_collection must be a UUID string")?;
+            let id = uuid::Uuid::parse_str(s)
+                .map_err(|_| "default_add_collection must be a UUID string".to_string())?;
+            if !handle
+                .collections_list()
+                .map_err(|e| e.to_string())?
+                .iter()
+                .any(|(cid, _, _)| *cid == id)
+            {
+                return Err("default_add_collection names no collection in this vault".into());
+            }
+            settings.default_add_collection = Some(id);
         }
         if let Some(v) = partial.get("collection_create_authority") {
             let s = v
