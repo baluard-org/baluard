@@ -402,6 +402,24 @@ impl VaultState {
             if let Err(e) = handle.migrate_device_names_into_settings() {
                 log::warn!("[state] device-name migration deferred: {e}");
             }
+            // G24 device-local merge cache (family-spaces step 7):
+            // record the ceiling as of this unlock so locked-vault
+            // eligibility stays answerable. Best-effort: a registry
+            // hiccup must never block an unlock.
+            let ceiling = handle
+                .get_settings()
+                .map(|s| baluard_core::vault::space::effective_personal_merge(&s, &self.vault_path))
+                .unwrap_or(false);
+            match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                Ok(mut reg) => {
+                    if let Some(slug) = reg.slug_for_path(&self.vault_path) {
+                        if reg.set_merge_cache(&slug, ceiling).is_ok() {
+                            let _ = reg.save_locked();
+                        }
+                    }
+                }
+                Err(e) => log::warn!("[state] merge cache refresh skipped: {e}"),
+            }
         }
 
         // M2 fix: activate the auto-sync coordinator immediately on unlock if
@@ -4406,6 +4424,7 @@ impl VaultState {
                 baluard_core::vault::manifest::JoinApproval::Code => "code",
             },
             // None and Some(1) both render as the default: one admin.
+            "personal_merge": s.personal_merge,
             "quorum_admin_ops": s.quorum_admin_ops.unwrap_or(1).max(1),
             "collection_create_authority": match s.collection_create_authority {
                 baluard_core::vault::manifest::CollectionCreateAuthority::Admins => "admins",
@@ -4487,6 +4506,10 @@ impl VaultState {
                 _ => return Err("join_approval must be manual or code".into()),
             };
         }
+        if let Some(v) = partial.get("personal_merge") {
+            let b = v.as_bool().ok_or("personal_merge must be a boolean")?;
+            settings.personal_merge = Some(b);
+        }
         if let Some(v) = partial.get("quorum_admin_ops") {
             // A number below the JSON parse; bools/strings refuse. 1 and
             // absent both mean the default; 2..=5 raise the threshold.
@@ -4521,7 +4544,23 @@ impl VaultState {
                 _ => return Err("collection_create_authority must be admins or editors".into()),
             };
         }
-        handle.save_settings(&settings).map_err(|e| format!("{e}"))
+        handle
+            .save_settings(&settings)
+            .map_err(|e| format!("{e}"))?;
+        // The merge cache must not wait for the next unlock: a ceiling
+        // change mid-session is visible to eligibility the moment the
+        // save lands (plan-merged-search: refreshed at every unlock
+        // AND settings pull). Same best-effort contract as unlock.
+        let ceiling =
+            baluard_core::vault::space::effective_personal_merge(&settings, &self.vault_path);
+        if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+            if let Some(slug) = reg.slug_for_path(&self.vault_path) {
+                if reg.set_merge_cache(&slug, ceiling).is_ok() {
+                    let _ = reg.save_locked();
+                }
+            }
+        }
+        Ok(())
     }
 
     // ── S3-6: request-access JIT ──

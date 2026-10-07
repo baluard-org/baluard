@@ -263,6 +263,8 @@ pub fn handle_init(
             last_synced: None,
             last_opened: None,
             vault_id: secrets.vault_id,
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
         })?;
         reg.set_active(s)?;
         reg.save_locked()?;
@@ -3737,6 +3739,8 @@ fn vaults_add(
         last_synced: None,
         last_opened: None,
         vault_id,
+        merge_opt_in: None,
+        merge_ceiling_seen: false,
     })?;
     reg.save_locked()?;
 

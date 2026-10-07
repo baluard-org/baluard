@@ -1328,6 +1328,8 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
                 last_synced: None,
                 last_opened: Some(now),
                 vault_id: marker.vault_id,
+                merge_opt_in: None,
+                merge_ceiling_seen: false,
             };
             match baluard_core::vault::registry::VaultRegistry::load_locked() {
                 Ok(mut reg) => {
@@ -2760,6 +2762,8 @@ async fn handle_vault_create(mut req: GatewayRequest, host: &SharedVaultHost) ->
                         .as_secs(),
                 ),
                 vault_id,
+                merge_opt_in: None,
+                merge_ceiling_seen: false,
             };
             // M3: surface registry errors instead of swallowing them. A
             // collision here (slug already registered) means the vault was
@@ -3302,6 +3306,8 @@ fn run_clone_to_completion(params: CloneParams) {
                 last_synced: Some(now),
                 last_opened: Some(now),
                 vault_id,
+                merge_opt_in: None,
+                merge_ceiling_seen: false,
             };
             let reg_err: Option<String> =
                 match baluard_core::vault::registry::VaultRegistry::load_locked() {

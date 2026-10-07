@@ -416,6 +416,8 @@ fn register_in_registry(slug: &str, path: &std::path::Path) {
             last_synced: None,
             last_opened: None,
             vault_id,
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
         },
     );
     reg.save_locked().expect("registry save");
@@ -1960,6 +1962,8 @@ async fn recover_kit_route_parses_and_resolves_slug() {
         last_synced: None,
         last_opened: None,
         vault_id: baluard_core::vault::handle::VaultHandle::vault_id_for_path(&vault_path).unwrap(),
+        merge_opt_in: None,
+        merge_ceiling_seen: false,
     })
     .unwrap();
     reg.save_locked().unwrap();
@@ -3196,6 +3200,8 @@ async fn members_remove_preflight_strike_refusal_and_override() {
         last_synced: None,
         last_opened: None,
         vault_id,
+        merge_opt_in: None,
+        merge_ceiling_seen: false,
     })
     .expect("add entry");
     reg.save_locked().expect("save registry");
@@ -3289,6 +3295,8 @@ async fn join_introduce_validates_consumes_and_polls() {
         last_synced: None,
         last_opened: None,
         vault_id,
+        merge_opt_in: None,
+        merge_ceiling_seen: false,
     })
     .expect("add entry");
     reg.save_locked().expect("save registry");

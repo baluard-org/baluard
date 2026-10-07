@@ -104,6 +104,17 @@ pub struct VaultEntry {
     pub last_opened: Option<u64>,
     /// Vault UUID (from the .baluard marker).
     pub vault_id: Uuid,
+    /// G24 device-local opt-out (family-spaces step 7): the member can
+    /// keep a Space out of their personal search and autofill on this
+    /// device even when the admin ceiling is on. None = no answer yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_opt_in: Option<bool>,
+    /// G24 device-local cache of the merge ceiling, refreshed at every
+    /// unlock: true means the ceiling was on the last time this device
+    /// opened the vault. A Space never unlocked here has false (no
+    /// cache) and stays ineligible - fail closed, never nags.
+    #[serde(default)]
+    pub merge_ceiling_seen: bool,
 }
 
 /// The vault registry, persisted to disk.
@@ -274,6 +285,41 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// G24 device-local cache refresh (family-spaces step 7): record
+    /// whether the merge ceiling was on at this unlock. Best-effort on
+    /// the caller side; the cache must never block an unlock.
+    pub fn set_merge_cache(&mut self, slug: &str, ceiling: bool) -> Result<(), RegistryError> {
+        let Some(entry) = self.vaults.get_mut(slug) else {
+            return Err(RegistryError::NotFound(slug.to_string()));
+        };
+        entry.merge_ceiling_seen = ceiling;
+        Ok(())
+    }
+
+    /// The slug registered for a vault path, if any.
+    pub fn slug_for_path(&self, path: &Path) -> Option<String> {
+        self.vaults
+            .values()
+            .find(|e| e.path == path)
+            .map(|e| e.slug.clone())
+    }
+
+    /// G24 eligibility for one registered vault, keyless: a personal
+    /// vault is always eligible; a Space needs the cached ceiling from
+    /// its last unlock here and no device-local opt-out.
+    pub fn merge_eligible(&self, slug: &str) -> bool {
+        let Some(entry) = self.vaults.get(slug) else {
+            return false;
+        };
+        if entry.merge_opt_in == Some(false) {
+            return false;
+        }
+        if !crate::vault::space::is_space(&entry.path) {
+            return true;
+        }
+        entry.merge_ceiling_seen
+    }
+
     /// Get the active vault entry.
     pub fn active(&self) -> Option<&VaultEntry> {
         self.active_vault
@@ -343,6 +389,8 @@ impl VaultRegistry {
                 last_synced: None,
                 last_opened: None,
                 vault_id: marker.vault_id,
+                merge_opt_in: None,
+                merge_ceiling_seen: false,
             });
         }
         found
@@ -392,6 +440,58 @@ impl std::error::Error for RegistryError {}
 mod tests {
     use super::*;
 
+    // ── G24 merge eligibility (family-spaces step 7) ──
+
+    fn entry_for(slug: &str, path: &Path) -> VaultEntry {
+        VaultEntry {
+            slug: slug.to_string(),
+            display_name: slug.to_string(),
+            path: path.to_path_buf(),
+            provider: None,
+            remote_url: None,
+            last_synced: None,
+            last_opened: None,
+            vault_id: Uuid::new_v4(),
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
+        }
+    }
+
+    #[test]
+    fn merge_eligibility_is_keyless_and_fails_closed() {
+        let personal_dir = tempfile::tempdir().unwrap();
+        let family_dir = tempfile::tempdir().unwrap();
+        crate::vault::space::set_purpose(
+            family_dir.path(),
+            crate::vault::space::SpacePurpose::Family,
+        )
+        .unwrap();
+        let mut reg = VaultRegistry::default();
+        reg.add(entry_for("baluard-personal", personal_dir.path()))
+            .unwrap();
+        reg.add(entry_for("baluard-family", family_dir.path()))
+            .unwrap();
+
+        // A personal vault is always eligible, cache or not.
+        assert!(reg.merge_eligible("baluard-personal"));
+        // A Space never unlocked on this device has no cache: it fails
+        // closed and never nags.
+        assert!(!reg.merge_eligible("baluard-family"));
+        // After an unlock observes the ceiling ON, the Space merges.
+        reg.set_merge_cache("baluard-family", true).unwrap();
+        assert!(reg.merge_eligible("baluard-family"));
+        // The member's device-local opt-out wins over the ceiling.
+        reg.vaults.get_mut("baluard-family").unwrap().merge_opt_in = Some(false);
+        assert!(!reg.merge_eligible("baluard-family"));
+        reg.vaults.get_mut("baluard-family").unwrap().merge_opt_in = None;
+        // A later unlock observing the ceiling OFF (family flipped to
+        // org semantics via the explicit knob) drops eligibility again.
+        reg.set_merge_cache("baluard-family", false).unwrap();
+        assert!(!reg.merge_eligible("baluard-family"));
+        // Unknown slugs are simply ineligible.
+        assert!(!reg.merge_eligible("ghost"));
+    }
+
     fn test_entry(slug: &str) -> VaultEntry {
         VaultEntry {
             slug: slug.to_string(),
@@ -402,6 +502,8 @@ mod tests {
             last_synced: None,
             last_opened: None,
             vault_id: Uuid::new_v4(),
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
         }
     }
 
@@ -495,6 +597,8 @@ mod tests {
             last_synced: None,
             last_opened: None,
             vault_id: Uuid::new_v4(),
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
         };
         let err = reg.add(bad_entry);
         assert!(matches!(err, Err(RegistryError::InvalidSlug(_))));
@@ -701,6 +805,8 @@ mod resolve_tests {
             last_synced: None,
             last_opened: None,
             vault_id: Uuid::new_v4(),
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
         })
         .unwrap();
         reg.set_active(slug).unwrap();
@@ -724,6 +830,8 @@ mod resolve_tests {
                     last_synced: None,
                     last_opened: None,
                     vault_id: Uuid::new_v4(),
+                    merge_opt_in: None,
+                    merge_ceiling_seen: false,
                 })
                 .unwrap();
         }
@@ -801,6 +909,8 @@ mod resolve_tests {
             last_synced: None,
             last_opened: None,
             vault_id: Uuid::new_v4(),
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
         })
         .unwrap();
         // No set_active call.
