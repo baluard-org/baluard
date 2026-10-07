@@ -239,6 +239,147 @@ mod tests {
     }
 
     #[test]
+    fn kit_threshold_bounded_by_live_admins() {
+        use crate::vault::approvals::{self, ApprovalEntry, EntryVerifier, PendingOp};
+        use crate::vault::members::{MemberFile, MemberRole, TrustLevel};
+
+        // Sole guardian: the bounded threshold is 1, so replacing and
+        // disabling the kit run immediately (no ask, no deadlock).
+        let (_temp, mut handle, _pw) = family_vault();
+        let (_shared, first_phrase) = setup_family_vault(&mut handle).unwrap();
+        assert!(first_phrase.is_some(), "creation enables the kit");
+        let second = handle.space_recovery_kit_enable().unwrap();
+        assert_ne!(second, first_phrase.unwrap());
+        assert!(handle.space_recovery_kit_disable().unwrap());
+        assert!(!handle.space_recovery_kit_disable().unwrap());
+        drop(handle);
+
+        // Two live admins: the threshold is 2. The first presentation
+        // pends, a valid second-admin approval completes and consumes
+        // the ask, and a re-raise starts a fresh one.
+        let temp = tempfile::tempdir().unwrap();
+        let (mut handle, _secrets) = crate::vault::creation::VaultCreator::new(
+            temp.path().join("fam2"),
+            "family-pass",
+            "FounderDevice",
+        )
+        .kdf_profile(crate::types::KdfProfile::MobileLow)
+        .initialize_git(true)
+        .execute()
+        .unwrap();
+        let (_shared, _kit) = setup_family_vault(&mut handle).unwrap();
+        // A live co-guardian with a real identity key.
+        let (sk, vk) = crate::crypto::signature::generate_ed25519_keypair();
+        let guard = MemberFile {
+            id: uuid::Uuid::new_v4(),
+            display_name: "Co-guardian".into(),
+            email: None,
+            role: MemberRole::Admin,
+            trust: TrustLevel::Verified,
+            identity_signing_pubkey: Some(hex::encode(vk.as_bytes())),
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            removed_reason: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        crate::vault::members::write_member(&handle.path, &guard).unwrap();
+
+        let kit_created_at = crate::vault::recovery_kit::load_kit(&handle.path)
+            .unwrap()
+            .unwrap()
+            .created_at;
+        let params = serde_json::json!({ "created_at": kit_created_at });
+        let err = handle.space_recovery_kit_enable().unwrap_err().to_string();
+        assert!(err.contains("2 admin approvals"), "{err}");
+
+        // The co-guardian confirms: sign the ask's own timestamp and
+        // nonce exactly as the gate would, then present. Founder's
+        // entry first, then the co-guardian's completes and consumes.
+        let path = handle.path.clone();
+        let path_for_present = path.clone();
+        let vault_id = handle.vault_id;
+        let pending: PendingOp = approvals::list_pending(&path)
+            .into_iter()
+            .find(|p| p.kind == "kit.replace")
+            .expect("pending ask");
+        let digest = approvals::op_digest("kit.replace", &params);
+        let msg = approvals::approval_message(
+            "kit.replace",
+            &digest,
+            vault_id,
+            pending.initiated_at,
+            &pending.nonce.as_deref().unwrap_or_default(),
+        );
+        let sig = hex::encode(
+            crate::crypto::signature::sign(&sk, &msg)
+                .unwrap()
+                .to_bytes(),
+        );
+        let entry = ApprovalEntry {
+            member: guard.id,
+            sig,
+        };
+        let nonce = pending.nonce.clone().unwrap_or_default();
+        // The verifier mirrors the gate: every recorded entry must
+        // carry a valid signature over the ask message under its own
+        // member row's key (the founder's entry included, or the
+        // retain pass drops it and the count never reaches 2).
+        let msg_for_verify = msg.clone();
+        let verifier = EntryVerifier {
+            nonce: nonce.clone(),
+            verify: Box::new(move |candidate: &ApprovalEntry| {
+                let Some(row) = crate::vault::members::member_file_by_id(&path, candidate.member)
+                else {
+                    return false;
+                };
+                let (Ok(pk), Ok(sig)) = (
+                    hex::decode(row.identity_signing_pubkey.unwrap_or_default()),
+                    hex::decode(&candidate.sig),
+                ) else {
+                    return false;
+                };
+                let (Ok(pk_arr), Ok(sig_arr)) = (
+                    <[u8; 32]>::try_from(pk.as_slice()),
+                    <[u8; 64]>::try_from(sig.as_slice()),
+                ) else {
+                    return false;
+                };
+                let Ok(pk) = crate::crypto::signature::verifying_key_from_bytes(&pk_arr) else {
+                    return false;
+                };
+                let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+                crate::crypto::signature::verify(&pk, &msg_for_verify, &sig).is_ok()
+            }),
+        };
+        assert_eq!(
+            approvals::present(
+                &path_for_present,
+                "kit.replace",
+                &params,
+                entry,
+                2,
+                approvals::list_pending(&path_for_present)[0].initiated_at,
+                &verifier,
+            ),
+            approvals::ApprovalOutcome::Approved
+        );
+        assert!(approvals::list_pending(&path_for_present).is_empty());
+
+        // A consumed ask never approves twice: the founder's re-raise
+        // pends again under a fresh nonce (old signatures never carry).
+        let err = handle.space_recovery_kit_enable().unwrap_err().to_string();
+        assert!(err.contains("2 admin approvals"), "{err}");
+
+        // Disable runs the same fixed threshold at two admins.
+        let err = handle.space_recovery_kit_disable().unwrap_err().to_string();
+        assert!(err.contains("2 admin approvals"), "{err}");
+    }
+
+    #[test]
     fn minor_invites_and_flags_stay_non_admin() {
         let (_temp, mut handle, _pw) = family_vault();
         let (_shared, _kit) = setup_family_vault(&mut handle).unwrap();
@@ -408,7 +549,7 @@ mod tests {
         // A live Editor member with a device binding, granted Write on
         // their own collection plus Read on Shared.
         let leaver_id = uuid::Uuid::new_v4();
-        let mut leaver = crate::vault::members::MemberFile {
+        let leaver = crate::vault::members::MemberFile {
             id: leaver_id,
             display_name: "Uncle Rob".into(),
             email: None,

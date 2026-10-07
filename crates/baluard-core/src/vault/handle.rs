@@ -409,6 +409,47 @@ impl VaultHandle {
     /// sync row, so every admin device sees the ask on its next pull.
     fn quorum_gate(&self, kind: &str, params: &serde_json::Value) -> Result<(), BaluardError> {
         let required = self.get_settings()?.quorum_admin_ops.unwrap_or(1).max(1);
+        self.run_approval_gate(kind, params, required)
+    }
+
+    /// Fixed kit threshold (family-spaces section 7): 2 bounded by the
+    /// live-admin count, so a sole guardian confirms alone (founding,
+    /// every-guardian-gone) and a two-admin household needs both.
+    /// Legacy personal vaults keep 1: the founder manages. The gate
+    /// covers kit REPLACEMENT (enable-over) and disable; a first
+    /// enable stays single-admin because family creation auto-enables.
+    fn kit_gate(&self, kind: &str, params: &serde_json::Value) -> Result<(), BaluardError> {
+        let members_dir = self.path.join(crate::vault::members::MEMBERS_DIR);
+        let required = if !members_dir.exists() {
+            1
+        } else {
+            crate::vault::members::list_members(&self.path)?
+                .iter()
+                .filter(|m| {
+                    m.reset.is_none()
+                        && m.removed.is_none()
+                        && matches!(
+                            m.role,
+                            crate::vault::members::MemberRole::Owner
+                                | crate::vault::members::MemberRole::Admin
+                        )
+                })
+                .count()
+                .min(2)
+                .max(1) as u8
+        };
+        self.run_approval_gate(kind, params, required)
+    }
+
+    /// Shared ask/approve machinery. `required` is the threshold for
+    /// this op class: the space knob for general admin ops, the fixed
+    /// kit threshold for kit replacements and disable.
+    fn run_approval_gate(
+        &self,
+        kind: &str,
+        params: &serde_json::Value,
+        required: u8,
+    ) -> Result<(), BaluardError> {
         // The role gate runs at EVERY threshold: the required<=1 early
         // return used to skip it, which made root rotation (via the new
         // space.rotate_root surface) available to any unlocked session at
@@ -606,6 +647,17 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         Self::assert_kit_admin(&self.path, self.device_id)?;
+        // Enable-over (a kit already exists) replaces the household's
+        // only offline backstop: the fixed kit threshold applies. The
+        // created_at binding pins the ask to the exact kit being
+        // replaced, so an approval cannot be replayed onto a different
+        // kit. A first enable is ungated (family creation enables).
+        if let Some(kit) = crate::vault::recovery_kit::load_kit(&self.path)? {
+            self.kit_gate(
+                "kit.replace",
+                &serde_json::json!({ "created_at": kit.created_at }),
+            )?;
+        }
         crate::vault::recovery_kit::enable_kit(&self.path, self.unlocked().root()?, self.vault_id)
     }
 
@@ -615,6 +667,16 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         Self::assert_kit_admin(&self.path, self.device_id)?;
+        // Removing the backstop needs the fixed kit threshold; a
+        // disable with no kit stays an idempotent no-op. The ask binds
+        // to the kit's created_at so replacing a kit supersedes any
+        // pending disable ask against the predecessor.
+        if let Some(kit) = crate::vault::recovery_kit::load_kit(&self.path)? {
+            self.kit_gate(
+                "kit.disable",
+                &serde_json::json!({ "created_at": kit.created_at }),
+            )?;
+        }
         crate::vault::recovery_kit::disable_kit(&self.path)
     }
 
