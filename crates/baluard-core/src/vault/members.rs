@@ -350,6 +350,7 @@ pub fn reset_member(
     vault_path: &Path,
     vault_id: Uuid,
     old_member_id: Uuid,
+    replacement_template: Option<crate::vault::templates::EmbeddedTemplate>,
 ) -> Result<(Uuid, String), BaluardError> {
     let deny = |msg: &str| BaluardError::from(VaultError::InvalidOperation(msg.to_string()));
     let path = vault_path
@@ -410,7 +411,8 @@ pub fn reset_member(
         old.role,
         Some(successor_id),
         None,
-        None,
+        replacement_template,
+        false,
     )?;
     Ok((successor_id, code))
 }
@@ -855,6 +857,12 @@ pub struct PendingInviteFile {
     /// field existed (never treated as stale).
     #[serde(default)]
     pub created_at: u64,
+    /// Family-spaces section 5: the approval seals the minor record for
+    /// the fresh row, so a child joins already flagged. Mintable only
+    /// on family vaults (guardian-controlled, admin-keyed); `false`
+    /// on every other invite.
+    #[serde(default)]
+    pub minor: bool,
 }
 
 /// Joiner-side self-introduction (§4.1 join queue, offline thin
@@ -966,6 +974,7 @@ fn sha256_hex(data: &[u8]) -> String {
 /// secret hash; it is consumed at approval (single-use).
 /// `target_member` (S1a-5) is set on reset invites: approval binds that
 /// existing successor row instead of minting a new member.
+#[allow(clippy::too_many_arguments)]
 pub fn create_invite(
     vault_path: &Path,
     vault_id: Uuid,
@@ -973,6 +982,7 @@ pub fn create_invite(
     target_member: Option<Uuid>,
     transport_username: Option<String>,
     template: Option<crate::vault::templates::EmbeddedTemplate>,
+    minor: bool,
 ) -> Result<String, BaluardError> {
     // S1a-7 review: an Owner invite would mint a SECOND owner row at
     // approval, violating the single-owner invariant. Ownership changes
@@ -988,6 +998,30 @@ pub fn create_invite(
     // more; admin+ roles never mint on a Space. Refusing at mint time
     // keeps the bad invite out of the join queue entirely.
     super::space::pair_gate(vault_path, role)?;
+    // Family-spaces section 5: the minor flag is mintable only on a
+    // family vault, and never on a reset invite (the successor row
+    // carries the flag over from the old row instead).
+    if minor {
+        if !super::space::is_family(vault_path) {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "the minor flag exists only on family vaults".into(),
+            )));
+        }
+        if target_member.is_some() {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "a reset invite cannot carry the minor flag; the successor row keeps it".into(),
+            )));
+        }
+        // A minor never arrives with power: admin rank on a family
+        // vault would hand a child the SGK and every co-guardian
+        // operation. Guardians join as admins; children as editors or
+        // viewers only.
+        if !matches!(role, MemberRole::Editor | MemberRole::Viewer) {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "minors can only be invited as editors or viewers".into(),
+            )));
+        }
+    }
     let mut secret = [0u8; 32];
     use rand::RngCore;
     rand::rngs::OsRng.fill_bytes(&mut secret);
@@ -1003,6 +1037,7 @@ pub fn create_invite(
         transport_username,
         template,
         created_at: crate::providers::types::now_secs(),
+        minor,
     };
     let dir = vault_path.join(INVITES_DIR);
     std::fs::create_dir_all(&dir)
@@ -1820,6 +1855,7 @@ mod tests {
             None,
             Some("gituser".into()),
             None,
+            false,
         )
         .unwrap();
         let raw = b64_decode(&code).unwrap();
@@ -1828,8 +1864,16 @@ mod tests {
         assert_eq!(pending.transport_username.as_deref(), Some("gituser"));
 
         // No username = None (invite-only sharing still works).
-        let code =
-            create_invite(temp.path(), vault_id, MemberRole::Viewer, None, None, None).unwrap();
+        let code = create_invite(
+            temp.path(),
+            vault_id,
+            MemberRole::Viewer,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         let raw = b64_decode(&code).unwrap();
         let invite: InviteCode = serde_json::from_slice(&raw).unwrap();
         let pending = read_pending_invite(temp.path(), invite.invite_id).unwrap();
@@ -1863,8 +1907,16 @@ mod tests {
         super::super::space::set_space_flag(vault, true).unwrap();
 
         // Admin never mints on a Space.
-        let err =
-            create_invite(vault, Uuid::new_v4(), MemberRole::Admin, None, None, None).unwrap_err();
+        let err = create_invite(
+            vault,
+            Uuid::new_v4(),
+            MemberRole::Admin,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("editor or viewer"), "{err}");
 
         // Owner + one bound editor fills the pair; the next invite
@@ -1894,7 +1946,16 @@ mod tests {
             },
         )
         .unwrap();
-        create_invite(vault, Uuid::new_v4(), MemberRole::Editor, None, None, None).unwrap();
+        create_invite(
+            vault,
+            Uuid::new_v4(),
+            MemberRole::Editor,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         let member = MemberFile {
             id: Uuid::new_v4(),
             display_name: "Pair".into(),
@@ -1921,8 +1982,16 @@ mod tests {
             },
         )
         .unwrap();
-        let err =
-            create_invite(vault, Uuid::new_v4(), MemberRole::Viewer, None, None, None).unwrap_err();
+        let err = create_invite(
+            vault,
+            Uuid::new_v4(),
+            MemberRole::Viewer,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("two people"), "{err}");
     }
 

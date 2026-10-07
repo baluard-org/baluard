@@ -675,6 +675,22 @@ impl VaultHandle {
         if live.reset.is_some() || live.removed.is_some() {
             return Err(VaultError::InvalidOperation("that member row is gone".into()).into());
         }
+        // A guardian is never a minor: flagging an Owner or Admin row
+        // would gate their own swap/claim rights while they hold the
+        // keys. Clearing (minor = false) stays allowed for any row so
+        // stale records can always be cleaned up.
+        if minor
+            && !matches!(
+                live.role,
+                crate::vault::members::MemberRole::Editor
+                    | crate::vault::members::MemberRole::Viewer
+            )
+        {
+            return Err(VaultError::InvalidOperation(
+                "admins and owners cannot be flagged as minors".into(),
+            )
+            .into());
+        }
         crate::vault::family::write_minor_record(
             &self.path,
             self.unlocked().root()?,
@@ -1713,6 +1729,7 @@ impl VaultHandle {
         role: crate::vault::members::MemberRole,
         transport_username: Option<String>,
         embedded: crate::vault::templates::EmbeddedTemplate,
+        minor: bool,
     ) -> Result<String, BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
@@ -1734,6 +1751,7 @@ impl VaultHandle {
             None,
             transport_username,
             Some(embedded),
+            minor,
         )
     }
 
@@ -1775,6 +1793,7 @@ impl VaultHandle {
                 name: template.name,
                 grants: template.grants,
             }),
+            false,
         )
     }
 
@@ -3110,6 +3129,7 @@ impl VaultHandle {
             None,
             transport_username,
             None,
+            false,
         )
     }
 
@@ -3123,6 +3143,7 @@ impl VaultHandle {
     pub fn member_reset(
         &mut self,
         member_id: uuid::Uuid,
+        replacement_template: Option<crate::vault::templates::EmbeddedTemplate>,
     ) -> Result<(uuid::Uuid, String), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
@@ -3143,13 +3164,29 @@ impl VaultHandle {
             "member_reset",
             &serde_json::json!({ "member_id": member_id }),
         )?;
-        let (successor, code) =
-            crate::vault::members::reset_member(&self.path, self.vault_id, member_id)?;
+        // Family-spaces section 5: a flagged minor keeps the flag
+        // across a reset (a new tablet does not grow the child up).
+        // Read BEFORE the tombstone; re-seal under the successor id.
+        let was_minor = crate::vault::family::minor_record_exists(&self.path, &member_id);
+        let (successor, code) = crate::vault::members::reset_member(
+            &self.path,
+            self.vault_id,
+            member_id,
+            replacement_template,
+        )?;
         // S4-2: group memberships die with the reset — the successor
         // re-joins fresh, and each affected group's GK rotates so the
         // reset row's gkwrap opens nothing (review F3). The successor
         // can be re-added to groups by an admin.
         crate::vault::groups::prune_member(&self.path, self.unlocked().sgk()?, &member_id)?;
+        if was_minor {
+            crate::vault::family::write_minor_record(
+                &self.path,
+                self.unlocked().root()?,
+                &successor,
+                true,
+            )?;
+        }
         // S3-7a: the successor row re-joins with a fresh identity, so the
         // stale identity-keyed wrap is dead mail. Best-effort (the 7b
         // gate counts it via status; prepare re-mints on the new card).
@@ -3578,7 +3615,9 @@ impl VaultHandle {
         // S1b-1: activity log (best-effort).
         self.emit_share_event(
             crate::vault::events::ShareEventKind::OwnershipClaimed,
-            format!("ownership claimed from member {old_member_id}"),
+            format!(
+                "ownership claimed from member {old_member_id} by member {new_owner_id}; every device sees this on its next sync"
+            ),
         );
         Ok(())
     }
@@ -3943,6 +3982,18 @@ impl VaultHandle {
                 identity_wrap_pubkey: identity_wrap,
             };
             crate::vault::members::write_member(&self.path, &member)?;
+            // Family-spaces section 5: a flagged invite seals the minor
+            // record at approval, so the child joins already flagged.
+            // Admin-device only (the root-derived record key); a
+            // failure fails the approval rather than joining unflagged.
+            if invite.minor {
+                crate::vault::family::write_minor_record(
+                    &self.path,
+                    self.unlocked().root()?,
+                    &member.id,
+                    true,
+                )?;
+            }
             member
         };
         crate::vault::members::write_device_binding(
@@ -14293,7 +14344,7 @@ mod tests {
         // The demoted owner (now admin) resets the new owner's row; the
         // successor inherits the Owner role, so the owner rejoins as self.
         let (successor_id, _reset_code) = handle
-            .member_reset(joiner_member_id)
+            .member_reset(joiner_member_id, None)
             .expect("admin resets an owner row per the family path");
         let successor =
             crate::vault::members::member_file_by_id(&owner_path, successor_id).unwrap();
@@ -14303,7 +14354,10 @@ mod tests {
         let joiner_member =
             crate::vault::members::member_id_for_device(&joiner_path, joiner.device_id);
         assert_eq!(joiner_member, Some(joiner_member_id));
-        assert!(joiner.member_reset(joiner_member_id).is_err(), "self-reset");
+        assert!(
+            joiner.member_reset(joiner_member_id, None).is_err(),
+            "self-reset"
+        );
     }
 
     /// Threshold 2: the claim becomes a two-admin ask. The ask binds
@@ -15135,7 +15189,7 @@ mod tests {
         // the Root Key is deliberately not rotated.
         let admin_member =
             crate::vault::members::member_id_for_device(&owner_path, joiner_device).unwrap();
-        handle.member_reset(admin_member).unwrap();
+        handle.member_reset(admin_member, None).unwrap();
         engine_o.commit_all(&repo_o, "reset admin").unwrap();
 
         // The old device pulls the tombstone and must NOT unlock: the
@@ -16102,15 +16156,15 @@ mod tests {
                 .invite_create(crate::vault::members::MemberRole::Viewer, None)
                 .is_err()
         );
-        assert!(joiner.member_reset(old_member_id).is_err());
+        assert!(joiner.member_reset(old_member_id, None).is_err());
 
         // Gates: unknown reset and self reset refuse; the OWNER row is
         // now resettable by an admin (S13) but the owner resetting their
         // own row is still the self guard.
-        assert!(handle.member_reset(uuid::Uuid::new_v4()).is_err());
-        let (successor_id, reset_code) = handle.member_reset(old_member_id).unwrap();
+        assert!(handle.member_reset(uuid::Uuid::new_v4(), None).is_err());
+        let (successor_id, reset_code) = handle.member_reset(old_member_id, None).unwrap();
         // Double reset refused.
-        assert!(handle.member_reset(old_member_id).is_err());
+        assert!(handle.member_reset(old_member_id, None).is_err());
         // S1b-1: the reset landed in the activity log.
         assert_eq!(
             handle.share_events(50).unwrap().last().unwrap().kind,
@@ -16700,7 +16754,7 @@ mod tests {
 
         // A RESET-tombstoned row is also refused as a successor (D above
         // covered the removal tombstone).
-        handle.member_reset(member_c_id).unwrap();
+        handle.member_reset(member_c_id, None).unwrap();
         assert!(handle.transfer_ownership(member_c_id).is_err());
     }
 
