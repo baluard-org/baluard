@@ -219,6 +219,10 @@ pub struct CeremonySecrets {
     pub trust_fingerprint: [u8; 32],
     pub device_id: Uuid,
     pub vault_id: Uuid,
+    /// Family-spaces section 7: the family kit phrase, shown exactly
+    /// once at creation. `None` on personal vaults and on resumed
+    /// family runs whose kit already exists.
+    pub kit_phrase: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Drop for CeremonySecrets {
@@ -707,22 +711,25 @@ impl<'a> VaultCreator<'a> {
                     }),
                 };
 
-                let secrets = CeremonySecrets {
+                let mut secrets = CeremonySecrets {
                     recovery_phrase,
                     trust_fingerprint,
                     device_id,
                     vault_id,
+                    kit_phrase: None,
                 };
 
                 // Apply wizard profile + preferences
                 self.apply_wizard_settings(&handle)?;
 
                 // Family transaction runs LAST: purpose -> Shared +
-                // Guardians -> flip, so a failure above leaves a plain
-                // personal vault and a failure below leaves a resumable
-                // family vault (setup_family_vault is idempotent).
+                // Guardians -> flip -> kit, so a failure above leaves a
+                // plain personal vault and a failure below leaves a
+                // resumable family vault (setup_family_vault is
+                // idempotent).
                 if self.family {
-                    super::family::setup_family_vault(&mut handle)?;
+                    let (_, kit) = super::family::setup_family_vault(&mut handle)?;
+                    secrets.kit_phrase = kit.map(zeroize::Zeroizing::new);
                 }
 
                 Ok((handle, secrets))
@@ -980,6 +987,7 @@ impl<'a> VaultCreator<'a> {
                     trust_fingerprint,
                     device_id,
                     vault_id,
+                    kit_phrase: None,
                 };
 
                 // Apply wizard profile + preferences

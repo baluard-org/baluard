@@ -362,6 +362,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "members.leave",
     // members.leave_list is a read query: no cover commit, no nudge.
     "members.leave_approve",
+    "members.replace_device",
     "requests.approve",
     "requests.deny",
     "tag.create",
@@ -5031,6 +5032,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+        // Family-spaces section 8: stolen-device journey in one op.
+        "members.replace_device" => match state.members_replace_device(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
         "members.claim" => match state.members_claim(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
@@ -6321,6 +6327,7 @@ mod tests {
             "members.leave",
             "members.leave_list",
             "members.leave_approve",
+            "members.replace_device",
             "policies.set",
             "collections.request_access",
             "collections.requests_withdraw",

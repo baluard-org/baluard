@@ -2576,6 +2576,10 @@ impl VaultState {
                                 expires_in_days: None,
                             }],
                         },
+                        // The family default is never a minor invite:
+                        // flagged children come from the creation
+                        // wizard with per-person grants.
+                        false,
                     )
                     .map_err(|e| e.to_string())?,
                 None => handle
@@ -2661,7 +2665,9 @@ impl VaultState {
         let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
         let member_id = uuid::Uuid::parse_str(v["member_id"].as_str().ok_or("missing member_id")?)
             .map_err(|e| e.to_string())?;
-        let outcome = handle.member_reset(member_id).map_err(|e| e.to_string());
+        let outcome = handle
+            .member_reset(member_id, None)
+            .map_err(|e| e.to_string());
         drop(guard);
         if let Err(e) = &outcome {
             // A quorum refusal leaves a pending ask on disk — ship it.
@@ -3268,6 +3274,67 @@ impl VaultState {
             }
         }
         Ok(out)
+    }
+
+    /// Replacement grants for a reset successor: the same openable set
+    /// the departure ceremony captures, but with the member's real
+    /// access levels so the replacement invite restores what the child
+    /// had (family-spaces section 8). Admins ride the SGK, so their
+    /// cosmetic re-grants come back as Read.
+    #[allow(clippy::type_complexity)]
+    fn replacement_grants_for_member(
+        handle: &baluard_core::vault::VaultHandle,
+        member_id: uuid::Uuid,
+    ) -> Result<
+        Vec<(
+            uuid::Uuid,
+            baluard_core::vault::collections::CollectionAccess,
+        )>,
+        String,
+    > {
+        use baluard_core::vault::collections::{CollectionAccess, GrantTarget};
+        use baluard_core::vault::members::MemberRole;
+        let role = baluard_core::vault::members::member_file_by_id(&handle.path, member_id)
+            .map(|row| row.role);
+        if matches!(role, Some(MemberRole::Owner) | Some(MemberRole::Admin)) {
+            return Ok(handle
+                .collections_list()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|(id, _, _)| (id, CollectionAccess::Read))
+                .collect());
+        }
+        let groups: std::collections::HashSet<uuid::Uuid> = handle
+            .groups_list()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|(_, _, members)| members.contains(&member_id))
+            .map(|(id, _, _)| id)
+            .collect();
+        let rank = |a: &CollectionAccess| match a {
+            CollectionAccess::Read => 0,
+            CollectionAccess::Write => 1,
+            CollectionAccess::Manage => 2,
+        };
+        let mut best: std::collections::HashMap<uuid::Uuid, CollectionAccess> =
+            std::collections::HashMap::new();
+        for (cid, _, grants) in handle.collections_list().map_err(|e| e.to_string())? {
+            for g in &grants {
+                let hit = match &g.target {
+                    GrantTarget::Member { id } => *id == member_id,
+                    GrantTarget::Group { id } => groups.contains(id),
+                };
+                if hit
+                    && best
+                        .get(&cid)
+                        .map(|b| rank(b) < rank(&g.access))
+                        .unwrap_or(true)
+                {
+                    best.insert(cid, g.access);
+                }
+            }
+        }
+        Ok(best.into_iter().collect())
     }
 
     /// Shared removal executor: pre-flight under a read lock, provider
@@ -6947,6 +7014,149 @@ impl VaultState {
 
     /// Revoke a device by UUID. Removes it from the registry and rotates keys.
     /// Only works for the current (self) device initiating the revoke.
+    /// Family-spaces section 8, the stolen-device journey in one
+    /// op: tombstone the member with a fresh successor (their invite
+    /// code returns exactly once), optionally revoke-and-rekey the
+    /// stolen device (Root Key rotation, cipher re-encryption, kit
+    /// rewrap, D78 verifier refresh), then rotate every collection the
+    /// member could open so keys the thief extracted die with the old
+    /// epoch. The successor keeps the member's minor flag; re-grants
+    /// ride the replacement invite's embedded template.
+    pub async fn members_replace_device(&self, payload: &str) -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let member_id: uuid::Uuid = v["member_id"]
+            .as_str()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .ok_or("invalid or missing 'member_id'")?;
+        let revoke_device = v
+            .get("revoke_device")
+            .and_then(|r| r.as_bool())
+            .unwrap_or(true);
+
+        // Pre-flight under a read lock: the member must be live and
+        // not the actor; capture the openable set BEFORE anything dies.
+        let (grants_to_restore, had_kit, vault_id) = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault is locked")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            let row = baluard_core::vault::members::member_file_by_id(&handle.path, member_id)
+                .ok_or_else(|| format!("no member row {member_id}"))?;
+            if row.removed.is_some() || row.reset.is_some() {
+                return Err("that member row is already gone".into());
+            }
+            if baluard_core::vault::members::member_id_for_device(&handle.path, handle.device_id)
+                == Some(member_id)
+            {
+                return Err("resetting your own member row would lock you out".into());
+            }
+            (
+                Self::replacement_grants_for_member(handle, member_id)?,
+                baluard_core::vault::recovery_kit::kit_exists(&handle.path).unwrap_or(false),
+                handle.vault_id,
+            )
+        };
+
+        // Reset: tombstone + successor + replacement invite code. The
+        // invite embeds the captured grants so the rejoining child
+        // keeps Shared and their own collections (a reset successor
+        // starts with zero grants otherwise).
+        let replacement = baluard_core::vault::templates::EmbeddedTemplate {
+            name: "Replacement device (restored grants)".to_string(),
+            grants: grants_to_restore
+                .iter()
+                .map(
+                    |(cid, access)| baluard_core::vault::templates::TemplateGrant {
+                        collection_id: *cid,
+                        access: *access,
+                        expires_in_days: None,
+                    },
+                )
+                .collect(),
+        };
+        let (successor, invite_code) = {
+            let mut guard = self.inner.write().await;
+            let handle = guard.as_mut().ok_or("Vault is locked")?;
+            handle
+                .member_reset(member_id, Some(replacement))
+                .map_err(|e| e.to_string())?
+        };
+
+        // Optional revoke-and-rekey of the stolen device. Best-effort:
+        // if the device is already gone the reset struck it; report.
+        let mut revoke_error = None;
+        if revoke_device {
+            // The member's bound devices (bindings stay on disk and
+            // inert after a reset, so the walk still finds them).
+            let devices_dir = {
+                let guard = self.inner.read().await;
+                let handle = guard.as_ref().ok_or("Vault is locked")?;
+                handle
+                    .path
+                    .join(baluard_core::vault::members::MEMBERS_DIR)
+                    .join(member_id.to_string())
+                    .join("devices")
+            };
+            let stolen: Vec<uuid::Uuid> = std::fs::read_dir(&devices_dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .filter_map(|e| {
+                            // Binding files are <device_id>.json.
+                            let name = e.file_name();
+                            uuid::Uuid::parse_str(name.to_string_lossy().strip_suffix(".json")?)
+                                .ok()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            for device_id in stolen {
+                let mut guard = self.inner.write().await;
+                let handle = guard.as_mut().ok_or("Vault is locked")?;
+                if device_id == handle.device_id {
+                    continue;
+                }
+                if let Err(e) = handle.revoke_device_and_rekey(device_id) {
+                    revoke_error = Some(format!("{device_id}: {e}"));
+                    break;
+                }
+            }
+        }
+
+        // Rotate the captured collections under the (possibly new)
+        // epoch, pruning the old member's grant rows and wraps. The
+        // successor re-grants ride the replacement invite; the rotation
+        // kills keys the thief may hold in memory.
+        let mut rotation_failed: Vec<String> = Vec::new();
+        {
+            let mut guard = self.inner.write().await;
+            let handle = guard.as_mut().ok_or("Vault is locked")?;
+            if handle.is_unlocked() {
+                for (cid, _access) in &grants_to_restore {
+                    if let Err(e) = handle.collection_rotate_key(*cid, Some(member_id)) {
+                        rotation_failed.push(format!("{cid}: {e}"));
+                    }
+                }
+            }
+        }
+
+        let report = serde_json::json!({
+            "successor": successor.to_string(),
+            "invite_code": invite_code,
+            "collections_rotated": grants_to_restore.len() - rotation_failed.len(),
+            "rotation_failed": rotation_failed,
+            "revoke_error": revoke_error,
+            // Informational: a theft does not compromise the kit
+            // phrase (it never rode the stolen device), and the
+            // revoke-and-rekey leg rewraps the kit file to the new
+            // Root Key without it.
+            "kit_present": had_kit,
+            "vault_id": vault_id.to_string(),
+        });
+        Ok(report.to_string())
+    }
+
     pub async fn device_revoke(&self, device_id_str: &str) -> Result<String, String> {
         let device_id: uuid::Uuid = device_id_str.parse().map_err(|_| "Invalid UUID")?;
 
@@ -7230,6 +7440,10 @@ impl VaultState {
             .and_then(|s| s.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
+        // Family-spaces section 13 step 6: create the vault AS a family
+        // vault (purpose, Shared + Guardians, team shape, kit) in the
+        // one transaction; the response carries the kit phrase.
+        let family = v.get("family").and_then(|f| f.as_bool()).unwrap_or(false);
         let (handle, secrets) = baluard_core::vault::creation::VaultCreator::new(
             &self.vault_path,
             &password,
@@ -7238,6 +7452,7 @@ impl VaultState {
         .slug(slug_for_marker)
         .kdf_profile(profile)
         .profile(vault_name.clone(), None)
+        .family(family)
         .execute()
         .map_err(|e| format!("Vault creation failed: {e}"))?;
 
@@ -7262,7 +7477,7 @@ impl VaultState {
                 .as_secs(),
             Ordering::Relaxed,
         );
-        let response = serde_json::json!({
+        let mut response = serde_json::json!({
             "vault_id": secrets.vault_id.to_string(),
             "device_id": secrets.device_id.to_string(),
             "recovery_phrase": secrets.recovery_phrase.phrase(),
@@ -7270,6 +7485,11 @@ impl VaultState {
             "session_token": token,
             "vault_name": vault_name,
         });
+        // The family kit phrase rides the creation response exactly
+        // once; absent (not null) on personal vaults and resumed runs.
+        if let Some(kit) = &secrets.kit_phrase {
+            response["kit_phrase"] = serde_json::Value::String(kit.to_string());
+        }
         Ok(response.to_string())
     }
 
