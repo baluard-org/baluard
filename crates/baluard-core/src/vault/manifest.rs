@@ -307,6 +307,14 @@ pub struct VaultSettings {
     /// is refused. `None` on every non-family vault.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family_shared_collection: Option<uuid::Uuid>,
+    /// G24 merge ceiling (family-spaces step 7): the synced admin
+    /// answer to whether this Space's entries merge into the member's
+    /// personal search and autofill. Absent follows the purpose
+    /// (family on, everything else off) via
+    /// `space::effective_personal_merge`; an explicit value overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personal_merge: Option<bool>,
+
     /// App-to-web suggestion toggle (path B trust-on-first-use). When true,
     /// native-app fills may surface web-saved logins whose registrable domain
     /// matches a package-name-derived candidate, after the user explicitly
@@ -442,6 +450,14 @@ pub struct EncryptedSettings {
     /// Family vaults: the system `Shared` collection id (see VaultSettings).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family_shared_collection: Option<uuid::Uuid>,
+    /// G24 merge ceiling (family-spaces step 7): the synced admin
+    /// answer to whether this Space's entries merge into the member's
+    /// personal search and autofill. Absent follows the purpose
+    /// (family on, everything else off) via
+    /// `space::effective_personal_merge`; an explicit value overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personal_merge: Option<bool>,
+
     /// App-to-web suggestion toggle (path B trust-on-first-use).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggest_app_logins: Option<bool>,

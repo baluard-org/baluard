@@ -138,6 +138,8 @@ fn spawn_vaulted() -> VaultedHandle {
             last_synced: None,
             last_opened: None,
             vault_id: uuid::Uuid::new_v4(),
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
         })
         .expect("registry add");
         reg.save_to(&registry_path).expect("registry save");
