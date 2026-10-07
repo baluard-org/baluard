@@ -3162,8 +3162,21 @@ impl VaultState {
                 }
             }
             let leaver_collections = Self::leaver_openable_collections(handle, member_id)?;
-            let had_kit = baluard_core::vault::recovery_kit::kit_exists(&handle.path)
-                .map_err(|e| e.to_string())?;
+            // Only a guardian's departure forces the kit re-issue: a
+            // child leaving must not stage a doomed two-admin ask.
+            let leaver_is_guardian =
+                baluard_core::vault::members::member_file_by_id(&handle.path, member_id)
+                    .map(|m| {
+                        matches!(
+                            m.role,
+                            baluard_core::vault::members::MemberRole::Owner
+                                | baluard_core::vault::members::MemberRole::Admin
+                        )
+                    })
+                    .unwrap_or(false);
+            let had_kit = leaver_is_guardian
+                && baluard_core::vault::recovery_kit::kit_exists(&handle.path)
+                    .map_err(|e| e.to_string())?;
             (vault_id, leaver_collections, had_kit)
         };
         let drop_ids = rotate_ids;

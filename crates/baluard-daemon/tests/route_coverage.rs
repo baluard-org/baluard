@@ -2151,13 +2151,14 @@ async fn family_leave_journey_files_lists_and_approves() {
         .unwrap();
     // Enable the kit so the approval must re-issue it.
     let _old_phrase = handle.space_recovery_kit_enable().unwrap();
-    // A live Editor leaver with a device binding and a Shared Read grant.
+    // A live ADMIN leaver (guardian) with a device binding and a
+    // Shared Read grant: guardian departures force the kit re-issue.
     let leaver_id = uuid::Uuid::new_v4();
     let leaver = baluard_core::vault::members::MemberFile {
         id: leaver_id,
         display_name: "Uncle Rob".into(),
         email: None,
-        role: baluard_core::vault::members::MemberRole::Editor,
+        role: baluard_core::vault::members::MemberRole::Admin,
         trust: baluard_core::vault::members::TrustLevel::Channel,
         identity_signing_pubkey: None,
         identity_signing_pubkey_previous: None,
