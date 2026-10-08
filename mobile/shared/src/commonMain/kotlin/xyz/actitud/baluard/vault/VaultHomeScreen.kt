@@ -82,6 +82,8 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.ui.components.cipherTypeTheme
 import xyz.actitud.baluard.ui.toast.Toast
+import xyz.actitud.baluard.ui.E2eTags
+import androidx.compose.ui.platform.testTag
 
 /**
  * Hub screen (Bitwarden-style): instead of a flat entry list, the home page
@@ -182,10 +184,17 @@ fun VaultHomeScreen(
                 },
                 actions = {
                     SyncIconButton(phase = syncPhase, onClick = onSyncClick)
-                    TopBarActionIcon(Icons.Default.Add, t("vault.addEntry"), onAddEntry, highlight = true)
+                    TopBarActionIcon(
+                    Icons.Default.Add, t("vault.addEntry"), onAddEntry,
+                    highlight = true,
+                    modifier = Modifier.testTag(E2eTags.LIST_ADD),
+                )
                     TopBarActionIcon(Icons.Default.Password, t("generator.title"), onOpenGenerator)
                     TopBarActionIcon(Icons.Default.Settings, t("settings.title"), onOpenSettings)
-                    TopBarActionIcon(Icons.Default.Lock, t("vault.lockVault"), onLock)
+                    TopBarActionIcon(
+                    Icons.Default.Lock, t("vault.lockVault"), onLock,
+                    modifier = Modifier.testTag(E2eTags.LIST_LOCK),
+                )
                 },
             )
         },
@@ -365,6 +374,7 @@ fun VaultHomeScreen(
                 onValueChange = { listViewModel.setQuery(it) },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .testTag(E2eTags.LIST_SEARCH)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
 
@@ -718,9 +728,10 @@ private fun TopBarActionIcon(
     contentDescription: String,
     onClick: () -> Unit,
     highlight: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .padding(horizontal = 3.dp)
             .size(36.dp)
             .clip(RoundedCornerShape(10.dp))

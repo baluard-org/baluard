@@ -128,7 +128,7 @@ The highest-value layer and the cheapest. The CLI is the executable spec, so thi
 |---|---|
 | Enabling work E1-E13 | Not started; E1-E6 ride with Phase 1, E10-E13 too |
 | Phase 1 CLI + daemon | Not started; multi-device flow gated on a spike |
-| Phase 2 Android Maestro | Not started; needs E12 + native-build CI |
+| Phase 2 Android Maestro | Enabling work landed (E12 gate, test tags, boot wait, runner, 3 flows); flows unrun pending a Maestro install + dedicated device/emulator; CI needs the x86_64 native build |
 | Phase 3 Desktop wdio | Blocked on this box's GTK headers (`just sysdeps`); CI carries it; needs E6/E7 |
 | Phase 4 Extension | Not started; needs E6/E8 |
 
