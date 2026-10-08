@@ -954,46 +954,44 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
             if let Err(e) = active_state.verify_session_token(&req.session_token).await {
                 return err_response(e);
             }
-            // Snapshot rows WITHOUT holding the host lock across the
-            // per-vault envelope awaits (same discipline as host.list).
-            let rows = host.list().await;
+            // G24 §4.1/§4.2: the merge is eligibility-gated. An
+            // ineligible Space (organization ceiling off, member
+            // opt-out, never-classified) keeps its metadata row but
+            // carries no ciphers - the deliberate D31 retrofit that
+            // makes org friction consistent across surfaces. This
+            // includes the ACTIVE row when the user sits in an org
+            // Space: the desktop drops active rows here and reads the
+            // active vault through vault.list_full, so nothing is
+            // lost, and the exemption must NOT live in the shared
+            // helper (it would leak org items into bridge.match).
+            let rows = merge_fanout_rows(host).await;
             let mut merged = Vec::with_capacity(rows.len());
             for row in rows {
-                let mut obj = serde_json::json!({
-                    "slug": row.slug,
-                    "display_name": row.display_name,
-                    "space": row.space,
-                    "active": row.active,
-                    "presence": row.presence,
-                });
-                if row.presence == "unlocked" {
-                    if let Some(state) = host.get(&row.slug).await {
-                        match state.full_envelope().await {
-                            Ok(env) => {
-                                if let Some(o) = obj.as_object_mut() {
-                                    if row.active {
-                                        // Active row keeps the full envelope
-                                        // shape (mirrors vault.list_full).
-                                        for key in
-                                            ["ciphers", "folders", "trash", "archived", "tags"]
-                                        {
-                                            o.insert(key.to_string(), env[key].clone());
-                                        }
-                                    } else {
-                                        // Sibling rows carry only the item
-                                        // list — folders/trash/tags belong to
-                                        // their own vault's view, and skipping
-                                        // them keeps the merged frame small.
-                                        o.insert("ciphers".into(), env["ciphers"].clone());
+                let mut obj = row.meta;
+                if let Some(state) = row.state {
+                    match state.full_envelope().await {
+                        Ok(env) => {
+                            if let Some(o) = obj.as_object_mut() {
+                                if o["active"].as_bool().unwrap_or(false) {
+                                    // Active row keeps the full envelope
+                                    // shape (mirrors vault.list_full).
+                                    for key in ["ciphers", "folders", "trash", "archived", "tags"] {
+                                        o.insert(key.to_string(), env[key].clone());
                                     }
+                                } else {
+                                    // Sibling rows carry only the item
+                                    // list - folders/trash/tags belong to
+                                    // their own vault's view, and skipping
+                                    // them keeps the merged frame small.
+                                    o.insert("ciphers".into(), env["ciphers"].clone());
                                 }
                             }
-                            // A vault that locked mid-scan degrades to a
-                            // metadata row with CORRECTED presence; never
-                            // fail the whole merge.
-                            Err(_) => {
-                                obj["presence"] = serde_json::json!("locked");
-                            }
+                        }
+                        // A vault that locked mid-scan degrades to a
+                        // metadata row with CORRECTED presence; never
+                        // fail the whole merge.
+                        Err(_) => {
+                            obj["presence"] = serde_json::json!("locked");
                         }
                     }
                 }
@@ -1900,6 +1898,48 @@ async fn handle_bridge_host_route(
 /// Enforces: BRIDGE_ALLOWED_ACTIONS (Decision 7); vault.update field gate
 /// (no fido2_credentials, no uris — Decision 13); per-pairing read-rate cap
 /// on bridge.match / vault.get; active vault MUST be unlocked
+/// G24 (plan-merged-search §4.1): one fan-out walk over the host map,
+/// shared by every merged reader. Every vault yields a metadata row;
+/// the state is attached ONLY when the vault is merge-eligible (the
+/// device-local registry predicate: admin ceiling cache + member
+/// opt-in) and unlocked, so no merged reader can ever touch an
+/// ineligible or locked vault's data. A registry that fails to load
+/// fails closed: all rows come back metadata-only.
+struct MergeFanoutRow {
+    meta: serde_json::Value,
+    eligible: bool,
+    state: Option<SharedVaultState>,
+}
+
+async fn merge_fanout_rows(host: &SharedVaultHost) -> Vec<MergeFanoutRow> {
+    let registry = baluard_core::vault::registry::VaultRegistry::load_locked().ok();
+    let rows = host.list().await;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let eligible = registry
+            .as_ref()
+            .map(|r| r.merge_eligible(&row.slug))
+            .unwrap_or(false);
+        let state = if eligible && row.presence == "unlocked" {
+            host.get(&row.slug).await
+        } else {
+            None
+        };
+        out.push(MergeFanoutRow {
+            meta: serde_json::json!({
+                "slug": row.slug,
+                "display_name": row.display_name,
+                "space": row.space,
+                "active": row.active,
+                "presence": row.presence,
+            }),
+            eligible,
+            state,
+        });
+    }
+    out
+}
+
 /// (Decision 5 lock binding). Then snapshots the active vault and delegates
 /// the actual op (bridge.match / bridge.config are NEW; the rest reuse the
 /// existing vault.* semantics via route_request).
@@ -1964,11 +2004,60 @@ async fn route_bridge_request(
         Ok(pair) => pair,
         Err(_) => return err_response("locked"),
     };
-    let state: SharedVaultState = snapshot.1.clone();
+    let mut state: SharedVaultState = snapshot.1.clone();
     let active_slug = snapshot.0.clone();
 
-    // 5. Active vault MUST be unlocked.
-    if !state.is_unlocked().await {
+    // 4b. G24 §4.4 slug-scoped reads: vault.get / cipher.totp_code may
+    //     name a sibling vault (cipher UUIDs are per-vault). The target
+    //     resolves BEFORE any per-vault gate so the origin binding and
+    //     the delegated token bind the right vault, not the active
+    //     one. The slug must be merge-eligible and the target
+    //     unlocked; anything else is refused exactly like an unknown
+    //     vault (fail closed).
+    if matches!(req.action.as_str(), "vault.get" | "cipher.totp_code") {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) {
+            if let Some(slug) = v.get("vault_slug").and_then(|x| x.as_str()) {
+                if !slug.is_empty() && slug != active_slug {
+                    // A slug-scoped read targets a foreign vault, so it
+                    // MUST carry the page URL: without it the origin
+                    // binding below would be skipped and any UUID from
+                    // any enabled vault would be readable (plan §4.4).
+                    let has_url = v
+                        .get("url")
+                        .and_then(|x| x.as_str())
+                        .map(|u| !u.is_empty())
+                        .unwrap_or(false);
+                    if !has_url {
+                        return err_response("slug-scoped bridge reads require a page URL");
+                    }
+                    let eligible = baluard_core::vault::registry::VaultRegistry::load_locked()
+                        .ok()
+                        .map(|r| r.merge_eligible(slug))
+                        .unwrap_or(false);
+                    let target = if eligible { host.get(slug).await } else { None };
+                    match target {
+                        Some(t) if t.is_unlocked().await => state = t,
+                        Some(_) => return err_response("vault is locked"),
+                        None => return err_response("vault not available for bridge reads"),
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Gate. Most actions demand the ACTIVE vault unlocked. The
+    //    merged read (bridge.match) passes when ANY merge-eligible
+    //    vault is unlocked (G24 §4.3): a sleeping personal vault must
+    //    not blank autofill while a family Space is open.
+    if req.action.as_str() == "bridge.match" {
+        let any_unlocked = merge_fanout_rows(host)
+            .await
+            .iter()
+            .any(|r| r.state.is_some());
+        if !any_unlocked {
+            return err_response("locked");
+        }
+    } else if !state.is_unlocked().await {
         return err_response("locked");
     }
 
@@ -2040,7 +2129,7 @@ async fn route_bridge_request(
         d
     };
     match req.action.as_str() {
-        "bridge.match" => handle_bridge_match(req, &state, &vault_name).await,
+        "bridge.match" => handle_bridge_match(req, host, &vault_name).await,
         "bridge.config" => handle_bridge_config(&state).await,
         // vault.get / vault.add / vault.update / cipher.totp_code /
         // generator.* / sync.autosync_status all reuse the normal path.
@@ -2122,36 +2211,17 @@ async fn bridge_read_matches_page(
         // Malformed id: the generic handler produces the proper error.
         return Ok(());
     };
-    let want = hostname_of(url);
-    if want.is_empty() {
-        return Err("unparseable page URL".to_string());
-    }
-    // Decrypted fetch: URI data lives inside the decrypted kind.
-    let cipher_json = state.get_cipher(id, true).await?;
-    let c: serde_json::Value =
-        serde_json::from_str(&cipher_json).map_err(|e| format!("cipher parse: {e}"))?;
-    let uris = c["kind"]["data"]["uris"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    if uris.is_empty() {
-        log::info!(
-            "[daemon] bridge read of URI-less cipher {id} from {url} (extension-owned UI policy)"
-        );
-        return Ok(());
-    }
-    let matched = uris.iter().any(|u| {
-        let stored = u["uri"]
-            .as_str()
-            .or_else(|| u.as_str())
-            .map(hostname_of)
-            .unwrap_or_default();
-        !stored.is_empty() && hostname_matches(&stored, &want)
-    });
-    if matched {
-        Ok(())
-    } else {
-        Err(format!("no stored URI matches {want}"))
+    // G24 §4.3: ONE matcher everywhere. The read check rides the same
+    // UriMatchStrategy evaluation (plus the vault's custom equivalent
+    // domains) as bridge.match, so a suggested credential is exactly a
+    // readable credential - never loosely accepted, never falsely
+    // rejected on an equivalent domain.
+    match state.cipher_matches_uri(id, url).await? {
+        true => Ok(()),
+        false => {
+            let want = hostname_of(url);
+            Err(format!("no stored URI matches {want}"))
+        }
     }
 }
 
@@ -2210,59 +2280,93 @@ async fn finalize_pair(
 /// the user picks.
 async fn handle_bridge_match(
     req: GatewayRequest,
-    state: &SharedVaultState,
+    host: &SharedVaultHost,
     vault_name: &str,
 ) -> GatewayResponse {
     let url: String = match serde_json::from_str::<serde_json::Value>(&req.payload) {
         Ok(v) => v["url"].as_str().unwrap_or("").to_string(),
         Err(_) => return err_response("Invalid JSON"),
     };
-    let want = hostname_of(&url);
-    if want.is_empty() {
+    if url.is_empty() {
         return ok_resp(
-            serde_json::json!({ "matches": [], "active_vault": vault_name }).to_string(),
+            serde_json::json!({ "matches": [], "vaults": [], "active_vault": vault_name })
+                .to_string(),
             None,
         );
     }
-    match state.list_all().await {
-        Ok(blob) => {
-            let v: serde_json::Value = serde_json::from_str(&blob).unwrap_or_default();
-            let ciphers = v["ciphers"].as_array().cloned().unwrap_or_default();
-            let matched: Vec<serde_json::Value> = ciphers
-                .into_iter()
-                .filter(|c| {
-                    // CipherKind serializes as {"type":"login","data":{...}}
-                    // (#[serde(tag="type", content="data")]). URIs live at
-                    // kind.data.uris for the Login variant.
-                    let uris = c["kind"]["data"]["uris"]
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default();
-                    uris.iter().any(|u| {
-                        let stored = u["uri"]
-                            .as_str()
-                            .or_else(|| u.as_str())
-                            .map(hostname_of)
-                            .unwrap_or_default();
-                        !stored.is_empty() && hostname_matches(&stored, &want)
-                    })
-                })
-                .map(|c| {
-                    serde_json::json!({
-                        "id": c["id"],
-                        "name": c["name"],
-                        "username": c.get("username").cloned().unwrap_or(serde_json::Value::Null),
-                        "cipher_type": c.get("cipher_type").cloned().unwrap_or(serde_json::Value::Null),
-                    })
-                })
-                .collect();
-            ok_resp(
-                serde_json::json!({ "matches": matched, "active_vault": vault_name }).to_string(),
-                None,
-            )
+    // G24 §4.3: fan out over the unlocked merge-eligible vaults using
+    // VaultState::autofill_query - login-only, no passwords,
+    // UriMatchStrategy with the vault's custom equivalent domains. The
+    // old loose hostname matcher over list_all (which decrypted and
+    // serialized every cipher including passwords on every tab event)
+    // retires here: one matcher everywhere.
+    let rows = merge_fanout_rows(host).await;
+    let mut matches: Vec<serde_json::Value> = Vec::new();
+    let mut vaults: Vec<serde_json::Value> = Vec::new();
+    // (space, slug, name) per contributing vault, for cross-vault
+    // ranking: the personal vault outranks Spaces so a shared favorite
+    // never beats the user's own login (plan §4.11).
+    let mut vault_rank: Vec<(bool, String, String)> = Vec::new();
+    for row in rows {
+        let slug = row.meta["slug"].as_str().unwrap_or_default().to_string();
+        let name = row.meta["display_name"]
+            .as_str()
+            .unwrap_or(&slug)
+            .to_string();
+        let space = row.meta["space"].as_bool().unwrap_or(false);
+        // Chips list ELIGIBLE vaults only (plan §4.3): an org Space is
+        // invisible to the merged surface, locked or not.
+        if row.eligible {
+            vaults.push(serde_json::json!({
+                "slug": slug,
+                "display_name": name,
+                "unlocked": row.state.is_some(),
+            }));
         }
-        Err(e) => err_response(e),
+        let Some(state) = row.state else {
+            continue;
+        };
+        vault_rank.push((space, slug.clone(), name.clone()));
+        let Ok(raw) = state.autofill_query(&url).await else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        for mut m in v["matches"].as_array().cloned().unwrap_or_default() {
+            if let Some(o) = m.as_object_mut() {
+                o.insert("vault_slug".into(), serde_json::json!(slug));
+                o.insert("vault_name".into(), serde_json::json!(name));
+            }
+            matches.push(m);
+        }
     }
+    let rank_of = |m: &serde_json::Value| {
+        let slug = m["vault_slug"].as_str().unwrap_or_default();
+        let vr = vault_rank
+            .iter()
+            .find(|(_, s, _)| s == slug)
+            .cloned()
+            .unwrap_or((true, slug.to_string(), String::new()));
+        (
+            vr.0,
+            // Ascending bool sort puts false first; favorites must
+            // sort first, so invert (plan §4.11).
+            !m["favorite"].as_bool().unwrap_or(false),
+            m["name"].as_str().unwrap_or_default().to_string(),
+            slug.to_string(),
+        )
+    };
+    matches.sort_by_key(rank_of);
+    ok_resp(
+        serde_json::json!({
+            "matches": matches,
+            "vaults": vaults,
+            "active_vault": vault_name,
+        })
+        .to_string(),
+        None,
+    )
 }
 
 /// bridge.config: returns ONLY default_uri_match (Decision 7; NOT settings.get
@@ -4252,7 +4356,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             if req.payload.is_empty() {
                 return err_response("Missing cipher UUID in payload");
             }
-            match state.totp_code(&req.payload).await {
+            // The wire shape is {id, url?, vault_slug?} (the extension
+            // sends JSON; B3's origin binding parses the same object).
+            // Older callers and tests pass a bare UUID - keep both.
+            let id = serde_json::from_str::<serde_json::Value>(&req.payload)
+                .ok()
+                .and_then(|v| v["id"].as_str().map(str::to_string))
+                .unwrap_or_else(|| req.payload.clone());
+            match state.totp_code(&id).await {
                 Ok(json) => ok_resp(json, token_str),
                 Err(e) => err_response(e),
             }
