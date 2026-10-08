@@ -15,6 +15,9 @@ kotlin {
     sourceSets {
         androidMain.dependencies {
             implementation(project(":shared"))
+            // The E2E root Box (testTagsAsResourceId) needs foundation
+            // layout directly; :shared's compose deps are not exported.
+            implementation(compose.foundation)
             implementation(libs.androidx.activity.compose)
             // MainActivity is a FragmentActivity host for BiometricPrompt (B5).
             implementation("androidx.fragment:fragment-ktx:1.6.2")
@@ -32,6 +35,12 @@ kotlin {
 android {
     namespace = "xyz.actitud.baluard"
     compileSdk = 35
+    // BuildConfig carries the E2E gate: `-Pbaluard.e2e=true` produces a
+    // build that skips FLAG_SECURE so Maestro can screenshot (E12,
+    // docs/e2e-testing.md). Normal debug/release builds never see it.
+    buildFeatures {
+        buildConfig = true
+    }
     // Pinned: AGP 8.7's default (26.0.2.1) is absent on this machine; 27.2 is installed.
     ndkVersion = "27.2.12479018"
 
@@ -42,7 +51,6 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-
         // Package only ABIs we ship a cdylib for. Alpha default: arm64-v8a
         // (every test phone since ~2016). Also strips the JNA aar's other-ABI
         // .so, which would otherwise let a 32-bit device load libjnidispatch
@@ -75,12 +83,24 @@ android {
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("baluardDebug")
+            // E2E gate lives on debug ONLY: no release variant can ever
+            // ship with FLAG_SECURE skipped, whatever flags the build
+            // was invoked with (fail secure).
+            buildConfigField(
+                "boolean",
+                "BALUARD_E2E",
+                ((project.findProperty("baluard.e2e") as? String) == "true").toString(),
+            )
         }
         release {
             // Alpha: debug-keystore-signed release so local A/B testing
             // (debug vs release ART/Compose perf) can adb install -r over
             // the same applicationId. Store signing lands at store time.
             signingConfig = signingConfigs.getByName("baluardDebug")
+            // The E2E gate exists in both build types (the shared flag
+            // readers compile against both), but release is pinned false
+            // so no release build can ever ship the FLAG_SECURE skip.
+            buildConfigField("boolean", "BALUARD_E2E", "false")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

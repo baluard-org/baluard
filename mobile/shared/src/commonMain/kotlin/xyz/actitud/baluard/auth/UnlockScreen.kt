@@ -41,6 +41,8 @@ import xyz.actitud.baluard.ui.components.BaluardLogoBadge
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.BaluardTextField
+import xyz.actitud.baluard.ui.E2eTags
+import androidx.compose.ui.platform.testTag
 
 /** Local UI states layered over [AuthState]: enroll offer after unlock. */
 private enum class UnlockPhase { Input, EnrollOffer, Enrolling }
@@ -141,6 +143,7 @@ fun UnlockScreen(
             ) {
                 BaluardTextField(
                     value = password,
+                    modifier = Modifier.testTag(E2eTags.UNLOCK_PASSWORD),
                     onValueChange = {
                         password = it
                         if (state is AuthState.Error) state = AuthState.Init
@@ -157,6 +160,7 @@ fun UnlockScreen(
                 Spacer(Modifier.height(16.dp))
 
                 BaluardPrimaryButton(
+                    modifier = Modifier.testTag(E2eTags.UNLOCK_SUBMIT),
                     text = t("login.unlock"),
                     onClick = {
                         state = AuthState.Unlocking
@@ -166,7 +170,14 @@ fun UnlockScreen(
                                     state = AuthState.Unlocked
                                     // Offer quick-unlock enrollment once, right
                                     // after the user proved the master password.
-                                    if (biometric.isAvailable() && !biometricEnrolled) {
+                                    // E2E builds skip the enrollment
+                                    // offer: no human to answer it, and
+                                    // the flows assert straight through
+                                    // to the list screen.
+                                    if (!xyz.actitud.baluard.platform.e2eBuild &&
+                                        biometric.isAvailable() &&
+                                        !biometricEnrolled
+                                    ) {
                                         phase = UnlockPhase.EnrollOffer
                                     } else {
                                         finishUnlock()

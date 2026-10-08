@@ -1,0 +1,28 @@
+# Baluard E2E, flow 01 (docs/e2e-testing.md Phase 2): the creation
+# wizard on a DEDICATED test device or emulator. clearState wipes every
+# vault in the app - never run against a device holding real vaults.
+# Password comes from the runner: maestro test -e MASTER_PW=...
+appId: xyz.actitud.baluard
+name: 01-create-vault
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Baluard"
+- tapOn:
+    id: "e2e/onboarding/create"
+- tapOn:
+    id: "e2e/create/password"
+- inputText: "${MASTER_PW}"
+- tapOn:
+    id: "e2e/create/confirm"
+- inputText: "${MASTER_PW}"
+- tapOn:
+    id: "e2e/create/submit"
+# Recovery acknowledgment: the phrase is shown once; the E2E vault is
+# synthetic, so nothing is exported here.
+- tapOn:
+    id: "e2e/recovery/ack"
+- tapOn:
+    id: "e2e/recovery/continue"
+- assertVisible:
+    id: "e2e/list/search"

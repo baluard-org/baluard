@@ -73,6 +73,8 @@ import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.BaluardTextField
 import xyz.actitud.baluard.ui.components.CipherAvatar
 import xyz.actitud.baluard.ui.components.SectionCard
+import xyz.actitud.baluard.ui.E2eTags
+import androidx.compose.ui.platform.testTag
 
 // Wire tags in UI order come from the shared schema (detail/cipherTypeWireTags);
 // dropdown labels come from i18n.
@@ -147,6 +149,7 @@ fun EditCipherScreen(
                 BaluardTextField(
                     value = form.name,
                     onValueChange = { viewModel.setName(it) },
+                    modifier = Modifier.testTag(E2eTags.EDIT_NAME),
                     label = t("edit.name"),
                     placeholder = t("edit.namePlaceholder"),
                     enabled = !saving,
@@ -393,6 +396,7 @@ fun EditCipherScreen(
             Spacer(Modifier.height(8.dp))
 
             BaluardPrimaryButton(
+                modifier = Modifier.testTag(E2eTags.EDIT_SAVE),
                 text = if (saving) t("common.saving") else t("common.save"),
                 onClick = {
                     saving = true
@@ -705,6 +709,7 @@ private fun PasswordWithGenerator(
         BaluardTextField(
             value = value,
             onValueChange = onValueChange,
+            modifier = Modifier.testTag(E2eTags.EDIT_PASSWORD),
             label = t("edit.password"),
             isPassword = true,
             enabled = enabled,
