@@ -1025,6 +1025,40 @@ impl VaultState {
         .map_err(|e| format!("serialization: {e}"))
     }
 
+    /// G24 (plan-merged-search §4.3): the fill-time origin check rides
+    /// the SAME matcher as bridge.match - UriMatchStrategy over the
+    /// cipher's URIs plus the vault's custom equivalent domains - so a
+    /// credential suggested for a page is exactly the credential
+    /// readable for it. Returns false for non-login and URI-less
+    /// ciphers (the route layer decides the URI-less policy).
+    pub async fn cipher_matches_uri(&self, id_str: &str, url: &str) -> Result<bool, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let cid = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+        let cipher = handle.get_cipher(cid).map_err(|e| format!("{e}"))?;
+        let c = match cipher {
+            baluard_core::vault::handle::CipherRead::Decrypted(c) => *c,
+            baluard_core::vault::handle::CipherRead::Locked(_) => {
+                return Err("Cipher is locked".into());
+            }
+        };
+        let settings = handle.get_settings().ok();
+        let custom_groups: Vec<Vec<String>> = settings
+            .as_ref()
+            .and_then(|s| s.custom_equivalent_domains.clone())
+            .unwrap_or_default();
+        let baluard_core::types::CipherKind::Login(login) = &c.kind else {
+            return Ok(false);
+        };
+        Ok(login
+            .uris
+            .iter()
+            .any(|lu| lu.match_strategy.matches_with(&lu.uri, url, &custom_groups)))
+    }
+
     /// Record a user trust decision for a (package, registrable domain)
     /// pairing (path B app-to-web matching). [trust] true records trust
     /// (the pair's web entries fill in that app); false records rejection

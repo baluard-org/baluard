@@ -330,19 +330,25 @@ async fn devices_lists_enrolled_device() {
 /// VaultHost::list() joins the in-memory map with the on-disk registry.
 /// Redirect BALUARD_DATA_DIR to a per-test tempdir so the host can't see
 /// the developer's real registry. Same trick the CLI tests use.
-fn sandboxed_host_env() -> tempfile::TempDir {
+/// G24: sandbox access is serialized. BALUARD_DATA_DIR is a
+/// process-wide var, so two parallel tests racing their sandboxes
+/// made registry-dependent routes read each other's registries (the
+/// merged-read routes made that race load-bearing). The guard ties
+/// the env flip to the sandbox lifetime.
+static SANDBOX_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+async fn sandboxed_host_env() -> (tempfile::TempDir, tokio::sync::MutexGuard<'static, ()>) {
+    let guard = SANDBOX_LOCK.lock().await;
     let dir = tempfile::tempdir().expect("sandbox tempdir");
-    // SAFETY: each #[tokio::test] awaits before any other env-var reader
-    // runs in this test process. Tests using this helper don't read
-    // BALUARD_DATA_DIR concurrently with the set.
     unsafe {
         std::env::set_var("BALUARD_DATA_DIR", dir.path());
     }
-    dir
+    (dir, guard)
 }
 
 async fn vault_host_list_includes_inserted_vault() {
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host = VaultHost::new();
     let (_dir, path) = make_vault("host-list");
     let state = Arc::new(VaultState::new(path));
@@ -385,7 +391,7 @@ async fn vault_host_close_removes_from_map() {
 
 #[tokio::test]
 async fn vault_host_list_empty_with_sandboxed_registry() {
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host = VaultHost::new();
     assert!(
         host.list().await.is_empty(),
@@ -425,7 +431,7 @@ fn register_in_registry(slug: &str, path: &std::path::Path) {
 
 #[tokio::test]
 async fn vaults_list_full_all_merges_and_gates_on_active_token() {
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host = VaultHost::new();
     let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(host);
 
@@ -777,7 +783,7 @@ async fn reprompt_verify_with_wrong_master_errors() {
 
 #[tokio::test]
 async fn vault_host_switch_flips_active_pointer() {
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host = VaultHost::new();
     let (_d1, p1) = make_vault("switch-1");
     let (_d2, p2) = make_vault("switch-2");
@@ -795,7 +801,7 @@ async fn vault_host_switch_flips_active_pointer() {
 
 #[tokio::test]
 async fn vault_host_switch_unknown_slug_errors() {
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host = VaultHost::new();
     let err = host.switch("ghost").await.unwrap_err();
     // Just confirm the error message references the slug.
@@ -807,7 +813,7 @@ async fn vault_host_switch_unknown_slug_errors() {
 
 #[tokio::test]
 async fn vault_host_lock_all_returns_count() {
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host = VaultHost::new();
     let (_d1, p1) = make_vault("lock-all-1");
     let (_d2, p2) = make_vault("lock-all-2");
@@ -1941,7 +1947,7 @@ async fn recover_kit_route_parses_and_resolves_slug() {
     // Registry writes + env sandbox: hold the join guard so env-setting
     // tests never interleave.
     let _guard = JOIN_REG.lock().await;
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, vault_path) = make_vault("kitroute");
     let password = MASTER.to_string();
     // Enable the kit so the route reaches the brick guard (creation's
@@ -2014,7 +2020,7 @@ async fn recover_kit_route_parses_and_resolves_slug() {
 
 #[tokio::test]
 async fn vaults_copy_items_founds_a_family_vault() {
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
 
     // Personal source with one login.
@@ -2100,7 +2106,7 @@ async fn vaults_copy_items_founds_a_family_vault() {
 
 #[tokio::test]
 async fn family_default_add_collection_sugar() {
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let dir = tempfile::tempdir().unwrap();
     let vault_path = dir.path().join("fam-default");
     let (mut handle, _secrets) = VaultCreator::new(&vault_path, MASTER, "route-default")
@@ -2298,7 +2304,7 @@ async fn family_claim_arming_surfaces_as_success() {
     // daemon skipped the cover commit and the record - the owner's
     // only notice - never synced. The wrapper must surface arming as
     // success-shaped JSON.
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let dir = tempfile::tempdir().unwrap();
     let vault_path = dir.path().join("fam-arm");
     let (mut handle, _secrets) = VaultCreator::new(&vault_path, MASTER, "route-arm")
@@ -3471,10 +3477,426 @@ async fn bridge_write_gate_follows_member_role() {
     assert!(state.bridge_write_allowed().await.is_err());
 }
 
+/// G24 step 3: bridge.match fans out over unlocked merge-eligible
+/// vaults via autofill_query; an org Space (ceiling never seen) is
+/// excluded from matches and from the vaults array, and match
+/// payloads never carry passwords.
+#[tokio::test]
+async fn bridge_match_merges_across_eligible_vaults() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+
+    // Personal vault P (active).
+    let (dir_p, path_p) = make_vault("g24p");
+    let state_p = Arc::new(VaultState::new(path_p.clone()));
+    state_p.open().await.expect("open p");
+    state_p.unlock(MASTER).await.expect("unlock p");
+    state_p
+        .add_cipher(
+            &serde_json::json!({
+                "name": "MyBank personal",
+                "favorite": true,
+                "kind": {"type": "login", "data": {
+                    "username": "me", "password": "p-secret",
+                    "uris": [{"uri": "https://login.mybank.com", "matchStrategy": "domain"}],
+                    "totp_uri": null, "autofill_on_page_load": false,
+                    "password_revision_date": null, "favicon": null,
+                    "fido2_credentials": null
+                }}
+            })
+            .to_string(),
+        )
+        .await
+        .expect("add p");
+    // A non-favorite whose NAME would sort first: the favorite flag
+    // must outrank it (plan §4.11 ordering).
+    state_p
+        .add_cipher(
+            &serde_json::json!({
+                "name": "Aaa personal",
+                "kind": {"type": "login", "data": {
+                    "username": "me2", "password": "p2-secret",
+                    "uris": [{"uri": "https://login.mybank.com", "matchStrategy": "domain"}],
+                    "totp_uri": null, "autofill_on_page_load": false,
+                    "password_revision_date": null, "favicon": null,
+                    "fido2_credentials": null
+                }}
+            })
+            .to_string(),
+        )
+        .await
+        .expect("add p2");
+    register_in_registry("g24p", &path_p);
+
+    // Family vault F: eligible after its unlock refreshes the ceiling
+    // cache (family purpose defaults the ceiling on).
+    let dir_f = tempfile::tempdir().unwrap();
+    let path_f = dir_f.path().join("g24f");
+    let (mut handle_f, _) = VaultCreator::new(&path_f, MASTER, "route-g24f")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle_f.unlock(MASTER).unwrap();
+    drop(handle_f);
+    register_in_registry("g24f", &path_f);
+    let state_f = Arc::new(VaultState::new(path_f.clone()));
+    state_f.open().await.expect("open f");
+    state_f.unlock(MASTER).await.expect("unlock f");
+    state_f
+        .add_cipher(
+            &serde_json::json!({
+                "name": "MyBank family",
+                "kind": {"type": "login", "data": {
+                    "username": "family", "password": "f-secret",
+                    "uris": [{"uri": "https://login.mybank.com", "matchStrategy": "domain"}],
+                    "totp_uri": null, "autofill_on_page_load": false,
+                    "password_revision_date": null, "favicon": null,
+                    "fido2_credentials": null
+                }}
+            })
+            .to_string(),
+        )
+        .await
+        .expect("add f");
+
+    // Org Space O: flipped shape with the ceiling cache recorded false
+    // at its unlock (the marker lands after the cache refresh), so it
+    // stays ineligible even though it is unlocked and holds a
+    // matching entry.
+    let (dir_o, path_o) = make_vault("g24o");
+    let state_o = Arc::new(VaultState::new(path_o.clone()));
+    state_o.open().await.expect("open o");
+    state_o.unlock(MASTER).await.expect("unlock o");
+    register_in_registry("g24o", &path_o);
+    baluard_core::vault::space_meta::write_shape_marker(&path_o, 1).unwrap();
+    state_o
+        .add_cipher(&serde_json::to_string(&login_input("MyBank org", "org")).unwrap())
+        .await
+        .expect("add o");
+
+    let host = Arc::new(VaultHost::new());
+    host.insert("g24p".into(), state_p.clone()).await;
+    host.insert("g24f".into(), state_f.clone()).await;
+    host.insert("g24o".into(), state_o.clone()).await;
+    host.switch("g24p").await.expect("switch");
+
+    let token_hex = {
+        let mut reg = host.bridge().write().await;
+        let _pair = reg.start_pair("test-harness");
+        reg.complete_pair("ext", "chrome").expect("pair").1
+    };
+
+    let req = GatewayRequest {
+        action: "bridge.match".into(),
+        payload: r#"{"url":"https://login.mybank.com/signin"}"#.into(),
+        session_token: token_hex,
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+
+    let matches = parsed["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 3, "personal x2 + family: {parsed:?}");
+    assert_eq!(matches[0]["name"], serde_json::json!("MyBank personal"));
+    assert_eq!(matches[1]["name"], serde_json::json!("Aaa personal"));
+    assert_eq!(matches[2]["vault_slug"], serde_json::json!("g24f"));
+    assert!(
+        !resp.payload.contains("p-secret") && !resp.payload.contains("f-secret"),
+        "match payloads never carry passwords"
+    );
+
+    let vaults = parsed["vaults"].as_array().unwrap();
+    let slugs: Vec<&str> = vaults.iter().filter_map(|v| v["slug"].as_str()).collect();
+    assert!(slugs.contains(&"g24p") && slugs.contains(&"g24f"));
+    assert!(
+        !slugs.contains(&"g24o"),
+        "an org Space with no ceiling cache is ineligible: {vaults:?}"
+    );
+    assert_eq!(
+        parsed["active_vault"],
+        serde_json::json!("Vault g24p"),
+        "active_vault keeps its display-name contract"
+    );
+
+    let _ = (dir_p, dir_o);
+}
+
+/// G24 step 3 gate change: the merged read passes when ANY
+/// merge-eligible vault is unlocked - a sleeping personal vault no
+/// longer blanks autofill while a family Space is open. With every
+/// eligible vault locked the gate still refuses.
+#[tokio::test]
+async fn bridge_match_gate_passes_on_sibling_unlocked() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+
+    let (dir_p, path_p) = make_vault("g24gp");
+    let state_p = Arc::new(VaultState::new(path_p.clone()));
+    state_p.open().await.expect("open p");
+    state_p.unlock(MASTER).await.expect("unlock p");
+    register_in_registry("g24gp", &path_p);
+
+    let dir_f = tempfile::tempdir().unwrap();
+    let path_f = dir_f.path().join("g24gf");
+    let (mut handle_f, _) = VaultCreator::new(&path_f, MASTER, "route-g24gf")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle_f.unlock(MASTER).unwrap();
+    drop(handle_f);
+    register_in_registry("g24gf", &path_f);
+    let state_f = Arc::new(VaultState::new(path_f.clone()));
+    state_f.open().await.expect("open f");
+    state_f.unlock(MASTER).await.expect("unlock f");
+
+    let host = Arc::new(VaultHost::new());
+    host.insert("g24gp".into(), state_p.clone()).await;
+    host.insert("g24gf".into(), state_f.clone()).await;
+    host.switch("g24gp").await.expect("switch");
+
+    let token_hex = {
+        let mut reg = host.bridge().write().await;
+        let _pair = reg.start_pair("test-harness");
+        reg.complete_pair("ext", "chrome").expect("pair").1
+    };
+    let mk = |token: &str| GatewayRequest {
+        action: "bridge.match".into(),
+        payload: r#"{"url":"https://example.com"}"#.into(),
+        session_token: token.to_string(),
+        slug: String::new(),
+    };
+
+    // Active personal locked, family open: the merged read passes.
+    let _ = state_p.lock().await;
+    let resp = route_host_request(mk(&token_hex), &host).await;
+    assert!(
+        resp.success,
+        "sibling-unlocked gate must pass: {}",
+        resp.error_message
+    );
+
+    // Everything eligible locked: refused.
+    let _ = state_f.lock().await;
+    let resp = route_host_request(mk(&token_hex), &host).await;
+    assert!(!resp.success, "all-locked must refuse");
+    assert!(resp.error_message.contains("locked"));
+
+    let _ = (dir_p, dir_f);
+}
+
+/// G24 step 4: slug-scoped bridge reads. A merge-eligible sibling
+/// resolves; unknown, ineligible, locked, and URL-mismatched targets
+/// fail closed.
+#[tokio::test]
+async fn bridge_slug_scoped_reads_fail_closed() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+
+    let (dir_p, path_p) = make_vault("g24sp");
+    let state_p = Arc::new(VaultState::new(path_p.clone()));
+    state_p.open().await.expect("open p");
+    state_p.unlock(MASTER).await.expect("unlock p");
+    register_in_registry("g24sp", &path_p);
+
+    let dir_f = tempfile::tempdir().unwrap();
+    let path_f = dir_f.path().join("g24sf");
+    let (mut handle_f, _) = VaultCreator::new(&path_f, MASTER, "route-g24sf")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle_f.unlock(MASTER).unwrap();
+    drop(handle_f);
+    register_in_registry("g24sf", &path_f);
+    let state_f = Arc::new(VaultState::new(path_f.clone()));
+    state_f.open().await.expect("open f");
+    state_f.unlock(MASTER).await.expect("unlock f");
+    state_f
+        .add_cipher(
+            &serde_json::json!({
+                "name": "Family Wi-Fi",
+                "kind": {"type": "login", "data": {
+                    "username": "home", "password": "f-wifi-secret",
+                    "uris": [{"uri": "https://router.local", "matchStrategy": "domain"}],
+                    "totp_uri": "otpauth://totp/Baluard:home?secret=JBSWY3DPEHPK3PXP",
+                    "autofill_on_page_load": false,
+                    "password_revision_date": null, "favicon": null,
+                    "fido2_credentials": null
+                }}
+            })
+            .to_string(),
+        )
+        .await
+        .expect("add f");
+    let env = state_f.full_envelope().await.expect("envelope");
+    let fid = env["ciphers"][0]["id"].as_str().unwrap().to_string();
+
+    // Ineligible org sibling (marker after the unlock so the ceiling
+    // cache reads false).
+    let (dir_o, path_o) = make_vault("g24so");
+    let state_o = Arc::new(VaultState::new(path_o.clone()));
+    state_o.open().await.expect("open o");
+    state_o.unlock(MASTER).await.expect("unlock o");
+    register_in_registry("g24so", &path_o);
+    baluard_core::vault::space_meta::write_shape_marker(&path_o, 1).unwrap();
+
+    let host = Arc::new(VaultHost::new());
+    host.insert("g24sp".into(), state_p.clone()).await;
+    host.insert("g24sf".into(), state_f.clone()).await;
+    host.insert("g24so".into(), state_o.clone()).await;
+    host.switch("g24sp").await.expect("switch");
+
+    let token_hex = {
+        let mut reg = host.bridge().write().await;
+        let _pair = reg.start_pair("test-harness");
+        reg.complete_pair("ext", "chrome").expect("pair").1
+    };
+    let get = |id: &str, url: &str, slug: &str| GatewayRequest {
+        action: "vault.get".into(),
+        payload: serde_json::json!({
+            "id": id, "url": url, "vault_slug": slug, "decrypt": true
+        })
+        .to_string(),
+        session_token: token_hex.clone(),
+        slug: String::new(),
+    };
+
+    // Happy path: the family credential resolves through the slug and
+    // the origin binding runs against the TARGET vault.
+    let resp = route_host_request(get(&fid, "https://router.local/x", "g24sf"), &host).await;
+    assert!(resp.success, "scoped read: {}", resp.error_message);
+    assert!(
+        resp.payload.contains("f-wifi-secret"),
+        "scoped decrypt returns the credential"
+    );
+
+    // Unknown slug refused like a foreign vault.
+    let resp = route_host_request(get(&fid, "https://router.local", "nope"), &host).await;
+    assert!(!resp.success);
+    assert!(resp.error_message.contains("not available"));
+
+    // Ineligible slug (org, no ceiling cache) refused the same way.
+    let resp = route_host_request(get(&fid, "https://router.local", "g24so"), &host).await;
+    assert!(!resp.success);
+    assert!(resp.error_message.contains("not available"));
+
+    // URL mismatch refused by the target-side origin binding.
+    let resp = route_host_request(get(&fid, "https://evil.example", "g24sf"), &host).await;
+    assert!(!resp.success);
+    assert!(resp.error_message.contains("bridge read refused"));
+
+    // Locked target refused.
+    let _ = state_f.lock().await;
+    let resp = route_host_request(get(&fid, "https://router.local", "g24sf"), &host).await;
+    assert!(!resp.success);
+    assert!(resp.error_message.contains("locked"));
+    state_f.unlock(MASTER).await.expect("re-unlock f");
+
+    // Scoped TOTP read rides the same resolution.
+    let req = GatewayRequest {
+        action: "cipher.totp_code".into(),
+        payload: serde_json::json!({
+            "id": fid, "url": "https://router.local", "vault_slug": "g24sf"
+        })
+        .to_string(),
+        session_token: token_hex.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "scoped totp: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert!(
+        parsed["code"].as_str().unwrap().len() >= 6,
+        "a real code comes back: {parsed:?}"
+    );
+
+    let _ = (dir_p, dir_o);
+}
+
+/// G24 step 1 + the D31 retrofit: vaults.list_full_all gates sibling
+/// rows by eligibility. An org Space (ceiling off/never seen) keeps
+/// its metadata row but carries no ciphers; a family Space merges.
+#[tokio::test]
+async fn list_full_all_gates_ineligible_spaces() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let host = VaultHost::new();
+    let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(host);
+
+    let (dir_p, path_p) = make_vault("g24lp");
+    let state_p = Arc::new(VaultState::new(path_p.clone()));
+    state_p.open().await.expect("open p");
+    state_p.unlock(MASTER).await.expect("unlock p");
+    state_p
+        .add_cipher(&serde_json::to_string(&login_input("Mine", "u")).unwrap())
+        .await
+        .expect("add p");
+    register_in_registry("g24lp", &path_p);
+
+    let dir_f = tempfile::tempdir().unwrap();
+    let path_f = dir_f.path().join("g24lf");
+    let (mut handle_f, _) = VaultCreator::new(&path_f, MASTER, "route-g24lf")
+        .family(true)
+        .execute()
+        .unwrap();
+    handle_f.unlock(MASTER).unwrap();
+    drop(handle_f);
+    register_in_registry("g24lf", &path_f);
+    let state_f = Arc::new(VaultState::new(path_f.clone()));
+    state_f.open().await.expect("open f");
+    state_f.unlock(MASTER).await.expect("unlock f");
+    state_f
+        .add_cipher(&serde_json::to_string(&login_input("Family item", "u")).unwrap())
+        .await
+        .expect("add f");
+
+    let (dir_o, path_o) = make_vault("g24lo");
+    let state_o = Arc::new(VaultState::new(path_o.clone()));
+    state_o.open().await.expect("open o");
+    state_o.unlock(MASTER).await.expect("unlock o");
+    register_in_registry("g24lo", &path_o);
+    baluard_core::vault::space_meta::write_shape_marker(&path_o, 1).unwrap();
+    state_o
+        .add_cipher(&serde_json::to_string(&login_input("Org item", "u")).unwrap())
+        .await
+        .expect("add o");
+
+    host.insert("g24lp".into(), state_p.clone()).await;
+    host.insert("g24lf".into(), state_f.clone()).await;
+    host.insert("g24lo".into(), state_o.clone()).await;
+    host.switch("g24lp").await.expect("switch");
+
+    let token = state_p.get_session_token().await.expect("token");
+    let req = GatewayRequest {
+        action: "vaults.list_full_all".into(),
+        payload: String::new(),
+        session_token: token,
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    let rows = parsed["vaults"].as_array().unwrap();
+
+    let row_p = rows.iter().find(|r| r["slug"] == "g24lp").unwrap();
+    assert_eq!(row_p["ciphers"].as_array().unwrap().len(), 1);
+    let row_f = rows.iter().find(|r| r["slug"] == "g24lf").unwrap();
+    assert_eq!(
+        row_f["ciphers"].as_array().unwrap().len(),
+        1,
+        "an eligible family Space merges"
+    );
+    let row_o = rows.iter().find(|r| r["slug"] == "g24lo").unwrap();
+    assert!(
+        row_o.get("ciphers").is_none(),
+        "an ineligible org Space keeps metadata only: {row_o:?}"
+    );
+    assert_eq!(row_o["presence"], serde_json::json!("unlocked"));
+
+    let _ = (dir_p, dir_o);
+}
+
 #[tokio::test]
 async fn bridge_route_enforces_write_gate() {
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, state) = open_unlocked("bridge-route-gate").await;
+    register_in_registry("brg", &state.vault_path);
     let host = Arc::new(VaultHost::new());
     host.insert("brg".into(), state.clone()).await;
     host.switch("brg").await.expect("switch");
@@ -3536,7 +3958,7 @@ async fn bridge_route_enforces_write_gate() {
 #[tokio::test]
 async fn members_remove_preflight_strike_refusal_and_override() {
     let _guard = JOIN_REG.lock().await;
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, state) = open_unlocked("remove-flow").await;
     let vault_path = state.vault_path.clone();
 
@@ -3640,7 +4062,7 @@ async fn join_introduce_validates_consumes_and_polls() {
     // Hold for the WHOLE test: both env-setting tests (BALUARD_DATA_DIR
     // sandbox) must never interleave, or they read each other's registry.
     let _guard = JOIN_REG.lock().await;
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     // Real vault with an owner genesis and a live editor invite.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().to_path_buf();
@@ -3852,7 +4274,7 @@ async fn reveal_open_guest_route_roundtrip_and_refusal() {
 #[tokio::test]
 async fn space_create_route_prefixes_slug_marks_flag_and_lists() {
     let _guard = JOIN_REG.lock().await;
-    let _sandbox = sandboxed_host_env();
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host = Arc::new(VaultHost::new());
 
     let req = GatewayRequest {

@@ -262,11 +262,11 @@ export function statusKeyFor(code) {
         item.appendChild(user);
       }
       // m.id is chosen from the entries WE rendered — never from the page.
-      item.addEventListener("click", () => requestFill(m.id));
+      item.addEventListener("click", () => requestFill(m.id, m.vault_slug));
       item.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          requestFill(m.id);
+          requestFill(m.id, m.vault_slug);
         }
       });
       menu.appendChild(item);
@@ -277,7 +277,7 @@ export function statusKeyFor(code) {
   // minimize the pushed payload: "totp" pushes the code ONLY (no username,
   // no password). The SW fetches a code when this page can consume it or
   // when copyTotp is on for an entry that has TOTP (clipboard for step 2).
-  async function requestFill(id) {
+  async function requestFill(id, vaultSlug) {
     // The page may have swapped or removed the trigger field between menu
     // open and entry click. Fail closed.
     if (
@@ -293,7 +293,13 @@ export function statusKeyFor(code) {
     const anchor = menuField;
     closeMenu();
     try {
-      const resp = await chrome.runtime.sendMessage({ action: "inline.fill", id, mode, hasTotpField });
+      const resp = await chrome.runtime.sendMessage({
+        action: "inline.fill",
+        id,
+        vault_slug: vaultSlug || "",
+        mode,
+        hasTotpField,
+      });
       if (resp && !resp.ok) {
         showStatus(t(statusKeyFor(resp.code)), anchor);
       }

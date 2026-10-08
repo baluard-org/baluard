@@ -359,6 +359,24 @@ vaults with one locked, and `search --vault` against an org Space.
 ## 7. Landing order
 
 1. Extract the shared fan-out helper from `vaults.list_full_all`.
+   LANDED (2026-10-07): `merge_fanout_rows` (fail-closed on a registry
+   load failure), `vaults.list_full_all` eligibility-gated (D31
+   retrofit; an ineligible Space keeps metadata, no ciphers, including
+   the active row - the desktop drops active rows here and reads its
+   own vault through `vault.list_full`), steps 3 and 4 landed in the
+   same wave: `bridge.match` fans out over `autofill_query` with the
+   any-eligible-unlocked gate, personal-first ranking (favorite, then
+   name, then slug), a chips `vaults` array listing eligible vaults
+   only, slug-scoped `vault.get`/`cipher.totp_code` that always demand
+   a page URL and resolve before every gate, the fill-time origin
+   check unified on the same matcher (`VaultState::cipher_matches_uri`),
+   a wire bug fixed en route (`cipher.totp_code` parsed a bare UUID
+   while the extension sends JSON - TOTP fill was silently dead),
+   and the inline projection rule pulled forward from step 5 (the
+   page principal gets match fields plus `vault_slug`, never the
+   `vaults` array or display names). The §6 extension projection
+   vitest stays open with step 5 (this box's browser vitest runner
+   cannot load the chrome global).
 2. The consent model: `personal_merge` on `VaultSettings`, the two
    device-local registry fields, the `merge_eligible` predicate, the
    wizard question, the join notice, and the D31 desktop retrofit —

@@ -210,10 +210,30 @@ async function handleInlineMatches(sender) {
   const url = senderUrl(sender);
   if (!url) throw err("no matching tab", "no-match");
   const r = await send("bridge.match", { url });
-  return r.payload;
+  let data = {};
+  try {
+    data = JSON.parse(r.payload || "{}");
+  } catch {
+    data = {};
+  }
+  // B4 projection, G24: the merged match response carries a vaults
+  // array and display names for popup chips; the PAGE principal gets
+  // match fields only. Vault names never cross to inline; it learns
+  // at most that more than one vault contributed.
+  const matches = (data.matches || []).map((m) => ({
+    id: m.id,
+    name: m.name,
+    username: m.username,
+    favorite: m.favorite,
+    vault_slug: m.vault_slug,
+  }));
+  return JSON.stringify({
+    matches,
+    multiVault: new Set(matches.map((m) => m.vault_slug).filter(Boolean)).size > 1,
+  });
 }
 
-async function handleInlineFill(sender, id, mode, hasTotpField) {
+async function handleInlineFill(sender, id, mode, hasTotpField, vaultSlug) {
   const url = senderUrl(sender);
   if (!url) throw err("no matching tab", "no-match");
   if (typeof id !== "string" || id.length === 0) throw err("missing id", "proto");
@@ -227,7 +247,7 @@ async function handleInlineFill(sender, id, mode, hasTotpField) {
     // B3: the page URL rides along so the DAEMON enforces the URI match
     // server-side with the same matcher bridge.match uses — a compromised
     // extension page cannot fetch a credential for an unrelated site.
-    const r = await send("vault.get", { id, url });
+    const r = await send("vault.get", { id, url, vault_slug: vaultSlug || "" });
     try {
       cred = JSON.parse(r.payload || "{}");
     } catch {
@@ -246,7 +266,7 @@ async function handleInlineFill(sender, id, mode, hasTotpField) {
   let clipboardFallback = false;
   if (wantsTotp) {
     try {
-      const t = await send("cipher.totp_code", { id, url });
+      const t = await send("cipher.totp_code", { id, url, vault_slug: vaultSlug || "" });
       totpCode = JSON.parse(t.payload || "{}").code || "";
     } catch {
       totpCode = "";
@@ -357,7 +377,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.action === "inline.fill" && sender && sender.tab) {
-    handleInlineFill(sender, msg.id, msg.mode, msg.hasTotpField)
+    handleInlineFill(sender, msg.id, msg.mode, msg.hasTotpField, msg.vault_slug)
       .then((payload) => sendResponse({ ok: true, payload }))
       .catch((e) => sendResponse({ ok: false, error: e.message, code: e.code }));
     return true;
