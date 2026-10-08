@@ -74,8 +74,24 @@ kotlin {
 android {
     namespace = "xyz.actitud.baluard.shared"
     compileSdk = 35
+    buildFeatures {
+        buildConfig = true
+    }
     defaultConfig {
         minSdk = 32 // plan §9.1: API 32 (Android 12L) floor
+        // E2E gate readable from shared code (UnlockScreen quick-unlock
+        // offer skip). Debug follows -Pbaluard.e2e; release is pinned
+        // false so no release variant can ever enable the E2E behavior.
+        buildConfigField(
+            "boolean",
+            "BALUARD_E2E",
+            ((project.findProperty("baluard.e2e") as? String) == "true").toString(),
+        )
+    }
+    buildTypes {
+        release {
+            buildConfigField("boolean", "BALUARD_E2E", "false")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

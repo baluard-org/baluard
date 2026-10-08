@@ -49,6 +49,8 @@ import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.toast.Toast
+import xyz.actitud.baluard.ui.E2eTags
+import androidx.compose.ui.platform.testTag
 
 /**
  * Recovery-phrase display styled with numbered word cards and security alerts.
@@ -198,6 +200,7 @@ fun RecoveryPhraseScreen(
                     .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainer)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                    .testTag(E2eTags.RECOVERY_ACK)
                     .clickable { acknowledged = !acknowledged }
                     .padding(12.dp),
             ) {
@@ -222,6 +225,7 @@ fun RecoveryPhraseScreen(
             Spacer(Modifier.height(20.dp))
 
             BaluardPrimaryButton(
+                modifier = Modifier.testTag(E2eTags.RECOVERY_CONTINUE),
                 text = t("common.continue"),
                 onClick = onAcknowledged,
                 enabled = acknowledged,

@@ -36,6 +36,8 @@ import xyz.actitud.baluard.ui.components.BaluardLogoBadge
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.BaluardTextField
+import xyz.actitud.baluard.ui.E2eTags
+import androidx.compose.ui.platform.testTag
 
 /**
  * Vault-creation form styled after Baluard design guidelines.
@@ -92,6 +94,7 @@ fun CreateVaultScreen(
             ) {
                 BaluardTextField(
                     value = password,
+                    modifier = Modifier.testTag(E2eTags.CREATE_PASSWORD),
                     onValueChange = {
                         password = it
                         error = null
@@ -111,6 +114,7 @@ fun CreateVaultScreen(
 
                 BaluardTextField(
                     value = confirm,
+                    modifier = Modifier.testTag(E2eTags.CREATE_CONFIRM),
                     onValueChange = {
                         confirm = it
                         error = null
@@ -130,6 +134,7 @@ fun CreateVaultScreen(
 
                 BaluardTextField(
                     value = deviceName,
+                    modifier = Modifier.testTag(E2eTags.CREATE_DEVICE_NAME),
                     onValueChange = {
                         deviceName = it
                         error = null
@@ -151,6 +156,7 @@ fun CreateVaultScreen(
                 Spacer(Modifier.height(20.dp))
 
                 BaluardPrimaryButton(
+                    modifier = Modifier.testTag(E2eTags.CREATE_SUBMIT),
                     text = t("onboarding.createButton"),
                     onClick = {
                         if (password.length < MIN_PASSWORD_LEN) {

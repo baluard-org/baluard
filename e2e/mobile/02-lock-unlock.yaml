@@ -1,0 +1,26 @@
+# Baluard E2E, flow 02 (docs/e2e-testing.md Phase 2): lock and unlock
+# with the master password. Runs after flow 01 on the same device.
+appId: xyz.actitud.baluard
+name: 02-lock-unlock
+---
+- launchApp
+- assertVisible:
+    id: "e2e/unlock/password"
+- tapOn:
+    id: "e2e/unlock/password"
+- inputText: "${MASTER_PW}"
+- tapOn:
+    id: "e2e/unlock/submit"
+- assertVisible:
+    id: "e2e/list/search"
+- tapOn:
+    id: "e2e/list/lock"
+- assertVisible:
+    id: "e2e/unlock/password"
+- tapOn:
+    id: "e2e/unlock/password"
+- inputText: "${MASTER_PW}"
+- tapOn:
+    id: "e2e/unlock/submit"
+- assertVisible:
+    id: "e2e/list/search"

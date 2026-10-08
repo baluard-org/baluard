@@ -1,0 +1,32 @@
+# Baluard E2E, flow 03 (docs/e2e-testing.md Phase 2): add an entry and
+# find it in the list. Runs after flow 01 on the same device; the vault
+# starts locked (every flow launch begins from the unlock screen).
+appId: xyz.actitud.baluard
+name: 03-add-entry
+---
+- launchApp
+- assertVisible:
+    id: "e2e/unlock/password"
+- tapOn:
+    id: "e2e/unlock/password"
+- inputText: "${MASTER_PW}"
+- tapOn:
+    id: "e2e/unlock/submit"
+- assertVisible:
+    id: "e2e/list/search"
+- tapOn:
+    id: "e2e/list/add"
+- tapOn:
+    id: "e2e/edit/name"
+- inputText: "E2E Entry"
+- tapOn:
+    id: "e2e/edit/password"
+- inputText: "e2e-secret-42"
+- tapOn:
+    id: "e2e/edit/save"
+# The hub lists categories and favorites when the query is blank; a new
+# non-favorite entry surfaces through search, not the home screen.
+- tapOn:
+    id: "e2e/list/search"
+- inputText: "E2E Entry"
+- assertVisible: "E2E Entry"

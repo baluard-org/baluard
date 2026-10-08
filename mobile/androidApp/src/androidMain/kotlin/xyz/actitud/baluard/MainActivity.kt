@@ -12,6 +12,11 @@ import xyz.actitud.baluard.autofill.AutofillSaveToken
 import xyz.actitud.baluard.platform.AppContextHolder
 import xyz.actitud.baluard.platform.AutofillSavePrefill
 import xyz.actitud.baluard.ui.App
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 
 /**
  * FragmentActivity (not plain ComponentActivity): BiometricPrompt's
@@ -25,16 +30,22 @@ class MainActivity : FragmentActivity() {
     /** Captured login from the autofill save prompt, until the editor seeds. */
     private var autofillSavePrefill by mutableStateOf<AutofillSavePrefill?>(null)
 
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // M4: app-wide FLAG_SECURE — screenshots, recents preview, and
         // unprivileged screen recording stay blank for the whole app, not
         // per-screen. Compose UIs render before per-screen effects run, so
         // the flag must be set before first frame. Strictly user-setting
-        // driven (default off, fail secure) — no build-type exemption, so
-        // the Settings toggle is fully testable on debug builds too.
+        // driven (default off, fail secure). The only exemption is the E2E
+        // gate above (-Pbaluard.e2e), keeping the Settings toggle testable
+        // on debug builds.
         AppContextHolder.set(this)
-        if (!xyz.actitud.baluard.platform.ScreenshotPrefs().allowScreenshots()) {
+        // E2E builds (-Pbaluard.e2e) skip the flag so Maestro screenshots
+        // are not black (E12); no other build type sets BALUARD_E2E.
+        if (!BuildConfig.BALUARD_E2E &&
+            !xyz.actitud.baluard.platform.ScreenshotPrefs().allowScreenshots()
+        ) {
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
         AppContextHolder.setActivity(this)
@@ -48,10 +59,19 @@ class MainActivity : FragmentActivity() {
             autofillSavePrefill = extractAutofillSave(intent)
         }
         setContent {
-            App(
-                savePrefill = autofillSavePrefill,
-                onSavePrefillConsumed = { autofillSavePrefill = null },
-            )
+            // testTagsAsResourceId exposes Modifier.testTag values as
+            // resource-id semantics so Maestro id: selectors resolve
+            // (docs/e2e-testing.md Phase 2). Android-only surface.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .semantics { testTagsAsResourceId = true },
+            ) {
+                App(
+                    savePrefill = autofillSavePrefill,
+                    onSavePrefillConsumed = { autofillSavePrefill = null },
+                )
+            }
         }
     }
 

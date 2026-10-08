@@ -980,6 +980,14 @@ android-apk:
 
 # Build + install the debug APK on a connected device (adb). Extra args
 # forward to the script, e.g. `just android-install --device 192.168.1.50:38507`
+
+# Android E2E (docs/e2e-testing.md Phase 2): Maestro flows on a dedicated
+# test device or emulator - NEVER a device holding real vaults (flow 01
+# wipes app data). One-time Maestro install:
+#   curl -Ls "https://get.maestro.mobile.dev" | bash
+# Build + install the E2E APK first: mobile/scripts/build-android-apk.sh --e2e --install
+e2e-android *ARGS:
+	mobile/scripts/run-maestro.sh {{ARGS}}
 # (needed when wireless debugging shows one phone twice: IP:port + mDNS entry).
 android-install *ARGS:
 	cd mobile && ./scripts/build-android-apk.sh --install {{ARGS}}

@@ -47,6 +47,8 @@ import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.GitExplainerDialog
 import xyz.actitud.baluard.ui.components.GitWhatLink
 import xyz.actitud.baluard.ui.components.rememberShareOpenFlow
+import xyz.actitud.baluard.ui.E2eTags
+import androidx.compose.ui.platform.testTag
 /**
  * First-launch root styled with Baluard brand cards and feature highlights.
  */
@@ -97,6 +99,7 @@ fun OnboardingScreen(
             Spacer(Modifier.height(24.dp))
 
             BaluardPrimaryButton(
+                modifier = Modifier.testTag(E2eTags.ONBOARDING_CREATE),
                 text = t("onboarding.createVault"),
                 onClick = onCreateVault,
                 leadingIcon = Icons.Default.Add,

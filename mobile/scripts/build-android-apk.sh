@@ -30,12 +30,14 @@ REPO_ROOT="$(cd "$MOBILE_DIR/.." && pwd)"
 DO_INSTALL=0
 DO_REGEN_BINDINGS=0
 SKIP_NATIVE=0
+DO_E2E=0
 DEVICE="${ANDROID_DEVICE:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --install)         DO_INSTALL=1; shift ;;
     --regen-bindings)  DO_REGEN_BINDINGS=1; shift ;;
     --skip-native)     SKIP_NATIVE=1; shift ;;
+    --e2e)             DO_E2E=1; shift ;;   # -Pbaluard.e2e=true (skips FLAG_SECURE for Maestro)
     --device)          DEVICE="${2:?--device needs a serial}"; shift 2 ;;
     --device=*)        DEVICE="${1#--device=}"; shift ;;
     -h|--help)
@@ -198,9 +200,11 @@ printf 'sdk.dir=%s\n' "$SDK_ROOT" > "$MOBILE_DIR/local.properties"
 export JAVA_HOME="$JDK17_HOME"
 export PATH="$JAVA_HOME/bin:$PATH"
 echo "==> ./gradlew :androidApp:assembleDebug  (JAVA_HOME=$JAVA_HOME)"
+GRADLE_ARGS=()
+[[ $DO_E2E -eq 1 ]] && GRADLE_ARGS+=("-Pbaluard.e2e=true")
 (
   cd "$MOBILE_DIR"
-  ./gradlew :androidApp:assembleDebug
+  ./gradlew :androidApp:assembleDebug "${GRADLE_ARGS[@]}"
 )
 echo
 
@@ -239,6 +243,17 @@ if [[ $DO_INSTALL -eq 1 ]]; then
     fail "ambiguous device target"
   fi
   ADBS=( "$ADB" -s "$SERIAL" )
+
+  # Phase 2 (docs/e2e-testing.md): a freshly connected wireless device can
+  # still be mid-boot; installing before sys.boot_completed fails.
+  BOOTED="$("${ADBS[@]}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
+  WAITED=0
+  while [[ "$BOOTED" != "1" ]]; do
+    WAITED=$((WAITED + 5))
+    [[ $WAITED -ge 120 ]] && fail "device $SERIAL not booted after 120s (sys.boot_completed != 1)"
+    sleep 5
+    BOOTED="$("${ADBS[@]}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
+  done
 
   echo
   echo "==> ${ADBS[*]} install -r $APK"

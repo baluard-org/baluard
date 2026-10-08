@@ -59,7 +59,10 @@ class AutofillActivity : FragmentActivity() {
         // Mirror the app-wide FLAG_SECURE policy (peer-review finding #6):
         // the picker shows entry names/usernames and must stay out of
         // screenshots, recents and recordings when the user opted for it.
-        if (!xyz.actitud.baluard.platform.ScreenshotPrefs().allowScreenshots()) {
+        // E2E builds skip the flag for Maestro screenshots (E12).
+        if (!xyz.actitud.baluard.BuildConfig.BALUARD_E2E &&
+            !xyz.actitud.baluard.platform.ScreenshotPrefs().allowScreenshots()
+        ) {
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
         setContentView(R.layout.autofill_activity)

@@ -57,6 +57,8 @@ import xyz.actitud.baluard.ui.toast.Toast
 import xyz.actitud.baluard.ui.components.BaluardTopBar
 import xyz.actitud.baluard.ui.components.CipherRowCard
 import xyz.actitud.baluard.ui.components.SyncIconButton
+import xyz.actitud.baluard.ui.E2eTags
+import androidx.compose.ui.platform.testTag
 
 /**
  * Generic filtered entry list behind the home hub: renders the slice for
@@ -163,6 +165,7 @@ fun EntryListScreen(
                 onValueChange = { listViewModel.setQuery(it) },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .testTag(E2eTags.LIST_SEARCH)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
 
@@ -235,6 +238,7 @@ fun EntryListScreen(
                         onClick = { onCipherClick(meta.id) },
                         modifier = Modifier
                             .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .testTag(E2eTags.LIST_ROW)
                             .fillMaxWidth(),
                         trailing = when (kind) {
                             EntryListKind.Archive -> ({
