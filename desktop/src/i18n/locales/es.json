@@ -1069,5 +1069,10 @@
     "cliHint": "Para borrar también los archivos: baluard vaults detach {slug} --delete-from-disk",
     "detachAction": "Quitar de esta app (conservar los archivos)",
     "detachedToast": "Quitado de esta app. Los archivos permanecen en el disco."
+  },
+  "bridgeUnlock": {
+    "unlockRequested": "«{name}» quiere rellenar desde el navegador",
+    "unlockNow": "Desbloquear",
+    "dismiss": "Ahora no"
   }
 }
