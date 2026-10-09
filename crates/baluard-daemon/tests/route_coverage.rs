@@ -4324,3 +4324,349 @@ async fn space_create_route_prefixes_slug_marks_flag_and_lists() {
         .expect("created space listed");
     assert_eq!(row["space"], serde_json::json!(true));
 }
+
+// G24 step 6 (plan §4.10): vault.search is the CLI's executable spec of the
+// fan-out contract - all=true merges unlocked merge-eligible vaults, a
+// locked vault contributes nothing, an org Space never joins the fan-out,
+// and vault_slug=<slug> is the explicit "switch vaults" form that may
+// search an org Space on purpose.
+#[tokio::test]
+async fn vault_search_fans_out_and_skips_locked_and_ineligible() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
+
+    let (dir_a, path_a) = make_vault("search-a");
+    let state_a = Arc::new(VaultState::new(path_a.clone()));
+    state_a.open().await.expect("open a");
+    state_a.unlock(MASTER).await.expect("unlock a");
+    state_a
+        .add_cipher(&serde_json::to_string(&login_input("Alpha Query", "u")).unwrap())
+        .await
+        .expect("add a");
+    register_in_registry("search-a", &path_a);
+
+    let (dir_b, path_b) = make_vault("search-b");
+    let state_b = Arc::new(VaultState::new(path_b.clone()));
+    state_b.open().await.expect("open b");
+    state_b.unlock(MASTER).await.expect("unlock b");
+    state_b
+        .add_cipher(&serde_json::to_string(&login_input("Beta Query", "u")).unwrap())
+        .await
+        .expect("add b");
+    register_in_registry("search-b", &path_b);
+
+    // Org Space: flipped shape, never unlocked-eligible (ceiling cache
+    // stays false). Its cipher must never join the fan-out.
+    let (dir_o, path_o) = make_vault("search-org");
+    let state_o = Arc::new(VaultState::new(path_o.clone()));
+    state_o.open().await.expect("open org");
+    state_o.unlock(MASTER).await.expect("unlock org");
+    baluard_core::vault::space_meta::write_shape_marker(&path_o, 1).unwrap();
+    state_o
+        .add_cipher(&serde_json::to_string(&login_input("Org Query", "u")).unwrap())
+        .await
+        .expect("add org");
+    register_in_registry("search-org", &path_o);
+
+    host.insert("search-a".into(), state_a.clone()).await;
+    host.insert("search-b".into(), state_b.clone()).await;
+    host.insert("search-org".into(), state_o.clone()).await;
+    host.switch("search-b").await.expect("switch to b");
+
+    let token_b = state_b.get_session_token().await.expect("active token");
+    let search_req = |payload: serde_json::Value, token: &str| GatewayRequest {
+        action: "vault.search".into(),
+        payload: payload.to_string(),
+        session_token: token.to_string(),
+        slug: String::new(),
+    };
+
+    // all=true: both personal vaults contribute, tagged; the org Space is
+    // absent even though it is unlocked and carries a matching name.
+    let resp = route_host_request(
+        search_req(serde_json::json!({"query": "Query", "all": true}), &token_b),
+        &host,
+    )
+    .await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    let rows = parsed["matches"].as_array().expect("rows");
+    assert_eq!(rows.len(), 2, "personal only, org excluded: {rows:?}");
+    assert!(
+        rows.iter()
+            .all(|r| r["vault_slug"].is_string() && r["vault_name"].is_string()),
+        "rows carry attribution: {rows:?}"
+    );
+    assert!(rows.iter().all(|r| r["vault_slug"] != "search-org"));
+
+    // Default form: active vault only, no attribution fields.
+    let resp = route_host_request(
+        search_req(serde_json::json!({"query": "Beta"}), &token_b),
+        &host,
+    )
+    .await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    let rows = parsed["matches"].as_array().expect("rows");
+    assert_eq!(rows.len(), 1);
+    assert!(
+        rows[0].get("vault_name").is_none(),
+        "default form is unattributed"
+    );
+    let resp = route_host_request(
+        search_req(serde_json::json!({"query": "Alpha"}), &token_b),
+        &host,
+    )
+    .await;
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(
+        parsed["matches"].as_array().unwrap().len(),
+        0,
+        "active-only default"
+    );
+
+    // A locked vault contributes nothing to the fan-out.
+    state_a.lock().await.expect("lock a");
+    let resp = route_host_request(
+        search_req(serde_json::json!({"query": "Query", "all": true}), &token_b),
+        &host,
+    )
+    .await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    let rows = parsed["matches"].as_array().expect("rows");
+    assert_eq!(rows.len(), 1, "locked vault skipped: {rows:?}");
+    assert_eq!(rows[0]["vault_slug"], serde_json::json!("search-b"));
+
+    // Explicit single-vault form still reaches the locked vault only as an
+    // error; it must never silently search a locked vault.
+    let resp = route_host_request(
+        search_req(
+            serde_json::json!({"query": "Alpha", "vault_slug": "search-a"}),
+            &token_b,
+        ),
+        &host,
+    )
+    .await;
+    assert!(!resp.success, "locked explicit search must fail");
+
+    // Gates: empty query and missing token refuse.
+    let resp = route_host_request(
+        search_req(serde_json::json!({"query": "  "}), &token_b),
+        &host,
+    )
+    .await;
+    assert!(!resp.success, "empty query refused");
+    let resp =
+        route_host_request(search_req(serde_json::json!({"query": "Query"}), ""), &host).await;
+    assert!(!resp.success, "missing token refused");
+}
+
+#[tokio::test]
+async fn vault_search_explicit_slug_includes_org_space() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
+
+    let (dir_p, path_p) = make_vault("svp-personal");
+    let state_p = Arc::new(VaultState::new(path_p.clone()));
+    state_p.open().await.expect("open personal");
+    state_p.unlock(MASTER).await.expect("unlock personal");
+    state_p
+        .add_cipher(&serde_json::to_string(&login_input("Personal Hit", "u")).unwrap())
+        .await
+        .expect("add personal");
+    register_in_registry("svp-personal", &path_p);
+
+    let (dir_o, path_o) = make_vault("svp-org");
+    let state_o = Arc::new(VaultState::new(path_o.clone()));
+    state_o.open().await.expect("open org");
+    state_o.unlock(MASTER).await.expect("unlock org");
+    baluard_core::vault::space_meta::write_shape_marker(&path_o, 1).unwrap();
+    state_o
+        .add_cipher(&serde_json::to_string(&login_input("Org Secret", "u")).unwrap())
+        .await
+        .expect("add org");
+    register_in_registry("svp-org", &path_o);
+
+    host.insert("svp-personal".into(), state_p.clone()).await;
+    host.insert("svp-org".into(), state_o.clone()).await;
+    host.switch("svp-personal")
+        .await
+        .expect("switch to personal");
+    let token = state_p.get_session_token().await.expect("active token");
+
+    // vault_slug=<org>: the explicit "switch vaults" form (plan §4.10). An
+    // organization Space is searchable by explicit choice; no eligibility
+    // gate applies, only the unlock requirement.
+    let req = GatewayRequest {
+        action: "vault.search".into(),
+        payload: serde_json::json!({"query": "Org Secret", "vault_slug": "svp-org"}).to_string(),
+        session_token: token,
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    let rows = parsed["matches"].as_array().expect("rows");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["vault_slug"], serde_json::json!("svp-org"));
+    assert_eq!(rows[0]["name"], serde_json::json!("Org Secret"));
+
+    // Unknown slug refuses like the bridge reads do.
+    let req = GatewayRequest {
+        action: "vault.search".into(),
+        payload: serde_json::json!({"query": "x", "vault_slug": "nope"}).to_string(),
+        session_token: state_p.get_session_token().await.unwrap(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success);
+    assert!(resp.error_message.contains("not open in the daemon"));
+}
+
+// G24 step 9 (plan §4.6 v1.1 + §4.7 v2): slug-routed capture updates let a
+// merge-eligible Space's entry take a browser capture; bridge.request_unlock
+// carries the ask (never a credential) to the desktop.
+#[tokio::test]
+async fn bridge_slug_scoped_write_and_request_unlock() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
+
+    let (dir_p, path_p) = make_vault("g24w-p");
+    let state_p = Arc::new(VaultState::new(path_p.clone()));
+    state_p.open().await.expect("open personal");
+    state_p.unlock(MASTER).await.expect("unlock personal");
+    register_in_registry("g24w-p", &path_p);
+
+    // Family vault (eligible ceiling) + org Space (ineligible).
+    let dir_f = tempfile::TempDir::new().expect("fam tmp");
+    let path_f = dir_f.path().join("fam");
+    let (handle_f, _) =
+        baluard_core::vault::creation::VaultCreator::new(&path_f, MASTER, "this-device")
+            .family(true)
+            .execute()
+            .expect("create family");
+    let state_f = Arc::new(VaultState::new(path_f.clone()));
+    // Registration BEFORE unlock: registering replaces the whole registry
+    // entry, wiping the merge_ceiling_seen cache the unlock refresh writes
+    // (the established fixture-order rule).
+    register_in_registry("g24w-f", &path_f);
+    state_f.open().await.expect("open family");
+    state_f.unlock(MASTER).await.expect("unlock family");
+    drop(handle_f);
+
+    let (dir_o, path_o) = make_vault("g24w-org");
+    let state_o = Arc::new(VaultState::new(path_o.clone()));
+    state_o.open().await.expect("open org");
+    state_o.unlock(MASTER).await.expect("unlock org");
+    baluard_core::vault::space_meta::write_shape_marker(&path_o, 1).unwrap();
+    register_in_registry("g24w-org", &path_o);
+
+    host.insert("g24w-p".into(), state_p.clone()).await;
+    host.insert("g24w-f".into(), state_f.clone()).await;
+    host.insert("g24w-org".into(), state_o.clone()).await;
+    host.switch("g24w-p").await.expect("switch to personal");
+    let token = state_p.get_session_token().await.expect("active token");
+    let token_hex = {
+        let mut reg = host.bridge().write().await;
+        let _pair = reg.start_pair("test-harness");
+        reg.complete_pair("ext", "firefox").expect("pair").1
+    };
+
+    // Slug-scoped WRITE: a capture update lands in the family vault even
+    // though the active vault is personal (plan §4.6 v1.1).
+    let mut add = login_input("Family Wifi", "home");
+    let mut v: serde_json::Value = serde_json::to_value(&add).unwrap();
+    v["vault_slug"] = serde_json::json!("g24w-f");
+    let req = GatewayRequest {
+        action: "vault.add".into(),
+        payload: v.to_string(),
+        session_token: token_hex.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "slug-scoped write refused: {}",
+        resp.error_message
+    );
+    let fam_ciphers = state_f.list_cipher_meta().await.expect("family metas");
+    assert!(
+        fam_ciphers.iter().any(|m| m.name == "Family Wifi"),
+        "cipher landed in the family vault"
+    );
+    assert!(
+        !state_p
+            .list_cipher_meta()
+            .await
+            .expect("personal metas")
+            .iter()
+            .any(|m| m.name == "Family Wifi"),
+        "personal vault untouched"
+    );
+
+    // Ineligible slug refuses the write (org Space stays invisible).
+    let mut v2: serde_json::Value = serde_json::to_value(&login_input("Org Wifi", "u")).unwrap();
+    v2["vault_slug"] = serde_json::json!("g24w-org");
+    let req = GatewayRequest {
+        action: "vault.add".into(),
+        payload: v2.to_string(),
+        session_token: token_hex.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "ineligible write must refuse");
+
+    // bridge.request_unlock: eligible slug accepted + surfaced; org
+    // refused; take consumes.
+    let req = GatewayRequest {
+        action: "bridge.request_unlock".into(),
+        payload: serde_json::json!({"slug": "g24w-f"}).to_string(),
+        session_token: token_hex.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "request_unlock refused: {}",
+        resp.error_message
+    );
+    let req = GatewayRequest {
+        action: "bridge.unlock_request".into(),
+        payload: String::new(),
+        session_token: token.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(parsed["slug"], serde_json::json!("g24w-f"));
+    let req = GatewayRequest {
+        action: "bridge.request_unlock".into(),
+        payload: serde_json::json!({"slug": "g24w-org"}).to_string(),
+        session_token: token_hex.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "org Space unlock request must refuse");
+    let req = GatewayRequest {
+        action: "bridge.unlock_request_take".into(),
+        payload: String::new(),
+        session_token: token.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(parsed["slug"], serde_json::json!("g24w-f"));
+    // Consumed: the peek now returns an empty object.
+    let req = GatewayRequest {
+        action: "bridge.unlock_request".into(),
+        payload: String::new(),
+        session_token: token.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert!(parsed.get("slug").is_none(), "request consumed: {parsed}");
+}

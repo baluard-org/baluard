@@ -161,6 +161,18 @@ enum Commands {
         action: TrashAction,
     },
 
+    /// Search entries by name or username.
+    Search {
+        /// Text to match (case-insensitive substring).
+        query: String,
+        /// Search every unlocked merge-eligible vault, not just the active one.
+        #[arg(long)]
+        all: bool,
+        /// Search one explicit vault by slug (an organization Space included).
+        #[arg(long, value_name = "SLUG")]
+        vault: Option<String>,
+    },
+
     /// Manage folders.
     Folders {
         #[command(subcommand)]
@@ -1424,6 +1436,10 @@ fn main() {
                 commands::handle_space_settings_set(mode, cli.socket.as_deref(), &kv)
             }
         },
+
+        Commands::Search { query, all, vault } => {
+            commands::handle_search(mode, cli.socket.as_deref(), &query, all, vault.as_deref())
+        }
 
         Commands::Trash { action } => match action {
             TrashAction::List => {

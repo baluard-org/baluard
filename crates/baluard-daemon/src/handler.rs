@@ -276,6 +276,10 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     // enforcement happens in core against settings.enc decrypted with
     // the phrase-recovered Root Key.
     "vault.enroll_with_phrase",
+    // G24 step 6 (plan section 4.10): the CLI fan-out search. Token-gated
+    // IN PLACE against the active vault (same trust as vaults.list_full_all)
+    // because the payload crosses vault boundaries.
+    "vault.search",
 ];
 
 /// Default-deny gate for the per-vault dispatcher. Unknown actions require
@@ -313,6 +317,9 @@ const HOST_ACTIONS: &[&str] = &[
     "join.poll",
     "vaults.list",
     "vaults.list_full_all",
+    "vault.search",
+    "bridge.unlock_request",
+    "bridge.unlock_request_take",
     "vaults.active",
     "vaults.switch",
     "vaults.set_active",
@@ -1009,6 +1016,8 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
                 None,
             );
         }
+        // ── vault.search (G24 step 6, plan section 4.10) ──
+        "vault.search" => return handle_vault_search(req, host).await,
         "vaults.switch" => {
             let slug = match extract_slug(&req.payload) {
                 Some(s) => s,
@@ -1708,6 +1717,39 @@ async fn handle_bridge_host_route(
             ))
         }
 
+        // G24 §4.7 v2: the desktop polls for a browser unlock request.
+        // Peek is idempotent; take consumes it (the desktop acting on the
+        // ask). NO per-vault token is demanded - the banner must render on
+        // the login screen, where nothing is unlocked, and the payload is
+        // one slug plus its age (no secrets, no unlock state beyond what
+        // vaults.list already exposes pre-token) - the documented §9.8
+        // same-UID trust class. Nothing unlocks without the desktop's own
+        // unlock flow, so this only carries the ask, never a credential.
+        "bridge.unlock_request" | "bridge.unlock_request_take" => {
+            let take = req.action.as_str() == "bridge.unlock_request_take";
+            let mut reg = host.bridge().write().await;
+            // Expired requests are pruned on peek too, not just on take.
+            if let Some(p) = reg.pending_unlock() {
+                let age = br::now_secs().saturating_sub(p.created_at);
+                if age > br::PENDING_TTL_SECONDS {
+                    reg.take_unlock_request();
+                }
+            }
+            let pending = if take {
+                reg.take_unlock_request()
+            } else {
+                reg.pending_unlock().cloned()
+            };
+            let Some(p) = pending else {
+                return Some(ok_resp("{}", None));
+            };
+            let age = br::now_secs().saturating_sub(p.created_at);
+            Some(ok_resp(
+                serde_json::json!({ "slug": p.slug, "age_seconds": age }).to_string(),
+                None,
+            ))
+        }
+
         // Called by the extension/NMH. Registered as a waiter and HELD until
         // the desktop user clicks Approve (which resolves the waiter). Not
         // token-gated (the extension has no token yet). If the desktop
@@ -1905,6 +1947,26 @@ async fn handle_bridge_host_route(
 /// opt-in) and unlocked, so no merged reader can ever touch an
 /// ineligible or locked vault's data. A registry that fails to load
 /// fails closed: all rows come back metadata-only.
+/// D73 removal notice (plan-merged-search section 4.7): a Space whose local
+/// member row is tombstoned is "removed", not "locked" - the chips surface
+/// offers detach wording instead of an unlock hint. Keyless filesystem read;
+/// fails open to false so a missing or damaged marker never lies.
+fn vault_removal_notice(vault_path: &std::path::Path) -> bool {
+    use baluard_core::vault::members::{member_file_by_id, member_id_for_device};
+    let Ok(raw) = std::fs::read_to_string(vault_path.join("meta/device-id")) else {
+        return false;
+    };
+    let Ok(device_id) = uuid::Uuid::parse_str(raw.trim()) else {
+        return false;
+    };
+    let Some(member_id) = member_id_for_device(vault_path, device_id) else {
+        return false;
+    };
+    member_file_by_id(vault_path, member_id)
+        .map(|row| row.removed.is_some())
+        .unwrap_or(false)
+}
+
 struct MergeFanoutRow {
     meta: serde_json::Value,
     eligible: bool,
@@ -1925,6 +1987,15 @@ async fn merge_fanout_rows(host: &SharedVaultHost) -> Vec<MergeFanoutRow> {
         } else {
             None
         };
+        // Only locked Spaces can carry a removal notice - an unlocked one
+        // has already been pulled past it (sync-lag boundary, plan section 5).
+        let removed = row.presence != "unlocked"
+            && row.space
+            && registry
+                .as_ref()
+                .and_then(|r| r.get(&row.slug))
+                .map(|entry| vault_removal_notice(&entry.path))
+                .unwrap_or(false);
         out.push(MergeFanoutRow {
             meta: serde_json::json!({
                 "slug": row.slug,
@@ -1932,12 +2003,144 @@ async fn merge_fanout_rows(host: &SharedVaultHost) -> Vec<MergeFanoutRow> {
                 "space": row.space,
                 "active": row.active,
                 "presence": row.presence,
+                "removed": removed,
             }),
             eligible,
             state,
         });
     }
     out
+}
+
+/// vault.search: the CLI's executable spec of the fan-out contract. Three
+/// forms - default searches the active vault, all=true fans out over every
+/// unlocked merge-eligible vault (personal first, plan section 4.11), and
+/// vault_slug=<slug> is the CLI's "switch vaults": one explicit vault, an
+/// organization Space included, which must merely be unlocked. Token-gated
+/// IN PLACE against the ACTIVE vault (same trust as vaults.list_full_all);
+/// bridge pairing tokens never verify.
+async fn handle_vault_search(req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) else {
+        return err_response("Invalid JSON");
+    };
+    let query = v["query"].as_str().unwrap_or("").trim().to_string();
+    if query.is_empty() {
+        return err_response("search query is empty");
+    }
+    let all = v["all"].as_bool().unwrap_or(false);
+    let slug = v["vault_slug"].as_str().unwrap_or("").trim().to_string();
+
+    let Some(active_slug) = host.active_slug().await else {
+        return err_response("No active vault".to_string());
+    };
+    let Some(active_state) = host.get(&active_slug).await else {
+        return err_response("No active vault".to_string());
+    };
+    if let Err(e) = active_state.verify_session_token(&req.session_token).await {
+        return err_response(e);
+    }
+
+    let tag = |mut meta: serde_json::Value, vault_slug: &str, vault_name: &str| {
+        if let Some(o) = meta.as_object_mut() {
+            o.insert("vault_slug".into(), serde_json::json!(vault_slug));
+            o.insert("vault_name".into(), serde_json::json!(vault_name));
+        }
+        meta
+    };
+
+    if !slug.is_empty() {
+        let Some(target) = host.get(&slug).await else {
+            return err_response(format!("vault '{slug}' is not open in the daemon"));
+        };
+        let name = baluard_core::vault::registry::VaultRegistry::load_locked()
+            .ok()
+            .and_then(|r| r.get(&slug).map(|e| e.display_name.clone()))
+            .unwrap_or_else(|| slug.clone());
+        return match search_state_meta(&target, &query).await {
+            Ok(rows) => ok_resp(
+                serde_json::json!({
+                    "matches": rows.into_iter().map(|m| tag(m, &slug, &name)).collect::<Vec<_>>()
+                })
+                .to_string(),
+                None,
+            ),
+            Err(e) => err_response(e),
+        };
+    }
+
+    if all {
+        let rows = merge_fanout_rows(host).await;
+        let mut matches: Vec<serde_json::Value> = Vec::new();
+        let mut vault_rank: Vec<(bool, String, String)> = Vec::new();
+        for row in rows {
+            let slug = row.meta["slug"].as_str().unwrap_or_default().to_string();
+            let name = row.meta["display_name"]
+                .as_str()
+                .unwrap_or(&slug)
+                .to_string();
+            let space = row.meta["space"].as_bool().unwrap_or(false);
+            let Some(state) = row.state else {
+                continue;
+            };
+            vault_rank.push((space, slug.clone(), name.clone()));
+            let Ok(mut found) = search_state_meta(&state, &query).await else {
+                continue;
+            };
+            for m in found.drain(..) {
+                matches.push(tag(m, &slug, &name));
+            }
+        }
+        // Personal first, then favorite, then name, then slug (plan 4.11).
+        matches.sort_by_key(|m| {
+            let slug = m["vault_slug"].as_str().unwrap_or_default();
+            let vr = vault_rank
+                .iter()
+                .find(|(_, s, _)| s == slug)
+                .cloned()
+                .unwrap_or((true, slug.to_string(), String::new()));
+            (
+                vr.0,
+                !m["favorite"].as_bool().unwrap_or(false),
+                m["name"].as_str().unwrap_or_default().to_string(),
+                slug.to_string(),
+            )
+        });
+        return ok_resp(serde_json::json!({ "matches": matches }).to_string(), None);
+    }
+
+    match search_state_meta(&active_state, &query).await {
+        Ok(rows) => ok_resp(serde_json::json!({ "matches": rows }).to_string(), None),
+        Err(e) => err_response(e),
+    }
+}
+
+/// Metadata-only match over name + username (no decrypts - CipherMeta
+/// carries both). Search rows keep only the fields the CLI prints.
+async fn search_state_meta(
+    state: &SharedVaultState,
+    query: &str,
+) -> Result<Vec<serde_json::Value>, String> {
+    let metas = state.list_cipher_meta().await?;
+    let q = query.to_lowercase();
+    Ok(metas
+        .into_iter()
+        .filter(|m| {
+            m.name.to_lowercase().contains(&q)
+                || m.username
+                    .as_deref()
+                    .map(|u| u.to_lowercase().contains(&q))
+                    .unwrap_or(false)
+        })
+        .filter_map(|m| serde_json::to_value(&m).ok())
+        .map(|mut meta| {
+            if let Some(o) = meta.as_object_mut() {
+                o.retain(|k, _| {
+                    ["id", "name", "cipher_type", "favorite", "username"].contains(&k.as_str())
+                });
+            }
+            meta
+        })
+        .collect())
 }
 
 /// (Decision 5 lock binding). Then snapshots the active vault and delegates
@@ -1999,6 +2202,30 @@ async fn route_bridge_request(
         }
     }
 
+    // 3d. G24 §4.7 v2: the extension asks the desktop to unlock a vault.
+    //     Works pre-unlock by design; the desktop polls, shows the ask, and
+    //     the user's approval IS the unlock (no unlock route ever accepts a
+    //     master password from the extension). Only merge-eligible vaults
+    //     may be requested; a newer request supersedes.
+    if req.action.as_str() == "bridge.request_unlock" {
+        let slug = serde_json::from_str::<serde_json::Value>(&req.payload)
+            .ok()
+            .and_then(|v| v.get("slug").and_then(|x| x.as_str()).map(String::from))
+            .unwrap_or_default();
+        if slug.is_empty() {
+            return err_response("bridge.request_unlock requires a slug");
+        }
+        let eligible = baluard_core::vault::registry::VaultRegistry::load_locked()
+            .ok()
+            .map(|r| r.merge_eligible(&slug))
+            .unwrap_or(false);
+        if !eligible {
+            return err_response("vault not available for bridge access");
+        }
+        host.bridge().write().await.request_unlock(slug);
+        return ok_resp("{}", None);
+    }
+
     // 4. Snapshot the ACTIVE vault (bridge tokens are slug-agnostic).
     let snapshot = match host.snapshot_target(None).await {
         Ok(pair) => pair,
@@ -2014,20 +2241,27 @@ async fn route_bridge_request(
     //     one. The slug must be merge-eligible and the target
     //     unlocked; anything else is refused exactly like an unknown
     //     vault (fail closed).
-    if matches!(req.action.as_str(), "vault.get" | "cipher.totp_code") {
+    if matches!(
+        req.action.as_str(),
+        "vault.get" | "cipher.totp_code" | "vault.add" | "vault.update"
+    ) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) {
             if let Some(slug) = v.get("vault_slug").and_then(|x| x.as_str()) {
                 if !slug.is_empty() && slug != active_slug {
-                    // A slug-scoped read targets a foreign vault, so it
+                    // A slug-scoped READ targets a foreign vault, so it
                     // MUST carry the page URL: without it the origin
                     // binding below would be skipped and any UUID from
                     // any enabled vault would be readable (plan §4.4).
+                    // Writes (capture updates, §4.6 v1.1) carry no page
+                    // URL; the C21 preservation gate below re-checks the
+                    // target vault after the rebind.
+                    let is_read = matches!(req.action.as_str(), "vault.get" | "cipher.totp_code");
                     let has_url = v
                         .get("url")
                         .and_then(|x| x.as_str())
                         .map(|u| !u.is_empty())
                         .unwrap_or(false);
-                    if !has_url {
+                    if is_read && !has_url {
                         return err_response("slug-scoped bridge reads require a page URL");
                     }
                     let eligible = baluard_core::vault::registry::VaultRegistry::load_locked()
@@ -2321,6 +2555,7 @@ async fn handle_bridge_match(
                 "slug": slug,
                 "display_name": name,
                 "unlocked": row.state.is_some(),
+                "removed": row.meta["removed"].as_bool().unwrap_or(false),
             }));
         }
         let Some(state) = row.state else {
@@ -2401,37 +2636,6 @@ fn hostname_of(url: &str) -> String {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase()
-}
-
-/// Safe hostname match with dot-boundary enforcement.
-/// Exact match, or one is a proper subdomain of the other (separated by a
-/// literal dot). Rejects the `evilgithub.com` matches `github.com` phishing
-/// hole that a naive `ends_with` would allow. Also rejects bare-suffix
-/// matches like `com` matching `github.com` (a value with no dot is only
-/// allowed to match exactly).
-fn hostname_matches(stored: &str, want: &str) -> bool {
-    if stored == want {
-        return true;
-    }
-    // A candidate suffix must itself contain a dot, otherwise it's a bare
-    // TLD-like fragment ("com", "co") that shouldn't match any domain.
-    // want is a subdomain of stored: want = "api.github.com", stored = "github.com"
-    if stored.contains('.') {
-        if let Some(prefix) = want.strip_suffix(stored) {
-            if prefix.ends_with('.') {
-                return true;
-            }
-        }
-    }
-    // stored is a subdomain of want: stored = "api.github.com", want = "github.com"
-    if want.contains('.') {
-        if let Some(prefix) = stored.strip_suffix(want) {
-            if prefix.ends_with('.') {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 /// `vault.unlock` (Phase 6): takes an explicit `slug` (or falls back to
@@ -6765,7 +6969,7 @@ mod tests {
 
     // ── Browser bridge regression tests ──
 
-    use super::{bridge_update_touches_forbidden, hostname_matches};
+    use super::bridge_update_touches_forbidden;
 
     /// C2 regression: the field-gate MUST see fido2_credentials / uris under
     /// kind.data (the real serialized CipherKind shape), not kind directly.
@@ -6862,23 +7066,5 @@ mod tests {
         let uriless = serde_json::json!({ "type": "login", "data": { "username": "u" } });
         let omits = serde_json::json!({ "type": "login", "data": { "password": "x" } });
         assert!(kind_omits_or_shrinks_protected(Some(&uriless), Some(&omits)).is_none());
-    }
-
-    /// C3 regression: hostname matching MUST NOT let `evilgithub.com` match
-    /// `github.com`. Dot-boundary is required for subdomain matches.
-    #[test]
-    fn hostname_match_rejects_phishing_lookalikes() {
-        // Exact match is fine.
-        assert!(hostname_matches("github.com", "github.com"));
-        // Legit subdomain.
-        assert!(hostname_matches("github.com", "api.github.com"));
-        assert!(hostname_matches("api.github.com", "github.com"));
-        // Phishing: evilgithub.com must NOT match github.com (no dot boundary).
-        assert!(!hostname_matches("github.com", "evilgithub.com"));
-        assert!(!hostname_matches("evilgithub.com", "github.com"));
-        // Phishing: github.com.evil.com must NOT match.
-        assert!(!hostname_matches("github.com", "github.com.evil.com"));
-        // Bare TLD must not match a domain sharing that suffix.
-        assert!(!hostname_matches("com", "github.com"));
     }
 }
