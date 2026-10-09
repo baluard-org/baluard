@@ -72,6 +72,11 @@ const STRINGS = {
     copyTotp: "Copy code",
     copied: "Copied",
     refresh: "Refresh",
+    // G24 merged surfaces
+    lockedChip: "is locked. Open Baluard.",
+    spaceRemoved: "You may no longer have access to this space.",
+    askUnlock: "Click to ask the Baluard app to unlock this vault",
+    unlockRequested: "Unlock requested.",
     // Settings
     settings: "Settings",
     back: "Back",
@@ -129,6 +134,10 @@ const STRINGS = {
     copyTotp: "Copiar código",
     copied: "Copiado",
     refresh: "Actualizar",
+    lockedChip: "está bloqueada. Abre Baluard.",
+    spaceRemoved: "Puede que ya no tengas acceso a este espacio.",
+    askUnlock: "Pulsa para pedir a la app de Baluard que la desbloquee",
+    unlockRequested: "Desbloqueo solicitado.",
     // Settings
     settings: "Ajustes",
     back: "Volver",
@@ -155,6 +164,9 @@ const [state, setState] = createSignal("loading");
 const [matches, setMatches] = createSignal([]);
 const [activeVault, setActiveVault] = createSignal("");
 const [tabUrl, setTabUrl] = createSignal("");
+// G24: eligible-vault rows for the locked/removal chips (popup-owned page,
+// so display names are fine here - they never cross to the page principal).
+const [vaultChips, setVaultChips] = createSignal([]);
 const [error, setError] = createSignal(null);
 const [copied, setCopied] = createSignal("");
 // Settings view + inline autofill preference (chrome.storage.local).
@@ -162,6 +174,29 @@ const [settingsOpen, setSettingsOpen] = createSignal(false);
 const [inlineAutofill, setInlineAutofill] = createSignal(true);
 const [copyTotpEnabled, setCopyTotpEnabled] = createSignal(true);
 const [clipboardClear, setClipboardClear] = createSignal(60);
+// G24 section 4.11: vault attribution renders only when two or more
+// eligible vaults contribute, so a single-vault user never sees merge UI.
+function multiVault() {
+  return new Set(matches().map((m) => m.vault_slug).filter(Boolean)).size > 1;
+}
+
+// Locked-space chips ask the desktop to unlock (bridge.request_unlock,
+// section 4.7 v2). No unlock route ever accepts a password here: the
+// desktop shows the ask and its approval IS the unlock.
+const [unlockRequested, setUnlockRequested] = createSignal(new Set());
+
+async function askUnlock(c) {
+  if (unlockRequested().has(c.slug)) return;
+  try {
+    await send("bridge.request_unlock", { slug: c.slug });
+    const next = new Set(unlockRequested());
+    next.add(c.slug);
+    setUnlockRequested(next);
+  } catch (e) {
+    setError(e.message);
+  }
+}
+
 // Pairing code typed by the user (audit C13): proves the pair_complete
 // comes from the person watching the desktop ceremony panel.
 const [pairCode, setPairCode] = createSignal("");
@@ -253,6 +288,7 @@ async function refresh(silent = false) {
       // Non-web tab: show ready-but-empty (no autofill context).
       setMatches([]);
       setActiveVault("");
+      setVaultChips([]);
       setStatePersisted("ready");
       return;
     }
@@ -264,6 +300,7 @@ async function refresh(silent = false) {
     const data = JSON.parse(payload || "{}");
     setMatches(data.matches || []);
     setActiveVault(data.active_vault || "");
+    setVaultChips(data.vaults || []);
     setStatePersisted("ready");
   } catch (e) {
     setError(e.message);
@@ -345,7 +382,13 @@ function detectBrowser() {
 
 async function fill(entry) {
   try {
-    const payload = await send("vault.get", { id: entry.id });
+    // Slug-scoped reads always carry the tab URL: the daemon enforces the
+    // URI match server-side even for a foreign (merge-eligible) vault.
+    const payload = await send("vault.get", {
+      id: entry.id,
+      url: tabUrl(),
+      vault_slug: entry.vault_slug || "",
+    });
     const cred = JSON.parse(payload || "{}");
     // Fetch the fresh code when the entry has TOTP configured (cred.totp is
     // only a presence flag here — the seed itself is never read or stored).
@@ -353,7 +396,11 @@ async function fill(entry) {
     let totpCode = "";
     if (cred.totp) {
       try {
-        const t = await send("cipher.totp_code", { id: entry.id, url: tabUrl() });
+        const t = await send("cipher.totp_code", {
+          id: entry.id,
+          url: tabUrl(),
+          vault_slug: entry.vault_slug || "",
+        });
         const raw = typeof t === "string" ? t : (t && t.payload) || "{}";
         totpCode = JSON.parse(raw).code || "";
       } catch {
@@ -395,7 +442,11 @@ async function fill(entry) {
 
 async function copyField(entry, field) {
   try {
-    const payload = await send("vault.get", { id: entry.id });
+    const payload = await send("vault.get", {
+      id: entry.id,
+      url: tabUrl(),
+      vault_slug: entry.vault_slug || "",
+    });
     const cred = JSON.parse(payload || "{}");
     const val = cred[field] || "";
     await clipboardCopy(val);
@@ -408,7 +459,11 @@ async function copyField(entry, field) {
 
 async function copyTotp(entry) {
   try {
-    const code = await send("cipher.totp_code", { id: entry.id });
+    const code = await send("cipher.totp_code", {
+      id: entry.id,
+      url: tabUrl(),
+      vault_slug: entry.vault_slug || "",
+    });
     const parsed = JSON.parse(code || "{}");
     await clipboardCopy(parsed.code || "");
     setCopied(`totp-${entry.id}`);
@@ -710,6 +765,26 @@ function App() {
       </Show>
 
       <Show when={state() === "ready"}>
+        <Show when={vaultChips().some((c) => !c.unlocked)}>
+          <div class="vault-chips">
+            <For each={vaultChips().filter((c) => !c.unlocked)}>
+              {(c) => (
+                <div
+                  class={`vault-chip ${c.removed ? "danger" : "clickable"}`}
+                  role={c.removed ? undefined : "button"}
+                  title={c.removed ? undefined : t("askUnlock")}
+                  onClick={c.removed ? undefined : () => askUnlock(c)}
+                >
+                  {c.removed
+                    ? t("spaceRemoved")
+                    : `${c.display_name} ${t("lockedChip")}${
+                        unlockRequested().has(c.slug) ? ` ${t("unlockRequested")}` : ""
+                      }`}
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
         <Show when={matches().length === 0}>
           <div class="state-block">
             <div class="state-desc">{t("noMatches")}</div>
@@ -723,6 +798,9 @@ function App() {
                   <div class="match-name">{m.name}</div>
                   <Show when={m.username}>
                     <div class="match-user">{m.username}</div>
+                  </Show>
+                  <Show when={multiVault() && m.vault_name}>
+                    <div class="match-vault">{m.vault_name}</div>
                   </Show>
                 </div>
                 <div class="match-actions-row">

@@ -206,7 +206,7 @@ function hostnameOf(url) {
 // http://example.com — a network attacker can serve the plain-HTTP page
 // and read the typed password. Content scripts compare location.origin.
 
-async function handleInlineMatches(sender) {
+export async function handleInlineMatches(sender) {
   const url = senderUrl(sender);
   if (!url) throw err("no matching tab", "no-match");
   const r = await send("bridge.match", { url });
@@ -233,7 +233,7 @@ async function handleInlineMatches(sender) {
   });
 }
 
-async function handleInlineFill(sender, id, mode, hasTotpField, vaultSlug) {
+export async function handleInlineFill(sender, id, mode, hasTotpField, vaultSlug) {
   const url = senderUrl(sender);
   if (!url) throw err("no matching tab", "no-match");
   if (typeof id !== "string" || id.length === 0) throw err("missing id", "proto");

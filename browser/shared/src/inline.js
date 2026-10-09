@@ -51,6 +51,7 @@ export function statusKeyFor(code) {
       codeCopyFailed: "Copy failed",
       noCode: "No code available",
       fillFailed: "Couldn't fill this field",
+      multiVaultNote: "Some logins come from another vault",
       appRequired: "Open the Baluard app to fill logins",
       locked: "Unlock the Baluard app to fill logins",
       updateApp: "Update the Baluard app to continue",
@@ -63,6 +64,7 @@ export function statusKeyFor(code) {
       codeCopyFailed: "Error al copiar",
       noCode: "Sin código disponible",
       fillFailed: "No se pudo rellenar este campo",
+      multiVaultNote: "Algunos inicios de sesión vienen de otra bóveda",
       appRequired: "Abre la app de Baluard para rellenar inicios de sesión",
       locked: "Desbloquea la app de Baluard para rellenar inicios de sesión",
       updateApp: "Actualiza la app de Baluard para continuar",
@@ -117,6 +119,7 @@ export function statusKeyFor(code) {
       }
       .menu.open { display: block; }
       .menu-status { padding: 12px; color: #a2b7ba; }
+      .menu-note { padding: 8px 12px 0; font-size: 11px; opacity: 0.85; }
       .entry {
         display: flex;
         flex-direction: column;
@@ -230,7 +233,7 @@ export function statusKeyFor(code) {
       }
       const data = resp && resp.ok ? safeParse(resp.payload) : null;
       const matches = (data && data.matches) || [];
-      renderEntries(matches);
+      renderEntries(matches, Boolean(data && data.multiVault));
     } catch {
       // Messaging-level failure (SW died mid-flight): same mapping. A code
       // rarely exists here, so this lands on the plain no-matches message.
@@ -239,13 +242,21 @@ export function statusKeyFor(code) {
     }
   }
 
-  function renderEntries(matches) {
+  function renderEntries(matches, multiVault = false) {
     if (!menuOpen) return; // closed while loading
     if (matches.length === 0) {
       menu.innerHTML = `<div class="menu-status">${escapeHtml(t("noMatches"))}</div>`;
       return;
     }
     menu.innerHTML = "";
+    if (multiVault) {
+      // Neutral merge marker (G24 section 4.5): the page principal learns
+      // only that more than one vault contributed - never WHICH vault.
+      const note = document.createElement("div");
+      note.className = "menu-status menu-note";
+      note.textContent = t("multiVaultNote");
+      menu.appendChild(note);
+    }
     for (const m of matches) {
       const item = document.createElement("div");
       item.className = "entry";
