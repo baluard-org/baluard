@@ -724,3 +724,113 @@ fn e2e_encrypted_backup_cross_vault_restore() {
         .success()
         .stdout(predicates::str::contains("backup-pw-123"));
 }
+
+/// G24 step 6 (plan §6): CLI search is the executable spec of the fan-out
+/// contract. --all merges unlocked vaults (a locked one contributes
+/// nothing), the default form is active-vault only, --vault scopes to one
+/// explicit vault, and an explicit search of a locked vault fails loudly.
+#[test]
+fn e2e_search_all_and_explicit_vault() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    // Vault A exists before the daemon and is the initial active vault.
+    let _a = init_vault_json(&tmp, "baluard-e2e-sa");
+    let guard = spawn_daemon(tmp);
+
+    baluard_daemon(&guard).arg("unlock").assert().success();
+    baluard_daemon(&guard)
+        .args([
+            "add",
+            "login",
+            "--name",
+            "Alpha Query",
+            "--username",
+            "a",
+            "--password",
+            "pw-a",
+        ])
+        .assert()
+        .success();
+
+    // Second vault through the running daemon: init registers it and makes
+    // it active, so the following unlock/add land in B.
+    baluard_daemon(&guard)
+        .args([
+            "init",
+            "--name",
+            "Search B",
+            "--slug",
+            "baluard-e2e-sb",
+            "--json",
+        ])
+        .assert()
+        .success();
+    // init registers + sets the registry default but does NOT flip the
+    // daemon host's active pointer - the explicit switch is required
+    // (the multi-device join flow hit the same thing).
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-e2e-sb"])
+        .assert()
+        .success();
+    baluard_daemon(&guard).arg("unlock").assert().success();
+    baluard_daemon(&guard)
+        .args([
+            "add",
+            "login",
+            "--name",
+            "Beta Query",
+            "--username",
+            "b",
+            "--password",
+            "pw-b",
+        ])
+        .assert()
+        .success();
+
+    // Lock A in place while B stays active and unlocked.
+    baluard_daemon(&guard)
+        .args(["--vault", "baluard-e2e-sa", "lock"])
+        .assert()
+        .success();
+
+    // --all sees only the unlocked vault, tagged with its display name.
+    baluard_daemon(&guard)
+        .args(["search", "Query", "--all"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Beta Query"))
+        .stdout(predicates::str::contains("Search B"))
+        .stdout(predicates::str::contains("Alpha Query").not());
+
+    // Default form: the active vault only.
+    baluard_daemon(&guard)
+        .args(["search", "Alpha"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No matches."));
+
+    // An explicit search of a locked vault fails loudly.
+    baluard_daemon(&guard)
+        .args(["search", "Alpha", "--vault", "baluard-e2e-sa"])
+        .assert()
+        .failure();
+
+    // Unlock A while B stays active; --all now merges both, each tagged.
+    baluard_daemon(&guard)
+        .args(["--vault", "baluard-e2e-sa", "unlock"])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["search", "Query", "--all"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Alpha Query"))
+        .stdout(predicates::str::contains("Beta Query"));
+
+    // Explicit --vault scopes to one vault even with both unlocked.
+    baluard_daemon(&guard)
+        .args(["search", "Query", "--vault", "baluard-e2e-sb"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Beta Query"))
+        .stdout(predicates::str::contains("Alpha Query").not());
+}

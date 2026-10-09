@@ -53,8 +53,9 @@ pub const BRIDGE_ALLOWED_ACTIONS: &[&str] = &[
     "cipher.totp_code",      // TOTP copy (derived code only; seed never crosses)
     "generator.history_add", // record a freshly-generated password
     "generator.history_clear",
-    "bridge.config",        // returns ONLY default_uri_match
-    "sync.autosync_status", // read-only sync badge
+    "bridge.config",         // returns ONLY default_uri_match
+    "bridge.request_unlock", // ask the desktop to unlock a merge-eligible vault (§4.7 v2)
+    "sync.autosync_status",  // read-only sync badge
 ];
 
 /// Membership test against the allowlist. Used by both the daemon (authoritative)
