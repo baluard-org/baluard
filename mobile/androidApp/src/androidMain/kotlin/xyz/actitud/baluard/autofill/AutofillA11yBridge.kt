@@ -14,6 +14,8 @@ object AutofillA11yBridge {
         val target: String,
         /** Foreground package the fill must land in (null when unknown). */
         val targetPackage: String?,
+        /** Owning vault of the picked entry (merged picker; null = active). */
+        val vaultPath: String? = null,
     )
 
     /** Armed by the quick-settings tile; consumed by the next window change. */

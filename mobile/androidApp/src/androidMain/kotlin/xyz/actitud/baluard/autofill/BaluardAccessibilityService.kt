@@ -132,14 +132,14 @@ class BaluardAccessibilityService : AccessibilityService() {
         // Session work runs off the main thread (a11y events arrive on it);
         // decrypt + clipboard must never block it (peer-review finding #1).
         AutofillSession.scope.launch {
-            val (username, password) = AutofillSession.credential(fill.cipherId)
+            val (username, password) = AutofillSession.credential(fill.vaultPath, fill.cipherId)
                 ?: run { AutofillA11yBridge.pendingFill = null; return@launch }
 
             val filled = fillFields(root, username, password)
             if (filled) {
                 AutofillA11yBridge.pendingFill = null
                 AutofillA11yBridge.pendingFillAttempts = 0
-                AutofillSession.totpCode(fill.cipherId)?.let { code ->
+                AutofillSession.totpCode(fill.vaultPath, fill.cipherId)?.let { code ->
                     copyToClipboard(code)
                     toastMain(t("a11y.totpCopied"))
                 }

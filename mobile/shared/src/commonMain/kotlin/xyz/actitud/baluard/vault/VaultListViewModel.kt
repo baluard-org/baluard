@@ -29,7 +29,34 @@ import xyz.actitud.baluard.platform.platformLogE
  * reload. Never index during [refresh]: that decrypted every cipher on
  * every hub load and sync completion.
  */
+/** One foreign vault's slice of the merged app search (G24 §4.9). */
+data class ForeignHits(
+    val vaultPath: String,
+    val vaultName: String,
+    val ciphers: List<MobileCipherMeta>,
+)
+
 class VaultListViewModel(private val repo: VaultRepository) {
+    /**
+     * Merged-search source (G24 §4.9), wired once by App: (query,
+     * excludePath) -> hits per other unlocked merge-eligible session. Null
+     * keeps search single-vault.
+     */
+    var foreignSearch: (suspend (String, String) -> List<ForeignHits>)? = null
+
+    /**
+     * Foreign matches ride name/username only: the deep-content index is per
+     * active vault, and decrypting other vaults' content on every keystroke
+     * buys nothing for v1 (plan §4.9 keeps the merge to what the hub shows).
+     */
+    fun filterForeign(hits: ForeignHits, query: String): List<MobileCipherMeta> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        return hits.ciphers.filter { m ->
+            m.name.contains(q, ignoreCase = true) ||
+                (m.username?.contains(q, ignoreCase = true) ?: false)
+        }
+    }
     private val _ciphers = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
     val ciphers: StateFlow<List<MobileCipherMeta>> = _ciphers.asStateFlow()
 

@@ -25,6 +25,25 @@ actual object VaultRegistry {
         return base.removePrefix("baluard-").replaceFirstChar { it.uppercase() }
     }
 
+    actual fun isMergeEligible(path: String): Boolean {
+        return runCatching {
+            val dir = java.io.File(path)
+            // Flipped team shape (org made by the flip button): never merges.
+            if (java.io.File(dir, "meta/space-shape.json").exists()) return@runCatching false
+            val pub = java.io.File(dir, "meta/settings-pub.json")
+            if (!pub.exists()) return@runCatching true // personal: always eligible
+            val obj = org.json.JSONObject(pub.readText())
+            when {
+                obj.optString("purpose") == "family" -> true
+                obj.optString("purpose") == "org" -> false
+                obj.optString("purpose") == "pair" -> false
+                // Legacy pair flag without a purpose: a pair Space.
+                obj.optBoolean("space", false) -> false
+                else -> true
+            }
+        }.getOrDefault(false)
+    }
+
     actual fun listVaults(): List<DiscoveredVault> {
         val found = LinkedHashMap<String, DiscoveredVault>()
         val defaultDir = defaultVault()

@@ -40,6 +40,7 @@ class AutofillActivity : FragmentActivity() {
         const val EXTRA_PASSWORD_ID = "baluard.autofill.extra.PASSWORD_ID"
         const val EXTRA_MODE = "baluard.autofill.extra.MODE"
         const val EXTRA_TARGET_PACKAGE = "baluard.autofill.extra.TARGET_PACKAGE"
+const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         const val MODE_DATASETS = "datasets"
         const val MODE_A11Y_PICKER = "a11y_picker"
         const val MODE_FALLBACK_PICK = "fallback_pick"
@@ -94,7 +95,10 @@ class AutofillActivity : FragmentActivity() {
             return
         }
         val status = findViewById<TextView>(R.id.autofill_status)
-        val path = VaultRegistry.loadActiveVault()
+        // Per-vault auth datasets pin the vault; without one, the last-active
+        // vault is the unlock target (plan-merged-search §4.8).
+        val path = intent?.getStringExtra(EXTRA_VAULT_PATH)
+            ?: VaultRegistry.loadActiveVault()
         if (path == null) {
             status.text = t("autofill.openAppToSetup")
             openMainAndFinishDelayed()
@@ -149,7 +153,7 @@ class AutofillActivity : FragmentActivity() {
             title = t("login.biometricTitle"),
             onSuccess = { kek ->
                 AutofillSession.scope.launch {
-                    val unlocked = AutofillSession.unlock(kek)
+                    val unlocked = AutofillSession.unlockPath(path, kek)
                     if (!unlocked) {
                         failOnUiThread(t("autofill.unlockFailed"))
                         return@launch
@@ -237,7 +241,7 @@ class AutofillActivity : FragmentActivity() {
                     onTrust = {
                         if (pkg != null) {
                             AutofillSession.scope.launch {
-                                AutofillSession.trustApp(pkg, suggestion.domain)
+                                AutofillSession.trustApp(pkg, suggestion.domain, suggestion.vaultPath)
                                 showList(target, all = true)
                             }
                         }
@@ -245,7 +249,7 @@ class AutofillActivity : FragmentActivity() {
                     onNotNow = {
                         if (pkg != null) {
                             AutofillSession.scope.launch {
-                                AutofillSession.rejectApp(pkg, suggestion.domain)
+                                AutofillSession.rejectApp(pkg, suggestion.domain, suggestion.vaultPath)
                                 showList(target, all = true)
                             }
                         }
@@ -319,7 +323,7 @@ class AutofillActivity : FragmentActivity() {
             // Tile flow: hand the cipher id to the service via the bridge;
             // the service types it into the target app.
             AutofillA11yBridge.startPendingFill(
-                AutofillA11yBridge.PendingFill(match.id, target, targetPackage()),
+                AutofillA11yBridge.PendingFill(match.id, target, targetPackage(), match.vaultPath),
             )
             finish()
             return

@@ -33,6 +33,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Opt out of Maestro's anonymous analytics (mobile.dev telemetry).
+export MAESTRO_CLI_NO_ANALYTICS=1
 command -v maestro >/dev/null 2>&1 || {
   echo "ERROR: Maestro CLI missing. Install it (one-time):" >&2
   echo '  curl -Ls "https://get.maestro.mobile.dev" | bash' >&2

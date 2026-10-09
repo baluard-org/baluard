@@ -15,6 +15,13 @@ expect object VaultRegistry {
     /** All vault directories found on this device (marker-checked). */
     fun listVaults(): List<DiscoveredVault>
 
+    /**
+     * G24 §4.2 merge-eligibility sniff for merged search. Keyless read of
+     * the plaintext classification surfaces only; anything damaged fails
+     * closed.
+     */
+    fun isMergeEligible(path: String): Boolean
+
     /** Last-used vault path, or null (fall back to the platform default). */
     fun loadActiveVault(): String?
 
