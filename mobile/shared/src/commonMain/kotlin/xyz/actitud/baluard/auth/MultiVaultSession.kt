@@ -93,6 +93,17 @@ class MultiVaultSession(
     suspend fun holds(path: String): Boolean =
         sessions[path]?.let { it.vault.isUnlocked() } == true
 
+    /** G24 §4.9: paths of all still-unlocked sessions (merged search fan-out). */
+    suspend fun unlockedPaths(): List<String> =
+        sessions.mapNotNull { (path, e) -> if (e.vault.isUnlocked()) path else null }
+
+    /** The live FFI handle for [path], when its session is still unlocked. */
+    suspend fun vaultFor(path: String): MobileVault? {
+        val e = sessions[path] ?: return null
+        if (!e.vault.isUnlocked()) return null
+        return e.vault.mobile
+    }
+
     override suspend fun lockActive(): Boolean {
         val last = sessions.keys.lastOrNull() ?: return false
         return lockOne(last)

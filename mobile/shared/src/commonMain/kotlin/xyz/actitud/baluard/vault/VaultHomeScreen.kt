@@ -48,6 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,6 +107,8 @@ fun VaultHomeScreen(
     onOpenKind: (EntryListKind) -> Unit = {},
     onOpenTags: () -> Unit = {},
     onCipherClick: (String) -> Unit = {},
+    /** G24 §4.9: open a merged-search hit from another vault (path, id). */
+    onForeignOpen: (String, String) -> Unit = { _, _ -> },
     vaultName: String,
     vaultPath: String,
     onSwitchVault: (String) -> Unit = {},
@@ -428,6 +431,38 @@ fun VaultHomeScreen(
                         )
                     }
                     Spacer(Modifier.height(16.dp))
+                }
+
+                // ── Merged search (G24 §4.9): other unlocked
+                // merge-eligible vaults, badged per origin. A tap switches
+                // to the owning vault and opens the entry.
+                val foreign by produceState(
+                    initialValue = emptyList<ForeignHits>(),
+                    query,
+                    revision,
+                ) {
+                    value = listViewModel.foreignSearch
+                        ?.invoke(query, vaultPath)
+                        ?.map { hits ->
+                            val filtered = listViewModel.filterForeign(hits, query)
+                            ForeignHits(hits.vaultPath, hits.vaultName, filtered)
+                        }
+                        ?.filter { it.ciphers.isNotEmpty() }
+                        ?: emptyList()
+                }
+                foreign.forEach { hits ->
+                    HomeSectionHeader(t("home.fromVault", hits.vaultName), hits.ciphers.size)
+                    hits.ciphers.forEach { meta ->
+                        CipherRowCard(
+                            meta = meta,
+                            typeLabel = t(typeLabelKey(normalizeTypeTag(meta.cipherType))),
+                            onClick = { onForeignOpen(hits.vaultPath, meta.id) },
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                                .fillMaxWidth(),
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
                 }
                 return@Column
             }

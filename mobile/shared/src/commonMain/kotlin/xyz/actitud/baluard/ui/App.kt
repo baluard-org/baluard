@@ -56,6 +56,7 @@ import xyz.actitud.baluard.ui.theme.BaluardTheme
 import xyz.actitud.baluard.ui.toast.Toast
 import xyz.actitud.baluard.ui.toast.ToastHost
 import xyz.actitud.baluard.vault.EntryListKind
+import xyz.actitud.baluard.vault.ForeignHits
 import xyz.actitud.baluard.vault.EntryListScreen
 import xyz.actitud.baluard.vault.TagListScreen
 import xyz.actitud.baluard.vault.VaultHomeScreen
@@ -158,6 +159,16 @@ fun App(
         val settingsVm = remember { SettingsViewModel(configStore.load()) }
         val conflictVm = remember { ConflictViewModel() }
         val listVm = remember { VaultListViewModel(repo) }
+        // G24 §4.9: merged app-search fan-out source. The AuthViewModel owns
+        // the session map; the ViewModel stays free of auth wiring.
+        listVm.foreignSearch = { query, excludePath ->
+            val out = ArrayList<ForeignHits>()
+            for ((p, name, v) in auth.mergeSearchSessions(excludePath)) {
+                val metas = runCatching { repo.listCiphers(v) }.getOrDefault(emptyList())
+                out.add(ForeignHits(p, name, metas))
+            }
+            out
+        }
         val flowVm = remember { ProviderFlowViewModel(repo, auth) }
         val detailVm = remember { CipherDetailViewModel(repo) }
         val editVm = remember { EditCipherViewModel(repo) }
@@ -456,6 +467,26 @@ fun App(
                                     onCipherClick = {
                                         detailOrigin = null
                                         nav = Nav.Detail(it)
+                                    },
+                                    onForeignOpen = { targetPath, cipherId ->
+                                        // Fast path: the vault's session is
+                                        // still unlocked - adopt it and open
+                                        // the entry. Anything else falls back
+                                        // to the normal switch (unlock screen).
+                                        scope.launch {
+                                            if (auth.switchTo(targetPath)) {
+                                                xyz.actitud.baluard.platform.VaultRegistry.saveActiveVault(targetPath)
+                                                path = targetPath
+                                                auth.vault()?.let { v ->
+                                                    runCatching { sync.onUnlock(v) }
+                                                    conflictVm.refresh(v)
+                                                }
+                                                detailOrigin = null
+                                                nav = Nav.Detail(cipherId)
+                                            } else {
+                                                switchVault(targetPath)
+                                            }
+                                        }
                                     },
                                     vaultName = vaultDisplayName,
                                     vaultPath = path,

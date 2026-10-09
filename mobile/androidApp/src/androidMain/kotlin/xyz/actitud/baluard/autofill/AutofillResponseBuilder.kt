@@ -118,11 +118,18 @@ object AutofillResponseBuilder {
         // its values: inherent to multi-dataset responses (Bitwarden does the
         // same); per-dataset authentication would add a prompt per row.
         // Plan D2 holds where it matters: the QUERY never returns passwords.
+        // G24 §4.11: vault attribution renders only when two or more vaults
+        // contribute, so a single-vault user never sees merge machinery.
+        val multiVault = matches.mapNotNull { it.vaultPath }.distinct().size > 1
         val builder = FillResponse.Builder()
         matches.forEachIndexed { index, match ->
-            val (username, password) = AutofillSession.credential(match.id) ?: return@forEachIndexed
-            val chip = inline?.let { inlineChipOrNull(context, it, index, match.name, username) }
-            val views = datasetPresentation(context, match.name, username)
+            val (username, password) = AutofillSession.credential(match.vaultPath, match.id) ?: return@forEachIndexed
+            val title = match.vaultName
+                ?.takeIf { multiVault }
+                ?.let { "${match.name} ($it)" }
+                ?: match.name
+            val chip = inline?.let { inlineChipOrNull(context, it, index, title, username) }
+            val views = datasetPresentation(context, title, username)
             val ds = Dataset.Builder().setId("fill-" + match.id)
             var hasValue = false
 
@@ -157,8 +164,68 @@ object AutofillResponseBuilder {
             }
         }
 
+        // Per-vault unlock datasets (plan-merged-search §4.8): a locked
+        // vault contributes nothing to the merge, but shows up here as its
+        // own auth dataset - one explicit biometric prompt each.
+        for ((lockedPath, lockedName) in AutofillSession.lockedVaults()) {
+            builder.addDataset(
+                lockedVaultDataset(context, fields, target, lockedPath, lockedName).build(),
+            )
+        }
         builder.addDataset(openBaluardDataset(context, fields, target).build())
         return applyIgnored(builder.setSaveInfo(saveInfo(fields)), ignored).build()
+    }
+
+    /**
+     * Auth dataset for one LOCKED vault: presentations-only fields plus
+     * Dataset.setAuthentication into [AutofillActivity] with the vault path
+     * pinned, so the biometric prompt unlocks THAT vault's KEK.
+     */
+    private fun lockedVaultDataset(
+        context: Context,
+        fields: TargetFields,
+        target: String,
+        vaultPath: String,
+        vaultName: String,
+    ): Dataset.Builder {
+        val intent = Intent(context, AutofillActivity::class.java).apply {
+            putExtra(AutofillActivity.EXTRA_TARGET, target)
+            putExtra(AutofillActivity.EXTRA_VAULT_PATH, vaultPath)
+            fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
+            fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
+        }
+        // Distinct request code per vault: PendingIntents with the same
+        // code and filterEquals collapse, and FLAG_UPDATE_CURRENT would
+        // point every locked-vault dataset at the LAST vault iterated.
+        val pending = PendingIntent.getActivity(
+            context,
+            vaultPath.hashCode(),
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val views = RemoteViews(context.packageName, R.layout.autofill_dataset_item).apply {
+            setTextViewText(
+                R.id.autofill_item_title,
+                t("autofill.unlockVault", vaultName),
+            )
+            setTextViewText(R.id.autofill_item_subtitle, t("autofill.unlockHint"))
+            setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
+        }
+        val ds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val presentations = Presentations.Builder()
+                .setMenuPresentation(views)
+                .setDialogPresentation(views)
+                .build()
+            val b = Dataset.Builder()
+            listOfNotNull(fields.usernameId, fields.passwordId).forEach { autofillId ->
+                b.setField(autofillId, Field.Builder().setPresentations(presentations).build())
+            }
+            b
+        } else {
+            @Suppress("DEPRECATION")
+            Dataset.Builder(views)
+        }
+        return ds
     }
 
     /**
@@ -188,7 +255,7 @@ object AutofillResponseBuilder {
         match: AutofillSession.Match,
         inline: InlineStyle? = null,
     ): FillResponse? {
-        val (username, password) = AutofillSession.credential(match.id) ?: return null
+        val (username, password) = AutofillSession.credential(match.vaultPath, match.id) ?: return null
         val chip = inline?.let { inlineChipOrNull(context, it, 0, match.name, username) }
         val views = datasetPresentation(context, match.name, username)
         val ds = Dataset.Builder().setId("fill-" + match.id)
@@ -230,7 +297,7 @@ object AutofillResponseBuilder {
      * selection, the entry's code goes to the clipboard with a toast.
      */
     suspend fun copyTotpFor(context: Context, match: AutofillSession.Match) {
-        AutofillSession.totpCode(match.id)?.let { code ->
+        AutofillSession.totpCode(match.vaultPath, match.id)?.let { code ->
             xyz.actitud.baluard.platform.copyToClipboard(code)
             android.widget.Toast.makeText(
                 context,

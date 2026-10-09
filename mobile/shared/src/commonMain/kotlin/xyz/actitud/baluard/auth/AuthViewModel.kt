@@ -16,6 +16,22 @@ import xyz.actitud.baluard.MobileVault
  * The KDF stays user-serialized — one password prompt runs one KDF.
  */
 class AuthViewModel(private val repo: VaultRepository) {
+    /**
+     * G24 §4.9 merged app-search source: every OTHER still-unlocked session
+     * whose vault passes the merge-eligibility sniff. (path, name, handle).
+     */
+    suspend fun mergeSearchSessions(excludePath: String): List<Triple<String, String, MobileVault>> {
+        val out = ArrayList<Triple<String, String, MobileVault>>()
+        for (path in session.unlockedPaths()) {
+            if (path == excludePath) continue
+            if (!xyz.actitud.baluard.platform.VaultRegistry.isMergeEligible(path)) continue
+            val vault = session.vaultFor(path) ?: continue
+            val name = xyz.actitud.baluard.platform.VaultRegistry.listVaults()
+                .firstOrNull { it.path == path }?.name ?: path
+            out.add(Triple(path, name, vault))
+        }
+        return out
+    }
     private val session = MultiVaultSession()
 
     /**
