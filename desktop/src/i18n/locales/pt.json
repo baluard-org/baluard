@@ -1069,5 +1069,10 @@
     "cliHint": "Para apagar também os arquivos: baluard vaults detach {slug} --delete-from-disk",
     "detachAction": "Remover deste app (manter os arquivos)",
     "detachedToast": "Removido deste app. Os arquivos permanecem no disco."
+  },
+  "bridgeUnlock": {
+    "unlockRequested": "\"{name}\" quer preencher pelo navegador",
+    "unlockNow": "Desbloquear",
+    "dismiss": "Agora não"
   }
 }

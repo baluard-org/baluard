@@ -1,6 +1,7 @@
 import { Show, createSignal, createEffect, onCleanup } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
+import BridgeUnlockBanner from "./BridgeUnlockBanner.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { daemon, getRenderState } from "../lib/daemon.js";
 import { biometryPrompt } from "../lib/biometry.js";
@@ -195,6 +196,13 @@ export default function LoginScreen() {
           </div>
           <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)] font-logo">{t("login.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("login.subtitle")}</p>
+          <BridgeUnlockBanner onUnlock={async (row) => {
+            // Same handoff as picking a locked vault in the switcher:
+            // move the pre-unlock pointer and show that vault's unlock.
+            await switcher.switchTo(row.slug);
+            auth.setSwitchTarget(row.slug);
+            auth.refreshActiveVault();
+          }} />
           <Show when={switcher.vaults().length > 1} fallback={
             <Show when={auth.activeVault()}>
               <p class="text-xs text-[var(--color-primary)] mt-2 font-medium">{auth.activeVault().display_name}</p>

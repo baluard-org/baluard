@@ -19,6 +19,9 @@ const VaultSwitcherContext = createContext(null);
 function VaultSwitcherProvider(props) {
   const [vaults, setVaults] = createSignal([]);
   const [activeSlug, setActiveSlug] = createSignal(null);
+  // G24 §4.7 v2: a pending browser unlock request, resolved to a vault row
+  // for the banner. Null = no pending ask.
+  const [unlockRequest, setUnlockRequest] = createSignal(null);
 
   async function refresh() {
     try {
@@ -27,9 +30,29 @@ function VaultSwitcherProvider(props) {
       setVaults(rows);
       const active = rows.find((r) => r.active);
       setActiveSlug(active ? active.slug : null);
+      try {
+        const req = JSON.parse((await daemon("bridge.unlock_request")) || "{}");
+        const row = req.slug ? rows.find((r) => r.slug === req.slug) : null;
+        setUnlockRequest(row ? { slug: row.slug, display_name: row.display_name } : null);
+      } catch {
+        setUnlockRequest(null);
+      }
     } catch {
       // Daemon unreachable / no vaults — leave the list as-is.
     }
+  }
+
+  // Consume the pending request when the desktop acts on it or dismisses
+  // it. Returns the row (or null).
+  async function takeUnlockRequest() {
+    const cur = unlockRequest();
+    try {
+      await daemon("bridge.unlock_request_take");
+    } catch {
+      // Already gone (TTL) — still clear locally.
+    }
+    setUnlockRequest(null);
+    return cur;
   }
 
   // 30s heartbeat: catches auto-locks and closes that happen while the
@@ -99,6 +122,8 @@ function VaultSwitcherProvider(props) {
     switchTo,
     close,
     detach,
+    unlockRequest,
+    takeUnlockRequest,
   };
 
   return (

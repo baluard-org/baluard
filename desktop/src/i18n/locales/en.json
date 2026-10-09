@@ -1069,5 +1069,10 @@
     "cliHint": "To also delete the files: baluard vaults detach {slug} --delete-from-disk",
     "detachAction": "Remove from this app (keep the files)",
     "detachedToast": "Removed from this app. The files stay on disk."
+  },
+  "bridgeUnlock": {
+    "unlockRequested": "\"{name}\" wants to fill from the browser",
+    "unlockNow": "Unlock now",
+    "dismiss": "Not now"
   }
 }
