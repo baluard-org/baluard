@@ -5,7 +5,10 @@
 //! - Direct: calls baluard-core directly (fallback, --direct flag)
 
 use crate::Cli;
+use crate::CollectionAction;
 use crate::ConnectMode;
+use crate::MemberAction;
+use crate::ProviderAction;
 use crate::VaultAction;
 use crate::client;
 
@@ -1101,6 +1104,666 @@ fn print_trash_row(c: &serde_json::Value) {
     let ctype = c["_meta"]["cipher_type"].as_str().unwrap_or("login");
     let username = c["_meta"]["username"].as_str().unwrap_or("");
     println!("{id}  [{ctype:>10}]  {name}  {username}");
+}
+
+// ── G7/G8/G9/G11p1 shared helpers ──
+
+fn require_daemon(mode: ConnectMode, what: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if matches!(mode, ConnectMode::Direct) {
+        return Err(format!("{what} requires daemon mode; drop --direct").into());
+    }
+    Ok(())
+}
+
+fn post(
+    socket: Option<&str>,
+    action: &str,
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let resp = client::request_to(action, &payload.to_string(), socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    Ok(serde_json::from_str(&resp.payload)?)
+}
+
+/// Resolve a user-supplied cipher reference (UUID or case-insensitive name
+/// substring) against the daemon's vault.list. Ambiguous substrings list
+/// the candidates instead of guessing.
+fn resolve_cipher_id(
+    socket: Option<&str>,
+    target: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if uuid::Uuid::parse_str(target).is_ok() {
+        return Ok(target.to_string());
+    }
+    let data = post(socket, "vault.list", &serde_json::json!({}))?;
+    let needle = target.to_lowercase();
+    let mut hits: Vec<(String, String)> = Vec::new();
+    for c in data["ciphers"].as_array().cloned().unwrap_or_default() {
+        let name = c["name"].as_str().unwrap_or("").to_lowercase();
+        if name.contains(&needle) {
+            hits.push((
+                c["id"].as_str().unwrap_or("").to_string(),
+                c["name"].as_str().unwrap_or("").to_string(),
+            ));
+        }
+    }
+    match hits.len() {
+        0 => Err(format!("no entry matches '{target}'").into()),
+        1 => Ok(hits.remove(0).0),
+        _ => {
+            let mut msg = format!("'{target}' matches several entries:\n");
+            for (id, name) in &hits {
+                msg.push_str(&format!("  {id}  {name}\n"));
+            }
+            Err(msg.into())
+        }
+    }
+}
+
+/// Resolve a user-supplied collection reference (UUID or exact name).
+fn resolve_collection_id(
+    socket: Option<&str>,
+    target: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if uuid::Uuid::parse_str(target).is_ok() {
+        return Ok(target.to_string());
+    }
+    let data = post(socket, "collections.list", &serde_json::json!({}))?;
+    let rows = data["collections"].as_array().cloned().unwrap_or_default();
+    let mut hits: Vec<(String, String)> = Vec::new();
+    for c in rows {
+        if c["name"].as_str() == Some(target) {
+            hits.push((
+                c["id"].as_str().unwrap_or("").to_string(),
+                c["name"].as_str().unwrap_or("").to_string(),
+            ));
+        }
+    }
+    match hits.len() {
+        0 => Err(format!("no collection named '{target}'").into()),
+        1 => Ok(hits.remove(0).0),
+        _ => {
+            let mut msg = format!("'{target}' names several collections:\n");
+            for (id, _) in &hits {
+                msg.push_str(&format!("  {id}\n"));
+            }
+            Err(msg.into())
+        }
+    }
+}
+
+// ── Generator (G7) ──
+
+#[allow(clippy::too_many_arguments)]
+pub fn handle_generate(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    kind: &str,
+    length: Option<usize>,
+    words: Option<usize>,
+    no_upper: bool,
+    no_numbers: bool,
+    no_symbols: bool,
+    sep: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (value, value_kind, params) = match kind {
+        "password" => {
+            let d = baluard_core::generator::PasswordOptions::default();
+            let opts = baluard_core::generator::PasswordOptions {
+                length: length.unwrap_or(d.length),
+                upper: !no_upper,
+                numbers: !no_numbers,
+                symbols: !no_symbols,
+            };
+            let v = baluard_core::generator::generate_password(&opts).map_err(|e| e.to_string())?;
+            let params = serde_json::json!({
+                "length": opts.length,
+                "upper": opts.upper,
+                "numbers": opts.numbers,
+                "symbols": opts.symbols,
+            });
+            (v, "password", params)
+        }
+        "passphrase" => {
+            let d = baluard_core::generator::PassphraseOptions::default();
+            let opts = baluard_core::generator::PassphraseOptions {
+                word_count: words.unwrap_or(d.word_count),
+                separator: sep.to_string(),
+                upper: !no_upper,
+                number: !no_numbers,
+                symbol: !no_symbols,
+            };
+            let v =
+                baluard_core::generator::generate_passphrase(&opts).map_err(|e| e.to_string())?;
+            let params = serde_json::json!({
+                "length": opts.word_count,
+                "upper": opts.upper,
+                "numbers": opts.number,
+                "symbols": opts.symbol,
+                "separator": opts.separator,
+            });
+            (v, "passphrase", params)
+        }
+        other => return Err(format!("unknown kind '{other}'; use password or passphrase").into()),
+    };
+
+    // Best-effort history, desktop parity: an open vault records the
+    // generation, but the command never blocks or fails on it.
+    if matches!(mode, ConnectMode::Daemon) {
+        let payload = serde_json::json!({ "value": value, "kind": value_kind, "params": params });
+        let _ = client::request_to("generator.history_add", &payload.to_string(), socket);
+    }
+
+    println!("{value}");
+    Ok(())
+}
+
+// ── TOTP (G7) ──
+
+pub fn handle_totp(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    target: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "totp")?;
+    ensure_unlocked_daemon(socket)?;
+    let id = resolve_cipher_id(socket, target)?;
+    let data = post(socket, "cipher.totp_code", &serde_json::json!({ "id": id }))?;
+    let code = data["code"].as_str().unwrap_or("");
+    let expires_at = data["expires_at"].as_i64().unwrap_or(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64;
+    let remaining = expires_at.saturating_sub(now);
+    println!("{code}  (valid for {remaining}s)");
+    Ok(())
+}
+
+// ── SSH keygen (G7) ──
+
+pub fn handle_ssh_keygen(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    key_type: &str,
+    comment: &str,
+    store: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "ssh-keygen")?;
+    ensure_unlocked_daemon(socket)?;
+    let mut payload = serde_json::json!({ "type": key_type });
+    if !comment.is_empty() {
+        payload["comment"] = serde_json::json!(comment);
+    }
+    let data = post(socket, "ssh.generate_key", &payload)?;
+    let public = data["public_key"].as_str().unwrap_or("");
+    let fingerprint = data["fingerprint"].as_str().unwrap_or("");
+    let private = data["private_key"].as_str().unwrap_or("");
+    println!("Public key:");
+    println!("{public}");
+    println!();
+    println!("Fingerprint:");
+    println!("{fingerprint}");
+    println!();
+    println!("Private key (shown once; store it in the vault or a key file):");
+    println!("{private}");
+
+    if let Some(name) = store {
+        let input = CipherInput {
+            name: name.to_string(),
+            kind: baluard_core::types::CipherKind::SshKey(baluard_core::types::SshKeyData {
+                private_key: Some(private.to_string()),
+                public_key: Some(public.to_string()),
+                key_fingerprint: Some(fingerprint.to_string()),
+            }),
+            ..Default::default()
+        };
+        handle_add(mode, "", socket, input)?;
+        println!("Stored as '{name}'.");
+    }
+    Ok(())
+}
+
+// ── Providers (G16 + G8) ──
+
+pub fn handle_provider(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: &ProviderAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "provider")?;
+    match action {
+        ProviderAction::Connect {
+            provider,
+            pat,
+            instance,
+            client_id,
+        } => {
+            let mut base = serde_json::json!({ "provider": provider });
+            if let Some(i) = instance {
+                base["instance_url"] = serde_json::json!(i);
+            }
+            if let Some(c) = client_id {
+                base["client_id"] = serde_json::json!(c);
+            }
+            if *pat {
+                let token = prompt_password("Personal access token: ")?;
+                base["token"] = serde_json::json!(token);
+                let data = post(socket, "provider.connect_pat", &base)?;
+                println!("Connected as {}.", data["username"].as_str().unwrap_or("?"));
+                return Ok(());
+            }
+            let session = post(socket, "provider.connect_start", &base)?;
+            println!(
+                "Open {} and enter the code:",
+                session["verification_uri"].as_str().unwrap_or("")
+            );
+            println!("    {}", session["user_code"].as_str().unwrap_or(""));
+            let mut interval = session["interval_secs"].as_u64().unwrap_or(5).max(1);
+            let mut session = session.clone();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(interval));
+                // The poll payload carries the session plus the same
+                // config overrides (B2: config must ride every call).
+                let mut poll = session.clone();
+                if let Some(i) = instance {
+                    poll["instance_url"] = serde_json::json!(i);
+                }
+                if let Some(c) = client_id {
+                    poll["client_id"] = serde_json::json!(c);
+                }
+                let data = post(socket, "provider.connect_poll", &poll)?;
+                match data["status"].as_str().unwrap_or("") {
+                    "pending" => {}
+                    "slow_down" => {
+                        interval = data["interval_secs"].as_u64().unwrap_or(interval + 5);
+                        session["interval_secs"] = serde_json::json!(interval);
+                    }
+                    "expired" => return Err("device flow expired; run connect again".into()),
+                    "success" => {
+                        println!("Connected as {}.", data["username"].as_str().unwrap_or("?"));
+                        return Ok(());
+                    }
+                    other => return Err(format!("unexpected poll status: {other}").into()),
+                }
+            }
+        }
+        ProviderAction::List => {
+            let data = post(socket, "provider.list", &serde_json::json!({}))?;
+            let mut names: Vec<&String> = data
+                .as_object()
+                .map(|o| o.keys().collect())
+                .unwrap_or_default();
+            names.sort();
+            for name in names {
+                let v = &data[name];
+                let connected = v["connected"].as_bool().unwrap_or(false);
+                let method = v["auth_method"].as_str().unwrap_or("");
+                if connected {
+                    let user = v["username"].as_str().unwrap_or("");
+                    println!("{name:<10} connected  {user}  ({method})");
+                } else {
+                    println!("{name:<10} not connected  ({method})");
+                }
+            }
+            Ok(())
+        }
+        ProviderAction::Status { provider } => {
+            let data = post(
+                socket,
+                "provider.status",
+                &serde_json::json!({ "provider": provider }),
+            )?;
+            if data["connected"].as_bool() == Some(false) {
+                println!("{provider} not connected.");
+            } else if data["valid"].as_bool() == Some(true) {
+                println!(
+                    "{provider} token valid for {} ({}).",
+                    data["username"].as_str().unwrap_or("?"),
+                    data["email"].as_str().unwrap_or("no email")
+                );
+            } else {
+                println!(
+                    "{provider} token INVALID: {}",
+                    data["error"].as_str().unwrap_or("unknown error")
+                );
+            }
+            Ok(())
+        }
+        ProviderAction::Disconnect { provider } => {
+            post(
+                socket,
+                "provider.disconnect",
+                &serde_json::json!({ "provider": provider }),
+            )?;
+            println!("{provider} disconnected; stored token revoked where possible.");
+            Ok(())
+        }
+        ProviderAction::Repos { provider } => {
+            let data = post(
+                socket,
+                "provider.repos",
+                &serde_json::json!({ "provider": provider }),
+            )?;
+            for r in data.as_array().cloned().unwrap_or_default() {
+                println!(
+                    "{}  {}",
+                    r["full_name"].as_str().unwrap_or(""),
+                    r["clone_url"].as_str().unwrap_or("")
+                );
+            }
+            Ok(())
+        }
+        ProviderAction::VaultRepos { provider } => {
+            let data = post(
+                socket,
+                "provider.vault_repos",
+                &serde_json::json!({ "provider": provider }),
+            )?;
+            for r in data.as_array().cloned().unwrap_or_default() {
+                let slug = r["vault_slug"].as_str().unwrap_or("-");
+                println!("{}  (vault: {slug})", r["full_name"].as_str().unwrap_or(""));
+            }
+            Ok(())
+        }
+        ProviderAction::CreateRepo { provider, name } => {
+            // Not sentinel-exempt (unlike list/connect): the daemon gate
+            // demands an unlocked vault for repo creation.
+            ensure_unlocked_daemon(socket)?;
+            let data = post(
+                socket,
+                "provider.create_repo",
+                &serde_json::json!({ "provider": provider, "name": name }),
+            )?;
+            println!(
+                "Created private repository {}.",
+                data["full_name"].as_str().unwrap_or(name)
+            );
+            if let Some(url) = data["clone_url"].as_str() {
+                println!("Clone URL: {url}");
+            }
+            Ok(())
+        }
+    }
+}
+
+// ── Root-key rotation (G9) ──
+
+pub fn handle_rotate_root(
+    mode: ConnectMode,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "rotate-root")?;
+    ensure_unlocked_daemon(socket)?;
+    post(socket, "space.rotate_root", &serde_json::json!({}))?;
+    println!("Root key rotated. Other enrolled devices adopt the new key on their next unlock.");
+    println!("Attachments, settings, and the recovery escrow were re-wrapped to the new key.");
+    Ok(())
+}
+
+// ── Collections (G11 phase 1) ──
+
+pub fn handle_collections(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: &CollectionAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "collections")?;
+    match action {
+        CollectionAction::List => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(socket, "collections.list", &serde_json::json!({}))?;
+            let rows = data["collections"].as_array().cloned().unwrap_or_default();
+            if rows.is_empty() {
+                println!("No collections.");
+                return Ok(());
+            }
+            for c in rows {
+                let id = c["id"].as_str().unwrap_or("");
+                let name = c["name"].as_str().unwrap_or("");
+                let access = c["access"].as_str().unwrap_or("");
+                println!("{id}  {name}  ({access})");
+                for g in c["grants"].as_array().cloned().unwrap_or_default() {
+                    let kind = g["kind"].as_str().unwrap_or("member");
+                    let gid = g["id"].as_str().unwrap_or("");
+                    let gacc = g["access"].as_str().unwrap_or("");
+                    let exp = g["expires_at"]
+                        .as_u64()
+                        .map(|e| format!(" until {e}"))
+                        .unwrap_or_default();
+                    println!("    {kind} {gid}  {gacc}{exp}");
+                }
+            }
+            Ok(())
+        }
+        CollectionAction::Create { name } => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(
+                socket,
+                "collections.create",
+                &serde_json::json!({ "name": name }),
+            )?;
+            println!(
+                "Created collection {} ({}).",
+                data["name"].as_str().unwrap_or(name),
+                data["id"].as_str().unwrap_or("")
+            );
+            Ok(())
+        }
+        CollectionAction::Assign { cipher, to } => {
+            ensure_unlocked_daemon(socket)?;
+            let cipher_id = resolve_cipher_id(socket, cipher)?;
+            let mut payload = serde_json::json!({ "cipher_id": cipher_id });
+            if let Some(t) = to {
+                payload["collection_id"] = serde_json::json!(resolve_collection_id(socket, t)?);
+            }
+            post(socket, "cipher.set_collection", &payload)?;
+            match to {
+                Some(t) => println!("Assigned to {t}."),
+                None => println!("Removed from its collection."),
+            }
+            Ok(())
+        }
+        CollectionAction::Grant {
+            collection,
+            kind,
+            target_id,
+            access,
+            expires_at,
+        } => {
+            ensure_unlocked_daemon(socket)?;
+            let id = resolve_collection_id(socket, collection)?;
+            let mut payload = serde_json::json!({
+                "id": id,
+                "kind": kind,
+                "target_id": target_id,
+                "access": access,
+            });
+            if let Some(e) = expires_at {
+                payload["expires_at"] = serde_json::json!(e);
+            }
+            post(socket, "collections.grant", &payload)?;
+            println!("Granted {access} on {collection} to {kind} {target_id}.");
+            Ok(())
+        }
+        CollectionAction::Revoke {
+            collection,
+            kind,
+            target_id,
+        } => {
+            ensure_unlocked_daemon(socket)?;
+            let id = resolve_collection_id(socket, collection)?;
+            post(
+                socket,
+                "collections.revoke",
+                &serde_json::json!({ "id": id, "kind": kind, "target_id": target_id }),
+            )?;
+            println!("Revoked {kind} {target_id}'s access to {collection}.");
+            Ok(())
+        }
+    }
+}
+
+// ── Members + pending asks (G11 phase 1) ──
+
+pub fn handle_members(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: &MemberAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "members")?;
+    match action {
+        MemberAction::List => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(socket, "members.list", &serde_json::json!({}))?;
+            for m in data["members"].as_array().cloned().unwrap_or_default() {
+                let marker = if m["is_self"].as_bool().unwrap_or(false) {
+                    "*"
+                } else {
+                    " "
+                };
+                let role = m["role"].as_str().unwrap_or("?");
+                let name = m["display_name"].as_str().unwrap_or("");
+                let email = m["email"].as_str().unwrap_or("");
+                let flags = match (
+                    m["reset"].as_bool().unwrap_or(false),
+                    m["removed"].as_bool().unwrap_or(false),
+                ) {
+                    (true, _) => "  [reset pending]",
+                    (_, true) => "  [removed]",
+                    _ => "",
+                };
+                println!(
+                    "{marker} {}  {role:<8}  {name}  {email}{flags}",
+                    m["id"].as_str().unwrap_or("")
+                );
+            }
+            if let Some(role) = data["your_role"].as_str() {
+                println!();
+                println!("You are {role}.");
+            }
+            Ok(())
+        }
+        MemberAction::Requests => {
+            ensure_unlocked_daemon(socket)?;
+            // Two queues: pending joins (requests.*) and collection
+            // access asks (collections.requests_*). Different id fields,
+            // so each section names its own approve command.
+            let joins = post(socket, "requests.list", &serde_json::json!({}))?;
+            let join_rows = joins["requests"].as_array().cloned().unwrap_or_default();
+            println!("Pending joins:");
+            if join_rows.is_empty() {
+                println!("  (none)");
+            }
+            for r in &join_rows {
+                let secret = if r["secret_ok"].as_bool().unwrap_or(false) {
+                    "verified"
+                } else {
+                    "UNVERIFIED"
+                };
+                println!(
+                    "  {}  {}  <{}>  [{secret}]",
+                    r["req_id"].as_str().unwrap_or(""),
+                    r["display_name"].as_str().unwrap_or("?"),
+                    r["email"].as_str().unwrap_or(""),
+                );
+            }
+            if !join_rows.is_empty() {
+                println!("  Confirm: baluard members approve-join <req_id>");
+            }
+            println!();
+            println!("Collection access asks:");
+            let asks = post(socket, "collections.requests_list", &serde_json::json!({}))?;
+            let rows = asks["requests"].as_array().cloned().unwrap_or_default();
+            if rows.is_empty() {
+                println!("  (none)");
+            }
+            for r in &rows {
+                println!(
+                    "  {}  {}  asks {} on {} ({}){}",
+                    r["request_id"].as_str().unwrap_or(""),
+                    r["requester_member_id"].as_str().unwrap_or(""),
+                    r["requester_name"].as_str().unwrap_or("?"),
+                    r["collection_name"].as_str().unwrap_or("?"),
+                    r["access"].as_str().unwrap_or("?"),
+                    match r["note"].as_str() {
+                        Some(n) if !n.is_empty() => format!("  note: {n}"),
+                        _ => String::new(),
+                    }
+                );
+            }
+            if !rows.is_empty() {
+                println!("  Approve: baluard members approve <request_id> <requester_member_id>");
+            }
+            Ok(())
+        }
+        MemberAction::ApproveJoin { req_id } => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(
+                socket,
+                "requests.approve",
+                &serde_json::json!({ "req_id": req_id }),
+            )?;
+            println!(
+                "Joined as member {}{}.",
+                data["member_id"].as_str().unwrap_or("?"),
+                if data["seat_upgraded"].as_bool().unwrap_or(false) {
+                    " (forge seat granted)"
+                } else {
+                    ""
+                },
+            );
+            Ok(())
+        }
+        MemberAction::DenyJoin { req_id } => {
+            ensure_unlocked_daemon(socket)?;
+            post(
+                socket,
+                "requests.deny",
+                &serde_json::json!({ "req_id": req_id }),
+            )?;
+            println!("Join request dropped.");
+            Ok(())
+        }
+        MemberAction::Approve {
+            request_id,
+            requester_member_id,
+        } => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(
+                socket,
+                "collections.requests_approve",
+                &serde_json::json!({
+                    "request_id": request_id,
+                    "requester_member_id": requester_member_id,
+                }),
+            )?;
+            println!(
+                "Approved: {} now has {} on {}.",
+                data["requester_name"].as_str().unwrap_or("requester"),
+                data["access"].as_str().unwrap_or("?"),
+                data["collection_name"].as_str().unwrap_or("?"),
+            );
+            Ok(())
+        }
+        MemberAction::Deny {
+            request_id,
+            requester_member_id,
+        } => {
+            ensure_unlocked_daemon(socket)?;
+            post(
+                socket,
+                "collections.requests_deny",
+                &serde_json::json!({
+                    "request_id": request_id,
+                    "requester_member_id": requester_member_id,
+                }),
+            )?;
+            println!("Denied.");
+            Ok(())
+        }
+    }
 }
 
 /// vault.search (G24 step 6): the CLI's executable spec of the daemon

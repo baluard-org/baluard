@@ -173,6 +173,73 @@ enum Commands {
         vault: Option<String>,
     },
 
+    /// Generate a password or passphrase. Printed once, never stored
+    /// unless a vault is open (best-effort history, like the apps).
+    Generate {
+        /// password | passphrase
+        #[arg(default_value = "password")]
+        kind: String,
+        /// Password length.
+        #[arg(long)]
+        length: Option<usize>,
+        /// Passphrase word count.
+        #[arg(long)]
+        words: Option<usize>,
+        /// Exclude uppercase letters.
+        #[arg(long)]
+        no_upper: bool,
+        /// Exclude digits.
+        #[arg(long)]
+        no_numbers: bool,
+        /// Exclude symbols.
+        #[arg(long)]
+        no_symbols: bool,
+        /// Passphrase separator.
+        #[arg(long, default_value = "-")]
+        sep: String,
+    },
+
+    /// Show the live TOTP code for an entry (id or name substring).
+    Totp {
+        /// Entry id, or a case-insensitive name substring.
+        target: String,
+    },
+
+    /// Generate an SSH keypair daemon-side. The private key is printed
+    /// once; store it with --store or keep it out of the vault.
+    SshKeygen {
+        /// ed25519 | ecdsa256
+        #[arg(long, default_value = "ed25519")]
+        key_type: String,
+        #[arg(long, default_value = "")]
+        comment: String,
+        /// Also store as a new SSH-key entry with this name.
+        #[arg(long)]
+        store: Option<String>,
+    },
+
+    /// Git provider accounts: connect, status, repositories.
+    Provider {
+        #[command(subcommand)]
+        action: ProviderAction,
+    },
+
+    /// Rotate this vault's root key. Other enrolled devices adopt the
+    /// rekey on their next unlock; the recovery phrase rotates too.
+    RotateRoot,
+
+    /// Space collections: list, create, assign entries, manage grants.
+    Collections {
+        #[command(subcommand)]
+        action: CollectionAction,
+    },
+
+    /// Space members and their pending asks (joins, access requests).
+    Members {
+        #[command(subcommand)]
+        action: MemberAction,
+    },
+
     /// Manage folders.
     Folders {
         #[command(subcommand)]
@@ -417,6 +484,108 @@ enum TrashAction {
         /// Age threshold in days.
         #[arg(long, default_value_t = 30)]
         days: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProviderAction {
+    /// Connect an account. Device flow where the provider supports it,
+    /// otherwise connect with a personal access token (--pat).
+    Connect {
+        /// github | gitlab | codeberg
+        provider: String,
+        /// Connect with a personal access token instead of a flow.
+        #[arg(long)]
+        pat: bool,
+        /// Override the instance URL (self-hosted).
+        #[arg(long)]
+        instance: Option<String>,
+        /// Override the OAuth client id.
+        #[arg(long)]
+        client_id: Option<String>,
+    },
+    /// Show every provider's connection state.
+    List,
+    /// Validate one account's stored token against the provider.
+    Status { provider: String },
+    /// Disconnect and revoke the stored token.
+    Disconnect { provider: String },
+    /// List the account's repositories.
+    Repos { provider: String },
+    /// List repositories that carry a Baluard marker.
+    VaultRepos { provider: String },
+    /// Create a private repository (name normalized, baluard- prefixed).
+    CreateRepo { provider: String, name: String },
+}
+
+#[derive(Subcommand)]
+enum CollectionAction {
+    /// List collections with their grants.
+    List,
+    /// Create a collection.
+    Create { name: String },
+    /// Assign an entry to a collection; omit --to to unassign.
+    Assign {
+        /// Entry id, or a case-insensitive name substring.
+        cipher: String,
+        /// Collection id or exact name.
+        #[arg(long)]
+        to: Option<String>,
+    },
+    /// Grant a member or group access to a collection.
+    Grant {
+        /// Collection id or exact name.
+        collection: String,
+        /// member | group
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        target_id: String,
+        /// read | write | manage
+        #[arg(long, default_value = "read")]
+        access: String,
+        /// Expiry as unix seconds.
+        #[arg(long)]
+        expires_at: Option<u64>,
+    },
+    /// Revoke a member or group's access to a collection.
+    Revoke {
+        /// Collection id or exact name.
+        collection: String,
+        /// member | group
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        target_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemberAction {
+    /// List members with roles and trust.
+    List,
+    /// List pending asks: join confirmations and access requests.
+    Requests,
+    /// Confirm a pending join (the member becomes a space member).
+    ApproveJoin {
+        /// Join request id from `baluard members requests`.
+        req_id: String,
+    },
+    /// Drop a pending join.
+    DenyJoin {
+        /// Join request id from `baluard members requests`.
+        req_id: String,
+    },
+    /// Approve a collection access ask. Ids come from
+    /// `baluard members requests`.
+    Approve {
+        request_id: String,
+        requester_member_id: String,
+    },
+    /// Deny a collection access ask.
+    Deny {
+        request_id: String,
+        requester_member_id: String,
     },
 }
 
@@ -1439,6 +1608,54 @@ fn main() {
 
         Commands::Search { query, all, vault } => {
             commands::handle_search(mode, cli.socket.as_deref(), &query, all, vault.as_deref())
+        }
+
+        Commands::Generate {
+            kind,
+            length,
+            words,
+            no_upper,
+            no_numbers,
+            no_symbols,
+            sep,
+        } => commands::handle_generate(
+            mode,
+            cli.socket.as_deref(),
+            &kind,
+            length,
+            words,
+            no_upper,
+            no_numbers,
+            no_symbols,
+            &sep,
+        ),
+
+        Commands::Totp { target } => commands::handle_totp(mode, cli.socket.as_deref(), &target),
+
+        Commands::SshKeygen {
+            key_type,
+            comment,
+            store,
+        } => commands::handle_ssh_keygen(
+            mode,
+            cli.socket.as_deref(),
+            &key_type,
+            &comment,
+            store.as_deref(),
+        ),
+
+        Commands::Provider { action } => {
+            commands::handle_provider(mode, cli.socket.as_deref(), &action)
+        }
+
+        Commands::RotateRoot => commands::handle_rotate_root(mode, cli.socket.as_deref()),
+
+        Commands::Collections { action } => {
+            commands::handle_collections(mode, cli.socket.as_deref(), &action)
+        }
+
+        Commands::Members { action } => {
+            commands::handle_members(mode, cli.socket.as_deref(), &action)
         }
 
         Commands::Trash { action } => match action {

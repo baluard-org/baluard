@@ -834,3 +834,128 @@ fn e2e_search_all_and_explicit_vault() {
         .stdout(predicates::str::contains("Beta Query"))
         .stdout(predicates::str::contains("Alpha Query").not());
 }
+
+/// Wave B (CLI parity): the G7/G9/G11-phase-1 commands ride their daemon
+/// routes end to end - generation with history best-effort, TOTP by name
+/// resolution, SSH keygen (private material printed, never stored unless
+/// asked), collections create/assign/list, members list, and a root-key
+/// rotation the vault keeps unlocking after.
+#[test]
+fn e2e_cli_parity_generate_totp_ssh_collections_rotation() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let _a = init_vault_json(&tmp, "baluard-e2e-wb");
+    let guard = spawn_daemon(tmp);
+    baluard_daemon(&guard).arg("unlock").assert().success();
+
+    // G7: generation prints once. The vault is unlocked, so the
+    // best-effort history hook must not fail the command.
+    let generated = baluard_daemon(&guard)
+        .args(["generate", "password", "--length", "24", "--no-symbols"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let generated = String::from_utf8(generated).expect("utf8");
+    let generated = generated.trim();
+    assert_eq!(generated.len(), 24, "password length: {generated}");
+    assert!(
+        !generated
+            .chars()
+            .any(|c| "!@#$%^&*()-_=+[]{};:'\",.<>/?`~|\\ ".contains(c)),
+        "no symbols or separators: {generated}"
+    );
+    baluard_daemon(&guard)
+        .args(["generate", "passphrase", "--words", "4"])
+        .assert()
+        .success();
+
+    // G7: TOTP resolves a name substring to the entry and prints a
+    // live code with its validity window.
+    baluard_daemon(&guard)
+        .args([
+            "add",
+            "login",
+            "--name",
+            "Totp Site",
+            "--username",
+            "me",
+            "--password",
+            "pw-123456",
+            "--totp-uri",
+            "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP",
+        ])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["totp", "Totp"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(valid for"));
+
+    // G7: SSH keygen prints all three artifacts; --store lands an
+    // SshKey entry whose get shows the fingerprint.
+    baluard_daemon(&guard)
+        .args([
+            "ssh-keygen",
+            "--comment",
+            "e2e@test",
+            "--store",
+            "Server key",
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Public key:"))
+        .stdout(predicates::str::contains("Fingerprint:"))
+        .stdout(predicates::str::contains("PRIVATE KEY"));
+    let listing = baluard_daemon(&guard)
+        .args(["list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let ssh_id = row_id(&listing, "Server key");
+    baluard_daemon(&guard)
+        .args(["get", &ssh_id])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Server key"));
+
+    // G11 phase 1: collections create -> assign by name -> list shows
+    // the admin grant table.
+    baluard_daemon(&guard)
+        .args(["collections", "create", "Family"])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["collections", "assign", "Totp", "--to", "Family"])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["collections", "list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Family  (admin)"));
+
+    // G11 phase 1: members list marks the self row and the role.
+    baluard_daemon(&guard)
+        .args(["members", "list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("owner"))
+        .stdout(predicates::str::contains("You are owner."));
+
+    // G9: a standalone root-key rotation succeeds and the vault
+    // keeps serving decrypted reads afterwards (keys re-derived in
+    // place; other devices adopt on their next unlock).
+    baluard_daemon(&guard)
+        .arg("rotate-root")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Root key rotated"));
+    baluard_daemon(&guard)
+        .args(["totp", "Totp"])
+        .assert()
+        .success();
+}
