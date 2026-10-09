@@ -142,13 +142,13 @@ Surface: Mobile. Missing: fleet list, revoke, rotate (enrollment exists). Revoca
 Surface: Mobile. Missing: escrow and kit surfaces. Effort: M. Value: full S4 lifecycle on phones. Decision: needed - close now or park behind G3.
 
 ### G7. CLI utility commands (generator, TOTP, SSH generation, list search)
-Surface: CLI. Missing: password / passphrase generation, standalone TOTP code command, SSH key generation (storage exists), `list --search`. Effort: M (three command trees plus a filter flag; not a one-day bundle). Value: scripting and headless workflows. Decision: close.
+Surface: CLI. CLOSED (2026-10-09): `baluard generate password|passphrase` (flags for length/words/transforms, best-effort history like the apps), `baluard totp <id-or-name>` (name-substring resolution with ambiguity refusal), `baluard ssh-keygen` (daemon-side generation, printed once, optional `--store`); list search arrived with G24 step 6 as `baluard search`. See the Closed table.
 
 ### G8. CLI provider connect
-Surface: CLI. Missing: OAuth device flow and PAT connect. Cloning already works by provider + repo using daemon-stored tokens; what is missing is the interactive connect step, so a fresh headless machine cannot attach its own credentials. Effort: M. Value: a first-class CLI must be self-sufficient on first run - setup cannot require borrowing a desktop. Decision: scheduled in the CLI parity track.
+Surface: CLI. CLOSED (2026-10-09): `baluard provider connect <name>` runs the device flow where supported (code printed, poll loop honors slow-down) and `--pat` prompts for a token; `status`, `list`, `disconnect`, `repos`, and `vault-repos` complete the account surface. The connect routes are sentinel-exempt, so connect works before any vault is unlocked. See the Closed table.
 
 ### G9. CLI rotation without revocation
-Surface: CLI. Missing: standalone `rotate_root_key`. Device revoke (which rotates as a side effect) already exists. Effort: M. Value: scheduled key rotation and incident response that keeps all devices enrolled - the headless machine stays the security console, not a second-class device. Decision: scheduled in the CLI parity track.
+Surface: CLI. CLOSED (2026-10-09): `baluard rotate-root` rides the daemon rotation route (quorum-gated in core, so a family vault with quorum 2 still needs its co-approver); the autosync enrollment verifier refreshes daemon-side per D78. See the Closed table.
 
 ### G10. Mobile passkey ceremonies
 Surface: Mobile. Missing: register / assert. Platform WebAuthn APIs make this the hardest mobile item. Effort: L. Value: real, but display-only may be the right 1.0 scope. Decision: needed - park or schedule after 1.0.
@@ -156,7 +156,7 @@ Surface: Mobile. Missing: register / assert. Platform WebAuthn APIs make this th
 ### G11. CLI sharing surface (phased)
 Surface: CLI. Missing: every sharing command (members, approvals, collections, groups, policies, activity). With the CLI first-class, this is in scope, in two phases:
 
-- **Phase 1 (M) - the Bitwarden shape:** share an item to a space, collection list/assign, member list, member confirm. The item-level ops people actually script.
+- **Phase 1 (M) - the Bitwarden shape:** share an item to a space, collection list/assign, member list, member confirm. LANDED (2026-10-09): `baluard collections list|create|assign|grant|revoke` and `baluard members list|requests|approve-join|deny-join|approve|deny` (two queues: joins via `requests.*`, access asks via `collections.requests_*`). Phase 2 stays first item after 1.0.
 - **Phase 2 (L) - full admin:** invite, remove, roles, groups, policies, approvals, activity. Peer precedent: the 1Password CLI is a full admin surface (`user provision/confirm/suspend`, `group` CRUD, vault permission grants); the Bitwarden CLI deliberately keeps deep admin in the web console. A first-class Baluard CLI ships both phases - phase 2 may land just after 1.0.
 
 Decision: committed (2026-10-03, Esteban). Phase 1 in the CLI parity track; phase 2 first item after 1.0.
@@ -174,7 +174,7 @@ Surface: CLI. Missing: list trash, restore, purge. Effort: S. Value: scripting c
 Surface: Mobile. Missing: drop a vault from the list, prune stale vaults (both GUIs have it; the destructive delete arm stays desktop/CLI by design). Effort: S. Value: unclutter the vault list after a vault is removed elsewhere. Decision: close. CLOSED: detach shipped; prune has no mobile shape (the list is a filesystem scan and cannot go stale) — the stale-active-pointer self-heal is its equivalent. See the Closed table.
 
 ### G16. Repo creation on provider (mobile + CLI)
-Surface: Mobile + CLI. Missing: `provider.create_repo` (desktop-only today). Effort: S on CLI (route + flag), M on mobile (wizard step). Value: first-run setup without a desktop, on either client. Decision: close; CLI part rides with G8 in the CLI parity track.
+Surface: Mobile + CLI. CLI part CLOSED (2026-10-09): `baluard provider create-repo <name>` (name normalized, baluard- prefixed). The mobile wizard step remains future work. See the Closed table.
 
 ### G17. Desktop passkey rename UI
 Surface: Desktop. Missing: rename exists on CLI only. Effort: S. Value: naming credentials is a daily-use nicety. Decision: close.
@@ -229,6 +229,11 @@ Surface: Extension + Android + Mobile + CLI (the desktop app is already merged v
 | G18 | this wave | re-prompt enforced on both GUIs behind a 30s master-password grant. Review round made the gate REAL: verification rides `vault.reprompt_verify` / a new `repromptVerify` FFI (opening a temp handle), because `vault.unlock` short-circuits Ok on an already-unlocked vault and would have accepted any password; desktop gates all sensitive field classes (not just logins), edit flows are gated, autofill refuses reprompt-protected entries, and the modal's show() binds its callback at confirm time (fixing a dead wiring where the rotation gate never fired) |
 | G4 | this wave | mobile opens shared `.baluard-share` files: one reusable flow composable serves the full chain (one-shot package import → view-only contact reveal → passphrase guest leg, surfacing the contact leg's error when the guest open also fails) from Settings > Data, and a guest-only entry on the onboarding screen so a recipient without an account can open a passphrase share — the S2 IS-6 core promise; new FFI: `import_shared_package`, `open_shared_contact`, and a vault-agnostic `open_shared_guest` mirroring the daemon's host-level route; secrets masked with copy, everything selectable |
 | G15 | this wave | detach drops a vault from the switcher without deleting anything: the directory moves aside under a detached folder (collision-counted, never auto-deleted), the cached session and biometric KEK are dropped first, and the active pointer self-heals when its directory is gone. Prune is deliberately not a button on mobile — the list is a filesystem scan and entries cannot go stale |
+| G7 | this wave | `generate`, `totp`, `ssh-keygen` (search arrived with G24 step 6); generation is direct core compute with best-effort history, TOTP resolves name substrings with ambiguity refusal, SSH material prints once with an optional `--store` into the vault |
+| G8 | this wave | `provider connect` (device flow with slow-down handling, or `--pat`), `status`, `list`, `disconnect`, `repos`, `vault-repos`; connect rides the sentinel-exempt routes so it works pre-unlock |
+| G9 | this wave | `rotate-root` over the quorum-gated core rotation; survivors adopt on next unlock, the D78 verifier refreshes daemon-side |
+| G16 (CLI) | this wave | `provider create-repo` with slug normalization; demands an unlocked vault (it is not sentinel-exempt) |
+| G11 phase 1 | this wave | collections list/create/assign/grant/revoke plus members list and both pending queues: `approve-join`/`deny-join` over `requests.*` and `approve`/`deny` over `collections.requests_*`; the review caught that join confirmation and access asks are separate route families and the first draft wired only one |
 
 ## Keeping this document current
 
