@@ -10,6 +10,8 @@ actual object VaultRegistry {
 
     actual fun listVaults(): List<DiscoveredVault> = vaults.toList()
 
+    actual fun isMergeEligible(path: String): Boolean = false // fail closed
+
     actual fun loadActiveVault(): String? = active
 
     actual fun saveActiveVault(path: String) {

@@ -448,6 +448,7 @@ internal val EN: Map<String, String> = mapOf(
     "home.detachTitle" to "Remove {0}?",
     "home.detachDesc" to "This vault disappears from the list. Its files stay on this device, and you can add it again by syncing from your remote.",
     "home.viewAll" to "View all ({0})",
+    "home.fromVault" to "From {0}",
     "home.noneYet" to "Nothing here yet.",
     "list.showing" to "Showing {0} of {1}",
     "list.emptyTrash" to "Empty trash",
@@ -499,6 +500,7 @@ internal val EN: Map<String, String> = mapOf(
     // Android autofill picker + trampoline (Phase 6). The biometric prompt
     // title reuses login.biometricTitle.
     "autofill.unlockHint" to "Tap to unlock and fill",
+    "autofill.unlockVault" to "Unlock {0}",
     "autofill.noUsername" to "(no username)",
     "autofill.openAppToSetup" to "Open Baluard first to set up quick unlock",
     "autofill.unlockFailed" to "Could not unlock. Open Baluard and try again.",

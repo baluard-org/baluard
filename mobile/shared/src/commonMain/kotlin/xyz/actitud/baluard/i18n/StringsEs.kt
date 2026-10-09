@@ -465,6 +465,7 @@ internal val ES: Map<String, String> = mapOf(
     "home.switchVault" to "Cambiar de bóveda",
     "home.vaults" to "Bóvedas",
     "home.viewAll" to "Ver todas ({0})",
+    "home.fromVault" to "De {0}",
     "home.noneYet" to "Nada por aquí todavía.",
     "list.showing" to "Mostrando {0} de {1}",
     "list.emptyTrash" to "Vaciar papelera",
@@ -504,6 +505,7 @@ internal val ES: Map<String, String> = mapOf(
     // Android autofill picker + trampoline (Phase 6). El título del prompt
     // biométrico reutiliza login.biometricTitle.
     "autofill.unlockHint" to "Toca para desbloquear y rellenar",
+    "autofill.unlockVault" to "Desbloquear {0}",
     "autofill.noUsername" to "(sin usuario)",
     "autofill.openAppToSetup" to "Abre Baluard primero para activar el desbloqueo rápido",
     "autofill.unlockFailed" to "No se pudo desbloquear. Abre Baluard e inténtalo de nuevo.",
