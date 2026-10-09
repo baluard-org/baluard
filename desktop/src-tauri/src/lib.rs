@@ -188,6 +188,9 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "bridge.list",
     "bridge.pair_approve",
     "bridge.pair_start",
+    // G24 §4.7 v2: the browser unlock-request banner's poll + consume.
+    "bridge.unlock_request",
+    "bridge.unlock_request_take",
     "bridge.pending",
     "bridge.revoke",
     // ciphers

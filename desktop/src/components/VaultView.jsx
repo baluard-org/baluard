@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
 import { toastError } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
+import BridgeUnlockBanner from "./BridgeUnlockBanner.jsx";
 import { daemon } from "../lib/daemon.js";
 import { buildFolderCreatePayload } from "../lib/payload.js";
 import { selectSource, filterByCategory, filterByFolder, filterByTag, filterByCollection, cipherCollectionId, searchCiphers } from "../lib/filters.js";
@@ -223,6 +224,11 @@ export default function VaultView() {
               </button>
             </div>
           </div>
+
+          {/* Browser unlock request (G24 §4.7 v2) */}
+          <BridgeUnlockBanner onUnlock={(row) => {
+            setSwitchUnlockTarget({ slug: row.slug, display_name: row.display_name });
+          }} />
 
           {/* Active Vault Switcher Card */}
           <VaultSwitcher onLockedTarget={(row) => {
