@@ -328,7 +328,39 @@
             gap: 2px;
           }
 
-          .match-name {
+          /* G24 merged surfaces: per-match vault label + locked/removal chips. */
+.match-vault {
+  font-size: 10px;
+  color: #a2b7ba;
+  margin-top: 2px;
+}
+.vault-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.vault-chip {
+  font-size: 11px;
+  color: #a2b7ba;
+  background: rgba(162, 183, 186, 0.08);
+  border: 1px solid rgba(162, 183, 186, 0.2);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.vault-chip.danger {
+  color: #f2b8b5;
+  border-color: rgba(242, 184, 181, 0.35);
+}
+.vault-chip.clickable {
+  cursor: pointer;
+  text-align: left;
+}
+.vault-chip.clickable:hover {
+  border-color: rgba(162, 183, 186, 0.45);
+}
+
+.match-name {
             font-size: 13px;
             font-weight: 600;
             color: var(--color-text);
