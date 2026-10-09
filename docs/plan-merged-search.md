@@ -386,11 +386,42 @@ vaults with one locked, and `search --vault` against an org Space.
 4. Slug-scoped `vault.get` / `cipher.totp_code`, route reorder,
    popup URL fix.
 5. Service-worker projection, popup badges, locked chips.
+   LANDED (2026-10-09): the projection landed with step 1; this step added
+   the popup surfaces - locked-vault chips with the D73 removal wording,
+   per-match vault labels when two or more vaults contribute, popup
+   reads (fill/copy/TOTP) carrying the tab URL plus the entry's
+   vault_slug, the neutral inline multi-vault note, and the section-6
+   vitest suites (the browser vitest runner works from `browser/shared`;
+   the earlier failure was the repo-root invocation trap).
 6. CLI `search --all` and `search --vault`.
+   LANDED (2026-10-09): the daemon `vault.search` host route (token-gated
+   IN PLACE against the active vault, same trust as
+   `vaults.list_full_all`), metadata-only matching over names and
+   usernames, personal-first ranking, and the CLI `baluard search` with
+   `--all` / `--vault <slug>`; org Spaces searchable by explicit choice.
 7. Android autofill (per-handle design above).
+   LANDED (2026-10-09): one opened handle per discovered vault in the
+   `:autofill` process; queries fan out over unlocked handles with
+   per-match vault attribution; per-vault unlock datasets (one explicit
+   biometric prompt each); `credential(path, id)` / `totpCode(path, id)`;
+   app-trust decisions scoped to the vault whose suggestion was confirmed.
 8. Android app search merge.
+   LANDED (2026-10-09): the hub search fans out over other still-unlocked
+   sessions that pass the keyless Kotlin eligibility sniff (family purpose
+   merges; org, pair, flipped shapes and damaged files fail closed), with
+   per-vault section headers and switch-and-open on tap. Foreign matches
+   ride name/username only - the deep-content index stays per active
+   vault.
 9. Follow-up: slug-routed capture updates for merge-eligible Spaces
    (Editor and above), then `bridge.request_unlock` as the v2 chip.
+   LANDED (2026-10-09): `vault.add` / `vault.update` honor a payload
+   `vault_slug` resolved before the gates (the C21 preservation and
+   write-scope checks then run against the TARGET vault); the eligibility
+   and unlock requirements are identical to slug-scoped reads. And
+   `bridge.request_unlock {slug}` + the desktop peek/take routes: the
+   extension's locked chip asks, the desktop banner (login screen and
+   vault view) offers Unlock/Not-now, and the user's approval IS the
+   unlock - no unlock route ever accepts a credential from the extension.
 
 Steps 1 through 6 land value for every extension user before the
 Android slice begins. The desktop needs no merge work; it ships in
