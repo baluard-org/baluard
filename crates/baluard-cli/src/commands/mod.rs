@@ -1103,6 +1103,63 @@ fn print_trash_row(c: &serde_json::Value) {
     println!("{id}  [{ctype:>10}]  {name}  {username}");
 }
 
+/// vault.search (G24 step 6): the CLI's executable spec of the daemon
+/// fan-out contract. Daemon-only - the merge-eligibility machinery lives in
+/// the daemon's host map, so --direct has nothing to fan out over.
+pub fn handle_search(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    query: &str,
+    all: bool,
+    vault_slug: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if matches!(mode, ConnectMode::Direct) {
+        return Err("search requires daemon mode (multi-vault fan-out); drop --direct".into());
+    }
+    ensure_unlocked_daemon(socket)?;
+    let payload = serde_json::json!({
+        "query": query,
+        "all": all,
+        "vault_slug": vault_slug.unwrap_or(""),
+    });
+    let resp = client::request_to("vault.search", &payload.to_string(), socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    let rows = data["matches"].as_array().cloned().unwrap_or_default();
+    if rows.is_empty() {
+        println!("No matches.");
+        return Ok(());
+    }
+    for c in &rows {
+        print_search_row(c);
+    }
+    println!();
+    println!("{} match(es)", rows.len());
+    Ok(())
+}
+
+fn print_search_row(c: &serde_json::Value) {
+    let fav = if c["favorite"].as_bool().unwrap_or(false) {
+        "*"
+    } else {
+        " "
+    };
+    let id = c["id"].as_str().unwrap_or("");
+    let ctype = c["cipher_type"].as_str().unwrap_or("login").to_lowercase();
+    let name = c["name"].as_str().unwrap_or("");
+    let username = c["username"].as_str().unwrap_or("");
+    // Attribution renders only when the row came from a named vault
+    // (--all / --vault); a plain active-vault search prints list-style.
+    let vault = c["vault_name"].as_str().unwrap_or("");
+    if vault.is_empty() {
+        println!("{fav} {id}  [{ctype:>10}]  {name}  {username}");
+    } else {
+        println!("{fav} {id}  [{ctype:>10}]  {name}  {username}  ({vault})");
+    }
+}
+
 pub fn handle_trash_list(
     mode: ConnectMode,
     vault_path: &str,

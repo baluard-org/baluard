@@ -54,6 +54,18 @@ pub struct BridgeRegistry {
     /// held pair_complete unblocks and mints the token. Replaced on each
     /// new pair_start / pair_complete.
     waiter: Option<tokio::sync::oneshot::Sender<WaiterPayload>>,
+    /// Pending browser unlock request (plan-merged-search §4.7 v2): the
+    /// extension asked for a locked merge-eligible vault to be unlocked so
+    /// its entries can fill. Single slot; a newer request supersedes.
+    pending_unlock: Option<PendingUnlockRequest>,
+}
+
+/// One browser unlock request. The desktop polls, shows the ask, and its
+/// approval IS the unlock; the request dies at the pairing TTL.
+#[derive(Debug, Clone)]
+pub struct PendingUnlockRequest {
+    pub slug: String,
+    pub created_at: u64,
 }
 
 /// What the held pair_complete receives when the desktop approves.
@@ -104,7 +116,7 @@ fn generate_pair_code() -> String {
         .collect()
 }
 
-fn now_secs() -> u64 {
+pub fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -117,6 +129,24 @@ impl BridgeRegistry {
     /// DROPPING the sender, which triggers `RecvError` on the held
     /// `pair_complete` so it lands in the timeout/superseded error path
     /// rather than being treated as a successful approval).
+    /// Record a browser unlock request for [slug], superseding any prior.
+    pub fn request_unlock(&mut self, slug: impl Into<String>) {
+        self.pending_unlock = Some(PendingUnlockRequest {
+            slug: slug.into(),
+            created_at: now_secs(),
+        });
+    }
+
+    /// The pending unlock request, if any (the caller applies the TTL).
+    pub fn pending_unlock(&self) -> Option<&PendingUnlockRequest> {
+        self.pending_unlock.as_ref()
+    }
+
+    /// Take (consume) the pending unlock request - the desktop acting on it.
+    pub fn take_unlock_request(&mut self) -> Option<PendingUnlockRequest> {
+        self.pending_unlock.take()
+    }
+
     pub fn start_pair(&mut self, browser_hint: impl Into<String>) -> (String, String) {
         // Cancel any in-flight extension waiter by dropping the sender.
         // (Do NOT send an empty payload — the receiver would treat it as success.)
