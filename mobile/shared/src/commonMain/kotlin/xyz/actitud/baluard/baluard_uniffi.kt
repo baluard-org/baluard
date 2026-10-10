@@ -997,6 +997,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1155,6 +1157,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_deny(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_list(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_stage(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_list_archived_ciphers(`ptr`: Pointer,
     ): Long
@@ -1584,6 +1588,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_list(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_stage(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_list_archived_ciphers(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_list_ciphers(
@@ -1957,6 +1963,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_list() != 37935.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_stage() != 38778.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_list_archived_ciphers() != 27383.toShort()) {
@@ -3392,6 +3401,14 @@ public interface MobileVaultInterface {
      * secret_ok}], malformed}`.
      */
     suspend fun `joinRequestsList`(): kotlin.String
+    
+    /**
+     * Stage an out-of-band introduction code into the join queue. The
+     * admin received the code from the joiner (chat, email); this is
+     * the consuming step that makes the request approvable. Payload:
+     * `{intro_code}`; returns `{req_id}`.
+     */
+    suspend fun `joinRequestsStage`(`payload`: kotlin.String): kotlin.String
     
     /**
      * List archived cipher metadata (Archive view).
@@ -5281,6 +5298,33 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_list(
                 thisPtr,
                 
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Stage an out-of-band introduction code into the join queue. The
+     * admin received the code from the joiner (chat, email); this is
+     * the consuming step that makes the request approvable. Payload:
+     * `{intro_code}`; returns `{req_id}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `joinRequestsStage`(`payload`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_stage(
+                thisPtr,
+                FfiConverterString.lower(`payload`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },

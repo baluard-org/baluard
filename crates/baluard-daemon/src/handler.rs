@@ -373,6 +373,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "members.contest_cancel",
     // members.contest_status is a read query: no cover commit.
     "members.replace_device",
+    "requests.stage",
     "requests.approve",
     "requests.deny",
     "tag.create",
@@ -5380,6 +5381,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         // creation.
         "space.set_purpose" => match state.space_set_purpose(&req.payload).await {
             Ok(()) => ok_resp("{}", token_str),
+            Err(e) => err_response(e),
+        },
+        // §4.8-2: the admin pastes the joiner's out-of-band intro code;
+        // this is the consuming step that stages the request for approval.
+        "requests.stage" => match state.requests_stage(&req.payload).await {
+            Ok(resp) => ok_resp(resp, token_str),
             Err(e) => err_response(e),
         },
         "requests.list" => match state.requests_list().await {

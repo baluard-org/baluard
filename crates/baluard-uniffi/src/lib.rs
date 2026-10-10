@@ -1228,6 +1228,17 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Stage an out-of-band introduction code into the join queue. The
+    /// admin received the code from the joiner (chat, email); this is
+    /// the consuming step that makes the request approvable. Payload:
+    /// `{intro_code}`; returns `{req_id}`.
+    pub async fn join_requests_stage(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .requests_stage(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Approve a queued join. Payload: `{req_id}`. Runs the standard
     /// verification path; consumed only on success.
     pub async fn join_requests_approve(&self, payload: String) -> Result<String, BaluardError> {
