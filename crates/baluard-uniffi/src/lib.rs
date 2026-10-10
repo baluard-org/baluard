@@ -659,6 +659,34 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// G16: create-or-reuse this vault's private repo on the connected
+    /// provider and wire it as the sync remote (origin, first push,
+    /// registry entry). Self-heals a repo left over from a prior
+    /// attempt. Returns {status, repo, provider}. Vault must be
+    /// unlocked (the first push signs a commit).
+    pub async fn setup_sync(
+        &self,
+        provider: MobileProvider,
+        repo_name: String,
+        clone_url: Option<String>,
+    ) -> Result<String, BaluardError> {
+        if !self.state.is_unlocked().await {
+            return Err(BaluardError::Vault {
+                detail: "Vault is locked. Unlock first.".into(),
+            });
+        }
+        let seal = self.state.devkey_seal().await;
+        baluard_runtime::providers::setup_sync_remote(
+            &self.state.vault_path,
+            seal,
+            baluard_core::providers::Provider::from(provider),
+            &repo_name,
+            clone_url,
+        )
+        .await
+        .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Fleet snapshot: {devices: [{name, device_id, enrolled_at, ...}],
     /// total}. Key material is masked daemon-side.
     pub async fn devices_list(&self) -> Result<String, BaluardError> {

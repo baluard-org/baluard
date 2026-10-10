@@ -3,6 +3,7 @@ package xyz.actitud.baluard.sync
 import xyz.actitud.baluard.MobileCipherMeta
 import xyz.actitud.baluard.MobileCatalogInput
 import xyz.actitud.baluard.MobileSyncStatus
+import xyz.actitud.baluard.MobileProvider
 import xyz.actitud.baluard.MobileVaultInterface
 
 /**
@@ -167,6 +168,12 @@ open class StubVault(
     override suspend fun `importSharedPackage`(packageB64: String): String = err()
     override suspend fun `openSharedContact`(revealB64: String): String = err()
     override suspend fun `rotateRecoveryPhrase`(oldPassword: String): String = err()
+    // G16: provider sync setup — the stub never exercises it.
+    override suspend fun `setupSync`(
+        provider: MobileProvider,
+        repoName: String,
+        cloneUrl: String?,
+    ): String = err()
     override suspend fun `devicesList`(): String = err()
     override suspend fun `deviceRevoke`(deviceId: String): String = err()
     override suspend fun `spaceKitStatus`(): String = err()

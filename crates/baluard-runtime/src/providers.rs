@@ -163,6 +163,143 @@ pub async fn detect_vault_repos(provider: Provider) -> Result<Vec<VaultRepo>, Ba
         .map_err(|e| VaultError::Metadata(format!("detect repos: {e}")).into())
 }
 
+/// G16 (mobile parity): point a phone-created vault at its own private
+/// Git repo — create-or-reuse the repo, wire the origin remote, commit
+/// pending changes, first push, and record sync info in the device
+/// registry. Mirrors the daemon's vault.setup_sync arm so a vault born
+/// on the phone gains a remote without a desktop; unlike the daemon arm
+/// it self-heals a pre-existing repo (create failing with an
+/// already-exists shape falls back to the repo's existing clone URL).
+#[cfg(feature = "git-sync")]
+pub async fn setup_sync_remote(
+    vault_path: &Path,
+    devkey_seal: Option<[u8; 32]>,
+    provider: Provider,
+    repo_name: &str,
+    clone_url: Option<String>,
+) -> Result<String, String> {
+    let (info, tok) = ensure_valid_token(provider)
+        .await
+        .map_err(|e| e.to_string())?;
+    let prov = provider_for(provider, info.config()).map_err(|e| format!("provider init: {e}"))?;
+
+    // Default the repo name from the .baluard marker slug, then the
+    // directory name — the same ladder the daemon arm uses.
+    let marker_slug = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
+        .ok()
+        .flatten()
+        .map(|m| m.slug);
+    let effective_name = baluard_core::vault::slug::normalize_slug(&match repo_name.trim() {
+        "" => marker_slug.clone().unwrap_or_else(|| {
+            vault_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("vault")
+                .to_string()
+        }),
+        n => n.to_string(),
+    });
+
+    let remote_url: String = if let Some(url) = clone_url {
+        url
+    } else {
+        match prov.create_private_repo(&tok, &effective_name).await {
+            Ok(r) => r.clone_url,
+            Err(e) => {
+                let msg = e.to_string();
+                let looks_exists = msg.contains("already exists")
+                    || msg.contains("422")
+                    || msg.contains("already");
+                if !looks_exists {
+                    return Err(format!("Failed to create repo: {msg}"));
+                }
+                // Repo exists from a prior partial attempt — reuse it.
+                // Accounts can hold many repos; walk pages until found.
+                let mut found: Option<String> = None;
+                for page in 1..=10u8 {
+                    let repos = prov
+                        .list_repos(&tok, page, 100)
+                        .await
+                        .map_err(|e| format!("Repo exists but listing failed: {e}"))?;
+                    if repos.is_empty() {
+                        break;
+                    }
+                    if let Some(r) = repos.iter().find(|r| r.name == effective_name) {
+                        found = Some(r.clone_url.clone());
+                        break;
+                    }
+                }
+                found.ok_or_else(|| {
+                    format!("Repo '{effective_name}' exists but was not found on {provider}")
+                })?
+            }
+        }
+    };
+
+    // Init git repo + add remote + commit + push (blocking git ops).
+    let git_path = vault_path.to_path_buf();
+    let provider_str = provider.to_string();
+    let remote_for_block = remote_url.clone();
+    let _ = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let engine = SyncEngine::new(&git_path, "baluard-mobile", devkey_seal.as_ref());
+        let git_repo = match engine.open_repo() {
+            Ok(r) => r,
+            Err(_) => engine
+                .init_repo()
+                .map_err(|e| format!("Git init failed: {e}"))?,
+        };
+        if let Ok(existing) = engine.get_remote_url(&git_repo, "origin") {
+            if existing != remote_for_block {
+                return Err(format!(
+                    "Remote 'origin' already set to {existing}; disconnect sync first"
+                ));
+            }
+        } else {
+            engine
+                .add_remote(&git_repo, "origin", &remote_for_block)
+                .map_err(|e| format!("Failed to add remote: {e}"))?;
+        }
+        let status = engine
+            .status(&git_repo)
+            .map_err(|e| format!("Status check failed: {e}"))?;
+        if status.is_dirty() {
+            engine
+                .commit_all(&git_repo, "")
+                .map_err(|e| format!("Commit failed: {e}"))?;
+        }
+        engine
+            .push(&git_repo, "origin")
+            .map_err(|e| format!("First push failed: {e}"))?;
+        Ok(remote_for_block)
+    })
+    .await
+    .map_err(|e| format!("Task join: {e}"))??;
+
+    // Record sync info in the device-local registry.
+    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+        if let Some(slug) = marker_slug {
+            if let Some(entry) = reg.get_mut(&slug) {
+                entry.provider = Some(provider_str.clone());
+                entry.remote_url = Some(remote_url.clone());
+                entry.last_synced = Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                );
+            }
+            let _ = reg.save_locked();
+        }
+    }
+
+    Ok(serde_json::json!({
+        "status": "synced",
+        "repo": remote_url,
+        "provider": provider_str,
+    })
+    .to_string())
+}
+
 /// Where a member stands in the P8c transport-staging lifecycle.
 /// The mapping is the least-privilege rule: nobody gets push until the
 /// vault-side approval grants an editor-or-above role.
