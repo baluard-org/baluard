@@ -7,6 +7,12 @@ name: 01-create-vault
 ---
 - launchApp:
     clearState: true
+# Android 17 shows a system "App Compatibility" alert on first launch;
+# clearState wipes its dismissal flag, so this run dismisses it again.
+# optional: the alert only appears on some devices/launches.
+- tapOn:
+    id: "android:id/button2"
+    optional: true
 - assertVisible: "Baluard"
 - tapOn:
     id: "e2e/onboarding/create"
@@ -16,12 +22,18 @@ name: 01-create-vault
 - tapOn:
     id: "e2e/create/confirm"
 - inputText: "${MASTER_PW}"
+- hideKeyboard
 - tapOn:
     id: "e2e/create/submit"
 # Recovery acknowledgment: the phrase is shown once; the E2E vault is
 # synthetic, so nothing is exported here.
 - tapOn:
     id: "e2e/recovery/ack"
+# The 24-word grid pushes the continue button below the fold.
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/continue"
+    direction: DOWN
 - tapOn:
     id: "e2e/recovery/continue"
 - assertVisible:
