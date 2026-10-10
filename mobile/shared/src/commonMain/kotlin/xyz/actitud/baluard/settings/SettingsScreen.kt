@@ -1,5 +1,6 @@
 package xyz.actitud.baluard.settings
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
@@ -57,7 +58,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
+import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonArray
@@ -67,6 +70,8 @@ import kotlinx.serialization.json.JsonObject
 import xyz.actitud.baluard.MobileProvider
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
+import xyz.actitud.baluard.data.MobileHealthReport
+import xyz.actitud.baluard.data.MobileHealthFinding
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.data.MobileSpaceSettings
 import xyz.actitud.baluard.data.MobileSpaceStatus
@@ -85,6 +90,7 @@ import xyz.actitud.baluard.platform.BrowserAutofillIntegration
 import xyz.actitud.baluard.platform.ClipboardPrefs
 import xyz.actitud.baluard.platform.PickedFile
 import xyz.actitud.baluard.platform.removeVaultDirectory
+import xyz.actitud.baluard.platform.decodeImageBitmap
 import xyz.actitud.baluard.platform.rememberImportFilePicker
 import xyz.actitud.baluard.platform.rememberRecoverySheetSaver
 import xyz.actitud.baluard.platform.ScreenshotPrefs
@@ -126,7 +132,7 @@ internal fun s4OpLabel(kind: String): String = when (kind) {
 /**
  * Settings screen styled after Baluard design language.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalEncodingApi::class)
 @Composable
 fun SettingsScreen(
     vault: MobileVault,
@@ -427,6 +433,13 @@ fun SettingsScreen(
             }
 
             // Security Section
+            // G19 health states (composable scope — the dialog renders
+            // outside the security card).
+            var healthOpen by remember { mutableStateOf(false) }
+            var healthBusy by remember { mutableStateOf(false) }
+            var health by remember { mutableStateOf<MobileHealthReport?>(null) }
+            var healthErr by remember { mutableStateOf<String?>(null) }
+
             SectionCard(title = t("settings.security")) {
                 Text(
                     t("settings.autoLock"),
@@ -762,6 +775,95 @@ fun SettingsScreen(
                         },
                     )
                 }
+
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                // G19: password health check (vault.health) — a decrypting
+                // pass; findings are read-only, search the hub for the row.
+                // States live at composable scope: the dialog below sits
+                // outside this card's lambda.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (!healthBusy) {
+                                healthOpen = true
+                                healthBusy = true
+                                health = null
+                                healthErr = null
+                                scope.launch {
+                                    runCatching { repo.healthReport(vault) }
+                                        .onSuccess { health = it }
+                                        .onFailure {
+                                            healthErr = it.message
+                                                ?.removePrefix("detail=")
+                                                ?.ifBlank { t("error.generic") }
+                                        }
+                                    healthBusy = false
+                                }
+                            }
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = t("settings.healthTitle"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            if (healthOpen) {
+                AlertDialog(
+                    onDismissRequest = { healthOpen = false },
+                    title = { Text(t("settings.healthTitle")) },
+                    text = {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.verticalScroll(rememberScrollState()),
+                        ) {
+                            when {
+                                healthBusy -> Text(t("settings.healthChecking"))
+                                healthErr != null -> Text(
+                                    healthErr ?: t("error.generic"),
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                health?.isEmpty == true -> Text(t("settings.healthClean"))
+                                health != null -> {
+                                    val r = health!!
+                                    val sections: List<Pair<String, List<MobileHealthFinding>>> = listOf(
+                                        "settings.healthWeak" to r.weak,
+                                        "settings.healthReused" to r.reused,
+                                        "settings.healthOld" to r.old,
+                                    )
+                                    sections.forEach { (label, findings) ->
+                                        if (findings.isNotEmpty()) {
+                                            Text(
+                                                t(label),
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                            findings.forEach { f ->
+                                                Column {
+                                                    Text(f.name, style = MaterialTheme.typography.bodyMedium)
+                                                    Text(
+                                                        f.reason,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { healthOpen = false }) { Text(t("common.close")) }
+                    },
+                )
             }
 
             // G5: device fleet. Lost-phone response without a desktop.
@@ -2557,6 +2659,120 @@ fun SettingsScreen(
             SectionCard(title = t("settings.vaultSection")) {
                 var confirmRemove by remember { mutableStateOf(false) }
                 var removeError by remember { mutableStateOf<String?>(null) }
+
+                // G21: vault avatar — encrypted at rest by the core;
+                // the file picker bytes ride base64 into vault.avatar.set.
+                var avatarB64 by remember { mutableStateOf("") }
+                var avatarBusy by remember { mutableStateOf(false) }
+                var avatarErr by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(vault) {
+                    avatarB64 = runCatching { repo?.avatarGet(vault) }.getOrNull() ?: ""
+                }
+                val avatarPicker = rememberImportFilePicker()
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    val decoded = remember(avatarB64) {
+                        runCatching {
+                            if (avatarB64.isEmpty()) null
+                            else decodeImageBitmap(
+                                kotlin.io.encoding.Base64.decode(avatarB64),
+                            )
+                        }.getOrNull()
+                    }
+                    if (decoded != null) {
+                        Image(
+                            bitmap = decoded,
+                            contentDescription = t("settings.avatarTap"),
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clickable(enabled = !avatarBusy && repo != null) {
+                                    avatarPicker(listOf("image/*")) { picked ->
+                                        if (picked != null) pickAvatar(
+                                            scope,
+                                            picked,
+                                            vault,
+                                            repo,
+                                            onDone = { b64 ->
+                                                avatarErr = null
+                                                avatarB64 = b64
+                                            },
+                                            onErr = {
+                                                avatarErr = when (it) {
+                                                    "bad-type" -> t("settings.avatarBadType")
+                                                    "too-large" -> t("settings.avatarTooLarge")
+                                                    else -> it.ifBlank { t("error.generic") }
+                                                }
+                                            },
+                                            setBusy = { avatarBusy = it },
+                                        )
+                                    }
+                                },
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable(enabled = !avatarBusy && repo != null) {
+                                    avatarPicker(listOf("image/*")) { picked ->
+                                        if (picked != null) pickAvatar(
+                                            scope,
+                                            picked,
+                                            vault,
+                                            repo,
+                                            onDone = { b64 ->
+                                                avatarErr = null
+                                                avatarB64 = b64
+                                            },
+                                            onErr = {
+                                                avatarErr = when (it) {
+                                                    "bad-type" -> t("settings.avatarBadType")
+                                                    "too-large" -> t("settings.avatarTooLarge")
+                                                    else -> it.ifBlank { t("error.generic") }
+                                                }
+                                            },
+                                            setBusy = { avatarBusy = it },
+                                        )
+                                    }
+                                },
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = if (avatarB64.isEmpty()) t("settings.avatarTap") else t("settings.avatarChange"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (avatarB64.isNotEmpty()) {
+                            Text(
+                                text = t("settings.avatarRemove"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.clickable(enabled = !avatarBusy && repo != null) {
+                                    avatarBusy = true
+                                    scope.launch {
+                                        runCatching { repo?.avatarSet(vault, "", "png") }
+                                            .onSuccess { avatarB64 = "" }
+                                            .onFailure { avatarErr = it.message }
+                                        avatarBusy = false
+                                    }
+                                },
+                            )
+                        }
+                        avatarErr?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+
                 Text(
                     t("settings.removeVaultHint"),
                     style = MaterialTheme.typography.bodySmall,
@@ -2661,5 +2877,52 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+/** G21: encode a picked image and push it as the vault avatar. The
+ *  extension was validated by the caller; the core enforces its own
+ *  whitelist and the ~256KB decoded cap. */
+private fun pickAvatar(
+    scope: kotlinx.coroutines.CoroutineScope,
+    picked: PickedFile,
+    vault: xyz.actitud.baluard.MobileVault,
+    repo: VaultRepository?,
+    onDone: (String) -> Unit,
+    onErr: (String) -> Unit,
+    setBusy: (Boolean) -> Unit,
+) {
+    setBusy(true)
+    scope.launch {
+        try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                // Downscale + recompress: phone photos arrive in the
+                // megabytes and the core caps the stored avatar.
+                val prepared = xyz.actitud.baluard.platform.prepareAvatarImage(picked.bytes)
+                    ?: throw IllegalStateException("bad-type")
+                val (bytes, ext) = prepared
+                if (bytes.size > 262_144) throw IllegalStateException("too-large")
+                @OptIn(ExperimentalEncodingApi::class)
+                val b64 = kotlin.io.encoding.Base64.encode(bytes)
+                repo?.avatarSet(vault, b64, ext)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    onDone(b64)
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                onErr(
+                    when (msg) {
+                        "bad-type" -> "bad-type"
+                        "too-large" -> "too-large"
+                        else -> msg.removePrefix("detail=").ifBlank { "" }
+                    },
+                )
+            }
+        }
+        setBusy(false)
     }
 }
