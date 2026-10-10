@@ -888,6 +888,98 @@ async fn sharing_surfaces_happy_path_and_role_guard() {
     let bogus = r#"{"req_id": "11111111-1111-1111-1111-111111111111"}"#;
     assert!(state.requests_approve(bogus).await.is_err());
     assert!(state.requests_deny(bogus).await.is_err());
+
+    // Stage leg (§4.8-2): the joiner's out-of-band intro code enters the
+    // queue through the route, list shows it with a matching secret, and
+    // approval mints the member. The introduction is hand-built from the
+    // invite code the way a real joiner's device would emit it.
+    use baluard_core::vault::members::Introduction;
+    // Core encodes invite codes with the URL_SAFE alphabet.
+    use base64::Engine as _;
+    let invite_json: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(
+            base64::engine::general_purpose::URL_SAFE
+                .decode(invite["code"].as_str().unwrap())
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let intro = Introduction {
+        vault_id: invite_json["vault_id"].as_str().unwrap().parse().unwrap(),
+        invite_id: invite_json["invite_id"].as_str().unwrap().parse().unwrap(),
+        secret: invite_json["secret"].as_str().unwrap().to_string(),
+        device_id: uuid::Uuid::new_v4(),
+        encryption_public_key: "aa".repeat(32),
+        signing_public_key: "bb".repeat(32),
+        display_name: "Phone B".into(),
+        email: Some("b@example.com".into()),
+        contact_card: None,
+        identity_signature: None,
+    };
+    let intro_code = intro.encode().unwrap();
+    // Garbage and foreign-vault replies refuse without staging anything.
+    assert!(
+        state
+            .requests_stage(r#"{"intro_code":"not-a-code"}"#)
+            .await
+            .is_err()
+    );
+    let mut foreign = intro.clone();
+    foreign.vault_id = uuid::Uuid::new_v4();
+    let foreign_err = state
+        .requests_stage(&format!(
+            r#"{{"intro_code":"{}"}}"#,
+            foreign.encode().unwrap()
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        foreign_err.contains("different vault"),
+        "err: {foreign_err}"
+    );
+    let staged: serde_json::Value = serde_json::from_str(
+        &state
+            .requests_stage(&format!(r#"{{"intro_code":"{intro_code}"}}"#))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(!staged["req_id"].as_str().unwrap().is_empty());
+    let q: serde_json::Value = serde_json::from_str(&state.requests_list().await.unwrap()).unwrap();
+    let rows = q["requests"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "staged request is listed");
+    assert_eq!(rows[0]["display_name"], "Phone B");
+    assert_eq!(rows[0]["secret_ok"], true);
+    assert_eq!(rows[0]["email"], "b@example.com");
+    // Editor is NOT above the trust dial: the approval proceeds without a
+    // Verified contact card, mints the member row, and empties the queue.
+    // No provider remote, so the seat upgrade reports false.
+    let approved: serde_json::Value = serde_json::from_str(
+        &state
+            .requests_approve(&format!(
+                r#"{{"req_id":"{}"}}"#,
+                staged["req_id"].as_str().unwrap()
+            ))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(!approved["member_id"].as_str().unwrap().is_empty());
+    assert_eq!(approved["seat_upgraded"], false);
+    let q: serde_json::Value = serde_json::from_str(&state.requests_list().await.unwrap()).unwrap();
+    assert_eq!(
+        q["requests"].as_array().unwrap().len(),
+        0,
+        "approval consumed the request"
+    );
+    let list: serde_json::Value =
+        serde_json::from_str(&state.members_list().await.unwrap()).unwrap();
+    assert_eq!(
+        list["members"].as_array().unwrap().len(),
+        2,
+        "joiner has a member row"
+    );
 }
 
 #[tokio::test]

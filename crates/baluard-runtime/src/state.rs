@@ -3056,6 +3056,40 @@ impl VaultState {
         }
     }
 
+    /// Stage an out-of-band introduction code into the join queue. The
+    /// admin received the code from the joiner (chat, email); this is the
+    /// consuming step the whole join loop was missing a surface for.
+    pub async fn requests_stage(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let intro_code = v["intro_code"]
+            .as_str()
+            .ok_or("missing intro_code")?
+            .trim()
+            .to_string();
+        // Re-staging the same reply must not pile up dead duplicates: the
+        // invite is consumed at approval, so a second request row for the
+        // same (invite, device) could never be approved. Idempotent: an
+        // already-staged reply returns its existing request id.
+        let intro = baluard_core::vault::members::Introduction::decode(&intro_code)
+            .map_err(|e| e.to_string())?;
+        let (existing, _) = handle.join_queue_list().map_err(|e| e.to_string())?;
+        if let Some(row) = existing
+            .iter()
+            .find(|r| r.invite_id == intro.invite_id && r.device_id == intro.device_id)
+        {
+            return Ok(serde_json::json!({ "req_id": row.req_id.to_string() }).to_string());
+        }
+        let req_id = handle
+            .join_queue_submit(&intro_code)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "req_id": req_id.to_string() }).to_string())
+    }
+
     /// Join queue: well-shaped staged requests plus the malformed count.
     pub async fn requests_list(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
