@@ -174,7 +174,7 @@ Surface: CLI. Missing: list trash, restore, purge. Effort: S. Value: scripting c
 Surface: Mobile. Missing: drop a vault from the list, prune stale vaults (both GUIs have it; the destructive delete arm stays desktop/CLI by design). Effort: S. Value: unclutter the vault list after a vault is removed elsewhere. Decision: close. CLOSED: detach shipped; prune has no mobile shape (the list is a filesystem scan and cannot go stale) — the stale-active-pointer self-heal is its equivalent. See the Closed table.
 
 ### G16. Repo creation on provider (mobile + CLI)
-Surface: Mobile + CLI. CLI part CLOSED (2026-10-09): `baluard provider create-repo <name>` (name normalized, baluard- prefixed). The mobile wizard step remains future work. See the Closed table.
+Surface: Mobile + CLI. CLOSED (2026-10-10): CLI `provider create-repo` (2026-10-09) plus the mobile half — Settings > Sync "Back up through your own Git account" (provider chips, optional PAT, optional repo name) riding a new runtime `setup_sync_remote` over UniFFI: create-or-reuse the private repo (self-heals a repo left by a prior attempt via paginated listing), wire origin, first push, registry entry. The daemon `vault.setup_sync` arm is unchanged (unification parked). See the Closed table.
 
 ### G17. Desktop passkey rename UI
 Surface: Desktop. Missing: rename exists on CLI only. Effort: S. Value: naming credentials is a daily-use nicety. Decision: close.
@@ -232,7 +232,8 @@ Surface: Extension + Android + Mobile + CLI (the desktop app is already merged v
 | G7 | this wave | `generate`, `totp`, `ssh-keygen` (search arrived with G24 step 6); generation is direct core compute with best-effort history, TOTP resolves name substrings with ambiguity refusal, SSH material prints once with an optional `--store` into the vault |
 | G8 | this wave | `provider connect` (device flow with slow-down handling, or `--pat`), `status`, `list`, `disconnect`, `repos`, `vault-repos`; connect rides the sentinel-exempt routes so it works pre-unlock |
 | G9 | this wave | `rotate-root` over the quorum-gated core rotation; survivors adopt on next unlock, the D78 verifier refreshes daemon-side |
-| G16 (CLI) | this wave | `provider create-repo` with slug normalization; demands an unlocked vault (it is not sentinel-exempt) |
+| G16 (CLI) | 2026-10-09 wave | `provider create-repo` with slug normalization; demands an unlocked vault (it is not sentinel-exempt) |
+| G16 (mobile) | this wave | Git-backup wizard on Settings > Sync: runtime `setup_sync_remote` (create-or-reuse + origin + first push + registry, self-healing an already-created repo through paginated reuse), UniFFI `setup_sync` (locked-refusing, devkey_seal carried for signed commits — an enrolled vault refuses unsigned commits fail-closed), PAT never enters the sync path (ensure_valid_token loads from keyring); daemon `vault.setup_sync` left as-is, unification parked |
 | G11 phase 1 | this wave | collections list/create/assign/grant/revoke plus members list and both pending queues: `approve-join`/`deny-join` over `requests.*` and `approve`/`deny` over `collections.requests_*`; the review caught that join confirmation and access asks are separate route families and the first draft wired only one |
 
 ## Keeping this document current
