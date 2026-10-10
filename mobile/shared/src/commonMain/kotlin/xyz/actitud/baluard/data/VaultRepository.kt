@@ -795,6 +795,17 @@ class VaultRepository {
         config: MobileProviderConfig = MobileProviderConfig(null, null),
     ) = uniffiConnectPat(provider, token, config)
 
+    /** G16: create-or-reuse this vault's private repo on the connected
+     * provider and wire it as the sync remote (first push included).
+     * Returns {status, repo, provider}. Vault must be unlocked; a blank
+     * [cloneUrl] lets the core create or reuse the repo by name. */
+    suspend fun setupSync(
+        vault: MobileVault,
+        provider: MobileProvider,
+        repoName: String,
+        cloneUrl: String? = null,
+    ): String = vault.setupSync(provider, repoName, cloneUrl)
+
     /** Repos that look like Baluard vaults on the connected account. */
     suspend fun listVaultRepos(provider: MobileProvider): List<MobileRepo> =
         uniffiListVaultRepos(provider)
