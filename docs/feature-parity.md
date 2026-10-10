@@ -130,16 +130,16 @@ Surface: CLI. Missing: the space knobs (guest sharing, invite authority, viewer 
 Surface: Mobile. Missing: no import of the 8 formats, no export. Effort: M (parsers already live in core; the work is UI + file access). Value: the largest real user gap. Migration onto the product is desktop-only today; users on phones cannot leave or arrive. Decision: close.
 
 ### G3. Mobile phrase rotation ceremony
-Surface: Mobile. Missing: no rotation UI, no Recovery Kit surface. A user who created a vault on a phone must rotate on desktop. Effort: M to L (ceremony flow + kit export reuse). Value: security lifecycle parity; recovery independence per platform. Decision: close.
+Surface: Mobile. CLOSED (2026-10-10): Settings > Security rotates the phrase behind the current master password (D74); the new 24 words show once with copy, and flipped Spaces surface the kit-refusal error text. See the Closed table.
 
 ### G4. Mobile open shared reveals
 Surface: Mobile. Missing: cannot open a guest or contact reveal file. Effort: S. Value: a phone receives the share file; it should open it. Decision: close. CLOSED: shipped — see the Closed table.
 
 ### G5. Mobile device fleet management
-Surface: Mobile. Missing: fleet list, revoke, rotate (enrollment exists). Revocation triggers a full rekey on-device, so the crypto path is heavy and the flow needs care. Effort: M to L. Value: lost-phone response without a desktop. Decision: close.
+Surface: Mobile. CLOSED (2026-10-10): Settings > Devices lists the fleet with a this-device marker and revokes with confirmation; the rekey is the daemon's existing `device.revoke` (no new on-device crypto was needed - the design-pass worry dissolved once the route already carried the ceremony), surfaced with a busy state. See the Closed table.
 
 ### G6. Mobile emergency escrow + Recovery Kit
-Surface: Mobile. Missing: escrow and kit surfaces. Effort: M. Value: full S4 lifecycle on phones. Decision: needed - close now or park behind G3.
+Surface: Mobile. CLOSED (2026-10-10) as kit-only: Settings > Space carries kit status/replace/disable (the fixed threshold's asks render in the pending list with approve actions, and gate errors ship the ask promptly), and onboarding gains phrase-only kit recovery for a discovered-but-unopenable vault, handing off to the unlock stage. The S4 emergency escrow (EmergencyConfig wrapped root key) stays desktop-shaped on mobile - it has no mobile consumer story yet and the kit covers the loss scenario. See the Closed table.
 
 ### G7. CLI utility commands (generator, TOTP, SSH generation, list search)
 Surface: CLI. CLOSED (2026-10-09): `baluard generate password|passphrase` (flags for length/words/transforms, best-effort history like the apps), `baluard totp <id-or-name>` (name-substring resolution with ambiguity refusal), `baluard ssh-keygen` (daemon-side generation, printed once, optional `--store`); list search arrived with G24 step 6 as `baluard search`. See the Closed table.
@@ -195,7 +195,7 @@ Surface: Mobile. Missing: set / view vault avatar (desktop-only today). Effort: 
 Surface: Desktop + Mobile. Missing: no GUI renders `password_history` (CLI exposes it in JSON). Effort: S. Value: "what was the old password" is a real support question. Decision: close.
 
 ### G23. Mobile admin ops: repoint / migrate, commit revocation
-Surface: Mobile. Missing: remote repoint and signed-manifest revocation. Effort: S each. Value: recovery from a bad remote without a desktop. Decision: fold into G5's admin surface or park.
+Surface: Mobile. PARKED (2026-10-10): commit revocation stays CLI-first by usefulness (its own row above); repoint/migrate rides the CLI and desktop today - the family kit-recovery path now covers the "lost remote" recovery story on phones, so the mobile rows return with the first real demand. Decision: park.
 
 ### G24. Merged search and autofill across personal vault and Spaces
 Surface: Extension + Android + Mobile + CLI (the desktop app is already merged via `vaults.list_full_all`, D31). Missing: extension autofill, Android autofill, mobile search, and the CLI each read one active vault, so family or organization items are invisible until a vault switch. Effort: M. Value: the 1Password/Bitwarden expectation — one list, one badge per origin vault. Decision: planned. Spec: docs/plan-merged-search.md (fan-out over unlocked, browser-consented vaults; per-vault quick unlock instead of a shared secret).
@@ -241,3 +241,7 @@ Surface: Extension + Android + Mobile + CLI (the desktop app is already merged v
 2. Update the snapshot line at the top.
 3. Move closed gaps into a "Closed" list at the bottom with the commit that closed them.
 4. Any row change needs a source reference in the commit message.
+| G3 | this wave | phrase rotation in Settings > Security: master-password gated, new words shown once with copy, flipped Spaces surface the kit refusal |
+| G5 | this wave | Devices card: fleet with this-device marker, confirmed revoke riding `device.revoke` (the rekey ceremony was already daemon-side, so no new on-device crypto), busy state + post-revoke refresh |
+| G6 | this wave (kit) | kit status/replace/disable in Settings > Space with the fixed-threshold asks approved in the pending list, plus phrase-only kit recovery from onboarding that adopts the vault and hands off to unlock; the emergency escrow stays desktop-shaped |
+| G23 | parked | commit revocation stays CLI-first; repoint/migrate covered by CLI and desktop, kit recovery covers the phone-side loss story - rows return on demand |
