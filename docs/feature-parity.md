@@ -165,7 +165,7 @@ Decision: committed (2026-10-03, Esteban). Phase 1 in the CLI parity track; phas
 Surface: Mobile. Missing: autofill provider (Phase 7) plus the iOS actuals behind several partial cells above. Effort: L. Value: the second mobile platform. Decision: already planned as Phase 7; the remaining iOS actuals ride along.
 
 ### G13. Space user groups on mobile
-Surface: Mobile + CLI. Missing: group CRUD and membership (desktop has the full GroupsTab; CLI follows G11 phase 2). Effort: M. Value: batch access management for larger spaces on phones. Decision: close after G3/G5 on mobile; the CLI part rides with G11 phase 2.
+Surface: Mobile + CLI. CLOSED (2026-10-10): mobile half landed - People > Groups card (create, rename, member add/remove, two-tap delete whose copy states that access given only through the group is removed, matching the core's grant-row pruning). The CLI part still rides G11 phase 2.
 
 ### G14. CLI trash surface
 Surface: CLI. Missing: list trash, restore, purge. Effort: S. Value: scripting cleanup; parity with both GUIs. Decision: close.
@@ -183,13 +183,13 @@ Surface: Desktop. Missing: rename exists on CLI only. Effort: S. Value: naming c
 Surface: Desktop + Mobile. Missing: the flag saves but nothing enforces it on view or reveal on either GUI. Effort: S to M. Value: security parity; a silent unenforced security flag is worse than none. Decision: close.
 
 ### G19. Password health on desktop and mobile
-Surface: Desktop + Mobile. Missing: the `vault.health` report (weak, reused, old passwords) has no GUI surface anywhere. Effort: M, cheapened by the CLI-first rule - the primitive exists (`vault.health` route + `baluard health`), so this is UI wiring, not new logic. Value: the CLI should not be the only place users learn their passwords are weak. Decision: close after 1.0 or schedule with the 1.0 polish pass.
+Surface: Desktop + Mobile. CLOSED (2026-10-10): mobile half landed - Settings > Security > Security check (decrypting pass, findings by entry name, read-only). Known wart parked: the core's reason strings are English-only on es/pt devices. Desktop remains the 1.0 polish item.
 
 ### G20. Generator history on mobile
 Surface: Mobile. Missing: history drawer (UniFFI bindings already exist). Effort: S. Value: recovering a generated password you did not save yet. Decision: close.
 
 ### G21. Vault avatar on mobile
-Surface: Mobile. Missing: set / view vault avatar (desktop-only today). Effort: S to M. Value: multi-vault recognition on the list screen. Decision: close.
+Surface: Mobile. CLOSED (2026-10-10): Settings > Vault picture - picked images are downscaled and recompressed on-device (512px JPEG steps) to fit the core's cap before the encrypted set; iOS renders nothing yet (decoder stub, fail-closed).
 
 ### G22. Password history view
 Surface: Desktop + Mobile. Missing: no GUI renders `password_history` (CLI exposes it in JSON). Effort: S. Value: "what was the old password" is a real support question. Decision: close.
@@ -234,6 +234,9 @@ Surface: Extension + Android + Mobile + CLI (the desktop app is already merged v
 | G9 | this wave | `rotate-root` over the quorum-gated core rotation; survivors adopt on next unlock, the D78 verifier refreshes daemon-side |
 | G16 (CLI) | 2026-10-09 wave | `provider create-repo` with slug normalization; demands an unlocked vault (it is not sentinel-exempt) |
 | G16 (mobile) | this wave | Git-backup wizard on Settings > Sync: runtime `setup_sync_remote` (create-or-reuse + origin + first push + registry, self-healing an already-created repo through paginated reuse), UniFFI `setup_sync` (locked-refusing, devkey_seal carried for signed commits — an enrolled vault refuses unsigned commits fail-closed), PAT never enters the sync path (ensure_valid_token loads from keyring); daemon `vault.setup_sync` left as-is, unification parked |
+| G13 (mobile) | this wave | People > Groups card riding the groups.* daemon wire shapes; group delete prunes grant rows and the confirm copy says so |
+| G19 (mobile) | this wave | Security check over vault.health; core reason strings English-only on es/pt (parked) |
+| G21 | this wave | Vault picture with on-device downscale/recompress; iOS decoder stubbed fail-closed |
 | G11 phase 1 | this wave | collections list/create/assign/grant/revoke plus members list and both pending queues: `approve-join`/`deny-join` over `requests.*` and `approve`/`deny` over `collections.requests_*`; the review caught that join confirmation and access asks are separate route families and the first draft wired only one |
 
 ## Keeping this document current
