@@ -4,11 +4,17 @@ appId: xyz.actitud.baluard
 name: 02-lock-unlock
 ---
 - launchApp
+# Android 17's App Compatibility alert pops on every cold start; the
+# optional tap no-ops when it is absent.
+- tapOn:
+    id: "android:id/button2"
+    optional: true
 - assertVisible:
     id: "e2e/unlock/password"
 - tapOn:
     id: "e2e/unlock/password"
 - inputText: "${MASTER_PW}"
+- hideKeyboard
 - tapOn:
     id: "e2e/unlock/submit"
 - assertVisible:
@@ -20,6 +26,7 @@ name: 02-lock-unlock
 - tapOn:
     id: "e2e/unlock/password"
 - inputText: "${MASTER_PW}"
+- hideKeyboard
 - tapOn:
     id: "e2e/unlock/submit"
 - assertVisible:
