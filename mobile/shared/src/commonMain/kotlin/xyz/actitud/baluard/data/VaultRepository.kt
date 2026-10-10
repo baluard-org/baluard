@@ -80,6 +80,29 @@ data class MobileMemberInfo(
     val isSelf: Boolean = false,
 )
 
+/** A user group (G13): id, name, and the member ids in it. */
+data class MobileGroupInfo(
+    val id: String,
+    val name: String,
+    val memberIds: List<String> = emptyList(),
+)
+
+/** One password-health finding (G19). */
+data class MobileHealthFinding(
+    val cipherId: String,
+    val name: String,
+    val reason: String,
+)
+
+/** Password-health report (vault.health wire shape). */
+data class MobileHealthReport(
+    val weak: List<MobileHealthFinding> = emptyList(),
+    val reused: List<MobileHealthFinding> = emptyList(),
+    val old: List<MobileHealthFinding> = emptyList(),
+) {
+    val isEmpty: Boolean get() = weak.isEmpty() && reused.isEmpty() && old.isEmpty()
+}
+
 /** Queued join introduction (from `requests_list` JSON). */
 data class MobileJoinRequest(
     val reqId: String,
@@ -877,6 +900,82 @@ class VaultRepository {
     /** Disable the kit; {removed} out. May arm the approval. */
     suspend fun spaceKitDisable(vault: MobileVault): String =
         vault.spaceKitDisable()
+
+    // ── G13: user groups ──
+
+    /** Groups with member ids. */
+    suspend fun listGroups(vault: MobileVault): List<MobileGroupInfo> {
+        val raw = runCatching { vault.groupsList() }.getOrNull() ?: return emptyList()
+        val obj = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        }.getOrNull() ?: return emptyList()
+        val arr = obj["groups"] as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val id = (o["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val name = (o["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (id != null && name != null) MobileGroupInfo(
+                id = id,
+                name = name,
+                memberIds = ((o["members"] ?: kotlinx.serialization.json.JsonArray(emptyList())) as? kotlinx.serialization.json.JsonArray).orEmpty()
+                    .mapNotNull { m -> (m as? kotlinx.serialization.json.JsonPrimitive)?.content },
+            ) else null
+        }
+    }
+
+    /** Create a group; returns the new id ("" on failure). */
+    suspend fun groupCreate(vault: MobileVault, name: String): String {
+        val raw = vault.groupCreate("""{"name":${kotlinx.serialization.json.JsonPrimitive(name)}}""")
+        return runCatching {
+            (kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject["id"]
+                as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
+        }.getOrDefault("")
+    }
+
+    suspend fun groupRename(vault: MobileVault, id: String, name: String) =
+        vault.groupRename("""{"id":"$id","name":${kotlinx.serialization.json.JsonPrimitive(name)}}""")
+
+    suspend fun groupDelete(vault: MobileVault, id: String) =
+        vault.groupDelete("""{"id":"$id"}""")
+
+    suspend fun groupMemberAdd(vault: MobileVault, id: String, memberId: String) =
+        vault.groupMemberAdd("""{"id":"$id","member_id":"$memberId"}""")
+
+    suspend fun groupMemberRemove(vault: MobileVault, id: String, memberId: String) =
+        vault.groupMemberRemove("""{"id":"$id","member_id":"$memberId"}""")
+
+    // ── G19: password health ──
+
+    /** Decrypting pass over the whole vault; busy-state the caller. */
+    suspend fun healthReport(vault: MobileVault): MobileHealthReport {
+        val raw = vault.healthReport()
+        val obj = kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        val pick: (String) -> List<MobileHealthFinding> = { key ->
+            (obj[key] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { el ->
+                val e = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                MobileHealthFinding(
+                    cipherId = (e["cipher_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+                    name = (e["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+                    reason = (e["reason"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+                )
+            }
+        }
+        return MobileHealthReport(weak = pick("weak"), reused = pick("reused"), old = pick("old"))
+    }
+
+    // ── G21: vault avatar ──
+
+    /** Base64 avatar ("" when none). */
+    suspend fun avatarGet(vault: MobileVault): String = vault.avatarGet()
+
+    /** Set (b64 + ext from the whitelist) or remove (b64 empty). */
+    suspend fun avatarSet(vault: MobileVault, b64: String, ext: String) {
+        if (b64.isEmpty()) {
+            vault.avatarSet("""{"data":"","ext":"png"}""")
+        } else {
+            vault.avatarSet("""{"data":"$b64","ext":"$ext"}""")
+        }
+    }
 
     /** Pre-unlock kit recovery on a fresh device. Returns the device id.
      * Calls the top-level FFI free function by qualified name (same-name
