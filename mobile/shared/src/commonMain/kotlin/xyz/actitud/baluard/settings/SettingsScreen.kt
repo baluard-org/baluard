@@ -61,6 +61,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonObject
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
@@ -114,6 +115,8 @@ internal fun s4OpLabel(kind: String): String = when (kind) {
     "space_migrate" -> "space.opMigrate"
     "ownership_claim" -> "space.opClaim"
     "quorum_lower" -> "space.opLower"
+    "kit.replace" -> "space.opKitReplace"
+    "kit.disable" -> "space.opKitDisable"
     else -> kind
 }
 
@@ -490,6 +493,237 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
                 )
+
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                // G3: recovery-phrase rotation (D74 ceremony). The current
+                // master password gates it; the new 24 words show once.
+                var rotateOpen by remember { mutableStateOf(false) }
+                var rotatePw by remember { mutableStateOf("") }
+                var rotateErr by remember { mutableStateOf<String?>(null) }
+                var rotateBusy by remember { mutableStateOf(false) }
+                var rotatedWords by remember { mutableStateOf<List<String>?>(null) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = t("settings.rotatePhrase"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { rotateOpen = true; rotateErr = null }, enabled = !rotateBusy) {
+                        Text(t("settings.rotatePhraseBtn"))
+                    }
+                }
+                Text(
+                    t("settings.rotatePhraseHint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+
+                if (rotateOpen && rotatedWords == null) {
+                    AlertDialog(
+                        onDismissRequest = { if (!rotateBusy) rotateOpen = false },
+                        title = { Text(t("settings.rotatePhraseTitle")) },
+                        text = {
+                            Column {
+                                Text(
+                                    t("settings.rotatePhraseBody"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = rotatePw,
+                                    onValueChange = { rotatePw = it },
+                                    label = { Text(t("login.password")) },
+                                    singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    isError = rotateErr != null,
+                                    supportingText = { rotateErr?.let { Text(it) } },
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                enabled = !rotateBusy && rotatePw.isNotEmpty(),
+                                onClick = {
+                                    rotateBusy = true
+                                    rotateErr = null
+                                    scope.launch {
+                                        try {
+                                            val json = repo.rotateRecoveryPhrase(vault, rotatePw)
+                                            val words = (Json.parseToJsonElement(json) as? JsonObject)
+                                                ?.get("phrase")?.jsonPrimitive?.content
+                                                ?.trim()?.split(Regex("\\s+"))
+                                                .orEmpty()
+                                            if (words.size == 24) {
+                                                rotatedWords = words
+                                                rotateOpen = false
+                                                rotatePw = ""
+                                            } else {
+                                                rotateErr = t("settings.rotatePhraseBad")
+                                            }
+                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            rotateErr = e.message ?: t("settings.rotatePhraseBad")
+                                        }
+                                        rotateBusy = false
+                                    }
+                                },
+                            ) { Text(t("common.continue")) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { rotateOpen = false }) { Text(t("common.cancel")) }
+                        },
+                    )
+                }
+
+                // Words-once display after a successful rotation.
+                rotatedWords?.let { words ->
+                    var copiedRotation by remember { mutableStateOf(false) }
+                    AlertDialog(
+                        onDismissRequest = {},
+                        title = { Text(t("settings.rotatePhraseDoneTitle")) },
+                        text = {
+                            Column {
+                                Text(
+                                    t("settings.rotatePhraseDoneBody"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    words.chunked(2).forEachIndexed { rowIdx, pair ->
+                                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            pair.forEachIndexed { colIdx, w ->
+                                                Text(
+                                                    text = "${rowIdx * 2 + colIdx + 1}. $w",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontFamily = FontFamily.Monospace,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Row {
+                                TextButton(onClick = {
+                                    copyToClipboard(words.joinToString(" "))
+                                    copiedRotation = true
+                                }) {
+                                    Text(if (copiedRotation) t("common.copied") else t("recovery.copyPhrase"))
+                                }
+                                TextButton(onClick = { rotatedWords = null }) {
+                                    Text(t("recovery.ack"))
+                                }
+                            }
+                        },
+                    )
+                }
+            }
+
+            // G5: device fleet. Lost-phone response without a desktop.
+            SectionCard(title = t("settings.fleetSection")) {
+                var fleet by remember(vault) { mutableStateOf<List<JsonObject>>(emptyList()) }
+                var thisDevice by remember(vault) { mutableStateOf("") }
+                var revokeTarget by remember { mutableStateOf<JsonObject?>(null) }
+                var fleetBusy by remember { mutableStateOf(false) }
+                LaunchedEffect(vault) {
+                    thisDevice = vault.deviceId()
+                    runCatching {
+                        val json = repo.devicesList(vault)
+                        fleet = ((Json.parseToJsonElement(json) as? JsonObject)
+                            ?.get("devices") as? JsonArray)
+                            ?.mapNotNull { it as? JsonObject }
+                            .orEmpty()
+                    }
+                }
+                if (fleet.isEmpty()) {
+                    Text(
+                        t("settings.fleetEmpty"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                fleet.forEach { d ->
+                    val id = d.get("device_id")?.jsonPrimitive?.content.orEmpty()
+                    val name = d.get("name")?.jsonPrimitive?.content.orEmpty()
+                    val enrolled = d.get("enrolled_at")?.jsonPrimitive?.content?.toLongOrNull()
+                    val isThis = id == thisDevice
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isThis) t("settings.fleetThisDevice", name) else name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            enrolled?.let {
+                                Text(
+                                    text = t("settings.fleetEnrolled", formatEpochDate(it)),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        if (!isThis) {
+                            TextButton(onClick = { revokeTarget = d }, enabled = !fleetBusy) {
+                                Text(t("settings.fleetRevoke"), color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                    if (d != fleet.last()) BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                }
+                Text(
+                    t("settings.fleetHint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+
+                revokeTarget?.let { target ->
+                    val tname = target.get("name")?.jsonPrimitive?.content.orEmpty()
+                    AlertDialog(
+                        onDismissRequest = { if (!fleetBusy) revokeTarget = null },
+                        title = { Text(t("settings.fleetRevokeTitle")) },
+                        text = { Text(t("settings.fleetRevokeBody", tname)) },
+                        confirmButton = {
+                            TextButton(enabled = !fleetBusy, onClick = {
+                                fleetBusy = true
+                                scope.launch {
+                                    try {
+                                        repo.deviceRevoke(vault, target.get("device_id")?.jsonPrimitive?.content.orEmpty())
+                                        val json = repo.devicesList(vault)
+                                        fleet = ((Json.parseToJsonElement(json) as? JsonObject)
+                                            ?.get("devices") as? JsonArray)
+                                            ?.mapNotNull { it as? JsonObject }
+                                            .orEmpty()
+                                        Toast.success(t("settings.fleetRevoked"))
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Toast.error(e.message ?: t("settings.fleetFailed"))
+                                    }
+                                    fleetBusy = false
+                                    revokeTarget = null
+                                }
+                            }) { Text(t("settings.fleetRevoke"), color = MaterialTheme.colorScheme.error) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { revokeTarget = null }) { Text(t("common.cancel")) }
+                        },
+                    )
+                }
             }
 
             // Autofill Section (Android only; iOS has no requestable role,
@@ -1318,6 +1552,156 @@ fun SettingsScreen(
                     }
 
                     Spacer(Modifier.height(8.dp))
+
+                    // G6: Space Recovery Kit. Family vaults carry one from
+                    // creation; enabling over it (or disabling) may demand
+                    // the fixed two-admin confirmation, which surfaces in
+                    // the pending asks above.
+                    var kitEnabled by remember(vault) { mutableStateOf<Boolean?>(null) }
+                    var kitBusy by remember { mutableStateOf(false) }
+                    var kitConfirm by remember { mutableStateOf<String?>(null) }
+                    var kitWords by remember { mutableStateOf<List<String>?>(null) }
+                    LaunchedEffect(vault) {
+                        runCatching {
+                            val json = repo.spaceKitStatus(vault)
+                            kitEnabled = (Json.parseToJsonElement(json) as? JsonObject)
+                                ?.get("enabled")?.jsonPrimitive?.content == "true"
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(t("space.kitLabel"), style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = t("space.kitDesc"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    // Replace re-runs enable (enable-over rotates the
+                    // phrase behind the fixed threshold); Disable is a
+                    // separate destructive affordance.
+                    val kitRunEnable: () -> Unit = kitRunEnable@{
+                        kitBusy = true
+                        scope.launch {
+                            try {
+                                val json = repo.spaceKitEnable(vault)
+                                val words = (Json.parseToJsonElement(json) as? JsonObject)
+                                    ?.get("phrase")?.jsonPrimitive?.content
+                                    ?.trim()?.split(Regex("\\s+")).orEmpty()
+                                kitWords = if (words.size == 24) words else null
+                                kitEnabled = true
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Toast.error(e.message ?: t("space.kitFailed"))
+                            }
+                            kitBusy = false
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            enabled = !kitBusy && kitEnabled != null,
+                            onClick = { kitRunEnable() },
+                        ) {
+                            Text(
+                                when (kitEnabled) {
+                                    true -> t("space.kitReplace")
+                                    false -> t("space.kitEnable")
+                                    null -> t("common.loading")
+                                },
+                            )
+                        }
+                        if (kitEnabled == true) {
+                            TextButton(
+                                enabled = !kitBusy,
+                                onClick = { kitConfirm = "disable" },
+                            ) {
+                                Text(t("space.kitDisable"), color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                    if (kitEnabled == false) {
+                        Text(
+                            t("space.kitOffHint"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    }
+                    
+                    if (kitConfirm == "disable") {
+                        AlertDialog(
+                            onDismissRequest = { if (!kitBusy) kitConfirm = null },
+                            title = { Text(t("space.kitDisableTitle")) },
+                            text = { Text(t("space.kitDisableBody")) },
+                            confirmButton = {
+                                TextButton(enabled = !kitBusy, onClick = {
+                                    kitBusy = true
+                                    scope.launch {
+                                        try {
+                                            repo.spaceKitDisable(vault)
+                                            kitEnabled = false
+                                            Toast.success(t("space.kitDisabled"))
+                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            Toast.error(e.message ?: t("space.kitFailed"))
+                                        }
+                                        kitBusy = false
+                                        kitConfirm = null
+                                    }
+                                }) { Text(t("space.kitDisable"), color = MaterialTheme.colorScheme.error) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { kitConfirm = null }) { Text(t("common.cancel")) }
+                            },
+                        )
+                    }
+
+                    kitWords?.let { words ->
+                        AlertDialog(
+                            onDismissRequest = {},
+                            title = { Text(t("space.kitPhraseTitle")) },
+                            text = {
+                                Column {
+                                    Text(
+                                        t("space.kitPhraseBody"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        words.chunked(2).forEachIndexed { rowIdx, pair ->
+                                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                pair.forEachIndexed { colIdx, w ->
+                                                    Text(
+                                                        text = "${rowIdx * 2 + colIdx + 1}. $w",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontFamily = FontFamily.Monospace,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    copyToClipboard(words.joinToString(" "))
+                                    Toast.success(t("common.copied"))
+                                }) { Text(t("recovery.copyPhrase")) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { kitWords = null }) { Text(t("common.done")) }
+                            },
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
                     // Who may trash entries (§6.5 trash_policy).
                     Text(t("space.trashPolicyLabel"), style = MaterialTheme.typography.bodyMedium)
                     Text(
@@ -1531,6 +1915,29 @@ fun SettingsScreen(
                                                     pendingOps = repo.approvalsPending(vault)
                                                 } catch (e: Exception) {
                                                     Toast.error(e.message ?: t("error.generic"))
+                                                }
+                                            }
+                                        }) {
+                                            Text(t("people.approve"))
+                                        }
+                                    }
+                                    if (op.kind == "kit.replace" || op.kind == "kit.disable") {
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                try {
+                                                    if (op.kind == "kit.replace") {
+                                                        repo.spaceKitEnable(vault)
+                                                        kitEnabled = true
+                                                    } else {
+                                                        repo.spaceKitDisable(vault)
+                                                        kitEnabled = false
+                                                    }
+                                                    pendingOps = repo.approvalsPending(vault)
+                                                    Toast.success(t("space.kitConfirmed"))
+                                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    Toast.error(e.message ?: t("space.kitFailed"))
                                                 }
                                             }
                                         }) {
