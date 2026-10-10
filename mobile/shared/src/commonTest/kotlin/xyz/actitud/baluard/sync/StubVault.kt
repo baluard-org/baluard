@@ -166,4 +166,10 @@ open class StubVault(
     override suspend fun `repromptVerify`(masterPassword: String): ULong = err()
     override suspend fun `importSharedPackage`(packageB64: String): String = err()
     override suspend fun `openSharedContact`(revealB64: String): String = err()
+    override suspend fun `rotateRecoveryPhrase`(oldPassword: String): String = err()
+    override suspend fun `devicesList`(): String = err()
+    override suspend fun `deviceRevoke`(deviceId: String): String = err()
+    override suspend fun `spaceKitStatus`(): String = err()
+    override suspend fun `spaceKitEnable`(): String = err()
+    override suspend fun `spaceKitDisable`(): String = err()
 }

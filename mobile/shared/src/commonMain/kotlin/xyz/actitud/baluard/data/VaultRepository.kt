@@ -839,6 +839,40 @@ class VaultRepository {
     suspend fun repromptVerify(vault: MobileVault, masterPassword: String): ULong =
         vault.repromptVerify(masterPassword)
 
+    // ── Security lifecycle (G3/G5/G6) ──
+
+    /** Rotate the recovery phrase (D74). New 24-word JSON {phrase} out;
+     * flipped Spaces refuse (use the kit). */
+    suspend fun rotateRecoveryPhrase(vault: MobileVault, oldPassword: String): String =
+        vault.rotateRecoveryPhrase(oldPassword)
+
+    /** Fleet snapshot JSON: {devices: [...], total}. */
+    suspend fun devicesList(vault: MobileVault): String =
+        vault.devicesList()
+
+    /** Revoke another device and rekey (heavy; busy-state the caller). */
+    suspend fun deviceRevoke(vault: MobileVault, deviceId: String): String =
+        vault.deviceRevoke(deviceId)
+
+    /** Kit status JSON {enabled}. */
+    suspend fun spaceKitStatus(vault: MobileVault): String =
+        vault.spaceKitStatus()
+
+    /** Enable the kit; {phrase} out, shown exactly once. May arm the
+     * fixed-threshold approval (surfaces in the pending asks list). */
+    suspend fun spaceKitEnable(vault: MobileVault): String =
+        vault.spaceKitEnable()
+
+    /** Disable the kit; {removed} out. May arm the approval. */
+    suspend fun spaceKitDisable(vault: MobileVault): String =
+        vault.spaceKitDisable()
+
+    /** Pre-unlock kit recovery on a fresh device. Returns the device id.
+     * Calls the top-level FFI free function by qualified name (same-name
+     * member would recurse). */
+    suspend fun recoverKitForPath(vaultPath: String, phrase: String, newPassword: String, deviceName: String): String =
+        xyz.actitud.baluard.recoverKitForPath(vaultPath, phrase, newPassword, deviceName)
+
     /** One-shot shared package (S2 IS-3): imports the entry. b64 in,
      * import-summary JSON out. */
     suspend fun importSharedPackage(vault: MobileVault, packageB64: String): String =
