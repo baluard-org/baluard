@@ -4367,10 +4367,16 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
-        let phrase = handle
-            .space_recovery_kit_enable()
-            .map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({ "phrase": phrase }).to_string())
+        // The fixed kit threshold may arm an ask; ship it promptly so the
+        // co-admin sees it on the next pull (space_migrate precedent).
+        match handle.space_recovery_kit_enable() {
+            Ok(phrase) => Ok(serde_json::json!({ "phrase": phrase }).to_string()),
+            Err(e) => {
+                drop(guard);
+                self.ship_pending_approval().await;
+                Err(e.to_string())
+            }
+        }
     }
 
     pub async fn space_kit_disable(&self) -> Result<String, String> {
@@ -4379,10 +4385,14 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
-        let removed = handle
-            .space_recovery_kit_disable()
-            .map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({ "removed": removed }).to_string())
+        match handle.space_recovery_kit_disable() {
+            Ok(removed) => Ok(serde_json::json!({ "removed": removed }).to_string()),
+            Err(e) => {
+                drop(guard);
+                self.ship_pending_approval().await;
+                Err(e.to_string())
+            }
+        }
     }
 
     pub async fn space_kit_status(&self) -> Result<String, String> {

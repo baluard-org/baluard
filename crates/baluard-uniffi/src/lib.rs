@@ -180,6 +180,47 @@ pub fn generate_recovery_phrase() -> Result<MobileRecoveryPhrase, BaluardError> 
     })
 }
 
+/// Pre-unlock kit recovery on a fresh device (family-spaces §7): the
+/// phrase unwraps the kit, a new per-device master password is minted by
+/// the recoverer, and the device binds to a fresh member row (Owner when
+/// no live admin row exists, else Admin). Path-only by design - no vault
+/// needs to be open. Returns the recovered device id.
+#[uniffi::export]
+pub async fn recover_kit_for_path(
+    vault_path: String,
+    phrase: String,
+    new_password: String,
+    device_name: String,
+) -> Result<String, BaluardError> {
+    if new_password.chars().count() < 8 {
+        return Err(BaluardError::InvalidInput {
+            detail: "password must be at least 8 characters".into(),
+        });
+    }
+    if device_name.trim().is_empty() {
+        return Err(BaluardError::InvalidInput {
+            detail: "device name must not be empty".into(),
+        });
+    }
+    let path = std::path::PathBuf::from(vault_path);
+    rt().spawn_blocking(move || {
+        baluard_core::vault::handle::VaultHandle::recover_device_with_kit(
+            &path,
+            &phrase,
+            &new_password,
+            &device_name,
+        )
+        .map(|id| id.to_string())
+        .map_err(|e| BaluardError::Vault {
+            detail: e.to_string(),
+        })
+    })
+    .await
+    .map_err(|e| BaluardError::Vault {
+        detail: format!("kit recovery failed: {e}"),
+    })?
+}
+
 /// Render the recovery sheet (TXT or one-page PDF) for the mobile export
 /// surface. Same renderer as desktop (D77): one writer, three consumers.
 /// `format` is "txt" or "pdf"; `phrase` is the space-separated 24 words.
@@ -599,6 +640,68 @@ impl MobileVault {
                 detail: e.to_string(),
             })?;
         Ok(v["expires_at"].as_u64().unwrap_or(0))
+    }
+
+    // ── Security lifecycle (G3/G5/G6): rotation, fleet, kit ──
+    // Thin wrappers over the same runtime calls the daemon routes use;
+    // the ceremony gates live in core, not here.
+
+    /// Rotate the recovery phrase (D74 ceremony: current master password
+    /// in, new 24 words out exactly once). Flipped Spaces refuse here and
+    /// must use the Space Recovery Kit. Returns {phrase}.
+    pub async fn rotate_recovery_phrase(
+        &self,
+        old_password: String,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .rotate_recovery_phrase(&old_password)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Fleet snapshot: {devices: [{name, device_id, enrolled_at, ...}],
+    /// total}. Key material is masked daemon-side.
+    pub async fn devices_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .devices()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Revoke another device and rekey: rotates the Root Key, re-encrypts
+    /// ciphers, and writes the keywrap. Heavy on-device crypto; the caller
+    /// should surface a busy state. Refuses the current device.
+    pub async fn device_revoke(&self, device_id: String) -> Result<String, BaluardError> {
+        self.state
+            .device_revoke(&device_id)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Space Recovery Kit status: {enabled}.
+    pub async fn space_kit_status(&self) -> Result<String, BaluardError> {
+        self.state
+            .space_kit_status()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Enable (or enable-over, which may arm the fixed-threshold
+    /// approval). Returns {phrase} shown exactly once.
+    pub async fn space_kit_enable(&self) -> Result<String, BaluardError> {
+        self.state
+            .space_kit_enable()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Disable the kit (may arm the fixed-threshold approval).
+    /// Returns {removed}.
+    pub async fn space_kit_disable(&self) -> Result<String, BaluardError> {
+        self.state
+            .space_kit_disable()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
     }
 
     /// Open a one-shot shared package (S2 IS-3): imports the entry into

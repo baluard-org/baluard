@@ -963,6 +963,20 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1062,6 +1076,10 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_device_name(`ptr`: Pointer,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_device_revoke(`ptr`: Pointer,`deviceId`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_devices_list(`ptr`: Pointer,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_export_data(`ptr`: Pointer,`format`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_export_encrypted_backup(`ptr`: Pointer,`passphrase`: RustBuffer.ByValue,
@@ -1148,11 +1166,19 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_restore_cipher(`ptr`: Pointer,`id`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_rotate_recovery_phrase(`ptr`: Pointer,`oldPassword`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_set_settings(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_should_auto_lock(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_space_flip(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_kit_disable(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_kit_enable(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_kit_status(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_space_prepare(`ptr`: Pointer,
     ): Long
@@ -1223,6 +1249,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_func_open_vault(`path`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_provider_disconnect(`provider`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_func_recover_kit_for_path(`vaultPath`: RustBuffer.ByValue,`phrase`: RustBuffer.ByValue,`newPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_recovery_sheet_bytes(`format`: RustBuffer.ByValue,`title`: RustBuffer.ByValue,`warning`: RustBuffer.ByValue,`phrase`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -1378,6 +1406,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_provider_disconnect(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_func_recover_kit_for_path(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_func_recovery_sheet_bytes(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_set_token_encryption_key(
@@ -1453,6 +1483,10 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_device_id(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_device_name(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_device_revoke(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_devices_list(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_export_data(
     ): Short
@@ -1540,11 +1574,19 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_restore_cipher(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_rotate_recovery_phrase(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_set_settings(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_flip(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_kit_disable(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_kit_enable(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_kit_status(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_prepare(
     ): Short
@@ -1648,6 +1690,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_provider_disconnect() != 36787.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_func_recover_kit_for_path() != 24018.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_recovery_sheet_bytes() != 63933.toShort()) {
@@ -1762,6 +1807,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_device_name() != 63685.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_device_revoke() != 49495.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_devices_list() != 54563.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_export_data() != 22198.toShort()) {
@@ -1893,6 +1944,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_restore_cipher() != 15451.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_rotate_recovery_phrase() != 51277.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_set_settings() != 36932.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1900,6 +1954,15 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_flip() != 43702.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_kit_disable() != 15817.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_kit_enable() != 9181.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_kit_status() != 41304.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_prepare() != 48404.toShort()) {
@@ -3049,6 +3112,19 @@ public interface MobileVaultInterface {
     suspend fun `deviceName`(): kotlin.String
     
     /**
+     * Revoke another device and rekey: rotates the Root Key, re-encrypts
+     * ciphers, and writes the keywrap. Heavy on-device crypto; the caller
+     * should surface a busy state. Refuses the current device.
+     */
+    suspend fun `deviceRevoke`(`deviceId`: kotlin.String): kotlin.String
+    
+    /**
+     * Fleet snapshot: {devices: [{name, device_id, enrolled_at, ...}],
+     * total}. Key material is masked daemon-side.
+     */
+    suspend fun `devicesList`(): kotlin.String
+    
+    /**
      * Export the vault in one of three shapes: "baluard" (the Baluard
      * backup — full-fidelity JSON in our own format, the default),
      * "bw-json" (Bitwarden JSON, for moving to other apps) or "bw-csv"
@@ -3332,6 +3408,13 @@ public interface MobileVaultInterface {
     suspend fun `restoreCipher`(`id`: kotlin.String)
     
     /**
+     * Rotate the recovery phrase (D74 ceremony: current master password
+     * in, new 24 words out exactly once). Flipped Spaces refuse here and
+     * must use the Space Recovery Kit. Returns {phrase}.
+     */
+    suspend fun `rotateRecoveryPhrase`(`oldPassword`: kotlin.String): kotlin.String
+    
+    /**
      * Update vault settings from JSON string.
      */
     suspend fun `setSettings`(`payload`: kotlin.String)
@@ -3349,6 +3432,23 @@ public interface MobileVaultInterface {
      * from their next unlock. Admin-gated at the core layer.
      */
     suspend fun `spaceFlip`(): kotlin.String
+    
+    /**
+     * Disable the kit (may arm the fixed-threshold approval).
+     * Returns {removed}.
+     */
+    suspend fun `spaceKitDisable`(): kotlin.String
+    
+    /**
+     * Enable (or enable-over, which may arm the fixed-threshold
+     * approval). Returns {phrase} shown exactly once.
+     */
+    suspend fun `spaceKitEnable`(): kotlin.String
+    
+    /**
+     * Space Recovery Kit status: {enabled}.
+     */
+    suspend fun `spaceKitStatus`(): kotlin.String
     
     /**
      * Mint or refresh the shared-space key wraps for every live
@@ -4278,6 +4378,57 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { FfiConverterString.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Revoke another device and rekey: rotates the Root Key, re-encrypts
+     * ciphers, and writes the keywrap. Heavy on-device crypto; the caller
+     * should surface a busy state. Refuses the current device.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deviceRevoke`(`deviceId`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_device_revoke(
+                thisPtr,
+                FfiConverterString.lower(`deviceId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Fleet snapshot: {devices: [{name, device_id, enrolled_at, ...}],
+     * total}. Key material is masked daemon-side.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `devicesList`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_devices_list(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
     )
     }
 
@@ -5386,6 +5537,32 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * Rotate the recovery phrase (D74 ceremony: current master password
+     * in, new 24 words out exactly once). Flipped Spaces refuse here and
+     * must use the Space Recovery Kit. Returns {phrase}.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `rotateRecoveryPhrase`(`oldPassword`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_rotate_recovery_phrase(
+                thisPtr,
+                FfiConverterString.lower(`oldPassword`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Update vault settings from JSON string.
      */
     @Throws(BaluardException::class)
@@ -5446,6 +5623,80 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_flip(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Disable the kit (may arm the fixed-threshold approval).
+     * Returns {removed}.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spaceKitDisable`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_kit_disable(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Enable (or enable-over, which may arm the fixed-threshold
+     * approval). Returns {phrase} shown exactly once.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spaceKitEnable`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_kit_enable(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Space Recovery Kit status: {enabled}.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spaceKitStatus`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_kit_status(
                 thisPtr,
                 
             )
@@ -7256,6 +7507,28 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
         // lift function
         { Unit },
         
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+        /**
+         * Pre-unlock kit recovery on a fresh device (family-spaces §7): the
+         * phrase unwraps the kit, a new per-device master password is minted by
+         * the recoverer, and the device binds to a fresh member row (Owner when
+         * no live admin row exists, else Admin). Path-only by design - no vault
+         * needs to be open. Returns the recovered device id.
+         */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `recoverKitForPath`(`vaultPath`: kotlin.String, `phrase`: kotlin.String, `newPassword`: kotlin.String, `deviceName`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_recover_kit_for_path(FfiConverterString.lower(`vaultPath`),FfiConverterString.lower(`phrase`),FfiConverterString.lower(`newPassword`),FfiConverterString.lower(`deviceName`),),
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
