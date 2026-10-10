@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
@@ -63,6 +64,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonObject
+import xyz.actitud.baluard.MobileProvider
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
@@ -97,6 +99,7 @@ import xyz.actitud.baluard.sync.SyncPhase
 import xyz.actitud.baluard.sync.runSyncCycle
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardDivider
+import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import xyz.actitud.baluard.ui.components.BaluardTopBar
@@ -263,6 +266,14 @@ fun SettingsScreen(
             }
 
             // Sync Preferences Section
+            // G16: Git-backup wizard (provider + optional PAT + repo
+            // name; setup_sync creates-or-reuses the repo and pushes).
+            var showGitBackup by remember { mutableStateOf(false) }
+            var gitProvider by remember { mutableStateOf(MobileProvider.GIT_HUB) }
+            var gitPat by remember { mutableStateOf("") }
+            var gitRepo by remember { mutableStateOf("") }
+            var gitBusy by remember { mutableStateOf(false) }
+
             SectionCard(title = t("settings.sync")) {
                 ToggleRow(t("settings.syncOnUnlock"), config.syncOnUnlock) {
                     viewModel.setSyncOnUnlock(it)
@@ -290,6 +301,129 @@ fun SettingsScreen(
                 ToggleRow(t("settings.wifiOnly"), config.wifiOnly) {
                     viewModel.setWifiOnly(it)
                 }
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardOutlinedButton(
+                    text = t("settings.gitBackup"),
+                    onClick = { showGitBackup = true },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    t("settings.gitBackupDesc"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 2.dp),
+                )
+            }
+
+            if (showGitBackup) {
+                // The PAT is a secret: every close path scrubs the
+                // fields so it never lingers in Compose state.
+                fun closeGitBackup() {
+                    if (!gitBusy) {
+                        gitPat = ""
+                        gitRepo = ""
+                        showGitBackup = false
+                    }
+                }
+                AlertDialog(
+                    onDismissRequest = { closeGitBackup() },
+                    title = { Text(t("settings.gitBackup")) },
+                    text = {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.verticalScroll(rememberScrollState()),
+                        ) {
+                            Text(
+                                t("settings.gitBackupHelp"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf(
+                                    MobileProvider.GIT_HUB,
+                                    MobileProvider.GIT_LAB,
+                                    MobileProvider.CODEBERG,
+                                ).forEach { p ->
+                                    FilterChip(
+                                        selected = gitProvider == p,
+                                        onClick = { gitProvider = p },
+                                        label = {
+                                            Text(
+                                                when (p) {
+                                                    MobileProvider.GIT_HUB -> "GitHub"
+                                                    MobileProvider.GIT_LAB -> "GitLab"
+                                                    MobileProvider.CODEBERG -> "Codeberg"
+                                                }
+                                            )
+                                        },
+                                    )
+                                }
+                            }
+                            OutlinedTextField(
+                                value = gitPat,
+                                onValueChange = { gitPat = it },
+                                label = { Text(t("settings.gitPat")) },
+                                supportingText = { Text(t("settings.gitPatHint")) },
+                                singleLine = true,
+                                enabled = !gitBusy,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = gitRepo,
+                                onValueChange = { gitRepo = it },
+                                label = { Text(t("settings.gitRepo")) },
+                                supportingText = { Text(t("settings.gitRepoHint")) },
+                                singleLine = true,
+                                enabled = !gitBusy,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            enabled = !gitBusy,
+                            onClick = {
+                                gitBusy = true
+                                scope.launch {
+                                    try {
+                                        if (gitPat.isNotBlank()) {
+                                            repo?.connectPat(
+                                                gitProvider,
+                                                gitPat.trim(),
+                                            )
+                                        }
+                                        val json = repo?.setupSync(
+                                            vault,
+                                            gitProvider,
+                                            gitRepo.trim(),
+                                        )
+                                        val url = (json?.let {
+                                            Json.parseToJsonElement(it) as? JsonObject
+                                        })?.get("repo")?.jsonPrimitive?.content
+                                        gitPat = ""
+                                        gitRepo = ""
+                                        showGitBackup = false
+                                        Toast.success(
+                                            t("settings.gitBackupDone", url ?: ""),
+                                        )
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Toast.error(e.message ?: t("settings.gitBackupFailed"))
+                                    }
+                                    gitBusy = false
+                                }
+                            },
+                        ) { Text(t("common.continue")) }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            enabled = !gitBusy,
+                            onClick = { closeGitBackup() },
+                        ) { Text(t("common.cancel")) }
+                    },
+                )
             }
 
             // Security Section
