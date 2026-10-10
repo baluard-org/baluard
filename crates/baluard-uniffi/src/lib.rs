@@ -732,6 +732,88 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    // ── G13/G19/G21: space groups, password health, vault avatar ──
+    // Thin JSON pass-throughs over the runtime state methods; payload
+    // and response shapes match the daemon routes (groups.*, vault.health,
+    // vault.avatar.get/set) so GUIs stay wire-compatible.
+
+    /// List user groups. Returns {"groups": [{id, name, members: [uuid]}]}.
+    pub async fn groups_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .groups_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Create a group. Payload {"name"}. Returns {"id"}.
+    pub async fn group_create(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .group_create(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Rename a group. Payload {"id", "name"}.
+    pub async fn group_rename(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .group_rename(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Delete a group. The group's grant rows are pruned from every
+    /// collection, so access given only through this group is removed.
+    /// Payload {"id"}.
+    pub async fn group_delete(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .group_delete(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Add a member to a group. Payload {"id", "member_id"}.
+    pub async fn group_member_add(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .group_member_add(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Remove a member from a group. Payload {"id", "member_id"}.
+    pub async fn group_member_remove(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .group_member_remove(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Password health report: {"weak": [...], "reused": [...], "old": [...]}
+    /// with entries {cipher_id, name, reason}. Decrypts the whole vault.
+    pub async fn health_report(&self) -> Result<String, BaluardError> {
+        self.state
+            .health_report()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Vault avatar as base64 ("" when none). Decrypts meta/avatar.enc,
+    /// migrating legacy plaintext on managing devices.
+    pub async fn avatar_get(&self) -> Result<String, BaluardError> {
+        self.state
+            .avatar_get()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Set the vault avatar. Payload {"data": "<base64>", "ext": "png|jpg|jpeg|gif|webp"};
+    /// empty data removes it. Managing devices only; ~256KB decoded cap.
+    pub async fn avatar_set(&self, payload: String) -> Result<(), BaluardError> {
+        self.state
+            .avatar_set(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Open a one-shot shared package (S2 IS-3): imports the entry into
     /// this vault. `package_b64` is the base64 of the .baluard-share file.
     /// Returns the import summary JSON ({item_name, sender, ...}).
@@ -2252,6 +2334,79 @@ mod tests {
         // Unknown formats fail closed on both directions.
         assert!(vault.import_data("md".into(), b"x".to_vec()).await.is_err());
         assert!(vault.export_data("pdf".into()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn groups_health_avatar_roundtrip_via_ffi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pw".to_string(), "dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pw".to_string()).await.unwrap();
+
+        // G21: avatar set/get/remove roundtrip (1x1 PNG bytes).
+        let png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x62, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        vault
+            .avatar_set(format!("{{\"data\":\"{b64}\",\"ext\":\"png\"}}"))
+            .await
+            .expect("avatar set");
+        let got = vault.avatar_get().await.expect("avatar get");
+        assert_eq!(got, b64, "avatar roundtrip");
+        vault
+            .avatar_set("{\"data\":\"\",\"ext\":\"png\"}".to_string())
+            .await
+            .expect("avatar remove");
+        assert_eq!(vault.avatar_get().await.unwrap(), "", "avatar cleared");
+
+        // G13: group create, member add (self), list, rename.
+        let created = vault
+            .group_create("{\"name\":\"Guardians\"}".to_string())
+            .await
+            .expect("group create");
+        let gid = (serde_json::from_str::<serde_json::Value>(&created).unwrap())["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let members = vault.members_list().await.unwrap();
+        let mid =
+            (serde_json::from_str::<serde_json::Value>(&members).unwrap())["members"][0]["id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+        vault
+            .group_member_add(format!("{{\"id\":\"{gid}\",\"member_id\":\"{mid}\"}}"))
+            .await
+            .expect("member add");
+        let listed = vault.groups_list().await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&listed).unwrap();
+        assert_eq!(v["groups"][0]["name"], "Guardians");
+        assert_eq!(v["groups"][0]["members"][0], mid.as_str());
+        vault
+            .group_rename(format!("{{\"id\":\"{gid}\",\"name\":\"Family\"}}"))
+            .await
+            .expect("rename");
+        let listed = vault.groups_list().await.unwrap();
+        assert!(listed.contains("\"Family\""));
+        vault
+            .group_delete(format!("{{\"id\":\"{gid}\"}}"))
+            .await
+            .expect("delete");
+        assert!(vault.groups_list().await.unwrap().contains("\"groups\":[]"));
+
+        // G19: health report over a strong-password vault is clean.
+        let report = vault.health_report().await.expect("health");
+        let hv: serde_json::Value = serde_json::from_str(&report).unwrap();
+        assert!(hv["weak"].as_array().unwrap().is_empty());
+        assert!(hv["reused"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

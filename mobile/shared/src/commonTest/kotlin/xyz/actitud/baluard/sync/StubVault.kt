@@ -168,6 +168,17 @@ open class StubVault(
     override suspend fun `importSharedPackage`(packageB64: String): String = err()
     override suspend fun `openSharedContact`(revealB64: String): String = err()
     override suspend fun `rotateRecoveryPhrase`(oldPassword: String): String = err()
+    // G13/G19/G21: groups, health, avatar — never exercised by stubs.
+    override suspend fun `groupsList`(): String = err()
+    override suspend fun `groupCreate`(payload: String): String = err()
+    override suspend fun `groupRename`(payload: String): String = err()
+    override suspend fun `groupDelete`(payload: String): String = err()
+    override suspend fun `groupMemberAdd`(payload: String): String = err()
+    override suspend fun `groupMemberRemove`(payload: String): String = err()
+    override suspend fun `healthReport`(): String = err()
+    override suspend fun `avatarGet`(): String = err()
+    override suspend fun `avatarSet`(payload: String) = err()
+
     // G16: provider sync setup — the stub never exercises it.
     override suspend fun `setupSync`(
         provider: MobileProvider,
