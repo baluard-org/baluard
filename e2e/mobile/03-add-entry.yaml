@@ -5,6 +5,11 @@ appId: xyz.actitud.baluard
 name: 03-add-entry
 ---
 - launchApp
+# Android 17's App Compatibility alert pops on every cold start; the
+# optional tap no-ops when it is absent.
+- tapOn:
+    id: "android:id/button2"
+    optional: true
 - assertVisible:
     id: "e2e/unlock/password"
 - tapOn:
@@ -19,9 +24,16 @@ name: 03-add-entry
 - tapOn:
     id: "e2e/edit/name"
 - inputText: "E2E Entry"
+- hideKeyboard
 - tapOn:
     id: "e2e/edit/password"
 - inputText: "e2e-secret-42"
+- hideKeyboard
+# Long form: save may sit below the fold depending on field count.
+- scrollUntilVisible:
+    element:
+      id: "e2e/edit/save"
+    direction: DOWN
 - tapOn:
     id: "e2e/edit/save"
 # The hub lists categories and favorites when the query is blank; a new
@@ -29,4 +41,5 @@ name: 03-add-entry
 - tapOn:
     id: "e2e/list/search"
 - inputText: "E2E Entry"
+- hideKeyboard
 - assertVisible: "E2E Entry"

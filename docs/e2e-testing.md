@@ -63,6 +63,7 @@ The highest-value layer and the cheapest. The CLI is the executable spec, so thi
 - Selectors: the app has zero Compose test tags today. Add `testTag` + `testTagsAsResourceId` for Maestro `id:` selectors; pin the emulator to en-US since text selectors track the device locale.
 - Biometric: drive the system prompt with injected fingerprint events (`adb emu finger touch` after enrollment) or defer to the instrumentation follow-up; Maestro cannot press BiometricPrompt itself.
 - Coverage: creation wizard (recovery save sheet), unlock, list/search/detail, add/edit/delete, folders, tags, generator (with history), settings sub-pages (back gesture), vault switcher, equivalent-domains dialog. Cross-app autofill stays a UI-Automator follow-up.
+- Status (2026-10-10): first flows RUN GREEN on a dedicated Pixel 8 (Android 17, USB): 01-create-vault, 02-lock-unlock, 03-add-entry, via `just e2e-android`. Device realities folded into the flows: Android 17 shows a system App Compatibility alert on every cold start of the debug APK (dismissed with an optional tap after each launchApp); the IME hides buttons below text fields (hideKeyboard before submit taps); the recovery and edit screens push their action buttons below the fold (scrollUntilVisible before the tap). Flows are idempotent: 01 recreates the synthetic vault via clearState on the dedicated device.
 - Home: `e2e/mobile/`, one YAML per journey, shared helpers file.
 
 ## Phase 3: Desktop (WebdriverIO + tauri-plugin-wdio)
