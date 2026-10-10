@@ -721,6 +721,14 @@ fun App(
                     RootStage.Onboarding -> OnboardingScreen(
                         onCreateVault = { showCreate = true },
                         onOpenProvider = { showOpen = true },
+                        onRecovered = { recovered ->
+                            // G6: kit recovery on a fresh device — adopt
+                            // the vault as active; the unlock stage takes
+                            // it from here with the new password.
+                            xyz.actitud.baluard.platform.VaultRegistry.saveActiveVault(recovered)
+                            path = recovered
+                            hasVault = true
+                        },
                     )
 
                     RootStage.Unlock -> UnlockScreen(

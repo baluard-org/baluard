@@ -23,6 +23,13 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,6 +63,7 @@ import androidx.compose.ui.platform.testTag
 fun OnboardingScreen(
     onCreateVault: () -> Unit,
     onOpenProvider: () -> Unit = {},
+    onRecovered: (path: String) -> Unit = {},
 ) {
     var gitHelpOpen by remember { mutableStateOf(false) }
     BaluardAmbientBackground {
@@ -132,6 +140,25 @@ fun OnboardingScreen(
                 onClick = shareOpen.open,
                 leadingIcon = Icons.Default.Folder,
             )
+
+            Spacer(Modifier.height(8.dp))
+
+            // G6: kit recovery on a fresh device — the vault is on disk
+            // (cloned or restored) but this device has no key yet. The
+            // kit phrase mints a fresh member row and password.
+            var kitRecoverOpen by remember { mutableStateOf(false) }
+            BaluardOutlinedButton(
+                text = t("onboarding.kitRecoverRow"),
+                onClick = { kitRecoverOpen = true },
+                leadingIcon = Icons.Default.Key,
+            )
+
+            if (kitRecoverOpen) {
+                KitRecoverDialog(
+                    onDismiss = { kitRecoverOpen = false },
+                    onRecovered = onRecovered,
+                )
+            }
         }
     }
     if (gitHelpOpen) {
@@ -180,4 +207,131 @@ private fun FeatureRow(
             )
         }
     }
+}
+
+/** G6: phrase-only kit recovery for a vault discovered on this device
+ * (fresh clone / restored directory). The kit phrase unwraps the Root
+ * Key; the new password is THIS device's own master password. */
+@Composable
+private fun KitRecoverDialog(onDismiss: () -> Unit, onRecovered: (String) -> Unit) {
+    val vaults = remember { xyz.actitud.baluard.platform.VaultRegistry.listVaults() }
+    var picked by remember { mutableStateOf(vaults.firstOrNull()) }
+    var pickerOpen by remember { mutableStateOf(vaults.size > 1) }
+    var phrase by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var deviceName by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    if (pickerOpen) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(t("onboarding.kitPickTitle")) },
+            text = {
+                Column {
+                    if (vaults.isEmpty()) {
+                        Text(t("onboarding.kitPickEmpty"))
+                    }
+                    vaults.forEach { v ->
+                        TextButton(onClick = { picked = v; pickerOpen = false }) {
+                            Text(v.name)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text(t("common.cancel")) }
+            },
+        )
+        return
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text(t("onboarding.kitTitle")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    t("onboarding.kitDesc", picked?.name ?: ""),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (vaults.size > 1) {
+                    TextButton(onClick = { pickerOpen = true }) {
+                        Text(t("onboarding.kitChangeVault", picked?.name ?: ""))
+                    }
+                }
+                OutlinedTextField(
+                    value = phrase,
+                    onValueChange = { phrase = it },
+                    label = { Text(t("onboarding.kitPhrase")) },
+                    isError = error != null,
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text(t("onboarding.kitPassword")) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                OutlinedTextField(
+                    value = confirm,
+                    onValueChange = { confirm = it },
+                    label = { Text(t("onboarding.kitPasswordConfirm")) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    isError = confirm.isNotEmpty() && password != confirm,
+                    supportingText = {
+                        if (confirm.isNotEmpty() && password != confirm) Text(t("onboarding.kitPasswordMismatch"))
+                    },
+                )
+                OutlinedTextField(
+                    value = deviceName,
+                    onValueChange = { deviceName = it },
+                    label = { Text(t("onboarding.kitDeviceName")) },
+                    singleLine = true,
+                )
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !busy && picked != null && phrase.isNotBlank() &&
+                    password.length >= 8 && password == confirm && deviceName.isNotBlank(),
+                onClick = {
+                    busy = true
+                    error = null
+                    scope.launch {
+                        try {
+                            val target = picked!!
+                            xyz.actitud.baluard.recoverKitForPath(
+                                target.path,
+                                phrase.trim(),
+                                password,
+                                deviceName.trim(),
+                            )
+                            onDismiss()
+                            // Hand off: the recovered vault becomes the
+                            // active one and the app moves to the unlock
+                            // stage (the password just chosen unlocks it).
+                            onRecovered(target.path)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            error = e.message ?: t("onboarding.kitFailed")
+                        }
+                        busy = false
+                    }
+                },
+            ) { Text(t("common.continue")) }
+        },
+        dismissButton = {
+            TextButton(onClick = { if (!busy) onDismiss() }) { Text(t("common.cancel")) }
+        },
+    )
 }
