@@ -1,0 +1,61 @@
+# Roles matrix — viewer leg (roles journey).
+# Assumes: the family vault is the active vault on this device, the
+# app cold-starts to the unlock screen, and the box has just set this
+# device's member to viewer and pushed.
+appId: xyz.actitud.baluard
+---
+- launchApp
+- tapOn:
+    id: android:id/button2
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "e2e/unlock/password"
+    timeout: 20000
+- tapOn:
+    id: "e2e/unlock/password"
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- hideKeyboard
+- tapOn:
+    id: "e2e/unlock/submit"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 45000
+# Unlock pulled the roster: the member is a viewer now.
+# Probe 1: the People surface is admin-only — absent for a viewer.
+- tapOn:
+    id: "e2e/home/settings"
+- extendedWaitUntil:
+    visible: "Settings"
+    timeout: 20000
+- assertNotVisible: "People & access"
+- back
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 20000
+# Probe 2: writing is refused — no collection is open for edits.
+- tapOn:
+    id: "e2e/list/add"
+    id: "e2e/list/add"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/edit/name"
+    timeout: 20000
+- tapOn:
+    id: "e2e/edit/name"
+- inputText: "Blocked Entry"
+- hideKeyboard
+# Save sits below the fold — scroll to it, let the scroll settle.
+- scrollUntilVisible:
+    element:
+      id: "e2e/edit/save"
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn:
+    id: "e2e/edit/save"
+- extendedWaitUntil:
+    visible:
+      text: ".*guardian to grant one.*"
+    timeout: 20000
