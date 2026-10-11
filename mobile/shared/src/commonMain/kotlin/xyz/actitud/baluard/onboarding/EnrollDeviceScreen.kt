@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -26,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import xyz.actitud.baluard.auth.JoinSpaceDialog
+import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.deviceDisplayName
 import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
@@ -41,6 +44,7 @@ import xyz.actitud.baluard.ui.components.BaluardTextField
 @Composable
 fun EnrollDeviceScreen(
     vm: ProviderFlowViewModel,
+    authViewModel: AuthViewModel,
     vaultPath: String,
     onEnrolled: () -> Unit,
     onCancelled: () -> Unit,
@@ -56,6 +60,9 @@ fun EnrollDeviceScreen(
     }
     var enrolling by rememberSaveable { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
+    // A cloned SHARED vault cannot phrase-enroll (team shapes refuse) —
+    // the invite code is this clone's only way in.
+    var showJoin by remember { mutableStateOf(false) }
 
     val wordCount = phrase.trim().split(Regex("\\s+")).count { it.isNotBlank() }
     val phraseValid = wordCount == 24
@@ -155,6 +162,15 @@ fun EnrollDeviceScreen(
 
                 Spacer(Modifier.height(10.dp))
 
+                androidx.compose.material3.TextButton(
+                    onClick = { showJoin = true },
+                    enabled = !enrolling,
+                ) {
+                    Text(t("join.entry"))
+                }
+
+                Spacer(Modifier.height(4.dp))
+
                 BaluardOutlinedButton(
                     text = t("common.back"),
                     onClick = onCancelled,
@@ -162,5 +178,17 @@ fun EnrollDeviceScreen(
                 )
             }
         }
+    }
+
+    if (showJoin) {
+        JoinSpaceDialog(
+            vaultPath = vaultPath,
+            authViewModel = authViewModel,
+            onApproved = {
+                showJoin = false
+                onEnrolled()
+            },
+            onDismiss = { showJoin = false },
+        )
     }
 }

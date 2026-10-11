@@ -637,6 +637,8 @@ internal val EN: Map<String, String> = mapOf(
         "people.title" to "People & access",
         "people.entrySubtitle" to "Members, join requests, and collection grants",
         "people.joinRequests" to "Join requests",
+        "people.stageIntro" to "Paste invite reply",
+        "people.staged" to "Request staged. Approve it below.",
         "people.secretMismatch" to "Secret check failed - verify this person out of band before approving",
         "people.approve" to "Approve",
         "people.deny" to "Deny",

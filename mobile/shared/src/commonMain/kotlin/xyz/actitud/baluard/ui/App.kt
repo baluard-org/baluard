@@ -675,6 +675,7 @@ fun App(
 
                                 stage is ProviderFlowViewModel.Stage.Enroll -> EnrollDeviceScreen(
                                     vm = flowVm,
+                                    authViewModel = auth,
                                     vaultPath = pendingVaultPath ?: path,
                                     onEnrolled = {
                                         // Switch to the freshly enrolled vault.
