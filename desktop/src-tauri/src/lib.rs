@@ -316,6 +316,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "members.transfer",
         "members.claim",
         "members.set_email",
+        "members.set_role",
         "requests.list",
         "requests.stage",
         "requests.approve",

@@ -776,7 +776,9 @@
     "tlRemoteMoved": "sincronização movida",
     "stageIntro": "Cole a resposta do convite",
     "stageBtn": "Enfileirar",
-    "staged": "Pedido na fila para aprovar."
+    "staged": "Pedido na fila para aprovar.",
+    "roleChanged": "Papel atualizado.",
+    "roleSelectLabel": "Mudar papel"
   },
   "join": {
     "joinLink": "Foi convidado para um cofre compartilhado?",

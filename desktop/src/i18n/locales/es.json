@@ -776,7 +776,9 @@
     "tlRemoteMoved": "sincronización movida",
     "stageIntro": "Pega la respuesta de invitación",
     "stageBtn": "Encolar",
-    "staged": "Solicitud en cola para aprobar."
+    "staged": "Solicitud en cola para aprobar.",
+    "roleChanged": "Rol actualizado.",
+    "roleSelectLabel": "Cambiar rol"
   },
   "join": {
     "joinLink": "¿Te invitaron a una bóveda compartida?",
