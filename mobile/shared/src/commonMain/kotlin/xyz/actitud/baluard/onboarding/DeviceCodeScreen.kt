@@ -41,6 +41,7 @@ import kotlinx.coroutines.delay
 import xyz.actitud.baluard.MobileDeviceFlowStatus
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.copyToClipboard
+import xyz.actitud.baluard.platform.platformLogE
 import xyz.actitud.baluard.platform.openUrl
 import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
 import xyz.actitud.baluard.ui.components.BaluardCard
@@ -62,7 +63,16 @@ fun DeviceCodeScreen(
     var revealed by remember { mutableStateOf(false) }
 
     LaunchedEffect(revealed) {
-        if (revealed) copyToClipboard(flow.userCode().replace("-", ""))
+        if (revealed) {
+            // E2E builds surface the one-time device code on logcat so the
+            // two-phone harness can type it into the browser. Logged before
+            // the clipboard copy so a clipboard failure can never swallow
+            // it. Never compiled into release (BuildConfig gate).
+            if (xyz.actitud.baluard.platform.e2eBuild) {
+                platformLogE("DeviceCode", "user_code=" + flow.userCode())
+            }
+            copyToClipboard(flow.userCode().replace("-", ""))
+        }
     }
 
     LaunchedEffect(flow, vm.error) {
