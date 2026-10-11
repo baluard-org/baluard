@@ -704,6 +704,7 @@ internal val ES: Map<String, String> = mapOf(
         "people.actionReset" to "Restablecer",
         "people.actionRole" to "Rol",
         "people.roleDesc" to "Elige el rol de este miembro. Los administradores gestionan miembros y ven todo.",
+        "people.roleDemoteWarn" to "Quitar el rol de administrador pierde ese acceso de inmediato.",
         "people.actionRemove" to "Quitar",
         "people.removeTitle" to "Quitar miembro",
         "people.removeBody" to "{name} pierde el acceso en su próxima sincronización. Sus claves se retiran y las claves del espacio rotan.",

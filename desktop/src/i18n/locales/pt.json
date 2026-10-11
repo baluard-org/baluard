@@ -778,7 +778,10 @@
     "stageBtn": "Enfileirar",
     "staged": "Pedido na fila para aprovar.",
     "roleChanged": "Papel atualizado.",
-    "roleSelectLabel": "Mudar papel"
+    "roleSelectLabel": "Mudar papel",
+    "demoteTitle": "Remover acesso de administrador",
+    "demoteBody": "Rebaixar {name} remove o acesso de administrador imediatamente. A pessoa mantém a conta e o acesso atual às entradas, mas não poderá mais gerenciar membros, chaves nem coleções.",
+    "demoteConfirm": "Rebaixar"
   },
   "join": {
     "joinLink": "Foi convidado para um cofre compartilhado?",
