@@ -89,13 +89,6 @@ export default function CipherDetail(props) {
         setRevealPass(false);
       }, 30000);
     });
-  createEffect(
-    () => cipher()?.id,
-    () => {
-      setRepromptOk(0);
-      setRevealPass(false);
-    },
-  );
 
   // §4.8-5: move the open entry between collections. Admins can move
   // anywhere (and back out to personal); members only where they hold
@@ -198,6 +191,15 @@ export default function CipherDetail(props) {
   }
 
   const cipher = () => props.cipher;
+
+  // Reset the reprompt gate whenever the open entry changes.
+  createEffect(
+    () => cipher()?.id,
+    () => {
+      setRepromptOk(0);
+      setRevealPass(false);
+    },
+  );
   // S2-5: entries from another vault are read-only here — the daemon
   // routes are slug-routed to the ACTIVE vault, so mutations would fail
   // (or worse, target a same-uuid cipher in the wrong vault).
