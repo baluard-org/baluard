@@ -77,7 +77,13 @@ fun JoinSpaceDialog(
                 delay(10_000)
                 approved = runCatching {
                     val vault = repo.openVault(vaultPath)
-                    repo.joinPoll(vault).contains("\"approved\":true")
+                    val resp = repo.joinPoll(vault)
+                    // The waiting loop swallows every failure, so log the
+                    // raw response — a stuck join is otherwise invisible.
+                    platformLogE("JoinPoll", "resp=$resp")
+                    resp.contains("\"approved\":true")
+                }.onFailure {
+                    platformLogE("JoinPoll", "poll failed", it)
                 }.getOrDefault(false)
             }
             // The password lives only in this composable's state; unlock

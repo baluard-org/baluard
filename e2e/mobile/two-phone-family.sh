@@ -80,6 +80,31 @@ join_phone() {
   [[ -n "$code" ]] || { echo "FAIL: no invite code for $invite_user"; echo "$invite_out"; exit 1; }
   # The invite file must be on the remote before the phone clones.
   "$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" sync push > /dev/null
+  # GitHub refuses READ-level collaborator invites to brand-new
+  # accounts (422 "Cannot assign ... permission of read"), so raise the
+  # seat to Write here — the approval upgrades it anyway. Best-effort.
+  if [[ "$invite_user" != "$GH_USER" ]]; then
+    curl -s -o /dev/null -X PUT -H "Authorization: Bearer $GH_PAT" \
+      -H "Content-Type: application/json" \
+      -d '{"permission":"push"}' \
+      "https://api.github.com/repos/$GH_USER/$REPO/collaborators/$invite_user"
+  fi
+  # A private-repo collaborator seat stays PENDING until the invitee
+  # accepts it; GitHub ships an invitee-side API for exactly that. The
+  # phone's token IS the invitee's, so accept here — 1:1 with the real
+  # world, where the joiner clicks the invite link.
+  if [[ "$invite_user" != "$GH_USER" ]]; then
+    INV_ID="$(curl -s -H "Authorization: Bearer $pat" https://api.github.com/user/repository_invitations | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+inv = [i['id'] for i in d if i.get('repository', {}).get('full_name', '').endswith('/$REPO')]
+print(inv[0] if inv else '')")"
+    if [[ -n "$INV_ID" ]]; then
+      curl -s -o /dev/null -X PATCH -H "Authorization: Bearer $pat" \
+        "https://api.github.com/user/repository_invitations/$INV_ID"
+      echo "    repo invitation accepted for $invite_user"
+    fi
+  fi
 
   adb -s "$serial" logcat -c 2>/dev/null || true
 
