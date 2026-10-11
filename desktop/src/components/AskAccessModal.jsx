@@ -25,9 +25,12 @@ export default function AskAccessModal(props) {
   const [busy, setBusy] = createSignal(false);
   let dialogRef;
 
-  createEffect(() => {
-    if (props.show) void refresh();
-  });
+  createEffect(
+    () => props.show,
+    (show) => {
+      if (show) void refresh();
+    },
+  );
 
   async function refresh() {
     try {
