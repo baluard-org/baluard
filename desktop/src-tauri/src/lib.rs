@@ -14,6 +14,7 @@ use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_shell::ShellExt;
+use zeroize::Zeroize;
 
 /// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
