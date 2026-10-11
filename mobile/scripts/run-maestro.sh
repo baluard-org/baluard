@@ -44,7 +44,9 @@ command -v maestro >/dev/null 2>&1 || {
 ADB="$(command -v adb || true)"
 [[ -n "$ADB" ]] || { echo "ERROR: adb missing (android-platform-tools)" >&2; exit 1; }
 
-SERIAL="${ANDROID_SERIAL:-${1:-}}"
+# The arg parser above may already have lifted a positional serial into
+# SERIAL (and shifted it away), so fall through to it before $1.
+SERIAL="${ANDROID_SERIAL:-${SERIAL:-${1:-}}}"
 if [[ -n "$SERIAL" ]]; then
   ADBS=("$ADB" -s "$SERIAL")
 else
@@ -57,9 +59,10 @@ else
   SERIAL="${DEVS[0]}"
   ADBS=("$ADB" -s "$SERIAL")
 fi
-# Maestro picks devices on its own; hand it the resolved serial so a
-# multi-device host runs against the chosen one.
+# Maestro does not honor ANDROID_SERIAL: hand it the resolved serial via
+# --udid so a multi-device host runs against the chosen one.
 export ANDROID_SERIAL="$SERIAL"
+MAESTRO_DEVICE="--udid=$SERIAL"
 echo "==> device: ${ADBS[*]}"
 
 # A device mid-boot refuses installs and launches; wait it out.
@@ -89,12 +92,14 @@ for f in "$FLOW_DIR"/*.yaml; do
   fi
   echo
   echo "==> maestro test $(basename "$f")"
-  # MASTER_PW plus any BALUARD_E2E_* variable the caller exported (the
-  # two-phone journey passes invite code, PAT, and repo name through).
-  args=(test -e MASTER_PW="$BALUARD_E2E_MASTER_PW")
+  # MASTER_PW keeps its short name for the original flows; every
+  # BALUARD_E2E_* variable is also forwarded UNSTRIPPED so newer flows
+  # can reference the full names (the two-phone journey passes invite
+  # code, PAT, and repo name through).
+  args=(test -e MASTER_PW="$BALUARD_E2E_MASTER_PW" -e BALUARD_E2E_MASTER_PW="$BALUARD_E2E_MASTER_PW")
   while read -r k; do
-    args+=(-e "${k#BALUARD_E2E_}=${!k}")
+    args+=(-e "${k}=${!k}")
   done < <(compgen -e | grep '^BALUARD_E2E_' | grep -v 'BALUARD_E2E_MASTER_PW$')
-  maestro "${args[@]}" "$f" || rc=1
+  maestro "${args[@]}" "$MAESTRO_DEVICE" "$f" || rc=1
 done
 exit "$rc"

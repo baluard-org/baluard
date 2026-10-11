@@ -1,36 +1,47 @@
 #!/usr/bin/env bash
-# Two-phone family-sharing journey (box = founder/admin, phone = joiner).
+# Two-phone family journey — 1:1 with reality:
+#   box            founder/admin desktop (CLI), owns account 1's repo
+#   Pixel 8        founder's own phone, signs in with account 1, joins as co-guardian
+#   Pixel 3a       invited joiner, signs in with account 2 (real clone-seat path)
 #
-# Prereqs (one-time): dedicated joiner phone over USB (debugging allowed,
-# no screen lock, stay awake); the E2E APK installed on it; a test GitHub
-# account plus a repo-scoped token; ideally a SECOND account for the
-# joiner so the read-only clone seat is exercised (with one account the
-# journey still works — the seat grant reports an error and the joiner,
-# owning the repo, sees it anyway); `baluard` + `baluard-daemon` built
-# with the e2e-hooks features.
+# Prereqs (one-time): both phones over USB, debugging allowed, NO screen
+# lock, stay awake, E2E APK installed; GitHub OAuth app for the device
+# flow live; `baluard` + `baluard-daemon` built with e2e-hooks.
 #
 # Usage:
-#   GH_USER=<founder-account-username> \
-#   GH_PAT=<founder-token> \
-#   JOINER_SERIAL=<serial> \
+#   GH_USER=<account1-username> \
+#   GH_PAT=<account1-repo-token> \
+#   GH_PASS1=<account1-password> \
+#   GH_USER2=<account2-username> GH_PASS2=<account2-password> \
+#   SERIAL_FOUNDER=<pixel8-serial> SERIAL_JOINER=<pixel3a-serial> \
 #   e2e/mobile/two-phone-family.sh
 #
-# Everything synthetic; the sandbox lives in a tempdir that is left in
-# place for inspection (path printed at the end). The PAT transits env
-# and stdin only and is never echoed.
+# Everything synthetic; the sandbox stays for inspection (path printed at
+# the end). Tokens/passwords transit env and stdin only, never echoed.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-: "${GH_USER:?set GH_USER to the founder account username}"
-: "${GH_PAT:?set GH_PAT to the founder account token}"
-: "${JOINER_SERIAL:?set JOINER_SERIAL to the joiner phone serial}"
+: "${GH_USER:?account1 username (founder)}"
+: "${GH_PAT:?account1 repo token}"
+: "${GH_USER2:?account2 username (invited joiner)}"
+: "${GH_PAT2:?account2 token (the joiner phone connects with its own account)}"
+: "${SERIAL_FOUNDER:?founder phone serial (Pixel 8)}"
+: "${SERIAL_JOINER:?joiner phone serial (Pixel 3a)}"
 
 WORK="$(mktemp -d /tmp/baluard-twophone.XXXXXX)"
 MASTER_PW="joiner-e2e-pw1"
 REPO="baluard-family-$(date +%s)"
 export BALUARD_DATA_DIR="$WORK/data"
 export BALUARD_DISABLE_KEYRING=1
+# Box-side CLI calls resolve the password from the env (no TTY here).
+export BALUARD_PASSWORD="$MASTER_PW"
+# Hermetic git config: the daemon's libgit2 reads the developer's global
+# config, where a pushInsteadOf rewrite to SSH hangs a headless push (no
+# key, no agent) until the op timeout. libgit2 ignores GIT_CONFIG_GLOBAL,
+# so move HOME: with an empty home the global rewrite is out of reach.
+mkdir -p "$WORK/emptyhome"
+export HOME="$WORK/emptyhome"
 BALUARD="target/debug/baluard"
 DAEMON="target/debug/baluard-daemon"
 SLUG=""
@@ -40,7 +51,77 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "── [box 1/8] scratch daemon"
+# authorize_github_device <serial> <user_code>
+# GitHub's device page no longer pre-fills from the URL, so the harness
+# types the code the app revealed and walks the two consent screens.
+intro_from_logcat() { # <serial>
+  adb -s "$1" logcat -d 2>/dev/null | python3 -c '
+import re, sys
+m = re.findall(r"JoinSpace.*intro=(\S+)", sys.stdin.read())
+print(m[-1] if m else "")'
+}
+
+req_id_from() { # <stage output>
+  python3 -c '
+import re, sys
+m = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", sys.stdin.read())
+print(m.group(0) if m else "")' <<< "$1"
+}
+
+# join_phone <serial> <invite-username> <github-pat> <label>
+join_phone() {
+  local serial="$1" invite_user="$2" pat="$3" label="$4"
+  echo "── [phone $label] invite, clone + join, approve"
+  # The invited seat grants clone access at mint time; inviting the repo
+  # owner reports a seat error and is fine (founder's own phone).
+  local invite_out code
+  invite_out="$("$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" members invite --role editor --username "$invite_user" || true)"
+  code="$(awk '/^[A-Za-z0-9+\/=_-]{200,}$/{print $0}' <<< "$invite_out" | tail -1)"
+  [[ -n "$code" ]] || { echo "FAIL: no invite code for $invite_user"; echo "$invite_out"; exit 1; }
+  # The invite file must be on the remote before the phone clones.
+  "$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" sync push > /dev/null
+
+  adb -s "$serial" logcat -c 2>/dev/null || true
+
+  # One flow drives the whole joiner side; the orchestrator acts during
+  # the waiting hold.
+  BALUARD_E2E_MASTER_PW="$MASTER_PW" \
+  BALUARD_E2E_INVITE="$code" \
+  BALUARD_E2E_PAT="$pat" \
+  BALUARD_E2E_REPO="$REPO" \
+  mobile/scripts/run-maestro.sh --pin-locale --flow 12-join-pat.yaml \
+    "$serial" > "$WORK/maestro-$label.log" 2>&1 &
+  local mpid=$!
+
+  # The joiner's one-time reply surfaces on logcat in e2e builds.
+  local intro=""
+  for _ in $(seq 1 60); do
+    sleep 3
+    kill -0 "$mpid" 2>/dev/null || break
+    intro="$(intro_from_logcat "$serial" || true)"
+    [[ -n "$intro" ]] && break
+  done
+  [[ -n "$intro" ]] || { echo "FAIL: intro not captured on $serial"; tail -20 "$WORK/maestro-$label.log"; exit 1; }
+  echo "    intro captured (${#intro} chars)"
+
+  "$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" unlock > /dev/null
+  local stage_out req_id
+  stage_out="$("$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" members stage "$intro")"
+  req_id="$(req_id_from "$stage_out")"
+  [[ -n "$req_id" ]] || { echo "FAIL: no req_id"; echo "$stage_out"; exit 1; }
+  "$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" members approve-join "$req_id"
+  # The approval commit must reach the remote before the next phone clones.
+  "$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" sync push > /dev/null
+
+  if wait "$mpid"; then
+    echo "    $label joined, approved, and unlocked."
+  else
+    echo "FAIL: Maestro flow on $label did not complete"
+    tail -30 "$WORK/maestro-$label.log"; exit 1
+  fi
+}
+
+echo "── [box 1/5] scratch daemon"
 "$DAEMON" --socket "$WORK/d.sock" &
 DMN_PID=$!
 for _ in $(seq 1 50); do
@@ -49,79 +130,39 @@ for _ in $(seq 1 50); do
 done
 export BALUARD_SOCKET="$WORK/d.sock"
 
-echo "── [box 2/8] family vault (founder)"
-INIT_JSON="$("$BALUARD" init --family --name Founder --slug family-e2e --json \
-  <<< "$MASTER_PW")"
+echo "── [box 2/5] family vault + remote (founder, account 1)"
+INIT_JSON="$("$BALUARD" --socket "$WORK/d.sock" init --family --name Founder --slug family-e2e --json)"
 SLUG="$(python3 -c '
 import json,sys
 d = json.loads([l for l in sys.stdin if l.startswith("{")][0])
 print(d["slug"])' <<< "$INIT_JSON")"
-"$BALUARD" --vault "$SLUG" unlock <<< "$MASTER_PW" > /dev/null
-
-echo "── [box 3/8] provider connect + repo $REPO"
-"$BALUARD" provider connect github --pat <<< "$GH_PAT" > /dev/null
-"$BALUARD" provider create-repo github "$REPO" > /dev/null
-"$BALUARD" sync remote "https://github.com/$GH_USER/$REPO.git" > /dev/null
-
-echo "── [box 4/8] invite for the joiner (seat grants clone access)"
-INVITE_JSON="$("$BALUARD" members invite --role editor --username "$GH_USER")"
-INVITE_CODE="$(awk '/^[A-Za-z0-9+\/=_-]{200,}$/{print $0}' <<< "$INVITE_JSON" | tail -1)"
-[[ -n "$INVITE_CODE" ]] || { echo "FAIL: no invite code in output"; echo "$INVITE_JSON"; exit 1; }
-echo "invite minted (${#INVITE_CODE} chars)"
-# The invite file must be on the remote before the phone clones.
-"$BALUARD" --vault "$SLUG" sync push > /dev/null
-
-echo "── [box 5/8] joiner phone: clone + join (Maestro)"
-BALUARD_E2E_MASTER_PW="$MASTER_PW" \
-BALUARD_E2E_INVITE="$INVITE_CODE" \
-BALUARD_E2E_PAT="$GH_PAT" \
-BALUARD_E2E_REPO="$REPO" \
-mobile/scripts/run-maestro.sh --pin-locale --flow 10-join-family.yaml \
-  "$JOINER_SERIAL" > "$WORK/maestro.log" 2>&1 &
-MAESTRO_PID=$!
-
-echo "── [box 6/8] reading the joiner's intro reply from logcat"
-INTRO_CODE=""
-for _ in $(seq 1 60); do
-  sleep 3
-  kill -0 "$MAESTRO_PID" 2>/dev/null || break
-  INTRO_CODE="$(adb -s "$JOINER_SERIAL" logcat -d 2>/dev/null \
-    | python3 -c '
-import re, sys
-m = re.findall(r"JoinSpace.*intro=(\S+)", sys.stdin.read())
-print(m[-1] if m else "")' || true)"
-  [[ -n "$INTRO_CODE" ]] && break
-done
-if [[ -z "$INTRO_CODE" ]]; then
-  echo "logcat empty; falling back to a UI dump"
-  adb -s "$JOINER_SERIAL" exec-out uiautomator dump /dev/tty > /dev/null 2>&1 || \
-    { adb -s "$JOINER_SERIAL" shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1; \
-      adb -s "$JOINER_SERIAL" pull /sdcard/ui.xml "$WORK/ui.xml" > /dev/null; }
-  INTRO_CODE="$(python3 -c '
-import re, sys
-tree = open(sys.argv[1]).read()
-m = re.findall(r"text=\"([A-Za-z0-9+\/=_-]{300,})\"", tree)
-print(m[-1] if m else "")' "$WORK/ui.xml" 2>/dev/null || true)"
-fi
-[[ -n "$INTRO_CODE" ]] || { echo "FAIL: intro code not found"; tail -20 "$WORK/maestro.log"; exit 1; }
-echo "intro captured (${#INTRO_CODE} chars)"
-
-echo "── [box 7/8] stage + approve"
-"$BALUARD" --vault "$SLUG" unlock <<< "$MASTER_PW" > /dev/null
-STAGE_OUT="$("$BALUARD" --vault "$SLUG" members stage "$INTRO_CODE")"
-echo "$STAGE_OUT"
-REQ_ID="$(python3 -c '
-import re, sys
-m = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", sys.stdin.read())
-print(m.group(0) if m else "")' <<< "$STAGE_OUT")"
-[[ -n "$REQ_ID" ]] || { echo "FAIL: no req_id"; exit 1; }
-"$BALUARD" --vault "$SLUG" members approve-join "$REQ_ID"
-echo "approved; the joiner unlocks on its next poll"
-
-echo "── [box 8/8] wait for the joiner to land in the vault"
-if wait "$MAESTRO_PID"; then
-  echo "PASS: joiner joined, approved, and unlocked."
+"$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" unlock > /dev/null
+"$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" provider connect github --pat <<< "$GH_PAT" > /dev/null
+# GH_REPO reuses an existing repo (rate-limit-friendly reruns); without
+# it a fresh private repo is created.
+if [[ -n "${GH_REPO:-}" ]]; then
+  REPO="$GH_REPO"
+  # Strip refs a previous run left behind so the fresh vault's history
+  # pushes fast-forward onto an effectively empty remote. The token
+  # rides the URL (git's pushInsteadOf rewrite only matches the bare
+  # github.com prefix, so this URL is transported as-is).
+  for ref in $(git ls-remote "https://actitudapps:$GH_PAT@github.com/$GH_USER/$REPO.git" | awk '{print $2}' | grep -v '^refs/pull'); do
+    git push "https://actitudapps:$GH_PAT@github.com/$GH_USER/$REPO.git" --delete "$ref" > /dev/null 2>&1 || true
+  done
 else
-  echo "FAIL: Maestro flow did not complete"; tail -30 "$WORK/maestro.log"; exit 1
+  "$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" provider create-repo github "$REPO" > /dev/null
 fi
+"$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" sync remote "https://github.com/$GH_USER/$REPO.git" > /dev/null
+
+join_phone "$SERIAL_FOUNDER" "$GH_USER" "$GH_PAT" "founder-phone"
+
+echo "── [box 3/5] invited joiner phone (account 2, real clone seat)"
+join_phone "$SERIAL_JOINER" "$GH_USER2" "$GH_PAT2" "joiner-phone"
+
+echo "── [box 4/5] roster"
+"$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" unlock > /dev/null
+"$BALUARD" --socket "$WORK/d.sock" --vault "$SLUG" members list
+
+echo "── [box 5/5] DONE"
+echo "PASS: family vault with founder + two phones on two accounts."
 echo "sandbox kept for inspection: $WORK"

@@ -1,0 +1,67 @@
+# Joiner-phone journey (dedicated device ONLY: clearState wipes every
+# vault on the phone). Run through the two-phone orchestrator, never
+# standalone: the orchestrator reads the joiner's one-time reply from
+# logcat during the waiting hold, stages it, and approves on the admin
+# box; approval auto-unlocks the device in place.
+#
+#   BALUARD_E2E_MASTER_PW  joiner's chosen master password
+#   BALUARD_E2E_INVITE     invite code minted on the admin box
+#   BALUARD_E2E_PAT        THIS phone's GitHub account token
+#   BALUARD_E2E_REPO       repo name to clone
+#
+# Connect rides the access-token UI. The invited joiner's token sees the
+# shared repo only through the read-only collaborator seat granted at
+# invite time - the real-world joiner path.
+appId: xyz.actitud.baluard
+appLaunchDelay: 3000
+---
+- launchApp:
+    clearState: true
+# Android re-arms the App Compatibility alert on every cold start.
+- tapOn:
+    id: android:id/button2
+    optional: true
+
+# Onboarding → the provider clone flow.
+- tapOn: "Open an existing vault"
+- assertVisible: "GitHub"
+- tapOn: "GitHub"
+- tapOn: "Use an access token instead"
+
+# Connect this phone's GitHub account.
+- tapOn: "Access token"
+- inputText: ${BALUARD_E2E_PAT}
+- hideKeyboard
+- tapOn: "Connect"
+
+# Repos picker: the shared repo (owner for the founder's phone, invited
+# seat for the joiner's). The card's a11y text is "owner/<repo>"; match
+# it with a regex tail so the owner prefix never breaks the match.
+- assertVisible: ".*${BALUARD_E2E_REPO}"
+- tapOn:
+    text: ".*${BALUARD_E2E_REPO}"
+
+# Post-clone screen offers phrase enroll AND the join entry. A shared
+# vault refuses phrase enrollment — the invite code is the way in.
+- assertVisible: "Join a shared space"
+- tapOn: "Join a shared space"
+
+# Join form: invite code, password, confirm, device name (prefilled).
+- tapOn: "Invite code"
+- inputText: ${BALUARD_E2E_INVITE}
+- tapOn: "Choose a master password"
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- tapOn: "Confirm master password"
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- hideKeyboard
+- tapOn: "Send request"
+
+# Waiting screen: the orchestrator reads the intro code from logcat,
+# stages + approves it on the admin box, and this device unlocks on its
+# next 10s poll.
+- assertVisible: "Waiting for approval"
+# Hold the screen while the admin acts; approval auto-unlocks in place.
+- extendedWaitUntil:
+    notVisible: "Waiting for approval"
+    timeout: 180000
+- assertVisible: "Baluard"
