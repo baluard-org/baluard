@@ -404,7 +404,10 @@ fun EditCipherScreen(
                     scope.launch {
                         viewModel.save(vault)
                             .onSuccess { saving = false; onSaved() }
-                            .onFailure { saving = false; error = it.message }
+                            .onFailure {
+                                saving = false
+                                error = it.message?.removePrefix("detail=") ?: it.message
+                            }
                     }
                 },
                 // A failed load leaves an empty form; saving would overwrite
