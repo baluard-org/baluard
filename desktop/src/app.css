@@ -171,41 +171,49 @@
 
 
 :root {
-  /* Dark Mode: Deep Forest Teal / Soft Lavender / Lime Accent */
-  --color-bg: #091315;
-  --color-sidebar: #0f2022;
-  --color-list: #14292c;
-  --color-detail: #193236;
-  --color-card: #0b1517;
-  --color-border: #1d3a3d;
-  --color-border-focus: #b3e55c;
-  --color-text: #f3f4f6;
-  --color-muted: #a2b7ba;
-  --color-primary: #b3e55c;
-  --color-primary-text: #102427;
-  --color-primary-hover: #c5f279;
-  --color-accent: #cfc6f9;
-  --color-danger: #ef4444;
-  --color-success: #10b981;
+  /* Dark Mode: Catppuccin Mocha (https://catppuccin.com/palette/) */
+  --color-bg: #1e1e2e;            /* Base */
+  --color-sidebar: #181825;       /* Mantle */
+  --color-list: #11111b;          /* Crust */
+  --color-detail: #313244;        /* Surface0 */
+  --color-card: #181825;          /* Mantle */
+  --color-surface: #313244;       /* Surface0 */
+  --color-border: #45475a;        /* Surface1 */
+  --color-border-focus: #cba6f7;  /* Mauve */
+  --color-text: #cdd6f4;          /* Text */
+  --color-text-secondary: #bac2de;/* Subtext1 */
+  --color-text-muted: #a6adc8;    /* Subtext0 */
+  --color-muted: #a6adc8;         /* Subtext0 */
+  --color-primary: #cba6f7;       /* Mauve */
+  --color-primary-text: #1e1e2e;  /* Base (text on Mauve fills) */
+  --color-primary-hover: #b4befe; /* Lavender */
+  --color-accent: #b4befe;        /* Lavender */
+  --color-warning: #f9e2af;       /* Yellow */
+  --color-danger: #f38ba8;        /* Red */
+  --color-success: #a6e3a1;       /* Green */
 }
 
 .light-theme {
-  /* Light Mode: Clean White / Slate / Dark Teal Accent */
-  --color-bg: #f4f6f6;
-  --color-sidebar: #e9ecec;
-  --color-list: #ffffff;
-  --color-detail: #f8fafc;
-  --color-card: #ffffff;
-  --color-border: #d1dbdb;
-  --color-border-focus: #102427;
-  --color-text: #102427;
-  --color-muted: #495c5f;
-  --color-primary: #102427;
-  --color-primary-text: #ffffff;
-  --color-primary-hover: #1b383c;
-  --color-accent: #7c3aed;
-  --color-danger: #ef4444;
-  --color-success: #10b981;
+  /* Light Mode: Catppuccin Latte (https://catppuccin.com/palette/) */
+  --color-bg: #eff1f5;            /* Base */
+  --color-sidebar: #e6e9ef;       /* Mantle */
+  --color-list: #dce0e8;          /* Crust */
+  --color-detail: #ccd0da;        /* Surface0 */
+  --color-card: #e6e9ef;          /* Mantle */
+  --color-surface: #ccd0da;       /* Surface0 */
+  --color-border: #bcc0cc;        /* Surface1 */
+  --color-border-focus: #8839ef;  /* Mauve */
+  --color-text: #4c4f69;          /* Text */
+  --color-text-secondary: #5c5f77;/* Subtext1 */
+  --color-text-muted: #6c6f85;    /* Subtext0 */
+  --color-muted: #6c6f85;         /* Subtext0 */
+  --color-primary: #8839ef;       /* Mauve */
+  --color-primary-text: #eff1f5;  /* Base (text on Mauve fills) */
+  --color-primary-hover: #7287fd; /* Lavender */
+  --color-accent: #7287fd;        /* Lavender */
+  --color-warning: #df8e1d;       /* Yellow */
+  --color-danger: #d20f39;        /* Red */
+  --color-success: #40a02b;       /* Green */
 }
 
 /* Global focus outlines for keyboard navigation accessibility */
@@ -264,7 +272,7 @@ select {
   appearance: none !important;
   -webkit-appearance: none !important;
   -moz-appearance: none !important;
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238fa3a6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236c7086' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
   background-repeat: no-repeat !important;
   background-position: right 0.75rem center !important;
   background-size: 0.9rem !important;
@@ -273,7 +281,7 @@ select {
 }
 
 .light-theme select {
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235e7275' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ca0b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
 }
 
 /* Style select options to match the theme across platforms */
