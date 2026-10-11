@@ -778,7 +778,10 @@
     "stageBtn": "Stage",
     "staged": "Request staged for approval.",
     "roleChanged": "Role updated.",
-    "roleSelectLabel": "Change role"
+    "roleSelectLabel": "Change role",
+    "demoteTitle": "Remove admin access",
+    "demoteBody": "Demoting {name} removes their admin access immediately. They keep their account and current entry access, but can no longer manage members, keys, or collections.",
+    "demoteConfirm": "Demote"
   },
   "join": {
     "joinLink": "Joining a shared vault?",

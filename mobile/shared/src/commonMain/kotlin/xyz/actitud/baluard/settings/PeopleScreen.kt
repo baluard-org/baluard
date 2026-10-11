@@ -953,6 +953,13 @@ fun PeopleScreen(
                             )
                         }
                     }
+                    if (m.role == "admin" && rolePick != "admin") {
+                        Text(
+                            t("people.roleDemoteWarn"),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     roleErr?.let {
                         Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     }
