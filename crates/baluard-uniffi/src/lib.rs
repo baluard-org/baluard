@@ -1574,6 +1574,21 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Change a member's role (admin surface). Keywraps follow the
+    /// role core-side; admin rank demands a verified contact on the
+    /// member and refuses minors. Returns the change JSON.
+    pub async fn member_set_role(
+        &self,
+        member_id: String,
+        role: String,
+    ) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "member_id": member_id, "role": role }).to_string();
+        self.state
+            .member_set_role(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Join a shared space (member side of the join ceremony). The vault
     /// must already be cloned locally (see `clone_vault_start`). Payload
     /// fields: `code` (the invite code), `password` (the joiner's chosen

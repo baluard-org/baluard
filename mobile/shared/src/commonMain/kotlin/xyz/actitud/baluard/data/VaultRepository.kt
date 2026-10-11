@@ -410,6 +410,9 @@ class VaultRepository {
     suspend fun membersList(vault: MobileVault): String = vault.membersList()
     suspend fun memberInvite(vault: MobileVault, payload: String): String =
         vault.memberInvite(payload)
+    /** Change a member's role (admin surface; keywraps follow core-side). */
+    suspend fun memberSetRole(vault: MobileVault, memberId: String, role: String): String =
+        vault.memberSetRole(memberId, role)
     /** Stage an out-of-band intro code into the join queue. */
     suspend fun joinRequestsStage(vault: MobileVault, introCode: String): String =
         vault.joinRequestsStage(
