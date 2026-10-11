@@ -1,0 +1,61 @@
+# Joiner-phone journey for the two-family test (dedicated device ONLY:
+# clearState wipes every vault on the phone). Run through the two-phone
+# orchestrator, never standalone — the intro code handoff happens outside
+# Maestro (uiautomator dump on the waiting screen).
+#
+#   BALUARD_E2E_MASTER_PW  joiner's chosen master password
+#   BALUARD_E2E_INVITE     invite code minted on the admin box
+#   BALUARD_E2E_PAT        test-account access token
+#   BALUARD_E2E_REPO       repo name to clone (e.g. baluard-family)
+appId: xyz.actitud.baluard
+appLaunchDelay: 3000
+---
+- launchApp:
+    clearState: true
+# Android 17 re-arms the App Compatibility alert on every cold start.
+- tapOn:
+    id: android:id/button2
+    optional: true
+
+# Onboarding → the provider clone flow.
+- tapOn: "Open an existing vault"
+- assertVisible: "GitHub"
+- tapOn: "GitHub"
+- tapOn: "Use an access token instead"
+
+# Connect the test account. The PAT rides the run's env only.
+- tapOn: "Access token"
+- inputText: ${BALUARD_E2E_PAT}
+- hideKeyboard
+- tapOn: "Connect"
+
+# Repos picker: the invited joiner holds a ReadOnly seat, so the shared
+# repo is listed. Clone it.
+- assertVisible: ${BALUARD_E2E_REPO}
+- tapOn: ${BALUARD_E2E_REPO}
+
+# Post-clone screen offers phrase enroll AND the join entry. A shared
+# vault refuses phrase enrollment — the invite code is the way in.
+- assertVisible: "Join a shared space"
+- tapOn: "Join a shared space"
+
+# Join form: invite code, password, confirm, device name (prefilled).
+- tapOn: "Invite code"
+- inputText: ${BALUARD_E2E_INVITE}
+- tapOn: "Choose a master password"
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- tapOn: "Confirm master password"
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- hideKeyboard
+- tapOn: "Send request"
+
+# Waiting screen: the orchestrator scrapes the intro code from here
+# (uiautomator dump), stages + approves it on the admin box, and this
+# device unlocks on its next 10s poll.
+- assertVisible: "Waiting for approval"
+# Hold the screen while the admin acts (the harness reads the intro code
+# from logcat); approval auto-unlocks the device in place.
+- extendedWaitUntil:
+    notVisible: "Waiting for approval"
+    timeout: 180000
+- assertVisible: "Baluard"
