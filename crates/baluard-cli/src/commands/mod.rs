@@ -1645,6 +1645,37 @@ pub fn handle_members(
             }
             Ok(())
         }
+        MemberAction::Invite { role, username } => {
+            ensure_unlocked_daemon(socket)?;
+            let mut payload = serde_json::json!({ "role": role });
+            if let Some(u) = username {
+                payload["transport_username"] = serde_json::json!(u.trim());
+            }
+            let data = post(socket, "members.invite", &payload)?;
+            println!("Invite code (send out of band, one-time):");
+            println!("{}", data["code"].as_str().unwrap_or(""));
+            match data["seat_error"].as_str() {
+                Some(e) if !e.is_empty() => println!("clone access: NOT granted ({e})"),
+                _ if data["seat_granted"].as_bool().unwrap_or(false) => {
+                    println!("clone access: granted (read-only until approved)");
+                }
+                _ => println!("clone access: not requested"),
+            }
+            Ok(())
+        }
+        MemberAction::Stage { code } => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(
+                socket,
+                "requests.stage",
+                &serde_json::json!({ "intro_code": code.trim() }),
+            )?;
+            println!(
+                "Staged. Confirm with: baluard members approve-join {}",
+                data["req_id"].as_str().unwrap_or("<req_id>")
+            );
+            Ok(())
+        }
         MemberAction::Requests => {
             ensure_unlocked_daemon(socket)?;
             // Two queues: pending joins (requests.*) and collection
