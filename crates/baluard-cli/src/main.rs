@@ -564,6 +564,23 @@ enum CollectionAction {
 enum MemberAction {
     /// List members with roles and trust.
     List,
+    /// Mint a member invite. The returned code travels to the joiner
+    /// out-of-band; pass --username so the joiner's clone seat can be
+    /// granted on the connected provider.
+    Invite {
+        /// editor or viewer (admin requires a verified contact card on
+        /// the joiner's side; the owner seat cannot be invited).
+        #[arg(long, default_value = "editor")]
+        role: String,
+        /// Joiner's provider username (grant clone access).
+        #[arg(long)]
+        username: Option<String>,
+    },
+    /// Stage a joiner's out-of-band intro reply into the join queue.
+    Stage {
+        /// The intro code the joiner sent you.
+        code: String,
+    },
     /// List pending asks: join confirmations and access requests.
     Requests,
     /// Confirm a pending join (the member becomes a space member).
