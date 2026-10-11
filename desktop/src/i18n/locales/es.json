@@ -773,7 +773,10 @@
     "tlTeamFlip": "modo equipo",
     "tlPoliciesSet": "recomendaciones",
     "tlRecoveryKitSet": "kit de recuperación",
-    "tlRemoteMoved": "sincronización movida"
+    "tlRemoteMoved": "sincronización movida",
+    "stageIntro": "Pega la respuesta de invitación",
+    "stageBtn": "Encolar",
+    "staged": "Solicitud en cola para aprobar."
   },
   "join": {
     "joinLink": "¿Te invitaron a una bóveda compartida?",

@@ -773,7 +773,10 @@
     "tlTeamFlip": "team mode",
     "tlPoliciesSet": "recommendations",
     "tlRecoveryKitSet": "recovery kit",
-    "tlRemoteMoved": "sync moved"
+    "tlRemoteMoved": "sync moved",
+    "stageIntro": "Paste the invite reply",
+    "stageBtn": "Stage",
+    "staged": "Request staged for approval."
   },
   "join": {
     "joinLink": "Joining a shared vault?",
