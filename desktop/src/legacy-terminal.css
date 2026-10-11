@@ -1,0 +1,45 @@
+/*
+ * Legacy "terminal" palette (pre-Catppuccin).
+ * Reference backup only: NOT imported by the build. The old values also
+ * predate the four tokens added later (surface, text-secondary, text-muted,
+ * warning), so restoring means pasting these blocks over the token blocks
+ * in app.css and dropping or re-deriving those four.
+ */
+
+:root {
+  /* Dark Mode: Deep Forest Teal / Soft Lavender / Lime Accent */
+  --color-bg: #091315;
+  --color-sidebar: #0f2022;
+  --color-list: #14292c;
+  --color-detail: #193236;
+  --color-card: #0b1517;
+  --color-border: #1d3a3d;
+  --color-border-focus: #b3e55c;
+  --color-text: #f3f4f6;
+  --color-muted: #a2b7ba;
+  --color-primary: #b3e55c;
+  --color-primary-text: #102427;
+  --color-primary-hover: #c5f279;
+  --color-accent: #cfc6f9;
+  --color-danger: #ef4444;
+  --color-success: #10b981;
+}
+
+.light-theme {
+  /* Light Mode: Clean White / Slate / Dark Teal Accent */
+  --color-bg: #f4f6f6;
+  --color-sidebar: #e9ecec;
+  --color-list: #ffffff;
+  --color-detail: #f8fafc;
+  --color-card: #ffffff;
+  --color-border: #d1dbdb;
+  --color-border-focus: #102427;
+  --color-text: #102427;
+  --color-muted: #495c5f;
+  --color-primary: #102427;
+  --color-primary-text: #ffffff;
+  --color-primary-hover: #1b383c;
+  --color-accent: #7c3aed;
+  --color-danger: #ef4444;
+  --color-success: #10b981;
+}
