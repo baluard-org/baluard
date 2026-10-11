@@ -3,7 +3,7 @@
 # run-maestro.sh — Android E2E flows (docs/e2e-testing.md Phase 2).
 #
 # Usage:
-#   ./scripts/run-maestro.sh [--pin-locale] [device-serial]
+#   ./scripts/run-maestro.sh [--pin-locale] [--flow <name.yaml>] [device-serial]
 #
 # Env:
 #   BALUARD_E2E_MASTER_PW   required — the synthetic vault password
@@ -28,6 +28,7 @@ SERIAL="${ANDROID_SERIAL:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --pin-locale) PIN_LOCALE=1; shift ;;
+    --flow) ONLY_FLOW="$2"; shift 2 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) SERIAL="$1"; shift ;;
   esac
@@ -79,10 +80,21 @@ fi
 
 : "${BALUARD_E2E_MASTER_PW:?set BALUARD_E2E_MASTER_PW for the synthetic vault}"
 
+# Only the named flow runs when --flow is given (the two-phone harness
+# drives its own flow); otherwise every flow runs in name order.
 rc=0
 for f in "$FLOW_DIR"/*.yaml; do
+  if [[ -n "$ONLY_FLOW" && "$(basename "$f")" != "$ONLY_FLOW" ]]; then
+    continue
+  fi
   echo
   echo "==> maestro test $(basename "$f")"
-  maestro test -e MASTER_PW="$BALUARD_E2E_MASTER_PW" "$f" || rc=1
+  # MASTER_PW plus any BALUARD_E2E_* variable the caller exported (the
+  # two-phone journey passes invite code, PAT, and repo name through).
+  args=(test -e MASTER_PW="$BALUARD_E2E_MASTER_PW")
+  while read -r k; do
+    args+=(-e "${k#BALUARD_E2E_}=${!k}")
+  done < <(compgen -e | grep '^BALUARD_E2E_' | grep -v 'BALUARD_E2E_MASTER_PW$')
+  maestro "${args[@]}" "$f" || rc=1
 done
 exit "$rc"
