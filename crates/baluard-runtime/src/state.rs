@@ -3652,38 +3652,38 @@ impl VaultState {
     /// zero/one/many decision is deterministic.
     fn family_writable_collections(
         handle: &baluard_core::vault::VaultHandle,
-        member_id: uuid::Uuid,
+        _member_id: uuid::Uuid,
     ) -> Result<Vec<uuid::Uuid>, String> {
+        // Member devices resolve their writables through the member-side
+        // listing: it folds direct AND group grants via plaintext
+        // memberships and needs no SGK (groups_list refuses on member
+        // devices, so a grant-table scan can never work here). Members
+        // are the only callers of this helper — admins take the
+        // type-based routing branch above.
+        // Rank floor: grants scope WHERE an editor writes but never lift
+        // a viewer's rank, so a viewer's writable set is empty no matter
+        // what its grants say (the floor is enforced again at write time).
+        if matches!(
+            baluard_core::vault::members::member_role_for_device(&handle.path, handle.device_id),
+            Some(baluard_core::vault::members::MemberRole::Viewer)
+        ) {
+            return Ok(Vec::new());
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let groups: std::collections::HashSet<uuid::Uuid> = handle
-            .groups_list()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .filter(|(_, _, members)| members.contains(&member_id))
-            .map(|(id, _, _)| id)
-            .collect();
         let mut out = std::collections::BTreeSet::new();
-        for (cid, _, grants) in handle.collections_list().map_err(|e| e.to_string())? {
-            let writable = grants.iter().any(|g| {
-                matches!(
-                    g.access,
+        for row in handle.my_collections_list().map_err(|e| e.to_string())? {
+            let unexpired = row.expires_at.map(|e| e > now).unwrap_or(true);
+            if unexpired
+                && matches!(
+                    row.access,
                     baluard_core::vault::collections::CollectionAccess::Write
                         | baluard_core::vault::collections::CollectionAccess::Manage
-                ) && g.expires_at.map(|e| e > now).unwrap_or(true)
-                    && match &g.target {
-                        baluard_core::vault::collections::GrantTarget::Member { id } => {
-                            *id == member_id
-                        }
-                        baluard_core::vault::collections::GrantTarget::Group { id } => {
-                            groups.contains(id)
-                        }
-                    }
-            });
-            if writable {
-                out.insert(cid);
+                )
+            {
+                out.insert(row.collection_id);
             }
         }
         Ok(out.into_iter().collect())
