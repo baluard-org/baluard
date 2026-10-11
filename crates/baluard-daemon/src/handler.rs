@@ -4734,6 +4734,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // other connection (root cause of the EAGAIN storm).
             let vault_path = state.vault_path.clone();
             let payload = req.payload.clone();
+            let remote_url = req.payload.clone();
+            let reg_path = state.vault_path.clone();
             let seal = state.devkey_seal().await;
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
@@ -4743,7 +4745,38 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             )
             .await;
             match joined {
-                Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
+                Ok(Ok(Ok(msg))) => {
+                    // Record the transport in the registry so provider
+                    // features (clone-seat grants, transport coords) see it.
+                    // Mirrors vault.setup_sync's registry tail; best-effort —
+                    // the origin itself is already set.
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Ok(mut reg) =
+                            baluard_core::vault::registry::VaultRegistry::load_locked()
+                        {
+                            let url = remote_url;
+                            let slug = reg.slug_for_path(&reg_path);
+                            let provider = if url.contains("github.com") {
+                                Some("github".to_string())
+                            } else if url.contains("gitlab.com") {
+                                Some("gitlab".to_string())
+                            } else if url.contains("codeberg.org") {
+                                Some("codeberg".to_string())
+                            } else {
+                                None
+                            };
+                            if let Some(slug) = slug.filter(|_| provider.is_some()) {
+                                if let Some(entry) = reg.vaults.get_mut(&slug) {
+                                    entry.remote_url = Some(url.clone());
+                                    entry.provider = provider;
+                                    let _ = reg.save_locked();
+                                }
+                            }
+                        }
+                    })
+                    .await;
+                    ok_resp(msg, token_str)
+                }
                 Ok(Ok(Err(e))) => err_response(e),
                 Ok(Err(e)) => err_response(format!("Task join: {e}")),
                 Err(_) => err_response("sync.remote timed out".to_string()),
@@ -6054,6 +6087,16 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
 #[cfg(feature = "git-sync")]
 fn first_device_id(vault_path: &std::path::Path) -> String {
+    // The engine identity MUST be this clone's own device. A roster scan
+    // iterates a HashMap, so on a multi-device vault it can return ANOTHER
+    // device's id; the P5 admission then credits the wrong committer and
+    // reverts this device's admin-gated meta writes (seen as a family
+    // join's member row shipping reverted). meta/device-id is the
+    // authoritative local identity; the roster walk stays as the legacy
+    // fallback for vaults predating it.
+    if let Some(id) = baluard_core::vault::device_privkey::read_device_id(vault_path) {
+        return id.to_string();
+    }
     let reg_path = vault_path.join("meta/devices.json");
     if reg_path.exists() {
         if let Ok(data) = std::fs::read_to_string(&reg_path) {
