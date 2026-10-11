@@ -23,6 +23,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -107,6 +108,12 @@ fun PeopleScreen(
     var groupEditName by remember { mutableStateOf("") }
     var groupDeleteArm by remember { mutableStateOf(false) }
     var groupBusy by remember { mutableStateOf(false) }
+
+    // Role change (admin surface): target row + chosen role + busy/error.
+    var roleTarget by remember { mutableStateOf<MobileMemberInfo?>(null) }
+    var rolePick by remember { mutableStateOf("editor") }
+    var roleBusy by remember { mutableStateOf(false) }
+    var roleErr by remember { mutableStateOf<String?>(null) }
 
     suspend fun refreshAll() {
         runCatching {
@@ -464,6 +471,15 @@ fun PeopleScreen(
                                     // (the successor inherits Owner), but
                                     // removal still requires the owner row
                                     // gone first.
+                                    if (canOffboard && m.role != "owner") {
+                                        TextButton(onClick = {
+                                            roleTarget = m
+                                            rolePick = m.role
+                                            roleErr = null
+                                        }) {
+                                            Text(t("people.actionRole"))
+                                        }
+                                    }
                                     if (canOffboard) {
                                         TextButton(onClick = { openOffboard("reset", m) }) {
                                             Text(t("people.actionReset"))
@@ -899,6 +915,71 @@ fun PeopleScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showGroupCreate = false }) { Text(t("common.cancel")) }
+            },
+        )
+    }
+
+    roleTarget?.let { m ->
+        AlertDialog(
+            onDismissRequest = { if (!roleBusy) roleTarget = null },
+            title = { Text(m.name) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        t("people.roleDesc"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    listOf("viewer", "editor", "admin").forEach { role ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { rolePick = role }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = rolePick == role,
+                                onClick = null,
+                            )
+                            Text(
+                                when (role) {
+                                    "owner" -> t("people.roleOwner")
+                                    "admin" -> t("people.roleAdmin")
+                                    "viewer" -> t("people.roleViewer")
+                                    else -> t("people.roleEditor")
+                                },
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                    }
+                    roleErr?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !roleBusy,
+                    onClick = {
+                        scope.launch {
+                            roleBusy = true
+                            try {
+                                repo.memberSetRole(vault, m.id, rolePick)
+                                roleTarget = null
+                                refreshAll()
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Throwable) {
+                                roleErr = e.message?.removePrefix("detail=") ?: t("error.generic")
+                            }
+                            roleBusy = false
+                        }
+                    },
+                ) { Text(t("common.save")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { roleTarget = null }) { Text(t("common.cancel")) }
             },
         )
     }
