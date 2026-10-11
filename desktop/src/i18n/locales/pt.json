@@ -773,7 +773,10 @@
     "tlTeamFlip": "modo equipe",
     "tlPoliciesSet": "recomendações",
     "tlRecoveryKitSet": "kit de recuperação",
-    "tlRemoteMoved": "sincronização movida"
+    "tlRemoteMoved": "sincronização movida",
+    "stageIntro": "Cole a resposta do convite",
+    "stageBtn": "Enfileirar",
+    "staged": "Pedido na fila para aprovar."
   },
   "join": {
     "joinLink": "Foi convidado para um cofre compartilhado?",

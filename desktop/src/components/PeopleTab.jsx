@@ -53,6 +53,7 @@ export default function PeopleTab() {
 
   const [members, setMembers] = createSignal([]);
   const [requests, setRequests] = createSignal([]);
+  const [stageIntro, setStageIntro] = createSignal("");
   const [malformed, setMalformed] = createSignal(0);
   const [events, setEvents] = createSignal([]);
   const [refusals, setRefusals] = createSignal([]);
@@ -285,6 +286,23 @@ export default function PeopleTab() {
     }
   }
 
+  async function doStage(e) {
+    e.preventDefault();
+    const code = stageIntro().trim();
+    if (!code || busy()) return;
+    setBusy(true);
+    try {
+      await daemon("requests.stage", { intro_code: code });
+      setStageIntro("");
+      toastSuccess(t("people.staged"));
+      await reloadAll();
+    } catch (err) {
+      toastError(sanitizeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function doApprove(reqId) {
     setBusy(true);
     try {
@@ -459,6 +477,23 @@ export default function PeopleTab() {
       {/* Requests */}
       <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
         <h3 class="text-sm font-bold text-[var(--color-text)] mb-3">{t("people.requestsTitle")}</h3>
+        <form onSubmit={doStage} class="flex gap-2 mb-3">
+          <input
+            type="text"
+            value={stageIntro()}
+            onInput={(e) => setStageIntro(e.currentTarget.value)}
+            placeholder={t("people.stageIntro")}
+            disabled={busy()}
+            class="flex-1 px-2.5 py-1.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-muted)] outline-none focus:border-[var(--color-primary)]"
+          />
+          <button
+            type="submit"
+            disabled={busy() || !stageIntro().trim()}
+            class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-[10px] font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+          >
+            {t("people.stageBtn")}
+          </button>
+        </form>
         <Show
           when={requests().length > 0}
           fallback={<p class="text-xs text-[var(--color-muted)]">{t("people.requestsEmpty")}</p>}

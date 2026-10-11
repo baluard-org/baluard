@@ -390,7 +390,7 @@ impl ForgeProvider for GitLabProvider {
         per_page: u8,
     ) -> Result<Vec<VaultRepo>, ProviderError> {
         let url = format!(
-            "{api}/projects?membership=true&owned=true&simple=true&per_page={pp}&page={pg}",
+            "{api}/projects?membership=true&simple=true&per_page={pp}&page={pg}",
             api = self.api_base(),
             pp = per_page,
             pg = page,
@@ -416,13 +416,16 @@ impl ForgeProvider for GitLabProvider {
         token: &ProviderToken,
     ) -> Result<Vec<VaultRepo>, ProviderError> {
         // List+fetch: GitLab code search requires Elasticsearch (not always on
-        // gitlab.com for all users), so we paginate owned projects and probe
-        // `.baluard` per repo.
+        // gitlab.com for all users), so we paginate member projects
+        // (membership spans owned + invited seats - a joiner needs this to
+        // see the shared repo) and probe `.baluard` per repo. Known boundary:
+        // the 10-page probe cap can drop repos for users with very large
+        // membership lists.
         let mut found = Vec::new();
         let mut page: u8 = 1;
         loop {
             let url = format!(
-                "{api}/projects?membership=true&owned=true&simple=true&per_page=100&page={pg}",
+                "{api}/projects?membership=true&simple=true&per_page=100&page={pg}",
                 api = self.api_base(),
                 pg = page,
             );
