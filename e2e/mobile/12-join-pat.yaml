@@ -37,13 +37,25 @@ appLaunchDelay: 3000
 # Repos picker: the shared repo (owner for the founder's phone, invited
 # seat for the joiner's). The card's a11y text is "owner/<repo>"; match
 # it with a regex tail so the owner prefix never breaks the match.
+# Stale repos from earlier runs pile above it, so scroll until the
+# fresh one is on screen before asserting.
+- scrollUntilVisible:
+    element:
+      text: ".*${BALUARD_E2E_REPO}"
+    timeout: 20000
+# The fling leaves the list settling; tap after it stops moving or the
+# tap lands on a scrolling row and never fires.
+- waitForAnimationToEnd
 - assertVisible: ".*${BALUARD_E2E_REPO}"
 - tapOn:
     text: ".*${BALUARD_E2E_REPO}"
 
 # Post-clone screen offers phrase enroll AND the join entry. A shared
-# vault refuses phrase enrollment — the invite code is the way in.
-- assertVisible: "Join a shared space"
+# vault refuses phrase enrollment — the invite code is the way in. The
+# clone itself takes a few seconds over the network.
+- extendedWaitUntil:
+    visible: "Join a shared space"
+    timeout: 45000
 - tapOn: "Join a shared space"
 
 # Join form: invite code, password, confirm, device name (prefilled).
@@ -64,4 +76,6 @@ appLaunchDelay: 3000
 - extendedWaitUntil:
     notVisible: "Waiting for approval"
     timeout: 180000
-- assertVisible: "Baluard"
+# The hub's title is the vault display name, not the app name; the
+# family vault always renders its Shared section.
+- assertVisible: "SHARED"
