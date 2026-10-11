@@ -111,6 +111,7 @@ open class StubVault(
     // §4.8-7 admin surfaces: same err() discipline.
     override suspend fun `collectionGrant`(payload: String): String = err()
     override suspend fun `collectionRevoke`(payload: String): String = err()
+    override suspend fun `joinRequestsStage`(payload: String): String = err()
     override suspend fun `joinRequestsApprove`(payload: String): String = err()
     override suspend fun `joinRequestsDeny`(payload: String): String = err()
     override suspend fun `joinRequestsList`(): String = err()

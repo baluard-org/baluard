@@ -642,6 +642,8 @@ internal val ES: Map<String, String> = mapOf(
         "people.title" to "Personas y acceso",
         "people.entrySubtitle" to "Miembros, solicitudes de acceso y permisos de colecciones",
         "people.joinRequests" to "Solicitudes de incorporación",
+        "people.stageIntro" to "Pega la respuesta de invitación",
+        "people.staged" to "Solicitud en cola. Apruébala abajo.",
         "people.secretMismatch" to "La verificación de secreto falló: confirma la identidad de esta persona por otro medio antes de aprobar",
         "people.approve" to "Aprobar",
         "people.deny" to "Rechazar",
