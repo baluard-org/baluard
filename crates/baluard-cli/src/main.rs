@@ -581,6 +581,15 @@ enum MemberAction {
         /// The intro code the joiner sent you.
         code: String,
     },
+    /// Change a member's role (admin or owner). Keywraps follow the
+    /// role: demotion strips the member's Root-Key keywraps, promotion
+    /// mints them (admin rank needs a verified contact on the member).
+    SetRole {
+        /// Member id from `baluard members list`.
+        member_id: String,
+        /// admin, editor, or viewer.
+        role: String,
+    },
     /// List pending asks: join confirmations and access requests.
     Requests,
     /// Confirm a pending join (the member becomes a space member).
