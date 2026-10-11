@@ -39,7 +39,7 @@ export BALUARD_PASSWORD="$BOX_PW"
 REAL_HOME="$HOME"
 mkdir -p "$WORK/emptyhome"
 export HOME="$WORK/emptyhome"   # hermetic libgit2 (see two-phone-family.sh)
-SHOTS="${SHOTS:-$REAL_HOME/Dev/baluard-e2e-shots}"
+SHOTS="${SHOTS:-$REAL_HOME/Dev/Screenshots}"
 BALUARD="target/debug/baluard"
 DAEMON="target/debug/baluard-daemon"
 SOCKET="$WORK/roles.sock"
