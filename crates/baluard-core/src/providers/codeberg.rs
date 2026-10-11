@@ -314,8 +314,11 @@ impl ForgeProvider for CodebergProvider {
         &self,
         token: &ProviderToken,
     ) -> Result<Vec<VaultRepo>, ProviderError> {
-        // Forgejo: paginate /user/repos (type=owner - accessible org/collab
-        // repos must NOT surface in the picker), probe .baluard per repo. Fetches
+        // Forgejo: paginate /user/repos (type=owner). Known boundary: a
+        // Codeberg joiner holding only a collaborator seat cannot see the
+        // shared repo here yet - Forgejo has no affiliation filter, so
+        // widening this would pull in every visible repo. Probe .baluard per
+        // repo. Fetches
         // within a page run concurrently (JoinSet) to avoid rate-limit thrash
         // on large accounts.
         let mut found = Vec::new();

@@ -171,9 +171,9 @@ impl Default for GitHubProvider {
 }
 
 impl GitHubProvider {
-    /// Tier 1: paginate the authenticated user's OWNED repos and probe
-    /// .baluard concurrently within each page (mirrors the GitLab and
-    /// Codeberg detection tier).
+    /// Tier 1: paginate the authenticated user's owned + collaborator
+    /// repos and probe .baluard concurrently within each page (an invited
+    /// joiner holds a read-only seat and must see the shared repo).
     async fn list_and_probe_owned(
         &self,
         token: &ProviderToken,
@@ -186,7 +186,9 @@ impl GitHubProvider {
             let page_repos: Vec<octocrab::models::Repository> = client
                 .current()
                 .list_repos_for_authenticated_user()
-                .affiliation("owner")
+                // Collaborators too: an invited joiner holds a ReadOnly
+                // seat on the shared repo and must see it to clone it.
+                .affiliation("owner,collaborator")
                 .per_page(100)
                 .page(page)
                 .send()
@@ -506,7 +508,9 @@ impl ForgeProvider for GitHubProvider {
         let page_result = client
             .current()
             .list_repos_for_authenticated_user()
-            .type_("owner")
+            // affiliation covers collaborator seats (see detect path); it
+            // replaces type_ — GitHub treats the two as alternatives.
+            .affiliation("owner,collaborator")
             .per_page(per_page)
             .page(page)
             .send()
@@ -523,7 +527,8 @@ impl ForgeProvider for GitHubProvider {
         &self,
         token: &ProviderToken,
     ) -> Result<Vec<VaultRepo>, ProviderError> {
-        // Tier 1 (primary): paginate OWNED repos and probe .baluard per repo.
+        // Tier 1 (primary): paginate owned + collaborator repos and probe
+        // .baluard per repo.
         // Complete and immune to code-search indexing lag (N4: the search API
         // can miss private repos entirely and only indexes default branches).
         let mut found = self.list_and_probe_owned(token).await?;
