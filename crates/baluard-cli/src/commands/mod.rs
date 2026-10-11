@@ -1676,6 +1676,25 @@ pub fn handle_members(
             );
             Ok(())
         }
+        MemberAction::SetRole { member_id, role } => {
+            ensure_unlocked_daemon(socket)?;
+            let role = role.trim().to_lowercase();
+            let data = post(
+                socket,
+                "members.set_role",
+                &serde_json::json!({ "member_id": member_id.trim(), "role": role }),
+            )?;
+            if data["changed"].as_bool().unwrap_or(false) {
+                println!(
+                    "Role updated: {} is now {}.",
+                    member_id.trim(),
+                    data["role"].as_str().unwrap_or(&role)
+                );
+            } else {
+                println!("No change: already {}.", role);
+            }
+            Ok(())
+        }
         MemberAction::Requests => {
             ensure_unlocked_daemon(socket)?;
             // Two queues: pending joins (requests.*) and collection

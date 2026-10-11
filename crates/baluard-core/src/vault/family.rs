@@ -719,6 +719,117 @@ mod tests {
     }
 
     #[test]
+    fn member_set_role_cycles_demotes_and_guards() {
+        use crate::vault::members::{MemberFile, MemberRole, TrustLevel};
+        let (_temp, mut handle, _pw) = family_vault();
+        let (_shared, _kit) = setup_family_vault(&mut handle).unwrap();
+        let path = handle.path.clone();
+        let member_id = uuid::Uuid::new_v4();
+        let mk_row = |role: MemberRole| MemberFile {
+            id: member_id,
+            display_name: "Role Cycle".into(),
+            email: None,
+            role,
+            trust: TrustLevel::Channel,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            removed_reason: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        crate::vault::members::write_member(&path, &mk_row(MemberRole::Editor)).unwrap();
+
+        // Demote, promote, and a no-op no-change answer.
+        let out = handle
+            .member_set_role(member_id, MemberRole::Viewer)
+            .unwrap();
+        assert_eq!(out["changed"], serde_json::json!(true));
+        let row = crate::vault::members::list_members(&path)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.id == member_id)
+            .unwrap();
+        assert_eq!(row.role, MemberRole::Viewer);
+        let out = handle
+            .member_set_role(member_id, MemberRole::Editor)
+            .unwrap();
+        assert_eq!(out["changed"], serde_json::json!(true));
+        let out = handle
+            .member_set_role(member_id, MemberRole::Editor)
+            .unwrap();
+        assert_eq!(out["changed"], serde_json::json!(false));
+
+        // The Owner row is untouchable and Owner is not assignable.
+        let owner_id = crate::vault::members::owner_member_id(&path).unwrap();
+        let err = handle
+            .member_set_role(owner_id, MemberRole::Viewer)
+            .unwrap_err();
+        assert!(err.to_string().contains("ownership moves via transfer"));
+        let err = handle
+            .member_set_role(member_id, MemberRole::Owner)
+            .unwrap_err();
+        assert!(err.to_string().contains("ownership cannot be assigned"));
+
+        // Admin rank needs a verified contact (the flipped-vault dial);
+        // an unverified member is refused.
+        let err = handle
+            .member_set_role(member_id, MemberRole::Admin)
+            .unwrap_err();
+        assert!(err.to_string().contains("verified contact"));
+
+        // A minor cannot hold admin rank either (clearly flagged row).
+        handle.member_set_minor(member_id, true).unwrap();
+        let err = handle
+            .member_set_role(member_id, MemberRole::Admin)
+            .unwrap_err();
+        assert!(err.to_string().contains("a minor cannot hold admin rank"));
+        handle.member_set_minor(member_id, false).unwrap();
+
+        // Tombstoned rows refuse.
+        let mut gone = mk_row(MemberRole::Viewer);
+        gone.removed = Some(crate::vault::templates::now_secs());
+        crate::vault::members::write_member(&path, &gone).unwrap();
+        let err = handle
+            .member_set_role(member_id, MemberRole::Editor)
+            .unwrap_err();
+        assert!(err.to_string().contains("that member row is gone"));
+
+        // Demotion strips keywraps: seed an admin row whose device
+        // carries a keywrap, demote, the wrap dies. The acting (owner)
+        // device's own wrap survives.
+        let admin_id = uuid::Uuid::new_v4();
+        let mut admin = mk_row(MemberRole::Admin);
+        admin.id = admin_id;
+        admin.identity_signing_pubkey = None;
+        crate::vault::members::write_member(&path, &admin).unwrap();
+        let admin_device = uuid::Uuid::new_v4();
+        crate::vault::members::write_device_binding(
+            &path,
+            &crate::vault::members::DeviceBinding {
+                device_id: admin_device,
+                member_id: admin_id,
+            },
+        )
+        .unwrap();
+        super::super::write_vault_file(
+            &path.join(format!("meta/keywrap/{admin_device}.json")),
+            br#"{"device_id":"x"}"#,
+        )
+        .unwrap();
+        handle
+            .member_set_role(admin_id, MemberRole::Viewer)
+            .unwrap();
+        assert!(
+            !path
+                .join(format!("meta/keywrap/{admin_device}.json"))
+                .exists()
+        );
+    }
+
     fn leave_record_files_lists_and_execution_leaves_traces() {
         let (_temp, mut handle, _pw) = family_vault();
         let (shared, _kit) = setup_family_vault(&mut handle).unwrap();
