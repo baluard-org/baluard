@@ -33,6 +33,7 @@ const TL_KINDS = {
   "member-reset": "people.tlMemberReset",
   "identity-rotated": "people.tlIdentityRotated",
   "role-changed": "people.tlRoleChanged",
+  "member-role-changed": "people.tlRoleChanged",
   "ownership-transferred": "people.tlOwnershipTransferred",
   "collection-created": "people.tlCollectionCreated",
   "collection-deleted": "people.tlCollectionDeleted",
@@ -69,6 +70,8 @@ export default function PeopleTab() {
   const [emailDraft, setEmailDraft] = createSignal("");
   const [seatError, setSeatError] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
+  // Role change in flight: the member id whose select is disabled.
+  const [roleBusyId, setRoleBusyId] = createSignal(null);
   const [yourRole, setYourRole] = createSignal(null);
   // §4.8-3: destructive actions (remove / reset / transfer). Each opens a
   // typed-confirmation modal; the confirm word is the member's name.
@@ -256,6 +259,24 @@ export default function PeopleTab() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function changeRole(member, role) {
+    if (role === m_role(member)) return; // no-op select flicker
+    setRoleBusyId(member.id);
+    try {
+      await daemon("members.set_role", { member_id: member.id, role });
+      toastSuccess(t("people.roleChanged"));
+      await reloadAll();
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setRoleBusyId(null);
+    }
+  }
+
+  function m_role(member) {
+    return member.role;
   }
 
   async function reloadAll() {
@@ -672,6 +693,19 @@ export default function PeopleTab() {
                     >
                       {t("people.claim")}
                     </button>
+                  </Show>
+                  <Show when={(yourRole() === "owner" || yourRole() === "admin") && m.role !== "owner"}>
+                    <select
+                      value={m.role}
+                      disabled={busy() || roleBusyId() === m.id}
+                      onChange={(e) => changeRole(m, e.currentTarget.value)}
+                      class="px-1.5 py-1 rounded-lg border border-[var(--color-border)] bg-transparent text-[10px] font-bold text-[var(--color-muted)] cursor-pointer disabled:opacity-50"
+                      aria-label={t("people.roleSelectLabel")}
+                    >
+                      <option value="editor">{t("people.roleEditor")}</option>
+                      <option value="viewer">{t("people.roleViewer")}</option>
+                      <option value="admin">{t("people.roleAdmin")}</option>
+                    </select>
                   </Show>
                   <Show when={yourRole() === "owner" || yourRole() === "admin"}>
                     <button
