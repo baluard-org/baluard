@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -228,14 +229,66 @@ fun PeopleScreen(
                 }
             }
 
-            // ── Join queue ── introductions waiting for approval.
-            if (joinRequests.isNotEmpty()) {
-                item {
-                    SectionCard(
-                        title = t("people.joinRequests"),
-                        contentPadding = PaddingValues(vertical = 4.dp),
+            // ── Join queue ── the admin pastes the joiner's out-of-band
+            // intro code here; staged requests wait below for approval.
+            // Admin surface: staging is manage-gated daemon-side.
+            if (canOffboard) item {
+                var stageIntro by remember { mutableStateOf("") }
+                var stageBusy by remember { mutableStateOf(false) }
+                var stageMsg by remember { mutableStateOf<String?>(null) }
+                SectionCard(
+                    title = t("people.joinRequests"),
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
                     ) {
-                        joinRequests.forEach { req ->
+                        BaluardTextField(
+                            value = stageIntro,
+                            onValueChange = { stageIntro = it; stageMsg = null },
+                            label = t("people.stageIntro"),
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            enabled = !stageBusy,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = {
+                                stageBusy = true
+                                stageMsg = null
+                                scope.launch {
+                                    try {
+                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                            repo.joinRequestsStage(vault, stageIntro.trim())
+                                        }
+                                        stageIntro = ""
+                                        stageMsg = t("people.staged")
+                                        refreshAll()
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        val msg = e.message?.removePrefix("detail=") ?: ""
+                                        stageMsg = msg.ifBlank { t("error.generic") }
+                                    }
+                                    stageBusy = false
+                                }
+                            },
+                            enabled = !stageBusy && stageIntro.isNotBlank(),
+                        ) {
+                            Text(if (stageBusy) t("common.sending") else t("common.save"))
+                        }
+                    }
+                    stageMsg?.let {
+                        Text(
+                            it,
+                            color = if (it == t("people.staged")) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                        )
+                    }
+                    joinRequests.forEach { req ->
                             Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
                                 Text(req.displayName, style = MaterialTheme.typography.bodyLarge)
                                 req.email?.let {
@@ -281,7 +334,6 @@ fun PeopleScreen(
                         }
                     }
                 }
-            }
 
             // ── Access-request inbox ── members asking for collections.
             if (accessAsks.isNotEmpty()) {

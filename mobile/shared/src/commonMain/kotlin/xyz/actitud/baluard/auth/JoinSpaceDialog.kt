@@ -33,6 +33,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import xyz.actitud.baluard.data.UnlockResult
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.platform.platformLogE
 import xyz.actitud.baluard.platform.copyToClipboard
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.BaluardTextField
@@ -168,6 +169,14 @@ fun JoinSpaceDialog(
                                     if (introCode.isBlank()) {
                                         errorMsg = t("error.generic")
                                     } else {
+                                        // E2E builds surface the one-time reply
+                                        // on logcat so the two-phone harness can
+                                        // hand it to the admin without scraping
+                                        // the screen. Never compiled into
+                                        // release (BuildConfig gate).
+                                        if (xyz.actitud.baluard.platform.e2eBuild) {
+                                            platformLogE("JoinSpace", "intro=$introCode")
+                                        }
                                         phase = "waiting"
                                     }
                                 }.onFailure {

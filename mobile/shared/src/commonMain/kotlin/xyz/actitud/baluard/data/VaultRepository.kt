@@ -410,6 +410,13 @@ class VaultRepository {
     suspend fun membersList(vault: MobileVault): String = vault.membersList()
     suspend fun memberInvite(vault: MobileVault, payload: String): String =
         vault.memberInvite(payload)
+    /** Stage an out-of-band intro code into the join queue. */
+    suspend fun joinRequestsStage(vault: MobileVault, introCode: String): String =
+        vault.joinRequestsStage(
+            kotlinx.serialization.json.buildJsonObject {
+                put("intro_code", kotlinx.serialization.json.JsonPrimitive(introCode.trim()))
+            }.toString(),
+        )
     suspend fun joinRequestsList(vault: MobileVault): String = vault.joinRequestsList()
     suspend fun joinRequestsApprove(vault: MobileVault, reqId: String): String =
         vault.joinRequestsApprove("{\"req_id\":\"$reqId\"}")
