@@ -778,7 +778,10 @@
     "stageBtn": "Encolar",
     "staged": "Solicitud en cola para aprobar.",
     "roleChanged": "Rol actualizado.",
-    "roleSelectLabel": "Cambiar rol"
+    "roleSelectLabel": "Cambiar rol",
+    "demoteTitle": "Quitar acceso de administrador",
+    "demoteBody": "Quitar el rol de administrador a {name} pierde ese acceso de inmediato. Conserva su cuenta y el acceso actual a entradas, pero ya no podrá gestionar miembros, llaves ni colecciones.",
+    "demoteConfirm": "Quitar admin"
   },
   "join": {
     "joinLink": "¿Te invitaron a una bóveda compartida?",

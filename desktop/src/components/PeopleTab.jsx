@@ -262,7 +262,13 @@ export default function PeopleTab() {
   }
 
   async function changeRole(member, role) {
-    if (role === m_role(member)) return; // no-op select flicker
+    if (role === member.role) return; // no-op select flicker
+    // Demoting an admin strips their keywraps and admin powers on the
+    // next sync — typed confirm, same bar as reset/remove.
+    if (member.role === "admin") {
+      setPendingAction({ kind: "demote", member, role });
+      return;
+    }
     setRoleBusyId(member.id);
     try {
       await daemon("members.set_role", { member_id: member.id, role });
@@ -273,10 +279,6 @@ export default function PeopleTab() {
     } finally {
       setRoleBusyId(null);
     }
-  }
-
-  function m_role(member) {
-    return member.role;
   }
 
   async function reloadAll() {
@@ -390,6 +392,9 @@ export default function PeopleTab() {
       } else if (action.kind === "transfer") {
         await daemon("members.transfer", { member_id: id });
         toastSuccess(t("people.transferDone"));
+      } else if (action.kind === "demote") {
+        await daemon("members.set_role", { member_id: id, role: action.role });
+        toastSuccess(t("people.roleChanged"));
       } else if (action.kind === "claim") {
         const selfId = members().find((r) => r.is_self)?.id;
         if (!selfId) {

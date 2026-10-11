@@ -699,6 +699,7 @@ internal val EN: Map<String, String> = mapOf(
         "people.actionReset" to "Reset",
         "people.actionRole" to "Role",
         "people.roleDesc" to "Pick the role for this member. Admins manage members and see everything.",
+        "people.roleDemoteWarn" to "Demoting removes their admin access immediately.",
         "people.actionRemove" to "Remove",
         "people.removeTitle" to "Remove member",
         "people.removeBody" to "{name} loses access on their next sync. Their key material is retired and the space keys rotate.",
