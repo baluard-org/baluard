@@ -193,7 +193,10 @@ fun VaultHomeScreen(
                     modifier = Modifier.testTag(E2eTags.LIST_ADD),
                 )
                     TopBarActionIcon(Icons.Default.Password, t("generator.title"), onOpenGenerator)
-                    TopBarActionIcon(Icons.Default.Settings, t("settings.title"), onOpenSettings)
+                    TopBarActionIcon(
+                        Icons.Default.Settings, t("settings.title"), onOpenSettings,
+                        modifier = Modifier.testTag(E2eTags.HOME_SETTINGS),
+                    )
                     TopBarActionIcon(
                     Icons.Default.Lock, t("vault.lockVault"), onLock,
                     modifier = Modifier.testTag(E2eTags.LIST_LOCK),

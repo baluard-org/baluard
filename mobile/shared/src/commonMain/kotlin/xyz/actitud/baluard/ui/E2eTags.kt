@@ -29,6 +29,7 @@ object E2eTags {
     const val LIST_ROW = "e2e/list/row"
     const val LIST_ADD = "e2e/list/add"
     const val LIST_LOCK = "e2e/list/lock"
+    const val HOME_SETTINGS = "e2e/home/settings"
 
     // Cipher editor.
     const val EDIT_NAME = "e2e/edit/name"

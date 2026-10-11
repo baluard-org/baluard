@@ -1,0 +1,53 @@
+# Roles matrix — editor leg (roles journey).
+# Assumes: the box has set this device's member to editor and granted
+# Write on a dedicated collection, so an unfiled add routes there.
+appId: xyz.actitud.baluard
+---
+- launchApp
+- tapOn:
+    id: android:id/button2
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "e2e/unlock/password"
+    timeout: 20000
+- tapOn:
+    id: "e2e/unlock/password"
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- hideKeyboard
+- tapOn:
+    id: "e2e/unlock/submit"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 45000
+# Editor probe: a new entry files into the granted collection and is
+# searchable (the hub shows categories, so search before asserting).
+- tapOn:
+    id: "e2e/list/add"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/edit/name"
+    timeout: 20000
+- tapOn:
+    id: "e2e/edit/name"
+- inputText: "Roles Entry"
+- hideKeyboard
+# Save sits below the fold — scroll to it, let the scroll settle.
+- scrollUntilVisible:
+    element:
+      id: "e2e/edit/save"
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn:
+    id: "e2e/edit/save"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 45000
+- tapOn:
+    id: "e2e/list/search"
+- inputText: "Roles Entry"
+- extendedWaitUntil:
+    visible: "Roles Entry"
+    timeout: 20000
