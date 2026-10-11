@@ -702,6 +702,8 @@ internal val ES: Map<String, String> = mapOf(
         "people.claimBody" to "¿Tomar la propiedad de {name}? Pasa a admin y puede ser propietario de nuevo más tarde.",
         "people.claimDone" to "Ya eres el propietario",
         "people.actionReset" to "Restablecer",
+        "people.actionRole" to "Rol",
+        "people.roleDesc" to "Elige el rol de este miembro. Los administradores gestionan miembros y ven todo.",
         "people.actionRemove" to "Quitar",
         "people.removeTitle" to "Quitar miembro",
         "people.removeBody" to "{name} pierde el acceso en su próxima sincronización. Sus claves se retiran y las claves del espacio rotan.",

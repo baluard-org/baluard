@@ -668,6 +668,8 @@ internal val PT: Map<String, String> = mapOf(
         "people.claimBody" to "Assumir a propriedade de {name}? Passa a admin e pode ser proprietário de novo mais tarde.",
         "people.claimDone" to "Você agora é o proprietário",
         "people.actionReset" to "Redefinir",
+        "people.actionRole" to "Papel",
+        "people.roleDesc" to "Escolha o papel deste membro. Administradores gerenciam membros e veem tudo.",
         "people.actionRemove" to "Remover",
         "people.removeTitle" to "Remover membro",
         "people.removeBody" to "{name} perde o acesso na próxima sincronização. O material de chave dele é aposentado e as chaves do espaço rotacionam.",
