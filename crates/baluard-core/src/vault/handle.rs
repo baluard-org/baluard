@@ -760,6 +760,145 @@ impl VaultHandle {
         )
     }
 
+    /// Change a member's role (admin surface). The family-rules mirror
+    /// of invites: no second Owner ever (ownership moves via transfer
+    /// or claim), minors never hold admin rank, pair Spaces cap at
+    /// editor/viewer, and admin rank demands the same verified contact
+    /// the invite path demands. Key material follows the role: demotion
+    /// strips the demoted member's Root-Key keywraps; promotion mints
+    /// one per bound device (flipped vaults only — unflipped vaults
+    /// keep the Root Key with every member, so there is nothing to
+    /// move). Caller (runtime) owns the quorum gate.
+    pub fn member_set_role(
+        &mut self,
+        member_id: Uuid,
+        new_role: crate::vault::members::MemberRole,
+    ) -> Result<serde_json::Value, BaluardError> {
+        use crate::vault::members::MemberRole;
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let mut row = crate::vault::members::list_members(&self.path)?
+            .into_iter()
+            .find(|m| m.id == member_id)
+            .ok_or_else(|| VaultError::InvalidOperation("that member row does not exist".into()))?;
+        if row.reset.is_some() || row.removed.is_some() {
+            return Err(VaultError::InvalidOperation("that member row is gone".into()).into());
+        }
+        if row.role == MemberRole::Owner {
+            return Err(VaultError::InvalidOperation(
+                "ownership moves via transfer or claim, not a role edit".into(),
+            )
+            .into());
+        }
+        if new_role == MemberRole::Owner {
+            return Err(VaultError::InvalidOperation(
+                "ownership cannot be assigned; use transfer or claim".into(),
+            )
+            .into());
+        }
+        if new_role == MemberRole::Admin {
+            if crate::vault::family::minor_record_exists(&self.path, &member_id) {
+                return Err(
+                    VaultError::InvalidOperation("a minor cannot hold admin rank".into()).into(),
+                );
+            }
+            if crate::vault::space::is_pair(&self.path) {
+                return Err(VaultError::InvalidOperation(
+                    "a two-person space shares as editor or viewer".into(),
+                )
+                .into());
+            }
+            // Same trust dial as invites: admin rank hands out the Root
+            // Key (keywrap below), so the member needs a verified
+            // contact binding their identity to their device.
+            let flipped = crate::vault::space_meta::shape_flipped(&self.path);
+            if flipped {
+                let Some(id_pub) = row.identity_signing_pubkey.as_deref() else {
+                    return Err(VaultError::InvalidOperation(
+                        "admin rank requires a verified contact for this member (exchange contact cards first)".into(),
+                    )
+                    .into());
+                };
+                let key = self.contacts_key()?;
+                if crate::vault::contacts::contact_trust(&self.path, &key, id_pub)
+                    != Some(crate::vault::contacts::ContactTrust::Verified)
+                {
+                    return Err(VaultError::InvalidOperation(
+                        "admin rank requires a verified contact for this member (run the Level 2 code check first)".into(),
+                    )
+                    .into());
+                }
+            }
+        }
+        let old_role = row.role;
+        if old_role == new_role {
+            return Ok(serde_json::json!({
+                "changed": false,
+                "member_id": member_id.to_string(),
+                "role": new_role,
+            }));
+        }
+        row.role = new_role;
+        crate::vault::members::write_member(&self.path, &row)?;
+
+        let flipped = crate::vault::space_meta::shape_flipped(&self.path);
+        let mut keywraps = 0usize;
+        if flipped {
+            if matches!(old_role, MemberRole::Admin) {
+                // device_maps_to_admin now reads Editor/Viewer for this
+                // member's devices, so the wholesale strip removes
+                // exactly their wraps and nothing else.
+                keywraps = self.strip_member_keywraps();
+            } else if new_role == MemberRole::Admin {
+                let root = self.unlocked().root()?.clone();
+                let reg = self.device_manager.registry.clone();
+                for binding in crate::vault::members::list_device_bindings(&self.path, member_id) {
+                    let Some(entry) = reg.devices.get(&binding.device_id) else {
+                        continue;
+                    };
+                    let Ok(enc) = hex::decode(&entry.encryption_public_key) else {
+                        continue;
+                    };
+                    let Ok(enc32) = <[u8; 32]>::try_from(enc.as_slice()) else {
+                        continue;
+                    };
+                    let recipient = x25519_dalek::PublicKey::from(enc32);
+                    let Ok((eph, ct, tag)) =
+                        hpke_wrap::wrap_key(root.as_bytes(), &recipient, "root-key-keywrap")
+                    else {
+                        continue;
+                    };
+                    let keywrap = serde_json::json!({
+                        "device_id": binding.device_id.to_string(),
+                        "ephemeral_public": hex::encode(eph),
+                        "encrypted_key": hex::encode(ct),
+                        "tag": hex::encode(tag),
+                    });
+                    super::write_vault_file(
+                        &self
+                            .path
+                            .join(format!("meta/keywrap/{}.json", binding.device_id)),
+                        serde_json::to_string_pretty(&keywrap).unwrap().as_bytes(),
+                    )?;
+                    keywraps += 1;
+                }
+            }
+        }
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::MemberRoleChanged,
+            format!("role changed from {old_role:?} to {new_role:?}"),
+        );
+        Ok(serde_json::json!({
+            "changed": true,
+            "member_id": member_id.to_string(),
+            "from": old_role,
+            "role": new_role,
+            "keywraps": keywraps,
+        }))
+    }
+
     /// Read the minor flag back (admin surface; absence = false). A
     /// damaged record errors instead of silently clearing the flag.
     pub fn member_minor_status(&self, member_id: Uuid) -> Result<bool, BaluardError> {

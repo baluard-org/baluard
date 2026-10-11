@@ -4360,6 +4360,44 @@ impl VaultState {
             .map_err(|e| e.to_string())
     }
 
+    /// Role change (admin surface). Quorum-gated like the other member
+    /// lifecycle ops: the digest binds member id and target role so two
+    /// admins confirming the same change approve one ask.
+    pub async fn member_set_role(&self, payload: &str) -> Result<String, String> {
+        let partial: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let member_id = partial["member_id"]
+            .as_str()
+            .ok_or("member_id is required")?;
+        let role = partial["role"].as_str().ok_or("role is required")?;
+        let uuid =
+            uuid::Uuid::parse_str(member_id).map_err(|e| format!("Invalid member id: {e}"))?;
+        if matches!(role, "owner") {
+            return Err("ownership moves via transfer or claim, not a role edit".into());
+        }
+        let parsed = serde_json::from_value::<baluard_core::vault::members::MemberRole>(
+            serde_json::json!(role),
+        )
+        .map_err(|_| "role must be one of: admin, editor, viewer".to_string())?;
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        if let Err(e) = handle.assert_op_quorum(
+            "member_role",
+            &serde_json::json!({ "member_id": member_id, "to": role }),
+        ) {
+            drop(guard);
+            self.ship_pending_approval().await;
+            return Err(e.to_string());
+        }
+        handle
+            .member_set_role(uuid, parsed)
+            .map(|v| v.to_string())
+            .map_err(|e| e.to_string())
+    }
+
     /// Family-spaces §2: record the vault's purpose — `org` from a
     /// personal vault (the flip journey's first step) or `family`
     /// through creation only. Core gates both; the route exists so the

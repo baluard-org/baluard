@@ -145,6 +145,40 @@ pub fn write_member(vault_path: &Path, member: &MemberFile) -> Result<(), Baluar
 }
 
 /// Write (or replace) one device-to-member binding.
+/// All device bindings recorded under one member's subtree. Missing
+/// directory reads as empty; malformed files are skipped (the same
+/// tolerance the role/device lookups use).
+pub fn list_device_bindings(vault_path: &Path, member_id: Uuid) -> Vec<DeviceBinding> {
+    let mut out = Vec::new();
+    let dir = vault_path
+        .join(MEMBERS_DIR)
+        .join(member_id.to_string())
+        .join("devices");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(id_str) = name.strip_suffix(".json") else {
+            continue;
+        };
+        // The filename must be a UUID; the payload's device_id is the
+        // authority and the member filter runs below.
+        if Uuid::parse_str(id_str).is_err() {
+            continue;
+        }
+        let Ok(json) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        if let Ok(b) = serde_json::from_str::<DeviceBinding>(&json) {
+            if b.member_id == member_id {
+                out.push(b);
+            }
+        }
+    }
+    out
+}
+
 pub fn write_device_binding(
     vault_path: &Path,
     binding: &DeviceBinding,

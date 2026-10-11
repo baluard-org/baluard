@@ -33,6 +33,9 @@ pub enum ShareEventKind {
     MemberJoined,
     MemberRemoved,
     MemberReset,
+    /// Admin changed a member's role (the role-change wave). Kebab-case
+    /// serde keeps this additive for readers of older event files.
+    MemberRoleChanged,
     OwnershipTransferred,
     OwnershipClaimed,
     IdentityRotated,

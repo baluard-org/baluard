@@ -367,6 +367,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "members.claim",
     "members.set_email",
     "members.set_minor",
+    "members.set_role",
     "members.leave",
     // members.leave_list is a read query: no cover commit, no nudge.
     "members.leave_approve",
@@ -5409,6 +5410,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(()) => ok_resp("{}", token_str),
             Err(e) => err_response(e),
         },
+        // Role change: the admin lifecycle op for promotions and
+        // demotions (keywraps follow the role core-side).
+        "members.set_role" => match state.member_set_role(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
         // Family-spaces §2: purpose is set once — org from a personal
         // vault (the flip journey's first step), family only through
         // creation.
@@ -6776,6 +6783,7 @@ mod tests {
             "space.settings_set",
             "space.set_purpose",
             "members.set_minor",
+            "members.set_role",
             "members.leave",
             "members.leave_list",
             "members.leave_approve",
