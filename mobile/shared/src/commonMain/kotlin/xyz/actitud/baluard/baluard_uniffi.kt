@@ -999,6 +999,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1187,6 +1189,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_remove(`ptr`: Pointer,`memberIds`: RustBuffer.ByValue,`offlineOverride`: Byte,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_reset(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_set_role(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,`role`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_transfer(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,
     ): Long
@@ -1618,6 +1622,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_reset(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_set_role(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_transfer(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_members_list(
@@ -2008,6 +2014,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_reset() != 8510.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_set_role() != 20685.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_transfer() != 445.toShort()) {
@@ -3496,6 +3505,13 @@ public interface MobileVaultInterface {
      * Returns `{successor_id, reset_code}`.
      */
     suspend fun `memberReset`(`memberId`: kotlin.String): kotlin.String
+    
+    /**
+     * Change a member's role (admin surface). Keywraps follow the
+     * role core-side; admin rank demands a verified contact on the
+     * member and refuses minors. Returns the change JSON.
+     */
+    suspend fun `memberSetRole`(`memberId`: kotlin.String, `role`: kotlin.String): kotlin.String
     
     /**
      * Transfer ownership to a member (owner-only; core-gated). The
@@ -5679,6 +5695,32 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_reset(
                 thisPtr,
                 FfiConverterString.lower(`memberId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Change a member's role (admin surface). Keywraps follow the
+     * role core-side; admin rank demands a verified contact on the
+     * member and refuses minors. Returns the change JSON.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberSetRole`(`memberId`: kotlin.String, `role`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_set_role(
+                thisPtr,
+                FfiConverterString.lower(`memberId`),FfiConverterString.lower(`role`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
