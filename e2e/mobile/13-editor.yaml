@@ -51,3 +51,21 @@ appId: xyz.actitud.baluard
 - extendedWaitUntil:
     visible: "Roles Entry"
     timeout: 20000
+
+# The admin leg greps this device's card from logcat; opening Settings
+# here fires the card log and proves the verification-code row renders
+# for a non-admin member.
+- tapOn:
+    id: "e2e/home/settings"
+# The verification-code row sits in the vault section at the bottom of
+# Settings; uiautomator only reports visible nodes.
+# The row's full text carries the code after the colon, so match by
+# regex — Maestro text selectors match the whole node exactly.
+- scrollUntilVisible:
+    element:
+      text: "Your verification code:.*"
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      text: "Your verification code:.*"
+    timeout: 20000

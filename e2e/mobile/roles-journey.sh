@@ -135,6 +135,14 @@ leg editor 13-editor.yaml roles-editor
 # Trust dial (box-side): promoting a joined member without the Level 2
 # verified-contact ceremony must refuse...
 echo "== leg: admin (trust dial, then the real check) =="
+# Make the refusal probe deterministic: a previous run may have already
+# verified this contact. Drop the row so the dial re-arms, then promote
+# through the real Level 2 ceremony below.
+# Empty the book: this sandbox's only contact is the subject, and any
+# leftover verified row would skip the dial. The import below re-adds.
+while read -r PK; do
+  [[ -n "$PK" ]] && B contacts remove "$PK" > /dev/null 2>&1 || true
+done < <(B contacts list | awk '/^[0-9a-f]{16,}/ {print $1}')
 if B members set-role "$SUBJECT" admin 2>"$WORK/roles-admin.err"; then
   echo "FAIL: admin promotion should have been refused (trust dial)"
   exit 1
@@ -161,6 +169,7 @@ PUBKEY="$(awk '$2 == "channel" || $2 == "verified" {print $1; exit}' <<<"$CL")"
 [[ -n "$PUBKEY" ]] || { echo "FAIL: member contact not in the address book"; exit 1; }
 B contacts verify "$PUBKEY"
 B members set-role "$SUBJECT" admin > /dev/null
+B sync pull > /dev/null 2>&1 || true
 B sync push > /dev/null
 leg admin 13-admin.yaml roles-admin
 

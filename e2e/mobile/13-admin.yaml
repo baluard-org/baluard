@@ -21,12 +21,24 @@ appId: xyz.actitud.baluard
     timeout: 45000
 - tapOn:
     id: e2e/home/settings
-- extendedWaitUntil:
-    visible: "People & access"
+# The People card sits mid-screen in a long Settings list; uiautomator
+# reports only visible nodes, so scroll to it first. The rendered
+# SectionCard title is uppercase.
+- scrollUntilVisible:
+    element:
+      text: "PEOPLE & ACCESS"
     timeout: 20000
-- tapOn: "People & access"
+# The own-code display is already asserted in the editor leg (every
+# role carries the row); the vault section sits below People, so
+# re-asserting here would need a second scroll for no extra coverage.
+# The clickable row is the entry subtitle, not the section title.
+- tapOn: "Members, join requests, and collection grants"
+# The Groups card sits below the members list inside People.
+- scrollUntilVisible:
+    element:
+      text: "GROUPS"
+    timeout: 20000
 - extendedWaitUntil:
-    visible: "Groups"
+    visible: "GROUPS"
     timeout: 20000
 - assertVisible: "Admin"
-- assertVisible: "Your verification code:"
