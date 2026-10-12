@@ -95,7 +95,8 @@ if [[ ! "$PHONE_DEV" =~ ^[0-9a-f-]{36}$ ]]; then
   exit 1
 fi
 SUBJECT=""
-for M in $(B members list | awk '$2 != "owner" && NF > 2 {print $1}'); do
+MLIST="$(B members list)"
+for M in $(awk '$2 != "owner" && NF > 2 {print $1}' <<<"$MLIST"); do
   if grep -rq "\"device_id\"[[:space:]]*:[[:space:]]*\"$PHONE_DEV\"" \
       "$BALUARD_DATA_DIR/vaults/$SLUG/meta/members/$M/devices/" 2>/dev/null; then
     SUBJECT="$M"
@@ -110,21 +111,29 @@ echo "subject member: $SUBJECT (device $PHONE_DEV)"
 # Grants never lift rank: a viewer cannot be handed Write. Normalize to
 # editor first so reruns after a mid-leg crash can always re-grant.
 B members set-role "$SUBJECT" editor > /dev/null
-if ! B collections list | grep -qF "$COLLECTION"; then
+# Resolve by id: capture the list fully (early-exit pipes make the CLI
+# panic on EPIPE, and pipefail then flips the guard), create only when
+# the name is truly absent, and grant by id so duplicate names from
+# older runs cannot break resolution.
+CLIST="$(B collections list)"
+CID="$(grep -F "  $COLLECTION  (" <<<"$CLIST" | head -1 | awk '{print $1}')"
+if [[ -z "$CID" ]]; then
   B collections create "$COLLECTION" > /dev/null
   echo "created collection $COLLECTION"
+  CLIST="$(B collections list)"
+  CID="$(grep -F "  $COLLECTION  (" <<<"$CLIST" | head -1 | awk '{print $1}')"
 fi
-# grant resolves the collection by exact name
-B collections grant "$COLLECTION" --kind member --target-id "$SUBJECT" --access write > /dev/null
+[[ -n "$CID" ]] || { echo "FAIL: could not resolve $COLLECTION"; exit 1; }
+B collections grant "$CID" --kind member --target-id "$SUBJECT" --access write > /dev/null
 B sync push > /dev/null
 echo "Write grant on $COLLECTION pushed"
 
 leg viewer 13-viewer.yaml roles-viewer
 leg editor 13-editor.yaml roles-editor
 
-# Trust dial (box-side, honest boundary): promoting a joined member
-# without the Level 2 verified-contact ceremony must refuse.
-echo "== leg: admin (expect refusal) =="
+# Trust dial (box-side): promoting a joined member without the Level 2
+# verified-contact ceremony must refuse...
+echo "== leg: admin (trust dial, then the real check) =="
 if B members set-role "$SUBJECT" admin 2>"$WORK/roles-admin.err"; then
   echo "FAIL: admin promotion should have been refused (trust dial)"
   exit 1
@@ -133,7 +142,26 @@ grep -q "verified contact" "$WORK/roles-admin.err" ||
   { echo "FAIL: unexpected refusal: $(cat "$WORK/roles-admin.err")"; exit 1; }
 echo "refused as designed: $(cat "$WORK/roles-admin.err")"
 
-# Leave the member as it started.
+# ...then run the real Level 2 check. The member's signed card is the
+# out-of-band share: in e2e the phone logs it (Settings shows every
+# member's verification code; the card rides the e2e log line). Import
+# it, record the code match, and promote. The phone leg asserts the
+# admin surfaces.
+CARD="$(adb -s "$SERIAL" logcat -d 2>/dev/null | grep -o 'ContactCard.*card=[A-Za-z0-9_=-]*' | tail -1 | sed 's/.*card=//')"
+[[ -n "$CARD" ]] || { echo "FAIL: member card code not found in logcat (open Settings on the phone first)"; exit 1; }
+B contacts import "$CARD" > /dev/null
+# The trust word sits in field 2 of each book row (own card is never
+# in the book).
+CL="$(B contacts list)"
+PUBKEY="$(awk '$2 == "channel" || $2 == "verified" {print $1; exit}' <<<"$CL")"
+[[ -n "$PUBKEY" ]] || { echo "FAIL: member contact not in the address book"; exit 1; }
+B contacts verify "$PUBKEY"
+B members set-role "$SUBJECT" admin > /dev/null
+B sync push > /dev/null
+leg admin 13-admin.yaml roles-admin
+
+# Leave the member as it started (demotion is allowed; only the owner
+# row is untouchable).
 B members set-role "$SUBJECT" editor > /dev/null
 B sync pull > /dev/null 2>&1 || true
 B sync push > /dev/null
