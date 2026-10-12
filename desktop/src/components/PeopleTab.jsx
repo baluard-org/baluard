@@ -64,6 +64,10 @@ export default function PeopleTab() {
   const [inviteCode, setInviteCode] = createSignal(null);
   const [inviteRole, setInviteRole] = createSignal("editor");
   const [inviteUsername, setInviteUsername] = createSignal("");
+const [verifyT, setVerifyT] = createSignal(null);
+const [verifyCode, setVerifyCode] = createSignal(null);
+const [verifyErr, setVerifyErr] = createSignal(null);
+const [verifyBusy, setVerifyBusy] = createSignal(false);
   // Member-email wave: the admin corrects a member's self-declared email
   // (the field is delta-frozen, so this route is the only writer).
   const [emailEdit, setEmailEdit] = createSignal(null); // member row | null
@@ -258,6 +262,40 @@ export default function PeopleTab() {
       toastError(sanitizeError(e, t));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function openVerify(member) {
+    setVerifyT(member);
+    setVerifyCode(null);
+    setVerifyErr(null);
+    try {
+      const res = JSON.parse(await daemon("contacts.list", {}));
+      const row = (res.contacts || []).find(
+        (c) => c.identity_signing_pubkey === member.identity_signing_pubkey,
+      );
+      if (row) setVerifyCode(row.verification_code);
+      else setVerifyErr(t("people.verifyMissing"));
+    } catch (e) {
+      setVerifyErr(sanitizeError(e, t));
+    }
+  }
+
+  async function confirmVerify() {
+    const m = verifyT();
+    if (!m) return;
+    setVerifyBusy(true);
+    try {
+      await daemon("contacts.mark_verified", {
+        identity_signing_pubkey: m.identity_signing_pubkey,
+      });
+      toastSuccess(t("people.verifiedToast"));
+      setVerifyT(null);
+      await reloadAll();
+    } catch (e) {
+      setVerifyErr(sanitizeError(e, t));
+    } finally {
+      setVerifyBusy(false);
     }
   }
 
@@ -699,6 +737,21 @@ export default function PeopleTab() {
                       {t("people.claim")}
                     </button>
                   </Show>
+                  <Show
+                    when={
+                      (yourRole() === "owner" || yourRole() === "admin") &&
+                      m.identity_signing_pubkey
+                    }
+                  >
+                    <button
+                      onClick={() => openVerify(m)}
+                      disabled={busy()}
+                      title={t("people.verifyDesc")}
+                      class="px-2 py-1 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {t("people.actionVerify")}
+                    </button>
+                  </Show>
                   <Show when={(yourRole() === "owner" || yourRole() === "admin") && m.role !== "owner"}>
                     <select
                       value={m.role}
@@ -1026,6 +1079,43 @@ export default function PeopleTab() {
           onConfirm={doConfirmedAction}
           onClose={closeAction}
         />
+      </Show>
+
+      {/* Level 2 contact check: compare codes out-of-band, then confirm. */}
+      <Show when={verifyT()}>
+        <div class="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4">
+          <div class="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+            <h3 class="text-sm font-bold mb-2">
+              {t("people.verifyTitle").replace("{name}", verifyT().display_name)}
+            </h3>
+            <p class="text-[10px] text-[var(--color-muted)] mb-3">{t("people.verifyDesc")}</p>
+            <Show
+              when={verifyCode()}
+              fallback={
+                <Show when={verifyErr()}>
+                  <p class="text-[10px] text-red-400">{verifyErr()}</p>
+                </Show>
+              }
+            >
+              <p class="font-mono text-base tracking-widest mb-3">{verifyCode()}</p>
+            </Show>
+            <div class="flex justify-end gap-2">
+              <button
+                onClick={() => setVerifyT(null)}
+                class="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs font-bold cursor-pointer"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                onClick={confirmVerify}
+                disabled={verifyBusy() || !verifyCode()}
+                class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+              >
+                {t("people.verifyConfirm")}
+              </button>
+            </div>
+          </div>
+        </div>
       </Show>
 
       {/* Member-email wave: the admin edits the frozen email. A simple
