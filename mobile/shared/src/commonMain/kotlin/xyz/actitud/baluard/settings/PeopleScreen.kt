@@ -493,7 +493,10 @@ fun PeopleScreen(
                                     // (the successor inherits Owner), but
                                     // removal still requires the owner row
                                     // gone first.
-                                    if (canOffboard && m.identityPub.isNotEmpty()) {
+                                    if (canOffboard &&
+                                        m.role != "owner" &&
+                                        m.identityPub.isNotEmpty()
+                                    ) {
                                         TextButton(onClick = {
                                             verifyTarget = m
                                             verifyCode = null

@@ -128,6 +128,7 @@ B collections grant "$CID" --kind member --target-id "$SUBJECT" --access write >
 B sync push > /dev/null
 echo "Write grant on $COLLECTION pushed"
 
+adb -s "$SERIAL" logcat -c 2>/dev/null || true  # card capture hygiene: this run only
 leg viewer 13-viewer.yaml roles-viewer
 leg editor 13-editor.yaml roles-editor
 
@@ -147,6 +148,9 @@ echo "refused as designed: $(cat "$WORK/roles-admin.err")"
 # member's verification code; the card rides the e2e log line). Import
 # it, record the code match, and promote. The phone leg asserts the
 # admin surfaces.
+# Cards are logged when a flow leg opens Settings (viewer/editor legs
+# both do); the buffer was cleared at run start, so the captured card
+# is from this run.
 CARD="$(adb -s "$SERIAL" logcat -d 2>/dev/null | grep -o 'ContactCard.*card=[A-Za-z0-9_=-]*' | tail -1 | sed 's/.*card=//')"
 [[ -n "$CARD" ]] || { echo "FAIL: member card code not found in logcat (open Settings on the phone first)"; exit 1; }
 B contacts import "$CARD" > /dev/null
