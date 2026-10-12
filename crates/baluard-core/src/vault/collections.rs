@@ -579,6 +579,17 @@ pub fn rename_collection(
     name: &str,
 ) -> Result<CollectionFile, BaluardError> {
     validate_name(name)?;
+    // Same uniqueness rule as creation: duplicate names make every
+    // name-based surface ambiguous.
+    if list_collections(vault_path, sgk)?
+        .into_iter()
+        .any(|(f, existing)| f.id != *id && existing.eq_ignore_ascii_case(name.trim()))
+    {
+        return Err(VaultError::InvalidOperation(format!(
+            "A collection named {name} already exists."
+        ))
+        .into());
+    }
     let (mut file, _) = open_collection(vault_path, sgk, id)?;
     let ck = unwrap_ck(&file, sgk)?;
     file.name_enc = seal_name(&ck, id, name.trim())?;
