@@ -1,0 +1,58 @@
+# Org joiner phone (dedicated device ONLY). Clones the organization
+# vault with this phone's own GitHub token (the invited collaborator
+# seat), joins by invite code, and waits while the founder phone
+# stages and approves the intro reply. The orchestrator acts during
+# the waiting hold; approval auto-unlocks in place.
+#
+#   MASTER_PW             joiner's master password
+#   BALUARD_E2E_PAT       THIS phone's GitHub account token
+#   BALUARD_E2E_REPO      repo name to clone
+#   BALUARD_E2E_INVITE    invite code minted on the founder phone
+appId: xyz.actitud.baluard
+appLaunchDelay: 3000
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: "android:id/button2"
+    optional: true
+- assertVisible: "Baluard"
+- tapOn: "Open an existing vault"
+- assertVisible: "GitHub"
+- tapOn: "GitHub"
+- tapOn: "Use an access token instead"
+- tapOn:
+    text: "Access token"
+- inputText: ${BALUARD_E2E_PAT}
+- hideKeyboard
+- tapOn: "Connect"
+- scrollUntilVisible:
+    element:
+      text: ".*${BALUARD_E2E_REPO}"
+    timeout: 30000
+- waitForAnimationToEnd
+- assertVisible: ".*${BALUARD_E2E_REPO}"
+- tapOn:
+    text: ".*${BALUARD_E2E_REPO}"
+- extendedWaitUntil:
+    visible: "Join a shared space"
+    timeout: 45000
+- tapOn: "Join a shared space"
+- tapOn: "Invite code"
+- inputText: ${BALUARD_E2E_INVITE}
+- tapOn: "Choose a master password"
+- inputText: ${MASTER_PW}
+- tapOn: "Confirm master password"
+- inputText: ${MASTER_PW}
+- hideKeyboard
+- tapOn: "Send request"
+- assertVisible: "Waiting for approval"
+- extendedWaitUntil:
+    notVisible: "Waiting for approval"
+    timeout: 240000
+# Approved: the org hub renders (viewer-scoped, likely without
+# entries yet — the hub search field is the stable marker).
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 45000
