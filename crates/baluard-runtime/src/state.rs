@@ -5200,6 +5200,30 @@ impl VaultState {
     /// Whether this device manages the space (holds the Root Key).
     /// The precise admin marker: collections_list branches on it, and
     /// unlike counting admin rows it holds for zero-collection vaults.
+    /// This device's member role, role-gated surfaces' source of truth.
+    /// Personal vaults (no member directory) are "owner" — the founder
+    /// manages. Flipped vaults: the row's role, even though admins hold
+    /// no Root Key there (isAdminDevice stays the key-holding signal).
+    pub async fn my_role(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let members_dir = self.vault_path.join("meta").join("members");
+        if !members_dir.is_dir() {
+            return Ok("owner".to_string());
+        }
+        Ok(
+            baluard_core::vault::members::member_role_for_device(
+                &self.vault_path,
+                handle.device_id,
+            )
+            .map(|r| format!("{r:?}").to_lowercase())
+            .unwrap_or_else(|| "owner".to_string()),
+        )
+    }
+
     pub async fn is_admin_device(&self) -> Result<bool, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
