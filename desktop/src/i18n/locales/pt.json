@@ -779,6 +779,12 @@
     "staged": "Pedido na fila para aprovar.",
     "roleChanged": "Papel atualizado.",
     "roleSelectLabel": "Mudar papel",
+    "actionVerify": "Verificar",
+    "verifyTitle": "Verificar {name}",
+    "verifyDesc": "Compare este código com o que o Baluard dele mostra junto ao código de verificação. A correspondência confirma a identidade.",
+    "verifyConfirm": "Os códigos coincidem",
+    "verifiedToast": "Contato verificado.",
+    "verifyMissing": "Ainda não há cartão de contato deste membro.",
     "demoteTitle": "Remover acesso de administrador",
     "demoteBody": "Rebaixar {name} remove o acesso de administrador imediatamente. A pessoa mantém a conta e o acesso atual às entradas, mas não poderá mais gerenciar membros, chaves nem coleções.",
     "demoteConfirm": "Rebaixar"

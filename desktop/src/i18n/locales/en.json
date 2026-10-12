@@ -779,6 +779,12 @@
     "staged": "Request staged for approval.",
     "roleChanged": "Role updated.",
     "roleSelectLabel": "Change role",
+    "actionVerify": "Verify",
+    "verifyTitle": "Verify {name}",
+    "verifyDesc": "Compare this code with the one their Baluard shows under their verification code. A match confirms identity.",
+    "verifyConfirm": "Codes match",
+    "verifiedToast": "Contact verified.",
+    "verifyMissing": "No contact card for this member yet.",
     "demoteTitle": "Remove admin access",
     "demoteBody": "Demoting {name} removes their admin access immediately. They keep their account and current entry access, but can no longer manage members, keys, or collections.",
     "demoteConfirm": "Demote"
