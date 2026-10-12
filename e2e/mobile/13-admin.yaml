@@ -1,0 +1,32 @@
+# Roles matrix — admin leg. The box verified this member's contact
+# (Level 2 code check) and promoted it to admin before this flow runs.
+# Asserts the admin surfaces a phone-side admin actually sees.
+appId: xyz.actitud.baluard
+---
+- launchApp:
+    clearState: false
+- tapOn:
+    id: android:id/button2
+    optional: true
+- tapOn:
+    id: e2e/unlock/password
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- hideKeyboard
+- tapOn:
+    id: e2e/unlock/submit
+# Admin's own code is visible on the People screen.
+- extendedWaitUntil:
+    visible:
+      id: e2e/list/search
+    timeout: 45000
+- tapOn:
+    id: e2e/home/settings
+- extendedWaitUntil:
+    visible: "People & access"
+    timeout: 20000
+- tapOn: "People & access"
+- extendedWaitUntil:
+    visible: "Groups"
+    timeout: 20000
+- assertVisible: "Admin"
+- assertVisible: "Your verification code:"
