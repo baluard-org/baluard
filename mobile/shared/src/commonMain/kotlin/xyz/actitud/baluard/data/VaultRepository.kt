@@ -78,6 +78,7 @@ data class MobileMemberInfo(
     val reset: Boolean = false,
     val removed: Boolean = false,
     val isSelf: Boolean = false,
+    val identityPub: String = "",
 )
 
 /** A user group (G13): id, name, and the member ids in it. */
@@ -413,6 +414,23 @@ class VaultRepository {
     /** Change a member's role (admin surface; keywraps follow core-side). */
     suspend fun memberSetRole(vault: MobileVault, memberId: String, role: String): String =
         vault.memberSetRole(memberId, role)
+
+    // Level 2 contact check: rows carry the verification code both
+    // sides compare out-of-band; verify records the match.
+    suspend fun contactsList(vault: MobileVault): String =
+        vault.contactsList()
+
+    suspend fun myContactCard(vault: MobileVault): String =
+        vault.myContactCard()
+
+    suspend fun contactImportCard(vault: MobileVault, card: String): String =
+        vault.contactImportCard(card)
+
+    suspend fun contactMarkVerified(vault: MobileVault, pubkey: String): String =
+        vault.contactMarkVerified(pubkey)
+
+    suspend fun contactRemove(vault: MobileVault, pubkey: String): String =
+        vault.contactRemove(pubkey)
     /** Stage an out-of-band intro code into the join queue. */
     suspend fun joinRequestsStage(vault: MobileVault, introCode: String): String =
         vault.joinRequestsStage(
@@ -689,6 +707,7 @@ class VaultRepository {
                 reset = (o["reset"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
                 removed = (o["removed"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
                 isSelf = (o["is_self"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+                identityPub = (o["identity_signing_pubkey"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
             ) else null
         }
     }

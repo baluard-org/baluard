@@ -115,6 +115,14 @@ fun PeopleScreen(
     var roleBusy by remember { mutableStateOf(false) }
     var roleErr by remember { mutableStateOf<String?>(null) }
 
+    // Level 2 contact check: this device's code (both sides compare),
+    // and the admin's per-member verify dialog with the member's code.
+    var myCode by remember { mutableStateOf<String?>(null) }
+    var verifyTarget by remember { mutableStateOf<MobileMemberInfo?>(null) }
+    var verifyCode by remember { mutableStateOf<String?>(null) }
+    var verifyBusy by remember { mutableStateOf(false) }
+    var verifyErr by remember { mutableStateOf<String?>(null) }
+
     suspend fun refreshAll() {
         runCatching {
             members = repo.listMembers(vault)
@@ -122,6 +130,12 @@ fun PeopleScreen(
             accessAsks = repo.listAccessAsks(vault)
             collections = repo.listCollectionsFull(vault)
             groups = repo.listGroups(vault)
+            myCode = runCatching {
+                val o = repo.myContactCard(vault)
+                ((kotlinx.serialization.json.Json.parseToJsonElement(o)
+                    as? kotlinx.serialization.json.JsonObject)
+                    ?.get("verification_code") as? kotlinx.serialization.json.JsonPrimitive)?.content
+            }.getOrNull()
         }.onFailure { loadError = it.message }
     }
 
@@ -418,6 +432,14 @@ fun PeopleScreen(
                     title = t("people.members"),
                     contentPadding = PaddingValues(vertical = 4.dp),
                 ) {
+                    myCode?.let { code ->
+                        Text(
+                            t("people.myCode") + " " + code,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                        )
+                    }
                     val live = members.filter { !it.removed && !it.reset }
                     val gone = members.filter { it.removed || it.reset }
                     live.forEach { m ->
@@ -471,6 +493,15 @@ fun PeopleScreen(
                                     // (the successor inherits Owner), but
                                     // removal still requires the owner row
                                     // gone first.
+                                    if (canOffboard && m.identityPub.isNotEmpty()) {
+                                        TextButton(onClick = {
+                                            verifyTarget = m
+                                            verifyCode = null
+                                            verifyErr = null
+                                        }) {
+                                            Text(t("people.actionVerify"))
+                                        }
+                                    }
                                     if (canOffboard && m.role != "owner") {
                                         TextButton(onClick = {
                                             roleTarget = m
@@ -915,6 +946,76 @@ fun PeopleScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showGroupCreate = false }) { Text(t("common.cancel")) }
+            },
+        )
+    }
+
+    verifyTarget?.let { m ->
+        AlertDialog(
+            onDismissRequest = { if (!verifyBusy) verifyTarget = null },
+            title = { Text(t("people.verifyTitle", m.name)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        t("people.verifyDesc"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (verifyCode == null && verifyErr == null) {
+                        LaunchedEffect(m.id) {
+                            runCatching {
+                                val o = kotlinx.serialization.json.Json.parseToJsonElement(
+                                    repo.contactsList(vault),
+                                ) as? kotlinx.serialization.json.JsonObject
+                                val rows = o?.get("contacts") as? kotlinx.serialization.json.JsonArray
+                                val row = rows?.firstOrNull { el ->
+                                    (el as? kotlinx.serialization.json.JsonObject)
+                                        ?.get("identity_signing_pubkey")
+                                        ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content } == m.identityPub
+                                } as? kotlinx.serialization.json.JsonObject
+                                verifyCode = row?.get("verification_code")
+                                    ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                                if (verifyCode == null) {
+                                    verifyErr = t("people.verifyMissing")
+                                }
+                            }.onFailure { verifyErr = t("error.generic") }
+                        }
+                    }
+                    verifyCode?.let { code ->
+                        Text(
+                            code,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        )
+                    }
+                    verifyErr?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !verifyBusy && verifyCode != null,
+                    onClick = {
+                        scope.launch {
+                            verifyBusy = true
+                            try {
+                                repo.contactMarkVerified(vault, m.identityPub)
+                                verifyTarget = null
+                                Toast.success(t("people.verifiedToast"))
+                                refreshAll()
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Throwable) {
+                                verifyErr = e.message?.removePrefix("detail=") ?: t("error.generic")
+                            }
+                            verifyBusy = false
+                        }
+                    },
+                ) { Text(t("people.verifyConfirm")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { verifyTarget = null }) { Text(t("common.cancel")) }
             },
         )
     }
