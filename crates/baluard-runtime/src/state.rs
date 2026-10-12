@@ -2530,6 +2530,7 @@ impl VaultState {
                     "reset": m.reset.is_some(),
                     "removed": m.removed.is_some(),
                     "identity_rotated_at": m.identity_rotated_at,
+                    "identity_signing_pubkey": m.identity_signing_pubkey,
                     "is_self": self_member_id == Some(m.id),
                 })
             })
@@ -3087,6 +3088,15 @@ impl VaultState {
         let req_id = handle
             .join_queue_submit(&intro_code)
             .map_err(|e| e.to_string())?;
+        // Seed the admin's address book with the joiner's signed card at
+        // Channel so the Level 2 code check can run while the request
+        // waits. A card-less introduction (old clients) stages fine.
+        if let Err(e) = handle.contacts_import_intro(&intro_code) {
+            let msg = e.to_string();
+            if !msg.contains("carries no contact card") {
+                return Err(msg);
+            }
+        }
         Ok(serde_json::json!({ "req_id": req_id.to_string() }).to_string())
     }
 
