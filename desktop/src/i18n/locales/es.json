@@ -779,6 +779,12 @@
     "staged": "Solicitud en cola para aprobar.",
     "roleChanged": "Rol actualizado.",
     "roleSelectLabel": "Cambiar rol",
+    "actionVerify": "Verificar",
+    "verifyTitle": "Verificar a {name}",
+    "verifyDesc": "Compara este código con el que muestra su Baluard junto a su código de verificación. Coincidir confirma la identidad.",
+    "verifyConfirm": "Los códigos coinciden",
+    "verifiedToast": "Contacto verificado.",
+    "verifyMissing": "Aún no hay tarjeta de contacto de este miembro.",
     "demoteTitle": "Quitar acceso de administrador",
     "demoteBody": "Quitar el rol de administrador a {name} pierde ese acceso de inmediato. Conserva su cuenta y el acceso actual a entradas, pero ya no podrá gestionar miembros, llaves ni colecciones.",
     "demoteConfirm": "Quitar admin"
