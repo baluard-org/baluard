@@ -2742,6 +2742,30 @@ fun SettingsScreen(
                         )
                     }
                     Column {
+                        // Level 2 contact check: every member carries a
+                        // verification code; guardians compare it out-of-band
+                        // before granting admin rank.
+                        var myContactCode by remember { mutableStateOf<String?>(null) }
+                        LaunchedEffect(vault) {
+                            runCatching {
+                                val o = repo?.myContactCard(vault) ?: return@runCatching
+                                val obj = kotlinx.serialization.json.Json.parseToJsonElement(o)
+                                    as? kotlinx.serialization.json.JsonObject
+                                myContactCode = (obj?.get("verification_code") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                                if (xyz.actitud.baluard.platform.e2eBuild) {
+                                    (obj?.get("card") as? kotlinx.serialization.json.JsonPrimitive)?.content?.let {
+                                        android.util.Log.e("ContactCard", "card=$it")
+                                    }
+                                }
+                            }
+                        }
+                        myContactCode?.let { code ->
+                            Text(
+                                text = t("people.myCode") + " " + code,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Text(
                             text = if (avatarB64.isEmpty()) t("settings.avatarTap") else t("settings.avatarChange"),
                             style = MaterialTheme.typography.bodyMedium,
