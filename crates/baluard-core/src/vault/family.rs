@@ -830,6 +830,130 @@ mod tests {
         );
     }
 
+    #[test]
+    fn member_revoke_rotates_the_collection_key() {
+        let (_temp, mut handle, _pw) = family_vault();
+        let (shared, _kit) = setup_family_vault(&mut handle).unwrap();
+        let path = handle.path.clone();
+        let sgk = handle.unlocked().sgk().unwrap().clone();
+
+        // A live Editor whose identity carries a real wrap key, so the
+        // grant mints a per-member wrap file.
+        let member_id = uuid::Uuid::new_v4();
+        let (wrap_secret, wrap_pub) = crate::crypto::hpke_wrap::generate_x25519_keypair();
+        let _ = wrap_secret;
+        let mut member = test_member_row(member_id, "Uncle Rob");
+        member.identity_wrap_pubkey = Some(hex::encode(wrap_pub.as_bytes()));
+        crate::vault::members::write_member(&path, &member).unwrap();
+
+        let roles = crate::vault::collections::create_collection(&path, &sgk, "Roles").unwrap();
+        crate::vault::collections::upsert_grant(
+            &path,
+            &sgk,
+            &roles.id,
+            crate::vault::collections::CollectionGrant {
+                target: crate::vault::collections::GrantTarget::Member { id: member_id },
+                access: crate::vault::collections::CollectionAccess::Write,
+                expires_at: None,
+            },
+        )
+        .unwrap();
+        let wrap_path = crate::vault::collections::grant_wrap_path(&path, &roles.id, &member_id);
+        assert!(wrap_path.exists(), "grant must mint the member wrap");
+
+        // One entry inside, so the rotation must re-encrypt it.
+        let input = crate::types::CipherInput {
+            name: "Shared Login".into(),
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("rob".into()),
+                password: Some("hunter2".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cipher_id = handle
+            .add_cipher_in_collection(&input, Some(roles.id))
+            .unwrap();
+
+        let (before, _) =
+            crate::vault::collections::open_collection(&path, &sgk, &roles.id).unwrap();
+        let old_ck = crate::vault::collections::unwrap_ck(&before, &sgk).unwrap();
+
+        handle
+            .collection_revoke(
+                roles.id,
+                crate::vault::collections::GrantTarget::Member { id: member_id },
+            )
+            .unwrap();
+
+        // The grant row dies, the wrap file dies, and the key rotates:
+        // the old wrap would be worthless even if a stale copy came back.
+        let (after, _) =
+            crate::vault::collections::open_collection(&path, &sgk, &roles.id).unwrap();
+        assert!(
+            after
+                .grants
+                .iter()
+                .all(|g| g.target.member_id() != Some(member_id)),
+            "revoked member row must be gone"
+        );
+        assert!(!wrap_path.exists(), "revoked member wrap must be deleted");
+        let new_ck = crate::vault::collections::unwrap_ck(&after, &sgk).unwrap();
+        assert_ne!(
+            old_ck.as_slice(),
+            new_ck.as_slice(),
+            "revocation must rotate the collection key"
+        );
+
+        // The stored entry still decrypts — under the NEW key.
+        use crate::vault::handle::CipherRead;
+        match handle.get_cipher(cipher_id).unwrap() {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.name, "Shared Login");
+            }
+            CipherRead::Locked(_) => panic!("vault is unlocked; cipher must decrypt"),
+        }
+        let _ = shared;
+
+        // Revoking someone who holds no grant stays a loud error.
+        let stranger = uuid::Uuid::new_v4();
+        let err = handle
+            .collection_revoke(
+                roles.id,
+                crate::vault::collections::GrantTarget::Member { id: stranger },
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("no access"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_collection_names_are_refused() {
+        let (_temp, mut handle, _pw) = family_vault();
+        setup_family_vault(&mut handle).unwrap();
+        handle.collection_create("Roles").unwrap();
+        let err = handle.collection_create("Roles").unwrap_err();
+        assert!(err.to_string().contains("already"), "{err}");
+    }
+
+    fn test_member_row(id: uuid::Uuid, name: &str) -> crate::vault::members::MemberFile {
+        crate::vault::members::MemberFile {
+            id,
+            display_name: name.into(),
+            email: None,
+            role: crate::vault::members::MemberRole::Editor,
+            trust: crate::vault::members::TrustLevel::Channel,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            removed_reason: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        }
+    }
+
     fn leave_record_files_lists_and_execution_leaves_traces() {
         let (_temp, mut handle, _pw) = family_vault();
         let (shared, _kit) = setup_family_vault(&mut handle).unwrap();

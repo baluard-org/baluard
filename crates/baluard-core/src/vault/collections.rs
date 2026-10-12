@@ -402,6 +402,18 @@ pub fn create_collection(
         )
         .into());
     }
+    // Duplicate names make every name-based surface ambiguous (the
+    // CLI resolves by exact name and errors on several matches) —
+    // refuse at the source instead.
+    if list_collections(vault_path, sgk)?
+        .into_iter()
+        .any(|(_, existing)| existing.eq_ignore_ascii_case(name.trim()))
+    {
+        return Err(VaultError::InvalidOperation(format!(
+            "A collection named {name} already exists."
+        ))
+        .into());
+    }
     let id = Uuid::new_v4();
     let mut ck = Zeroizing::new([0u8; 32]);
     rand::rngs::OsRng.fill_bytes(ck.as_mut());

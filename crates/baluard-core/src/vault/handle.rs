@@ -2522,7 +2522,46 @@ impl VaultHandle {
                 self.assert_can_manage_collection(id)?;
             }
         }
-        crate::vault::collections::revoke_grant(&self.path, self.unlocked().sgk()?, &id, &target)?;
+        let sgk = self.unlocked().sgk()?.clone();
+        match &target {
+            crate::vault::collections::GrantTarget::Member { id: member } => {
+                // Loud no-access error must survive: a member holding no
+                // grant is a caller mistake, not a rotation candidate.
+                let (file, _) = crate::vault::collections::open_collection(&self.path, &sgk, &id)?;
+                if !file
+                    .grants
+                    .iter()
+                    .any(|g| g.target.member_id() == Some(*member))
+                {
+                    return Err(VaultError::InvalidOperation(
+                        "That person has no access to this collection.".into(),
+                    )
+                    .into());
+                }
+                // Revoke-by-rotation (plan line 153 hardening): the removed
+                // member already holds the old key, so deleting the wrap is
+                // not enough — the key itself dies and every stored entry
+                // re-encrypts. A stale wrap copy wrapping the dead key is
+                // worthless, closing the resurrect class for good.
+                let Some(rotation) = crate::vault::collections::rotate_key_for_removal(
+                    &self.path,
+                    &sgk,
+                    &id,
+                    Some(member),
+                )?
+                else {
+                    return Err(VaultError::InvalidOperation(
+                        "That collection no longer exists.".into(),
+                    )
+                    .into());
+                };
+                self.reencrypt_after_sweep(&rotation);
+                crate::vault::collections::clear_sweep_pending(&self.path);
+            }
+            crate::vault::collections::GrantTarget::Group { .. } => {
+                crate::vault::collections::revoke_grant(&self.path, &sgk, &id, &target)?;
+            }
+        }
         Ok(())
     }
 
