@@ -1,6 +1,6 @@
 # Evaluation: Webview (Tauri v2) vs Native Rust UI (GPUI) for Baluard Desktop
 
-Status: Evaluated (October 2026). Decision: Retain Tauri v2 + SolidJS for desktop production; monitor GPUI and AccessKit ecosystem evolution.
+Status: Evaluated (October 2026). Decision: Retain Tauri v2 + SolidJS for desktop production; monitor GPUI and AccessKit ecosystem evolution. Last checkpoint: GPUI-Kit v0.7.3 (2026-10-12), decision unchanged. Monitoring log at the end of this document.
 
 ## Context
 
@@ -74,3 +74,23 @@ They lack production implementations for:
    - Wayland IME handling and fractional scaling stabilize.
    - FastFrame or GPUI-Kit reaches feature parity for accessible form controls.
 3. If prototyping is desired, implement a non-production experimental crate under `crates/baluard-desktop-gpui` targeting read-only vault inspection over the existing daemon socket.
+
+## Monitoring Log
+
+### GPUI-Kit v0.7.3 (2026-10-12)
+
+Checkpoint against the three re-evaluation triggers. Decision unchanged: retain Tauri v2 + SolidJS. None of the triggers is met.
+
+**Trigger status**
+
+1. **AccessKit parity on Linux (AT-SPI) and Windows (UI Automation): no movement.** The release ships accessibility hygiene only: the DataTable sort icon became a labelled button (#3396), `DropdownButton` gained `menu_accessibility_label` with a localized "More options" default (#3410), context menus now take focus before their first frame, fixing a debug-build abort with accessibility active (#3422), and focus rings stay inside list viewports (#3394). No AT-SPI or UIA backend work appears in the notes. The crash fix shows accessibility runs but remains fragile.
+2. **Wayland IME and fractional scaling: no mention** in the release notes. The only platform-stability items are the optional `gpui-fast` backend and a single embedded Windows manifest (#3380).
+3. **Accessible form-control parity: partially eroded, not reached.** The virtualized DataTable keeps maturing (separate header row height #3420, `visible_rows_changed` for one-row and empty tables #3397, right-click cell state #3413). A virtualized readonly Diff viewer shipped (#3378) plus a `tig` git-history example (#3388). Tooltips gained application-wide defaults and a placement API (#3376). Dialog entrances became configurable (#3405) and focus-recovery plus `open_dialog` contracts are now documented (#3386, #3406). Secure masked inputs and password strength visualizers are still absent; this remains the component Baluard needs most.
+
+**New strategic signals**
+
+- **GPUI Fast backend**: opt-in via the `gpui-fast` feature, paired with fixes that stop per-frame state writes in selectable text, inputs, `Root`, `TextViewState`, and resizable panels (#3407, #3418), so retained views stay on their scroll layer. This targets long-list scroll, the workload scale of a large vault.
+- **Snapshot pinning**: exact pins `gpui-pre =0.3.9` (zed@93d7456) and `gpui-fast 0.1.7` (#3459) are reproducible but confirm the kit rides pre-release upstream snapshots that break freely. v0.7.2 was yanked and replaced by this release.
+- **Diff + git-history components**: directly relevant to Baluard's git-backed storage if the prototype ever happens.
+
+**Next checkpoint watches for**: AT-SPI/UIA entries in release notes, a password/masked input component, Wayland/IME fix entries, and `gpui-fast` promotion from optional feature to default backend.
