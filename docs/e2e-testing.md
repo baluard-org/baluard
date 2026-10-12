@@ -64,6 +64,7 @@ The highest-value layer and the cheapest. The CLI is the executable spec, so thi
 - Biometric: drive the system prompt with injected fingerprint events (`adb emu finger touch` after enrollment) or defer to the instrumentation follow-up; Maestro cannot press BiometricPrompt itself.
 - Coverage: creation wizard (recovery save sheet), unlock, list/search/detail, add/edit/delete, folders, tags, generator (with history), settings sub-pages (back gesture), vault switcher, equivalent-domains dialog. Cross-app autofill stays a UI-Automator follow-up.
 - Status (2026-10-10): first flows RUN GREEN on a dedicated Pixel 8 (Android 17, USB): 01-create-vault, 02-lock-unlock, 03-add-entry, via `just e2e-android`. Device realities folded into the flows: Android 17 shows a system App Compatibility alert on every cold start of the debug APK (dismissed with an optional tap after each launchApp); the IME hides buttons below text fields (hideKeyboard before submit taps); the recovery and edit screens push their action buttons below the fold (scrollUntilVisible before the tap). Flows are idempotent: 01 recreates the synthetic vault via clearState on the dedicated device.
+- Status (2026-10-12): the two-device family join journey runs GREEN (`e2e/mobile/two-phone-family.sh` + flow 12, PAT leg, two accounts on two real phones): founder phone clones and joins by invite code, the invited joiner exercises a real collaborator seat, the box stages the intro reply and approves, both phones unlock. Device lessons folded in: pin the browser role before web flows, seed web sessions out of band (Maestro cannot paste), Maestro needs `--udid` on multi-device hosts, headless daemon git needs an isolated HOME (global pushInsteadOf rewrites), and every box-side push needs a defensive pull when phones autosync to the same remote. The OAuth device-flow flows 10a/10b are retained for a stable-renderer device (GitHub ignores user_code pre-fill; typing the code mid-flow is the only path).
 - Home: `e2e/mobile/`, one YAML per journey, shared helpers file.
 
 ## Phase 3: Desktop (WebdriverIO + tauri-plugin-wdio)
@@ -127,9 +128,9 @@ The highest-value layer and the cheapest. The CLI is the executable spec, so thi
 
 | Item | State |
 |---|---|
-| Enabling work E1-E13 | Not started; E1-E6 ride with Phase 1, E10-E13 too |
-| Phase 1 CLI + daemon | Not started; multi-device flow gated on a spike |
-| Phase 2 Android Maestro | Enabling work landed (E12 gate, test tags, boot wait, runner, 3 flows); flows unrun pending a Maestro install + dedicated device/emulator; CI needs the x86_64 native build |
+| Enabling work E1-E13 | Landed with Phase 1 (2026-10-03) |
+| Phase 1 CLI + daemon | Done (2026-10-03/04): harness + 9 flows incl. multi-device join/sync, forgery refusal, encrypted-backup restore |
+| Phase 2 Android Maestro | Flows GREEN on a dedicated Pixel 8 (2026-10-10) and the two-phone family join journey green (2026-10-11); CI still needs the x86_64 native build; org-share journey next |
 | Phase 3 Desktop wdio | Blocked on this box's GTK headers (`just sysdeps`); CI carries it; needs E6/E7 |
 | Phase 4 Extension | Not started; needs E6/E8 |
 
