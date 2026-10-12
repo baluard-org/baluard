@@ -1,0 +1,80 @@
+# Founder phone, third pass (NO clearState). Creates a PERSONAL vault
+# as the second vault on this phone, then searches for the org entry
+# while the personal vault is active: organization entries must never
+# merge into a personal vault's search (G24 §4.2 — org Spaces are
+# never merge-eligible).
+#
+#   MASTER_PW_2   the founder's PERSONAL vault password
+appId: xyz.actitud.baluard
+appLaunchDelay: 3000
+---
+- launchApp:
+    clearState: false
+- tapOn:
+    id: "android:id/button2"
+    optional: true
+- assertVisible:
+    id: "e2e/unlock/password"
+- tapOn:
+    id: "e2e/unlock/password"
+- inputText: "${BALUARD_E2E_ORG_PW}"
+- hideKeyboard
+- tapOn:
+    id: "e2e/unlock/submit"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/home/settings"
+    timeout: 30000
+# Positive control first: the org hub DOES hold the entry.
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 20000
+- tapOn:
+    id: "e2e/list/search"
+- inputText: Org Wifi
+- extendedWaitUntil:
+    visible: "Org Wifi"
+    timeout: 20000
+# Second vault: personal, via the switcher.
+- tapOn:
+    text: ".*${BALUARD_E2E_REPO}.*"
+- extendedWaitUntil:
+    visible: "Add vault"
+    timeout: 20000
+- tapOn: "Add vault"
+- extendedWaitUntil:
+    visible: "Baluard"
+    timeout: 20000
+- tapOn:
+    id: "e2e/onboarding/create"
+- tapOn:
+    id: "e2e/create/password"
+- inputText: "${BALUARD_E2E_MASTER_PW_2}"
+- tapOn:
+    id: "e2e/create/confirm"
+- inputText: "${BALUARD_E2E_MASTER_PW_2}"
+- hideKeyboard
+- tapOn:
+    id: "e2e/create/submit"
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/ack"
+    timeout: 20000
+- tapOn:
+    id: "e2e/recovery/ack"
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/continue"
+    timeout: 20000
+- tapOn:
+    id: "e2e/recovery/continue"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 30000
+# THE assertion: the org entry must not merge into the personal hub.
+- tapOn:
+    id: "e2e/list/search"
+- inputText: Org Wifi
+- assertNotVisible: "Org Wifi"

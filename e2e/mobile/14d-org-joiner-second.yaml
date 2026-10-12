@@ -1,0 +1,91 @@
+# Joiner phone, second pass (NO clearState). The org vault unlocked on
+# approval. As a grantless org editor the first add must be REFUSED —
+# organization entries need a granted collection, the cryptographically
+# enforced boundary. Then the joiner creates a personal vault as the
+# second vault on this phone.
+#
+#   MASTER_PW_2           the joiner's PERSONAL vault password
+appId: xyz.actitud.baluard
+appLaunchDelay: 3000
+---
+- launchApp:
+    clearState: false
+- tapOn:
+    id: "android:id/button2"
+    optional: true
+# The approval auto-unlocked in place, but this cold start starts
+# locked: unlock the org vault.
+- assertVisible:
+    id: "e2e/unlock/password"
+- tapOn:
+    id: "e2e/unlock/password"
+- inputText: "${BALUARD_E2E_ORG_PW}"
+- hideKeyboard
+- tapOn:
+    id: "e2e/unlock/submit"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/home/settings"
+    timeout: 30000
+
+# The grantless-editor refusal: org entries need a granted collection.
+- tapOn:
+    id: "e2e/list/add"
+- tapOn:
+    id: "e2e/edit/name"
+- inputText: B Entry
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: "e2e/edit/save"
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn:
+    id: "e2e/edit/save"
+- extendedWaitUntil:
+    visible: ".*No collection is open for your edits.*"
+    timeout: 20000
+
+# Second vault: a personal one, via the vault switcher (the pill
+# carries the vault's slug-derived name — the org clone's slug is the
+# repo name).
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 20000
+- tapOn:
+    text: ".*${BALUARD_E2E_REPO}.*"
+- extendedWaitUntil:
+    visible: "Add vault"
+    timeout: 20000
+- tapOn: "Add vault"
+- extendedWaitUntil:
+    visible: "Baluard"
+    timeout: 20000
+- tapOn:
+    id: "e2e/onboarding/create"
+- tapOn:
+    id: "e2e/create/password"
+- inputText: "${BALUARD_E2E_MASTER_PW_2}"
+- tapOn:
+    id: "e2e/create/confirm"
+- inputText: "${BALUARD_E2E_MASTER_PW_2}"
+- hideKeyboard
+- tapOn:
+    id: "e2e/create/submit"
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/ack"
+    timeout: 20000
+- tapOn:
+    id: "e2e/recovery/ack"
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/continue"
+    timeout: 20000
+- tapOn:
+    id: "e2e/recovery/continue"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 30000
