@@ -1011,6 +1011,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1215,6 +1217,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_members_list(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_my_contact_card(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_my_role(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_notices_list(`ptr`: Pointer,`refreshTransport`: Byte,
     ): Long
@@ -1658,6 +1662,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_my_contact_card(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_my_role(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_notices_list(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_open_shared_contact(
@@ -1992,7 +1998,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_import_shared_package() != 29109.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_is_admin_device() != 20077.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_is_admin_device() != 15991.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_is_unlocked() != 31920.toShort()) {
@@ -2068,6 +2074,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_my_contact_card() != 10077.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_my_role() != 43326.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_notices_list() != 44938.toShort()) {
@@ -3430,10 +3439,6 @@ public interface MobileVaultInterface {
      */
     suspend fun `importSharedPackage`(`packageB64`: kotlin.String): kotlin.String
     
-    /**
-     * Whether this device manages the space (holds the Root Key) —
-     * the admin marker that stays true for zero-collection vaults.
-     */
     suspend fun `isAdminDevice`(): kotlin.Boolean
     
     /**
@@ -3598,6 +3603,15 @@ public interface MobileVaultInterface {
      * The code is what the Level 2 check compares.
      */
     suspend fun `myContactCard`(): kotlin.String
+    
+    /**
+     * Whether this device manages the space (holds the Root Key) —
+     * the admin marker that stays true for zero-collection vaults.
+     * This device's member role ("owner"|"admin"|"editor"|"viewer").
+     * Role-gated UI gates on this, never on is_admin_device: on a
+     * flipped Space an admin holds no Root Key by design.
+     */
+    suspend fun `myRole`(): kotlin.String
     
     /**
      * Needs-attention notices (S1b-4). refresh_transport triggers the
@@ -5319,10 +5333,6 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     }
 
     
-    /**
-     * Whether this device manages the space (holds the Root Key) —
-     * the admin marker that stays true for zero-collection vaults.
-     */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `isAdminDevice`() : kotlin.Boolean {
@@ -5967,6 +5977,34 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_my_contact_card(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Whether this device manages the space (holds the Root Key) —
+     * the admin marker that stays true for zero-collection vaults.
+     * This device's member role ("owner"|"admin"|"editor"|"viewer").
+     * Role-gated UI gates on this, never on is_admin_device: on a
+     * flipped Space an admin holds no Root Key by design.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `myRole`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_my_role(
                 thisPtr,
                 
             )

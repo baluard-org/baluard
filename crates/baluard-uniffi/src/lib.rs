@@ -1290,6 +1290,16 @@ impl MobileVault {
 
     /// Whether this device manages the space (holds the Root Key) —
     /// the admin marker that stays true for zero-collection vaults.
+    /// This device's member role ("owner"|"admin"|"editor"|"viewer").
+    /// Role-gated UI gates on this, never on is_admin_device: on a
+    /// flipped Space an admin holds no Root Key by design.
+    pub async fn my_role(&self) -> Result<String, BaluardError> {
+        self.state
+            .my_role()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     pub async fn is_admin_device(&self) -> Result<bool, BaluardError> {
         self.state
             .is_admin_device()
