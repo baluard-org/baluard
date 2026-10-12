@@ -169,7 +169,9 @@ object AutofillSession {
      */
     suspend fun lockedVaults(): List<Pair<String, String>> = mutationMutex.withLock {
         handles.mapNotNull { (path, v) ->
-            if (!v.isUnlocked()) Pair(path, nameFor(path) ?: path) else null
+            if (v.isUnlocked()) null
+            else if (!mergesIntoAutofill(path)) null  // org/pair Spaces never surface in autofill, even as unlock chips
+            else Pair(path, nameFor(path) ?: path)
         }
     }
 
@@ -201,6 +203,7 @@ object AutofillSession {
         val suggestions = ArrayList<AppSuggestion>()
         for ((path, v) in snapshotHandles()) {
             if (!v.isUnlocked()) continue
+            if (!mergesIntoAutofill(path)) continue
             val raw = runCatching { v.autofillQuery(target) }.getOrNull() ?: continue
             val obj = runCatching { JSONObject(raw) }.getOrNull() ?: continue
             val vaultName = nameFor(path)
@@ -225,6 +228,17 @@ object AutofillSession {
         }
         return QueryResult(matches, suggestions)
     }
+
+    /**
+     * Merge-eligibility for autofill (plan-merged-search §4.2/§4.3): the
+     * ACTIVE vault always serves its own entries; every OTHER vault
+     * contributes only when merge-eligible (personal yes; org, pair, and
+     * flipped team shapes never - companies do not want company items in
+     * personal autofill). Keyless filesystem sniff, same predicate as the
+     * hub search.
+     */
+    private fun mergesIntoAutofill(path: String): Boolean =
+        path == activePath || VaultRegistry.isMergeEligible(path)
 
     private fun nameFor(path: String): String? =
         VaultRegistry.listVaults().firstOrNull { it.path == path }?.name
@@ -290,6 +304,7 @@ object AutofillSession {
         val out = ArrayList<Match>()
         for ((path, v) in snapshotHandles()) {
             if (!v.isUnlocked()) continue
+            if (!mergesIntoAutofill(path)) continue
             val metas = runCatching { v.listCiphers() }.getOrDefault(emptyList())
             val vaultName = nameFor(path)
             out.addAll(

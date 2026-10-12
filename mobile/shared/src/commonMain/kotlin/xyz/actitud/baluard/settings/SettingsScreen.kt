@@ -416,7 +416,13 @@ fun SettingsScreen(
                                     } catch (e: kotlinx.coroutines.CancellationException) {
                                         throw e
                                     } catch (e: Exception) {
-                                        Toast.error(e.message ?: t("settings.gitBackupFailed"))
+                                        // The FFI prefixes every error with
+                                        // "detail="; strip it like the other
+                                        // surfaces do.
+                                        val raw = e.message ?: ""
+                                        Toast.error(
+                                            raw.removePrefix("detail=").ifBlank { t("settings.gitBackupFailed") },
+                                        )
                                     }
                                     gitBusy = false
                                 }
@@ -2290,6 +2296,97 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+
+                // Import row (restored: the 3180802 share-open refactor
+                // dropped it along with the export row, leaving the
+                // dialogs orphaned and mobile unable to import at all).
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !importBusy && !exportBusy) {
+                            importPicker(listOf("*/*")) { file ->
+                                if (file != null) {
+                                    val isEncBackup =
+                                        file.bytes.size >= 6 && bakMagic.indices.all { file.bytes[it] == bakMagic[it] }
+                                    when {
+                                        // Encrypted container: the passphrase
+                                        // dialog decides everything else.
+                                        isEncBackup -> {
+                                            encFile = file
+                                            backupMode = "import"
+                                        }
+                                        // Auto-detect our own backup first: the
+                                        // header identifies it with no collision
+                                        // risk, so restoring a Baluard backup
+                                        // never needs a format answer.
+                                        file.bytes
+                                            .decodeToString(0, minOf(file.bytes.size, 512))
+                                            .contains("baluard.vault") -> {
+                                            importFormat = "baluard"
+                                            pendingImport = file
+                                        }
+                                        file.name.endsWith(".1pux", ignoreCase = true) -> {
+                                            importFormat = "1password-1pux"
+                                            pendingImport = file
+                                        }
+                                        file.name.endsWith(".json", ignoreCase = true) -> {
+                                            importFormat = "bw-json"
+                                            pendingImport = file
+                                        }
+                                        file.name.endsWith(".xml", ignoreCase = true) -> {
+                                            importFormat = "keepass-xml"
+                                            pendingImport = file
+                                        }
+                                        else -> {
+                                            importFormat = "bw-csv"
+                                            pendingImport = file
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (importBusy) t("settings.importBusy") else t("settings.importTitle"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    text = t("settings.importDesc"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                // Export row: opens the format dialog (Baluard backup or
+                // spreadsheet). The dialog carries the plaintext warning;
+                // the viewer role is refused at the repo layer.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !importBusy && !exportBusy) { exportDialog = true },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (exportBusy) t("settings.exportBusy") else t("settings.exportTitle"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    text = t("settings.exportDesc"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+
+                Spacer(Modifier.height(12.dp))
 
                 // Import: format confirmation once a file is picked (the
                 // picker's extension guesses, the user confirms).
