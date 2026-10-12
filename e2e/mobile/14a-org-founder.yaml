@@ -1,0 +1,129 @@
+# Org founder phone (dedicated device ONLY: clearState wipes every
+# vault). Creates the personal vault that becomes the organization,
+# wires its Git backup, flips it to team shape, and mints the invited
+# joiner's code. Run through two-phone-org.sh: it reads the one-time
+# invite from logcat (JoinInvite.*invite=) and drives the joiner phone.
+#
+#   MASTER_PW             founder's master password
+#   BALUARD_E2E_PAT       THIS phone's GitHub account token
+#   BALUARD_E2E_REPO      repo name for the backup
+#   GH_USER2              invited joiner's GitHub username
+appId: xyz.actitud.baluard
+appLaunchDelay: 3000
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: "android:id/button2"
+    optional: true
+- assertVisible: "Baluard"
+- tapOn:
+    id: "e2e/onboarding/create"
+- tapOn:
+    id: "e2e/create/password"
+- inputText: "${MASTER_PW}"
+- tapOn:
+    id: "e2e/create/confirm"
+- inputText: "${MASTER_PW}"
+- hideKeyboard
+- tapOn:
+    id: "e2e/create/submit"
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/ack"
+    timeout: 20000
+- tapOn:
+    id: "e2e/recovery/ack"
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/continue"
+    timeout: 20000
+- tapOn:
+    id: "e2e/recovery/continue"
+- assertVisible:
+    id: "e2e/list/search"
+
+# Settings → Git backup: give the vault a remote so the invite and the
+# roster propagate to the joiner's clone.
+- tapOn:
+    id: "e2e/home/settings"
+- scrollUntilVisible:
+    element:
+      text: "Back up through your own Git account"
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn: "Back up through your own Git account"
+- assertVisible: "GitHub"
+- tapOn: "GitHub"
+- scrollUntilVisible:
+    element:
+      text: "Access token (optional)"
+    timeout: 20000
+- tapOn:
+    text: "Access token (optional)"
+- inputText: ${BALUARD_E2E_PAT}
+- tapOn:
+    text: "Repository name (optional)"
+- inputText: ${BALUARD_E2E_REPO}
+- hideKeyboard
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Backup repository ready.*"
+    timeout: 90000
+
+# Flip to team shape: prepare, then the typed confirm.
+- scrollUntilVisible:
+    element:
+      text: "Prepare members"
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn: "Prepare members"
+- extendedWaitUntil:
+    visible: "Turn on team mode"
+    timeout: 20000
+- tapOn: "Turn on team mode"
+- assertVisible: 'Type "team" to confirm'
+- tapOn:
+    text: 'Type "team" to confirm'
+- inputText: team
+- hideKeyboard
+- tapOn: "Turn on team mode"
+- extendedWaitUntil:
+    visible: "Team mode is on."
+    timeout: 30000
+
+# Mint the invited joiner's code (Editor role: the joiner files the
+# org entry the merge-exclusion assert searches for; the box raises
+# the clone seat). The harness reads the code from logcat.
+- scrollUntilVisible:
+    element:
+      text: "Members, join requests, and collection grants"
+    direction: UP
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn: "Members, join requests, and collection grants"
+- extendedWaitUntil:
+    visible: "Invite someone"
+    timeout: 20000
+- tapOn: "Invite someone"
+- scrollUntilVisible:
+    element:
+      text: "Editor"
+    timeout: 20000
+- tapOn: "Editor"
+- scrollUntilVisible:
+    element:
+      text: "Git username (optional, grants clone access)"
+    timeout: 20000
+- tapOn:
+    text: "Git username (optional, grants clone access)"
+- inputText: ${BALUARD_E2E_GH_USER2}
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      text: "Create invite code"
+    timeout: 20000
+- tapOn: "Create invite code"
+- extendedWaitUntil:
+    visible: "Invite code"
+    timeout: 20000

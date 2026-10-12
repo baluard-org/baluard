@@ -1,0 +1,82 @@
+# Founder phone, second pass (NO clearState — the org vault lives
+# here). Unlocks, adds the org's reference entry (admin flat add),
+# stages the joiner's intro reply, approves the join.
+#
+#   MASTER_PW            founder's master password
+#   BALUARD_E2E_INTRO    the joiner's one-time reply (from their logcat)
+appId: xyz.actitud.baluard
+appLaunchDelay: 3000
+---
+- launchApp:
+    clearState: false
+- tapOn:
+    id: "android:id/button2"
+    optional: true
+- assertVisible:
+    id: "e2e/unlock/password"
+- tapOn:
+    id: "e2e/unlock/password"
+- inputText: ${MASTER_PW}
+- hideKeyboard
+- tapOn:
+    id: "e2e/unlock/submit"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/home/settings"
+    timeout: 30000
+
+# Reference entry: an admin add lands in the flat admin namespace, so
+# the joiner never sees it — that asymmetry is the org model.
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/add"
+    timeout: 20000
+- tapOn:
+    id: "e2e/list/add"
+- tapOn:
+    id: "e2e/edit/name"
+- inputText: Org Wifi
+- tapOn:
+    id: "e2e/edit/password"
+- inputText: org-wifi-secret
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: "e2e/edit/save"
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn:
+    id: "e2e/edit/save"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 20000
+
+# Stage the joiner's reply and approve.
+- tapOn:
+    id: "e2e/home/settings"
+- scrollUntilVisible:
+    element:
+      text: "Members, join requests, and collection grants"
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn: "Members, join requests, and collection grants"
+- extendedWaitUntil:
+    visible: "Paste invite reply"
+    timeout: 20000
+- tapOn: "Paste invite reply"
+- inputText: ${BALUARD_E2E_INTRO}
+- hideKeyboard
+- tapOn: "Save"
+- extendedWaitUntil:
+    visible: "Request staged. Approve it below."
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      text: "Approve"
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn: "Approve"
+- extendedWaitUntil:
+    visible: "Member approved"
+    timeout: 20000
