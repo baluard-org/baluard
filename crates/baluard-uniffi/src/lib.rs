@@ -1774,6 +1774,11 @@ pub async fn create_vault_with_recovery(
 
     let state = std::sync::Arc::new(baluard_runtime::VaultState::new(vault_path));
     state.open().await?;
+    // Unlock before returning: the adopted handle must be UNLOCKED or
+    // every gated call (add, sync setup, git backup) fails with "Vault
+    // is locked" right after creation — the UI believes the session is
+    // unlocked, so the user could never recover without re-unlocking.
+    state.unlock(&master_password).await?;
     Ok(MobileCreateResult {
         vault: std::sync::Arc::new(MobileVault { state }),
         recovery_phrase: MobileRecoveryPhrase {
@@ -2936,6 +2941,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.recovery_phrase.phrase.split_whitespace().count(), 24);
+        // The adopted handle arrives UNLOCKED: the two-phone org journey
+        // caught mobile-created vaults being FFI-locked at birth (the UI
+        // believed the session unlocked while every gated call refused).
+        assert!(
+            res.vault.is_unlocked().await,
+            "created vault must be unlocked"
+        );
 
         // Derive KEK using vault's on-disk params (2.2 fix)
         let kek = derive_kek_for_vault(path, pw).await.unwrap();

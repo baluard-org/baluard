@@ -49,6 +49,7 @@ import xyz.actitud.baluard.detail.formatEpochDate
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.Clock
 import xyz.actitud.baluard.platform.copyToClipboard
+import xyz.actitud.baluard.platform.platformLogE
 import xyz.actitud.baluard.ui.components.BaluardTextField
 import xyz.actitud.baluard.ui.components.BaluardTopBar
 import xyz.actitud.baluard.ui.components.SectionCard
@@ -646,7 +647,12 @@ fun PeopleScreen(
                                         repo.memberInvite(vault, payload)
                                     }.onSuccess { raw ->
                                         inviteCode = extractInviteCode(raw)
-                                        if (inviteCode == null) Toast.error(t("error.generic"))
+                                        if (inviteCode == null) {
+                                            Toast.error(t("error.generic"))
+                                        } else if (xyz.actitud.baluard.platform.e2eBuild) {
+                                            // harness reads the one-time code from logcat (JoinInvite.*invite=)
+                                            platformLogE("JoinInvite", "invite=$inviteCode")
+                                        }
                                     }.onFailure { Toast.error(it.message?.removePrefix("detail=") ?: t("error.generic")) }
                                     inviteBusy = false
                                 }
