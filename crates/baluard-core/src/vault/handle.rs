@@ -2538,6 +2538,9 @@ impl VaultHandle {
                     )
                     .into());
                 }
+                // A pending crash-recovery marker must converge first: the
+                // rotation below overwrites it.
+                self.converge_pending_sweeps(&sgk);
                 // Revoke-by-rotation (plan line 153 hardening): the removed
                 // member already holds the old key, so deleting the wrap is
                 // not enough — the key itself dies and every stored entry
@@ -2570,6 +2573,33 @@ impl VaultHandle {
     /// keys. Admin-gated — meta/collections/** is Admin-only at the git
     /// layer, so a non-admin sweep would mint a refused commit and wedge
     /// every peer's pull.
+    /// Converge a crash-interrupted sweep before any op that rewrites the
+    /// same pending marker. Rotations recorded on the marker are carried
+    /// only when the live def actually holds the new CK (a rotation whose
+    /// def never flipped is dropped — its files are still old-keyed and a
+    /// fresh sweep rotates again). The marker clears after the carry pass.
+    fn converge_pending_sweeps(&self, sgk: &crate::keys::hierarchy::SpaceGroupKey) {
+        let pending_rotations = crate::vault::collections::read_sweep_pending(&self.path);
+        if pending_rotations.is_empty() {
+            return;
+        }
+        for rot in &pending_rotations {
+            let flipped =
+                crate::vault::collections::open_collection(&self.path, sgk, &rot.collection_id)
+                    .ok()
+                    .and_then(|(def, _)| {
+                        crate::vault::collections::unwrap_ck(&def, sgk)
+                            .ok()
+                            .map(|ck| ck.as_ref() == rot.new_ck.as_ref())
+                    })
+                    .unwrap_or(false);
+            if flipped {
+                self.reencrypt_after_sweep(rot);
+            }
+        }
+        crate::vault::collections::clear_sweep_pending(&self.path);
+    }
+
     pub fn collections_sweep(
         &mut self,
     ) -> Result<Vec<crate::vault::collections::ExpiredGrant>, BaluardError> {
@@ -2578,32 +2608,8 @@ impl VaultHandle {
         }
         self.assert_can_manage_members()?;
         let sgk = self.unlocked().sgk()?.clone();
-        // Converge a crash-interrupted sweep first: rotations recorded on
-        // the pending marker are carried only when the live def actually
-        // holds the new CK (a rotation whose def never flipped is dropped —
-        // its files are still old-keyed and the fresh sweep below will
-        // rotate again). The marker clears only after the carry pass.
-        let pending_rotations = crate::vault::collections::read_sweep_pending(&self.path);
-        if !pending_rotations.is_empty() {
-            for rot in &pending_rotations {
-                let flipped = crate::vault::collections::open_collection(
-                    &self.path,
-                    &sgk,
-                    &rot.collection_id,
-                )
-                .ok()
-                .and_then(|(def, _)| {
-                    crate::vault::collections::unwrap_ck(&def, &sgk)
-                        .ok()
-                        .map(|ck| ck.as_ref() == rot.new_ck.as_ref())
-                })
-                .unwrap_or(false);
-                if flipped {
-                    self.reencrypt_after_sweep(rot);
-                }
-            }
-            crate::vault::collections::clear_sweep_pending(&self.path);
-        }
+        // Converge a crash-interrupted sweep before the fresh sweep below.
+        self.converge_pending_sweeps(&sgk);
         let swept = crate::vault::collections::sweep_expired_grants(&self.path, &sgk)?;
         // Carry each key rotation into the entry files. Their item keys
         // derive from the CK (S3-7c path-derived domains), so a rotated CK
@@ -2634,29 +2640,8 @@ impl VaultHandle {
         self.assert_can_manage_members()?;
         let sgk = self.unlocked().sgk()?.clone();
         // Converge a crash-interrupted sweep first — this op rewrites
-        // the same pending marker, and dropping unconverged rotations
-        // would strand entries under a dead key.
-        let pending_rotations = crate::vault::collections::read_sweep_pending(&self.path);
-        if !pending_rotations.is_empty() {
-            for rot in &pending_rotations {
-                let flipped = crate::vault::collections::open_collection(
-                    &self.path,
-                    &sgk,
-                    &rot.collection_id,
-                )
-                .ok()
-                .and_then(|(def, _)| {
-                    crate::vault::collections::unwrap_ck(&def, &sgk)
-                        .ok()
-                        .map(|ck| ck.as_ref() == rot.new_ck.as_ref())
-                })
-                .unwrap_or(false);
-                if flipped {
-                    self.reencrypt_after_sweep(rot);
-                }
-            }
-            crate::vault::collections::clear_sweep_pending(&self.path);
-        }
+        // the same pending marker.
+        self.converge_pending_sweeps(&sgk);
         let Some(rotation) = crate::vault::collections::rotate_key_for_removal(
             &self.path,
             &sgk,

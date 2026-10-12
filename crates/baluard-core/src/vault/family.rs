@@ -846,6 +846,13 @@ mod tests {
         member.identity_wrap_pubkey = Some(hex::encode(wrap_pub.as_bytes()));
         crate::vault::members::write_member(&path, &member).unwrap();
 
+        // A second, surviving member with their own wrap key.
+        let survivor_id = uuid::Uuid::new_v4();
+        let (survivor_secret, survivor_pub) = crate::crypto::hpke_wrap::generate_x25519_keypair();
+        let mut survivor = test_member_row(survivor_id, "Grandma");
+        survivor.identity_wrap_pubkey = Some(hex::encode(survivor_pub.as_bytes()));
+        crate::vault::members::write_member(&path, &survivor).unwrap();
+
         let roles = crate::vault::collections::create_collection(&path, &sgk, "Roles").unwrap();
         crate::vault::collections::upsert_grant(
             &path,
@@ -860,6 +867,25 @@ mod tests {
         .unwrap();
         let wrap_path = crate::vault::collections::grant_wrap_path(&path, &roles.id, &member_id);
         assert!(wrap_path.exists(), "grant must mint the member wrap");
+        for mid in [member_id, survivor_id] {
+            if mid != member_id {
+                crate::vault::collections::upsert_grant(
+                    &path,
+                    &sgk,
+                    &roles.id,
+                    crate::vault::collections::CollectionGrant {
+                        target: crate::vault::collections::GrantTarget::Member { id: mid },
+                        access: crate::vault::collections::CollectionAccess::Write,
+                        expires_at: None,
+                    },
+                )
+                .unwrap();
+            }
+        }
+        let survivor_wrap =
+            crate::vault::collections::grant_wrap_path(&path, &roles.id, &survivor_id);
+        assert!(survivor_wrap.exists());
+        let survivor_wrap_before = std::fs::read(&survivor_wrap).unwrap();
 
         // One entry inside, so the rotation must re-encrypt it.
         let input = crate::types::CipherInput {
@@ -905,6 +931,22 @@ mod tests {
             "revocation must rotate the collection key"
         );
 
+        // The survivor's wrap was rewrapped under the new key and still
+        // opens the collection with the survivor's own secret.
+        let survivor_wrap_after = std::fs::read(&survivor_wrap).unwrap();
+        assert_ne!(
+            survivor_wrap_before, survivor_wrap_after,
+            "surviving wrap must be rewrapped under the new key"
+        );
+        let survivor_ck = crate::vault::collections::open_grant_wrap(
+            &path,
+            &roles.id,
+            &survivor_id,
+            &survivor_secret,
+        )
+        .unwrap();
+        assert_eq!(survivor_ck.as_slice(), new_ck.as_slice());
+
         // The stored entry still decrypts — under the NEW key.
         use crate::vault::handle::CipherRead;
         match handle.get_cipher(cipher_id).unwrap() {
@@ -933,6 +975,11 @@ mod tests {
         handle.collection_create("Roles").unwrap();
         let err = handle.collection_create("Roles").unwrap_err();
         assert!(err.to_string().contains("already"), "{err}");
+        // Case-folded and trimmed collisions refuse too.
+        assert!(handle.collection_create("roles").is_err());
+        assert!(handle.collection_create("  Roles  ").is_err());
+        // A distinct name still creates.
+        assert!(handle.collection_create("Roles Junior").is_ok());
     }
 
     fn test_member_row(id: uuid::Uuid, name: &str) -> crate::vault::members::MemberFile {
