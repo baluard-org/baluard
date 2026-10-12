@@ -1589,6 +1589,53 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Address book for the Level 2 contact check: rows carry the
+    /// verification code both sides compare out-of-band.
+    pub async fn contacts_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .contacts_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// This device's signed contact card plus its verification code.
+    /// The code is what the Level 2 check compares.
+    pub async fn my_contact_card(&self) -> Result<String, BaluardError> {
+        self.state
+            .my_contact_card()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Import an out-of-band contact card code (lands at Channel until
+    /// the code check).
+    pub async fn contact_import_card(&self, card: String) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "card": card }).to_string();
+        self.state
+            .contacts_import_card(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Record the Level 2 check: the codes matched, so the contact is
+    /// trusted for admin-rank gates.
+    pub async fn contact_mark_verified(&self, pubkey: String) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "identity_signing_pubkey": pubkey }).to_string();
+        self.state
+            .contacts_mark_verified(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Remove a contact from the address book.
+    pub async fn contact_remove(&self, pubkey: String) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "identity_signing_pubkey": pubkey }).to_string();
+        self.state
+            .contacts_remove(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Join a shared space (member side of the join ceremony). The vault
     /// must already be cloned locally (see `clone_vault_start`). Payload
     /// fields: `code` (the invite code), `password` (the joiner's chosen
@@ -2477,6 +2524,64 @@ mod tests {
             .expect("encrypted import");
         let s: serde_json::Value = serde_json::from_str(&summary).unwrap();
         assert_eq!(s["imported"].as_u64(), Some(1), "summary: {summary}");
+    }
+
+    /// Level 2 contact check across the FFI: this device's card imports
+    /// into a fresh peer view of the same vault, lands at Channel, and
+    /// verify flips it — the state the admin-rank gates read.
+    #[tokio::test]
+    async fn contacts_level2_roundtrip_via_ffi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pw".to_string(), "dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pw".to_string()).await.unwrap();
+
+        // Own card: the code both sides compare.
+        let mine = vault.my_contact_card().await.unwrap();
+        let mine: serde_json::Value = serde_json::from_str(&mine).unwrap();
+        assert!(!mine["card"].as_str().unwrap().is_empty());
+        assert_eq!(mine["verification_code"].as_str().unwrap().len(), 16);
+
+        // Self-import is the same machinery a peer's card rides: land at
+        // Channel, then the check flips the row to verified.
+        vault
+            .contact_import_card(mine["card"].as_str().unwrap().to_string())
+            .await
+            .unwrap();
+        let list = vault.contacts_list().await.unwrap();
+        let list: serde_json::Value = serde_json::from_str(&list).unwrap();
+        let row = list["contacts"].as_array().unwrap()[0].clone();
+        let pubkey = row["identity_signing_pubkey"].as_str().unwrap().to_string();
+        assert_eq!(row["trust"].as_str().unwrap(), "channel");
+
+        vault.contact_mark_verified(pubkey).await.unwrap();
+        let list = vault.contacts_list().await.unwrap();
+        let list: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(
+            list["contacts"].as_array().unwrap()[0]["trust"]
+                .as_str()
+                .unwrap(),
+            "verified"
+        );
+
+        // Removal closes the loop.
+        let mine2 = vault.my_contact_card().await.unwrap();
+        let mine2: serde_json::Value = serde_json::from_str(&mine2).unwrap();
+        let pubkey2 = {
+            let list = vault.contacts_list().await.unwrap();
+            let list: serde_json::Value = serde_json::from_str(&list).unwrap();
+            list["contacts"].as_array().unwrap()[0]["identity_signing_pubkey"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        vault.contact_remove(pubkey2).await.unwrap();
+        let list = vault.contacts_list().await.unwrap();
+        let list: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(list["contacts"].as_array().unwrap().len(), 0);
+        let _ = mine2;
     }
 
     #[tokio::test]

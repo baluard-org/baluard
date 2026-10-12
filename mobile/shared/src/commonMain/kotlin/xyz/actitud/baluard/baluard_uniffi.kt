@@ -1001,6 +1001,16 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1089,6 +1099,14 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_revoke(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collections_list(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_contact_import_card(`ptr`: Pointer,`card`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_contact_mark_verified(`ptr`: Pointer,`pubkey`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_contact_remove(`ptr`: Pointer,`pubkey`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_contacts_list(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_create_folder(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1195,6 +1213,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_transfer(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_members_list(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_my_contact_card(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_notices_list(`ptr`: Pointer,`refreshTransport`: Byte,
     ): Long
@@ -1522,6 +1542,14 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collections_list(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_contact_import_card(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_contact_mark_verified(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_contact_remove(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_contacts_list(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_create_folder(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_create_tag(
@@ -1627,6 +1655,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_transfer(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_members_list(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_my_contact_card(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_notices_list(
     ): Short
@@ -1866,6 +1896,18 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collections_list() != 41165.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_contact_import_card() != 18740.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_contact_mark_verified() != 21754.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_contact_remove() != 33582.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_contacts_list() != 42237.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_create_folder() != 29428.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2023,6 +2065,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_members_list() != 29779.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_my_contact_card() != 10077.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_notices_list() != 44938.toShort()) {
@@ -3199,6 +3244,29 @@ public interface MobileVaultInterface {
     suspend fun `collectionsList`(): kotlin.String
     
     /**
+     * Import an out-of-band contact card code (lands at Channel until
+     * the code check).
+     */
+    suspend fun `contactImportCard`(`card`: kotlin.String): kotlin.String
+    
+    /**
+     * Record the Level 2 check: the codes matched, so the contact is
+     * trusted for admin-rank gates.
+     */
+    suspend fun `contactMarkVerified`(`pubkey`: kotlin.String): kotlin.String
+    
+    /**
+     * Remove a contact from the address book.
+     */
+    suspend fun `contactRemove`(`pubkey`: kotlin.String): kotlin.String
+    
+    /**
+     * Address book for the Level 2 contact check: rows carry the
+     * verification code both sides compare out-of-band.
+     */
+    suspend fun `contactsList`(): kotlin.String
+    
+    /**
      * Create a new folder (JSON payload `{"name": "..."}`).
      */
     suspend fun `createFolder`(`payload`: kotlin.String): kotlin.String
@@ -3524,6 +3592,12 @@ public interface MobileVaultInterface {
      * removed, identity_rotated_at, is_self}], your_role}`.
      */
     suspend fun `membersList`(): kotlin.String
+    
+    /**
+     * This device's signed contact card plus its verification code.
+     * The code is what the Level 2 check compares.
+     */
+    suspend fun `myContactCard`(): kotlin.String
     
     /**
      * Needs-attention notices (S1b-4). refresh_transport triggers the
@@ -4434,6 +4508,105 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collections_list(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Import an out-of-band contact card code (lands at Channel until
+     * the code check).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `contactImportCard`(`card`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_contact_import_card(
+                thisPtr,
+                FfiConverterString.lower(`card`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Record the Level 2 check: the codes matched, so the contact is
+     * trusted for admin-rank gates.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `contactMarkVerified`(`pubkey`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_contact_mark_verified(
+                thisPtr,
+                FfiConverterString.lower(`pubkey`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Remove a contact from the address book.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `contactRemove`(`pubkey`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_contact_remove(
+                thisPtr,
+                FfiConverterString.lower(`pubkey`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Address book for the Level 2 contact check: rows carry the
+     * verification code both sides compare out-of-band.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `contactsList`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_contacts_list(
                 thisPtr,
                 
             )
@@ -5769,6 +5942,31 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_members_list(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * This device's signed contact card plus its verification code.
+     * The code is what the Level 2 check compares.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `myContactCard`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_my_contact_card(
                 thisPtr,
                 
             )

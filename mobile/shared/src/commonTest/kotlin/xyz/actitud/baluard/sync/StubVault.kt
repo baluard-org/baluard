@@ -124,6 +124,11 @@ open class StubVault(
     override suspend fun `memberRemove`(memberIds: List<String>, offlineOverride: Boolean): String = err()
     override suspend fun `memberLeaveFile`(): String = err()
     override suspend fun `memberSetRole`(`memberId`: kotlin.String, `role`: kotlin.String): String = err()
+    override suspend fun `contactsList`(): String = err()
+    override suspend fun `myContactCard`(): String = err()
+    override suspend fun `contactImportCard`(card: kotlin.String): String = err()
+    override suspend fun `contactMarkVerified`(pubkey: kotlin.String): String = err()
+    override suspend fun `contactRemove`(pubkey: kotlin.String): String = err()
     override suspend fun `memberLeaveList`(): String = err()
     override suspend fun `memberLeaveApprove`(memberId: String, offlineOverride: Boolean): String = err()
     // §4.8-9 collection CRUD: same err() discipline.
