@@ -58,7 +58,7 @@ Tauri leverages standard web font resolution, BiDi algorithms, and simple reacti
 GPUI requires manual configuration for font fallback chains and shaping.
 Neither FastFrame nor GPUI-Kit provides a localization subsystem, requiring Baluard to author custom string interpolation, pluralization, and layout mirroring logic.
 
-### 4. Ecosystem and Widget Completeness
+### 4. Ecosystem and Widget Completeness (soft blocker, in-house work)
 FastFrame and GPUI-Kit provide basic buttons and inputs modeled after Tailwind syntax.
 They lack production implementations for:
 - Virtualized multi-column lists and tables
@@ -66,13 +66,17 @@ They lack production implementations for:
 - Focus-trapped modal dialogs
 - Password strength visualizers and secure masked text inputs with toggle controls
 
+Reassessment (2026-10-12): this gap is engineering effort we control, not a permanent blocker. GPUI primitives support full custom components, and v0.7.3 already erodes the list (virtualized Diff viewer, maturing DataTable, tooltip and dialog contracts).
+The secure masked input is also where GPUI beats the webview: a Rust-side input buffer can be zeroized on drop, which JavaScript GC never guarantees. The custom password field is the strongest argument for GPUI in a password manager.
+The real cost sits one layer down: every custom widget must hand-wire its AccessKit roles, focus semantics, and screen-reader announcements against a bridge that is still incomplete on Linux and Windows. Custom components inherit blocker 1; they do not bypass it, and the a11y wiring cost repeats per widget.
+
 ## Decision and Action Plan
 
 1. Retain Tauri v2 + SolidJS for desktop production. Accessibility and cross-platform UI stability are strict product requirements.
 2. Re-evaluate GPUI when:
    - AccessKit reaches parity across Linux (AT-SPI) and Windows (UI Automation) inside GPUI or GPUI-CE.
    - Wayland IME handling and fractional scaling stabilize.
-   - FastFrame or GPUI-Kit reaches feature parity for accessible form controls.
+   - FastFrame or GPUI-Kit reaches feature parity for accessible form controls. Widget parity is partly buildable in-house, but that work only pays off after the first trigger (AccessKit parity) lands: every hand-built control depends on it.
 3. If prototyping is desired, implement a non-production experimental crate under `crates/baluard-desktop-gpui` targeting read-only vault inspection over the existing daemon socket.
 
 ## Monitoring Log
@@ -93,4 +97,4 @@ Checkpoint against the three re-evaluation triggers. Decision unchanged: retain 
 - **Snapshot pinning**: exact pins `gpui-pre =0.3.9` (zed@93d7456) and `gpui-fast 0.1.7` (#3459) are reproducible but confirm the kit rides pre-release upstream snapshots that break freely. v0.7.2 was yanked and replaced by this release.
 - **Diff + git-history components**: directly relevant to Baluard's git-backed storage if the prototype ever happens.
 
-**Next checkpoint watches for**: AT-SPI/UIA entries in release notes, a password/masked input component, Wayland/IME fix entries, and `gpui-fast` promotion from optional feature to default backend.
+**Next checkpoint watches for**: AT-SPI/UIA entries in release notes (priority: the binding dependency), Wayland/IME fix entries, and `gpui-fast` promotion from optional feature to default backend. A password/masked input component is off the wait list: it is in-house work once the a11y foundation lands. A read-only prototype (`crates/baluard-desktop-gpui`, one custom component) can measure what AccessKit actually emits on Linux today and replace release-note watching with evidence.
