@@ -3083,21 +3083,39 @@ impl VaultState {
             .iter()
             .find(|r| r.invite_id == intro.invite_id && r.device_id == intro.device_id)
         {
+            // Retroactive: a row staged before the address-book seed
+            // existed still gets the joiner's card on re-stage.
+            Self::seed_contact_card(handle, &intro_code)?;
             return Ok(serde_json::json!({ "req_id": row.req_id.to_string() }).to_string());
         }
+        // Import BEFORE submit: a failure leaves nothing persisted, so a
+        // retry is a clean redo. A card-less introduction (old clients)
+        // stages fine.
+        Self::seed_contact_card(handle, &intro_code)?;
         let req_id = handle
             .join_queue_submit(&intro_code)
             .map_err(|e| e.to_string())?;
-        // Seed the admin's address book with the joiner's signed card at
-        // Channel so the Level 2 code check can run while the request
-        // waits. A card-less introduction (old clients) stages fine.
-        if let Err(e) = handle.contacts_import_intro(&intro_code) {
-            let msg = e.to_string();
-            if !msg.contains("carries no contact card") {
-                return Err(msg);
+        Ok(serde_json::json!({ "req_id": req_id.to_string() }).to_string())
+    }
+
+    /// Best-effort address-book seed from a staged introduction. Fails only
+    /// on real errors (I/O, malformed decode); a card-less introduction
+    /// (old clients) is tolerated. Idempotent: upsert never downgrades.
+    fn seed_contact_card(
+        handle: &mut baluard_core::vault::VaultHandle,
+        intro_code: &str,
+    ) -> Result<(), String> {
+        match handle.contacts_import_intro(intro_code) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("carries no contact card") {
+                    Ok(())
+                } else {
+                    Err(msg)
+                }
             }
         }
-        Ok(serde_json::json!({ "req_id": req_id.to_string() }).to_string())
     }
 
     /// Join queue: well-shaped staged requests plus the malformed count.

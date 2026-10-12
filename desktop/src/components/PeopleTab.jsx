@@ -740,6 +740,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
                   <Show
                     when={
                       (yourRole() === "owner" || yourRole() === "admin") &&
+                      m.role !== "owner" &&
                       m.identity_signing_pubkey
                     }
                   >
