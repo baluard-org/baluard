@@ -1479,11 +1479,13 @@ fun SettingsScreen(
             // §4.8-7: People & access entry — admin devices only. The admin
             // signal mirrors the desktop rule: any collections.list row
             // carrying access:"admin" means this device manages the space.
-            var isAdminDevice by remember { mutableStateOf(false) }
+            var myRole by remember { mutableStateOf("viewer") }
             LaunchedEffect(vault) {
-                isAdminDevice = repo.isAdminDevice(vault)
+                myRole = repo.myRole(vault)
             }
-            if (isAdminDevice) {
+            // Role-gated, not key-gated: on a flipped Space an admin
+            // holds no Root Key, so holds_root is the wrong signal here.
+            if (myRole == "owner" || myRole == "admin") {
                 SectionCard(title = t("people.title")) {
                     Row(
                         modifier = Modifier
@@ -1499,7 +1501,7 @@ fun SettingsScreen(
                     }
                 }
             }
-            if (isAdminDevice) {
+            if (myRole == "owner" || myRole == "admin") {
                 SectionCard(title = t("collections.title")) {
                     Row(
                         modifier = Modifier
@@ -1530,7 +1532,7 @@ fun SettingsScreen(
                     )
                 }
             }
-            if (isAdminDevice) {
+            if (myRole == "owner" || myRole == "admin") {
                 SectionCard(title = t("space.title")) {
                     val scope = rememberCoroutineScope()
                     var spaceSettings by remember(vault) { mutableStateOf<MobileSpaceSettings?>(null) }

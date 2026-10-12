@@ -461,6 +461,12 @@ class VaultRepository {
     suspend fun isAdminDevice(vault: MobileVault): Boolean =
         runCatching { vault.isAdminDevice() }.getOrDefault(false)
 
+    /** This device's member role ("owner"|"admin"|"editor"|"viewer").
+     * Role-gated UI gates on this: on a flipped Space an admin holds no
+     * Root Key, so isAdminDevice is the wrong signal there. */
+    suspend fun myRole(vault: MobileVault): String =
+        runCatching { vault.myRole() }.getOrDefault("viewer")
+
     /** §6.5 Space policy: {space_invite_authority, allow_viewer_export,
      * guest_enabled, trash_policy, restore_policy}. Null on failure —
      * the caller toasts. */
