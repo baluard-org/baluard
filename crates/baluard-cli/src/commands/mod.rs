@@ -1537,6 +1537,17 @@ pub fn handle_collections(
             }
             Ok(())
         }
+        CollectionAction::Delete { collection } => {
+            ensure_unlocked_daemon(socket)?;
+            let id = resolve_collection_id(socket, collection)?;
+            post(
+                socket,
+                "collections.delete",
+                &serde_json::json!({ "id": id }),
+            )?;
+            println!("Deleted collection.");
+            Ok(())
+        }
         CollectionAction::Create { name } => {
             ensure_unlocked_daemon(socket)?;
             let data = post(
@@ -1606,6 +1617,81 @@ pub fn handle_collections(
 }
 
 // ── Members + pending asks (G11 phase 1) ──
+
+/// Contact cards and the Level 2 identity check. Daemon-only: the
+/// address book is vault state, same as members.
+pub fn handle_contacts(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: &crate::ContactAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "contacts")?;
+    match action {
+        crate::ContactAction::List => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(socket, "contacts.list", &serde_json::json!({}))?;
+            for c in data["contacts"].as_array().cloned().unwrap_or_default() {
+                let trust = c["trust"].as_str().unwrap_or("channel");
+                println!(
+                    "{}  {}  {}",
+                    c["identity_signing_pubkey"].as_str().unwrap_or("?"),
+                    trust,
+                    c["display_name"].as_str().unwrap_or("?")
+                );
+                println!(
+                    "    code: {}",
+                    c["verification_code"].as_str().unwrap_or("?")
+                );
+            }
+            let n = data["contacts"].as_array().map(|a| a.len()).unwrap_or(0);
+            println!("{n} contact(s)");
+        }
+        crate::ContactAction::MyCard => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(socket, "contacts.my_card", &serde_json::json!({}))?;
+            println!("card: {}", data["card"].as_str().unwrap_or("?"));
+            println!(
+                "code: {}",
+                data["verification_code"].as_str().unwrap_or("?")
+            );
+            println!(
+                "Compare the code with your contact over a channel you both trust, then `contacts verify <their pubkey>`."
+            );
+        }
+        crate::ContactAction::Import { code } => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(
+                socket,
+                "contacts.import_card",
+                &serde_json::json!({ "card": code }),
+            )?;
+            println!(
+                "Contact imported: {}",
+                data["display_name"].as_str().unwrap_or("ok")
+            );
+            println!("Unverified. Compare codes, then `contacts verify <pubkey>`.");
+        }
+        crate::ContactAction::Verify { pubkey } => {
+            ensure_unlocked_daemon(socket)?;
+            post(
+                socket,
+                "contacts.mark_verified",
+                &serde_json::json!({ "identity_signing_pubkey": pubkey }),
+            )?;
+            println!("Contact verified. Admin rank is now available for this member.");
+        }
+        crate::ContactAction::Remove { pubkey } => {
+            ensure_unlocked_daemon(socket)?;
+            post(
+                socket,
+                "contacts.remove",
+                &serde_json::json!({ "identity_signing_pubkey": pubkey }),
+            )?;
+            println!("Contact removed.");
+        }
+    }
+    Ok(())
+}
 
 pub fn handle_members(
     mode: ConnectMode,

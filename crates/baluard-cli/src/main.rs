@@ -240,6 +240,12 @@ enum Commands {
         action: MemberAction,
     },
 
+    /// Contact cards and the Level 2 identity check.
+    Contacts {
+        #[command(subcommand)]
+        action: ContactAction,
+    },
+
     /// Manage folders.
     Folders {
         #[command(subcommand)]
@@ -548,6 +554,11 @@ enum CollectionAction {
         #[arg(long)]
         expires_at: Option<u64>,
     },
+    /// Delete a collection. Refused while it still has entries.
+    Delete {
+        /// Collection id or exact name.
+        collection: String,
+    },
     /// Revoke a member or group's access to a collection.
     Revoke {
         /// Collection id or exact name.
@@ -612,6 +623,29 @@ enum MemberAction {
     Deny {
         request_id: String,
         requester_member_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ContactAction {
+    /// List the address book with trust and verification codes.
+    List,
+    /// Print this device's card code and verification code.
+    MyCard,
+    /// Import a contact's card code (lands unverified).
+    Import {
+        /// The card code they shared out-of-band.
+        code: String,
+    },
+    /// Record the Level 2 check: the codes matched out-of-band.
+    Verify {
+        /// Identity pubkey from `baluard contacts list`.
+        pubkey: String,
+    },
+    /// Remove a contact from the address book.
+    Remove {
+        /// Identity pubkey from `baluard contacts list`.
+        pubkey: String,
     },
 }
 
@@ -1682,6 +1716,10 @@ fn main() {
 
         Commands::Members { action } => {
             commands::handle_members(mode, cli.socket.as_deref(), &action)
+        }
+
+        Commands::Contacts { action } => {
+            commands::handle_contacts(mode, cli.socket.as_deref(), &action)
         }
 
         Commands::Trash { action } => match action {
