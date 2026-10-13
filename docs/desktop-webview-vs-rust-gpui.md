@@ -23,7 +23,7 @@ Evaluated references:
 | Display and driver stability | High (tested webview compositor backends) | Variable on Linux Vulkan and Windows DX12 | Tauri wins |
 | Screen reader accessibility (a11y) | Native OS accessibility tree via HTML/ARIA | Incomplete AccessKit bindings (Linux/Win) | Tauri wins (Blocker) |
 | Input Method Editors (IME) | Complete system IME integration | Prone to focus bugs outside macOS | Tauri wins |
-| Internationalization (i18n) | Simple JSON bundles + reactive signals | Custom font fallback, layout, and lookup | Tauri wins |
+| Internationalization (i18n) | Simple JSON bundles + reactive signals | String lookup solved by rust-i18n; font fallback, BiDi mirroring, plurals still custom | Tauri wins (narrowing) |
 | Widget maturity | Production-ready forms, tables, modals | Early-stage primitives; heavy custom dev | Tauri wins |
 
 ## Security and Runtime Advantages of GPUI
@@ -56,7 +56,20 @@ Windows DirectX 12 integration lacks the extensive mixed-DPI monitor testing pre
 ### 3. Localization and Internationalization (i18n)
 Tauri leverages standard web font resolution, BiDi algorithms, and simple reactive i18n dictionaries (`en.json`, `es.json`, `pt.json`).
 GPUI requires manual configuration for font fallback chains and shaping.
-Neither FastFrame nor GPUI-Kit provides a localization subsystem, requiring Baluard to author custom string interpolation, pluralization, and layout mirroring logic.
+Neither FastFrame nor GPUI-Kit provides a localization subsystem.
+
+**rust-i18n assessment (2026-10-13)**: the string-lookup half of this gap has an ecosystem answer.
+[rust-i18n](https://github.com/longbridge/rust-i18n) (v4.0.0, 2026-04-11, MIT, active since 2021) embeds YAML/JSON/TOML locale maps into the binary at compile time and exposes a global `t!` macro with `%{name}` interpolation, fallback locale chains, and territory fallback (`zh-CN` falls back to `zh`).
+It is UI-framework agnostic, adds no runtime parse dependencies by default, and is already the de facto i18n layer of the GPUI ecosystem: `gpui-component` (~10K stars) uses it.
+Tooling ships with it: `cargo i18n` extracts untranslated keys from `t!` calls into TODO files, and the i18n Ally VS Code extension reads the locale files.
+This closes the custom lookup and interpolation tooling line-item from the migration cost estimate. The existing per-locale `en.json`/`es.json`/`pt.json` port with a flattening step (per-locale JSON is a supported format; nested keys become dot keys), and the vitest key-parity tests map to a small Rust test over `available_locales!()`.
+What rust-i18n does not solve, and stays in-house on a GPUI path:
+- ICU/CLDR plural categories. `count` is plain interpolation; plural forms need hand-rolled key conventions (`key.one`/`key.other` picked in code).
+- RTL/BiDi layout mirroring. No layout awareness; direction-aware widget layout is still custom GPUI work.
+- Font fallback chains and shaping. Unrelated to this crate; still GPUI text-system configuration.
+- Reactive re-render on locale switch. `set_locale()` is a process global; GPUI views need observe wiring to repaint on change.
+- Compile-time key validation. Missing keys surface at runtime (optional `log-miss-tr` warnings); the extractor plus a parity test are the guard.
+The decision is unchanged: this row was never the blocker; accessibility is.
 
 ### 4. Ecosystem and Widget Completeness (soft blocker, in-house work)
 FastFrame and GPUI-Kit provide basic buttons and inputs modeled after Tailwind syntax.
@@ -98,3 +111,10 @@ Checkpoint against the three re-evaluation triggers. Decision unchanged: retain 
 - **Diff + git-history components**: directly relevant to Baluard's git-backed storage if the prototype ever happens.
 
 **Next checkpoint watches for**: AT-SPI/UIA entries in release notes (priority: the binding dependency), Wayland/IME fix entries, and `gpui-fast` promotion from optional feature to default backend. A password/masked input component is off the wait list: it is in-house work once the a11y foundation lands. A read-only prototype (`crates/baluard-desktop-gpui`, one custom component) can measure what AccessKit actually emits on Linux today and replace release-note watching with evidence.
+
+### rust-i18n v4 assessment (2026-10-13)
+
+Follow-up on the i18n gap (section 3). Assessed https://github.com/longbridge/rust-i18n as the candidate lookup layer for a GPUI path.
+Verdict: it closes the string-lookup and interpolation half of the gap and is the ecosystem-standard choice (`gpui-component` builds on it). If the GPUI prototype happens, adopt rust-i18n; do not author custom lookup tooling.
+Still in-house: ICU plurals, BiDi/RTL mirroring, font fallback chains, locale-switch reactivity wiring, and runtime-only key validation (extractor plus parity test as the guard).
+Decision unchanged: retain Tauri v2 + SolidJS. The accessibility blocker is untouched by this crate.
