@@ -74,7 +74,34 @@ appLaunchDelay: 3000
       id: "e2e/list/search"
     timeout: 30000
 # THE assertion: the org entry must not merge into the personal hub.
+# Settle-first: type a query the personal entry matches, wait for it
+# visibly (the merged search coroutine has resolved), then assert the
+# org entry is absent — an immediate assertNotVisible could pass
+# against the initial empty foreign-hits state.
+- tapOn:
+    id: "e2e/list/add"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/edit/name"
+    timeout: 20000
+- inputText:
+    id: "e2e/edit/name"
+    text: "Wifi Router"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: "e2e/edit/save"
+    timeout: 20000
+- tapOn:
+    id: "e2e/edit/save"
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 20000
 - tapOn:
     id: "e2e/list/search"
-- inputText: Org Wifi
+- inputText: Wifi
+- extendedWaitUntil:
+    visible: "Wifi Router"
+    timeout: 20000
 - assertNotVisible: "Org Wifi"
