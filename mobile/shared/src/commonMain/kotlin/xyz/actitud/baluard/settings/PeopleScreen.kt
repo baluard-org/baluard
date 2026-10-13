@@ -216,7 +216,9 @@ fun PeopleScreen(
             }
             refreshAll()
         } catch (e: Exception) {
-            val msg = e.message ?: t("error.generic")
+            // ifBlank: an FFI error carrying only the "detail=" prefix
+            // would otherwise surface an empty message in the dialog.
+            val msg = (e.message ?: t("error.generic")).ifBlank { t("error.generic") }
             // A failed seat strike is not a dead end: the dialog stays
             // open so the admin can read why and opt into the override.
             if (kind == "remove" && msg.contains("provider seat removal failed")) {
