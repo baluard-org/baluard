@@ -71,9 +71,9 @@ appLaunchDelay: 3000
     visible: "Backup repository ready.*"
     timeout: 90000
 
-# Flip to team shape: prepare, then the typed confirm.
-- waitForAnimationToEnd:
-    timeout: 3000
+# Flip to team shape: prepare, then the typed confirm. (No settle wait
+# here: the People screen's pollers animate forever, so the wait itself
+# becomes the failing step — scrollUntilVisible carries the step.)
 - scrollUntilVisible:
     element:
       text: "Prepare members"

@@ -67,7 +67,16 @@ appLaunchDelay: 3000
     visible: "Paste invite reply"
     timeout: 20000
 - tapOn: "Paste invite reply"
-- inputText: ${BALUARD_E2E_INTRO}
+# Maestro's per-key inputText wedges on one long string (~1100+ chars),
+# so the intro rides in 8 chunk vars; short calls each return cleanly.
+- inputText: ${BALUARD_E2E_INTRO_1}
+- inputText: ${BALUARD_E2E_INTRO_2}
+- inputText: ${BALUARD_E2E_INTRO_3}
+- inputText: ${BALUARD_E2E_INTRO_4}
+- inputText: ${BALUARD_E2E_INTRO_5}
+- inputText: ${BALUARD_E2E_INTRO_6}
+- inputText: ${BALUARD_E2E_INTRO_7}
+- inputText: ${BALUARD_E2E_INTRO_8}
 - hideKeyboard
 - tapOn: "Save"
 - extendedWaitUntil:
