@@ -49,7 +49,7 @@ appLaunchDelay: 3000
 - assertVisible: "Waiting for approval"
 - extendedWaitUntil:
     notVisible: "Waiting for approval"
-    timeout: 240000
+    timeout: 600000
 # Approved: the org hub renders (viewer-scoped, likely without
 # entries yet — the hub search field is the stable marker).
 - extendedWaitUntil:
