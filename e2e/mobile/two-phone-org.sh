@@ -72,20 +72,22 @@ adb -s "$SERIAL_FOUNDER" logcat -c 2>/dev/null || true
 maestro "$SERIAL_FOUNDER" 14a-org-founder.yaml \
   "MASTER_PW=$FOUNDER_PW" "BALUARD_E2E_MASTER_PW=$FOUNDER_PW" "BALUARD_E2E_PAT=$GH_PAT" \
   "BALUARD_E2E_REPO=$REPO" "BALUARD_E2E_GH_USER2=$GH_USER2" \
-  > "$WORK/maestro-14a.log" 2>&1 &
-MPID_A=$!
-
-INVITE=""
-for _ in $(seq 1 90); do
-  sleep 3
-  INVITE="$(invite_from_logcat "$SERIAL_FOUNDER" || true)"
-  [[ -n "$INVITE" ]] && break
-  kill -0 "$MPID_A" 2>/dev/null || break
-done
+  # No adb while the flow runs: every adb client restarts the server the
+# runner just killed and the driver dies silently at startup. Run the
+# flow to completion, then read the invite from the accumulated logcat.
+if ! maestro "$SERIAL_FOUNDER" 14a-org-founder.yaml \
+    "MASTER_PW=$FOUNDER_PW" "BALUARD_E2E_MASTER_PW=$FOUNDER_PW" "BALUARD_E2E_PAT=$GH_PAT" \
+    "BALUARD_E2E_REPO=$REPO" "BALUARD_E2E_GH_USER2=$GH_USER2" \
+    > "$WORK/maestro-14a.log" 2>&1; then
+  echo "FAIL: founder flow failed"; tail -30 "$WORK/maestro-14a.log"; exit 1
+fi
+keep_shot "$SERIAL_FOUNDER" "14a-founder"
+INVITE="$(adb -s "$SERIAL_FOUNDER" logcat -d 2>/dev/null | python3 -c "
+import re, sys
+m = re.findall(r'JoinInvite.*invite=(\S+)', sys.stdin.read())
+print(m[-1] if m else '')" || true)"
 [[ -n "$INVITE" ]] || { echo "FAIL: invite code not captured on founder phone"; tail -20 "$WORK/maestro-14a.log"; exit 1; }
 echo "    invite captured (${#INVITE} chars)"
-wait "$MPID_A" || { echo "FAIL: founder flow failed"; tail -30 "$WORK/maestro-14a.log"; exit 1; }
-keep_shot "$SERIAL_FOUNDER" "14a-founder"
 
 # The invite must be on the remote before the joiner clones: the
 # founder's autosync pushes it (5s debounce). Commit COUNTS lie here:
@@ -137,8 +139,14 @@ done
 echo "    intro captured (${#INTRO} chars)"
 
 echo "── [4/6] founder phone: add entry, stage + approve"
+# One long inputText wedges Maestro's per-key typing; hand the flow the
+# intro in 8 chunks (empty-padded so every var always resolves).
+CHUNK_ENV=()
+for i in $(seq 0 7); do
+  CHUNK_ENV+=("BALUARD_E2E_INTRO_$((i+1))=$(printf '%s' "$INTRO" | cut -c $((i*200+1))-$(((i+1)*200)))")
+done
 maestro "$SERIAL_FOUNDER" 14c-org-approve.yaml \
-  "MASTER_PW=$FOUNDER_PW" "BALUARD_E2E_MASTER_PW=$FOUNDER_PW" "BALUARD_E2E_INTRO=$INTRO" \
+  "MASTER_PW=$FOUNDER_PW" "BALUARD_E2E_MASTER_PW=$FOUNDER_PW" "${CHUNK_ENV[@]}" \
   > "$WORK/maestro-14c.log" 2>&1
 keep_shot "$SERIAL_FOUNDER" "14c-approved"
 
