@@ -67,6 +67,7 @@ fun PeopleScreen(
     vault: MobileVault,
     repo: VaultRepository,
     onBack: () -> Unit = {},
+    onSyncNudge: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var members by remember { mutableStateOf<List<MobileMemberInfo>>(emptyList()) }
@@ -340,6 +341,7 @@ fun PeopleScreen(
                                             }.onSuccess {
                                                 Toast.success(t("people.joinApproved"))
                                                 refreshAll()
+                                                onSyncNudge()
                                             }.onFailure { Toast.error(it.message ?: t("error.generic")) }
                                         }
                                     }) { Text(t("people.approve")) }
@@ -655,6 +657,10 @@ fun PeopleScreen(
                                             // harness reads the one-time code from logcat (JoinInvite.*invite=)
                                             platformLogE("JoinInvite", "invite=$inviteCode")
                                         }
+                                        // The pending-invite file is a local
+                                        // artifact; only the debounced push
+                                        // carries it to the remote.
+                                        onSyncNudge()
                                     }.onFailure { Toast.error(it.message?.removePrefix("detail=") ?: t("error.generic")) }
                                     inviteBusy = false
                                 }

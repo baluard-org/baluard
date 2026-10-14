@@ -676,7 +676,7 @@ impl MobileVault {
             });
         }
         let seal = self.state.devkey_seal().await;
-        baluard_runtime::providers::setup_sync_remote(
+        let new = baluard_runtime::providers::setup_sync_remote(
             &self.state.vault_path,
             seal,
             baluard_core::providers::Provider::from(provider),
@@ -684,7 +684,12 @@ impl MobileVault {
             clone_url,
         )
         .await
-        .map_err(|e| BaluardError::Vault { detail: e })
+        .map_err(|e| BaluardError::Vault { detail: e })?;
+        // The unlock-time autosync activation skipped this vault (no remote
+        // yet at unlock); arm it now so debounced mutation nudges actually
+        // push instead of silently no-opping.
+        self.state.activate_autosync_after_remote().await;
+        Ok(new)
     }
 
     /// Fleet snapshot: {devices: [{name, device_id, enrolled_at, ...}],
