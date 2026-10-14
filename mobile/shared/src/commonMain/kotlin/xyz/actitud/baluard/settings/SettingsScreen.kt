@@ -145,6 +145,7 @@ fun SettingsScreen(
     onVaultRemoved: () -> Unit = {},
     repo: VaultRepository,
     onOpenPeople: () -> Unit = {},
+    onSyncNudge: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
     onOpenActivity: () -> Unit = {},
     onBack: () -> Unit = {},
@@ -413,6 +414,7 @@ fun SettingsScreen(
                                         Toast.success(
                                             t("settings.gitBackupDone", url ?: ""),
                                         )
+                                        onSyncNudge()
                                     } catch (e: kotlinx.coroutines.CancellationException) {
                                         throw e
                                     } catch (e: Exception) {
@@ -1597,6 +1599,7 @@ fun SettingsScreen(
                                 spaceTeam = repo.spaceStatus(vault)
                                 Toast.success(t("space.teamDone"))
                                 showFlipConfirm = false
+                                onSyncNudge()
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Exception) {
