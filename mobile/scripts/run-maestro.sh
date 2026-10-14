@@ -100,6 +100,18 @@ for f in "$FLOW_DIR"/*.yaml; do
   while read -r k; do
     args+=(-e "${k}=${!k}")
   done < <(compgen -e | grep '^BALUARD_E2E_' | grep -v 'BALUARD_E2E_MASTER_PW$')
+  # Maestro's DADB opens the USB device nodes directly; a running adb
+  # server holds those interfaces and the driver dies at its first RPC
+  # (DeviceServerDied at deviceInfo). Drop the server for the duration —
+  # maestro needs no server, and the next plain adb client restarts it.
+  adb kill-server > /dev/null 2>&1 || true
+  # An orphaned maestro from a killed run holds the same USB interface;
+  # a new driver start then dies identically. Clear stale launchers first.
+  for p in $(pgrep -f "bin/maestro" 2>/dev/null); do
+    [ "$p" != "$$" ] && kill "$p" 2>/dev/null
+  done
+  sleep 1
+  adb kill-server > /dev/null 2>&1 || true
   maestro "${args[@]}" "$MAESTRO_DEVICE" "$f" || rc=1
 done
 exit "$rc"

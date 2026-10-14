@@ -36,6 +36,7 @@ appLaunchDelay: 3000
 - tapOn:
     id: "e2e/edit/name"
 - inputText: Org Wifi
+- hideKeyboard
 - tapOn:
     id: "e2e/edit/password"
 - inputText: org-wifi-secret
@@ -44,6 +45,7 @@ appLaunchDelay: 3000
     element:
       id: "e2e/edit/save"
     timeout: 20000
+    centerElement: true
 - waitForAnimationToEnd
 - tapOn:
     id: "e2e/edit/save"

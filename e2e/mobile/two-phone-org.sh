@@ -88,19 +88,18 @@ wait "$MPID_A" || { echo "FAIL: founder flow failed"; tail -30 "$WORK/maestro-14
 keep_shot "$SERIAL_FOUNDER" "14a-founder"
 
 # The invite must be on the remote before the joiner clones: the
-# founder's autosync pushes it (5s debounce). Wait for the repo to
-# carry commits.
+# founder's autosync pushes it (5s debounce). Commit COUNTS lie here:
+# the git-backup push made the repo non-empty before the invite even
+# existed, so poll the contents API for meta/invites itself.
 echo "── [2/6] waiting for the founder's push"
-for _ in $(seq 1 30); do
-  N="$(curl -s -m 15 -H "Authorization: Bearer $GH_PAT" \
-    "https://api.github.com/repos/$GH_USER/$REPO/commits?per_page=1" | python3 -c 'import json,sys
-try: print(len(json.load(sys.stdin)))
-except Exception: print(0)')"
-  [[ "$N" != "0" ]] && break
+for _ in $(seq 1 45); do
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 15 -H "Authorization: Bearer $GH_PAT" \
+    "https://api.github.com/repos/$GH_USER/$REPO/contents/meta/invites")"
+  [[ "$CODE" == "200" ]] && break
   sleep 4
 done
-[[ "$N" != "0" ]] || { echo "FAIL: founder vault never reached the remote"; exit 1; }
-echo "    remote has $N commit(s)"
+[[ "$CODE" == "200" ]] || { echo "FAIL: invite never reached the remote"; exit 1; }
+echo "    invite file on the remote"
 
 # Read-level collaborator invites 422 between brand-new accounts: raise
 # the seat to push (the approval would upgrade it anyway), then accept
