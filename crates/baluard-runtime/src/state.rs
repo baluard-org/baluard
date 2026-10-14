@@ -327,6 +327,47 @@ impl VaultState {
     /// locked. Lets the daemon's sync routes open the sealed
     /// `meta/device-privkey.json` for commit signing without exposing the
     /// handle itself.
+    /// Activate autosync after a remote is attached post-unlock (the mobile
+    /// git-backup path). The unlock-time activation only fires when a remote
+    /// already exists, so a vault that gains its remote later — the common
+    /// onboarding order: create, then wire the backup — would otherwise leave
+    /// autosync inactive and every later debounced nudge would silently
+    /// no-op at the !active guard, stranding local-only artifacts (pending
+    /// invites, purpose writes) until the next unlock.
+    pub async fn activate_autosync_after_remote(&self) {
+        if self.autosync.is_active().await {
+            return;
+        }
+        let device_id = self
+            .inner
+            .read()
+            .await
+            .as_ref()
+            .map(|h| h.device_id.to_string())
+            .unwrap_or_default();
+        if device_id.is_empty() {
+            return;
+        }
+        let devkey_seal = self.devkey_seal().await;
+        let enroll_vk = {
+            let guard = self.inner.read().await;
+            guard.as_ref().and_then(|h| h.enroll_verify_key())
+        };
+        let has_remote = baluard_core::sync::engine::SyncEngine::new(
+            &self.vault_path,
+            &device_id,
+            devkey_seal.as_ref(),
+        )
+        .open_repo()
+        .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
+        .unwrap_or(false);
+        if has_remote && std::env::var("BALUARD_AUTOSYNC").ok().as_deref() != Some("0") {
+            self.autosync
+                .activate(device_id, devkey_seal, enroll_vk)
+                .await;
+        }
+    }
+
     pub async fn devkey_seal(&self) -> Option<[u8; 32]> {
         let g = self.inner.read().await;
         g.as_ref().and_then(|h| h.devkey_seal())

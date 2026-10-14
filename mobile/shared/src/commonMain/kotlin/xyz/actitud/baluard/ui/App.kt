@@ -607,6 +607,7 @@ fun App(
                                     repo = repo,
                                     onOpenPeople = { nav = Nav.People },
                                     onOpenCollections = { nav = Nav.Collections },
+                                    onSyncNudge = { notifyMutation() },
                                     onOpenActivity = { nav = Nav.Activity },
                                     onVaultTimeoutChange = { token ->
                                         autoLockToken = token
@@ -623,6 +624,7 @@ fun App(
                                     vault = vault,
                                     repo = repo,
                                     onBack = { nav = Nav.Settings },
+                                    onSyncNudge = { notifyMutation() },
                                 )
                                 Nav.Collections -> CollectionsScreen(
                                     vault = vault,

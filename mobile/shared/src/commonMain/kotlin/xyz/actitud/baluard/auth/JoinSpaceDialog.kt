@@ -186,7 +186,10 @@ fun JoinSpaceDialog(
                                         phase = "waiting"
                                     }
                                 }.onFailure {
-                                    errorMsg = it.message ?: t("error.generic")
+                                    // The FFI prefixes every error with
+                                    // "detail="; strip it like the other
+                                    // surfaces do.
+                                    errorMsg = (it.message ?: "").removePrefix("detail=").ifBlank { t("error.generic") }
                                 }
                                 busy = false
                             }
