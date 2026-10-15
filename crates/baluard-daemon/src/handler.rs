@@ -5986,12 +5986,23 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     let engine =
                         SyncEngine::new(&vault_path, "baluard-daemon", devkey_seal.as_ref());
 
-                    // Init repo if not already a git repo
+                    // Init repo if not already a git repo. A .git directory
+                    // means an existing vault repo: an open failure there is
+                    // transient and re-initializing would silently wipe the
+                    // vault's history (a second genesis can never push over
+                    // the first incarnation's remote line).
                     let git_repo = match engine.open_repo() {
                         Ok(r) => r,
-                        Err(_) => engine
-                            .init_repo()
-                            .map_err(|e| format!("Git init failed: {e}"))?,
+                        Err(open_err) => {
+                            if vault_path.join(".git").exists() {
+                                return Err(format!(
+                                    "Git open failed (vault repo already initialized): {open_err}"
+                                ));
+                            }
+                            engine
+                                .init_repo()
+                                .map_err(|e| format!("Git init failed: {e}"))?
+                        }
                     };
 
                     // Add origin remote (idempotent check)

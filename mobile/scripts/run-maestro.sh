@@ -107,7 +107,10 @@ for f in "$FLOW_DIR"/*.yaml; do
   adb kill-server > /dev/null 2>&1 || true
   # An orphaned maestro from a killed run holds the same USB interface;
   # a new driver start then dies identically. Clear stale launchers first.
-  for p in $(pgrep -f "bin/maestro" 2>/dev/null); do
+  # The CLI is a JVM whose comm is "java" — match the main class, not the
+  # binary name, or a hung run survives every cleanup and every later run
+  # attaches to its "live" session and dies at deviceInfo (~200ms).
+  for p in $(pgrep -f "maestro.cli.AppKt" 2>/dev/null); do
     [ "$p" != "$$" ] && kill "$p" 2>/dev/null
   done
   sleep 1
