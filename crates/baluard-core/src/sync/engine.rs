@@ -9,7 +9,7 @@
 #[cfg(feature = "git-sync")]
 use git2::build::RepoBuilder;
 #[cfg(feature = "git-sync")]
-use git2::{FetchOptions, Oid, PushOptions, Repository, Signature};
+use git2::{Direction, FetchOptions, Oid, PushOptions, Repository, Signature};
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -1547,6 +1547,37 @@ impl SyncEngine {
             }
         }
         out
+    }
+
+    /// Did the remote's branch tip already move to our local head? Used to
+    /// tell a push that errored after landing from one that genuinely
+    /// failed: a just-created forge repo can serve a stale ref view to the
+    /// push's own negotiation, so the pack arrives and the call still
+    /// reports non-fast-forward (org-journey evidence: both journey repos
+    /// were fully populated despite the reported error).
+    pub fn remote_head_matches_local(&self, repo: &Repository, remote_name: &str) -> bool {
+        let Ok(mut remote) = repo.find_remote(remote_name) else {
+            return false;
+        };
+        let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
+        {
+            let Ok(_connection) = remote.connect_auth(Direction::Push, Some(callbacks), None)
+            else {
+                return false;
+            };
+        }
+        let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) else {
+            return false;
+        };
+        let branch = Self::resolve_default_branch(repo);
+        let want = format!("refs/heads/{branch}");
+        remote
+            .list()
+            .map(|refs| {
+                refs.iter()
+                    .any(|r| r.name() == want && r.oid() == head.id())
+            })
+            .unwrap_or(false)
     }
 
     fn push_inner(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {

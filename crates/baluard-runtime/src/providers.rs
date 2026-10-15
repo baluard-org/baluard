@@ -244,9 +244,22 @@ pub async fn setup_sync_remote(
         let engine = SyncEngine::new(&git_path, "baluard-mobile", devkey_seal.as_ref());
         let git_repo = match engine.open_repo() {
             Ok(r) => r,
-            Err(_) => engine
-                .init_repo()
-                .map_err(|e| format!("Git init failed: {e}"))?,
+            Err(open_err) => {
+                // A .git directory means an existing vault repo: an open
+                // failure there is transient (lock contention with another
+                // engine) and re-initializing would silently wipe the
+                // vault's history, producing a second genesis whose push
+                // can never fast-forward over the first incarnation's
+                // remote line. Only a vault with no .git at all may init.
+                if git_path.join(".git").exists() {
+                    return Err(format!(
+                        "Git open failed (vault repo already initialized): {open_err}"
+                    ));
+                }
+                engine
+                    .init_repo()
+                    .map_err(|e| format!("Git init failed: {e}"))?
+            }
         };
         if let Ok(existing) = engine.get_remote_url(&git_repo, "origin") {
             if existing != remote_for_block {
@@ -267,9 +280,37 @@ pub async fn setup_sync_remote(
                 .commit_all(&git_repo, "")
                 .map_err(|e| format!("Commit failed: {e}"))?;
         }
-        engine
-            .push(&git_repo, "origin")
-            .map_err(|e| format!("First push failed: {e}"))?;
+        // A just-created forge repo can serve phantom or stale refs to the
+        // push's own negotiation: the pack lands (or lands on retry) while
+        // the call reports non-fast-forward, and the ref view converges
+        // seconds later. Retry with a delay, then trust the remote tip over
+        // the error — org-journey evidence: every "failed" backup repo was
+        // fully populated and converged within a minute.
+        let mut push_err: Option<BaluardError> = None;
+        for attempt in 0..3u8 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+            match engine.push(&git_repo, "origin") {
+                Ok(()) => {
+                    push_err = None;
+                    break;
+                }
+                Err(e) => {
+                    if engine.remote_head_matches_local(&git_repo, "origin") {
+                        eprintln!(
+                            "warning: push reported {e} but the remote tip already carries our head; treating the backup as pushed"
+                        );
+                        push_err = None;
+                        break;
+                    }
+                    push_err = Some(e);
+                }
+            }
+        }
+        if let Some(e) = push_err {
+            return Err(format!("First push failed: {e}"));
+        }
         Ok(remote_for_block)
     })
     .await
