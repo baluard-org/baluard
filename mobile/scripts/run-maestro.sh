@@ -111,7 +111,12 @@ for f in "$FLOW_DIR"/*.yaml; do
   # binary name, or a hung run survives every cleanup and every later run
   # attaches to its "live" session and dies at deviceInfo (~200ms).
   for p in $(pgrep -f "maestro.cli.AppKt" 2>/dev/null); do
-    [ "$p" != "$$" ] && kill "$p" 2>/dev/null
+    # Kill only HUNG runs (30+ min): a live run's JVM (an orchestrator
+    # leg running beside another) must survive another leg's preflight.
+    age=$(ps -o etimes= -p "$p" 2>/dev/null | tr -d ' ')
+    if [ -n "$age" ] && [ "$age" -gt 1800 ] && [ "$p" != "$$" ]; then
+      kill "$p" 2>/dev/null
+    fi
   done
   sleep 1
   adb kill-server > /dev/null 2>&1 || true
