@@ -1759,19 +1759,28 @@ pub struct MobileCreateResult {
 }
 
 /// Create a new vault and return both the vault handle and the 24-word recovery phrase.
+/// [display_name] names the vault in the switcher (marker slug via
+/// suggest_slug); blank resolves to "Personal", the CLI's own default.
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn create_vault_with_recovery(
     path: String,
+    display_name: Option<String>,
     master_password: String,
     device_name: String,
 ) -> Result<MobileCreateResult, BaluardError> {
     let vault_path = std::path::PathBuf::from(&path);
+    let display_name = match display_name.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => name.to_string(),
+        _ => "Personal".to_string(),
+    };
     let (_handle, secrets) = baluard_core::vault::creation::VaultCreator::new(
         &vault_path,
         &master_password,
         &device_name,
     )
     .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
+    .profile(Some(display_name.clone()), None)
+    .slug(Some(baluard_core::vault::slug::suggest_slug(&display_name)))
     .execute()
     .map_err(|e| BaluardError::Creation {
         detail: e.to_string(),
@@ -2942,9 +2951,14 @@ mod tests {
         let path = tmp.path().to_str().unwrap().to_string();
         let pw = "master-pass-123".to_string();
 
-        let res = create_vault_with_recovery(path.clone(), pw.clone(), "device-rec".to_string())
-            .await
-            .unwrap();
+        let res = create_vault_with_recovery(
+            path.clone(),
+            Some("Work Items".to_string()),
+            pw.clone(),
+            "device-rec".to_string(),
+        )
+        .await
+        .unwrap();
         assert_eq!(res.recovery_phrase.phrase.split_whitespace().count(), 24);
         // The adopted handle arrives UNLOCKED: the two-phone org journey
         // caught mobile-created vaults being FFI-locked at birth (the UI
@@ -2953,6 +2967,10 @@ mod tests {
             res.vault.is_unlocked().await,
             "created vault must be unlocked"
         );
+        // Display name rides the marker slug so the switcher renders the
+        // vault's name, not the machine directory.
+        let marker = std::fs::read_to_string(tmp.path().join(".baluard")).unwrap();
+        assert!(marker.contains("baluard-work-items"), "marker: {marker}");
 
         // Derive KEK using vault's on-disk params (2.2 fix)
         let kek = derive_kek_for_vault(path, pw).await.unwrap();
@@ -2961,6 +2979,22 @@ mod tests {
         // KEK unlocks the vault via unlock_with_kek
         res.vault.unlock_with_kek(kek).await.unwrap();
         assert!(res.vault.is_unlocked().await);
+    }
+
+    #[tokio::test]
+    async fn create_vault_blank_display_name_defaults_to_personal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        create_vault_with_recovery(
+            path,
+            Some("   ".to_string()),
+            "master-pass-123".to_string(),
+            "device-rec".to_string(),
+        )
+        .await
+        .unwrap();
+        let marker = std::fs::read_to_string(tmp.path().join(".baluard")).unwrap();
+        assert!(marker.contains("baluard-personal"), "marker: {marker}");
     }
 
     #[tokio::test]
