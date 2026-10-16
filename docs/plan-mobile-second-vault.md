@@ -1,6 +1,6 @@
 # A Second Vault on the Phone (mobile create-vault entry point)
 
-- Status: Draft for review
+- Status: Landed 2026-10-16
 - Date: 2026-10-16
 - Author: Esteban
 
@@ -213,14 +213,20 @@ today, accepted as a boundary.
 
 ## 6. Landing order
 
+All four steps LANDED 2026-10-16 (wave verified on device; the two-phone org
+journey ran green end to end with 14e executing for the first time, closing
+the G24 on-device exclusion gap).
+
 1. `AppPaths.nextCreatedVaultPath()` expect/actual trio (vaults + detached
-   collision scan) + stale doc fix.
+   collision scan) + stale doc fix. LANDED.
 2. One compiling unit: FFI `display_name` parameter + core profile/slug
    wiring + regenerated bindings + the pre-filled name field on
    `CreateVaultScreen` (with its phase-scoped `BackHandler`) + the App.kt
    entry point, `createTarget` mount wiring, staged create routing,
    cancel/back fast-path restore, and `onCreated` bookkeeping + i18n keys
    (en/es/pt). The FFI signature change breaks the commonMain callers, so
-   the wrapper and its consumers must land together.
-3. Wave verification (gradle compiles, uniffi tests, APK rebuild).
+   the wrapper and its consumers must land together. LANDED.
+3. Wave verification (gradle compiles, uniffi tests, APK rebuild). LANDED —
+   uniffi 20/0, all three gradle targets green, journey run green.
 4. Peer review, then 14e un-skip and the two-phone org journey re-fire.
+   LANDED — see §5's journey leg; the exclusion assert passed on device.
