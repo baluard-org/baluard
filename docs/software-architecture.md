@@ -18,7 +18,7 @@ baluard/
 │   │       ├── keys/           # Key hierarchy (hierarchy), epochs (epoch), rotation (rotation), nonces (nonce)
 │   │       ├── vault/          # Padding engine (5KB/30KB/100KB/250KB/2MB tiers), envelope, manifest, CRUD, canary, attachment, avatar, slug, registry, keywrap, index
 │   │       ├── sync/           # git2-rs sync engine, conflict 3-way merge, state machine, known_hosts, credentials, operations, commit
-│   │       ├── import/         # 8 import parsers (bw_json, bw_csv, chrome_csv, firefox_csv, lastpass_csv, 1password_1pux, 1password_csv, keepass_xml) + 2 export formats
+│   │       ├── import/         # 10 import parsers (baluard-encrypted .bldbak first, baluard.vault v1, then bw_json, bw_csv, chrome_csv, firefox_csv, lastpass_csv, 1password_1pux, 1password_csv, keepass_xml) + export (baluard JSON, CSV) + golden vector
 │   │       ├── providers/      # Git provider abstraction: github, gitlab, codeberg adapters + token store + shared types
 │   │       ├── bridge/         # Browser extension bridge: pairing file format + atomic writes (pairing), bridge token mint/verify (token)
 │   │       ├── biometric.rs    # OS-keychain-backed master password escrow (per-vault scoped, deterministic vault_id from KDF salt)
@@ -27,7 +27,8 @@ baluard/
 │   │       ├── emergency.rs    # Break-glass access
 │   │       ├── health.rs       # Password health report
 │   │       ├── integrity.rs    # Canary checks + rollback manifest
-│   │       ├── orgs.rs         # Team sharing / RBAC
+│   │       ├── orgs.rs         # Envelope-only: WrappedKeyBundle for the emergency escrow (sharing lives in vault/{members,groups,collections,approvals,policies,space_meta,family,contacts,reveals,packages,templates,outbox})
+
 │   │       ├── recovery.rs     # BIP-39 recovery
 │   │       ├── paths.rs        # Platform-correct base dirs (data, socket, logs, token)
 │   │       ├── resources/      # global_equivalent_domains.json (Bitwarden domain equivalence groups)
@@ -59,11 +60,11 @@ baluard/
 ├── desktop/                    # Tauri v2 Desktop App (SolidJS/Tailwind, full CRUD, 8 cipher types)
 │   ├── src-tauri/              # Rust backend: daemon sidecar + baluard-nmh sidecar + tray + proto codegen
 │   ├── src/                    # SolidJS webview: login, vault, cipher CRUD, settings
-│   │   ├── components/         # 38 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, WelcomeScreen, CloneFromProviderScreen, BridgeTab, ConflictBanner, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, VaultSwitcher, AutoSyncIndicator, DeviceFleetPanel, SyncTab, SettingsModal, ...)
+│   │   ├── components/         # 52 components (VaultView, CipherDetail, CreateVaultScreen, RecoveryScreen, PeopleTab, GroupsTab, CollectionsTab, ContactsTab, BridgeTab, BridgeUnlockBanner, ConflictResolutionPanel, DeviceFleetPanel, VaultSwitcher, AutoSyncIndicator, SyncTab, SettingsModal, ...)
 │   │   ├── context/            # AuthContext, VaultContext, VaultSwitcherContext, AutoSyncContext, ConflictResolutionContext, themeSignal, toastSignal
 │   │   ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
 │   │   ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
-│   │   └── i18n/locales/       # en.json, es.json (all user-facing strings)
+│   │   └── i18n/locales/       # en.json, es.json, pt.json (all user-facing strings)
 │   └── package.json            # SolidJS, Tailwind v4, Tauri API v2
 ├── browser/                    # MV3 Browser Extensions (Chromium + Firefox, shared codebase)
 │   ├── shared/                 # 95% of code: SolidJS popup, service worker, content script, nmh wrapper, autofill, pair
@@ -122,7 +123,7 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 
 ### 3.2 Mobile Tier (B2C)
 
-**Current state**: Android Phases 0-6 implemented. Compose Multiplatform codebase compiles to native Android and iOS targets. Consumes `baluard-runtime` and `baluard-core` in-process via `baluard-uniffi` bindings (no background daemon on mobile). Onboarding (new vault and git provider clone + device enrollment), home hub with categories and count pills, filtered entry lists, detail/edit for all 8 cipher types at desktop parity, deep search, password generator, TOTP widget, biometric unlock, auto-lock, sync feedback, settings (including favicon opt-in), and full system autofill integration are operational. Phase 7 (iOS AutoFill extension) is next.
+**Current state**: Android Phases 0-6 implemented. Compose Multiplatform codebase compiles to native Android and iOS targets. Consumes `baluard-runtime` and `baluard-core` in-process via `baluard-uniffi` bindings (no background daemon on mobile). Onboarding (new vault and git provider clone + device enrollment), home hub with categories and count pills, filtered entry lists, detail/edit for all 8 cipher types at desktop parity, deep search, password generator, TOTP widget, biometric unlock, auto-lock, sync feedback, settings (including favicon opt-in), and full system autofill integration are operational. Phase 7 (iOS AutoFill extension) is parked past 1.0.
 
 **Architecture properties**:
 - **KMP UI**: Shared Android/iOS screens written in Compose Multiplatform.
