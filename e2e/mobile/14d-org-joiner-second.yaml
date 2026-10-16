@@ -1,10 +1,11 @@
 # Joiner phone, second pass (NO clearState). The org vault unlocked on
 # approval. As a grantless org editor the first add must be REFUSED —
 # organization entries need a granted collection, the cryptographically
-# enforced boundary. Then the joiner creates a personal vault as the
-# second vault on this phone.
+# enforced boundary. The joiner-side merge-exclusion baseline lives
+# founder-side (14e); this flow ends after returning to the hub.
 #
-#   MASTER_PW_2           the joiner's PERSONAL vault password
+#   MASTER_PW_2           the joiner's PERSONAL vault password (unused
+#                         since the second-vault leg was trimmed)
 appId: xyz.actitud.baluard
 appLaunchDelay: 3000
 ---
@@ -52,10 +53,6 @@ appLaunchDelay: 3000
     visible:
       id: "e2e/list/search"
     timeout: 20000
-# Second vault: a personal one, via the vault switcher (the pill
-# carries the vault's slug-derived name — the org clone's slug is the
-# repo name).
-# The personal-second-vault leg is deliberately absent: the switcher's
-# Add vault offers only the clone path today (no create-a-second-vault
-# UI exists on mobile), so the joiner-side merge-exclusion baseline is
-# covered founder-side by 14e plus the daemon route_coverage pins.
+# The joiner-side personal-second-vault leg was trimmed once mobile had
+# no create-a-second-vault UI; that surface ships now, but the exclusion
+# assert stays founder-side (14e), so this flow still ends here.
