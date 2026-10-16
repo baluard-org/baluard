@@ -65,7 +65,12 @@
     "creating": "Criando cofre...",
     "alreadyHaveVault": "Já tenho um cofre",
     "errorMinLength": "A senha deve ter pelo menos 8 caracteres",
-    "errorMismatch": "As senhas não coincidem"
+    "errorMismatch": "As senhas não coincidem",
+    "purposeTitle": "Para que é este cofre?",
+    "purposePersonal": "Pessoal",
+    "purposePersonalDesc": "Só para você",
+    "purposeFamily": "Família",
+    "purposeFamilyDesc": "Compartilhe com sua família; inclui um kit de recuperação"
   },
   "recovery": {
     "title": "Frase de Recuperação",
@@ -101,7 +106,12 @@
       "stored": "Guardei minha nova frase em um local seguro",
       "done": "Pronto",
       "rotatedToast": "Frase de recuperação substituída. A frase antiga não funciona mais."
-    }
+    },
+    "kitTitle": "Kit de recuperação familiar",
+    "kitBody": "Essas 24 palavras abrem o cofre quando nenhum dispositivo de administrador restar. Mostradas uma única vez — guarde-as com o kit familiar.",
+    "kitSavedAck": "Guardei a frase do kit em um lugar seguro.",
+    "kitSheetTitle": "Kit de recuperação familiar",
+    "kitSheetWarning": "Qualquer pessoa com essas 24 palavras pode abrir este cofre. Guarde este arquivo com o kit familiar, em um lugar seguro."
   },
   "setup": {
     "title": "Sincronize seu cofre",
@@ -787,7 +797,14 @@
     "verifyMissing": "Ainda não há cartão de contato deste membro.",
     "demoteTitle": "Remover acesso de administrador",
     "demoteBody": "Rebaixar {name} remove o acesso de administrador imediatamente. A pessoa mantém a conta e o acesso atual às entradas, mas não poderá mais gerenciar membros, chaves nem coleções.",
-    "demoteConfirm": "Rebaixar"
+    "demoteConfirm": "Rebaixar",
+    "contestTitle": "Reivindicação de propriedade pendente",
+    "contestBody": "{claimant} reivindicou a propriedade do proprietário atual. Entrará em vigor em {date} salvo cancelamento.",
+    "contestHint": "Este aviso chega a cada dispositivo de administrador na próxima sincronização.",
+    "contestCancel": "Cancelar a reivindicação",
+    "contestCancelTitle": "Cancelar a reivindicação de propriedade?",
+    "contestCancelBody": "A reivindicação desaparece e o proprietário atual continua sendo o dono. O administrador que reivindicou verá a mudança na próxima sincronização.",
+    "contestCancelled": "Reivindicação cancelada."
   },
   "join": {
     "joinLink": "Foi convidado para um cofre compartilhado?",
