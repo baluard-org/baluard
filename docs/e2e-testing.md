@@ -131,7 +131,7 @@ The highest-value layer and the cheapest. The CLI is the executable spec, so thi
 | Enabling work E1-E13 | Landed with Phase 1 (2026-10-03) |
 | Phase 1 CLI + daemon | Done (2026-10-03/04): harness + 9 flows incl. multi-device join/sync, forgery refusal, encrypted-backup restore |
 | Phase 2 Android Maestro | Flows GREEN on a dedicated Pixel 8 (2026-10-10) and the two-phone family join journey green (2026-10-11); CI still needs the x86_64 native build; org-share journey next |
-| Phase 3 Desktop wdio | Blocked on this box's GTK headers (`just sysdeps`); CI carries it; needs E6/E7 |
+| Phase 3 Desktop wdio | Headers landed 2026-10-16 (fc44); build shells need `PKG_CONFIG_PATH=/usr/lib64/pkgconfig` because brew's pkg-config shadows the system one; needs E6/E7 |
 | Phase 4 Extension | Not started; needs E6/E8 |
 
 Rollout order: enabling work rides with its phase. Phase 1 first: no new runtime infrastructure, largest feature surface.
