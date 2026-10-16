@@ -38,6 +38,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import xyz.actitud.baluard.ui.components.BaluardDivider
 import xyz.actitud.baluard.ui.components.BaluardTopBar
+import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
+import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.platform.rememberRecoverySheetSaver
+import xyz.actitud.baluard.ui.toast.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -73,7 +77,7 @@ import xyz.actitud.baluard.ui.components.SectionCard
 /**
  * Decrypted cipher detail styled after Baluard design language.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, kotlin.io.encoding.ExperimentalEncodingApi::class)
 @Composable
 fun CipherDetailScreen(
     vault: MobileVault,
@@ -207,6 +211,70 @@ fun CipherDetailScreen(
             // TOTP Live Code Card if applicable
             if (s.hasTotp) {
                 TotpWidget(vault = vault, cipherId = s.id, viewModel = totpViewModel)
+            }
+
+            // Share as file: passphrase-guest reveal (Login-only; the
+            // passphrase opens it and travels by voice, never in the file).
+            if (s.typeTag == "login") {
+                val repo = remember { VaultRepository() }
+                val saver = rememberRecoverySheetSaver()
+                val shareScope = rememberCoroutineScope()
+                var shareBusy by remember { mutableStateOf(false) }
+                var sharePass by remember { mutableStateOf<String?>(null) }
+                BaluardOutlinedButton(
+                    text = t("share.exportRow"),
+                    onClick = {
+                        if (shareBusy) return@BaluardOutlinedButton
+                        shareBusy = true
+                        shareScope.launch {
+                            try {
+                                val expiresAt = Clock.currentTimeMillis() / 1000 + 7 * 86_400L
+                                val (revealB64, passphrase) =
+                                    repo.exportGuestReveal(vault, s.id, expiresAt, false)
+                                val bytes = kotlin.io.encoding.Base64.decode(revealB64)
+                                val stem = s.name.map { if (it.isLetterOrDigit()) it else '-' }
+                                    .joinToString("").trim('-').take(40).ifBlank { "entry" }
+                                saver(bytes, "application/octet-stream", "$stem.baluard-share") { saved ->
+                                    shareBusy = false
+                                    if (saved) sharePass = passphrase
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                shareBusy = false
+                                Toast.error(
+                                    (e.message ?: "").removePrefix("detail=").ifBlank { t("share.exportFailed") },
+                                )
+                            }
+                        }
+                    },
+                    enabled = !shareBusy,
+                )
+                sharePass?.let { pass ->
+                    AlertDialog(
+                        onDismissRequest = { sharePass = null },
+                        title = { Text(t("share.exportPassTitle")) },
+                        text = {
+                            Column {
+                                Text(
+                                    t("share.exportPassBody"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    pass,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { sharePass = null }) { Text(t("common.done")) }
+                        },
+                    )
+                }
             }
 
             // Credentials / Key Details Section

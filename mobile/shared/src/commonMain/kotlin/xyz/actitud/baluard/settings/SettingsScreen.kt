@@ -129,6 +129,18 @@ internal fun s4OpLabel(kind: String): String = when (kind) {
     else -> kind
 }
 
+/** Localized health-finding reason: core sends a machine kind plus the
+ * number it parametrizes; unknown kinds fall back to the English text. */
+internal fun healthReasonText(f: MobileHealthFinding): String = when (f.kind) {
+    "short" -> t("settings.healthRShort", f.n ?: 0)
+    "common" -> t("settings.healthRCommon")
+    "same_char" -> t("settings.healthRSameChar")
+    "sequential" -> t("settings.healthRSequential")
+    "old" -> t("settings.healthROld", f.n ?: 0)
+    "reused" -> t("settings.healthRReused", f.n ?: 0)
+    else -> f.reason
+}
+
 /**
  * Settings screen styled after Baluard design language.
  */
@@ -856,7 +868,7 @@ fun SettingsScreen(
                                                 Column {
                                                     Text(f.name, style = MaterialTheme.typography.bodyMedium)
                                                     Text(
-                                                        f.reason,
+                                                        healthReasonText(f),
                                                         style = MaterialTheme.typography.bodySmall,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     )
