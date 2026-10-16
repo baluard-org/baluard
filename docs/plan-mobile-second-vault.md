@@ -108,7 +108,8 @@ name to creation, riding the existing `VaultCreator` builder:
   01 and 14a are unaffected. The journey leg that consumes this feature
   (§5, 14e) names its second vault explicitly so the switcher never shows
   two identical rows, and its rewrite retires the stale `"Vault (1)"`
-  pill selector the old 14e text carried.
+  pill selector the old 14e text carried. (§5's journey leg types the
+  distinct name.)
 
 ### 3.4 Completion and cancel bookkeeping
 
@@ -119,17 +120,22 @@ post-unlock bookkeeping:
 
 ```
 onCreated = {
-    path = createTarget
-    VaultRegistry.saveActiveVault(createTarget)
+    val target = createTarget ?: return   // staged entries always set it
+    path = target
+    VaultRegistry.saveActiveVault(target)
     hasVault = true
     showCreate = false
+    createTarget = null
     unlocked = true
     nav = Nav.List
     // session adoption already happened in CreateVaultViewModel (auth.adopt);
-    // run the same post-unlock tail a switch gets:
-    sync.onUnlock(vault); conflictVm.refresh(vault)
+    // run the same post-unlock tail a switch gets, with the handle from auth:
+    auth.vault()?.let { v -> scope.launch { sync.onUnlock(v); conflictVm.refresh(v) } }
 }
 ```
+
+`createTarget` is nulled on BOTH completion and cancellation so stale state
+can never route a later first-run creation into the wrong directory.
 
 `auth.adopt` (CreateVaultViewModel.create) already seats the new unlocked
 handle in the session under the new path; LRU eviction beyond
@@ -141,9 +147,11 @@ Cancel is phase-scoped. The creation ceremony has two phases inside
 (after it). Cancel exists only in the form phase — `onCancelled` restores the
 live session via the `auth.switchTo(path)` fast path and returns to
 `Unlocked`, falling back to today's drop-to-unlock only when the session is
-not live. This fixes the pre-existing clone-flow quirk too (§1, last bullet):
-both cancel arms (`showCreate = false`, `showOpen = false`) get the same
-fast-path restore. Once the phrase is on screen the flow is non-cancellable
+not live. The restore runs inside a coroutine and flips `unlocked`/`showCreate`
+together AFTER `auth.switchTo(path)` resolves, so `currentRoot` never flashes
+the unlock screen for a frame. This fixes the pre-existing clone-flow quirk
+too (§1, last bullet): both cancel arms (`showCreate = false`,
+`showOpen = false`) get the same fast-path restore. Once the phrase is on screen the flow is non-cancellable
 (the words-once rule, same as the kit-rotation dialog's non-dismissable
 contract): `CreateVaultScreen` registers its own
 `BackHandler(enabled = !phraseShown)` so the system back gesture cancels the
@@ -192,10 +200,11 @@ today, accepted as a boundary.
 - commonTest: `MultiVaultSession` is unaffected (adoption path unchanged);
   no new unit surface — the routing layer is App.kt state with no harness.
 - E2E: un-skip journey leg 14e. The founder phone creates a personal second
-  vault through the new switcher row (name "Personal"), completes the
-  recovery acknowledgment, and the existing positive-control search then
-  asserts the org entry is absent from the personal hub — closing the
-  documented G24 on-device coverage gap. Fresh APK required.
+  vault through the new switcher row — typing a DISTINCT name ("Private"),
+  since the org vault's own pill now reads "Personal" after §3.3's default —
+  completes the recovery acknowledgment, and the existing positive-control
+  search then asserts the org entry is absent from the personal hub —
+  closing the documented G24 on-device coverage gap. Fresh APK required.
 - Manual checklist: create a second vault while the first stays unlocked;
   cancel in the form phase and confirm return without re-unlock; confirm
   back does nothing during the recovery-phrase phase; create a third vault
