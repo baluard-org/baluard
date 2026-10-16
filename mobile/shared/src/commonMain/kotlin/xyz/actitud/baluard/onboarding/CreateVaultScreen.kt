@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +38,7 @@ import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.BaluardTextField
 import xyz.actitud.baluard.ui.E2eTags
+import xyz.actitud.baluard.ui.BackPressHandler
 import androidx.compose.ui.platform.testTag
 
 /**
@@ -60,6 +62,9 @@ fun CreateVaultScreen(
     var deviceName by rememberSaveable {
         mutableStateOf(deviceDisplayName().ifBlank { t("onboarding.defaultDeviceName") })
     }
+    // Switcher display name, pre-filled with the CLI's default; blank still
+    // resolves to "Personal" inside the FFI.
+    var vaultName by rememberSaveable { mutableStateOf("Personal") }
     var creating by rememberSaveable { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var phraseShown by rememberSaveable { mutableStateOf(false) }
@@ -71,6 +76,11 @@ fun CreateVaultScreen(
         )
         return
     }
+
+    // Form-phase back cancels; once the phrase is up this composable has
+    // returned, so back falls through to App's (disabled) chain — the
+    // words-once rule keeps the phrase phase non-cancellable.
+    BackPressHandler(enabled = !creating, onBack = onCancelled)
 
     BaluardAmbientBackground {
         Column(
@@ -92,6 +102,22 @@ fun CreateVaultScreen(
             BaluardCard(
                 modifier = Modifier.fillMaxWidth(),
             ) {
+                BaluardTextField(
+                    value = vaultName,
+                    modifier = Modifier.testTag(E2eTags.CREATE_NAME),
+                    onValueChange = {
+                        vaultName = it
+                        error = null
+                    },
+                    label = t("onboarding.vaultName"),
+                    placeholder = t("onboarding.vaultName"),
+                    leadingIcon = Icons.Default.Folder,
+                    enabled = !creating,
+                    singleLine = true,
+                )
+
+                Spacer(Modifier.height(12.dp))
+
                 BaluardTextField(
                     value = password,
                     modifier = Modifier.testTag(E2eTags.CREATE_PASSWORD),
@@ -170,7 +196,7 @@ fun CreateVaultScreen(
                         creating = true
                         error = null
                         scope.launch {
-                            val ok = vm.create(vaultPath, password, deviceName)
+                            val ok = vm.create(vaultPath, vaultName, password, deviceName)
                             creating = false
                             if (ok) {
                                 phraseShown = true

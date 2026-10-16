@@ -11,6 +11,7 @@ object E2eTags {
     const val ONBOARDING_CREATE = "e2e/onboarding/create"
 
     // Vault creation wizard.
+    const val CREATE_NAME = "e2e/create/name"
     const val CREATE_PASSWORD = "e2e/create/password"
     const val CREATE_CONFIRM = "e2e/create/confirm"
     const val CREATE_DEVICE_NAME = "e2e/create/deviceName"
