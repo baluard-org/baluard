@@ -36,9 +36,12 @@ appLaunchDelay: 3000
 - extendedWaitUntil:
     visible: "Org Wifi"
     timeout: 20000
-# Second vault: personal, via the switcher.
+# Second vault: personal, via the switcher. The founder CREATED the org
+# vault (default name 'Vault', entry count in parens) — only clones
+# derive their slug from the repo name, so the pill is matched by its
+# literal hub text, not the repo regex.
 - tapOn:
-    text: ".*${BALUARD_E2E_REPO}.*"
+    text: "Vault (1)"
 - extendedWaitUntil:
     visible: "Add vault"
     timeout: 20000
