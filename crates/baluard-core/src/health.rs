@@ -22,6 +22,14 @@ pub struct HealthEntry {
     pub cipher_id: String,
     pub name: String,
     pub reason: String,
+    /// Machine-readable kind ("short" | "common" | "same_char" |
+    /// "sequential" | "old" | "reused") so GUIs can localize; additive —
+    /// [reason] stays the human-readable English text.
+    #[serde(default)]
+    pub kind: String,
+    /// The number embedded in the reason (chars, days, or entry count).
+    #[serde(default)]
+    pub n: Option<u64>,
 }
 
 /// Common passwords (top 100 from breach databases).
@@ -127,6 +135,18 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
                 } else {
                     "Weak".into()
                 },
+                kind: if pw.len() < 8 {
+                    "short".into()
+                } else if COMMON_PASSWORDS.contains(&pw.to_lowercase().as_str()) {
+                    "common".into()
+                } else if is_all_same_char(pw) {
+                    "same_char".into()
+                } else if is_sequential(pw) {
+                    "sequential".into()
+                } else {
+                    "weak".into()
+                },
+                n: (pw.len() < 8).then_some(pw.len() as u64),
             });
         }
 
@@ -143,6 +163,8 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
                 cipher_id: cipher.id.to_string(),
                 name: cipher.name.clone(),
                 reason: format!("Unchanged for {} days", days),
+                kind: "old".into(),
+                n: Some(days),
             });
         }
 
@@ -161,6 +183,8 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
                     cipher_id: id.clone(),
                     name: name.clone(),
                     reason: format!("Used on {} entries", entries.len()),
+                    kind: "reused".into(),
+                    n: Some(entries.len() as u64),
                 });
             }
         }
