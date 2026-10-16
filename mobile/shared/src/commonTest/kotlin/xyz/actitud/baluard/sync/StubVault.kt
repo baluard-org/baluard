@@ -175,6 +175,7 @@ override suspend fun `myRole`(): String = err()
     override suspend fun `repromptVerify`(masterPassword: String): ULong = err()
     override suspend fun `importSharedPackage`(packageB64: String): String = err()
     override suspend fun `openSharedContact`(revealB64: String): String = err()
+    override suspend fun `exportGuestReveal`(cipherId: String, expiresAt: ULong, includeTotp: Boolean): String = err()
     override suspend fun `rotateRecoveryPhrase`(oldPassword: String): String = err()
     // G13/G19/G21: groups, health, avatar — never exercised by stubs.
     override suspend fun `groupsList`(): String = err()

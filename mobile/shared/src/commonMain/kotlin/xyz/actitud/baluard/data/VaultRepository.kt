@@ -88,11 +88,14 @@ data class MobileGroupInfo(
     val memberIds: List<String> = emptyList(),
 )
 
-/** One password-health finding (G19). */
+/** One password-health finding (G19). [kind]/[n] are the machine fields
+ * core adds beside the English [reason]; GUIs localize by kind. */
 data class MobileHealthFinding(
     val cipherId: String,
     val name: String,
     val reason: String,
+    val kind: String = "",
+    val n: Long? = null,
 )
 
 /** Password-health report (vault.health wire shape). */
@@ -993,6 +996,8 @@ class VaultRepository {
                     cipherId = (e["cipher_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
                     name = (e["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
                     reason = (e["reason"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+                    kind = (e["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+                    n = (e["n"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull(),
                 )
             }
         }
@@ -1028,6 +1033,23 @@ class VaultRepository {
      * b64 in, OpenedReveal JSON out. */
     suspend fun openSharedContact(vault: MobileVault, revealB64: String): String =
         vault.openSharedContact(revealB64)
+
+    /** Export half of the share round trip: seal one of this vault's
+     * logins into a passphrase-guest .baluard-share file. Returns the
+     * file's base64 and the passphrase that opens it (voice only). */
+    suspend fun exportGuestReveal(
+        vault: MobileVault,
+        cipherId: String,
+        expiresAt: Long,
+        includeTotp: Boolean,
+    ): Pair<String, String> {
+        val res = vault.exportGuestReveal(cipherId, expiresAt.toULong(), includeTotp)
+        val obj = Json.parseToJsonElement(res).jsonObject
+        return Pair(
+            obj["reveal"]!!.jsonPrimitive.content,
+            obj["passphrase"]!!.jsonPrimitive.content,
+        )
+    }
 
     companion object {
         const val DEFAULT_VAULT_TIMEOUT = "15m"

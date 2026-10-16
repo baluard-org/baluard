@@ -1013,6 +1013,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1131,6 +1133,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_export_data(`ptr`: Pointer,`format`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_export_encrypted_backup(`ptr`: Pointer,`passphrase`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_export_guest_reveal(`ptr`: Pointer,`cipherId`: RustBuffer.ByValue,`expiresAt`: Long,`includeTotp`: Byte,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_fetch_favicon(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1576,6 +1580,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_export_encrypted_backup(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_export_guest_reveal(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_fetch_favicon(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_generator_history_add(
@@ -1945,6 +1951,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_export_encrypted_backup() != 44131.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_export_guest_reveal() != 38902.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_fetch_favicon() != 64896.toShort()) {
@@ -3340,6 +3349,16 @@ public interface MobileVaultInterface {
      * memory before returning.
      */
     suspend fun `exportEncryptedBackup`(`passphrase`: kotlin.String): EncryptedBackup
+    
+    /**
+     * Export one of this vault's logins as a passphrase-guest reveal
+     * file (S2 IS-6, the export half of the share round trip). Returns
+     * `{reveal, passphrase}` JSON: `reveal` is the base64 of the
+     * .baluard-share file bytes (save via the platform saver), and the
+     * passphrase opens it — it travels by voice, never beside the file.
+     * Guest reveals are Login-only and ride the opt-in guest door.
+     */
+    suspend fun `exportGuestReveal`(`cipherId`: kotlin.String, `expiresAt`: kotlin.ULong, `includeTotp`: kotlin.Boolean): kotlin.String
     
     /**
      * Fetch a favicon for a login's domain. Payload is the URI or bare
@@ -4905,6 +4924,35 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeEncryptedBackup.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Export one of this vault's logins as a passphrase-guest reveal
+     * file (S2 IS-6, the export half of the share round trip). Returns
+     * `{reveal, passphrase}` JSON: `reveal` is the base64 of the
+     * .baluard-share file bytes (save via the platform saver), and the
+     * passphrase opens it — it travels by voice, never beside the file.
+     * Guest reveals are Login-only and ride the opt-in guest door.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `exportGuestReveal`(`cipherId`: kotlin.String, `expiresAt`: kotlin.ULong, `includeTotp`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_export_guest_reveal(
+                thisPtr,
+                FfiConverterString.lower(`cipherId`),FfiConverterULong.lower(`expiresAt`),FfiConverterBoolean.lower(`includeTotp`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         BaluardException.ErrorHandler,
     )

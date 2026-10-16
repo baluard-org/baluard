@@ -840,6 +840,24 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Export one of this vault's logins as a passphrase-guest reveal
+    /// file (S2 IS-6, the export half of the share round trip). Returns
+    /// `{reveal, passphrase}` JSON: `reveal` is the base64 of the
+    /// .baluard-share file bytes (save via the platform saver), and the
+    /// passphrase opens it — it travels by voice, never beside the file.
+    /// Guest reveals are Login-only and ride the opt-in guest door.
+    pub async fn export_guest_reveal(
+        &self,
+        cipher_id: String,
+        expires_at: u64,
+        include_totp: bool,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .export_guest_reveal(&cipher_id, expires_at, include_totp)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
     /// logins against a fill target: `https://...` for web fills,
     /// `androidapp://com.pkg` for native app fills. Returns a JSON object
