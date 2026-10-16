@@ -31,10 +31,17 @@ class CreateVaultViewModel(
      * Create the vault at [path]. Returns true on success (words available in
      * [recoveryWords], vault adopted + unlocked). On failure [error] holds the
      * surfaced reason; the screen shows it instead of a bare generic string.
+     * [displayName] names the vault in the switcher; blank resolves to
+     * "Personal" inside the FFI.
      */
-    suspend fun create(path: String, password: String, deviceName: String): Boolean {
+    suspend fun create(
+        path: String,
+        displayName: String,
+        password: String,
+        deviceName: String,
+    ): Boolean {
         return try {
-            val result = repo.createVaultWithRecovery(path, password, deviceName)
+            val result = repo.createVaultWithRecovery(path, displayName, password, deviceName)
             recoveryWords = result.recoveryPhrase.phrase.split(' ').filter { it.isNotBlank() }
             auth.adopt(path, result.vault)
             true

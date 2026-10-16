@@ -229,9 +229,10 @@ class VaultRepository {
      */
     suspend fun createVaultWithRecovery(
         path: String,
+        displayName: String,
         password: String,
         deviceName: String,
-    ): MobileCreateResult = uniffiCreateVaultWithRecovery(path, password, deviceName)
+    ): MobileCreateResult = uniffiCreateVaultWithRecovery(path, displayName, password, deviceName)
 
     suspend fun listCiphers(vault: MobileVault): List<MobileCipherMeta> = vault.listCiphers()
     suspend fun getCipher(vault: MobileVault, id: String, decrypt: Boolean): String =

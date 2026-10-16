@@ -47,6 +47,7 @@ internal val PT: Map<String, String> = mapOf(
     "onboarding.kitDeviceName" to "Nome do dispositivo",
     "onboarding.kitFailed" to "Falha na recuperação. Verifique a frase e tente novamente.",
     "onboarding.createVault" to "Criar novo cofre",
+    "onboarding.vaultName" to "Nome do cofre",
     "onboarding.openExisting" to "Abrir um cofre existente",
     "onboarding.openExistingHint" to "Abre um cofre sincronizado de outro dispositivo",
     "onboarding.featureEncryptTitle" to "Criptografado no seu dispositivo",

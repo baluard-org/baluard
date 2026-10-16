@@ -151,6 +151,12 @@ fun App(
         var showCreate by remember { mutableStateOf(false) }
         var showOpen by remember { mutableStateOf(false) }
         var unlocked by remember { mutableStateOf(false) }
+        // Where the create ceremony writes. Set by the switcher's create row
+        // (fresh directory) or first-run staging (the default vault path); the
+        // mount and both completion arms consume it, and it is nulled on
+        // completion AND cancel so stale state can never route a later
+        // first-run creation into the wrong directory.
+        var createTarget by remember { mutableStateOf<String?>(null) }
 
         val repo = remember { VaultRepository() }
         val auth = remember { AuthViewModel(repo) }
@@ -509,6 +515,14 @@ fun App(
                                         showOpen = true
                                         nav = Nav.List
                                     },
+                                    onCreateVault = {
+                                        // Same stage flip; the current vault
+                                        // stays unlocked in the session.
+                                        unlocked = false
+                                        createTarget = AppPaths.nextCreatedVaultPath()
+                                        showCreate = true
+                                        nav = Nav.List
+                                    },
                                     revision = saveRevision,
                                 )
 
@@ -641,14 +655,46 @@ fun App(
                     }
 
                     RootStage.CreateVault -> CreateVaultScreen(
-                        vaultPath = path,
+                        vaultPath = createTarget ?: path,
                         authViewModel = auth,
                         onCreated = {
+                            val target = createTarget ?: return@CreateVaultScreen
+                            path = target
+                            xyz.actitud.baluard.platform.VaultRegistry.saveActiveVault(target)
                             hasVault = true
                             showCreate = false
+                            createTarget = null
                             unlocked = true
+                            nav = Nav.List
+                            // Session adoption already happened in
+                            // CreateVaultViewModel (auth.adopt); run the same
+                            // post-unlock tail a vault switch gets.
+                            auth.vault()?.let { v ->
+                                scope.launch {
+                                    runCatching { sync.onUnlock(v) }
+                                    conflictVm.refresh(v)
+                                }
+                            }
                         },
-                        onCancelled = { showCreate = false },
+                        onCancelled = {
+                            val target = path
+                            createTarget = null
+                            scope.launch {
+                                // Fast path: the live session is still
+                                // unlocked, so restore without re-auth. Flip
+                                // the stage flags together AFTER switchTo
+                                // resolves so no unlock screen flashes.
+                                if (auth.switchTo(target)) {
+                                    unlocked = true
+                                } else {
+                                    runCatching { auth.lock() }
+                                    conflictVm.clear()
+                                    hasVault = AppPaths.vaultExists(target)
+                                    unlocked = false
+                                }
+                                showCreate = false
+                            }
+                        },
                     )
 
                     RootStage.OpenProvider -> {
@@ -713,8 +759,21 @@ fun App(
                                     onDeviceCodeStarted = { },
                                     onPatConnected = { },
                                     onCancelled = {
-                                        hasVault = AppPaths.vaultExists(path)
-                                        showOpen = false
+                                        // Same fast-path restore as the create
+                                        // cancel: the current vault is still
+                                        // unlocked in the session.
+                                        val target = path
+                                        scope.launch {
+                                            if (auth.switchTo(target)) {
+                                                unlocked = true
+                                            } else {
+                                                runCatching { auth.lock() }
+                                                conflictVm.clear()
+                                                hasVault = AppPaths.vaultExists(target)
+                                                unlocked = false
+                                            }
+                                            showOpen = false
+                                        }
                                     },
                                 )
                             }
@@ -722,7 +781,12 @@ fun App(
                     }
 
                     RootStage.Onboarding -> OnboardingScreen(
-                        onCreateVault = { showCreate = true },
+                        onCreateVault = {
+                            // First run: the ceremony targets the default
+                            // vault path; both entries flow through one var.
+                            createTarget = path
+                            showCreate = true
+                        },
                         onOpenProvider = { showOpen = true },
                         onRecovered = { recovered ->
                             // G6: kit recovery on a fresh device — adopt

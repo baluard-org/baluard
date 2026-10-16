@@ -52,6 +52,7 @@ internal val EN: Map<String, String> = mapOf(
     "onboarding.kitDeviceName" to "Device name",
     "onboarding.kitFailed" to "Recovery failed. Check the phrase and try again.",
     "onboarding.createVault" to "Create new vault",
+    "onboarding.vaultName" to "Vault name",
     "onboarding.openExisting" to "Open an existing vault",
     "onboarding.openExistingHint" to "Opens a vault synced from another device",
 

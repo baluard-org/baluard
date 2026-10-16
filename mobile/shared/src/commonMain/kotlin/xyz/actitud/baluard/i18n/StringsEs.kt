@@ -52,6 +52,7 @@ internal val ES: Map<String, String> = mapOf(
     "onboarding.kitDeviceName" to "Nombre del dispositivo",
     "onboarding.kitFailed" to "La recuperación falló. Revisa la frase e inténtalo de nuevo.",
     "onboarding.createVault" to "Crear una bóveda nueva",
+    "onboarding.vaultName" to "Nombre de la bóveda",
     "onboarding.openExisting" to "Abrir una bóveda existente",
     "onboarding.openExistingHint" to "Abre una bóveda sincronizada desde otro dispositivo",
 

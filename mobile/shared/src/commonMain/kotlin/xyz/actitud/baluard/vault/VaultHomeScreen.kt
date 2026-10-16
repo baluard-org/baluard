@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Category
@@ -114,6 +115,7 @@ fun VaultHomeScreen(
     onSwitchVault: (String) -> Unit = {},
     onDetachVault: suspend (String) -> Unit = {},
     onAddVault: () -> Unit = {},
+    onCreateVault: () -> Unit = {},
     revision: Int = 0,
 ) {
     val ciphers by listViewModel.ciphers.collectAsState()
@@ -312,6 +314,29 @@ fun VaultHomeScreen(
                                 modifier = Modifier.padding(vertical = 6.dp),
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                             )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        switchOpen = false
+                                        onCreateVault()
+                                    }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AddCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    text = t("onboarding.createVault"),
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()

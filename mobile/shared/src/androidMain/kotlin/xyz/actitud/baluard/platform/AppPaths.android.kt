@@ -37,4 +37,23 @@ actual object AppPaths {
         }
         return candidate.absolutePath
     }
+
+    /**
+     * Machine directory for a created vault ("vault-2", "vault-3", ...); the
+     * display name comes from the marker slug, never from this name. Detach
+     * moves directories into detached/, so the collision scan covers both
+     * roots — otherwise a reused name would drift to "vault-2-1" on a later
+     * detach.
+     */
+    actual fun nextCreatedVaultPath(): String {
+        val detachedRoot = File(AppContextHolder.require().filesDir, "detached")
+        var n = 2
+        while (true) {
+            val candidate = vaultsRoot().resolve("vault-$n")
+            if (!candidate.exists() && !File(detachedRoot, "vault-$n").exists()) {
+                return candidate.absolutePath
+            }
+            n += 1
+        }
+    }
 }
