@@ -45,47 +45,17 @@ appLaunchDelay: 3000
 - extendedWaitUntil:
     visible: ".*No collection is open for your edits.*"
     timeout: 20000
-
+# A refused save keeps the edit screen up: go back to the hub before
+# touching the vault switcher (the recorded back-then-hub-marker rule).
+- back
+- extendedWaitUntil:
+    visible:
+      id: "e2e/list/search"
+    timeout: 20000
 # Second vault: a personal one, via the vault switcher (the pill
 # carries the vault's slug-derived name — the org clone's slug is the
 # repo name).
-- extendedWaitUntil:
-    visible:
-      id: "e2e/list/search"
-    timeout: 20000
-- tapOn:
-    text: ".*${BALUARD_E2E_REPO}.*"
-- extendedWaitUntil:
-    visible: "Add vault"
-    timeout: 20000
-- tapOn: "Add vault"
-- extendedWaitUntil:
-    visible: "Baluard"
-    timeout: 20000
-- tapOn:
-    id: "e2e/onboarding/create"
-- tapOn:
-    id: "e2e/create/password"
-- inputText: "${BALUARD_E2E_MASTER_PW_2}"
-- tapOn:
-    id: "e2e/create/confirm"
-- inputText: "${BALUARD_E2E_MASTER_PW_2}"
-- hideKeyboard
-- tapOn:
-    id: "e2e/create/submit"
-- scrollUntilVisible:
-    element:
-      id: "e2e/recovery/ack"
-    timeout: 20000
-- tapOn:
-    id: "e2e/recovery/ack"
-- scrollUntilVisible:
-    element:
-      id: "e2e/recovery/continue"
-    timeout: 20000
-- tapOn:
-    id: "e2e/recovery/continue"
-- extendedWaitUntil:
-    visible:
-      id: "e2e/list/search"
-    timeout: 30000
+# The personal-second-vault leg is deliberately absent: the switcher's
+# Add vault offers only the clone path today (no create-a-second-vault
+# UI exists on mobile), so the joiner-side merge-exclusion baseline is
+# covered founder-side by 14e plus the daemon route_coverage pins.

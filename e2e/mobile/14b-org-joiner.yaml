@@ -47,12 +47,7 @@ appLaunchDelay: 3000
 - hideKeyboard
 - tapOn: "Send request"
 - assertVisible: "Waiting for approval"
-- extendedWaitUntil:
-    notVisible: "Waiting for approval"
-    timeout: 600000
-# Approved: the org hub renders (viewer-scoped, likely without
-# entries yet — the hub search field is the stable marker).
-- extendedWaitUntil:
-    visible:
-      id: "e2e/list/search"
-    timeout: 45000
+# The flow ENDS here: the orchestrator's concurrent second Maestro run
+# (the founder's approve leg) kills or starves this JVM mid-hold, so the
+# approval wait is verified orchestrator-side by polling the joiner's
+# screen for the unlocked org hub instead of inside this flow.
