@@ -39,4 +39,27 @@ actual object AppPaths {
             .trim('-').take(48).ifEmpty { "vault" }
         return docs.stringByAppendingPathComponent("vaults/$slug")
     }
+
+    actual fun nextCreatedVaultPath(): String {
+        val docs = NSSearchPathForDirectoriesInDomains(
+            NSDocumentDirectory,
+            NSUserDomainMask,
+            expandTilde = true,
+        ).firstOrNull() as? String ?: ""
+        val detached = docs.stringByAppendingPathComponent("detached")
+        var n = 2
+        while (true) {
+            val name = "vault-$n"
+            val inVaults = NSFileManager.defaultManager.fileExistsAtPath(
+                docs.stringByAppendingPathComponent("vaults/$name"),
+            )
+            val inDetached = NSFileManager.defaultManager.fileExistsAtPath(
+                detached.stringByAppendingPathComponent(name),
+            )
+            if (!inVaults && !inDetached) {
+                return docs.stringByAppendingPathComponent("vaults/$name")
+            }
+            n += 1
+        }
+    }
 }
