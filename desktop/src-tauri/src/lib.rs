@@ -318,6 +318,8 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "members.claim",
         "members.set_email",
         "members.set_role",
+        "members.contest_status",
+        "members.contest_cancel",
         "requests.list",
         "requests.stage",
         "requests.approve",
@@ -594,6 +596,7 @@ async fn save_recovery_phrase(
     title: String,
     warning: String,
     phrase: String,
+    file_stem: Option<String>,
 ) -> Result<bool, String> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -625,12 +628,15 @@ async fn save_recovery_phrase(
         baluard_core::recovery_sheet::SheetFormat::Txt => sheet.to_txt().into_bytes(),
         baluard_core::recovery_sheet::SheetFormat::Pdf => sheet.to_pdf(),
     };
+    let default_stem = file_stem
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "baluard-recovery-phrase".to_string());
     let (filter_name, ext, default_name) = match sheet_format {
         baluard_core::recovery_sheet::SheetFormat::Txt => {
-            ("Text", "txt", "baluard-recovery-phrase.txt")
+            ("Text", "txt", format!("{default_stem}.txt"))
         }
         baluard_core::recovery_sheet::SheetFormat::Pdf => {
-            ("PDF", "pdf", "baluard-recovery-phrase.pdf")
+            ("PDF", "pdf", format!("{default_stem}.pdf"))
         }
     };
 

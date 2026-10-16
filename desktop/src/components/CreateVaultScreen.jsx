@@ -28,6 +28,7 @@ export default function CreateVaultScreen() {
   const [confirmPassword, setConfirmPassword] = createSignal("");
   const [customSlug, setCustomSlug] = createSignal("");
   const [editingSlug, setEditingSlug] = createSignal(false);
+  const [purpose, setPurpose] = createSignal("personal");
 
   // Auto-detect OS locale on first mount (before user has a saved preference)
   onSettled(() => {
@@ -72,7 +73,7 @@ export default function CreateVaultScreen() {
     if (auth.status() === "creating" || !canSubmit()) return;
     if (confirmPassword().length < 8) { toastWarning(t("create.errorMinLength")); return; }
     if (confirmPassword() !== auth.createPassword()) { toastWarning(t("create.errorMismatch")); return; }
-    auth.createVault(t, { slug: activeSlug(), name: vaultName().trim() });
+    auth.createVault(t, { slug: activeSlug(), name: vaultName().trim(), family: purpose() === "family" });
   };
 
   return (
@@ -137,6 +138,30 @@ export default function CreateVaultScreen() {
             <Show when={slugError()}>
               <div class="text-[11px] text-red-400 px-1 mt-1">{slugError()}</div>
             </Show>
+          </div>
+
+          {/* Who is this vault for: the purpose drives defaults (a family
+              vault enables sharing, minors, and the recovery kit). */}
+          <div>
+            <div class="text-[11px] font-semibold text-[var(--color-muted)] px-1 mb-1.5">{t("create.purposeTitle")}</div>
+            <div class="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPurpose("personal")}
+                class={`text-left px-3 py-2.5 rounded-xl border transition-all cursor-pointer ${purpose() === "personal" ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10" : "border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)]/50"}`}
+              >
+                <div class="text-sm font-semibold text-[var(--color-text)]">{t("create.purposePersonal")}</div>
+                <div class="text-[11px] text-[var(--color-muted)] mt-0.5">{t("create.purposePersonalDesc")}</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPurpose("family")}
+                class={`text-left px-3 py-2.5 rounded-xl border transition-all cursor-pointer ${purpose() === "family" ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10" : "border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)]/50"}`}
+              >
+                <div class="text-sm font-semibold text-[var(--color-text)]">{t("create.purposeFamily")}</div>
+                <div class="text-[11px] text-[var(--color-muted)] mt-0.5">{t("create.purposeFamilyDesc")}</div>
+              </button>
+            </div>
           </div>
 
           <input

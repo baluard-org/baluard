@@ -35,7 +35,12 @@
     "creating": "Creando bóveda...",
     "alreadyHaveVault": "Ya tengo una bóveda",
     "errorMinLength": "La contraseña debe tener al menos 8 caracteres",
-    "errorMismatch": "Las contraseñas no coinciden"
+    "errorMismatch": "Las contraseñas no coinciden",
+    "purposeTitle": "¿Para qué es esta bóveda?",
+    "purposePersonal": "Personal",
+    "purposePersonalDesc": "Solo para ti",
+    "purposeFamily": "Familia",
+    "purposeFamilyDesc": "Comparte con tu familia; incluye un kit de recuperación"
   },
   "recovery": {
     "title": "Frase de recuperación",
@@ -71,7 +76,12 @@
       "stored": "Guardé mi nueva frase en un lugar seguro",
       "done": "Listo",
       "rotatedToast": "Frase de recuperación reemplazada. La frase anterior ya no funciona."
-    }
+    },
+    "kitTitle": "Kit de recuperación familiar",
+    "kitBody": "Estas 24 palabras abren la bóveda cuando no queda ningún dispositivo de administrador. Se muestran una sola vez — guárdalas con el kit familiar.",
+    "kitSavedAck": "Guardé la frase del kit en un lugar seguro.",
+    "kitSheetTitle": "Kit de recuperación familiar",
+    "kitSheetWarning": "Cualquiera que tenga estas 24 palabras puede abrir esta bóveda. Guarda este archivo con el kit familiar, en un lugar seguro."
   },
   "setup": {
     "title": "Sincroniza tu bóveda",
@@ -787,7 +797,14 @@
     "verifyMissing": "Aún no hay tarjeta de contacto de este miembro.",
     "demoteTitle": "Quitar acceso de administrador",
     "demoteBody": "Quitar el rol de administrador a {name} pierde ese acceso de inmediato. Conserva su cuenta y el acceso actual a entradas, pero ya no podrá gestionar miembros, llaves ni colecciones.",
-    "demoteConfirm": "Quitar admin"
+    "demoteConfirm": "Quitar admin",
+    "contestTitle": "Reclamación de propiedad pendiente",
+    "contestBody": "{claimant} reclamó la propiedad del propietario actual. Surte efecto el {date} salvo que el propietario la cancele.",
+    "contestHint": "Este aviso llega a cada dispositivo de administrador en su próxima sincronización.",
+    "contestCancel": "Cancelar la reclamación",
+    "contestCancelTitle": "¿Cancelar la reclamación de propiedad?",
+    "contestCancelBody": "La reclamación desaparece y el propietario actual sigue siéndolo. El administrador que reclamó verá el cambio en su próxima sincronización.",
+    "contestCancelled": "Reclamación cancelada."
   },
   "join": {
     "joinLink": "¿Te invitaron a una bóveda compartida?",
