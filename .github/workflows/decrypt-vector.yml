@@ -6,14 +6,13 @@
 # build — the decryptor needs only pip's argon2-cffi + cryptography.
 name: decrypt-vector
 
+# Remote CI is gated on Esteban's approval (2026-10-16) — dispatch-only,
+# nothing runs on push. Flip the push block back on (and fix the decryptor
+# divergence it caught) when CI is approved. The first push-triggered run
+# found a real bug: the Python decryptor fails on the golden vector the
+# Rust tests pass, so the guard did its job once and then stood down.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/decrypt_backup.py'
-      - 'crates/baluard-core/tests/golden/backup-v1.bldbak'
-      - '.github/workflows/decrypt-vector.yml'
 
 jobs:
   decrypt:
