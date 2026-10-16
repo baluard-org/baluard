@@ -168,7 +168,7 @@ Mobile apps bind to the vault engine via the `baluard-uniffi` crate over `baluar
 - **Swift (iOS)**: UniFFI generates Swift bindings compiled into an xcframework.
 - **No intermediate language**: The Rust core is the single source of truth. No Go, no cgo, no gomobile. UniFFI provides a clean memory boundary between Rust memory and foreign code.
 - **Direct in-process host**: The mobile client hosts `baluard-runtime` in-process directly without a background daemon.
-- **Status**: Implemented in `crates/baluard-uniffi/`. Android Phases 0 through 6 are complete (Compose Multiplatform onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 build, Android Autofill Service with inline suggestions, save prompt, and quick-settings tile accessibility fill). Phase 7 iOS credential extension is next. iOS platform-specific actuals are pending.
+- **Status**: Implemented in `crates/baluard-uniffi/`. Android Phases 0 through 6 are complete (Compose Multiplatform onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 build, Android Autofill Service with inline suggestions, save prompt, and quick-settings tile accessibility fill). Phase 7 iOS credential extension is parked past 1.0 (2026-09-27). iOS platform-specific actuals are pending.
 
 ---
 
