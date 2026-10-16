@@ -65,7 +65,12 @@
     "creating": "Creating vault...",
     "alreadyHaveVault": "Already have a vault",
     "errorMinLength": "Password must be at least 8 characters",
-    "errorMismatch": "Passwords do not match"
+    "errorMismatch": "Passwords do not match",
+    "purposeTitle": "What is this vault for?",
+    "purposePersonal": "Personal",
+    "purposePersonalDesc": "Just for you",
+    "purposeFamily": "Family",
+    "purposeFamilyDesc": "Share with your family; includes a recovery kit"
   },
   "recovery": {
     "title": "Recovery Phrase",
@@ -101,7 +106,12 @@
       "stored": "I stored my new phrase somewhere safe",
       "done": "Done",
       "rotatedToast": "Recovery phrase replaced. The old phrase no longer works."
-    }
+    },
+    "kitTitle": "Family recovery kit",
+    "kitBody": "These 24 words open the vault when every admin device is gone. Shown once — keep them with the family kit.",
+    "kitSavedAck": "I saved the kit phrase somewhere safe.",
+    "kitSheetTitle": "Family recovery kit",
+    "kitSheetWarning": "Anyone holding these 24 words can open this vault. Store this file with the family kit, somewhere safe."
   },
   "setup": {
     "title": "Sync your vault",
@@ -787,7 +797,14 @@
     "verifyMissing": "No contact card for this member yet.",
     "demoteTitle": "Remove admin access",
     "demoteBody": "Demoting {name} removes their admin access immediately. They keep their account and current entry access, but can no longer manage members, keys, or collections.",
-    "demoteConfirm": "Demote"
+    "demoteConfirm": "Demote",
+    "contestTitle": "Ownership claim pending",
+    "contestBody": "{claimant} claimed ownership from the current owner. It takes effect on {date} unless the owner cancels it.",
+    "contestHint": "This notice reaches every admin device on its next sync.",
+    "contestCancel": "Cancel the claim",
+    "contestCancelTitle": "Cancel the ownership claim?",
+    "contestCancelBody": "The claim disappears and the current owner stays the owner. The claiming admin sees the change on their next sync.",
+    "contestCancelled": "Claim cancelled."
   },
   "join": {
     "joinLink": "Joining a shared vault?",

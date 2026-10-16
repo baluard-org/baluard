@@ -50,10 +50,13 @@ export default function RecoveryScreen() {
   const auth = useAuth();
   const { t } = useI18n();
   const [copied, copy] = useCopyFeedback(2000);
+  const [kitCopied, kitCopy] = useCopyFeedback(2000);
   const [verifyWords, setVerifyWords] = createSignal(["", "", "", ""]);
   const [showExamples, setShowExamples] = createSignal(false);
+  const [kitAck, setKitAck] = createSignal(false);
 
   const phrase = () => auth.recoveryPhrase();
+  const kit = () => auth.kitPhrase();
   const phraseWords = createMemo(() => phrase().split(/\s+/).filter(Boolean));
   const positions = createMemo(() => pickVerificationPositions(phrase()));
 
@@ -90,11 +93,31 @@ export default function RecoveryScreen() {
     }
   };
 
+  const canFinish = createMemo(() => allVerified() && (kit() === "" || kitAck()));
+
+  const handleKitDownload = async (format) => {
+    try {
+      // Same Rust-side sheet writer as the vault phrase; the kit gets its
+      // own title/warning so the printed page says what it is.
+      const saved = await invoke("save_recovery_phrase", {
+        format,
+        title: t("recovery.kitSheetTitle"),
+        warning: t("recovery.kitSheetWarning"),
+        phrase: kit(),
+        fileStem: "baluard-family-kit",
+      });
+      if (saved) toastSuccess(t("recovery.downloadSuccess"));
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    }
+  };
+
   const handleConfirm = (e) => {
     e.preventDefault();
-    if (!allVerified()) return;
+    if (!canFinish()) return;
     // Zero recovery phrase from memory, transition to setup wizard
     auth.setRecoveryPhrase("");
+    auth.setKitPhrase("");
     auth.setStatus("setup");
   };
 
@@ -181,6 +204,56 @@ export default function RecoveryScreen() {
         </div>
         <p class="text-xs text-[var(--color-muted)] text-center mb-5">{t("recovery.fileRisk")}</p>
 
+        {/* Family vaults: the Space Recovery Kit phrase, shown once. It
+            unlocks the vault when every admin device is gone, so it is
+            acknowledged like the vault phrase before continuing. */}
+        <Show when={kit() !== ""}>
+          <div class="mb-5 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
+            <h2 class="text-sm font-bold text-[var(--color-text)] mb-1">{t("recovery.kitTitle")}</h2>
+            <p class="text-xs text-[var(--color-muted)] mb-3">{t("recovery.kitBody")}</p>
+            <div class="relative group px-8 py-4 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm leading-relaxed text-[var(--color-text)] break-words select-all mb-3 text-center">
+              {kit()}
+              <button
+                type="button"
+                onClick={() => kitCopy(kit())}
+                class="absolute top-2 right-2 p-1.5 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer"
+                title={t("common.copy")}
+              >
+                <Show when={kitCopied()} fallback={<IconCopy class="w-4 h-4" />}>
+                  <span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>
+                </Show>
+              </button>
+            </div>
+            <div class="flex gap-3 mb-3">
+              <button
+                type="button"
+                onClick={() => handleKitDownload("txt")}
+                class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-xs font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+              >
+                <IconDownload class="w-3.5 h-3.5" />
+                {t("recovery.downloadTxt")}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleKitDownload("pdf")}
+                class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-xs font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+              >
+                <IconDownload class="w-3.5 h-3.5" />
+                {t("recovery.downloadPdf")}
+              </button>
+            </div>
+            <label class="flex items-start gap-2 text-xs text-[var(--color-text)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={kitAck()}
+                onChange={(e) => setKitAck(e.currentTarget.checked)}
+                class="mt-0.5 accent-[var(--color-primary)]"
+              />
+              <span>{t("recovery.kitSavedAck")}</span>
+            </label>
+          </div>
+        </Show>
+
         {/* Verification: re-enter 4 random words */}
         <form onSubmit={handleConfirm} class="space-y-4">
           <fieldset>
@@ -220,13 +293,13 @@ export default function RecoveryScreen() {
 
           <button
             type="submit"
-            disabled={!allVerified()}
+            disabled={!canFinish()}
             class={["w-full py-3.5 rounded-xl font-semibold transition-all shadow-lg", {
-              "bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] cursor-pointer": allVerified(),
-              "bg-[var(--color-border)] text-[var(--color-muted)] cursor-not-allowed": !allVerified(),
+              "bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] cursor-pointer": canFinish(),
+              "bg-[var(--color-border)] text-[var(--color-muted)] cursor-not-allowed": !canFinish(),
             }]}
           >
-            {allVerified() ? t("recovery.confirm") : t("recovery.confirmDisabled")}
+            {canFinish() ? t("recovery.confirm") : t("recovery.confirmDisabled")}
           </button>
         </form>
       </div>

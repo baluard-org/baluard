@@ -5,6 +5,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess, toastError } from "../context/toastSignal.js";
 import CopyButton from "./CopyButton.jsx";
 import TypedConfirmModal from "./TypedConfirmModal.jsx";
+import ConfirmModal from "./ConfirmModal.jsx";
 
 // §4.8-1: the People surface — members, invites, join queue, activity.
 // Plain language only: roles are words, the join queue is "requests",
@@ -53,6 +54,10 @@ export default function PeopleTab() {
   const { t } = useI18n();
 
   const [members, setMembers] = createSignal([]);
+  // D61: a pending ownership claim against the live owner (quorum 2
+  // families). Manage-gated read; null when absent or not manageable.
+  const [claimInfo, setClaimInfo] = createSignal(null);
+  const [claimConfirm, setClaimConfirm] = createSignal(false);
   const [requests, setRequests] = createSignal([]);
   const [stageIntro, setStageIntro] = createSignal("");
   const [malformed, setMalformed] = createSignal(0);
@@ -319,13 +324,41 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
     }
   }
 
+  async function loadClaim() {
+    try {
+      const res = JSON.parse(await daemon("members.contest_status"));
+      setClaimInfo(res.pending ? res : null);
+    } catch {
+      // Not a managing device (or locked): no claim surface.
+      setClaimInfo(null);
+    }
+  }
+
   async function reloadAll() {
     setBusy(true);
-    await Promise.all([loadMembers(), loadRequests(), loadActivity(), loadTimeline(), loadNotices(false), loadAsks()]);
+    await Promise.all([loadMembers(), loadRequests(), loadActivity(), loadTimeline(), loadNotices(false), loadAsks(), loadClaim()]);
     setBusy(false);
   }
 
   onSettled(() => void reloadAll());
+
+  const memberName = (id) => {
+    const m = members().find((m) => m.id === id);
+    return m?.display_name || id.slice(0, 8);
+  };
+
+  async function doCancelClaim() {
+    setBusy(true);
+    try {
+      await daemon("members.contest_cancel");
+      toastSuccess(t("people.contestCancelled"));
+      await reloadAll();
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function doInvite() {
     setBusy(true);
@@ -462,6 +495,29 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
 
   return (
     <div class="space-y-6">
+      {/* D61: a pending ownership claim against the live owner. The
+          window is the notice; the owner (and only the owner) can cancel
+          it before it matures. */}
+      <Show when={claimInfo()}>
+        <section class="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
+          <h3 class="text-sm font-bold text-[var(--color-text)] mb-1">{t("people.contestTitle")}</h3>
+          <p class="text-xs text-[var(--color-text)] mb-1">
+            {t("people.contestBody")
+              .replace("{claimant}", memberName(claimInfo().new_owner_id))
+              .replace("{date}", new Date(claimInfo().window_until * 1000).toLocaleDateString())}
+          </p>
+          <p class="text-xs text-[var(--color-muted)] mb-3">{t("people.contestHint")}</p>
+          <Show when={yourRole() === "owner"}>
+            <button
+              onClick={() => setClaimConfirm(true)}
+              class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 transition-all cursor-pointer"
+            >
+              {t("people.contestCancel")}
+            </button>
+          </Show>
+        </section>
+      </Show>
+
       {/* Reset code: one-time, hand back to the member */}
       <Show when={resetCode()}>
         <section class="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
@@ -1160,6 +1216,17 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
           </div>
         </div>
       </Show>
+
+      <ConfirmModal
+        show={claimConfirm()}
+        idPrefix="claim-cancel"
+        title={t("people.contestCancelTitle")}
+        body={t("people.contestCancelBody")}
+        confirmLabel={t("people.contestCancel")}
+        confirmVariant="danger"
+        onConfirm={doCancelClaim}
+        onClose={() => setClaimConfirm(false)}
+      />
     </div>
   );
 }

@@ -38,6 +38,9 @@ function AuthProvider(props) {
   // Independent of biometric; both can be enabled at once (both buttons shown).
   const [pinAvailable, setPinAvailable] = createSignal(false);
   const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
+  // Family creation: the Space Recovery Kit phrase, shown once on the
+  // recovery screen alongside the vault phrase; zeroed on acknowledgment.
+  const [kitPhrase, setKitPhrase] = createSignal("");
   const [createPassword, setCreatePassword] = createSignal("");
   // Phase 6: when the user picks a locked/closed vault from the switcher,
   // this holds the target slug so the unlock screen unlocks THAT vault
@@ -133,20 +136,22 @@ function AuthProvider(props) {
       // D3: defensive — if onboarding was abandoned mid-setup, the vault
       // password signal must not survive a lock cycle either.
       setCreatePassword("");
+      setKitPhrase("");
       // VaultProvider unmounts via <Show>. All vault signals destroyed.
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
   }
 
-  async function createVault(t, { slug, name } = {}) {
+  async function createVault(t, { slug, name, family } = {}) {
     const pw = createPassword();
     if (!pw || pw.length < 8) { toastWarning(t("create.errorMinLength")); return; }
     setCreatePassword(pw);
     guardStatus(status(), "creating", setStatus);
     try {
-      const result = JSON.parse(await daemon("vault.create", JSON.stringify(buildCreatePayload(pw, { slug, name }))));
+      const result = JSON.parse(await daemon("vault.create", JSON.stringify(buildCreatePayload(pw, { slug, name, family }))));
       setRecoveryPhrase(result.recovery_phrase);
+      setKitPhrase(result.kit_phrase || "");
       guardStatus(status(), "recovery", setStatus);
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -162,6 +167,7 @@ function AuthProvider(props) {
     keyringHint,
     pinAvailable, refreshPin,
     recoveryPhrase, setRecoveryPhrase,
+    kitPhrase, setKitPhrase,
     createPassword, setCreatePassword,
     switchTarget, setSwitchTarget,
     setLoginPasswordRef: (r) => { loginPasswordRef = r; },

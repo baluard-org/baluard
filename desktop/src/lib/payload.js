@@ -73,10 +73,11 @@ export function buildGetPayload(id) {
  * @param {string} [options.slug] - filesystem-safe vault identifier
  * @param {string} [options.name] - user-facing vault display name
  */
-export function buildCreatePayload(password, { profile = "desktop_std", slug, name } = {}) {
+export function buildCreatePayload(password, { profile = "desktop_std", slug, name, family } = {}) {
   const payload = { password, profile };
   if (slug) payload.slug = slug;
   if (name) payload.name = name;
+  if (family) payload.family = true;
   return payload;
 }
 
