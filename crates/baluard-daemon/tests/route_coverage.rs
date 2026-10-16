@@ -2787,6 +2787,87 @@ async fn family_add_cipher_defaults_route_by_type() {
     );
 }
 
+#[tokio::test]
+async fn pair_space_editor_keeps_flat_adds() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("pair-adds");
+    let (mut handle, _secrets) = VaultCreator::new(&vault_path, MASTER, "route-pair")
+        .execute()
+        .unwrap();
+    handle.unlock(MASTER).unwrap();
+    // Legacy pair Space: the plaintext space flag on an UNFLIPPED vault.
+    // Pair vaults can never flip (the flip demands a family or org
+    // purpose), so their editors hold the root key and write flat.
+    baluard_core::vault::space::set_space_flag(&vault_path, true);
+    let device_id = handle.device_id;
+    let (_, founder_row) =
+        baluard_core::vault::members::member_file_for_device(&vault_path, device_id)
+            .expect("founder row");
+    drop(handle);
+
+    // Rebind the device to a fresh Editor partner row: remove the
+    // founder's binding first (a device counted in two member subtrees
+    // resolves to nothing).
+    let founder_binding = vault_path
+        .join("meta")
+        .join("members")
+        .join(founder_row.id.to_string())
+        .join("devices")
+        .join(format!("{device_id}.json"));
+    std::fs::remove_file(founder_binding).unwrap();
+    let member = uuid::Uuid::new_v4();
+    let row = baluard_core::vault::members::MemberFile {
+        id: member,
+        display_name: "Partner".into(),
+        email: None,
+        role: baluard_core::vault::members::MemberRole::Editor,
+        trust: baluard_core::vault::members::TrustLevel::Verified,
+        identity_signing_pubkey: None,
+        identity_signing_pubkey_previous: None,
+        identity_rotation_signature: None,
+        identity_rotated_at: None,
+        reset: None,
+        removed: None,
+        removed_reason: None,
+        transport_username: None,
+        identity_wrap_pubkey: None,
+    };
+    baluard_core::vault::members::write_member(&vault_path, &row).unwrap();
+    baluard_core::vault::members::write_device_binding(
+        &vault_path,
+        &baluard_core::vault::members::DeviceBinding {
+            device_id,
+            member_id: member,
+        },
+    );
+
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    state.unlock(MASTER).await.expect("vault unlock");
+    // The pair editor's unfiled add lands flat: the routing block must
+    // gate on the flipped shape, never on is_space (a pair Space is a
+    // space whose members still write flat).
+    let id = state
+        .add_cipher(
+            r#"{"name":"Shared login","kind":{"type":"login","data":{"username":"u","password":"p"}}}"#,
+        )
+        .await
+        .expect("pair editor unfiled add must not refuse");
+    let envelope: serde_json::Value = state.full_envelope().await.unwrap();
+    let meta = envelope["ciphers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["_meta"]["id"] == serde_json::json!(id))
+        .expect("cipher in envelope")["_meta"]
+        .clone();
+    assert!(
+        meta["collection_id"].is_null(),
+        "pair editor add should stay flat, got {meta:?}"
+    );
+}
+
 async fn space_settings_lifecycle_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("space-settings");
     let state = Arc::new(VaultState::new(vault_path.clone()));

@@ -3825,10 +3825,12 @@ impl VaultState {
             // (non-admin) cannot write flat at all, so their unfiled
             // create routes to their single Write-granted collection —
             // the per-person collection — and refuses when zero or
-            // several qualify, asking them to pick explicitly.
-            None if baluard_core::vault::space::read_purpose(&handle.path)
-                == baluard_core::vault::space::SpacePurpose::Family =>
-            {
+            // several qualify, asking them to pick explicitly. The gate
+            // is the FLIPPED SHAPE, not is_space: pair Spaces are
+            // unflipped (and can never flip), so their editors hold the
+            // root key and must keep writing flat — an is_space gate
+            // broke them with the guardian refusal (found by review).
+            None if baluard_core::vault::space_meta::shape_flipped(&handle.path) => {
                 let actor_role = baluard_core::vault::members::member_role_for_device(
                     &handle.path,
                     handle.device_id,
