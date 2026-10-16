@@ -86,7 +86,13 @@ def main():
     passphrase = os.environ.get("BALUARD_BACKUP_PASSPHRASE") or getpass.getpass("Backup passphrase: ")
     norm = __import__("unicodedata").normalize("NFKC", passphrase)
     try:
-        dk = hash_secret_raw(norm.encode(), salt, mem_kib, iters, parall, 32, Type.ID)
+        # Keyword args: hash_secret_raw's order is (time_cost, memory_cost),
+        # the reverse of the header's (memory_kib, iterations) layout — the
+        # first CI run caught this exact swap as a wrong-key AEAD failure.
+        dk = hash_secret_raw(
+            norm.encode(), salt, time_cost=iters, memory_cost=mem_kib,
+            parallelism=parall, hash_len=32, type=Type.ID,
+        )
     except Exception:
         # Over-cap or sub-floor parameters: treat like an undecryptable file
         # rather than dumping a library traceback.
