@@ -1296,7 +1296,7 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_create_vault(`path`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
     ): Long
-    fun uniffi_baluard_uniffi_fn_func_create_vault_with_recovery(`path`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
+    fun uniffi_baluard_uniffi_fn_func_create_vault_with_recovery(`path`: RustBuffer.ByValue,`displayName`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_derive_kek(`password`: RustBuffer.ByValue,`salt`: RustBuffer.ByValue,
     ): Long
@@ -1761,7 +1761,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_func_create_vault() != 45715.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_func_create_vault_with_recovery() != 64431.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_func_create_vault_with_recovery() != 52483.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_derive_kek() != 45663.toShort()) {
@@ -8023,12 +8023,14 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 
         /**
          * Create a new vault and return both the vault handle and the 24-word recovery phrase.
+         * [display_name] names the vault in the switcher (marker slug via
+         * suggest_slug); blank resolves to "Personal", the CLI's own default.
          */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-     suspend fun `createVaultWithRecovery`(`path`: kotlin.String, `masterPassword`: kotlin.String, `deviceName`: kotlin.String) : MobileCreateResult {
+     suspend fun `createVaultWithRecovery`(`path`: kotlin.String, `displayName`: kotlin.String?, `masterPassword`: kotlin.String, `deviceName`: kotlin.String) : MobileCreateResult {
         return uniffiRustCallAsync(
-        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_create_vault_with_recovery(FfiConverterString.lower(`path`),FfiConverterString.lower(`masterPassword`),FfiConverterString.lower(`deviceName`),),
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_create_vault_with_recovery(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`displayName`),FfiConverterString.lower(`masterPassword`),FfiConverterString.lower(`deviceName`),),
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
         { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
