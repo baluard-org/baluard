@@ -36,24 +36,31 @@ appLaunchDelay: 3000
 - extendedWaitUntil:
     visible: "Org Wifi"
     timeout: 20000
-# Second vault: personal, via the switcher. The founder CREATED the org
-# vault (default name 'Vault', entry count in parens) — only clones
-# derive their slug from the repo name, so the pill is matched by its
-# literal hub text, not the repo regex.
+# Second vault: personal, via the switcher's create row (plan-mobile-
+# second-vault). The org vault itself was created first-run with the
+# pre-filled default name, so its pill reads "Personal (N)" — matched
+# by regex because the entry count rides the same text node. The new
+# vault is named explicitly so the switcher never shows two identical
+# rows.
 - tapOn:
-    text: "Vault (1)"
+    text: ".*Personal.*"
 - extendedWaitUntil:
-    visible: "Add vault"
+    visible: "Create new vault"
     timeout: 20000
-- tapOn: "Add vault"
+- tapOn: "Create new vault"
 - extendedWaitUntil:
-    visible: "Baluard"
+    visible:
+      id: "e2e/create/name"
     timeout: 20000
 - tapOn:
-    id: "e2e/onboarding/create"
+    id: "e2e/create/name"
+- eraseText: 20
+- inputText: Private
+- hideKeyboard
 - tapOn:
     id: "e2e/create/password"
 - inputText: "${BALUARD_E2E_MASTER_PW_2}"
+- hideKeyboard
 - tapOn:
     id: "e2e/create/confirm"
 - inputText: "${BALUARD_E2E_MASTER_PW_2}"
@@ -87,14 +94,16 @@ appLaunchDelay: 3000
     visible:
       id: "e2e/edit/name"
     timeout: 20000
-- inputText:
+- tapOn:
     id: "e2e/edit/name"
-    text: "Wifi Router"
+- inputText: Wifi Router
 - hideKeyboard
 - scrollUntilVisible:
     element:
       id: "e2e/edit/save"
     timeout: 20000
+    centerElement: true
+- waitForAnimationToEnd
 - tapOn:
     id: "e2e/edit/save"
 - extendedWaitUntil:
@@ -103,6 +112,9 @@ appLaunchDelay: 3000
     timeout: 20000
 - tapOn:
     id: "e2e/list/search"
+# The hub search query leaks across vault switches (shared list ViewModel);
+# clear the positive-control query before typing the settle-first one.
+- eraseText: 20
 - inputText: Wifi
 - extendedWaitUntil:
     visible: "Wifi Router"

@@ -37,6 +37,18 @@ jank: the Compose fields are passthrough and logcat shows zero Choreographer ski
   flow segments (base64url chars need no shell escaping), keeping the app
   foregrounded so field focus survives.
 
+### `inputText` has no element targeting — tap first, then type
+
+`inputText` types into whichever field currently holds focus. An `id:` key on
+an `inputText` step is silently discarded (commands.json records only the
+text), so `- inputText: {id: ..., text: ...}` fills the focused field, not
+the named one. Screens whose first field auto-focuses (create form) will
+swallow every input into that field. The reliable pattern is one field at a
+time: `tapOn` the field, `inputText`, `hideKeyboard` before moving to the
+next tap — the `hideKeyboard` matters because the open IME pushes lower
+fields behind it where their taps drift (this exact race is why a taller
+create form broke flows that had worked for weeks).
+
 ### Maestro's clipboard commands do not touch the device clipboard
 
 `setClipboard` writes Maestro's **internal** clipboard only, and `pasteText` replays

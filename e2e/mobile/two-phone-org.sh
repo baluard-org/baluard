@@ -156,11 +156,14 @@ keep_shot "$SERIAL_FOUNDER" "14c-approved"
 # The joiner flow ends at its waiting state (a concurrent second Maestro
 # run kills or starves its JVM mid-hold), so verify the approval's
 # auto-unlock by polling the joiner's screen for the unlocked org hub.
+# The hub marker is "Ask for access" (the grantless org editor's empty
+# hub): the org vault's marker now carries the founder's chosen display
+# name, so clone hubs no longer show the repo slug.
 JOINED=""
 adb -s "$SERIAL_JOINER" shell rm -f /sdcard/ui.xml 2>/dev/null || true
 for _ in $(seq 1 30); do
   adb -s "$SERIAL_JOINER" shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1 || true
-  if adb -s "$SERIAL_JOINER" shell cat /sdcard/ui.xml 2>/dev/null | grep -q "$REPO"; then
+  if adb -s "$SERIAL_JOINER" shell cat /sdcard/ui.xml 2>/dev/null | grep -q "Ask for access"; then
     JOINED=1; break
   fi
   sleep 4
@@ -169,24 +172,26 @@ done
 echo "    joiner joined and unlocked."
 keep_shot "$SERIAL_JOINER" "14b-joined"
 
-echo "── [5/6] joiner phone: grantless refusal + personal second vault"
+echo "── [5/6] joiner phone: grantless refusal"
 maestro "$SERIAL_JOINER" 14d-org-joiner-second.yaml \
   "MASTER_PW=$JOINER_PW" "BALUARD_E2E_MASTER_PW=$JOINER_PW" "BALUARD_E2E_ORG_PW=$JOINER_PW" "BALUARD_E2E_MASTER_PW_2=$PERSONAL_PW" "BALUARD_E2E_REPO=$REPO" \
   > "$WORK/maestro-14d.log" 2>&1
 keep_shot "$SERIAL_JOINER" "14d-joiner-personal"
 
 echo "── [6/6] founder phone: personal second vault, merge exclusion"
-# 14e needs a SECOND (personal) vault on the founder phone, but the
-# switcher's Add vault offers only the clone path today: mobile has no
-# create-a-second-vault UI. Until that ships, the merged-search org
-# exclusion stays covered daemon-side (route_coverage fan-out/gating
-# tests plus the autofill mergesIntoAutofill filter), so a 14e failure
-# is recorded as a documented skip, not a journey failure.
+# The switcher's create row (plan-mobile-second-vault) gives the founder
+# phone its personal second vault; the merged-search org exclusion is
+# asserted on device, closing the daemon-side-only coverage gap.
 maestro "$SERIAL_FOUNDER" 14e-org-exclusion.yaml \
   "MASTER_PW=$FOUNDER_PW" "BALUARD_E2E_MASTER_PW=$FOUNDER_PW" "BALUARD_E2E_ORG_PW=$FOUNDER_PW" "BALUARD_E2E_MASTER_PW_2=$FOUNDER_PW_2" "BALUARD_E2E_REPO=$REPO" \
-  > "$WORK/maestro-14e.log" 2>&1 \
-  && keep_shot "$SERIAL_FOUNDER" "14e-exclusion" \
-  || echo "    SKIP: 14e merge exclusion (no create-second-vault UI yet; covered daemon-side)"
+  > "$WORK/maestro-14e.log" 2>&1
+RC_14E=$?
+if [[ $RC_14E -ne 0 ]]; then
+  echo "FAIL: 14e merge exclusion (rc=$RC_14E) — tail of $WORK/maestro-14e.log:"
+  tail -15 "$WORK/maestro-14e.log"
+  exit 1
+fi
+keep_shot "$SERIAL_FOUNDER" "14e-exclusion"
 
-echo "PASS: org share journey green (join + grantless refusal; exclusion covered daemon-side)."
+echo "PASS: org share journey green (join + grantless refusal + merge exclusion)."
 echo "sandbox kept for inspection: $WORK"
