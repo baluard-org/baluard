@@ -1,9 +1,9 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-10-12 (Two more days on top of the 10-10 state, all multi-device. Invite-code join completed as a product surface: join-request staging (`requests.stage` across runtime/daemon/UniFFI/CLI/desktop PeopleTab) so an admin can consume the joiner intro reply, invited joiners now see shared repos in the pickers (GitHub/GitLab affiliation fix), and the post-clone Enroll screen carries the Join-a-shared-space entry. The two-phone family join journey is GREEN end to end on two real phones with two GitHub accounts (PAT leg; founder + invited joiner exercising a real collaborator seat), which exposed and fixed a latent sync defect: daemon/CLI sync picked a HashMap-order device identity, now `meta/device-id` (per-clone, gitignored) with the roster scan as legacy fallback, plus `sync.remote` records provider/remote_url in the registry like `vault.setup_sync`. The roles wave shipped: `members.set_role` across core/daemon/CLI/UniFFI/desktop/mobile (rank guards, minor guards, keywraps follow the role on flipped vaults, typed confirm before demoting an admin, role-gated mobile admin surfaces via the new `my_role`), and the roles matrix journey ran green on a phone through the full Level-2 contact-verification ceremony. Contact verification (Level 2) landed on every surface: CLI `contacts` subcommand + `collections delete`, five UniFFI contacts wrappers, mobile my-code row + verify dialog, desktop PeopleTab verify button, and staging now seeds the admin address book from the joiner card. Revocation hardening: revoking a member rotates the collection key (grant pruning, `.sweep-pending` drained first via `converge_pending_sweeps`), collection names unique per vault on create and rename, CLI `collections delete` + `assign` for re-filing. Desktop theme: the Catppuccin retheme was reverted to the legacy terminal dark palette with a green light-mode accent family; the desktop app itself was run headless (Xvfb) and screenshot-verified.)
+> Last updated: 2026-10-16 (Four more days on top of the 10-12 state. The two-phone ORG share journey went green end to end (founder creates and flips on the phone, PAT git backup, invited editor joiner, grantless-add refusal, on-device merge exclusion) after three real product fixes: mobile-created vaults were FFI-locked at birth, org members' unfiled adds exploded on the admin-only flat namespace, and mobile metadata mutations never armed the sync push (autosync also only activated at unlock-with-remote; now it activates when a remote is attached mid-session). The days-long Maestro driver outage was root-caused to a hung Maestro JVM zombie refreshing a session record (adb-server and orphaned-launcher USB claims are secondary conflicts the runner now sweeps); the whole playbook lives in mobile/AGENTS.md. The second-vault wave shipped: create a named personal vault from the phone switcher (FFI display_name, unlocked at birth), un-skipping the org journey's on-device merge-exclusion leg. Wave 2 landed the desktop family GUI: Personal/Family purpose cards, the words-once Space Recovery Kit card with copy + TXT/PDF, and the D61 claim-notice card. Wave 3 closed small items: machine kinds on health findings (localized on mobile), mobile share-entry-as-file export, and the reference decryptor wired into CI, which immediately caught a real Argon2 argument swap in the Python decryptor (fixed, CI gated to manual dispatch per the no-CI directive). The hub search query no longer leaks across vault switches, ~65 orphaned GitHub test repos were cleaned up with one-day delete-scoped tokens, and the desktop app now builds on this box for the first time (the fc44 GTK headers were installed; brew's pkg-config was shadowing them, so Tauri builds need PKG_CONFIG_PATH=/usr/lib64/pkgconfig).)
 >
-> Next up: (1) Org share journey on the two phones (invited joiner, merge-exclusion + export-restriction assertions) riding the PAT harness. (2) Family GUI surfaces: creation wizard beyond the CLI, D61 claim-notice card. (3) Small closes: mobile share-file export (the missing G4 export side), localized health-reason strings, reference decryptor into CI, delete-scoped GitHub token for the ~20 orphaned `baluard-family-*` test repos. (4) Esteban manual tests: encrypted backup (desktop + phone), mobile recovery PDF via SAF, desktop passkey rename, generator history, family share-open checks, CLI family wizard. (5) E2E Phase 3 desktop blocked on GTK headers (`just sysdeps`); Phase 4 extension; OAuth device-flow journeys 10a/10b parked for a stable renderer device. (6) 1.0 release engineering via the A-F matrix in section 11, unscoped. Parked: G10 mobile passkey ceremonies, G12 iOS depth, G11 phase 2 full admin, G23 mobile ops, desktop plain-export Blob polish, flat-folder import.)
+> Next up: (1) Esteban manual tests: encrypted backup (desktop + phone), mobile recovery PDF via SAF, desktop passkey rename, generator history, desktop family vault + kit card, D61 claim card, second-vault create/cancel, share-as-file on a Login, localized Security check, hub-search clear on vault switch, CLI family wizard. (2) Mobile entry-into-collection gap (G25 in the parity matrix): the phone can view and manage collections but cannot file an entry into one; desktop moves via the detail view, CLI via collections assign. (3) Mobile family creation UI: purpose selector + kit display (desktop and CLI have them). (4) Desktop password-health row: vault.health + machine kinds exist, the desktop GUI half of G19. (5) e2e Phase 3 desktop is unblocked (the crate compiles here; needs the wdio harness per docs/e2e-testing.md) and Phase 4 extension; OAuth journeys 10a/10b parked for a stable renderer device; decryptor CI stays manual-dispatch until Esteban re-enables remote CI. (6) 1.0 release engineering via the A-F matrix in section 11, unscoped. Parked: G10 mobile passkey ceremonies, G12 iOS depth, G11 phase 2 full admin, G23 mobile ops, desktop plain-export Blob polish, flat-folder import, role-gated collection defaults.)
 
 ---
 
@@ -262,9 +262,9 @@ Completed core, CLI, daemon, and desktop implementations.
 | Item | Description | Status |
 |------|-------------|--------|
 | G4 open shared reveals + G15 vault detach | Mobile opens share files through one ShareOpenFlow composable (package import, contact reveal, passphrase guest leg with per-leg error surfacing), plus a pre-vault onboarding entry; detach moves the vault directory aside from the switcher with session + biometric cleanup. Prune deliberately not a button: the switch list is a filesystem scan that cannot go stale | **Done** |
-| Family spaces steps 1-8 | Full plan landed backend-side per `docs/plan-family-spaces.md`: flags/classification/shape, sealed minor records, Shared system collection + family creation transaction, collection key rotation with grant pruning, kit verifier chain, kit threshold confirmations, join grants + add defaults, leave records + phrase-only recovery + stolen-device op, D61 contest window + founding copy + add-default knob. CLI `init --family` carries the interactive wizard. E2E pins the join/sync and forgery-refusal boundaries | **Done (GUI wizard surfaces pending)** |
+| Family spaces steps 1-8 | Full plan landed backend-side per `docs/plan-family-spaces.md`: flags/classification/shape, sealed minor records, Shared system collection + family creation transaction, collection key rotation with grant pruning, kit verifier chain, kit threshold confirmations, join grants + add defaults, leave records + phrase-only recovery + stolen-device op, D61 contest window + founding copy + add-default knob. CLI `init --family` carries the interactive wizard. E2E pins the join/sync and forgery-refusal boundaries | **Done (desktop wizard shipped; mobile family creation still open)** |
 | G24 merged search & autofill | Steps 1-9 per `docs/plan-merged-search.md`: daemon fan-out gated on merge eligibility, CLI search, extension merged chips + unlock asks, Android merged autofill + hub search, desktop unlock-request banner. Consent model: personal_merge ceiling (synced, family default on) + device-local merge_opt_in | **Done** |
-| E2E Phase 2 (Android Maestro) enabling | BALUARD_E2E gradle gate (debug-only true, fail-secure), FLAG_SECURE skipped in e2e builds, Compose test tags via testTagsAsResourceId, sys.boot_completed wait, run-maestro.sh runner + `just e2e-android`, three flows (create, lock/unlock, add-entry). Flows unrun — Maestro installed, dedicated device pending | **Enabling Done, runs pending** |
+| E2E Phase 2 (Android Maestro) enabling | BALUARD_E2E gradle gate (debug-only true, fail-secure), FLAG_SECURE skipped in e2e builds, Compose test tags via testTagsAsResourceId, sys.boot_completed wait, run-maestro.sh runner + `just e2e-android`, three flows (create, lock/unlock, add-entry). Flows green on the dedicated Pixel 8 (2026-10-10); the family, roles, contact, org, and second-vault journeys followed on two phones | **Done — flows green on device; family, roles, contact, org, and second-vault journeys followed** |
 | CLI parity track (Wave B) | `baluard generate/totp/ssh-keygen`, `provider` connect (device flow + PAT)/repos/create-repo, `rotate-root`, sharing ops (collections list/create/assign/grant/revoke, members list/requests with BOTH pending-ask families, approve/deny). G7/G8/G9/G11p1/G16-CLI closed in the parity matrix | **Done** |
 | Security lifecycle on mobile (Wave C) | G3 rotation ceremony (master-password gated, words shown once), G5 Devices card with confirmed revoke, G6 kit trio + onboarding phrase-only kit recovery adopting the vault into the unlock flow. G23 parked (commit revocation stays CLI-first; repoint/migrate on CLI + desktop) | **Done** |
 ### Join, Roles & Multi-Device Journeys (October 10-12, 2026)
@@ -272,13 +272,25 @@ Completed core, CLI, daemon, and desktop implementations.
 | Item | Description | Status |
 |------|-------------|--------|
 | Invite-code join as a surface | The joiner dialog already shipped (Unlock > Join a shared space); the wave closed the admin and clone sides: `requests.stage` end to end (runtime idempotent stage, daemon route, UniFFI, CLI `members stage`, desktop PeopleTab paste form), invited joiners see shared repos (GitHub/GitLab affiliation now includes collaborator seats), post-clone Enroll screen carries the join entry, CLI `members invite --username` | **Done** |
-| Two-phone family join journey | GREEN end to end on two real phones with two GitHub accounts: founder phone clones and joins by invite code, invited joiner exercises a real read-only collaborator seat (auto-accepted via the invitee-side API), box approves, both unlock. Harness: PAT-based flow 12 (OAuth 10a/10b parked: GitHub /login/device ignores user_code pre-fill and the old-phone renderer is unreliable), empty-HOME daemon isolation (pushInsteadOf rewrites), Maestro `--udid` pinning. Fixed en route: per-clone device identity (`meta/device-id` first, roster scan legacy) and `sync.remote` recording provider/remote_url | **Done (org journey pending)** |
+| Two-phone family join journey | GREEN end to end on two real phones with two GitHub accounts: founder phone clones and joins by invite code, invited joiner exercises a real read-only collaborator seat (auto-accepted via the invitee-side API), box approves, both unlock. Harness: PAT-based flow 12 (OAuth 10a/10b parked: GitHub /login/device ignores user_code pre-fill and the old-phone renderer is unreliable), empty-HOME daemon isolation (pushInsteadOf rewrites), Maestro `--udid` pinning. Fixed en route: per-clone device identity (`meta/device-id` first, roster scan legacy) and `sync.remote` recording provider/remote_url | **Done** |
 | Member roles | `members.set_role` everywhere: rank/minor/pair/trust guards, Owner row untouchable, keywraps follow the role on flipped vaults (demotion strips, promotion mints per device), MemberRoleChanged activity event, typed confirm before demoting an admin, desktop role select + mobile role dialog, mobile admin surfaces gated on the new `my_role` (is_admin_device is the wrong signal for promoted members on flipped vaults) | **Done** |
 | Roles matrix journey | GREEN on a phone: viewer (admin surfaces hidden, writes refused with the guardian-grant message), editor (files into the granted collection), admin leg through the real Level-2 ceremony (trust-dial refusal first, then contact verify and promotion, admin surfaces appear, restore to editor) | **Done** |
 | Contact verification (Level 2) | Every surface can run the code check: CLI `contacts list/my-card/import/verify/remove` + `collections delete`, five UniFFI wrappers, mobile my-code row + verify dialog, desktop PeopleTab verify. Staging now seeds the admin address book from the joiner contact card (before and after submit). Verification is a one-way latch per address book | **Done** |
 | Revocation hardening | Revoking a member rotates the collection key (revoke-with-rotation, the D67 closure): grant rows pruned, entries re-encrypted, `.sweep-pending` drained first via `converge_pending_sweeps`; group revokes stay wrap-only. Collection names unique per vault on create and rename (case-insensitive). CLI `collections delete` (occupancy-refused) and `assign` for re-filing. An earlier phantom-wrap alarm was a test-harness re-grant, verified by git forensics | **Done** |
 | Desktop theme | The Catppuccin Mocha/Latte retheme was reverted after review: dark mode restored to the legacy terminal palette (deep teal + lime + lavender, four formerly-undeclared tokens now derived), light mode keeps Latte neutrals with a green accent family. Verified in the real app headless (Xvfb) with screenshots in `~/Dev/Screenshots/` | **Done** |
 
+
+### Org, Second Vault & GUI Waves (October 12-16, 2026)
+
+| Item | Description | Status |
+|------|-------------|--------|
+| Org share journey | GREEN end to end on two real phones + two GitHub accounts: founder creates on the phone, PAT git backup, typed-'team' org flip, editor invite; joiner clones via PAT, joins by code, approved from the founder phone; grantless-add refusal and on-device merge-exclusion legs asserted. Harness: fresh repo per run, chunked intro typing, serverless Maestro transport | **Done** |
+| Product fixes the journey surfaced | Mobile-created vaults were FFI-locked at birth (`create_vault_with_recovery` now unlocks before returning); org members' unfiled adds fell into the admin-only flat namespace and exploded on the SGK guard (add-routing now gates on `shape_flipped`, covering orgs, with pair-Space editors kept flat); autosync activated only at unlock-with-remote (now also when a remote is attached mid-session) and metadata mutations (settings, people, invites) never armed the sync nudge (now they do) | **Done** |
+| Maestro transport saga | The days-long driver outage root-caused: a hung Maestro JVM zombie refreshed `~/.maestro/sessions`, so every new run attached to a dead session (upstream mobile-dev-inc/Maestro#3662); adb-server and orphaned-launcher USB claims are secondary conflicts the runner now sweeps before each invocation. Enabling work (--udid pinning, kill-server, age-guarded stale-JVM hunt, chunked inputText for long strings, centerElement scrolls) codified in `mobile/AGENTS.md` | **Done** |
+| Second vault on the phone | Create a named personal vault from the switcher per `docs/plan-mobile-second-vault.md` (two review rounds): FFI `create_vault_with_recovery` gained `display_name` (blank resolves to Personal), vaults unlock at birth, switcher-owned create row, phase-scoped cancel restoring the live session; the org journey's merge-exclusion leg (14e) runs on device | **Done** |
+| Desktop family GUI (Wave 2) | Personal/Family purpose cards on the creation screen (family rides VaultCreator's transaction), the words-once Space Recovery Kit card with copy + TXT/PDF under baluard-family-kit.* filenames (file_stem parameter on the save command), and the D61 claim-notice card with owner-gated cancel | **Done** |
+| Small closes (Wave 3) | Health findings carry machine kinds + numbers (additive core fields) with localized mobile strings and a raw-reason fallback; mobile share-entry-as-file export (Login-only guest reveal via the SAF saver, passphrase shown once); reference decryptor in CI (decrypt-vector.yml, manual-dispatch gated) — its first real run caught a swapped Argon2 time/memory pair in the Python decryptor, fixed in 049f972 | **Done** |
+| Hygiene | Hub search query clears on vault switch (dc1e1b0, was shared App-scoped ViewModel state); ~65 orphaned baluard-family-*/baluard-org-* GitHub test repos deleted across both test accounts using one-day delete_repo tokens, revoked after use; desktop builds on this box for the first time (17dadbb: `PKG_CONFIG_PATH=/usr/lib64/pkgconfig`; brew's pkg-config shadowed the installed fc44 GTK headers, and `just sysdeps` only covers the core/git deps) | **Done** |
 
 ### Browser Extension (KeePassXC-Browser-style bridge)
 
@@ -471,31 +483,34 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 
 | Command | Mode | Description |
 |---------|------|-------------|
-| `init [OPTIONS]` | Direct | Create new vault. Flags: `--profile`, `--name`, `--slug`, `--theme`, `--lang`, `--auto-lock` (no `--subtitle`: removed 2026-06-11) |
-| `unlock` | Daemon/Direct | Unlock vault (returns `{slug, token}`) |
-| `lock` | Daemon | Lock vault, zeroize keys |
+| `init [OPTIONS]` | Direct | Create new vault. Flags: `--profile`, `--name`, `--slug`, `--theme`, `--lang`, `--auto-lock`, `--family` (runs the interactive family wizard: kit phrase once, optional co-guardian invite, per-child collections + flagged Editor invites), `--json` (machine-readable output; the recovery phrase is the only secret on the JSON line) |
+| `unlock` / `lock` | Daemon/Direct | Unlock (returns `{slug, token}`; `BALUARD_PASSWORD` env-first) / lock and zeroize |
 | `add <type> ...` | Daemon/Direct | Add cipher (8 subcommands: login, card, secure-note, identity, ssh-key, bank-account, drivers-license, passport) |
-| `tags {create\|list\|rename\|delete}` | Daemon/Direct | Tag management |
-| `get <id> --decrypt` | Daemon/Direct | Get cipher by UUID |
-| `list` | Daemon/Direct | List all cipher UUIDs |
-| `edit <id>` | Daemon/Direct | Edit cipher metadata |
-| `delete <id>` | Daemon/Direct | Delete cipher |
-| `archive <id>` / `unarchive <id>` | Daemon/Direct | Archive/restore cipher |
-| `folders {create\|list\|rename\|delete}` | Daemon/Direct | Folder management |
-| `sync {init\|remote\|push\|pull\|clone\|...}` | Daemon/Direct | Git sync operations |
-| `import <format> <file>` | Daemon | Import entries |
-| `export <format> <file>` | Daemon | Export entries |
+| `get <id> [--decrypt] [--output=text]` | Daemon/Direct | Get by UUID; secrets need BOTH `--decrypt` and `--output=text` |
+| `list` / `edit <id>` / `delete <id>` / `archive` / `unarchive` | Daemon/Direct | Cipher basics (no CLI rename for passkeys here — see `passkey`) |
+| `folders {...}` / `tags {...}` | Daemon/Direct | Folder and tag management |
+| `sync {init\|remote\|push\|commit\|pull\|revoke\|status\|log\|clone <provider> <repo>\|clone-url <url>}` | Daemon/Direct | Git sync (commit is direct-only; clone-url rides the daemon job flow) |
+| `import <format> <file>` | Daemon | 10 formats (baluard-encrypted first: .bldbak rides a path passthrough with BALUARD_BACKUP_PASSPHRASE or prompt; baluard.vault auto-detected by header) |
+| `export <path> [--format <f>] [--encrypted] [--generate] [--force]` | Daemon | baluard format by default; `--encrypted` writes the passphrase-protected container and auto-verifies, printing `Backup checked: N entries.`; `--generate` mints a 6-word passphrase shown once |
 | `health` | Daemon | Password health report |
 | `attach-*` | Daemon | Attachment upload/download/delete/list |
-| `devices {list\|revoke\|info\|rotation-status\|rotation-abort\|enroll-with-phrase}` | Direct/Daemon | Device fleet |
+| `devices {list\|info\|rotation-status\|rotation-abort\|enroll-with-phrase [--phrase] [--yes]\|revoke}` | Direct/Daemon | Device fleet + phrase enrollment |
 | `passkey {list\|delete\|rename}` | Daemon | FIDO2 passkey management |
-| `vaults {list\|switch\|close\|set-default\|add\|detach\|prune}` | Daemon | Multi-vault CLI |
-| `provider {list\|connect\|disconnect\|repos\|vault-repos\|status}` | Daemon | Git provider ops |
-| `ssh-key` | Daemon | SSH key generation |
-| `biometric {enable\|disable\|status}` | Daemon | Per-vault biometric quick-unlock |
-| `pin {enable\|disable\|status}` | Daemon | Session PIN quick-unlock (Linux + Windows-without-Hello) |
-| `bridge {list\|pair-start\|pair-complete\|revoke\|reauth}` | Daemon | Browser extension pairing (desktop UI drives these) |
+| `settings {get\|set} / settings space-get / settings space-set <k>=<v>` | Daemon | Client prefs + the eight space knobs (guest_enabled, personal_merge, quorum_admin_ops 1..=5, ...) |
+| `trash {list\|restore <id>\|purge [--days N]}` | Daemon/Direct | Trash surface (`--days 0` wipes everything) |
+| `search <query> [--all] [--vault <slug>]` | Daemon | Merged multi-vault metadata search (personal-first ranking; --all fans out over merge-eligible unlocked vaults) |
+| `generate {password\|passphrase} [flags]` | Direct | Generator (best-effort history via the daemon) |
+| `totp <id-or-name>` | Daemon | Current TOTP code with validity window |
+| `ssh-keygen [type] [--store]` | Daemon | Generate an SSH keypair (ed25519/ecdsa256), printed once, optional store |
+| `provider {connect [--pat]\|list\|status\|disconnect\|repos\|vault-repos\|create-repo}` | Daemon | Git provider ops incl. private repo creation (create-repo needs an unlocked vault; the rest are tokenless sentinel routes) |
+| `rotate-root` | Daemon | Standalone root-key rotation (quorum-gated; no device revocation) |
+| `collections {list\|create\|assign <cipher> [--to <c>]\|grant\|delete\|revoke\|requests-list\|requests-approve\|requests-deny}` | Daemon | Space collections: filing (assign), grants, access asks |
+| `members {list\|invite [--role] [--username]\|stage\|set-role\|requests\|approve-join\|deny-join\|approve\|deny}` | Daemon | Space member lifecycle: invites, join staging + confirmation, roles |
+| `contacts {list\|my-card\|import <code>\|verify <pubkey>\|remove <pubkey>}` | Daemon | Level-2 contact verification (the admin-rank trust dial) |
+| `vaults {list\|switch\|close\|set-default\|add\|detach\|prune\|copy-items\|repoint\|recover-kit}` | Daemon | Multi-vault CLI incl. the founding copy (copy-items), remote migration (repoint), and phrase-only kit recovery |
 | `ping` | Daemon | Check daemon connectivity |
+
+Quick unlock (biometric, session PIN) and the browser-extension bridge are desktop/mobile surfaces — no CLI commands.
 
 **Flags**: `--vault-path <dir>`, `--vault <slug>`, `--direct` (skip daemon), `--socket <path>`
 
@@ -509,17 +524,17 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 baluard/
 ├── proto/                        # Shared Protobuf Schemas (vault, space, auth)
 ├── crates/
-│   ├── baluard-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments, providers, orgs, emergency, integrity, recovery, bridge
-│   │   └── src/                    # crypto/{aead,hkdf_derive,hpke_wrap,kdf,signature,totp}.rs + webauthn/
+│   ├── baluard-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments, providers, sharing, emergency, integrity, recovery, bridge
+│   │   └── src/                    # crypto/{aead,hkdf_derive,hpke_wrap,kdf,signature,totp}.rs + webauthn/ + generator/ (EFF + BIP-39-es wordlists)
 │   │                                 # keys/{epoch,hierarchy,nonce,rotation}.rs
-│   │                                 # vault/{attachment,avatar,canary,cipher,creation,envelope,handle,index,keywrap,manifest,padding,registry,slug}.rs
-│   │                                 # sync/{commit,conflict,credentials,engine,known_hosts,operations,state_machine}.rs
-│   │                                 # import/ + providers/{codeberg,github,gitlab,mod,token,types}.rs
-│   │                                 # bridge/{mod,pairing,token}.rs
+│   │                                 # vault/{access_requests,approvals,attachment,avatar,canary,cipher,collections,contacts,creation,device_privkey,envelope,events,family,groups,handle,identity,index,keywrap,manifest,members,outbox,packages,padding,policies,recovery_kit,registry,reveals,slug,space,space_meta,templates}.rs
+│   │                                 # sync/{commit,conflict,credentials,engine,gossip,known_hosts,policy,revocation,state_machine,timeline,tls}.rs
+│   │                                 # import/{backup_container (.bldbak),baluard_json (baluard.vault v1),8 migration parsers,export}.rs
+│   │                                 # providers/{codeberg,github,gitlab,mod,token,types}.rs + bridge/{mod,pairing,token}.rs
 │   │                                 # resources/global_equivalent_domains.json
-│   │                                 # biometric.rs, device_manager.rs, devices.rs, emergency.rs, health.rs, integrity.rs, orgs.rs, recovery.rs, paths.rs, types.rs, error.rs, lib.rs
+│   │                                 # biometric.rs, device_manager.rs, devices.rs, emergency.rs, generator/, health.rs, integrity.rs, orgs.rs (envelope only), recovery.rs, recovery_sheet.rs, secret_file.rs, sysdeps.rs, paths.rs, types.rs, error.rs, lib.rs
 │   ├── baluard-runtime/            # Shared vault-session runtime (hosted in-process by daemon, NMH, mobile)
-│   │   └── src/                    # host.rs, state.rs, autosync.rs, pin.rs, bridge.rs, rate_limit.rs, providers.rs, crypto.rs, lib.rs
+│   │   └── src/                    # host.rs, state.rs, autosync.rs, pin.rs, bridge.rs, rate_limit.rs, providers.rs, crypto.rs, founding.rs (cross-vault copy), lib.rs
 │   ├── baluard-uniffi/             # UniFFI bindings consumed by mobile/shared (Kotlin Multiplatform)
 │   │   └── src/                    # lib.rs, baluard.udl
 │   ├── baluard-cli/                # Terminal CLI (daemon-first + --direct fallback)
@@ -530,11 +545,11 @@ baluard/
 ├── desktop/                      # Tauri v2 Desktop (SolidJS/Tailwind)
 │   ├── src-tauri/                  # Rust backend: daemon sidecar, baluard-nmh sidecar, tray, proto codegen
 │   ├── src/
-│   │   ├── components/         # 38 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, WelcomeScreen, CloneFromProviderScreen, BridgeTab, ConflictBanner, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, VaultSwitcher, AutoSyncIndicator, DeviceFleetPanel, SyncTab, SettingsModal, ...)
+│   │   ├── components/         # 52 components (VaultView, CipherDetail, CreateVaultScreen, RecoveryScreen, PeopleTab, GroupsTab, CollectionsTab, ContactsTab, OutboxesTab, SpaceTab, BridgeTab, BridgeUnlockBanner, DeviceFleetPanel, SyncTab, SettingsModal, GeneratorModal, ShareDialog, OpenSharedModal, TypedConfirmModal, ThemeToggleFloating, ...)
 │   │   ├── context/             # AuthContext.jsx, VaultContext.jsx, VaultSwitcherContext.jsx, AutoSyncContext.jsx, ConflictResolutionContext.jsx, themeSignal.js, toastSignal.js
-│   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
-│   │   ├── __tests__/           # vitest tests (payload, utils, filters, cipherSchema, sync)
-│   │   └── i18n/locales/        # en.json, es.json (all user-facing strings)
+│   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, conflictFlow.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
+│   │   ├── __tests__/           # vitest tests (payload, utils, filters, cipherSchema, sync, i18n parity)
+│   │   └── i18n/locales/        # en.json, es.json, pt.json (all user-facing strings)
 ├── browser/                      # MV3 Browser extensions (Chromium + Firefox, shared codebase)
 │   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair, vitest tests)
 │   ├── chrome/                    # Chrome MV3 wrapper
@@ -543,5 +558,5 @@ baluard/
 │   ├── shared/                    # commonMain (UI + ViewModels + VaultRepository), androidMain, iosMain
 │   └── androidApp/                # Android host app (single-Activity, BaluardAutofillService, BaluardAccessibilityService, BaluardA11yTileService, AutofillActivity), resources, R8 release build
 ├── docs/                         # Architecture & design docs (index, arch, decisions, plans, PRDs, threat model, 2fa, post-quantum, brand, app icons)
-└── justfile                      # Build system (`just` recipes for build, test, lint, fmt, desktop, ext-*, android-*, app-icons, build-nmh, install-nmh-manifest, codesign)
+└── justfile                      # Build system (`just` recipes for build, test, lint, fmt, desktop, ext-*, android-*, app-icons, build-nmh, install-nmh-manifest, codesign, test-e2e, e2e-android, decrypt-vector, sysdeps)
 ```

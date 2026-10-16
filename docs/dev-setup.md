@@ -137,7 +137,7 @@ crates/baluard-core/     # All crypto, vault format, key lifecycle, git sync, pr
   src/keys/            # Key hierarchy, epochs, rotation, nonces
   src/vault/           # Vault handle, cipher CRUD, padding, folders, manifest, canary, attachment, avatar, slug, registry, keywrap, index
   src/sync/            # Git sync engine (git2-rs), conflict 3-way merge, state machine, known_hosts, credentials, operations, commit
-  src/import/          # 8 import parsers (bw_json/csv, chrome/firefox/lastpass/1password_csv, 1pux, keepass) + 2 exports
+  src/import/          # 10 import parsers (baluard-encrypted .bldbak, baluard.vault v1, then 8 migration parsers) + 3 exports (baluard JSON, CSV, .bldbak)
   src/providers/       # Git provider abstraction: github, gitlab, codeberg adapters + token store + shared types
   src/bridge/          # Browser extension bridge: pairing file (pairing), bridge token mint/verify (token)
   src/biometric.rs     # OS-keychain-backed MP escrow (per-vault scoped, deterministic vault_id from KDF salt)
@@ -179,7 +179,7 @@ desktop/               # Tauri v2 + SolidJS + Tailwind
   src-tauri/           # Rust backend (daemon sidecar + baluard-nmh sidecar + tray + proto codegen)
   src/                 # SolidJS frontend
     __tests__/          # Vitest tests (payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
-    components/         # 38 components including Icon.jsx (40+ SVG icons), BridgeTab, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, AutoSyncIndicator, CloneFromProviderScreen, WelcomeScreen, VaultSwitcher
+    components/         # 52 components including Icon.jsx (40+ SVG icons), PeopleTab, GroupsTab, CollectionsTab, ContactsTab, BridgeTab, CreateVaultScreen, RecoveryScreen, ConflictResolutionPanel, DeviceFleetPanel, VaultSwitcher
     context/            # AuthContext.jsx, VaultContext.jsx, VaultSwitcherContext.jsx, AutoSyncContext.jsx, ConflictResolutionContext.jsx, themeSignal.js, toastSignal.js
     lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
 browser/                # MV3 browser extensions (Chromium + Firefox, shared codebase)
