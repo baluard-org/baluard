@@ -165,6 +165,9 @@ fun App(
         val settingsVm = remember { SettingsViewModel(configStore.load()) }
         val conflictVm = remember { ConflictViewModel() }
         val listVm = remember { VaultListViewModel(repo) }
+        // The hub search belongs to one vault; a query typed there must not
+        // filter the next vault's hub after a switch.
+        LaunchedEffect(path) { listVm.setQuery("") }
         // G24 §4.9: merged app-search fan-out source. The AuthViewModel owns
         // the session map; the ViewModel stays free of auth wiring.
         listVm.foreignSearch = { query, excludePath ->
