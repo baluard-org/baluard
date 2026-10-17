@@ -11,12 +11,14 @@
 //! cipher envelope on re-import is absent too) — a backup of entries is a
 //! backup of secrets, not of stored files. Documented, deliberate boundary.
 //!
-//! Import boundary (current pipeline): the schema PRESERVES folder
-//! hierarchy and icons, but the generic import flow recreates folders
-//! flat by name and drops empty folders; passkey `linked_login_id`
+//! Import boundary (current pipeline): the schema's folder hierarchy AND
+//! empty folders are restored on import — parents are created before
+//! children, same-named siblings already in the vault are reused, and a
+//! hostile parent cycle in the file degrades to root folders rather than
+//! dropping them. Folder icons are the one schema field not yet restored
+//! (the folder-creation API takes no icon). Passkey `linked_login_id`
 //! references keep their source-vault UUIDs, which do not exist in the
-//! importing vault. Restoring hierarchy is future work on the import
-//! pipeline, not a schema limit.
+//! importing vault — that remains the documented boundary.
 
 use crate::types::{Cipher, CipherInput, CipherKind, CustomField, PasswordHistoryEntry};
 use serde::{Deserialize, Serialize};
@@ -180,15 +182,64 @@ pub fn parse_backup(data: &str) -> Result<BaluardBackupV1, String> {
 /// assignment rides ImportResult's name-keyed folder map; duplicate folder
 /// names merge into one runtime folder (same as every other format).
 pub fn backup_to_import(backup: BaluardBackupV1) -> crate::import::ImportResult {
-    let folder_names: std::collections::HashMap<Uuid, String> = backup
+    // Emit folders parents-first so the importer can create them in one
+    // pass. A hostile parent cycle cannot be rooted; those folders fall
+    // back to roots rather than being dropped.
+    let index: std::collections::HashMap<Uuid, usize> = backup
         .folders
         .iter()
-        .map(|f| (f.id, f.name.clone()))
+        .enumerate()
+        .map(|(i, f)| (f.id, i))
         .collect();
+    let src_parent: Vec<Option<usize>> = backup
+        .folders
+        .iter()
+        .map(|f| f.parent_id.and_then(|p| index.get(&p).copied()))
+        .collect();
+    let mut order: Vec<(usize, bool)> = Vec::with_capacity(backup.folders.len()); // (src idx, keep parent)
+    let mut placed = vec![false; backup.folders.len()];
+    while placed.iter().any(|p| !p) {
+        let mut progress = false;
+        for (i, sp) in src_parent.iter().enumerate() {
+            if !placed[i] && sp.is_none_or(|p| placed[p]) {
+                order.push((i, true));
+                placed[i] = true;
+                progress = true;
+            }
+        }
+        if !progress {
+            // Only a parent cycle lands here: re-root the stragglers.
+            for (i, p) in placed.iter_mut().enumerate() {
+                if !*p {
+                    order.push((i, false));
+                    *p = true;
+                }
+            }
+        }
+    }
 
     let mut result = crate::import::ImportResult::new();
+    let mut src_to_res: Vec<Option<usize>> = vec![None; backup.folders.len()];
+    for &(i, keep_parent) in &order {
+        let parent = if keep_parent {
+            src_parent[i].and_then(|p| src_to_res[p])
+        } else {
+            None
+        };
+        src_to_res[i] = Some(result.folders.len());
+        result.folders.push(crate::import::ImportFolder {
+            name: backup.folders[i].name.clone(),
+            parent,
+        });
+    }
+
     for c in backup.ciphers {
-        let folder = c.folder_id.as_ref().and_then(|id| folder_names.get(id));
+        // Result indices, not source indices: the runtime tree is indexed
+        // by result.folders order, which the fixpoint pass may have moved.
+        let folder_idx = c
+            .folder_id
+            .and_then(|id| index.get(&id).copied())
+            .and_then(|src_i| src_to_res[src_i]);
         let input = CipherInput {
             name: c.name,
             folder_id: None,
@@ -204,7 +255,8 @@ pub fn backup_to_import(backup: BaluardBackupV1) -> crate::import::ImportResult 
             archived: c.archived,
             tags: c.tags,
         };
-        result.add_with_folder(input, folder.cloned());
+        result.cipher_folders.push(folder_idx);
+        result.ciphers.push(input);
     }
     result
 }
@@ -390,7 +442,61 @@ mod tests {
         ciphers[0].folder_id = Some(folders[0].0);
         let json = export_backup(&ciphers, &folders, None, "0.1.0", 1).unwrap();
         let import = backup_to_import(parse_backup(&json).unwrap());
-        assert!(import.folder_map.contains_key("Work"));
+        // The hierarchy path replaces the flat name map for this format.
+        assert!(import.folder_map.is_empty());
+        assert_eq!(import.folders.len(), 2);
+        assert_eq!(import.folders[0].name, "Work");
+        assert_eq!(import.folders[0].parent, None);
+        assert_eq!(import.folders[1].name, "Sub");
+        assert_eq!(import.folders[1].parent, Some(0));
+        assert_eq!(import.cipher_folders[0], Some(0));
+        assert!(import.cipher_folders[1..].iter().all(|o| o.is_none()));
+    }
+
+    #[test]
+    fn import_orders_parents_before_children() {
+        let parent = Uuid::new_v4();
+        let folders = vec![
+            (Uuid::new_v4(), "Sub".to_string(), Some(parent), None),
+            (parent, "Work".to_string(), None, None),
+        ];
+        let mut ciphers = all_kinds();
+        ciphers[0].folder_id = Some(folders[0].0); // filed in Sub
+        let json = export_backup(&ciphers, &folders, None, "0.1.0", 1).unwrap();
+        let import = backup_to_import(parse_backup(&json).unwrap());
+        // The file lists the child first; the import result must not.
+        assert_eq!(import.folders[0].name, "Work");
+        assert_eq!(import.folders[0].parent, None);
+        assert_eq!(import.folders[1].name, "Sub");
+        assert_eq!(import.folders[1].parent, Some(0));
+        // cipher_folders carries RESULT indices: the cipher names Sub,
+        // which sits at result index 1 despite being source index 0.
+        assert_eq!(import.cipher_folders[0], Some(1));
+    }
+
+    #[test]
+    fn import_breaks_parent_cycles_as_roots() {
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let folders = vec![
+            (a, "A".to_string(), Some(b), None),
+            (b, "B".to_string(), Some(a), None),
+        ];
+        let json = export_backup(&all_kinds(), &folders, None, "0.1.0", 1).unwrap();
+        let import = backup_to_import(parse_backup(&json).unwrap());
+        // Neither folder can be rooted; both land as roots, none dropped.
+        assert_eq!(import.folders.len(), 2);
+        assert!(import.folders.iter().all(|f| f.parent.is_none()));
+    }
+
+    #[test]
+    fn import_keeps_empty_folders() {
+        let folders = sample_folders();
+        // All ciphers unfiled: both folders are empty but must survive.
+        let json = export_backup(&all_kinds(), &folders, None, "0.1.0", 1).unwrap();
+        let import = backup_to_import(parse_backup(&json).unwrap());
+        assert_eq!(import.folders.len(), 2);
+        assert!(import.cipher_folders.iter().all(|o| o.is_none()));
     }
 
     #[test]
