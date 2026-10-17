@@ -86,15 +86,19 @@ fi
 # Only the named flow runs when --flow is given (the two-phone harness
 # drives its own flow); otherwise every flow runs in name order.
 rc=0
+matched=0
+# --flow accepts the full filename or a prefix ("01" or "01-create-vault");
+# a name that matches NOTHING must fail loudly - a silent zero-flow exit 0
+# was the vacuous-run class this guard exists to kill.
+ONLY_BASE="$(basename "${ONLY_FLOW:-}")"
 for f in "$FLOW_DIR"/*.yaml; do
-  # --flow accepts the full filename or a prefix ("01" or "01-create-vault");
-  # a bare name that matches nothing must fail loudly, never run zero flows.
   if [[ -n "$ONLY_FLOW" ]]; then
     base="$(basename "$f")"
-    if [[ "$base" != "$ONLY_FLOW" && "$base" != "$ONLY_FLOW.yaml" && "$base" != "$ONLY_FLOW"-*.yaml ]]; then
+    if [[ "$base" != "$ONLY_FLOW" && "$base" != "$ONLY_BASE.yaml" && "$base" != "$ONLY_BASE"-*.yaml ]]; then
       continue
     fi
   fi
+  matched=$((matched + 1))
   echo
   echo "==> maestro test $(basename "$f")"
   # MASTER_PW keeps its short name for the original flows; every
@@ -127,4 +131,8 @@ for f in "$FLOW_DIR"/*.yaml; do
   adb kill-server > /dev/null 2>&1 || true
   maestro "${args[@]}" "$MAESTRO_DEVICE" "$f" || rc=1
 done
+if [[ -n "$ONLY_FLOW" && "$matched" -eq 0 ]]; then
+  echo "no flow matches '$ONLY_FLOW' in $FLOW_DIR" >&2
+  exit 1
+fi
 exit "$rc"
