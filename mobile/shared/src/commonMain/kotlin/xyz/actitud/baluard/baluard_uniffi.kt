@@ -1304,7 +1304,7 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_create_vault(`path`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
     ): Long
-    fun uniffi_baluard_uniffi_fn_func_create_vault_with_recovery(`path`: RustBuffer.ByValue,`displayName`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
+    fun uniffi_baluard_uniffi_fn_func_create_vault_with_recovery(`path`: RustBuffer.ByValue,`displayName`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,`family`: Byte,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_derive_kek(`password`: RustBuffer.ByValue,`salt`: RustBuffer.ByValue,
     ): Long
@@ -1773,7 +1773,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_func_create_vault() != 45715.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_func_create_vault_with_recovery() != 52483.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_func_create_vault_with_recovery() != 21643.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_derive_kek() != 45663.toShort()) {
@@ -7187,7 +7187,12 @@ public object FfiConverterTypeMobileCipherMeta: FfiConverterRustBuffer<MobileCip
  */
 data class MobileCreateResult (
     var `vault`: MobileVault, 
-    var `recoveryPhrase`: MobileRecoveryPhrase
+    var `recoveryPhrase`: MobileRecoveryPhrase, 
+    /**
+     * Family vaults only: the Space Recovery Kit phrase, shown exactly
+     * once at creation. Personal vaults carry None.
+     */
+    var `kitPhrase`: kotlin.String?
 ) : Disposable {
     
     @Suppress("UNNECESSARY_SAFE_CALL") // codegen is much simpler if we unconditionally emit safe calls here
@@ -7196,6 +7201,8 @@ data class MobileCreateResult (
         Disposable.destroy(this.`vault`)
     
         Disposable.destroy(this.`recoveryPhrase`)
+    
+        Disposable.destroy(this.`kitPhrase`)
     
     }
     
@@ -7210,17 +7217,20 @@ public object FfiConverterTypeMobileCreateResult: FfiConverterRustBuffer<MobileC
         return MobileCreateResult(
             FfiConverterTypeMobileVault.read(buf),
             FfiConverterTypeMobileRecoveryPhrase.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
     override fun allocationSize(value: MobileCreateResult) = (
             FfiConverterTypeMobileVault.allocationSize(value.`vault`) +
-            FfiConverterTypeMobileRecoveryPhrase.allocationSize(value.`recoveryPhrase`)
+            FfiConverterTypeMobileRecoveryPhrase.allocationSize(value.`recoveryPhrase`) +
+            FfiConverterOptionalString.allocationSize(value.`kitPhrase`)
     )
 
     override fun write(value: MobileCreateResult, buf: ByteBuffer) {
             FfiConverterTypeMobileVault.write(value.`vault`, buf)
             FfiConverterTypeMobileRecoveryPhrase.write(value.`recoveryPhrase`, buf)
+            FfiConverterOptionalString.write(value.`kitPhrase`, buf)
     }
 }
 
@@ -8114,12 +8124,13 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
          * Create a new vault and return both the vault handle and the 24-word recovery phrase.
          * [display_name] names the vault in the switcher (marker slug via
          * suggest_slug); blank resolves to "Personal", the CLI's own default.
+         * [family] founds a family vault (team shape + Shared folder + kit).
          */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-     suspend fun `createVaultWithRecovery`(`path`: kotlin.String, `displayName`: kotlin.String?, `masterPassword`: kotlin.String, `deviceName`: kotlin.String) : MobileCreateResult {
+     suspend fun `createVaultWithRecovery`(`path`: kotlin.String, `displayName`: kotlin.String?, `masterPassword`: kotlin.String, `deviceName`: kotlin.String, `family`: kotlin.Boolean) : MobileCreateResult {
         return uniffiRustCallAsync(
-        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_create_vault_with_recovery(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`displayName`),FfiConverterString.lower(`masterPassword`),FfiConverterString.lower(`deviceName`),),
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_create_vault_with_recovery(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`displayName`),FfiConverterString.lower(`masterPassword`),FfiConverterString.lower(`deviceName`),FfiConverterBoolean.lower(`family`),),
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
         { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
