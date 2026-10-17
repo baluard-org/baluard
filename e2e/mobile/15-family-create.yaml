@@ -1,0 +1,74 @@
+# Baluard E2E, flow 15: founding a FAMILY vault from the phone.
+# Drives the purpose selector, the words-once vault phrase, and the
+# second words-once Space Recovery Kit screen, ending on the family
+# hub (which always renders its SHARED folder). DEDICATED-DEVICE-ONLY:
+# clearState wipes every vault in the app.
+# Params: maestro test -e BALUARD_E2E_MASTER_PW=...
+appId: xyz.actitud.baluard
+name: 15-family-create
+---
+- launchApp:
+    clearState: true
+# System "App Compatibility" alert re-arms after clearState.
+- tapOn:
+    id: "android:id/button2"
+    optional: true
+- assertVisible: "Baluard"
+- tapOn:
+    id: "e2e/onboarding/create"
+# Purpose: Family (the selector sits below the device-name field).
+- tapOn:
+    id: "e2e/create/purposeFamily"
+# Name field is pre-filled "Personal"; replace it.
+- tapOn:
+    id: "e2e/create/name"
+- eraseText: 20
+- inputText: "Familia"
+- tapOn:
+    id: "e2e/create/password"
+- inputText: "${BALUARD_E2E_MASTER_PW}"
+- hideKeyboard
+- tapOn:
+    id: "e2e/create/confirm"
+- inputText: "${BALUARD_E2E_MASTER_PW}"
+- hideKeyboard
+# The purpose row pushed the submit lower; scroll to it before tapping.
+- scrollUntilVisible:
+    element:
+      id: "e2e/create/submit"
+    direction: DOWN
+- tapOn:
+    id: "e2e/create/submit"
+# Words-once: the vault recovery phrase.
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/ack"
+    direction: DOWN
+- tapOn:
+    id: "e2e/recovery/ack"
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/continue"
+    direction: DOWN
+- tapOn:
+    id: "e2e/recovery/continue"
+# Words-once again: the Space Recovery Kit (family only).
+- extendedWaitUntil:
+    visible: "Family recovery kit"
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/ack"
+    direction: DOWN
+- tapOn:
+    id: "e2e/recovery/ack"
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/continue"
+    direction: DOWN
+- tapOn:
+    id: "e2e/recovery/continue"
+# Family hub: the Shared folder section always renders.
+- extendedWaitUntil:
+    visible: "SHARED"
+    timeout: 45000
