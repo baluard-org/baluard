@@ -9,7 +9,7 @@ import { sanitizeError, generatePassphrase } from "../lib/utils.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { invoke } from "@tauri-apps/api/core";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
-import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
+import { buildImportPayload } from "../lib/payload.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 import { biometryAvailable } from "../lib/biometry.js";
 import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy } from "./Icon.jsx";
@@ -521,17 +521,10 @@ export default function SettingsModal() {
     setExporting(true);
     setMessage(null);
     try {
-      const resp = await daemon("vault.export", JSON.stringify(buildExportPayload(format)));
-      const isCsv = format === "bw-csv";
-      const blob = new Blob([resp], { type: isCsv ? "text/csv;charset=utf-8" : "application/json;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const stamp = new Date().toISOString().slice(0, 10);
-      a.download = isCsv ? `baluard-logins-${stamp}.csv` : `baluard-backup-${stamp}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setMessage(t("settings.exportComplete"));
+      const r = await invoke("export_save_plain", { format });
+      // saved=false is the user cancelling the save dialog: stay silent
+      // (desktop parity with the recovery sheet and the encrypted backup).
+      if (r && r.saved) setMessage(t("settings.exportComplete"));
     } catch (e) {
       setMessage(t("settings.exportFailed", { error: sanitizeError(e, t) }));
     } finally {
