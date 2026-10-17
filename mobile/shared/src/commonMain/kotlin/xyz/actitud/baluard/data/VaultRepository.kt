@@ -235,7 +235,8 @@ class VaultRepository {
         displayName: String,
         password: String,
         deviceName: String,
-    ): MobileCreateResult = uniffiCreateVaultWithRecovery(path, displayName, password, deviceName)
+        family: Boolean,
+    ): MobileCreateResult = uniffiCreateVaultWithRecovery(path, displayName, password, deviceName, family)
 
     suspend fun listCiphers(vault: MobileVault): List<MobileCipherMeta> = vault.listCiphers()
     suspend fun getCipher(vault: MobileVault, id: String, decrypt: Boolean): String =

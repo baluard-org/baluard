@@ -59,6 +59,12 @@ import androidx.compose.ui.platform.testTag
 fun RecoveryPhraseScreen(
     words: List<String>,
     onAcknowledged: () -> Unit,
+    // Overridden when reusing this screen for the family kit words.
+    title: String = t("recovery.title"),
+    subtitle: String = t("recovery.subtitle"),
+    warning: String = t("recovery.warning"),
+    // Sheet filename stem for the TXT/PDF save buttons.
+    fileStem: String = "baluard-recovery-phrase",
 ) {
     var acknowledged by rememberSaveable { mutableStateOf(false) }
 
@@ -67,7 +73,7 @@ fun RecoveryPhraseScreen(
         runCatching {
             recoverySheetBytes(
                 format,
-                t("recovery.title"),
+                title,
                 t("recovery.sheetWarning"),
                 words.joinToString(" "),
             )
@@ -93,13 +99,13 @@ fun RecoveryPhraseScreen(
             Spacer(Modifier.height(16.dp))
 
             Text(
-                text = t("recovery.title"),
+                text = title,
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = t("recovery.subtitle"),
+                text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -124,7 +130,7 @@ fun RecoveryPhraseScreen(
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = t("recovery.warning"),
+                        text = warning,
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                         color = Color(0xFFFCA5A5),
                     )
@@ -174,12 +180,12 @@ fun RecoveryPhraseScreen(
             ) {
                 BaluardOutlinedButton(
                     text = t("recovery.saveTxt"),
-                    onClick = { exportSheet("text/plain", "baluard-recovery-phrase.txt", "txt") },
+                    onClick = { exportSheet("text/plain", "$fileStem.txt", "txt") },
                     modifier = Modifier.weight(1f),
                 )
                 BaluardOutlinedButton(
                     text = t("recovery.savePdf"),
-                    onClick = { exportSheet("application/pdf", "baluard-recovery-phrase.pdf", "pdf") },
+                    onClick = { exportSheet("application/pdf", "$fileStem.pdf", "pdf") },
                     modifier = Modifier.weight(1f),
                 )
             }
