@@ -68,15 +68,16 @@ The highest-value layer and the cheapest. The CLI is the executable spec, so thi
 - Status (2026-10-16): the two-phone ORG share journey runs GREEN (`e2e/mobile/two-phone-org.sh`, flows 14a-14e): founder creates and flips on the phone, PAT git backup, editor invite; joiner clones, joins, is approved; the grantless-add refusal and the on-device merge-exclusion leg (founder creates a personal second vault via the switcher, then searches) both assert. Transport lessons (the Maestro JVM zombie, DADB-vs-adb-server, chunked inputText, centerElement scrolls, per-leg holds) are codified in `mobile/AGENTS.md`. Product fixes it surfaced: mobile vaults unlock at birth, org add-routing gates on shape, autosync activates on remote attach, settings/people mutations arm the sync nudge.
 - Home: `e2e/mobile/`, one YAML per journey, shared helpers file.
 
-## Phase 3: Desktop (WebdriverIO + tauri-plugin-wdio)
+## Phase 3: Desktop (WebdriverIO + tauri-driver)
 
-- Tools: real WebKitGTK webview, real daemon, real socket via the E6/E7 escape hatch. The plugin adds `browser.tauri.execute()` and IPC mocking; E2E specs never mock the daemon.
-- Prerequisites to schedule with this phase: only 11 `data-testid` attributes exist in `desktop/src` - add them along with specs; pin `LANG=en_US.UTF-8` because the UI language follows `navigator.language`.
+- Status (2026-10-17): GREEN on the Linux box. The harness lives in `e2e/desktop/` - `run-e2e-desktop.sh` owns one fresh sandbox per run (fresh `BALUARD_DATA_DIR`, isolated HOME, `BALUARD_DISABLE_KEYRING=1`), Xvfb + `WEBKIT_DISABLE_DMABUF_RENDERER=1` + software GL for the headless webview, a vite dev server on 1420 (the debug binary loads devUrl, and vite must be launched from `desktop/`), the CLI-seeded vault, and `tauri-driver` (which spawns the app via the `tauri:options.application` capability and hands WebDriver to the system `WebKitWebDriver` binary from webkit2gtk4.1). Plain `webdriverio.remote()` drives it - no wdio test runner, no app-side plugin. First flow: `unlock.mjs` (login form -> unlock -> hub). Run via `just e2e-desktop`.
+- Tools: real WebKitGTK webview, real daemon (the app spawns its own sidecar; E7's `BALUARD_SOCKET` escape hatch remains future work for pointing it at a test daemon). The tauri-plugin-wdio layer (browser.tauri.execute + IPC mocking) is deliberately deferred - selectors, clicks, and keys need nothing app-side; specs never mock the daemon.
+- Prerequisites tracked here: `data-testid` attributes are added along with specs (`login-password`, `login-unlock`, `vault-view` so far); pin `LANG=C.UTF-8` so the i18n fallback is English (the runner exports it).
 - Native GTK file dialogs (recovery-sheet save, import/export) cannot be driven by WebDriver; add a test hook that routes those to a fixed tempdir path in E2E builds.
-- Build wiring: stage the sidecar binaries (`binaries/baluard-daemon-<target-triple>`, as `linux-smoke.yml` does), build the frontend `dist` first, and carry the plugin capability via a separate E2E Tauri config (`tauri build --debug --no-bundle --config tauri.e2e.conf.json -- --features e2e`) since capabilities cannot be feature-conditional; verify the CSP `connect-src` does not block the plugin bridge.
-- Per-launch state: `render-watchdog.flag` and `desktop-prefs.json` persist in `BALUARD_DATA_DIR`; every launch gets a fresh data dir.
+- CI shape (from the Tauri docs' own workflow): ubuntu runner + `apt install webkit2gtk-driver xvfb` + `cargo install tauri-driver --locked` + `xvfb-run` around the runner; the desktop crate now builds on the dev box (fc44 headers; brew pkg-config shadow requires `PKG_CONFIG_PATH=/usr/lib64/pkgconfig`).
+- Per-launch state: `render-watchdog.flag` and `desktop-prefs.json` persist in `BALUARD_DATA_DIR`; every launch gets a fresh data dir (the runner does this).
 - Coverage: setup wizard, login, unlock flows, vault view, folders/tags, generator, import/export, settings, vault switcher, sync tab (conflict banner + resolution), sharing suite, device fleet, passkey rename, password history.
-- Home: `e2e/desktop/`. Fallback if wdio fights WebKitGTK: `@srsholmes/tauri-playwright`.
+- Home: `e2e/desktop/`. Fallback if wdio fights WebKitGTK: `@srsholmes/tauri-playwright` (not needed so far).
 
 ## Phase 4: Browser extension (Playwright + real NMH)
 

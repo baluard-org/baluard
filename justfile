@@ -178,6 +178,12 @@ test-e2e:
 	{{ linuxbrew_env }} cargo build -p baluard-cli -p baluard-daemon --features baluard-cli/e2e-hooks,baluard-daemon/e2e-hooks
 	BALUARD_DISABLE_KEYRING=1 BALUARD_E2E=1 {{ linuxbrew_env }} cargo test -p baluard-cli --test e2e --features baluard-cli/e2e-hooks
 
+# Desktop E2E (Phase 3): the real app headless via tauri-driver. Needs
+# tauri-driver (cargo install tauri-driver --locked), Xvfb, and a fresh
+# desktop build; see e2e/desktop/run-e2e-desktop.sh.
+e2e-desktop *ARGS:
+	bash e2e/desktop/run-e2e-desktop.sh {{ARGS}}
+
 # Decode the committed golden backup vector with the reference decryptor
 # (scripts/decrypt_backup.py). Needs: pip install argon2-cffi cryptography
 # (Python's stdlib has neither Argon2id nor AES-GCM). Exits 0 only when the
