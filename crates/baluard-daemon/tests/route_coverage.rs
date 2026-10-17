@@ -2111,6 +2111,109 @@ async fn recover_kit_route_parses_and_resolves_slug() {
 }
 
 #[tokio::test]
+async fn import_skips_subtrees_of_failed_folders() {
+    let (_dir, state) = open_unlocked("imp-depth").await;
+
+    // 18 chained levels: MAX_FOLDER_DEPTH is 16, so L0..L15 create, L16
+    // fails at the depth cap, and L17 must be SKIPPED with its parent --
+    // never re-rooted at the top level.
+    let mut result = baluard_core::import::ImportResult::new();
+    for level in 0..18 {
+        result.folders.push(baluard_core::import::ImportFolder {
+            name: format!("L{level}"),
+            parent: if level == 0 { None } else { Some(level - 1) },
+        });
+    }
+
+    let resp: serde_json::Value =
+        serde_json::from_str(&state.import_ciphers(result).await.expect("import")).unwrap();
+    let errors = resp["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|e| e.as_str().unwrap().contains("L16")),
+        "L16 must fail at the depth cap: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("skipped because its parent")),
+        "L17 must be skipped with its parent: {errors:?}"
+    );
+
+    let folders: Vec<serde_json::Value> =
+        serde_json::from_str(&state.list_folders().await.expect("list")).unwrap();
+    assert_eq!(folders.len(), 16, "L0..L15 created");
+    assert!(
+        !folders.iter().any(|f| f["name"] == "L17"),
+        "a failed folder's child must never be re-rooted"
+    );
+}
+
+#[tokio::test]
+async fn import_restores_folder_hierarchy() {
+    let (_dir, state) = open_unlocked("imp-hier").await;
+
+    let mut result = baluard_core::import::ImportResult::new();
+    result.folders.push(baluard_core::import::ImportFolder {
+        name: "Work".into(),
+        parent: None,
+    });
+    result.folders.push(baluard_core::import::ImportFolder {
+        name: "Sub".into(),
+        parent: Some(0),
+    });
+    result
+        .folders
+        .push(baluard_core::import::ImportFolder {
+            name: "Empty".into(),
+            parent: Some(0),
+        });
+    result.ciphers.push(CipherInput {
+        name: "Filed Entry".into(),
+        kind: CipherKind::Login(Default::default()),
+        ..Default::default()
+    });
+    result.cipher_folders.push(Some(1));
+
+    let resp: serde_json::Value =
+        serde_json::from_str(&state.import_ciphers(result).await.expect("import")).unwrap();
+    assert_eq!(resp["imported"], 1);
+    assert_eq!(resp["folders_created"], 3);
+
+    let folders: Vec<serde_json::Value> =
+        serde_json::from_str(&state.list_folders().await.expect("list")).unwrap();
+    assert_eq!(folders.len(), 3, "empty folder preserved, no duplicates");
+    let work = folders.iter().find(|f| f["name"] == "Work").unwrap();
+    let sub = folders.iter().find(|f| f["name"] == "Sub").unwrap();
+    assert_eq!(work["parent_id"], serde_json::Value::Null);
+    assert_eq!(sub["parent_id"], work["id"]);
+
+    // The filed cipher carries the child folder's real id.
+    let env = state.full_envelope().await.expect("envelope");
+    let cipher = env["ciphers"][0].clone();
+    assert_eq!(cipher["name"], "Filed Entry");
+    assert_eq!(cipher["folder_id"], sub["id"]);
+
+    // Re-import reuses same-named siblings instead of duplicating.
+    let mut again = baluard_core::import::ImportResult::new();
+    again.folders.push(baluard_core::import::ImportFolder {
+        name: "Work".into(),
+        parent: None,
+    });
+    again
+        .folders
+        .push(baluard_core::import::ImportFolder {
+            name: "Sub".into(),
+            parent: Some(0),
+        });
+    let resp2: serde_json::Value =
+        serde_json::from_str(&state.import_ciphers(again).await.expect("reimport")).unwrap();
+    assert_eq!(resp2["folders_created"], 2, "siblings reused");
+    let folders2: Vec<serde_json::Value> =
+        serde_json::from_str(&state.list_folders().await.expect("list2")).unwrap();
+    assert_eq!(folders2.len(), 3);
+}
+
+#[tokio::test]
 async fn vaults_copy_items_founds_a_family_vault() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
@@ -2213,6 +2316,17 @@ async fn family_default_add_collection_sugar() {
     let chores = handle.collection_create("Chores").unwrap();
     let kids = handle.collection_create("Kids").unwrap();
     let member_id = uuid::Uuid::new_v4();
+    // The member's wrap pubkey must be the REBOUND device identity's
+    // public half, or collection_grant mints no wrap and the honest
+    // member-path writables resolve to an empty set (the founder row
+    // already carries that pubkey — grants to it mint opens).
+    let founder_row = baluard_core::vault::members::member_file_for_device(
+        &vault_path,
+        founder_device,
+    )
+    .unwrap()
+    .1;
+    let wrap_pub = founder_row.identity_wrap_pubkey.clone().unwrap();
     let member = baluard_core::vault::members::MemberFile {
         id: member_id,
         display_name: "Alex".into(),
@@ -2227,7 +2341,7 @@ async fn family_default_add_collection_sugar() {
         removed: None,
         removed_reason: None,
         transport_username: None,
-        identity_wrap_pubkey: None,
+        identity_wrap_pubkey: Some(wrap_pub),
     };
     baluard_core::vault::members::write_member(&vault_path, &member).unwrap();
     let grant_target = baluard_core::vault::collections::GrantTarget::Member { id: member_id };
@@ -2338,6 +2452,15 @@ async fn family_default_add_collection_sugar() {
     let member_b = uuid::Uuid::new_v4();
     let mut row = member.clone();
     row.id = member_b;
+    // This vault's device has its own identity: the wrap pubkey must be
+    // device_b's, not the first fixture's.
+    row.identity_wrap_pubkey = baluard_core::vault::members::member_file_for_device(
+        &path2,
+        device_b,
+    )
+    .unwrap()
+    .1
+    .identity_wrap_pubkey;
     baluard_core::vault::members::write_member(&path2, &row).unwrap();
     let grant_target_b = baluard_core::vault::collections::GrantTarget::Member { id: member_b };
     handle_b
