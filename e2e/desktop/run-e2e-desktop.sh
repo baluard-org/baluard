@@ -27,16 +27,21 @@ DISPLAY_NUM="${BALUARD_E2E_DISPLAY:-97}"
 
 VITE_PID=""; DRIVER_PID=""; XVFB_PID=""
 cleanup() {
-  # pkill -f self-matches this script's own cmdline; enumerate by exact
-  # comm and match the sandbox path instead.
+  # pkill -f self-matches this script's own cmdline, and the APP's argv
+  # carries no sandbox path (tauri-driver spawns it as the bare binary);
+  # the sandbox only appears in its ENVIRONMENT. Match /proc/environ.
   for p in $(pgrep -x baluard-daemon 2>/dev/null; pgrep -x baluard-desktop 2>/dev/null); do
-    if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "baluard-e2e-desk"; then
+    if tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -q "baluard-e2e-desk"; then
       kill "$p" 2>/dev/null || true
     fi
   done
   [[ -n "$VITE_PID" ]] && kill "$VITE_PID" 2>/dev/null || true
   [[ -n "$DRIVER_PID" ]] && kill "$DRIVER_PID" 2>/dev/null || true
   [[ -n "$XVFB_PID" ]] && kill "$XVFB_PID" 2>/dev/null || true
+  # The sandbox is synthetic and disposable; keep it only on demand.
+  if [[ "${BALUARD_E2E_KEEP:-0}" != "1" ]]; then
+    rm -rf "$WORK"
+  fi
 }
 trap cleanup EXIT
 
@@ -47,6 +52,13 @@ command -v Xvfb > /dev/null || { echo "missing Xvfb"; exit 1; }
 
 export BALUARD_E2E_PW="${BALUARD_E2E_PW:-e2e-desktop-pw1}"
 export BALUARD_E2E_NAME="${BALUARD_E2E_NAME:-E2E Desk}"
+
+# The app kills every baluard-daemon system-wide at its own startup
+# (E7's escape hatch is future work); warn loudly before that happens.
+stray=$(pgrep -x baluard-daemon 2>/dev/null | grep -vc "^$$") || true
+if [[ "${stray:-0}" -gt 0 ]]; then
+  echo "WARNING: $stray baluard-daemon process(es) are running; the app will kill them at startup." >&2
+fi
 
 # Fake display: WebKit needs software GL headless and the DMABUF
 # renderer disabled or the window paints white (recorded recipe).
@@ -69,20 +81,35 @@ mkdir -p "$BALUARD_DATA_DIR"
 # Seed one vault with a known password (CLI; registry + marker + theme).
 BALUARD_PASSWORD="$BALUARD_E2E_PW" "$CLI" init --name "$BALUARD_E2E_NAME" --theme dark > /dev/null
 
-# Frontend dev server for the debug binary's devUrl.
-(cd "$ROOT/desktop" && exec npx vite --port 1420 --strictPort) > "$WORK/vite.log" 2>&1 &
+# Frontend dev server for the debug binary's devUrl. Invoke the binary
+# directly: killing the npx wrapper can orphan the real vite process.
+(cd "$ROOT/desktop" && exec ./node_modules/.bin/vite --port 1420 --strictPort) > "$WORK/vite.log" 2>&1 &
 VITE_PID=$!
 for _ in $(seq 1 60); do
+  # A pre-existing server on 1420 answers this curl even though our
+  # strictPort vite died - only trust the poll while OUR vite lives.
+  if ! kill -0 "$VITE_PID" 2>/dev/null; then
+    echo "vite died at startup (is port 1420 taken? see $WORK/vite.log)" >&2
+    exit 1
+  fi
   curl -s -o /dev/null http://localhost:1420/ && break
   sleep 0.5
 done
+if ! kill -0 "$VITE_PID" 2>/dev/null; then
+  echo "vite died at startup (see $WORK/vite.log)" >&2
+  exit 1
+fi
 curl -sf -o /dev/null http://localhost:1420/ || { echo "vite did not serve"; exit 1; }
 
 # tauri-driver proxies WebDriver to WebKitWebDriver and spawns the app
 # from the capabilities' application path; the app inherits this env.
 tauri-driver --port "$DRIVER_PORT" > "$WORK/driver.log" 2>&1 &
 DRIVER_PID=$!
-sleep 1
+for _ in $(seq 1 40); do
+  curl -sf -o /dev/null "http://127.0.0.1:$DRIVER_PORT/status" && break
+  sleep 0.25
+done
+curl -sf -o /dev/null "http://127.0.0.1:$DRIVER_PORT/status" || { echo "tauri-driver did not start (see $WORK/driver.log)"; exit 1; }
 
 cd "$ROOT/e2e/desktop"
 RC=0
