@@ -228,6 +228,7 @@ export default function LoginScreen() {
             <input
               ref={(el) => { passwordRef = el; auth.setLoginPasswordRef(el); }}
               type="password"
+              data-testid="login-password"
               autocomplete="current-password"
               autocorrect="off"
               autocapitalize="off"
@@ -245,6 +246,7 @@ export default function LoginScreen() {
 
           <button
             type="submit"
+            data-testid="login-unlock"
             disabled={auth.status() === "unlocking" || bruteLock()}
             class="login-screen__submit-btn w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg shadow-black/10 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
           >
