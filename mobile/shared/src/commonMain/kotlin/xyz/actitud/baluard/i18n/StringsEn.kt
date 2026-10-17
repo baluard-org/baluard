@@ -53,6 +53,9 @@ internal val EN: Map<String, String> = mapOf(
     "onboarding.kitFailed" to "Recovery failed. Check the phrase and try again.",
     "onboarding.createVault" to "Create new vault",
     "onboarding.vaultName" to "Vault name",
+        "onboarding.purposeLabel" to "Who is this vault for?",
+        "onboarding.purposePersonal" to "Personal",
+        "onboarding.purposeFamily" to "Family",
     "onboarding.openExisting" to "Open an existing vault",
     "onboarding.openExistingHint" to "Opens a vault synced from another device",
 
@@ -110,6 +113,11 @@ internal val EN: Map<String, String> = mapOf(
     "recovery.savePdf" to "Save as PDF",
     "recovery.sheetWarning" to "Anyone who can read these 24 words can open this vault. Store this file somewhere safe.",
     "recovery.fileRisk" to "The file is saved without encryption. Keep it only on an encrypted or offline drive.",
+        "recovery.lostWords" to "The words were lost when the screen restarted.",
+        "recovery.kitLost" to "The kit words were lost when the screen restarted. Replace the kit from this vault's settings.",
+        "recovery.kitTitle" to "Family recovery kit",
+        "recovery.kitSubtitle" to "Shown once. Save it somewhere safe before you continue.",
+        "recovery.kitWarning" to "Anyone who can read these 24 words can reopen this vault. Store them somewhere safe.",
     "recovery.savedToast" to "File saved",
     "recovery.saveFailed" to "Could not save the file",
     // provider connect (open existing vault)

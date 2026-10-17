@@ -1,13 +1,18 @@
 package xyz.actitud.baluard.onboarding
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -15,6 +20,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -25,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.auth.AuthViewModel
@@ -40,6 +47,9 @@ import xyz.actitud.baluard.ui.components.BaluardTextField
 import xyz.actitud.baluard.ui.E2eTags
 import xyz.actitud.baluard.ui.BackPressHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.selectable
+import xyz.actitud.baluard.ui.toast.Toast
 
 /**
  * Vault-creation form styled after Baluard design guidelines.
@@ -68,11 +78,54 @@ fun CreateVaultScreen(
     var creating by rememberSaveable { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var phraseShown by rememberSaveable { mutableStateOf(false) }
+    var kitShown by rememberSaveable { mutableStateOf(false) }
+    var purpose by rememberSaveable { mutableStateOf("personal") }
+
+    if (kitShown) {
+        // Family kit words: the second words-once screen. Back falls
+        // through to App's chain (same words-once rule as the phrase).
+        // Rotation/process death wipes the in-memory words while the
+        // saveable phase flags survive, so an empty kit here means the
+        // words are gone for good: proceed honestly with a warning —
+        // the kit can be replaced from the vault's settings.
+        if (vm.kitWords.isEmpty()) {
+            Toast.error(t("recovery.kitLost"))
+            onCreated()
+            return
+        }
+        RecoveryPhraseScreen(
+            words = vm.kitWords,
+            onAcknowledged = onCreated,
+            title = t("recovery.kitTitle"),
+            subtitle = t("recovery.kitSubtitle"),
+            warning = t("recovery.kitWarning"),
+            fileStem = "baluard-family-kit",
+        )
+        return
+    }
 
     if (phraseShown) {
         RecoveryPhraseScreen(
             words = vm.recoveryWords,
-            onAcknowledged = onCreated,
+            onAcknowledged = {
+                when {
+                    purpose == "family" && vm.kitWords.isNotEmpty() -> {
+                        phraseShown = false
+                        kitShown = true
+                    }
+                    purpose == "family" -> {
+                        // Words lost to a screen restart: creation itself
+                        // succeeded, so proceed with a loud warning.
+                        Toast.error(t("recovery.kitLost"))
+                        onCreated()
+                    }
+                    vm.recoveryWords.isEmpty() -> {
+                        Toast.error(t("recovery.lostWords"))
+                        onCreated()
+                    }
+                    else -> onCreated()
+                }
+            },
         )
         return
     }
@@ -170,6 +223,33 @@ fun CreateVaultScreen(
                     enabled = !creating,
                 )
 
+                Spacer(Modifier.height(12.dp))
+
+                Text(
+                    text = t("onboarding.purposeLabel"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth()) {
+                    PurposeOption(
+                        label = t("onboarding.purposePersonal"),
+                        selected = purpose == "personal",
+                        enabled = !creating,
+                        onClick = { purpose = "personal" },
+                        modifier = Modifier.weight(1f).testTag(E2eTags.CREATE_PURPOSE_PERSONAL),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    PurposeOption(
+                        label = t("onboarding.purposeFamily"),
+                        selected = purpose == "family",
+                        enabled = !creating,
+                        onClick = { purpose = "family" },
+                        modifier = Modifier.weight(1f).testTag(E2eTags.CREATE_PURPOSE_FAMILY),
+                    )
+                }
+
                 error?.let {
                     Spacer(Modifier.height(12.dp))
                     Text(
@@ -196,7 +276,7 @@ fun CreateVaultScreen(
                         creating = true
                         error = null
                         scope.launch {
-                            val ok = vm.create(vaultPath, vaultName, password, deviceName)
+                            val ok = vm.create(vaultPath, vaultName, password, deviceName, family = purpose == "family")
                             creating = false
                             if (ok) {
                                 phraseShown = true
@@ -223,3 +303,35 @@ fun CreateVaultScreen(
 }
 
 private const val MIN_PASSWORD_LEN = 8
+
+/** One half of the vault-purpose selector (Personal / Family). */
+@Composable
+private fun PurposeOption(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .border(
+                1.dp,
+                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                RoundedCornerShape(10.dp),
+            )
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null, enabled = enabled)
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
