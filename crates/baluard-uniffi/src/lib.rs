@@ -1797,21 +1797,29 @@ pub struct EncryptedBackup {
 pub struct MobileCreateResult {
     pub vault: std::sync::Arc<MobileVault>,
     pub recovery_phrase: MobileRecoveryPhrase,
+    /// Family vaults only: the Space Recovery Kit phrase, shown exactly
+    /// once at creation. Personal vaults carry None.
+    pub kit_phrase: Option<String>,
 }
 
 /// Create a new vault and return both the vault handle and the 24-word recovery phrase.
 /// [display_name] names the vault in the switcher (marker slug via
 /// suggest_slug); blank resolves to "Personal", the CLI's own default.
+/// [family] founds a family vault (team shape + Shared folder + kit).
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn create_vault_with_recovery(
     path: String,
     display_name: Option<String>,
     master_password: String,
     device_name: String,
+    family: bool,
 ) -> Result<MobileCreateResult, BaluardError> {
     let vault_path = std::path::PathBuf::from(&path);
+    // Blank name falls back per purpose: the family vault must never be
+    // silently named "Personal" (switcher identity comes from the marker slug).
     let display_name = match display_name.as_deref().map(str::trim) {
         Some(name) if !name.is_empty() => name.to_string(),
+        _ if family => "Family".to_string(),
         _ => "Personal".to_string(),
     };
     let (_handle, secrets) = baluard_core::vault::creation::VaultCreator::new(
@@ -1822,6 +1830,7 @@ pub async fn create_vault_with_recovery(
     .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
     .profile(Some(display_name.clone()), None)
     .slug(Some(baluard_core::vault::slug::suggest_slug(&display_name)))
+    .family(family)
     .execute()
     .map_err(|e| BaluardError::Creation {
         detail: e.to_string(),
@@ -1839,6 +1848,7 @@ pub async fn create_vault_with_recovery(
         recovery_phrase: MobileRecoveryPhrase {
             phrase: secrets.recovery_phrase.phrase(),
         },
+        kit_phrase: secrets.kit_phrase.as_deref().map(|s| s.clone()),
     })
 }
 
@@ -2997,6 +3007,7 @@ mod tests {
             Some("Work Items".to_string()),
             pw.clone(),
             "device-rec".to_string(),
+            false,
         )
         .await
         .unwrap();
@@ -3031,11 +3042,34 @@ mod tests {
             Some("   ".to_string()),
             "master-pass-123".to_string(),
             "device-rec".to_string(),
+            false,
         )
         .await
         .unwrap();
         let marker = std::fs::read_to_string(tmp.path().join(".baluard")).unwrap();
         assert!(marker.contains("baluard-personal"), "marker: {marker}");
+    }
+
+    #[tokio::test]
+    async fn create_family_vault_carries_kit_phrase_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let res = create_vault_with_recovery(
+            path.clone(),
+            Some("Familia".to_string()),
+            "master-pass-123".to_string(),
+            "device-rec".to_string(),
+            true,
+        )
+        .await
+        .unwrap();
+        // The kit phrase is the words-once recovery for the family vault.
+        let kit = res.kit_phrase.expect("family creation must enable the kit");
+        assert_eq!(kit.split_whitespace().count(), 24);
+        assert_ne!(kit, res.recovery_phrase.phrase, "kit is its own phrase");
+        // Purpose stamped plaintext so classification works before unlock.
+        let purpose = std::fs::read_to_string(tmp.path().join("meta/settings-pub.json")).unwrap();
+        assert!(purpose.contains("family"), "purpose: {purpose}");
     }
 
     #[tokio::test]
