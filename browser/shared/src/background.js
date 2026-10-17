@@ -435,13 +435,18 @@ function updateBadgeForTab(tabId, url) {
   if (badgeTimer) clearTimeout(badgeTimer);
   badgeTimer = setTimeout(() => {
     send("bridge.match", { url })
-      .then((payload) => {
-        const data = JSON.parse(payload || "{}");
+      .then((msg) => {
+        // The internal send resolves the whole NMH message ({ok, payload});
+        // only .payload is the JSON string (found by e2e: parsing the message
+        // object threw, so the badge silently never rendered).
+        const raw = typeof msg === "string" ? msg : (msg && msg.payload) || "{}";
+        const data = JSON.parse(raw || "{}");
         const n = (data.matches || []).length;
         chrome.action.setBadgeText({ tabId, text: n > 0 ? String(n) : "" });
         chrome.action.setBadgeBackgroundColor({ tabId, color: "#0a7" });
       })
-      .catch(() => {
+      .catch((e) => {
+        console.warn("[baluard-badge] match failed:", e?.message);
         chrome.action.setBadgeText({ tabId, text: "" });
       });
   }, 250);
@@ -455,8 +460,12 @@ chrome.tabs?.onActivated?.addListener((info) => {
 });
 
 chrome.tabs?.onUpdated?.addListener((tabId, change, tab) => {
-  if (change.url && tab.active) {
-    updateBadgeForTab(tabId, change.url);
+  // change.url is permission-gated to the "tabs" permission (which we
+  // deliberately do not request); the Tab argument's url IS populated by our
+  // host permissions, so the badge must read from there. Found by e2e:
+  // with change.url empty the badge silently never updated on navigation.
+  if (tab && tab.active && tab.url) {
+    updateBadgeForTab(tabId, tab.url);
   }
 });
 
