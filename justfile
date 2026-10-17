@@ -183,6 +183,11 @@ test-e2e:
 # desktop build; see e2e/desktop/run-e2e-desktop.sh.
 e2e-desktop *ARGS:
 	bash e2e/desktop/run-e2e-desktop.sh {{ARGS}}
+# Extension: real Chromium + real NMH + real daemon + the bridge pairing
+# ceremony (docs/e2e-testing.md Phase 4, Ring 1). Installs playwright deps
+# into e2e/extension on first run.
+e2e-extension *ARGS:
+	bash e2e/extension/run-e2e-extension.sh
 
 # Decode the committed golden backup vector with the reference decryptor
 # (scripts/decrypt_backup.py). Needs: pip install argon2-cffi cryptography

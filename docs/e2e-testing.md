@@ -88,6 +88,20 @@ The highest-value layer and the cheapest. The CLI is the executable spec, so thi
 - Firefox: Selenium + geckodriver temporary addon install, or deferred until Chromium coverage is green.
 - Home: `e2e/extension/`.
 
+- Status (2026-10-17): Ring 1 GREEN — `just e2e-extension` runs the full chain
+  deterministically (real Playwright Chromium + real NMH + real daemon + the
+  real bridge pairing ceremony over the daemon socket + the real action-popup
+  match card + toolbar badge). Enablers landed: E6 (`BALUARD_SOCKET` in
+  `paths::socket_path()`), the harness's fixed-key dist copy for a stable
+  extension id, and the NMH manifest written into the profile dir (modern
+  Chromium resolves user-level NMH manifests relative to the user data dir —
+  observed via strace — with the HOME brand paths kept for older builds).
+  Surface notes: the ceremony must ride the REAL action popup (a tab-borne
+  popup.html is dropped by the SW's content-script guard), which Playwright
+  does not wrap as a Page — the harness drives it over a flat CDP session
+  (`cdp-popup.mjs`). Firefox remains deferred. The wave also fixed two real
+  toolbar-badge bugs (permission-gated `change.url`; internal `send()` shape).
+
 ## Feature-to-layer map
 
 | Feature area | E2E layer |

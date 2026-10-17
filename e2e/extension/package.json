@@ -1,0 +1,8 @@
+{
+  "name": "baluard-extension-e2e",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
