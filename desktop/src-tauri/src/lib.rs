@@ -860,6 +860,73 @@ struct BackupSaveResult {
     entries: u32,
 }
 
+/// Plain-export result for the webview: whether a file landed and its size.
+#[derive(serde::Serialize)]
+struct ExportSaveResult {
+    saved: bool,
+    written_bytes: u64,
+}
+
+/// D1/D77 pattern extended to plain exports: the save dialog AND the daemon
+/// round-trip AND the file write all happen Rust-side. The webview passes
+/// only the format ("baluard" | "bw-csv"); it never holds a filesystem path
+/// nor the exported plaintext — the old Blob download carried no 0600 and
+/// handed the whole vault plaintext to webview memory. The export string is
+/// zeroized once written; a user cancel is Ok(saved=false), not an error.
+#[tauri::command]
+async fn export_save_plain(app: AppHandle, format: String) -> Result<ExportSaveResult, String> {
+    let is_csv = match format.as_str() {
+        "baluard" => false,
+        "bw-csv" => true,
+        _ => return Err("Unknown export format".to_string()),
+    };
+    let (token, slug) = active_session(&app)?;
+    let default_name = if is_csv {
+        format!("baluard-logins-{}.csv", today_stamp())
+    } else {
+        format!("baluard-backup-{}.json", today_stamp())
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let picked = app
+            .dialog()
+            .file()
+            .add_filter(
+                if is_csv { "Spreadsheet (logins only)" } else { "Baluard backup" },
+                if is_csv { &["csv"] } else { &["json"] },
+            )
+            .set_file_name(&default_name)
+            .blocking_save_file();
+        let out_path = match picked {
+            None => {
+                return Ok(ExportSaveResult {
+                    saved: false,
+                    written_bytes: 0,
+                })
+            }
+            Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
+            Some(_) => return Err("Unsupported save location".to_string()),
+        };
+        let payload = if is_csv {
+            r#"{"format":"bw-csv"}"#.to_string()
+        } else {
+            r#"{"format":"baluard"}"#.to_string()
+        };
+        let (data, _) = send_request_with_token("vault.export", &payload, &token, &slug)?;
+        // The response payload IS the exported plaintext; scrub it once the
+        // 0600 write lands (the whole-vault-plaintext lesson from §9).
+        let data = zeroize::Zeroizing::new(data);
+        baluard_core::secret_file::write_secret_file(&out_path, data.as_bytes())
+            .map_err(|e| format!("Export write failed: {e}"))?;
+        Ok(ExportSaveResult {
+            saved: true,
+            written_bytes: data.len() as u64,
+        })
+    })
+    .await
+    .map_err(|e| format!("Export task failed: {e}"))?
+}
+
 /// D1/D77 pattern for backups: the save dialog AND the daemon round-trip AND
 /// the file write all happen Rust-side. The webview passes only the
 /// passphrase; it never holds a filesystem path and never receives container
@@ -1540,6 +1607,7 @@ pub fn run() {
             save_recovery_phrase,
             backup_save_encrypted,
             backup_import_encrypted,
+            export_save_plain,
             clipboard_mark_concealed,
             get_desktop_prefs,
             set_tray_only,

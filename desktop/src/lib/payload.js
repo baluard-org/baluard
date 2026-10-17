@@ -89,13 +89,6 @@ export function buildImportPayload(format, data) {
 }
 
 /**
- * Build vault.export payload.
- */
-export function buildExportPayload(format) {
-  return { format };
-}
-
-/**
  * Build vault.attach_download payload.
  */
 export function buildAttachDownloadPayload(cipherId, attachmentId) {
