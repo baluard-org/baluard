@@ -1015,6 +1015,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1241,6 +1243,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_restore_cipher(`ptr`: Pointer,`id`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_rotate_recovery_phrase(`ptr`: Pointer,`oldPassword`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_set_collection(`ptr`: Pointer,`cipherId`: RustBuffer.ByValue,`collectionId`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_set_settings(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1688,6 +1692,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_rotate_recovery_phrase(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_set_collection(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_set_settings(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync(
@@ -2113,6 +2119,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_rotate_recovery_phrase() != 51277.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_set_collection() != 45662.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_set_settings() != 36932.toShort()) {
@@ -3693,6 +3702,12 @@ public interface MobileVaultInterface {
      * must use the Space Recovery Kit. Returns {phrase}.
      */
     suspend fun `rotateRecoveryPhrase`(`oldPassword`: kotlin.String): kotlin.String
+    
+    /**
+     * Assign an entry to a shared collection (None unassigns). Same grant
+     * and rank gates as the daemon's cipher.set_collection route.
+     */
+    suspend fun `setCollection`(`cipherId`: kotlin.String, `collectionId`: kotlin.String?)
     
     /**
      * Update vault settings from JSON string.
@@ -6297,6 +6312,32 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Assign an entry to a shared collection (None unassigns). Same grant
+     * and rank gates as the daemon's cipher.set_collection route.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setCollection`(`cipherId`: kotlin.String, `collectionId`: kotlin.String?) {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_set_collection(
+                thisPtr,
+                FfiConverterString.lower(`cipherId`),FfiConverterOptionalString.lower(`collectionId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+        
         // Error FFI converter
         BaluardException.ErrorHandler,
     )

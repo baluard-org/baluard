@@ -61,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import xyz.actitud.baluard.data.MobileCollectionInfo
 import xyz.actitud.baluard.data.MobileFolderInfo
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.detail.FieldSpec
@@ -97,6 +98,7 @@ fun EditCipherScreen(
 ) {
     val form by viewModel.form.collectAsState()
     val folders by viewModel.folders.collectAsState()
+    val collections by viewModel.collections.collectAsState()
     val allTags by viewModel.allTags.collectAsState()
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
@@ -119,6 +121,7 @@ fun EditCipherScreen(
             }
         }
         viewModel.loadFolders(vault)
+        viewModel.loadCollections(vault)
         viewModel.loadTags(vault)
     }
 
@@ -181,6 +184,23 @@ fun EditCipherScreen(
                     enabled = !saving,
                     onSelect = { viewModel.setFolderId(it) },
                 )
+
+                if (collections.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    CollectionPicker(
+                        selected = form.collectionId,
+                        isEdit = viewModel.isEdit,
+                        collections = collections,
+                        enabled = !saving,
+                        onSelect = { key ->
+                            when (key) {
+                                "keep" -> viewModel.keepCurrentCollection()
+                                "" -> viewModel.setCollectionId("")
+                                else -> viewModel.setCollectionId(key)
+                            }
+                        },
+                    )
+                }
             }
 
             // Schema-driven Fields Section
@@ -639,6 +659,39 @@ private fun FolderPicker(
         options = options,
         enabled = enabled,
         onSelect = { onSelect(it.ifEmpty { null }) },
+    )
+}
+
+/** Shared-folder picker (space filing). Edit mode starts on "keep current":
+* the wire get_cipher omits the stored collection, so an untouched picker
+* must not clear it on save. Names pass through t() unchanged (the i18n
+* fallback returns the key itself). */
+@Composable
+private fun CollectionPicker(
+    selected: String?,
+    isEdit: Boolean,
+    collections: List<MobileCollectionInfo>,
+    enabled: Boolean,
+    onSelect: (String?) -> Unit,
+) {
+    val options: List<Pair<String, String>> = buildList {
+        // Sentinels pre-resolved so user-defined names pass through DropdownField's
+        // t() lookup unchanged (a name colliding with a real key would mistranslate).
+        if (isEdit) add("keep" to t("edit.collectionKeepCurrent"))
+        add("" to t("edit.collectionNone"))
+        collections.forEach { add(it.id to it.name) }
+    }
+    val selectedKey = when {
+        selected != null -> selected
+        isEdit -> "keep"
+        else -> ""
+    }
+    DropdownField(
+        label = t("edit.sharedFolder"),
+        selected = selectedKey,
+        options = options,
+        enabled = enabled,
+        onSelect = { onSelect(it) },
     )
 }
 
