@@ -6012,19 +6012,78 @@ impl VaultState {
             }
         }
 
+        // Hierarchy path (baluard.vault): parents precede children in the
+        // import result, so one pass creates the tree. Same-named siblings
+        // already in the vault are reused, empty folders are kept, and a
+        // failed folder is reported while its subtree is skipped.
+        let mut tree_folder_ids: Vec<Option<uuid::Uuid>> = Vec::new();
+        let mut folder_errors: Vec<String> = Vec::new();
+        // Folders this import created, for duplicate-in-file reuse: the
+        // `existing` snapshot predates the loop.
+        let mut created_here: Vec<(String, Option<uuid::Uuid>, uuid::Uuid)> = Vec::new();
+        if !import_result.folders.is_empty() {
+            let existing = handle.list_folders().unwrap_or_default();
+            for f in &import_result.folders {
+                // A failed parent's subtree is skipped, never re-rooted:
+                // Some(p) with a None result means the parent died above.
+                let parent = match f.parent {
+                    None => None,
+                    Some(p) => match tree_folder_ids.get(p).and_then(|o| *o) {
+                        Some(pid) => Some(pid),
+                        None => {
+                            folder_errors.push(format!(
+                                "folder '{}': skipped because its parent could not be created",
+                                f.name
+                            ));
+                            tree_folder_ids.push(None);
+                            continue;
+                        }
+                    },
+                };
+                let id = existing
+                    .iter()
+                    .find(|x| x.name == f.name && x.parent_id == parent)
+                    .map(|x| x.id)
+                    .or_else(|| {
+                        created_here
+                            .iter()
+                            .find(|(n, p, _)| *n == f.name && *p == parent)
+                            .map(|(_, _, id)| *id)
+                    })
+                    .or_else(|| {
+                        handle
+                            .create_folder_with_parent(&f.name, parent)
+                            .map_err(|e| format!("folder '{}': {e}", f.name))
+                            .ok()
+                    });
+                if let Some(id) = id {
+                    created_here.push((f.name.clone(), parent, id));
+                } else {
+                    folder_errors.push(format!("folder '{}': could not be created", f.name));
+                }
+                tree_folder_ids.push(id);
+            }
+        }
+
         let total = import_result.ciphers.len();
         let mut created = 0usize;
         let mut errors = import_result.errors.clone();
+        errors.append(&mut folder_errors);
 
         for (idx, mut cipher) in import_result.ciphers.into_iter().enumerate() {
-            // Assign folder_id if this cipher belongs to a folder
-            let folder_name = import_result
-                .folder_map
-                .iter()
-                .find(|(_, indices)| indices.contains(&idx))
-                .map(|(name, _)| name.clone());
-            if let Some(name) = folder_name {
-                cipher.folder_id = folder_id_map.get(&name).copied();
+            // Assign folder_id: the hierarchy path indexes the created tree,
+            // the flat path scans the name map.
+            if let Some(fi) = import_result.cipher_folders.get(idx).and_then(|o| *o) {
+                cipher.folder_id = tree_folder_ids.get(fi).and_then(|o| *o);
+            } else {
+                let folder_name = import_result
+                    .folder_map
+                    .iter()
+                    .find(|(_, indices)| indices.contains(&idx))
+                    .map(|(name, _)| name.clone());
+                if let Some(name) = folder_name {
+                    cipher.folder_id = folder_id_map.get(&name).copied();
+                }
             }
 
             match handle.add_cipher(&cipher) {
@@ -6033,10 +6092,15 @@ impl VaultState {
             }
         }
 
+        let folders_created = if tree_folder_ids.is_empty() {
+            folder_id_map.len()
+        } else {
+            tree_folder_ids.iter().flatten().count()
+        };
         let response = serde_json::json!({
             "imported": created,
             "skipped": import_result.skipped + (total - created),
-            "folders_created": folder_id_map.len(),
+            "folders_created": folders_created,
             "errors": errors,
         });
         Ok(response.to_string())

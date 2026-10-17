@@ -17,6 +17,16 @@ pub mod onepassword_csv;
 
 use crate::types::CipherInput;
 
+/// A folder to create on import. The parent is an index into the same
+/// `folders` Vec, and parents always precede children (the hierarchy-
+/// carrying parser guarantees it; cycles degrade to roots). Flat parsers
+/// leave `ImportResult::folders` empty and use `folder_map` instead.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportFolder {
+    pub name: String,
+    pub parent: Option<usize>,
+}
+
 /// Result of an import operation.
 #[derive(Debug, Clone, Default)]
 pub struct ImportResult {
@@ -28,6 +38,10 @@ pub struct ImportResult {
     pub errors: Vec<String>,
     /// Folder name -> list of cipher indices (for formats that support folders).
     pub folder_map: std::collections::HashMap<String, Vec<usize>>,
+    /// Full folder tree for hierarchy-carrying formats (baluard.vault).
+    pub folders: Vec<ImportFolder>,
+    /// Source-folder index per cipher, parallel to `ciphers`.
+    pub cipher_folders: Vec<Option<usize>>,
 }
 
 impl ImportResult {
