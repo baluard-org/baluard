@@ -136,7 +136,7 @@ export default function VaultView() {
   }
 
   return (
-    <div class="flex h-full overflow-hidden">
+    <div class="flex h-full overflow-hidden" data-testid="vault-view">
       <DeleteConfirmModal
         viewCipher={viewCipher()}
         showDeleteConfirm={showDeleteConfirm()}
