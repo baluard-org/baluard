@@ -211,6 +211,7 @@ export default function VaultView() {
               <button
                 onClick={() => vault.setShowSettingsModal(true)}
                 title={t("settings.openSettings")}
+                data-testid="settings-open"
                 class="p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
               >
                 <IconCog class="w-4 h-4" />

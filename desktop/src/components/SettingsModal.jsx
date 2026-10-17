@@ -29,6 +29,7 @@ function TabButton(props) {
   return (
     <button
       onClick={() => props.setActiveTab(props.id)}
+      data-testid={`settings-tab-${props.id}`}
       class={`flex-1 px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
         props.active === props.id
           ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
@@ -128,6 +129,40 @@ export default function SettingsModal() {
   const [backupPwSaved, setBackupPwSaved] = createSignal(false);
   const [backupBusy, setBackupBusy] = createSignal(false);
   let backupDialogRef;
+
+  const [healthBusy, setHealthBusy] = createSignal(false);
+  const [healthOpen, setHealthOpen] = createSignal(false);
+  const [healthReport, setHealthReport] = createSignal(null);
+  let healthDialogRef;
+
+  const HEALTH_REASON_KEYS = {
+    short: "settings.healthRShort",
+    common: "settings.healthRCommon",
+    same_char: "settings.healthRSameChar",
+    sequential: "settings.healthRSequential",
+    weak: "settings.healthRWeak",
+    old: "settings.healthROld",
+    reused: "settings.healthRReused",
+  };
+  // Core attaches a machine kind and a number so the GUI can localize;
+  // anything else falls back to the raw English reason.
+  const healthReason = (f) => {
+    const key = HEALTH_REASON_KEYS[f.kind];
+    return key ? t(key, { n: f.n ?? 0 }) : f.reason;
+  };
+
+  async function runHealthCheck() {
+    setHealthBusy(true);
+    try {
+      const report = JSON.parse(await daemon("vault.health"));
+      setHealthReport(report);
+      setHealthOpen(true);
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setHealthBusy(false);
+    }
+  }
 
   function openBackupPass(mode) {
     // Export prefills a generated passphrase; import expects the one the
@@ -894,6 +929,23 @@ export default function SettingsModal() {
               </Show>
 
               <Show when={activeTab() === "data"}>
+                {/* Security check: whole-vault password analysis, run on demand. */}
+                <div class="space-y-3 mb-6">
+                  <div class="flex items-center justify-between">
+                    <div class="flex flex-col flex-1 pr-4">
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.healthCheck")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.healthDesc")}</span>
+                    </div>
+                    <button
+                      onClick={runHealthCheck}
+                      disabled={healthBusy()}
+                      class="px-5 py-2.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                    >
+                      {healthBusy() ? t("settings.healthChecking") : t("settings.healthRun")}
+                    </button>
+                  </div>
+                </div>
+
                 {/* Recovery phrase exit path */}
                 <div class="space-y-3 mb-6">
                   <RecoveryPhraseCard />
@@ -1092,6 +1144,63 @@ export default function SettingsModal() {
                       class="px-5 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {backupMode() === "export" ? t("settings.exportBackup") : t("settings.import")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Show>
+
+            {/* Security check findings. The report is already grouped
+                weak/reused/old server-side; entries localize via the
+                machine kind with the raw reason as fallback. */}
+            <Show when={healthOpen() && healthReport()}>
+              <div
+                ref={healthDialogRef}
+                class="fixed inset-0 bg-black/60 flex items-center justify-center z-[110]"
+                onClick={() => setHealthOpen(false)}
+              >
+                <FocusTrap containerRef={healthDialogRef} onEscape={() => setHealthOpen(false)} />
+                <div
+                  class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[80vh] flex flex-col"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div class="p-5 pb-3 border-b border-[var(--color-border)]">
+                    <label class="text-sm font-bold text-[var(--color-text)]">{t("settings.healthCheck")}</label>
+                  </div>
+                  <div class="flex-1 overflow-y-auto p-5 space-y-4">
+                    <For each={["weak", "reused", "old"]}>
+                      {(group) => (
+                        <Show when={(healthReport()[group] || []).length > 0}>
+                          <div class="space-y-1.5">
+                            <div class="text-xs font-bold text-[var(--color-text)]">
+                              {t(group === "weak" ? "settings.healthWeak" : group === "reused" ? "settings.healthReused" : "settings.healthOld")} ({healthReport()[group].length})
+                            </div>
+                            <For each={healthReport()[group]}>
+                              {(f) => (
+                                <div class="px-3 py-2 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)]" data-testid="health-finding">
+                                  <div class="text-xs text-[var(--color-text)]">{f.name}</div>
+                                  <div class="text-[10px] text-[var(--color-muted)] mt-0.5">{healthReason(f)}</div>
+                                </div>
+                              )}
+                            </For>
+                          </div>
+                        </Show>
+                      )}
+                    </For>
+                    <Show when={
+                      (healthReport().weak?.length ?? 0) +
+                        (healthReport().reused?.length ?? 0) +
+                        (healthReport().old?.length ?? 0) === 0
+                    }>
+                      <p class="text-xs text-[var(--color-muted)]">{t("settings.healthEmpty")}</p>
+                    </Show>
+                  </div>
+                  <div class="p-5 pt-3 border-t border-[var(--color-border)] flex justify-end">
+                    <button
+                      onClick={() => setHealthOpen(false)}
+                      class="px-5 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md"
+                    >
+                      {t("common.close")}
                     </button>
                   </div>
                 </div>

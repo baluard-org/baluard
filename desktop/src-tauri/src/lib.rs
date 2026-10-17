@@ -208,6 +208,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.avatar.set",
     "vault.delete",
     "vault.get",
+    "vault.health",
     "vault.import",
     "vault.export",
     "vault.list",
