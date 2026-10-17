@@ -87,8 +87,13 @@ fi
 # drives its own flow); otherwise every flow runs in name order.
 rc=0
 for f in "$FLOW_DIR"/*.yaml; do
-  if [[ -n "$ONLY_FLOW" && "$(basename "$f")" != "$ONLY_FLOW" ]]; then
-    continue
+  # --flow accepts the full filename or a prefix ("01" or "01-create-vault");
+  # a bare name that matches nothing must fail loudly, never run zero flows.
+  if [[ -n "$ONLY_FLOW" ]]; then
+    base="$(basename "$f")"
+    if [[ "$base" != "$ONLY_FLOW" && "$base" != "$ONLY_FLOW.yaml" && "$base" != "$ONLY_FLOW"-*.yaml ]]; then
+      continue
+    fi
   fi
   echo
   echo "==> maestro test $(basename "$f")"

@@ -27,7 +27,12 @@ name: 01-create-vault
 - tapOn:
     id: "e2e/create/submit"
 # Recovery acknowledgment: the phrase is shown once; the E2E vault is
-# synthetic, so nothing is exported here.
+# synthetic, so nothing is exported here. The 24-word grid pushes the
+# ack below the fold on smaller screens.
+- scrollUntilVisible:
+    element:
+      id: "e2e/recovery/ack"
+    direction: DOWN
 - tapOn:
     id: "e2e/recovery/ack"
 # The 24-word grid pushes the continue button below the fold.
