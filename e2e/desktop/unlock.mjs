@@ -30,10 +30,11 @@ try {
   await unlock.click();
 
   // The unlocked hub marker (VaultView root) appears.
-  await browser.waitUntil(
-    async () => (await browser.$('[data-testid="vault-view"]')).isDisplayed(),
-    { timeout: 30000, timeoutMsg: "vault hub did not render after unlock" },
-  );
+  const vault = await browser.$('[data-testid="vault-view"]');
+  await vault.waitForDisplayed({
+    timeout: 30000,
+    timeoutMsg: "vault hub did not render after unlock",
+  });
   console.log("E2E desktop unlock flow: PASS");
 } finally {
   await browser.deleteSession().catch(() => {});
