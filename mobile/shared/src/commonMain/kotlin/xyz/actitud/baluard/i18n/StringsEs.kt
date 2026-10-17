@@ -53,6 +53,9 @@ internal val ES: Map<String, String> = mapOf(
     "onboarding.kitFailed" to "La recuperación falló. Revisa la frase e inténtalo de nuevo.",
     "onboarding.createVault" to "Crear una bóveda nueva",
     "onboarding.vaultName" to "Nombre de la bóveda",
+        "onboarding.purposeLabel" to "¿Para quién es esta bóveda?",
+        "onboarding.purposePersonal" to "Personal",
+        "onboarding.purposeFamily" to "Familia",
     "onboarding.openExisting" to "Abrir una bóveda existente",
     "onboarding.openExistingHint" to "Abre una bóveda sincronizada desde otro dispositivo",
 
@@ -110,6 +113,11 @@ internal val ES: Map<String, String> = mapOf(
     "recovery.savePdf" to "Guardar como PDF",
     "recovery.sheetWarning" to "Cualquiera que pueda leer estas 24 palabras puede abrir esta bóveda. Guarda este archivo en un lugar seguro.",
     "recovery.fileRisk" to "El archivo se guarda sin cifrar. Consérvalo solo en un disco cifrado o externo.",
+        "recovery.lostWords" to "Las palabras se perdieron al reiniciar la pantalla.",
+        "recovery.kitLost" to "Las palabras del kit se perdieron al reiniciar la pantalla. Reemplaza el kit en los ajustes de esta bóveda.",
+        "recovery.kitTitle" to "Kit de recuperación familiar",
+        "recovery.kitSubtitle" to "Se muestra una vez. Guárdalo en un lugar seguro antes de continuar.",
+        "recovery.kitWarning" to "Cualquiera que pueda leer estas 24 palabras puede reabrir esta bóveda. Guárdalas en un lugar seguro.",
     "recovery.savedToast" to "Archivo guardado",
     "recovery.saveFailed" to "No se pudo guardar el archivo",
 
