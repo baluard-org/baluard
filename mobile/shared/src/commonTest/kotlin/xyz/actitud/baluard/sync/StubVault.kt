@@ -97,6 +97,7 @@ open class StubVault(
     override suspend fun listTags(): String = err()
     override suspend fun lock() = err()
     override suspend fun renameFolder(payload: String) = err()
+    override suspend fun setCollection(cipherId: String, collectionId: String?) = err()
     override suspend fun setSettings(payload: String) = err()
     override suspend fun totpCode(id: String): String = err()
     override suspend fun unlock(masterPassword: String) = err()

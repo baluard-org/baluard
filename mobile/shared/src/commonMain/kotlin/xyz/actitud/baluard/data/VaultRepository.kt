@@ -373,6 +373,11 @@ class VaultRepository {
         }
     }
 
+    /** Assign an entry to a shared collection (null unassigns). Same
+     * grant and rank gates as the desktop move control. */
+    suspend fun setCollection(vault: MobileVault, cipherId: String, collectionId: String?): Unit =
+        vault.setCollection(cipherId, collectionId)
+
     /** Parsed own pending asks for the ask dialog: [{id, collection_id,
     * access, created_at}]. */
     suspend fun listMyAsks(vault: MobileVault): List<MobileAskInfo> {

@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import xyz.actitud.baluard.data.MobileCollectionInfo
 import xyz.actitud.baluard.data.MobileFolderInfo
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.PasswordConfig
@@ -55,7 +56,17 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     private val _allTags = MutableStateFlow<List<String>>(emptyList())
     val allTags: StateFlow<List<String>> = _allTags.asStateFlow()
 
+    private val _collections = MutableStateFlow<List<MobileCollectionInfo>>(emptyList())
+    val collections: StateFlow<List<MobileCollectionInfo>> = _collections.asStateFlow()
+
     private var existingId: String? = null
+
+    /** Whether [save] edits an existing cipher (drives the shared-folder picker's keep-current default). */
+    val isEdit: Boolean get() = existingId != null
+
+    /** Tracks whether the shared-folder picker was touched this session:
+    * the wire get_cipher omits the stored collection, so untouched = keep. */
+    private var collectionTouched = false
 
     /** Original decrypted `data` object; null for a new entry. */
     private var originalData: JsonObject? = null
@@ -66,6 +77,12 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     fun setReprompt(v: Boolean) { _form.value = _form.value.copy(reprompt = v) }
     fun setTotpUri(v: String) { _form.value = _form.value.copy(totpUri = v) }
     fun setFolderId(v: String?) { _form.value = _form.value.copy(folderId = v) }
+
+    /** "" = explicitly no shared folder; an id = assign. Null = keep current (edit) or unfiled (create). */
+    fun setCollectionId(v: String?) { collectionTouched = true; _form.value = _form.value.copy(collectionId = v) }
+
+    /** Untouches the picker: the stored assignment survives the save. */
+    fun keepCurrentCollection() { collectionTouched = false; _form.value = _form.value.copy(collectionId = null) }
 
     /** Set one dynamic field value (wire key). */
     fun setField(key: String, value: String) {
@@ -135,6 +152,7 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         existingId = null
         originalData = null
         loadError = null
+        collectionTouched = false
         _form.value = EditForm()
     }
 
@@ -157,6 +175,11 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     /** Folder options for the picker; failures leave the previous (or empty) list. */
     suspend fun loadFolders(vault: MobileVault) {
         _folders.value = runCatching { repo.listFolders(vault) }.getOrDefault(_folders.value)
+    }
+
+    /** Openable shared folders for the picker; members see only their grants. */
+    suspend fun loadCollections(vault: MobileVault) {
+        _collections.value = runCatching { repo.listCollections(vault) }.getOrDefault(_collections.value)
     }
 
     /** All known tags for autocomplete; failures leave the previous list. */
@@ -221,6 +244,9 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         return runCatching {
             if (existingId != null) {
                 repo.updateCipher(vault, payload)
+                if (collectionTouched) {
+                    repo.setCollection(vault, existingId!!, _form.value.collectionId?.takeIf { it.isNotEmpty() })
+                }
                 existingId!!
             } else {
                 repo.addCipher(vault, payload)
@@ -296,6 +322,8 @@ class EditCipherViewModel(private val repo: VaultRepository) {
             put("reprompt", f.reprompt)
             put("notes", if (f.notes.isBlank()) JsonNull else JsonPrimitive(f.notes))
             put("folder_id", f.folderId?.let { JsonPrimitive(it) } ?: JsonNull)
+            // Add-time filing only: the update path ignores this field; edits ride set_collection.
+            if (id == null) put("collection_id", f.collectionId?.takeIf { it.isNotEmpty() }?.let { JsonPrimitive(it) } ?: JsonNull)
             put("tags", JsonArray(f.tags.map { JsonPrimitive(it) }))
             put("custom_fields", JsonArray(f.customFields
                 .filter { it.name.isNotBlank() }
@@ -353,6 +381,10 @@ data class EditForm(
     val customFields: List<CustomFieldEdit> = emptyList(),
     val tags: List<String> = emptyList(),
     val folderId: String? = null,
+    /** Shared-folder assignment. Null = untouched (get_cipher omits the stored
+    * value, so edits keep it unless the picker is touched); "" = explicitly
+    * none; an id = assign. */
+    val collectionId: String? = null,
 )
 
 /** Parse a decrypted get_cipher response into the edit form. Wire shape

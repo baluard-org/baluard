@@ -1151,6 +1151,29 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Assign an entry to a shared collection (None unassigns). Same grant
+    /// and rank gates as the daemon's cipher.set_collection route.
+    pub async fn set_collection(
+        &self,
+        cipher_id: String,
+        collection_id: Option<String>,
+    ) -> Result<(), BaluardError> {
+        let mut obj = serde_json::Map::new();
+        obj.insert("cipher_id".into(), serde_json::Value::String(cipher_id));
+        obj.insert(
+            "collection_id".into(),
+            collection_id
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        let payload = serde_json::Value::Object(obj).to_string();
+        self.state
+            .cipher_set_collection(&payload)
+            .await
+            .map(|_| ())
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Ask for access to a collection (request-access JIT). Payload:
     /// `{collection_id, access: "read"|"write", note?}`. Returns
     /// `{request_id}`.
