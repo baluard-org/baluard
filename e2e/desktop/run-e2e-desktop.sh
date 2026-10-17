@@ -47,6 +47,20 @@ trap cleanup EXIT
 
 [[ -x "$CLI" ]] || { echo "missing $CLI (cargo build -p baluard-cli)"; exit 1; }
 [[ -x "$APP" ]] || { echo "missing $APP (PKG_CONFIG_PATH=/usr/lib64/pkgconfig cargo build --manifest-path desktop/src-tauri/Cargo.toml)"; exit 1; }
+# The app spawns its own sidecar daemon — and NOT from target/debug: it
+# runs the STAGED COPY at desktop/src-tauri/binaries/baluard-daemon-<triple>
+# (lib.rs's sidecar spawn). A stale copy serves old wire shapes (the
+# health kind/n fields went dark exactly this way), so rebuild the daemon
+# and CLI, then restage the copy the app actually runs.
+PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-/usr/lib64/pkgconfig}" cargo build -p baluard-daemon -p baluard-cli > /dev/null 2>&1 || {
+  echo "cargo build failed"; exit 1;
+}
+TRIPLE="$(rustc -Vv | sed -n 's/host: //p')"
+cp target/debug/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
+# Dev sidecar resolution finds the daemon in the desktop crate's own
+# target dir (the justfile's desktop recipes stage it the same way).
+mkdir -p desktop/src-tauri/target/debug
+cp target/debug/baluard-daemon desktop/src-tauri/target/debug/baluard-daemon
 command -v tauri-driver > /dev/null || { echo "missing tauri-driver (cargo install tauri-driver --locked)"; exit 1; }
 command -v Xvfb > /dev/null || { echo "missing Xvfb"; exit 1; }
 
@@ -78,8 +92,13 @@ export BALUARD_DATA_DIR="$WORK/data"
 export BALUARD_DISABLE_KEYRING=1
 mkdir -p "$BALUARD_DATA_DIR"
 
-# Seed one vault with a known password (CLI; registry + marker + theme).
-BALUARD_PASSWORD="$BALUARD_E2E_PW" "$CLI" init --name "$BALUARD_E2E_NAME" --theme dark > /dev/null
+# Seed one vault with a known password (CLI; registry + marker + theme)
+# plus one entry with a weak password for the health-check flow.
+SEED_JSON=$(BALUARD_PASSWORD="$BALUARD_E2E_PW" "$CLI" init --json --name "$BALUARD_E2E_NAME" --theme dark)
+SEED_PATH=$(printf '%s\n' "$SEED_JSON" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
+[[ -n "$SEED_PATH" ]] || { echo "could not read seeded vault path"; exit 1; }
+BALUARD_PASSWORD="$BALUARD_E2E_PW" "$CLI" add login --name "Weak Entry" --username u \
+  --password 123 --direct --vault-path "$SEED_PATH" > /dev/null 2>&1
 
 # Frontend dev server for the debug binary's devUrl. Invoke the binary
 # directly: killing the npx wrapper can orphan the real vite process.
