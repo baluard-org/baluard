@@ -45,6 +45,14 @@ pub fn vaults_dir() -> PathBuf {
 /// macOS: `~/Library/Application Support/baluard/baluard.sock`
 /// Windows: `\\.\pipe\baluard` (Named Pipe, no filesystem path)
 pub fn socket_path() -> PathBuf {
+    // Test escape hatch: an explicit socket beats platform defaults
+    // (same trust class as BALUARD_DATA_DIR / BALUARD_LOG_DIR; the NMH
+    // has no flag surface and must reach a test daemon).
+    if let Ok(path) = std::env::var("BALUARD_SOCKET") {
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
     #[cfg(target_os = "linux")]
     {
         dirs::runtime_dir()
