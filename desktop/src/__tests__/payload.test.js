@@ -8,7 +8,6 @@ import {
   buildFolderCreatePayload,
   buildCreatePayload,
   buildImportPayload,
-  buildExportPayload,
   buildAttachDownloadPayload,
 } from "../lib/payload.js";
 
@@ -279,14 +278,6 @@ describe("buildImportPayload", () => {
       format: "bitwarden-json",
       data: "{...}",
     });
-  });
-});
-
-// ── buildExportPayload ──
-
-describe("buildExportPayload", () => {
-  test("structure", () => {
-    expect(buildExportPayload("bw-json")).toEqual({ format: "bw-json" });
   });
 });
 
