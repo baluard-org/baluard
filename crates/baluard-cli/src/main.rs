@@ -601,6 +601,17 @@ enum MemberAction {
         /// admin, editor, or viewer.
         role: String,
     },
+    /// Replace a member's stolen device in one op: reset with a
+    /// replacement invite carrying their grants, optionally revoke and
+    /// rekey the stolen devices, and rotate the collections they could
+    /// open. The invite code prints once.
+    ReplaceDevice {
+        /// Member id from `baluard members list`.
+        member_id: String,
+        /// Skip the revoke-and-rekey leg (reset + rotations only).
+        #[arg(long)]
+        no_revoke: bool,
+    },
     /// List pending asks: join confirmations and access requests.
     Requests,
     /// Confirm a pending join (the member becomes a space member).
