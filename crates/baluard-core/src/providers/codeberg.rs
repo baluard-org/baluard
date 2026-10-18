@@ -616,6 +616,7 @@ mod tests {
         CodebergProvider::with_config(ProviderConfig {
             client_id: None,
             instance_url: Some(base.into()),
+            client_secret: None,
         })
     }
 
@@ -692,6 +693,7 @@ mod tests {
     fn custom_instance_overrides_base() {
         let cb = CodebergProvider::with_config(ProviderConfig {
             instance_url: Some("https://forgejo.example.com/".into()),
+            client_secret: None,
             client_id: None,
         });
         assert_eq!(cb.base(), "https://forgejo.example.com");

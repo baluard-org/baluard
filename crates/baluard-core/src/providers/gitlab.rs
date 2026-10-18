@@ -732,6 +732,7 @@ mod tests {
         GitLabProvider::with_config(ProviderConfig {
             client_id: None,
             instance_url: Some(base.into()),
+            client_secret: None,
         })
     }
 
@@ -842,6 +843,7 @@ mod tests {
     fn custom_instance_overrides_base() {
         let gl = GitLabProvider::with_config(ProviderConfig {
             instance_url: Some("https://gitlab.example.com/".into()),
+            client_secret: None,
             client_id: None,
         });
         // trailing slash trimmed
