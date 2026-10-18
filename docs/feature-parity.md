@@ -112,7 +112,7 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Member role changes (set_role) | Yes (`members set-role`, owner-row and trust-dial guards) | Yes (People tab role select, typed demote confirm) | Yes (People role dialog, my_role-gated surfaces) |
 | Ownership claim + contest window (D61) | None | Yes (claim-notice card, owner-gated cancel) | None |
 | Family vault creation + kit display | Yes (`init --family` + wizard) | Yes (purpose cards, kit words-once with TXT/PDF) | Yes (purpose selector, kit screen) |
-| Stolen-device replacement (`members.replace_device`) | None | None | None (daemon route + FFI only; no surface yet - G26) |
+| Stolen-device replacement (`members.replace_device`) | Yes (`members replace-device`, `--no-revoke`) | Yes (People tab, typed confirm, one-time code card) | Yes (People screen, confirm dialog, one-time code dialog) |
 | Encrypted backup (.bldbak, cross-vault) | Yes (`export --encrypted`, env/`--generate`) | Yes (passphrase dialog, Rust-side save/open) | Yes (passphrase dialog, SAF) |
 
 ### Autofill and platform
@@ -205,14 +205,13 @@ Surface: Extension + Android + Mobile + CLI. CLOSED (2026-10-09, steps 5-9; step
 Surface: Mobile. CLOSED (2026-10-16): a Shared-folder picker on the edit/create form (three-state: keep current / none / assign) riding the UniFFI `set_collection` wrapper, with create-time routing through the state layer's collection defaults. Shipped alongside the Collections -> "Shared folders" terminology wave. See the Closed table.
 
 ### G26. Stolen-device replacement surfaces
-Surface: Desktop + Mobile + CLI. Missing: `members.replace_device` (reset + re-invite with carried grants + revoke-and-rekey + collection rotations, 2026-10-06) has a daemon route and UniFFI bindings but no surface consumer on any GUI or the CLI - the stolen-tablet journey runs daemon-side only today. Effort: S-M (a People-row action + confirm on desktop and mobile, a `members replace-device` CLI verb). Value: the most common family incident becomes one guided action instead of a daemon call. Decision: schedule next.
+Surface: Desktop + Mobile + CLI. CLOSED (2026-10-18): see the Closed table.
 
 ## Recommended order (2026-10-18 state)
 
 Every 1.0-track gap is closed; what remains is scheduled or parked:
 
-1. **Next:** G26 (stolen-device replacement surfaces - the route exists; GUIs and CLI need the button).
-2. **Post-1.0:** G11 phase 2 (full CLI admin - invite/remove/transfer/claim/reset, groups, policies, approvals, activity), G10 (mobile passkey ceremonies), G12 (iOS depth).
+1. **Post-1.0:** G11 phase 2 (full CLI admin - invite/remove/transfer/claim/reset, groups, policies, approvals, activity), G10 (mobile passkey ceremonies), G12 (iOS depth).
 3. **Parked on demand:** G23 (mobile admin ops: repoint/migrate, commit revocation).
 
 ## Out of parity scope by design
@@ -257,4 +256,5 @@ Every 1.0-track gap is closed; what remains is scheduled or parked:
 3. Move closed gaps into a "Closed" list at the bottom with the commit that closed them.
 4. Any row change needs a source reference in the commit message.
 | G24 | 2026-10-09 wave | merged search and autofill across surfaces: daemon fan-out behind the personal_merge/merge_opt_in ceiling, extension chips + slug-scoped reads + unlock asks, Android autofill/hub merge, `baluard search` |
+| G26 | 2026-10-18 wave | `members replace-device` CLI verb, desktop People-tab typed-confirm action with the one-time-code card, mobile People-screen confirm + code dialogs over the new UniFFI wrapper; the e2e pins the happy path, the tombstone and own-row refusals, and the revoke-stop warning |
 | G25 | 2026-10-16 wave | Shared-folder picker on the edit/create form (keep/none/assign three-state) over UniFFI `set_collection`; create-time routing rides the state layer's defaults |
