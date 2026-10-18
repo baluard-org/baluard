@@ -263,7 +263,10 @@ export default function SyncTab() {
   }
 
   // Auth method for a provider key, derived from provider.list ("device-flow" | "pat").
+  // GitHub prefers the browser sign-in (mobile parity) regardless of the
+  // listed primary, so the card label and the waiting UI match the flow.
   function authMethodFor(key) {
+    if (key === "github") return "web-oauth";
     return providerList()?.[key]?.auth_method || "pat";
   }
 
@@ -571,7 +574,7 @@ export default function SyncTab() {
                           <span class={`text-sm font-bold ${style.text}`}>{providerLabel(key)}</span>
                           <span class="text-[10px] text-[var(--color-muted)] ml-auto">
                             {(() => {
-                              const m = info?.auth_method;
+                              const m = authMethodFor(key);
                               if (m === "device-flow") return t("sync.authMethodDeviceFlow");
                               if (m === "web-oauth") return t("sync.authMethodWebOAuth");
                               return t("sync.authMethodPat");
