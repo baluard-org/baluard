@@ -469,8 +469,10 @@ fn parse_provider_name(
     }
 }
 
-/// Helper: parse Advanced Options overrides (client_id, instance_url) from a
-/// JSON payload. Both optional; absent => None => provider public default.
+/// Helper: parse Advanced Options overrides (client_id, instance_url,
+/// client_secret) from a JSON payload. All optional; absent => None =>
+/// provider default. The secret is accepted for the flow's lifetime and
+/// never persisted to providers.json.
 fn parse_provider_config(payload: &str) -> baluard_core::providers::ProviderConfig {
     let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) else {
         return baluard_core::providers::ProviderConfig::defaults();
@@ -478,6 +480,7 @@ fn parse_provider_config(payload: &str) -> baluard_core::providers::ProviderConf
     baluard_core::providers::ProviderConfig {
         client_id: val["client_id"].as_str().map(str::to_string),
         instance_url: val["instance_url"].as_str().map(str::to_string),
+        client_secret: val["client_secret"].as_str().map(str::to_string),
     }
 }
 
@@ -582,284 +585,6 @@ async fn refresh_connected_tokens_if_needed() {
     }
 }
 
-// ── Web-OAuth (auth-code + PKCE) callback infrastructure ──
-// Used by Codeberg/Forgejo (no device flow). The daemon starts a localhost
-// TCP listener, the desktop opens the auth URL in a browser, the provider
-// redirects to http://127.0.0.1:<port>/callback?code=...&state=... and the
-// daemon exchanges the code for a token.
-
-// ── Web-OAuth (auth-code + PKCE) callback infrastructure ──
-// Used by Codeberg/Forgejo (no device flow). The daemon starts a localhost
-// TCP listener, the desktop opens the auth URL in a browser, the provider
-// redirects to http://127.0.0.1:<port>/callback?code=...&state=... and the
-// daemon exchanges the code for a token.
-//
-// B1 fix: sessions are keyed by provider (not a single global Option) so a
-// concurrent flow for a different provider cannot overwrite another. M4 fix:
-// starting a new flow for the SAME provider aborts the prior listener task,
-// freeing its port immediately instead of waiting for the 5-min timeout.
-
-struct OAuthSession {
-    result: Option<Result<String, String>>, // Ok(username) | Err(msg)
-    /// Handle to the callback listener task. Aborted when the same provider
-    /// starts a new flow, dropping the listener and closing its port.
-    task: Option<tokio::task::JoinHandle<()>>,
-}
-
-static OAUTH_SESSIONS: std::sync::LazyLock<
-    tokio::sync::Mutex<
-        std::collections::HashMap<baluard_core::providers::types::Provider, OAuthSession>,
-    >,
-> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-/// Start a web-OAuth flow: bind a loopback listener, build the auth URL,
-/// spawn the callback handler, return the URL for the desktop to open.
-async fn start_web_oauth(
-    provider: baluard_core::providers::types::Provider,
-    config: baluard_core::providers::ProviderConfig,
-) -> Result<String, String> {
-    let prov = baluard_core::providers::provider_for(provider, config.clone())
-        .map_err(|e| e.to_string())?;
-
-    // Bind a random loopback port for the callback. RFC 8252 §7.3 says loopback
-    // redirects allow any port, so we bind :0 (OS-assigned). Forgejo's OAuth2
-    // provider is documented to honor this for public clients registered with
-    // `http://127.0.0.1/` as the redirect URI.
-    //
-    // TODO(H1, release-gate): verify Codeberg (Forgejo) actually accepts a
-    // dynamic-port redirect at runtime before shipping the automatic flow.
-    // If Codeberg requires an exact registered port, register a fixed port
-    // here and change the bind to `127.0.0.1:<FIXED>` to match. Test
-    // end-to-end against codeberg.org. Tracked in docs/git-provider-apps-
-    // and-tokens.md §9.6. Until verified, Codeberg users fall back to PAT.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|e| format!("Failed to bind callback listener: {e}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| format!("Failed to get listener addr: {e}"))?
-        .port();
-    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
-
-    let oauth = prov
-        .oauth_start(&redirect_uri)
-        .await
-        .map_err(|e| format!("oauth_start failed: {e}"))?;
-
-    // Spawn the callback listener (accepts one connection, then exits).
-    let verifier = oauth.code_verifier.clone();
-    let expected_state = oauth.state.clone();
-    let task = tokio::spawn(async move {
-        handle_oauth_callback(
-            listener,
-            provider,
-            config,
-            verifier,
-            expected_state,
-            redirect_uri,
-        )
-        .await;
-    });
-
-    // Replace any prior session for this provider: abort its listener (M4) so
-    // its port is freed immediately, then record the new one.
-    {
-        let mut sessions = OAUTH_SESSIONS.lock().await;
-        if let Some(mut old) = sessions.insert(
-            provider,
-            OAuthSession {
-                result: None,
-                task: Some(task),
-            },
-        ) {
-            if let Some(t) = old.task.take() {
-                t.abort();
-            }
-        }
-    }
-
-    Ok(oauth.auth_url)
-}
-
-/// Accept one HTTP request on the callback listener, extract code+state,
-/// exchange for token, store result in the session.
-async fn handle_oauth_callback(
-    listener: tokio::net::TcpListener,
-    provider: baluard_core::providers::types::Provider,
-    config: baluard_core::providers::ProviderConfig,
-    verifier: String,
-    expected_state: String,
-    redirect_uri: String,
-) {
-    // Accept one connection (timeout after 5 minutes).
-    let (mut sock, _) =
-        match tokio::time::timeout(std::time::Duration::from_secs(300), listener.accept()).await {
-            Ok(Ok(conn)) => conn,
-            _ => {
-                set_oauth_result(provider, Err("callback timeout".into())).await;
-                return;
-            }
-        };
-
-    // Read the HTTP request until the header terminator (\r\n\r\n). M3: a
-    // single read() is not guaranteed to return all data; loop until the
-    // terminator appears or we hit the buffer cap.
-    let mut buf = vec![0u8; 8192];
-    let mut total = 0;
-    loop {
-        if total >= buf.len() {
-            break; // header too large; proceed with what we have
-        }
-        let n = match sock.read(&mut buf[total..]).await {
-            Ok(0) => break, // EOF
-            Ok(n) => n,
-            Err(_) => break,
-        };
-        total += n;
-        if String::from_utf8_lossy(&buf[..total]).contains("\r\n\r\n") {
-            break;
-        }
-    }
-    let request = String::from_utf8_lossy(&buf[..total]);
-
-    // Extract code + state from the request line: GET /callback?code=X&state=Y
-    let (code, state) = match parse_callback_query(&request) {
-        Some(pair) => pair,
-        None => {
-            let _ = respond_html(&mut sock, "Missing code or state in callback.").await;
-            set_oauth_result(provider, Err("missing code/state".into())).await;
-            return;
-        }
-    };
-
-    if state != expected_state {
-        let _ = respond_html(&mut sock, "CSRF state mismatch. Authentication aborted.").await;
-        set_oauth_result(provider, Err("CSRF state mismatch".into())).await;
-        return;
-    }
-
-    // Exchange code for token.
-    let prov = match baluard_core::providers::provider_for(provider, config) {
-        Ok(p) => p,
-        Err(e) => {
-            let _ = respond_html(&mut sock, &format!("Provider error: {e}")).await;
-            set_oauth_result(provider, Err(e.to_string())).await;
-            return;
-        }
-    };
-
-    match prov.oauth_exchange(&code, &verifier, &redirect_uri).await {
-        Ok((token, info)) => {
-            if let Err(e) =
-                baluard_core::providers::token::store_token(info.provider, &info.username, &token)
-            {
-                let _ = respond_html(&mut sock, &format!("Keyring error: {e}")).await;
-                set_oauth_result(provider, Err(format!("Keyring: {e}"))).await;
-                return;
-            }
-            let mut state_file =
-                baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
-            state_file.set(info.clone());
-            if let Err(e) = state_file.save() {
-                let _ = baluard_core::providers::token::delete_token(info.provider, &info.username);
-                let _ = respond_html(&mut sock, &format!("State save error: {e}")).await;
-                set_oauth_result(provider, Err(format!("State: {e}"))).await;
-                return;
-            }
-            let _ = respond_html(
-                &mut sock,
-                "Authentication successful! You can close this tab and return to Baluard.",
-            )
-            .await;
-            set_oauth_result(provider, Ok(info.username)).await;
-        }
-        Err(e) => {
-            let _ = respond_html(&mut sock, &format!("Authentication failed: {e}")).await;
-            set_oauth_result(provider, Err(e.to_string())).await;
-        }
-    }
-}
-
-/// Escape HTML metacharacters. H2: provider API error bodies may contain
-/// <, >, &, ", ' — interpolating them raw into the callback response page is
-/// an XSS surface (local-only, but fail closed).
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#x27;")
-}
-
-async fn respond_html(sock: &mut tokio::net::TcpStream, msg: &str) -> std::io::Result<()> {
-    let safe = html_escape(msg);
-    let body = format!(
-        "<html><body style='font-family:sans-serif;text-align:center;padding:40px'>\
-         <h2>{safe}</h2></body></html>"
-    );
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    sock.write_all(response.as_bytes()).await
-}
-
-async fn set_oauth_result(
-    provider: baluard_core::providers::types::Provider,
-    result: Result<String, String>,
-) {
-    let mut sessions = OAUTH_SESSIONS.lock().await;
-    if let Some(s) = sessions.get_mut(&provider) {
-        s.result = Some(result);
-    }
-}
-
-/// Parse code + state from a GET request line: `GET /callback?code=X&state=Y HTTP/1.1`.
-fn parse_callback_query(request: &str) -> Option<(String, String)> {
-    let first_line = request.lines().next()?;
-    let path = first_line.split_whitespace().nth(1)?;
-    let query = path.split('?').nth(1)?;
-    let mut code = None;
-    let mut state = None;
-    for pair in query.split('&') {
-        let mut kv = pair.splitn(2, '=');
-        match kv.next()? {
-            "code" => code = kv.next().map(urldecode),
-            "state" => state = kv.next().map(urldecode),
-            _ => {}
-        }
-    }
-    Some((code?, state?))
-}
-
-/// Minimal URL-decoder for %XX sequences.
-fn urldecode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) =
-                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
-            {
-                out.push(b);
-                i += 3;
-                continue;
-            }
-        }
-        if bytes[i] == b'+' {
-            out.push(b' ');
-        } else {
-            out.push(bytes[i]);
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Extract the slug field from a JSON payload. Returns `None` when the
-/// payload is not JSON, has no `slug` field, or the field is empty. Used to
 /// route vault-level requests to a specific vault in the host map.
 fn extract_slug(payload: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(payload).ok()?;
@@ -5754,7 +5479,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(p) => p,
                 Err(e) => return e,
             };
-            if provider.auth_method() != "web-oauth" {
+            if !provider.supports_web_oauth() {
                 return err_response(format!(
                     "Web-OAuth not supported for {}. Use {}.",
                     provider,
@@ -5766,7 +5491,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 ));
             }
             let config = parse_provider_config(&req.payload);
-            match start_web_oauth(provider, config).await {
+            match baluard_runtime::providers::web_oauth_start(provider, config).await {
                 Ok(auth_url) => ok_resp(
                     serde_json::json!({"auth_url": auth_url}).to_string(),
                     token_str,
@@ -5780,23 +5505,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(p) => p,
                 Err(e) => return e,
             };
-            let sessions = OAUTH_SESSIONS.lock().await;
-            match sessions.get(&provider) {
-                Some(s) => match &s.result {
-                    Some(Ok(username)) => ok_resp(
-                        serde_json::json!({"status": "success", "username": username}).to_string(),
-                        token_str,
-                    ),
-                    Some(Err(msg)) => ok_resp(
-                        serde_json::json!({"status": "error", "error": msg}).to_string(),
-                        token_str,
-                    ),
-                    None => ok_resp(
-                        serde_json::json!({"status": "pending"}).to_string(),
-                        token_str,
-                    ),
-                },
-                None => err_response("No web-OAuth session in progress for this provider"),
+            match baluard_runtime::providers::web_oauth_status(provider).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
             }
         }
 
