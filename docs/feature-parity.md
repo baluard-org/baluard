@@ -1,6 +1,6 @@
 # Feature parity: CLI / Desktop / Mobile
 
-Snapshot: 2026-10-03, main @ `92e91ae`; second audit pass (every cell re-verified against source, then cross-checked by an independent peer audit), revised the same day with the CLI-first-class decision below. Owner: Esteban.
+Snapshot: 2026-10-18, main @ `57598df`; third audit pass - every cell re-swept from source (daemon route dispatcher, CLI enum, desktop `daemon()` calls, mobile UniFFI/`VaultRepository`, extension actions) after the October 6-18 waves. Owner: Esteban.
 
 ## Purpose
 
@@ -37,13 +37,13 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Biometric quick unlock | n/a | Yes (Touch ID; Windows Hello planned) | Yes (Android; iOS pending) |
 | Session PIN unlock | n/a | Yes (Linux, Windows) | None |
 | Auto-lock timer | Yes (`settings set`) | Yes | Yes |
-| Phrase rotation ceremony | None | Yes | None |
-| Space Recovery Kit | Partial (recover with an existing kit phrase; no kit management) | Yes | None |
+| Phrase rotation ceremony | None (`rotate-root` turns the root key, not the phrase) | Yes | Yes (Settings > Security, D74) |
+| Space Recovery Kit | Partial (recover with an existing kit phrase; no kit management) | Yes | Yes (kit status/replace/disable + onboarding phrase-only recovery) |
 | Emergency escrow (S4) | None | Yes | None |
 | Enroll this device | Yes (phrase enrollment) | Yes | Yes (phrase enrollment) |
-| Device fleet (list / revoke / rotate) | Yes (list, revoke, rotation status + abort) | Yes | None |
-| Search and filters | None (`get` accepts an id prefix only) | Yes (category, folder, tag, deep search) | Yes (deep search over content, URIs, notes, custom fields) |
-| Password health report | Yes (`baluard health`) | None | None |
+| Device fleet (list / revoke / rotate) | Yes (list, revoke, rotation status + abort) | Yes | Yes (Devices card with this-device marker, revoke) |
+| Search and filters | Yes (`baluard search` over name+username; `--all` fans out over unlocked merge-eligible vaults, `--vault` targets one explicitly) | Yes (category, folder, tag, deep search) | Yes (deep search over content, URIs, notes, custom fields; hub merges other unlocked eligible vaults) |
+| Password health report | Yes (`baluard health`) | Yes (Security check, localized findings) | Yes (Security check, localized findings) |
 
 ### Entries
 
@@ -57,21 +57,21 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Empty trash (purge all) | Yes (`trash purge --days 0`) | Yes | Yes |
 | Archive | Yes | Yes | Yes |
 | Attachments | Yes (upload, download, list, delete) | Yes | Partial (view only) |
-| TOTP code | Partial (code printed by `get` / `list` in daemon mode; no standalone command) | Yes | Yes |
+| TOTP code | Yes (`baluard totp <id-or-name>`) | Yes | Yes |
 | Passkeys: view | Yes (list) | Yes | Yes |
 | Passkeys: delete / rename | Yes | Yes | None |
 | Passkey ceremonies (register / assert) | None | Partial (routes live, UI arrives with extension Phase 2) | None |
 | SSH key entry (store) | Yes | Yes | Yes |
-| SSH key generation | None | Yes | Yes |
+| SSH key generation | Yes (`baluard ssh-keygen`, optional `--store`) | Yes | Yes |
 | Custom fields | Partial (raw JSON on `add` only, no flags) | Yes (all 4 types) | Yes (all 4 types) |
-| Import (8 formats) | Yes (bw-json, bw-csv, chrome-csv, firefox-csv, lastpass-csv, 1password-1pux, 1password-csv, keepass-xml) | Yes | None |
-| Export (bw-json, bw-csv) | Yes | Yes | None |
-| Password + passphrase generator | None | Yes | Yes |
-| Generator history | None | Yes | Yes |
+| Import (10 formats: baluard-encrypted .bldbak, baluard.vault, 8 migration) | Yes (magic-sniff hint before read) | Yes (auto-detects Baluard backups by header) | Yes (SAF picker, header sniff, format dialog) |
+| Export (baluard.vault backup, spreadsheet logins-only CSV, encrypted .bldbak) | Yes (`--format baluard` default; `--encrypted`) | Yes (Rust-side save dialog, 0600) | Yes (SAF saver incl. encrypted) |
+| Password + passphrase generator | Yes (`baluard generate`) | Yes | Yes |
+| Generator history | Partial (`generate` adds best-effort; no list/clear command) | Yes | Yes |
 | Password history view | Partial (present in `get --output json`) | Yes | Yes |
-| Re-prompt on sensitive fields | n/a | Yes | Partial (flag saved on edit, never enforced on view) |
+| Re-prompt on sensitive fields | n/a | Yes | Yes |
 | Favicons (website icons) | None | Yes | Yes (opt-in, fetched on save) |
-| Vault avatar / profile picture | None | Yes | None |
+| Vault avatar / profile picture | None | Yes | Yes (on-device downscale/recompress) |
 
 ### Sync and multi-vault
 
@@ -79,16 +79,16 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 |---|---|---|---|
 | Git remote setup | Yes (`sync init`, `sync remote`) | Yes | Yes |
 | Manual sync cycle | Yes | Yes | Yes |
-| Auto-sync | None (manual only) | Yes (debounced push, event pull) | Partial (pull on open, background fetch) |
+| Auto-sync | Partial (daemon mode rides the daemon's autosync; `--direct` is manual) | Yes (debounced push, event pull) | Yes (debounced push, event pull, activates when a remote attaches) |
 | Conflict resolution | None (conflicts error out) | Yes | Yes |
 | Provider OAuth device flow | None | Yes | Yes |
 | PAT connect | None | Yes | Yes |
 | Provider repo picker | None | Yes | Yes |
-| Repo creation on provider | None | Yes | None |
+| Repo creation on provider | Yes (`provider create-repo`) | Yes | Yes (git-backup wizard, create-or-reuse) |
 | Clone from provider | Yes (by provider + repo, or URL) | Yes | Yes |
 | Remote repoint / migrate | Yes (`vaults repoint`) | Yes (`space.migrate`) | None |
 | Commit revocation (signed manifest) | Yes (`sync revoke`) | None | None |
-| Multi-vault (switch, close, prune, detach) | Yes | Yes | Partial (switch only) |
+| Multi-vault (switch, create, close, prune, detach) | Yes | Yes | Partial (switch, create second vault, detach; no close/prune - the scan list cannot go stale) |
 | Offline state | Yes | Yes | Yes |
 
 ### Sharing and Spaces
@@ -96,19 +96,24 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Feature | CLI | Desktop | Mobile |
 |---|---|---|---|
 | Space create / flip | None | Yes | Yes |
-| Members (invite, remove, transfer, claim, reset) | None | Yes | Yes |
-| Join approvals | None | Yes | Yes |
-| Space user groups | None | Yes | None |
+| Members (invite, remove, transfer, claim, reset) | Partial (list, invite, stage replies, role changes, both approval queues; no remove/transfer/claim/reset) | Yes | Yes |
+| Join approvals | Yes (`members stage` + `approve-join` / `deny-join`) | Yes | Yes |
+| Space user groups | None (rides G11 phase 2) | Yes | Yes |
 | Collections CRUD + grants | None | Yes | Yes |
-| File an entry into a collection | Yes (`collections assign <cipher>`) | Yes (detail-view move, `cipher.set_collection`) | None (G25) |
-| Access asks / requests | None | Yes | Yes |
+| File an entry into a collection | Yes (`collections assign <cipher>`) | Yes (detail-view move, `cipher.set_collection`) | Yes (edit/create picker, `setCollection`) |
+| Access asks / requests | Yes (`members requests` + `approve` / `deny`) | Yes | Yes |
 | Space settings (all knobs) | Yes (`settings space get` / `space-set`) | Yes | Yes |
 | Policies | None | Yes | Yes |
 | Approvals / quorum | None | Yes | Yes |
 | Activity log | None | Yes | Yes |
-| Contact cards + outbox publish | None | Yes | None |
-| Open shared reveal (guest / contact file) | None | Yes | None |
-| Guest reveal create | None | Yes | None |
+| Contact cards + outbox publish | Partial (list, my-card, import, Level-2 verify, remove; no outbox publish) | Yes | Partial (my code + Level-2 verify from the People screen; no card-import UI, no outbox) |
+| Open shared reveal (guest / contact file) | None | Yes | Yes (Settings > Data + a guest-only onboarding entry) |
+| Guest reveal create | None | Yes | Yes (Share as file on a Login; 7-day expiry) |
+| Member role changes (set_role) | Yes (`members set-role`, owner-row and trust-dial guards) | Yes (People tab role select, typed demote confirm) | Yes (People role dialog, my_role-gated surfaces) |
+| Ownership claim + contest window (D61) | None | Yes (claim-notice card, owner-gated cancel) | None |
+| Family vault creation + kit display | Yes (`init --family` + wizard) | Yes (purpose cards, kit words-once with TXT/PDF) | Yes (purpose selector, kit screen) |
+| Stolen-device replacement (`members.replace_device`) | None | None | None (daemon route + FFI only; no surface yet - G26) |
+| Encrypted backup (.bldbak, cross-vault) | Yes (`export --encrypted`, env/`--generate`) | Yes (passphrase dialog, Rust-side save/open) | Yes (passphrase dialog, SAF) |
 
 ### Autofill and platform
 
@@ -125,16 +130,15 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 Effort: S = a day or less, M = 2 to 4 days, L = a week or more. Value states who needs it and why.
 
 ### G1. CLI space settings knobs
-Surface: CLI. Missing: the space knobs (guest sharing, invite authority, viewer export, trash policy, join approval, quorum, collection authority) have no CLI path; `settings set` covers client preferences only. Effort: S (a `settings space set` surface over the daemon's space-settings routes). Value: headless administration of a shared space. Decision: close.
-
+Surface: CLI. CLOSED (2026-10-03): see the Closed table.
 ### G2. Mobile import / export
-Surface: Mobile. Missing: no import of the 8 formats, no export. Effort: M (parsers already live in core; the work is UI + file access). Value: the largest real user gap. Migration onto the product is desktop-only today; users on phones cannot leave or arrive. Decision: close.
+Surface: Mobile. CLOSED (2026-10-04), extended twice: the Baluard backup (baluard.vault v1, full-fidelity with folders, tags, re-prompt, history, passkeys; header auto-detect) and the encrypted .bldbak container (2026-10-05). See the Closed table.
 
 ### G3. Mobile phrase rotation ceremony
 Surface: Mobile. CLOSED (2026-10-10): Settings > Security rotates the phrase behind the current master password (D74); the new 24 words show once with copy, and flipped Spaces surface the kit-refusal error text. See the Closed table.
 
 ### G4. Mobile open shared reveals
-Surface: Mobile. Missing: cannot open a guest or contact reveal file. Effort: S. Value: a phone receives the share file; it should open it. Decision: close. CLOSED: shipped — see the Closed table.
+Surface: Mobile. CLOSED (2026-10-05): shipped — see the Closed table.
 
 ### G5. Mobile device fleet management
 Surface: Mobile. CLOSED (2026-10-10): Settings > Devices lists the fleet with a this-device marker and revokes with confirmation; the rekey is the daemon's existing `device.revoke` (no new on-device crypto was needed - the design-pass worry dissolved once the route already carried the ceremony), surfaced with a busy state. See the Closed table.
@@ -169,48 +173,47 @@ Surface: Mobile. Missing: autofill provider (Phase 7) plus the iOS actuals behin
 Surface: Mobile + CLI. CLOSED (2026-10-10): mobile half landed - People > Groups card (create, rename, member add/remove, two-tap delete whose copy states that access given only through the group is removed, matching the core's grant-row pruning). The CLI part still rides G11 phase 2.
 
 ### G14. CLI trash surface
-Surface: CLI. Missing: list trash, restore, purge. Effort: S. Value: scripting cleanup; parity with both GUIs. Decision: close.
-
+Surface: CLI. CLOSED (2026-10-03): see the Closed table.
 ### G15. Mobile vault detach / prune
-Surface: Mobile. Missing: drop a vault from the list, prune stale vaults (both GUIs have it; the destructive delete arm stays desktop/CLI by design). Effort: S. Value: unclutter the vault list after a vault is removed elsewhere. Decision: close. CLOSED: detach shipped; prune has no mobile shape (the list is a filesystem scan and cannot go stale) — the stale-active-pointer self-heal is its equivalent. See the Closed table.
+Surface: Mobile. CLOSED (2026-10-05): detach shipped; prune has no mobile shape (the list is a filesystem scan and cannot go stale) — the stale-active-pointer self-heal is its equivalent. See the Closed table.
 
 ### G16. Repo creation on provider (mobile + CLI)
 Surface: Mobile + CLI. CLOSED (2026-10-10): CLI `provider create-repo` (2026-10-09) plus the mobile half — Settings > Sync "Back up through your own Git account" (provider chips, optional PAT, optional repo name) riding a new runtime `setup_sync_remote` over UniFFI: create-or-reuse the private repo (self-heals a repo left by a prior attempt via paginated listing), wire origin, first push, registry entry. The daemon `vault.setup_sync` arm is unchanged (unification parked). See the Closed table.
 
 ### G17. Desktop passkey rename UI
-Surface: Desktop. Missing: rename exists on CLI only. Effort: S. Value: naming credentials is a daily-use nicety. Decision: close.
-
+Surface: Desktop. CLOSED (2026-10-03): see the Closed table.
 ### G18. Desktop + mobile re-prompt enforcement
-Surface: Desktop + Mobile. Missing: the flag saves but nothing enforces it on view or reveal on either GUI. Effort: S to M. Value: security parity; a silent unenforced security flag is worse than none. Decision: close.
+Surface: Desktop + Mobile. CLOSED (2026-10-04): see the Closed table.
 
 ### G19. Password health on desktop and mobile
-Surface: Desktop + Mobile. CLOSED (2026-10-10): mobile half landed - Settings > Security > Security check (decrypting pass, findings by entry name, read-only). Known wart parked: the core's reason strings are English-only on es/pt devices. Desktop remains the 1.0 polish item.
+Surface: Desktop + Mobile. CLOSED (2026-10-10 mobile, 2026-10-17 desktop): Settings > Security > Security check on both GUIs. The English-reasons wart is closed too - core emits machine `kind`/`n` fields (2026-10-16) and both GUIs localize them with positional interpolation.
 
 ### G20. Generator history on mobile
-Surface: Mobile. Missing: history drawer (UniFFI bindings already exist). Effort: S. Value: recovering a generated password you did not save yet. Decision: close.
-
+Surface: Mobile. CLOSED (2026-10-03): see the Closed table.
 ### G21. Vault avatar on mobile
 Surface: Mobile. CLOSED (2026-10-10): Settings > Vault picture - picked images are downscaled and recompressed on-device (512px JPEG steps) to fit the core's cap before the encrypted set; iOS renders nothing yet (decoder stub, fail-closed).
 
 ### G22. Password history view
-Surface: Desktop + Mobile. Missing: no GUI renders `password_history` (CLI exposes it in JSON). Effort: S. Value: "what was the old password" is a real support question. Decision: close.
-
+Surface: Desktop + Mobile. CLOSED (2026-10-03): see the Closed table.
 ### G23. Mobile admin ops: repoint / migrate, commit revocation
 Surface: Mobile. PARKED (2026-10-10): commit revocation stays CLI-first by usefulness (its own row above); repoint/migrate rides the CLI and desktop today - the family kit-recovery path now covers the "lost remote" recovery story on phones, so the mobile rows return with the first real demand. Decision: park.
 
 ### G24. Merged search and autofill across personal vault and Spaces
-Surface: Extension + Android + Mobile + CLI (the desktop app is already merged via `vaults.list_full_all`, D31). Missing: extension autofill, Android autofill, mobile search, and the CLI each read one active vault, so family or organization items are invisible until a vault switch. Effort: M. Value: the 1Password/Bitwarden expectation — one list, one badge per origin vault. Decision: planned. Spec: docs/plan-merged-search.md (fan-out over unlocked, browser-consented vaults; per-vault quick unlock instead of a shared secret).
+Surface: Extension + Android + Mobile + CLI. CLOSED (2026-10-09, steps 5-9; steps 1-4 landed 2026-10-07): daemon fan-out gated by the two-knob merge ceiling (family purpose merges, organizations never do), `bridge.match` + slug-scoped reads + unlock asks for the extension, merged Android autofill and hub search, `baluard search`, unlock-request banner on desktop. Spec: docs/plan-merged-search.md. See the Closed table.
 
 ### G25. File an entry into a collection on mobile
-Surface: Mobile. Missing: the edit/create screens have no collection field and no assign surface, so a phone member cannot file an entry into a granted collection (the space's core act: putting the Wi-Fi password where the family can see it). Desktop moves the open entry from the detail view; the CLI has `collections assign`. Verified against source 2026-10-16 (zero collection references in EditCipherScreen/EditCipherViewModel). Effort: S-M (a collection picker on the edit form routed through `cipher.set_collection`, plus the create-time default). Value: high for family/org spaces - without it a member's new entries land flat or refused. Decision: close next.
+Surface: Mobile. CLOSED (2026-10-16): a Shared-folder picker on the edit/create form (three-state: keep current / none / assign) riding the UniFFI `set_collection` wrapper, with create-time routing through the state layer's collection defaults. Shipped alongside the Collections -> "Shared folders" terminology wave. See the Closed table.
 
-## Recommended order
+### G26. Stolen-device replacement surfaces
+Surface: Desktop + Mobile + CLI. Missing: `members.replace_device` (reset + re-invite with carried grants + revoke-and-rekey + collection rotations, 2026-10-06) has a daemon route and UniFFI bindings but no surface consumer on any GUI or the CLI - the stolen-tablet journey runs daemon-side only today. Effort: S-M (a People-row action + confirm on desktop and mobile, a `members replace-device` CLI verb). Value: the most common family incident becomes one guided action instead of a daemon call. Decision: schedule next.
 
-1. **Small closes (S batch):** G1, G14, G17, G20, G22.
-2. **Adoption (the phone stands alone):** G2 (import/export), G4 (open reveals), G15 (detach), G18 (reprompt enforcement), G24 (merged search and autofill), G25 (file into a collection on mobile).
-3. **CLI parity track:** G7 (utilities), G16-CLI + G8 (repo creation and connect), G9 (rotation), G11 phase 1 (sharing). Each gap lands a daemon + CLI primitive that the desktop and mobile twins then wrap.
-4. **Security lifecycle:** G3 (rotation ceremony), G5 + G23 (fleet and admin ops), G6 (escrow + kit).
-5. **Post-1.0:** G11 phase 2 (full CLI admin), G10 (mobile passkey ceremonies), G12 (iOS depth), G13 (groups on mobile + CLI), G19 (health GUI), G21 (avatar).
+## Recommended order (2026-10-18 state)
+
+Every 1.0-track gap is closed; what remains is scheduled or parked:
+
+1. **Next:** G26 (stolen-device replacement surfaces - the route exists; GUIs and CLI need the button).
+2. **Post-1.0:** G11 phase 2 (full CLI admin - invite/remove/transfer/claim/reset, groups, policies, approvals, activity), G10 (mobile passkey ceremonies), G12 (iOS depth).
+3. **Parked on demand:** G23 (mobile admin ops: repoint/migrate, commit revocation).
 
 ## Out of parity scope by design
 
@@ -239,8 +242,12 @@ Surface: Mobile. Missing: the edit/create screens have no collection field and n
 | G16 (CLI) | 2026-10-09 wave | `provider create-repo` with slug normalization; demands an unlocked vault (it is not sentinel-exempt) |
 | G16 (mobile) | this wave | Git-backup wizard on Settings > Sync: runtime `setup_sync_remote` (create-or-reuse + origin + first push + registry, self-healing an already-created repo through paginated reuse), UniFFI `setup_sync` (locked-refusing, devkey_seal carried for signed commits — an enrolled vault refuses unsigned commits fail-closed), PAT never enters the sync path (ensure_valid_token loads from keyring); daemon `vault.setup_sync` left as-is, unification parked |
 | G13 (mobile) | this wave | People > Groups card riding the groups.* daemon wire shapes; group delete prunes grant rows and the confirm copy says so |
-| G19 (mobile) | this wave | Security check over vault.health; core reason strings English-only on es/pt (parked) |
+| G19 (mobile) | 2026-10-10 wave | Security check over vault.health; reason localization landed 2026-10-16 (machine kind/n fields), desktop half landed 2026-10-17 |
 | G21 | this wave | Vault picture with on-device downscale/recompress; iOS decoder stubbed fail-closed |
+| G3 | this wave | phrase rotation in Settings > Security: master-password gated, new words shown once with copy, flipped Spaces surface the kit refusal |
+| G5 | this wave | Devices card: fleet with this-device marker, confirmed revoke riding `device.revoke` (the rekey ceremony was already daemon-side, so no new on-device crypto), busy state + post-revoke refresh |
+| G6 | this wave (kit) | kit status/replace/disable in Settings > Space with the fixed-threshold asks approved in the pending list, plus phrase-only kit recovery from onboarding that adopts the vault and hands off to unlock; the emergency escrow stays desktop-shaped |
+| G23 | parked | commit revocation stays CLI-first; repoint/migrate covered by CLI and desktop, kit recovery covers the phone-side loss story - rows return on demand |
 | G11 phase 1 | this wave | collections list/create/assign/grant/revoke plus members list and both pending queues: `approve-join`/`deny-join` over `requests.*` and `approve`/`deny` over `collections.requests_*`; the review caught that join confirmation and access asks are separate route families and the first draft wired only one |
 
 ## Keeping this document current
@@ -249,7 +256,5 @@ Surface: Mobile. Missing: the edit/create screens have no collection field and n
 2. Update the snapshot line at the top.
 3. Move closed gaps into a "Closed" list at the bottom with the commit that closed them.
 4. Any row change needs a source reference in the commit message.
-| G3 | this wave | phrase rotation in Settings > Security: master-password gated, new words shown once with copy, flipped Spaces surface the kit refusal |
-| G5 | this wave | Devices card: fleet with this-device marker, confirmed revoke riding `device.revoke` (the rekey ceremony was already daemon-side, so no new on-device crypto), busy state + post-revoke refresh |
-| G6 | this wave (kit) | kit status/replace/disable in Settings > Space with the fixed-threshold asks approved in the pending list, plus phrase-only kit recovery from onboarding that adopts the vault and hands off to unlock; the emergency escrow stays desktop-shaped |
-| G23 | parked | commit revocation stays CLI-first; repoint/migrate covered by CLI and desktop, kit recovery covers the phone-side loss story - rows return on demand |
+| G24 | 2026-10-09 wave | merged search and autofill across surfaces: daemon fan-out behind the personal_merge/merge_opt_in ceiling, extension chips + slug-scoped reads + unlock asks, Android autofill/hub merge, `baluard search` |
+| G25 | 2026-10-16 wave | Shared-folder picker on the edit/create form (keep/none/assign three-state) over UniFFI `set_collection`; create-time routing rides the state layer's defaults |
