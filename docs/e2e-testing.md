@@ -89,6 +89,8 @@ The highest-value layer and the cheapest. The CLI is the executable spec, so thi
 - Home: `e2e/extension/`.
 
 - Status (2026-10-17): Ring 1 GREEN — `just e2e-extension` runs the full chain
+- Status (2026-10-18): Ring 2 GREEN - `just e2e-extension` also drives the REAL inline dropdown (closed shadow root reached via CDP DOM pierce + trusted input events) on a real public login form (practicetestautomation.com, real credentials accepted) and against a local server-side TOTP verifier: the daemon computes the code from the seeded fixture secret, the inline TOTP mode fills the one-time-code field, and the verifier validates the ±1 window. The live 2fa.scheb.de was tried first and rejected hand-computed codes for its own published fixture secret (deployment drift), so per product call the 2FA leg runs against the local verifier; the practice site stays live-on-purpose. Content-script injection at document_idle can lag many seconds behind ad-heavy pages, so every inline step waits for the `[data-baluard-inline]` mount first.
+
   deterministically (real Playwright Chromium + real NMH + real daemon + the
   real bridge pairing ceremony over the daemon socket + the real action-popup
   match card + toolbar badge). Enablers landed: E6 (`BALUARD_SOCKET` in
