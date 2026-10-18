@@ -206,7 +206,16 @@ docs/                  # Architecture, design, plans, PRDs, threat model, post-q
 just test              # All tests (runs with BALUARD_DISABLE_KEYRING=1 for hermetic execution)
 just test-core         # Core library only (crypto, vault, keys)
 just e2e               # Full daemon-mode smoke test
+just test-e2e          # CLI+daemon E2E suite (real daemon on a scratch socket; crates/baluard-cli/tests/e2e)
+just e2e-android       # Maestro flows on a USB device or emulator (needs BALUARD_E2E_MASTER_PW)
+just e2e-emu           # The four device-only Maestro flows on the local emulator (BALUARD_E2E_MASTER_PW=... required)
+just emulator          # Start/ensure the headless local Android emulator (emulator-5554)
+just e2e-desktop       # WebdriverIO + tauri-driver desktop flows (headless under Xvfb)
+just e2e-extension     # Playwright + real Chromium extension flows (pairing, matches, inline autofill)
+just decrypt-vector    # Third-party reference decryptor vs the committed .bldbak golden vector (pip: argon2-cffi cryptography)
 ```
+
+The Maestro transport and flow-authoring playbook lives in [mobile/AGENTS.md](../mobile/AGENTS.md); the full test plan in [e2e-testing.md](e2e-testing.md).
 
 ### Writing tests
 
@@ -247,7 +256,7 @@ just cross-compile
 ```bash
 # Create a vault
 just install-local
-baluard init --vault-path ~/.baluard
+baluard init --name "My Vault" --slug myvault      # or plain `baluard init` for prompts
 
 # Unlock and add a credential
 baluard unlock
@@ -273,10 +282,10 @@ baluard sync remote <git-url>
 baluard sync push
 
 # Daemon mode (background)
-baluard-daemon --vault-path ~/.baluard
+baluard-daemon                  # serves the vaults in BALUARD_DATA_DIR's registry; --socket overrides the socket path
 ```
 
-All commands route through the daemon by default. Use `--direct` to run in-process (no daemon needed).
+All commands route through the daemon by default. Use `--direct` to run in-process (no daemon needed). The global `--vault <slug>` flag targets a registered vault by slug (the executable spec for every daemon route is the CLI: generator, search, providers, sharing, contacts, rotation all have verbs).
 
 ## Key Features
 
@@ -284,9 +293,9 @@ All commands route through the daemon by default. Use `--direct` to run in-proce
 - **Padded buckets** (5KB/30KB/100KB/250KB/2MB tiers) prevent metadata leakage
 - **8 cipher types**: Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID
 - **TOTP code generation** (RFC 6238, SHA1/256/512, 6/8 digits)
-- **FIDO2/WebAuthn passkeys** (Phase 0+1) embedded in `LoginData::fido2_credentials`. ES256 only.
+- **FIDO2/WebAuthn passkeys** embedded in `LoginData::fido2_credentials`. ES256 only; daemon ceremony routes, delete/rename UI.
 - **Multi-vault** (Phase 6): keep-unlocked / switch-pointer daemon model. Per-vault session tokens. Single auto-lock walker. Lock-all on window blur.
-- **Browser extensions** (Phase 0+1): KeePassXC-Browser-style bridge. Chromium + Firefox MV3. `baluard-nmh` native messaging host. Paired-companion auth, scoped bridge token, action allowlist.
+- **Browser extension**: Chromium + Firefox MV3. `baluard-nmh` native messaging host. Paired-companion auth, scoped bridge token, action allowlist, merged matches across unlocked vaults, inline autofill, toolbar badge.
 - **Per-vault biometric unlock**: macOS `SecAccessControl BIOMETRY_ANY`, other platforms via `keyring` crate. Deterministic `vault_id` from KDF salt scopes the keychain entry.
 - **Session PIN** (Linux + Windows-without-Hello fallback): in-memory KEK + Argon2id PIN verifier, 5-strike nuke, survives soft-lock, dies on close/restart.
 - **Password generator** with CSPRNG + EFF 7776-word passphrase
@@ -302,7 +311,10 @@ All commands route through the daemon by default. Use `--direct` to run in-proce
 - **Zeroize** all sensitive memory after use; `mlock` on key material; aggregate `mlock_budget` logged per unlock
 - **CSP-enforced** webview security
 - **Dark/light/system themes**
-- **i18n** (English + Spanish; all user-facing strings go through `t()`)
+- **Sharing & Spaces**: invite-code joins with role templates and forge seats, member roles, Level-2 contact verification, groups, grant-scoped collections, family Spaces (purpose flag, sealed minor records, phrase-only kit recovery, contest window), merged search/autofill across eligible vaults
+- **Backups**: full-fidelity `baluard.vault` v1 export/import (folder hierarchy restored), logins-only spreadsheet CSV, and the passphrase-encrypted `.bldbak` container (cross-vault restore, golden vector + reference decryptor)
+- **Password health** with machine-kind findings localized on every GUI
+- **i18n** (English, Spanish, Portuguese; all user-facing strings go through `t()`)
 
 ## Common Issues
 
@@ -327,6 +339,13 @@ sudo apt install protobuf-compiler  # Linux
 ```
 
 ### Desktop build fails on Linux (WebKitGTK)
+
+The desktop crate needs the GTK/WebKit *development* headers (`gtk3-devel`, `webkit2gtk4.1-devel`, `libayatana-appindicator-gtk3-devel` on Fedora) — `just sysdeps` only preflights the core/git deps. If a brew `pkg-config` sits earlier in `PATH`, it shadows the system one and the GTK libs stay invisible; point the build at the system pkgconfig directory:
+
+```bash
+export PKG_CONFIG_PATH=/usr/lib64/pkgconfig
+cargo check --manifest-path desktop/src-tauri/Cargo.toml
+```
 
 ```bash
 sudo apt install libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \

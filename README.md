@@ -5,16 +5,26 @@ Git-native password manager with padded-bucket encrypted storage, device-identit
 ## Architecture
 
 ```
-baluard-core    -> Pure Rust: crypto (AES-256-GCM, Argon2id, HPKE, Ed25519, TOTP), vault format, key lifecycle, git sync
-baluard-runtime -> Shared orchestration runtime: VaultHost, VaultState, auto-sync coordinator, PIN escrow
-baluard-daemon  -> Background IPC daemon (tokio Unix socket, Protobuf gateway, thin runtime shell)
-baluard-cli     -> Terminal client (daemon-first with --direct fallback, folders, edit)
+baluard-core    -> Pure Rust: crypto (AES-256-GCM, Argon2id, HPKE, Ed25519, TOTP), vault format, key lifecycle, sharing, git sync, import/export (incl. the encrypted .bldbak container)
+baluard-runtime -> Shared orchestration runtime: VaultHost, VaultState, auto-sync coordinator, PIN escrow, provider connect, cross-vault copy
+baluard-daemon  -> Background IPC daemon (tokio Unix socket, Protobuf gateway, ~150 actions, thin runtime shell)
+baluard-cli     -> Terminal client: 35 commands - daemon-first with --direct fallback; vault CRUD, search, generator/TOTP/SSH keygen, providers, sharing, contacts, rotation, backups
 baluard-nmh     -> Native messaging host (browser extension bridge, stdio-JSON <-> varint-protobuf)
-baluard-uniffi  -> UniFFI bindings consumed by Kotlin Multiplatform mobile app
-desktop/        -> Tauri v2 desktop app (SolidJS + Tailwind v4, 8 cipher types, generator, TOTP widget, switcher)
-browser/        -> MV3 browser extension for Chromium and Firefox (paired companion model)
-mobile/        -> Kotlin Multiplatform / Compose app for Android and iOS (home hub, filters, biometric, sync, autofill, accessibility fill)
+baluard-uniffi  -> UniFFI bindings consumed by the Kotlin Multiplatform mobile app
+desktop/        -> Tauri v2 desktop app (SolidJS + Tailwind v4: all cipher types, sharing/family admin, backups, health, merged vault view)
+browser/        -> MV3 browser extension for Chromium and Firefox (paired companion, merged matches, inline autofill)
+mobile/        -> Kotlin Multiplatform / Compose app (Android shipped; iOS pending): multi-vault, sharing/family, biometric, autofill + accessibility fill, backups
 ```
+
+## Features
+
+- **Encrypted vault as a git repo** - no server; padded buckets (5 tiers) hide metadata; device identity with signed commits and enrollment proofs
+- **All 8 cipher types**, TOTP, SSH keys, passkeys (view/delete), custom fields, attachments, password health
+- **Sharing & Spaces** - invite-code joins with roles and grants, family Spaces (purpose flag, minors, phrase-only recovery kit, D61 claim window), merged search/autofill across eligible vaults
+- **Backups** - full-fidelity `baluard.vault` JSON, logins-only CSV, and a passphrase-encrypted `.bldbak` container that restores into any vault
+- **Git providers** - GitHub/GitLab/Codeberg device-flow or PAT connect, repo creation, clone, auto-sync
+- **Quick unlock** - Touch ID / Windows Hello keychain, Android biometric, session PIN (Linux)
+- **Clients** - desktop (Tauri), Android app with system autofill, browser extension, and a first-class CLI
 
 ## Quick Start
 

@@ -31,25 +31,33 @@ Do not introduce ad-hoc colors. Extend tokens here first, then reference the CSS
 | `--color-danger` | `#ef4444` | 🟥 | Destructive actions |
 | `--color-success` | `#10b981` | 🟩 | Success states |
 
-## Light Mode: Clean White / Slate / Dark Teal Accent
+## Light Mode: Catppuccin Latte / Green Accent
 
 | Token | Hex | Swatch | Role |
 |---|---|---|---|
-| `--color-bg` | `#f4f6f6` | ⬜ | Page background |
-| `--color-sidebar` | `#e9ecec` | ⬜ | Sidebar surface |
-| `--color-list` | `#ffffff` | ⬜ | Cipher list pane |
-| `--color-detail` | `#f8fafc` | ⬜ | Detail/editor pane |
-| `--color-card` | `#ffffff` | ⬜ | Cards within surfaces |
-| `--color-border` | `#d1dbdb` | ⬜ | Default borders |
-| `--color-border-focus` | `#102427` | 🟩 | Focus ring / active border |
-| `--color-text` | `#102427` | 🟩 | Primary text |
-| `--color-muted` | `#5e7275` | 🟩 | Secondary/placeholder text |
-| `--color-primary` | `#102427` | 🟩 | Primary action (deep teal) |
-| `--color-primary-text` | `#ffffff` | ⬜ | Text on primary |
-| `--color-primary-hover` | `#1b383c` | 🟩 | Primary hover state |
-| `--color-accent` | `#7c3aed` | 🟪 | Accent/highlight (violet) |
-| `--color-danger` | `#ef4444` | 🟥 | Destructive actions |
-| `--color-success` | `#10b981` | 🟩 | Success states |
+| `--color-bg` | `#eff1f5` | ⬜ | Page background (Latte Base) |
+| `--color-sidebar` | `#e6e9ef` | ⬜ | Sidebar surface (Mantle) |
+| `--color-list` | `#dce0e8` | ⬜ | Cipher list pane (Crust) |
+| `--color-detail` | `#ccd0da` | ⬜ | Detail/editor pane (Surface0) |
+| `--color-card` | `#e6e9ef` | ⬜ | Cards within surfaces (Mantle) |
+| `--color-border` | `#bcc0cc` | ⬜ | Default borders (Surface1) |
+| `--color-border-focus` | `#40a02b` | 🟩 | Focus ring / active border (green) |
+| `--color-text` | `#4c4f69` | 🟩 | Primary text (Latte Text) |
+| `--color-muted` | `#6c6f85` | 🟩 | Secondary/placeholder text (Subtext0) |
+| `--color-primary` | `#40a02b` | 🟩 | Primary action (Latte green) |
+| `--color-primary-text` | `#eff1f5` | ⬜ | Text on primary (Base; green fills) |
+| `--color-primary-hover` | `#55b83b` | 🟩 | Primary hover state (green tint) |
+| `--color-accent` | `#66bf4f` | 🟩 | Accent/highlight (soft green) |
+| `--color-danger` | `#d20f39` | 🟥 | Destructive actions (Latte red) |
+| `--color-success` | `#40a02b` | 🟩 | Success states (green) |
+| `--color-surface` | `#ccd0da` | ⬜ | Raised surfaces (Surface0) |
+| `--color-text-secondary` | `#5c5f77` | 🟩 | Secondary text (Subtext1) |
+| `--color-text-muted` | `#6c6f85` | 🟩 | Muted text (Subtext0) |
+| `--color-warning` | `#df8e1d` | 🟨 | Warning states (Latte yellow) |
+| `--color-surface` | `#193236` | 🟩 | Raised surfaces (derived: detail elevation) |
+| `--color-text-secondary` | `#d3ddde` | 🟩 | Secondary text (derived) |
+| `--color-text-muted` | `#a2b7ba` | 🟩 | Muted text (derived) |
+| `--color-warning` | `#fcd34d` | 🟨 | Warning states (derived) |
 
 ## Semantic Tokens (shared across themes)
 
