@@ -1,0 +1,38 @@
+# GitHub web-OAuth connect (loopback redirect): connect via the phone's
+# browser with ZERO code entry. Requires the GitHub OAuth app to carry the
+# http://127.0.0.1/callback loopback callback and the client secret embedded.
+# Params: BALUARD_E2E_REPO (repo the test account can see), optional
+# BALUARD_E2E_GH_USER (expected signed-in account).
+# Dedicated device only: launchApp clearState wipes all app data.
+appId: xyz.actitud.baluard
+---
+- launchApp:
+    clearState: true
+# Optional Android App Compatibility alert (re-arms on cold start).
+- tapOn:
+    id: android:id/button2
+    optional: true
+- assertVisible: "Baluard"
+- tapOn: "Open an existing vault"
+- tapOn: "GitHub"
+# Web sign-in is GitHub's primary connect path on mobile.
+- tapOn: "Use the browser sign-in"
+# The browser opens the authorize URL. With a seeded GitHub session this is
+# at most: 'Continue as <user>' then 'Authorize Baluard'; a previously
+# authorized account auto-redirects with no visible page at all.
+- extendedWaitUntil:
+    visible:
+      text: ".*Authorize.*"
+    timeout: 45000
+    optional: true
+- tapOn:
+    text: ".*Authorize Baluard.*"
+    optional: true
+# The redirect lands on 127.0.0.1 (the in-app listener already answered);
+# return to Baluard, which is polling and advances to the repos picker.
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible:
+      text: ".*${BALUARD_E2E_REPO}"
+    timeout: 45000

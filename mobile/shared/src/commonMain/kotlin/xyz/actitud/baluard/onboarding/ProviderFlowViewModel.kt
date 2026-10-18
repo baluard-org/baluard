@@ -6,7 +6,10 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import xyz.actitud.baluard.MobileCloneJob
 import xyz.actitud.baluard.MobileDeviceFlow
 import xyz.actitud.baluard.MobileDeviceFlowStatus
@@ -16,6 +19,7 @@ import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.platform.openUrl
 import xyz.actitud.baluard.platform.platformLogE
 /**
  * Drives the "open an existing vault" onboarding path (plan §5.2-5.4):
@@ -37,6 +41,8 @@ class ProviderFlowViewModel(
     sealed interface Stage {
         data object PickProvider : Stage
         data class DeviceCode(val flow: MobileDeviceFlow) : Stage
+        /** Waiting in the browser for the web-OAuth redirect (GitHub). */
+        data object WebAuth : Stage
         data class Repos(val repos: List<MobileRepo>) : Stage
         data object Cloning : Stage
         data object Enroll : Stage
@@ -67,7 +73,7 @@ class ProviderFlowViewModel(
     /** System back: one stage back. Call only when [canGoBack] is true. */
     fun back() {
         when (stage) {
-            is Stage.DeviceCode -> backToPickProvider()
+            is Stage.DeviceCode, is Stage.WebAuth -> backToPickProvider()
             is Stage.Repos -> backToPickProvider()
             is Stage.Enroll -> backToRepos()
             else -> Unit
@@ -101,6 +107,63 @@ class ProviderFlowViewModel(
             fail("startDeviceFlow", e, t("provider.errorConnection"))
         }
         busy = false
+    }
+
+    /**
+     * Start the web-OAuth sign-in (GitHub): open the returned URL in the
+     * phone's browser and wait on [Stage.WebAuth]; the redirect lands on the
+     * in-process loopback listener. Poll with [pollWebOAuth].
+     */
+    suspend fun startWebOAuth() {
+        if (busy) return
+        busy = true
+        error = null
+        try {
+            val url = repo.webOauthStart(provider)
+            stage = Stage.WebAuth
+            // Open after the stage flip so back-from-browser lands on the
+            // waiting card, not the provider picker.
+            openUrl(url)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            stage = Stage.PickProvider
+            fail("startWebOAuth", e, t("provider.errorConnection"))
+        }
+        busy = false
+    }
+
+    /**
+     * Poll once while on [Stage.WebAuth]. `true` = approved (repos loaded),
+     * `false` = still pending, `null` = terminal ([error] holds the reason).
+     * Mirrors [pollDeviceFlow]'s contract: only an exception reaching this
+     * catch is terminal; a `status:"error"` result is terminal too (GitHub
+     * denied or the code expired) and the user must restart the flow.
+     */
+    suspend fun pollWebOAuth(): Boolean? {
+        return try {
+            val o = kotlinx.serialization.json.Json.parseToJsonElement(
+                repo.webOauthStatus(provider),
+            ).jsonObject
+            when (o["status"]?.jsonPrimitive?.content) {
+                "success" -> if (loadRepos()) true else null
+                "error" -> {
+                    fail(
+                        "pollWebOAuth",
+                        IllegalStateException(
+                            o["error"]?.jsonPrimitive?.content ?: "authorization failed",
+                        ),
+                        t("provider.errorAuth"),
+                    )
+                    null
+                }
+                else -> false
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            fail("pollWebOAuth", e, t("provider.errorAuth"))
+            null
+        }
     }
 
     /**
@@ -159,16 +222,38 @@ class ProviderFlowViewModel(
         stage = Stage.Repos(repos)
     }
 
-    /** Load the repo list and advance to the picker. False = [error] is set. */
+    /** Load the repo list and advance to the picker. False = [error] is set.
+     *
+     * Retried: the first call often races app resume from the browser
+     * (Android can briefly cut background sockets), surfacing as a Connect
+     * error that a second attempt seconds later does not see.
+     */
     private suspend fun loadRepos(): Boolean {
         busy = true
         return try {
-            repos = repo.listVaultRepos(provider)
-            stage = Stage.Repos(repos)
-            true
-        } catch (e: Exception) {
-            fail("loadRepos", e, t("provider.errorListRepos"))
-            false
+            var list: List<MobileRepo>? = null
+            var last: Exception? = null
+            repeat(5) { attempt ->
+                if (list == null) {
+                    try {
+                        list = repo.listVaultRepos(provider)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        last = e
+                        if (attempt < 4) delay(2_000)
+                    }
+                }
+            }
+            val found = list
+            if (found != null) {
+                repos = found
+                stage = Stage.Repos(found)
+                true
+            } else {
+                fail("loadRepos", last!!, t("provider.errorListRepos"))
+                false
+            }
         } finally {
             busy = false
         }

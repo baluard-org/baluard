@@ -49,6 +49,21 @@ next tap — the `hideKeyboard` matters because the open IME pushes lower
 fields behind it where their taps drift (this exact race is why a taller
 create form broke flows that had worked for weeks).
 
+### Device prep for flows that background the app (browser legs)
+
+Any flow that leaves the app for a browser (OAuth connect) hits **light doze**
+(`dumpsys deviceidle` `mLightState=ACTIVE`): Android cuts a backgrounded app's
+sockets, so the first API call after resuming can fail with
+`client error (Connect)` even though the network is fine (ping works). One-time
+device whitelist fixes it:
+
+```bash
+adb -s <serial> shell dumpsys deviceidle whitelist +xyz.actitud.baluard
+```
+
+The app side still carries a bounded retry on the post-OAuth repo fetch (5
+attempts, 2s apart) so a cold resume never kills the ceremony outright.
+
 ### Maestro's clipboard commands do not touch the device clipboard
 
 `setClipboard` writes Maestro's **internal** clipboard only, and `pasteText` replays
