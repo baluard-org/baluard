@@ -15,6 +15,12 @@ pub enum Provider {
     Codeberg,
 }
 
+/// Embedded GitHub OAuth app client secret for the web application flow.
+/// Populated once the app registration hands one over; `None` keeps web
+/// connect fail-closed with a plain-language error naming the env override
+/// (`BALUARD_GITHUB_CLIENT_SECRET`).
+const GITHUB_CLIENT_SECRET: Option<&str> = Some("73a95d04c148979e451c672f5e6abba3d2904c0e");
+
 impl fmt::Display for Provider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -36,6 +42,26 @@ impl Provider {
         match self {
             Self::GitHub | Self::GitLab => "device-flow",
             Self::Codeberg => "web-oauth",
+        }
+    }
+
+    /// Whether the provider implements the web application flow (loopback
+    /// redirect + PKCE). GitHub ships it for mobile/desktop browsers; Codeberg
+    /// is web-only; GitLab is device-flow only today.
+    pub fn supports_web_oauth(&self) -> bool {
+        matches!(self, Self::GitHub | Self::Codeberg)
+    }
+
+    /// Embedded default client_secret for web-flow token exchange.
+    /// GitHub's OAuth app requires a secret at exchange time (there is no
+    /// PKCE-only mode); native-app secrets are not truly confidential and
+    /// shipping them is the norm for GitHub apps (the gh CLI does the same).
+    /// The app registration's secret is embedded for GitHub; the env var
+    /// `BALUARD_GITHUB_CLIENT_SECRET` overrides it per invocation.
+    pub fn default_client_secret(&self) -> Option<&'static str> {
+        match self {
+            Self::GitHub => GITHUB_CLIENT_SECRET,
+            Self::GitLab | Self::Codeberg => None,
         }
     }
 
@@ -110,6 +136,10 @@ impl Provider {
 pub struct ProviderConfig {
     /// OAuth client_id override. `None` = `Provider::default_client_id()`.
     pub client_id: Option<String>,
+    /// OAuth client_secret override for web-flow token exchange. `None` =
+    /// env `BALUARD_<PROVIDER>_CLIENT_SECRET`, then the embedded default
+    /// (GitHub needs a secret at exchange time; Forgejo public clients do not).
+    pub client_secret: Option<String>,
     /// Instance base URL override (self-hosted GitLab/Forgejo). `None` =
     /// `Provider::default_instance_url()`.
     pub instance_url: Option<String>,
@@ -137,6 +167,28 @@ impl ProviderConfig {
             .clone()
             .unwrap_or_else(|| provider.default_instance_url().to_string());
         url.trim_end_matches('/').to_string()
+    }
+
+    /// Effective client_secret for web-flow token exchange: explicit
+    /// override, then the `BALUARD_<PROVIDER>_CLIENT_SECRET` env var, then
+    /// the embedded default. `None` when the provider needs no secret
+    /// (Forgejo public clients). Missing secret fails at exchange time with
+    /// a plain-language error.
+    pub fn effective_client_secret(&self, provider: Provider) -> Option<String> {
+        if let Some(s) = self.client_secret.clone() {
+            return Some(s);
+        }
+        let env_var = match provider {
+            Provider::GitHub => "BALUARD_GITHUB_CLIENT_SECRET",
+            Provider::GitLab => "BALUARD_GITLAB_CLIENT_SECRET",
+            Provider::Codeberg => "BALUARD_CODEBERG_CLIENT_SECRET",
+        };
+        if let Ok(s) = std::env::var(env_var) {
+            if !s.trim().is_empty() {
+                return Some(s);
+            }
+        }
+        provider.default_client_secret().map(str::to_string)
     }
 }
 
@@ -359,11 +411,14 @@ pub struct ProviderInfo {
 }
 
 impl ProviderInfo {
-    /// Build a `ProviderConfig` from the persisted overrides.
+    /// Build a `ProviderConfig` from the persisted overrides. Deliberately
+    /// without a client_secret: secrets ride the env var or the embedded
+    /// default, never the plaintext providers.json.
     pub fn config(&self) -> ProviderConfig {
         ProviderConfig {
             client_id: self.client_id.clone(),
             instance_url: self.instance_url.clone(),
+            client_secret: None,
         }
     }
 
@@ -1026,6 +1081,7 @@ mod tests {
         let config = ProviderConfig {
             client_id: Some("from-config".into()),
             instance_url: None,
+            client_secret: None,
         };
         // Explicit `ProviderConfig.client_id` wins over env var (Advanced
         // Options override is the user's most deliberate choice).

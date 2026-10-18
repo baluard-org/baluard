@@ -12,7 +12,8 @@ use secrecy::ExposeSecret;
 
 use super::types::{
     CollaboratorPermission, CollaboratorStatus, DeviceFlowSession, DeviceFlowStatus, ForgeProvider,
-    Provider, ProviderError, ProviderInfo, ProviderToken, VaultRepo,
+    OAuthStart, Provider, ProviderError, ProviderInfo, ProviderToken, VaultRepo,
+    code_challenge_s256, generate_code_verifier, generate_state, urlencoding_encode,
 };
 
 /// Format an octocrab error with the real GitHub API message.
@@ -305,6 +306,104 @@ impl GitHubProvider {
 impl ForgeProvider for GitHubProvider {
     fn provider(&self) -> Provider {
         Provider::GitHub
+    }
+
+    /// Web application flow start (loopback redirect + PKCE). GitHub
+    /// ignores RFC 8628 verification_uri_complete entirely, so the device
+    /// flow can never pre-fill the code; the web flow is the mobile/desktop
+    /// path where the browser redirects straight back with the code.
+    async fn oauth_start(&self, redirect_uri: &str) -> Result<OAuthStart, ProviderError> {
+        let verifier = generate_code_verifier();
+        let challenge = code_challenge_s256(&verifier);
+        let state = generate_state();
+        let client_id = self.client_id();
+
+        let params = [
+            ("client_id", client_id.as_str()),
+            ("redirect_uri", redirect_uri),
+            ("response_type", "code"),
+            ("scope", "repo"),
+            ("state", state.as_str()),
+            ("code_challenge_method", "S256"),
+            ("code_challenge", challenge.as_str()),
+        ];
+        let query = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, urlencoding_encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        Ok(OAuthStart {
+            auth_url: format!("https://github.com/login/oauth/authorize?{}", query),
+            code_verifier: verifier,
+            state,
+        })
+    }
+
+    /// Web flow token exchange. GitHub has no PKCE-only mode: the secret is
+    /// required here even for native clients (the gh CLI ships its secret in
+    /// public source for the same reason).
+    async fn oauth_exchange(
+        &self,
+        code: &str,
+        code_verifier: &str,
+        redirect_uri: &str,
+    ) -> Result<(ProviderToken, ProviderInfo), ProviderError> {
+        let secret = self
+            .config
+            .effective_client_secret(Provider::GitHub)
+            .ok_or_else(|| {
+                ProviderError::AuthFailed(
+                    "GitHub web sign-in needs the app client secret; set BALUARD_GITHUB_CLIENT_SECRET"
+                        .into(),
+                )
+            })?;
+        let client_id = self.client_id();
+        let resp = self
+            .http
+            .post(ACCESS_TOKEN_URL)
+            .header("Accept", "application/json")
+            .form(&[
+                ("client_id", client_id.as_str()),
+                ("client_secret", secret.as_str()),
+                ("code", code),
+                ("grant_type", "authorization_code"),
+                ("redirect_uri", redirect_uri),
+                ("code_verifier", code_verifier),
+            ])
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::AuthFailed(format!(
+                "oauth_exchange HTTP {status}: {body}"
+            )));
+        }
+        let d: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        if let Some(err) = d["error"].as_str() {
+            let desc = d["error_description"].as_str().unwrap_or("");
+            return Err(ProviderError::AuthFailed(format!(
+                "{}{}",
+                err,
+                if desc.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", desc)
+                }
+            )));
+        }
+        let access = d["access_token"]
+            .as_str()
+            .ok_or_else(|| ProviderError::Api("missing access_token".into()))?
+            .to_string();
+        let token = ProviderToken::new(access, d["scope"].as_str().unwrap_or("repo"));
+        let info = self.validate_token(&token).await?;
+        Ok((token, info))
     }
 
     async fn device_flow_start(&self) -> Result<DeviceFlowSession, ProviderError> {
@@ -1001,6 +1100,7 @@ mod tests {
         GitHubProvider::with_config(ProviderConfig {
             client_id: None,
             instance_url: Some(base.into()),
+            client_secret: None,
         })
     }
 
@@ -1173,5 +1273,60 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn web_oauth_start_builds_pkce_authorize_url() {
+        let gh = GitHubProvider::new();
+        let start = gh
+            .oauth_start("http://127.0.0.1:1234/callback")
+            .await
+            .unwrap();
+        assert!(
+            start
+                .auth_url
+                .starts_with("https://github.com/login/oauth/authorize?")
+        );
+        assert!(start.auth_url.contains("client_id="));
+        assert!(
+            start
+                .auth_url
+                .contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback")
+        );
+        assert!(start.auth_url.contains("response_type=code"));
+        assert!(start.auth_url.contains("scope=repo"));
+        assert!(start.auth_url.contains("code_challenge_method=S256"));
+        assert!(start.auth_url.contains("code_challenge="));
+        assert!(start.auth_url.contains("state="));
+        assert!(start.code_verifier.len() >= 43);
+    }
+
+    #[test]
+    fn web_oauth_secret_chain_shape() {
+        // The embedded default ships (the app registration handed the secret
+        // over), so the exchange no longer fails closed on GitHub; the chain
+        // contract that remains is explicit-override-wins and per-provider
+        // defaults.
+        assert!(Provider::GitHub.default_client_secret().is_some());
+        assert!(Provider::GitLab.default_client_secret().is_none());
+        assert!(Provider::Codeberg.default_client_secret().is_none());
+        // An explicit config override wins even when empty (set for the
+        // flow's lifetime only; it never persists to providers.json).
+        let cfg = ProviderConfig {
+            client_id: None,
+            instance_url: None,
+            client_secret: Some(String::new()),
+        };
+        assert_eq!(
+            cfg.effective_client_secret(Provider::GitHub),
+            Some(String::new())
+        );
+    }
+
+    #[test]
+    fn github_supports_web_oauth() {
+        assert!(Provider::GitHub.supports_web_oauth());
+        assert!(Provider::Codeberg.supports_web_oauth());
+        assert!(!Provider::GitLab.supports_web_oauth());
     }
 }
