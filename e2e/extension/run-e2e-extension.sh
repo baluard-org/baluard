@@ -33,6 +33,13 @@ PW=$REPO/e2e/extension/node_modules/.bin
 cleanup() {
   [ -n "${DPID:-}" ] && kill "$DPID" 2>/dev/null || true
   [ -n "${XVFB_PID:-}" ] && kill "$XVFB_PID" 2>/dev/null || true
+  # A wedged browser outlives its node driver; sweep it by its profile flag.
+  for CMD in /proc/[0-9]*/cmdline; do
+    if grep -q "user-data-dir=$PROFILE" "$CMD" 2>/dev/null; then
+      PID="${CMD#/proc/}"
+      kill "${PID%/cmdline}" 2>/dev/null || true
+    fi
+  done
   if [ "${BALUARD_E2E_KEEP:-0}" != "1" ]; then rm -rf "$WORK"; fi
 }
 trap cleanup EXIT
@@ -88,9 +95,24 @@ BALUARD_PASSWORD='ext-e2e-pw1' BALUARD_SOCKET="$SOCK" \
   "$REPO/target/debug/baluard" init --name 'Ext Vault' --slug ext-t --json >"$WORK/init.json" 2>"$WORK/init.err"
 SITE_PORT=$(node -e 'console.log(20000 + Math.floor(Math.random() * 20000))')
 SITE_URL="http://127.0.0.1:$SITE_PORT/"
+DEMO_PORT=$(node -e 'console.log(40000 + Math.floor(Math.random() * 20000))')
+DEMO_URL="http://127.0.0.2:$DEMO_PORT/"
 BALUARD_PASSWORD='ext-e2e-pw1' BALUARD_SOCKET="$SOCK" \
   "$REPO/target/debug/baluard" add login --name 'Ext Bank' --username 'u@ext.test' \
   --password 'hunter2ext' --uri "$SITE_URL" >/dev/null
+# Ring 2: real-site logins for the inline-dropdown flow. The practice site
+# publishes its test credentials on the page; the 2FA demo ships its TOTP
+# secret in the repo's SQLite fixture (user1, SHA1/30s/6 digits) — both are
+# public fixture material, not secrets.
+BALUARD_PASSWORD='ext-e2e-pw1' BALUARD_SOCKET="$SOCK" \
+  "$REPO/target/debug/baluard" add login --name 'Practice Portal' \
+  --username 'student' --password 'Password123' \
+  --uri 'https://practicetestautomation.com/practice-test-login/' >/dev/null
+BALUARD_PASSWORD='ext-e2e-pw1' BALUARD_SOCKET="$SOCK" \
+  "$REPO/target/debug/baluard" add login --name '2FA Demo' \
+  --username 'user1' --password 'test' \
+  --uri "$DEMO_URL" \
+  --totp-uri 'otpauth://totp/2fa%20Demo:user1?secret=JBSWY3DPEHPK3PXP&issuer=2fa%20Demo' >/dev/null
 BALUARD_PASSWORD='ext-e2e-pw1' BALUARD_SOCKET="$SOCK" \
   "$REPO/target/debug/baluard" unlock >/dev/null
 DESKTOP_TOKEN=$(cat "$WORK/d.tok")
@@ -107,11 +129,13 @@ export DISPLAY=":$XVFB_DISP"
 # The browser and node run under the sandboxed HOME (NMH brand paths; no
 # caller state leaks through). Cargo deliberately stays on the real HOME so
 # its caches keep working.
-export HOME="$HOME_SBOX"
+true # BISECT: export HOME disabled
 
 cd e2e/extension
 CDP_PORT=$((25000 + RANDOM % 20000))
-PLAYWRIGHT_BROWSERS_PATH="$REPO/e2e/extension/.browsers" \
-EXT_ID="$EXT_ID" EXT_DIR="$EXT_DIR" DESKTOP_TOKEN="$DESKTOP_TOKEN" \
-DAEMON_SOCKET="$SOCK" SITE_URL="$SITE_URL" PROFILE_DIR="$PROFILE" CDP_PORT="$CDP_PORT" \
-  node pw.mjs
+export PLAYWRIGHT_BROWSERS_PATH="$REPO/e2e/extension/.browsers"
+DAEMON_SOCKET="$SOCK"
+PROFILE_DIR="$PROFILE"
+export EXT_ID EXT_DIR DESKTOP_TOKEN DAEMON_SOCKET SITE_URL DEMO_URL PROFILE_DIR CDP_PORT
+node pw.mjs
+node inline.mjs
