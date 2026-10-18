@@ -102,6 +102,12 @@ fun PeopleScreen(
     var offboardBusy by remember { mutableStateOf(false) }
     var resetResult by remember { mutableStateOf<VaultRepository.MobileResetResult?>(null) }
 
+    // G26 stolen-device replace: confirm dialog + one-time result dialog.
+    var replaceTarget by remember { mutableStateOf<MobileMemberInfo?>(null) }
+    var replaceBusy by remember { mutableStateOf(false) }
+    var replaceErr by remember { mutableStateOf<String?>(null) }
+    var replaceResult by remember { mutableStateOf<VaultRepository.MobileReplaceReport?>(null) }
+
     // G13: user groups (admin-managed).
     var groups by remember { mutableStateOf<List<xyz.actitud.baluard.data.MobileGroupInfo>>(emptyList()) }
     var showGroupCreate by remember { mutableStateOf(false) }
@@ -524,6 +530,14 @@ fun PeopleScreen(
                                             Text(t("people.actionReset"))
                                         }
                                     }
+                                    if (canOffboard) {
+                                        TextButton(onClick = {
+                                            replaceTarget = m
+                                            replaceErr = null
+                                        }) {
+                                            Text(t("people.actionReplace"))
+                                        }
+                                    }
                                     if (canOffboard && m.role != "owner") {
                                         TextButton(onClick = { openOffboard("remove", m) }) {
                                             Text(
@@ -926,6 +940,108 @@ fun PeopleScreen(
             },
             dismissButton = {
                 TextButton(onClick = { resetResult = null }) { Text(t("common.close")) }
+            },
+        )
+    }
+
+    // ── G26 stolen-device replace: confirm, then the one-time code. ──
+    replaceTarget?.let { m ->
+        AlertDialog(
+            onDismissRequest = { if (!replaceBusy) replaceTarget = null },
+            title = { Text(t("people.replaceTitle", m.name)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(t("people.replaceBody"), style = MaterialTheme.typography.bodyMedium)
+                    if (replaceErr != null) {
+                        Text(
+                            replaceErr!!.removePrefix("detail="),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !replaceBusy,
+                    onClick = {
+                        scope.launch {
+                            replaceBusy = true
+                            try {
+                                val raw = repo.memberReplaceDevice(vault, m.id)
+                                val report = repo.parseReplaceReport(raw)
+                                if (report == null || report.inviteCode.isEmpty()) {
+                                    // The reset already happened core-side; a
+                                    // lost code would lock the successor out,
+                                    // so a bad payload must never read as success.
+                                    replaceErr = t("error.generic")
+                                } else {
+                                    replaceTarget = null
+                                    replaceResult = report
+                                    Toast.success(t("people.replaceDone"))
+                                    refreshAll()
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                replaceErr = (e.message ?: t("error.generic"))
+                                    .removePrefix("detail=")
+                                    .ifBlank { t("error.generic") }
+                            } finally {
+                                replaceBusy = false
+                            }
+                        }
+                    },
+                ) { Text(t("people.replaceConfirm")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { if (!replaceBusy) replaceTarget = null }) {
+                    Text(t("common.cancel"))
+                }
+            },
+        )
+    }
+    replaceResult?.let { r ->
+        AlertDialog(
+            onDismissRequest = { replaceResult = null },
+            title = { Text(t("people.replaceCodeTitle")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(t("people.replaceCodeBody"), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        r.inviteCode,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp,
+                    )
+                    Text(
+                        t("people.replaceSuccessor") + " " + r.successor,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (r.revokeError != null || r.rotationFailed.isNotEmpty()) {
+                        Text(
+                            t("people.replaceWarn"),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        r.revokeError?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
+                        for (f in r.rotationFailed) {
+                            Text(f, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    copyToClipboard(r.inviteCode)
+                    Toast.success(t("people.codeCopied"))
+                    replaceResult = null
+                }) { Text(t("people.copyCode")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { replaceResult = null }) { Text(t("common.close")) }
             },
         )
     }

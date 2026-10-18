@@ -671,6 +671,14 @@ class VaultRepository {
     // args, so the app never hand-escapes member ids.
     suspend fun memberReset(vault: MobileVault, memberId: String): String =
         vault.memberReset(memberId)
+
+    /** Stolen-device journey in one op; returns the report JSON whose
+     * `invite_code` is one-time. */
+    suspend fun memberReplaceDevice(
+        vault: MobileVault,
+        memberId: String,
+        revokeDevice: Boolean = true,
+    ): String = vault.memberReplaceDevice(memberId, revokeDevice)
     suspend fun memberTransfer(vault: MobileVault, memberId: String): String =
         vault.memberTransfer(memberId)
     suspend fun memberClaim(vault: MobileVault, memberId: String): String =
@@ -731,6 +739,16 @@ class VaultRepository {
     /** One-time reset code handed back to the member (members.reset). */
     data class MobileResetResult(val successorId: String, val resetCode: String)
 
+    /** Stolen-device report (members.replace_device): the one-time
+     *  replacement invite plus the cleanup outcome. */
+    data class MobileReplaceReport(
+        val successor: String,
+        val inviteCode: String,
+        val collectionsRotated: Int,
+        val revokeError: String?,
+        val rotationFailed: List<String>,
+    )
+
     /** Offboarding report (members.remove): what was struck and what
      *  could not be — the UI surfaces unstruck seats prominently. */
     data class MobileRemoveReport(
@@ -746,6 +764,20 @@ class VaultRepository {
         MobileResetResult(
             successorId = (o["successor_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
             resetCode = (o["reset_code"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+        )
+    }.getOrNull()
+
+    /** Parse the members.replace_device report; null on malformed input. */
+    fun parseReplaceReport(raw: String): MobileReplaceReport? = runCatching {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        MobileReplaceReport(
+            successor = (o["successor"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+            inviteCode = (o["invite_code"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+            collectionsRotated = (o["collections_rotated"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 0,
+            revokeError = (o["revoke_error"] as? kotlinx.serialization.json.JsonPrimitive)?.content,
+            rotationFailed = (o["rotation_failed"] as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                .orEmpty(),
         )
     }.getOrNull()
 
