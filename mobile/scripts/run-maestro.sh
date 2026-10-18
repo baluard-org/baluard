@@ -92,7 +92,7 @@ matched=0
 # was the vacuous-run class this guard exists to kill.
 ONLY_BASE="$(basename "${ONLY_FLOW:-}")"
 for f in "$FLOW_DIR"/*.yaml; do
-  if [[ -n "$ONLY_FLOW" ]]; then
+  if [[ -n "${ONLY_FLOW:-}" ]]; then
     base="$(basename "$f")"
     if [[ "$base" != "$ONLY_FLOW" && "$base" != "$ONLY_BASE.yaml" && "$base" != "$ONLY_BASE"-*.yaml ]]; then
       continue
