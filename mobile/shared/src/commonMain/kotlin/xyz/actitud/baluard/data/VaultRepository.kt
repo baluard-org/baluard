@@ -24,6 +24,8 @@ import xyz.actitud.baluard.deriveKekForVault as uniffiDeriveKekForVault
 import xyz.actitud.baluard.enrollDeviceWithPhrase as uniffiEnrollDeviceWithPhrase
 import xyz.actitud.baluard.listVaultRepos as uniffiListVaultRepos
 import xyz.actitud.baluard.startDeviceFlow as uniffiStartDeviceFlow
+import xyz.actitud.baluard.webOauthStart as uniffiWebOauthStart
+import xyz.actitud.baluard.webOauthStatus as uniffiWebOauthStatus
 
 /**
  * Thin wrapper over the UniFFI-generated Kotlin bindings.
@@ -887,6 +889,18 @@ class VaultRepository {
         provider: MobileProvider,
         config: MobileProviderConfig = MobileProviderConfig(null, null),
     ): MobileDeviceFlow = uniffiStartDeviceFlow(provider, config)
+
+    /** Start a web-OAuth sign-in (GitHub): returns the URL to open in the
+     * phone's browser; the redirect lands on the in-process listener. */
+    suspend fun webOauthStart(
+        provider: MobileProvider,
+        config: MobileProviderConfig = MobileProviderConfig(null, null),
+    ): String = uniffiWebOauthStart(provider, config)
+
+    /** Poll a web-OAuth session: raw status JSON
+     * `{"status":"pending"|"success"|"error", ...}`. */
+    suspend fun webOauthStatus(provider: MobileProvider): String =
+        uniffiWebOauthStatus(provider)
 
     /** Connect with a personal access token (Codeberg default; works for all). */
     suspend fun connectPat(

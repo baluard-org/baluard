@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +42,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileProvider
 import xyz.actitud.baluard.i18n.t
@@ -129,7 +132,9 @@ fun ProviderConnectScreen(
 
                 Spacer(Modifier.height(18.dp))
 
-                if (vm.busy) {
+                if (vm.stage is ProviderFlowViewModel.Stage.WebAuth) {
+                    WebAuthCard(vm = vm)
+                } else if (vm.busy) {
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
@@ -168,6 +173,29 @@ fun ProviderConnectScreen(
                                 onClick = { showPat = true },
                             )
                         }
+                        MobileProvider.GIT_HUB -> {
+                            // Web sign-in first: one Authorize tap in the
+                            // phone's browser, no code transcription.
+                            BaluardPrimaryButton(
+                                text = t("provider.continueWebSignIn"),
+                                onClick = { scope.launch { vm.startWebOAuth() } },
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            BaluardOutlinedButton(
+                                text = t("provider.continueBrowser"),
+                                onClick = {
+                                    scope.launch {
+                                        vm.startDeviceFlow()
+                                        if (vm.stage is ProviderFlowViewModel.Stage.DeviceCode) onDeviceCodeStarted()
+                                    }
+                                },
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            BaluardOutlinedButton(
+                                text = t("provider.usePatInstead"),
+                                onClick = { showPat = true },
+                            )
+                        }
                         else -> {
                             BaluardPrimaryButton(
                                 text = t("provider.continueBrowser"),
@@ -193,6 +221,39 @@ fun ProviderConnectScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun WebAuthCard(vm: ProviderFlowViewModel) {
+    // Poll every 2s; `true` flips the stage to Repos (the App router takes
+    // over), `null` is terminal and shows vm.error below. Pending keeps the
+    // loop alive. The loop dies with composition (Back leaves the stage).
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            delay(2_000)
+            if (vm.pollWebOAuth() != false) break
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = t("provider.webAuthTitle"),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = t("provider.webAuthBody"),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+        }
+        // vm.error renders in the screen-level slot; no duplicate here.
+        BaluardOutlinedButton(
+            text = t("common.back"),
+            onClick = { vm.backToPickProvider() },
+        )
     }
 }
 
