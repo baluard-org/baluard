@@ -1019,6 +1019,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1344,6 +1348,10 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_start_device_flow(`provider`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_baluard_uniffi_fn_func_web_oauth_start(`provider`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_func_web_oauth_status(`provider`: RustBuffer.ByValue,
+    ): Long
     fun ffi_baluard_uniffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_baluard_uniffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1499,6 +1507,10 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_func_spike_async_probe(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_start_device_flow(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_func_web_oauth_start(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_func_web_oauth_status(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobileclonejob_cancel(
     ): Short
@@ -1831,6 +1843,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_start_device_flow() != 26346.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_func_web_oauth_start() != 58617.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_func_web_oauth_status() != 21807.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobileclonejob_cancel() != 22663.toShort()) {
@@ -8466,6 +8484,45 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_pointer(future) },
         // lift function
         { FfiConverterTypeMobileDeviceFlow.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+        /**
+         * Start a web-OAuth sign-in (GitHub on mobile): returns the authorization
+         * URL to open in the phone's browser. The host-side loopback listener
+         * catches the redirect; poll `web_oauth_status` until it reports success.
+         */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `webOauthStart`(`provider`: MobileProvider, `config`: MobileProviderConfig) : kotlin.String {
+        return uniffiRustCallAsync(
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_web_oauth_start(FfiConverterTypeMobileProvider.lower(`provider`),FfiConverterTypeMobileProviderConfig.lower(`config`),),
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+        /**
+         * Poll a web-OAuth session started by `web_oauth_start`. Returns the
+         * status JSON `{"status":"pending"|"success"|"error", ...}`.
+         */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `webOauthStatus`(`provider`: MobileProvider) : kotlin.String {
+        return uniffiRustCallAsync(
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_web_oauth_status(FfiConverterTypeMobileProvider.lower(`provider`),),
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
