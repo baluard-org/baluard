@@ -959,3 +959,115 @@ fn e2e_cli_parity_generate_totp_ssh_collections_rotation() {
         .assert()
         .success();
 }
+
+/// G26: `members replace-device` — the stolen-device journey in one CLI
+/// call. Seeds a hand-written live member row (required fields only;
+/// everything else serde-defaults), replaces it against the real daemon,
+/// and pins the one-time invite code, the successor id, and the two
+/// refusal paths (own row, already-gone row).
+#[test]
+fn e2e_members_replace_device() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let guard = spawn_daemon(tmp);
+    let slug = "baluard-rdev";
+    let created = daemon_init_json(&guard, slug);
+    let vault_path = created["path"].as_str().unwrap().to_string();
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", slug])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["unlock"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Vault unlocked (daemon)."));
+
+    // Self row id (the owner device's own member row) from members list.
+    let list = baluard_daemon(&guard)
+        .args(["members", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let self_line = String::from_utf8(list)
+        .unwrap()
+        .lines()
+        .find(|l| l.starts_with('*'))
+        .expect("self member row")
+        .to_string();
+    let own_id = self_line.split_whitespace().nth(1).unwrap().to_string();
+
+    // Hand-write a second live member row (minimal JSON: the other
+    // MemberFile fields are serde-defaulted) plus a device binding to an
+    // unknown device, so the revoke-and-rekey leg errors and the CLI's
+    // warning formatter is pinned too.
+    let stolen_id = uuid::Uuid::new_v4();
+    let stolen_device = uuid::Uuid::new_v4();
+    let row = format!(
+        "{{\"id\":\"{stolen_id}\",\"display_name\":\"Stolen Tablet\",\"role\":\"editor\",\"trust\":\"channel\"}}",
+    );
+    std::fs::write(
+        std::path::Path::new(&vault_path)
+            .join("meta/members")
+            .join(format!("{stolen_id}.json")),
+        row,
+    )
+    .unwrap();
+    let devices_dir = std::path::Path::new(&vault_path)
+        .join("meta/members")
+        .join(stolen_id.to_string())
+        .join("devices");
+    std::fs::create_dir_all(&devices_dir).unwrap();
+    std::fs::write(
+        devices_dir.join(format!("{stolen_device}.json")),
+        format!("{{\"device_id\":\"{stolen_device}\",\"member_id\":\"{stolen_id}\"}}"),
+    )
+    .unwrap();
+
+    // Happy path: reset + report. No bindings exist for the stolen
+    // row, so the revoke leg finds nothing and reports no error.
+    let out = baluard_daemon(&guard)
+        .args(["members", "replace-device", &stolen_id.to_string()])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    assert!(out.contains("Device replaced. Successor member:"));
+    assert!(out.contains("Replacement invite code (shown once"));
+    let code_line = out
+        .lines()
+        .find(|l| {
+            !l.is_empty()
+                && !l.starts_with("Device replaced")
+                && !l.starts_with("Replacement invite code")
+                && !l.starts_with("Collections rotated")
+        })
+        .expect("invite code line")
+        .trim()
+        .to_string();
+    assert!(
+        code_line.len() > 100,
+        "invite code should be long: {code_line}"
+    );
+    assert!(out.contains("Collections rotated: 0."));
+    // The binding points at a device that was never enrolled: the
+    // revoke-and-rekey leg refuses it and the CLI surfaces the stop.
+    assert!(out.contains("Revoke-and-rekey stopped:"));
+
+    // The row is now tombstoned: a second replace refuses.
+    baluard_daemon(&guard)
+        .args(["members", "replace-device", &stolen_id.to_string()])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("already gone"));
+
+    // Own row: the daemon refuses to lock the actor out.
+    baluard_daemon(&guard)
+        .args(["members", "replace-device", &own_id])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("would lock you out"));
+}

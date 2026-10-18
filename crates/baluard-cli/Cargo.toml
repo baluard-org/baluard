@@ -35,6 +35,7 @@ assert_cmd = { workspace = true }
 predicates = { workspace = true }
 tempfile = "3"
 regex = "1"
+uuid = { workspace = true }
 
 # The e2e harness lives in tests/e2e/main.rs and is excluded from plain
 # `cargo test` / `just test`: it only builds when the e2e-hooks feature is
