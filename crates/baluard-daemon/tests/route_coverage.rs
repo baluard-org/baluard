@@ -2161,12 +2161,10 @@ async fn import_restores_folder_hierarchy() {
         name: "Sub".into(),
         parent: Some(0),
     });
-    result
-        .folders
-        .push(baluard_core::import::ImportFolder {
-            name: "Empty".into(),
-            parent: Some(0),
-        });
+    result.folders.push(baluard_core::import::ImportFolder {
+        name: "Empty".into(),
+        parent: Some(0),
+    });
     result.ciphers.push(CipherInput {
         name: "Filed Entry".into(),
         kind: CipherKind::Login(Default::default()),
@@ -2199,12 +2197,10 @@ async fn import_restores_folder_hierarchy() {
         name: "Work".into(),
         parent: None,
     });
-    again
-        .folders
-        .push(baluard_core::import::ImportFolder {
-            name: "Sub".into(),
-            parent: Some(0),
-        });
+    again.folders.push(baluard_core::import::ImportFolder {
+        name: "Sub".into(),
+        parent: Some(0),
+    });
     let resp2: serde_json::Value =
         serde_json::from_str(&state.import_ciphers(again).await.expect("reimport")).unwrap();
     assert_eq!(resp2["folders_created"], 2, "siblings reused");
@@ -2320,12 +2316,10 @@ async fn family_default_add_collection_sugar() {
     // public half, or collection_grant mints no wrap and the honest
     // member-path writables resolve to an empty set (the founder row
     // already carries that pubkey — grants to it mint opens).
-    let founder_row = baluard_core::vault::members::member_file_for_device(
-        &vault_path,
-        founder_device,
-    )
-    .unwrap()
-    .1;
+    let founder_row =
+        baluard_core::vault::members::member_file_for_device(&vault_path, founder_device)
+            .unwrap()
+            .1;
     let wrap_pub = founder_row.identity_wrap_pubkey.clone().unwrap();
     let member = baluard_core::vault::members::MemberFile {
         id: member_id,
@@ -2454,13 +2448,11 @@ async fn family_default_add_collection_sugar() {
     row.id = member_b;
     // This vault's device has its own identity: the wrap pubkey must be
     // device_b's, not the first fixture's.
-    row.identity_wrap_pubkey = baluard_core::vault::members::member_file_for_device(
-        &path2,
-        device_b,
-    )
-    .unwrap()
-    .1
-    .identity_wrap_pubkey;
+    row.identity_wrap_pubkey =
+        baluard_core::vault::members::member_file_for_device(&path2, device_b)
+            .unwrap()
+            .1
+            .identity_wrap_pubkey;
     baluard_core::vault::members::write_member(&path2, &row).unwrap();
     let grant_target_b = baluard_core::vault::collections::GrantTarget::Member { id: member_b };
     handle_b
