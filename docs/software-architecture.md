@@ -16,8 +16,8 @@ baluard/
 │   │   └── src/
 │   │       ├── crypto/         # AES-256-GCM (aead), KDF Argon2id (kdf), HKDF (hkdf_derive), HPKE wrap (hpke_wrap), Ed25519 (signature), TOTP (RFC 6238), + webauthn/ subdir
 │   │       ├── keys/           # Key hierarchy (hierarchy), epochs (epoch), rotation (rotation), nonces (nonce)
-│   │       ├── vault/          # Padding engine (5KB/30KB/100KB/250KB/2MB tiers), envelope, manifest, CRUD, canary, attachment, avatar, slug, registry, keywrap, index
-│   │       ├── sync/           # git2-rs sync engine, conflict 3-way merge, state machine, known_hosts, credentials, operations, commit
+│   │       ├── vault/          # Padding engine (5KB/30KB/100KB/250KB/2MB tiers), envelope, manifest, CRUD, canary, attachment, avatar, slug, registry, keywrap, index; sharing lives here too (members, groups, collections, approvals, policies, space_meta, family, contacts, reveals, packages, templates, outbox)
+│   │       ├── sync/           # git2-rs sync engine, conflict 3-way merge, state machine, known_hosts, credentials, operations, commit, gossip (signed head announcements), policy (per-role path table), timeline, revocation
 │   │       ├── import/         # 10 import parsers (baluard-encrypted .bldbak first, baluard.vault v1, then bw_json, bw_csv, chrome_csv, firefox_csv, lastpass_csv, 1password_1pux, 1password_csv, keepass_xml) + export (baluard JSON, CSV) + golden vector
 │   │       ├── providers/      # Git provider abstraction: github, gitlab, codeberg adapters + token store + shared types
 │   │       ├── bridge/         # Browser extension bridge: pairing file format + atomic writes (pairing), bridge token mint/verify (token)
@@ -47,12 +47,13 @@ baluard/
 │   │       ├── pin.rs          # Session PIN escrow (in-memory KEK, 5-strike nuke)
 │   │       ├── bridge.rs       # Bridge-token registry + mobile pairing ceremony
 │   │       ├── rate_limit.rs   # Per-vault rate limiting: unlock/recovery/emergency/biometric/PIN
-│   │       ├── providers.rs    # Token refresh serialization, device flow, PAT connect, pre-unlock enrollment
+│   │       ├── providers.rs    # Token refresh serialization, device flow, PAT connect, pre-unlock enrollment, setup_sync_remote
+│   │       ├── founding.rs     # Cross-vault item copy (vaults.copy_items founding primitive)
 │   │       └── crypto.rs       # constant_time_eq + crypto helpers for session tokens
 │   ├── baluard-daemon/           # Background IPC Daemon (thin shell over baluard-runtime)
 │   │   └── src/
 │   │       ├── main.rs         # tokio Unix socket listener, auto-lock walker, SIGINT/SIGTERM, 0600 perms
-│   │       ├── handler.rs      # Protobuf routing, ~72 routes, token-gated actions, SO_PEERCRED, bridge allowlist
+│   │       ├── handler.rs      # Protobuf routing, ~150 actions across the vault/vaults/collections/members/contacts/space/sync/bridge/provider/passkey families, token-gated, SO_PEERCRED, bridge allowlist
 │   │       ├── socket_path.rs  # Platform socket path resolution
 │   │       └── lib.rs          # Test surface
 │   ├── baluard-nmh/              # Native Messaging Host (browser extension bridge): stdio-JSON <-> varint-protobuf
