@@ -1781,6 +1781,45 @@ pub fn handle_members(
             }
             Ok(())
         }
+        MemberAction::ReplaceDevice {
+            member_id,
+            no_revoke,
+        } => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(
+                socket,
+                "members.replace_device",
+                &serde_json::json!({
+                    "member_id": member_id.trim(),
+                    "revoke_device": !no_revoke
+                }),
+            )?;
+            println!(
+                "Device replaced. Successor member: {}.",
+                data["successor"].as_str().unwrap_or("?")
+            );
+            println!("Replacement invite code (shown once; give it to the member):");
+            println!("{}", data["invite_code"].as_str().unwrap_or(""));
+            println!(
+                "Collections rotated: {}.",
+                data["collections_rotated"].as_u64().unwrap_or(0)
+            );
+            if let Some(err) = data["revoke_error"].as_str() {
+                if !err.is_empty() {
+                    println!("Revoke-and-rekey stopped: {err}");
+                }
+            }
+            for f in data["rotation_failed"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+            {
+                if let Some(msg) = f.as_str() {
+                    println!("Rotation failed: {msg}");
+                }
+            }
+            Ok(())
+        }
         MemberAction::Requests => {
             ensure_unlocked_daemon(socket)?;
             // Two queues: pending joins (requests.*) and collection
