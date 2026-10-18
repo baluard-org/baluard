@@ -120,6 +120,7 @@ open class StubVault(
     override suspend fun `membersList`(): String = err()
     // §4.8-8 offboarding surfaces: same err() discipline.
     override suspend fun `memberReset`(memberId: String): String = err()
+    override suspend fun `memberReplaceDevice`(memberId: String, revokeDevice: Boolean): String = err()
     override suspend fun `memberTransfer`(memberId: String): String = err()
     override suspend fun `memberClaim`(memberId: String): String = err()
     override suspend fun `memberRemove`(memberIds: List<String>, offlineOverride: Boolean): String = err()

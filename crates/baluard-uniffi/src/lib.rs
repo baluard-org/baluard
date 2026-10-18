@@ -1550,6 +1550,24 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Stolen-device journey in one op: reset with a replacement invite
+    /// carrying the member's grants, optionally revoke-and-rekey their
+    /// devices, and rotate the collections they could open. The invite
+    /// code returns exactly once. Returns the report JSON
+    /// `{successor, invite_code, collections_rotated, rotation_failed, revoke_error, kit_present, vault_id}`.
+    pub async fn member_replace_device(
+        &self,
+        member_id: String,
+        revoke_device: bool,
+    ) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "member_id": member_id, "revoke_device": revoke_device })
+            .to_string();
+        self.state
+            .members_replace_device(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Transfer ownership to a member (owner-only; core-gated). The
     /// caller is demoted to Admin. Returns `{}`.
     pub async fn member_transfer(&self, member_id: String) -> Result<String, BaluardError> {

@@ -1017,6 +1017,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1213,6 +1215,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_leave_list(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_remove(`ptr`: Pointer,`memberIds`: RustBuffer.ByValue,`offlineOverride`: Byte,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_replace_device(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,`revokeDevice`: Byte,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_reset(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,
     ): Long
@@ -1662,6 +1666,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_remove(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_replace_device(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_reset(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_set_role(
@@ -2074,6 +2080,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_remove() != 46301.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_replace_device() != 32950.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_reset() != 8510.toShort()) {
@@ -3599,6 +3608,15 @@ public interface MobileVaultInterface {
      * `{removed, new_epoch, seats_struck, unstruck_seats}`.
      */
     suspend fun `memberRemove`(`memberIds`: List<kotlin.String>, `offlineOverride`: kotlin.Boolean): kotlin.String
+    
+    /**
+     * Stolen-device journey in one op: reset with a replacement invite
+     * carrying the member's grants, optionally revoke-and-rekey their
+     * devices, and rotate the collections they could open. The invite
+     * code returns exactly once. Returns the report JSON
+     * `{successor, invite_code, collections_rotated, rotation_failed, revoke_error, kit_present, vault_id}`.
+     */
+    suspend fun `memberReplaceDevice`(`memberId`: kotlin.String, `revokeDevice`: kotlin.Boolean): kotlin.String
     
     /**
      * Reset a member: their identity is tombstoned and a successor row
@@ -5915,6 +5933,34 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_remove(
                 thisPtr,
                 FfiConverterSequenceString.lower(`memberIds`),FfiConverterBoolean.lower(`offlineOverride`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Stolen-device journey in one op: reset with a replacement invite
+     * carrying the member's grants, optionally revoke-and-rekey their
+     * devices, and rotate the collections they could open. The invite
+     * code returns exactly once. Returns the report JSON
+     * `{successor, invite_code, collections_rotated, rotation_failed, revoke_error, kit_present, vault_id}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberReplaceDevice`(`memberId`: kotlin.String, `revokeDevice`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_replace_device(
+                thisPtr,
+                FfiConverterString.lower(`memberId`),FfiConverterBoolean.lower(`revokeDevice`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
