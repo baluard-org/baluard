@@ -997,6 +997,33 @@ android-apk:
 # wipes app data). One-time Maestro install:
 #   curl -Ls "https://get.maestro.mobile.dev" | bash
 # Build + install the E2E APK first: mobile/scripts/build-android-apk.sh --e2e --install
+# One-time setup: sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+# and avdmanager create avd -n baluard-e2e -k "system-images;android-35;google_apis;x86_64" -d pixel_5
+# Launch the headless local e2e emulator under KVM (boots in ~50s).
+emulator:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
+    if adb devices | grep -q "^emulator-5554"; then echo "emulator already running"; exit 0; fi
+    setsid "$SDK/emulator/emulator" -avd baluard-e2e -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -no-snapshot > /tmp/baluard-emulator.log 2>&1 < /dev/null &
+    for i in $(seq 1 30); do
+      if [ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+        echo "emulator booted"; exit 0
+      fi
+      sleep 5
+    done
+    echo "emulator did not boot in 150s (see /tmp/baluard-emulator.log)"; exit 1
+
+# Run the device-only Maestro flows on the local emulator (dogfooding-phase CI).
+e2e-emu SERIAL="emulator-5554":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SERIAL="${1:-emulator-5554}"
+    for f in 01-create-vault 02-lock-unlock 03-add-entry 15-family-create; do
+      BALUARD_E2E_MASTER_PW="${BALUARD_E2E_MASTER_PW:?set BALUARD_E2E_MASTER_PW}" \
+        mobile/scripts/run-maestro.sh --pin-locale --flow "$f" "$SERIAL"
+    done
+
 e2e-android *ARGS:
 	mobile/scripts/run-maestro.sh {{ARGS}}
 # (needed when wireless debugging shows one phone twice: IP:port + mDNS entry).
