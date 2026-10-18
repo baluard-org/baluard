@@ -39,13 +39,16 @@ export function createProviderConnect({ t, onUpdate }) {
 	// Resolve a provider's auth method ("device-flow" | "web-oauth" | "pat")
 	// from provider.list, falling back per-provider if unknown.
 	async function resolveMethod(provider) {
+		// Desktop prefers the browser sign-in for GitHub (mobile parity): the
+		// daemon route serves it and PAT stays available via the PAT field.
+		if (provider === "github") return "web-oauth";
 		try {
 			const providers = JSON.parse(await daemon("provider.list"));
 			const m = providers?.[provider]?.auth_method;
 			if (m === "device-flow" || m === "web-oauth" || m === "pat") return m;
 		} catch {}
 		// Fallbacks match the daemon's primary auth per provider.
-		if (provider === "github" || provider === "gitlab") return "device-flow";
+		if (provider === "gitlab") return "device-flow";
 		if (provider === "codeberg") return "web-oauth";
 		return "pat";
 	}
