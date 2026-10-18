@@ -3,7 +3,7 @@
 > Single source of truth for project state. Update after every work session.
 > Last updated: 2026-10-18 (Two more days on top of the 10-16 state. E2E Phase 4 shipped both rings: Ring 1 drives the real Chromium action popup through the service worker, NMH, and daemon (pairing, matches, toolbar badge - which turned out to have never rendered, fixed twice: a missing `tabs`-permission-gated URL field and an envelope-shape parse bug), and Ring 2 runs content-script inline autofill against the live practice-login site plus a local server-side-verified TOTP page (the 2fa.scheb.de demo's deployed secret drifted from its repo, so the live TOTP leg moved to a local verifier). The Maestro x86_64 CI plan was superseded by a local headless emulator (KVM, ~49s boot): flows 01/02/03/15 run green on it via `just e2e-emu`, with the two-phone GitHub journeys staying box-side. The folder-hierarchy import shipped (baluard.vault backups restore nested and empty folders, cycles degrade to roots, failed parents skip their subtree), plus the desktop password-health UI with localized findings, plain exports through the Rust-side 0600 save dialog, and the third feature-parity audit pass (every cell re-swept from source; ~25 cells corrected; G26 opened for the stolen-device replacement surfaces). The two-phone ORG share journey went green end to end (founder creates and flips on the phone, PAT git backup, invited editor joiner, grantless-add refusal, on-device merge exclusion) after three real product fixes: mobile-created vaults were FFI-locked at birth, org members' unfiled adds exploded on the admin-only flat namespace, and mobile metadata mutations never armed the sync push (autosync also only activated at unlock-with-remote; now it activates when a remote is attached mid-session). The days-long Maestro driver outage was root-caused to a hung Maestro JVM zombie refreshing a session record (adb-server and orphaned-launcher USB claims are secondary conflicts the runner now sweeps); the whole playbook lives in mobile/AGENTS.md. The second-vault wave shipped: create a named personal vault from the phone switcher (FFI display_name, unlocked at birth), un-skipping the org journey's on-device merge-exclusion leg. Wave 2 landed the desktop family GUI: Personal/Family purpose cards, the words-once Space Recovery Kit card with copy + TXT/PDF, and the D61 claim-notice card. Wave 3 closed small items: machine kinds on health findings (localized on mobile), mobile share-entry-as-file export, and the reference decryptor wired into CI, which immediately caught a real Argon2 argument swap in the Python decryptor (fixed, CI gated to manual dispatch per the no-CI directive). The hub search query no longer leaks across vault switches, ~65 orphaned GitHub test repos were cleaned up with one-day delete-scoped tokens, and the desktop app now builds on this box for the first time (the fc44 GTK headers were installed; brew's pkg-config was shadowing them, so Tauri builds need PKG_CONFIG_PATH=/usr/lib64/pkgconfig).) G26 shipped the stolen-device replacement surfaces (CLI verb, desktop People-tab typed-confirm action, mobile confirm + one-time-code dialogs over a new UniFFI wrapper; agy SHIP), closing the last 1.0-track parity gap.
 >
-> Next up: (1) Esteban manual tests: encrypted backup (desktop + phone), mobile recovery PDF via SAF, desktop passkey rename, generator history, desktop family vault + kit card, D61 claim card, second-vault create/cancel, share-as-file on a Login, localized Security check, desktop plain exports via the save dialog, folder-hierarchy import, stolen-device replace on all three surfaces (CLI verb, desktop People tab, mobile People screen). (2) post-1.0 items only (G11 phase 2 CLI admin, G10 mobile passkey ceremonies, G12 iOS depth) - the 1.0-track parity backlog is empty as of the G26 wave. OAuth journeys 10a/10b parked for a stable renderer device; decryptor CI stays manual-dispatch until Esteban re-enables remote CI. (3) 1.0 release engineering via the A-F matrix in section 11, unscoped - now the main named conversation. Parked: G10 mobile passkey ceremonies, G12 iOS depth, G11 phase 2 full admin, G23 mobile ops, role-gated collection defaults, folder icons on import, combined search+filter bar, Import into core views.
+> Next up: (1) Esteban manual tests: encrypted backup (desktop + phone), mobile recovery PDF via SAF, desktop passkey rename, generator history, desktop family vault + kit card, D61 claim card, second-vault create/cancel, share-as-file on a Login, localized Security check, desktop plain exports via the save dialog, folder-hierarchy import, stolen-device replace on all three surfaces (CLI verb, desktop People tab, mobile People screen). (2) post-1.0 items only (G11 phase 2 CLI admin, G10 mobile passkey ceremonies, G12 iOS depth) - the 1.0-track parity backlog is empty as of the G26 wave. OAuth journeys 10a/10b parked for a stable renderer device; decryptor CI stays manual-dispatch until Esteban re-enables remote CI. (3) 1.0 release engineering scoping - now the main named conversation. The full list lives in 'Pending Work' below. Parked: G10 mobile passkey ceremonies, G12 iOS depth, G11 phase 2 full admin, G23 mobile ops, role-gated collection defaults, folder icons on import, combined search+filter bar, Import into core views.
 
 ---
 
@@ -232,6 +232,37 @@ Completed core, CLI, daemon, and desktop implementations.
 | Provider selection UI | Desktop SyncTab: device-flow (GitHub/GitLab) + web-OAuth (Codeberg) + PAT under Advanced Options | **Done** |
 | Sync header refactor | One-click sync UI replaces git jargon. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` status pill (idle/syncing/dirty/offline). Sync label gated with `Show` inside `Transition` to silence background pulls. Provider state scoped to active vault (`58016d4`). | **Done** |
 | Vault detach | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk`. `vaults.detach` daemon route still supports both | **Done** |
+
+---
+
+## Pending Work (single authoritative list)
+
+Everything outstanding lives here. Done waves live in the sections below; gap-level detail lives in `docs/feature-parity.md`; test-phase detail in `docs/e2e-testing.md`. Update this section (not scattered notes) whenever an item ships, parks, or lands on Esteban.
+
+### Ready to build
+
+| # | Item | Notes |
+|---|------|-------|
+| 1 | **1.0 release engineering scoping** | The main open conversation. The old A-F pending matrix was restructured away in an earlier doc rewrite and predates ~20 shipped waves anyway - rebuild the release-engineering scope from scratch (versioning, packaging/installers per platform, signing, update story, docs/user guide, support surface). |
+| 2 | Firefox extension e2e leg | Deferred until Chromium was green; Chromium Ring 1 + Ring 2 are deterministic green (2026-10-17), so the Firefox leg is unblocked. |
+| 3 | Desktop e2e flow coverage | Harness (tauri-driver) is deterministic; only unlock + password-health flows exist. Candidates: vault CRUD, sharing surfaces, settings modals. |
+
+### Waiting on Esteban
+
+| # | Item | Notes |
+|---|------|-------|
+| 4 | Manual tests | Encrypted backup (desktop + phone) - mobile recovery PDF via SAF - desktop passkey rename - generator history - desktop family vault + kit card - D61 claim card - second-vault create/cancel - share-as-file on a Login - localized Security check (mobile + desktop) - desktop plain exports via the save dialog - folder-hierarchy re-import - shared-folder picker - stolen-device replace (CLI `members replace-device`, desktop People tab, mobile People screen). |
+| 5 | Decrypt-vector CI re-enable | Workflow is manual-dispatch per the no-remote-CI directive; the argon2 argument fix (049f972) is unverifiable until one dispatch runs. |
+
+### Blocked on environment (not code)
+
+| # | Item | Notes |
+|---|------|-------|
+| 6 | OAuth Maestro flows 10a/10b | GitHub /login/device ignores user_code pre-fill and the old-phone renderer is unreliable; flows stay written-but-unrun for a stable device. |
+
+### Parked (decided - do not pick up without Esteban)
+
+G11 phase 2 (full CLI org admin), G10 (mobile passkey ceremonies), G12 (iOS depth), G23 (mobile admin ops: commit revocation, repoint/migrate), Windows named-pipe transport, combined search+filter chips bar, Import moved into core views, folder icons restored on import, role-gated collection defaults. Product-accepted limitations are listed under Known Limitations below.
 
 ---
 
