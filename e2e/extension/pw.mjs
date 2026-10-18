@@ -30,7 +30,10 @@ const fail = (m) => {
   console.error(`FAIL: ${m}`);
   process.exit(1);
 };
-if (!EXT_ID || !TOKEN || !SOCKET || !SITE_URL || !EXT_DIR || !CDP_PORT) fail("env missing");
+const missing = Object.entries({ EXT_ID, TOKEN, SOCKET, SITE_URL, EXT_DIR, CDP_PORT })
+  .filter(([, v]) => !v)
+  .map(([k]) => k);
+if (missing.length) fail(`env missing: ${missing.join(",")}`);
 
 const desktop = (action, payload) => gatewayRequest(SOCKET, { action, payload, token: TOKEN });
 
@@ -41,6 +44,7 @@ const site = createServer((_req, res) => {
 });
 await new Promise((r) => site.listen(new URL(SITE_URL).port, "127.0.0.1", r));
 
+const swLogs = [];
 const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
   headless: false,
   args: [
@@ -56,7 +60,6 @@ try {
     ctx.serviceWorkers().find((w) => w.url().includes(EXT_ID)) ||
     (await ctx.waitForEvent("serviceworker", { timeout: 15000 }));
   if (!sw.url().includes(EXT_ID)) fail(`unexpected worker ${sw.url()}`);
-  const swLogs = [];
   sw.on("console", (m) => swLogs.push(m.text()));
 
   const version = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
@@ -155,7 +158,9 @@ try {
   cdp.close();
   console.log("EXT=0");
 } catch (e) {
-  fail(e.message.split("\n")[0]);
+  console.error("FAIL:", e.message.split("\n")[0]);
+  console.error("sw console:", JSON.stringify(swLogs.slice(-8)));
+  process.exitCode = 1;
 } finally {
   await ctx.close();
   site.close();

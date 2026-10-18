@@ -42,7 +42,6 @@ export class PopupCdp {
     });
   }
 
-  // Attach to the (newest) popup.html page target and return its session id.
   async attachPopup() {
     const { targetInfos } = await this.send("Target.getTargets");
     const candidates = targetInfos.filter(
