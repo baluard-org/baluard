@@ -38,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     --regen-bindings)  DO_REGEN_BINDINGS=1; shift ;;
     --skip-native)     SKIP_NATIVE=1; shift ;;
     --e2e)             DO_E2E=1; shift ;;   # -Pbaluard.e2e=true (skips FLAG_SECURE for Maestro)
+    --abis)            ABIS="${2:?--abis needs a comma-separated list}"; shift 2 ;;
     --device)          DEVICE="${2:?--device needs a serial}"; shift 2 ;;
     --device=*)        DEVICE="${1#--device=}"; shift ;;
     -h|--help)
@@ -202,6 +203,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 echo "==> ./gradlew :androidApp:assembleDebug  (JAVA_HOME=$JAVA_HOME)"
 GRADLE_ARGS=()
 [[ $DO_E2E -eq 1 ]] && GRADLE_ARGS+=("-Pbaluard.e2e=true")
+[[ -n "${ABIS:-}" ]] && GRADLE_ARGS+=("-Pbaluard.abis=$ABIS")
 (
   cd "$MOBILE_DIR"
   ./gradlew :androidApp:assembleDebug "${GRADLE_ARGS[@]}"
