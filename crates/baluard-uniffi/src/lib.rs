@@ -1984,6 +1984,9 @@ impl From<MobileProviderConfig> for baluard_core::providers::ProviderConfig {
         baluard_core::providers::ProviderConfig {
             client_id: cfg.client_id,
             instance_url: cfg.instance_url,
+            // Secrets ride env / the embedded default on mobile — never a
+            // UI-passed record.
+            client_secret: None,
         }
     }
 }
@@ -2092,6 +2095,31 @@ pub async fn connect_pat(
     let p_cfg = baluard_core::providers::ProviderConfig::from(config);
     baluard_runtime::providers::connect_pat(p_enum, &token, p_cfg).await?;
     Ok(())
+}
+
+/// Start a web-OAuth sign-in (GitHub on mobile): returns the authorization
+/// URL to open in the phone's browser. The host-side loopback listener
+/// catches the redirect; poll `web_oauth_status` until it reports success.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn web_oauth_start(
+    provider: MobileProvider,
+    config: MobileProviderConfig,
+) -> Result<String, BaluardError> {
+    let p_enum = baluard_core::providers::Provider::from(provider);
+    let p_cfg = baluard_core::providers::ProviderConfig::from(config);
+    baluard_runtime::providers::web_oauth_start(p_enum, p_cfg)
+        .await
+        .map_err(BaluardError::from)
+}
+
+/// Poll a web-OAuth session started by `web_oauth_start`. Returns the
+/// status JSON `{"status":"pending"|"success"|"error", ...}`.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn web_oauth_status(provider: MobileProvider) -> Result<String, BaluardError> {
+    let p_enum = baluard_core::providers::Provider::from(provider);
+    baluard_runtime::providers::web_oauth_status(p_enum)
+        .await
+        .map_err(BaluardError::from)
 }
 
 #[derive(uniffi::Record)]
