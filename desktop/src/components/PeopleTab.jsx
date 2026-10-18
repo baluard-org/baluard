@@ -88,6 +88,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
   const [removeOverride, setRemoveOverride] = createSignal(false);
   const [lastRemoveError, setLastRemoveError] = createSignal(null);
   const [resetCode, setResetCode] = createSignal(null);
+  const [replaceResult, setReplaceResult] = createSignal(null);
   const [notices, setNotices] = createSignal([]);
   const [transport, setTransport] = createSignal([]);
   const [checkingAccess, setCheckingAccess] = createSignal(false);
@@ -475,6 +476,21 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
         }
         await daemon("members.claim", { member_id: selfId });
         toastSuccess(t("people.claimDone"));
+      } else if (action.kind === "replace") {
+        const res = JSON.parse(
+          await daemon("members.replace_device", {
+            member_id: id,
+            revoke_device: true,
+          }),
+        );
+        setReplaceResult({
+          code: res.invite_code || "",
+          successor: res.successor || "",
+          rotated: res.collections_rotated || 0,
+          revokeError: res.revoke_error || null,
+          rotationFailed: res.rotation_failed || [],
+        });
+        toastSuccess(t("people.replaceDone"));
       }
       closeAction();
       await loadMembers();
@@ -527,6 +543,34 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
             <code class="text-xs text-[var(--color-text)] break-all flex-1 font-mono">{resetCode()}</code>
             <CopyButton value={resetCode()} />
           </div>
+        </section>
+      </Show>
+
+      {/* Replace-device result: the replacement invite is one-time. */}
+      <Show when={replaceResult()}>
+        <section class="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
+          <h3 class="text-sm font-bold text-[var(--color-text)] mb-1">{t("people.replaceResultTitle")}</h3>
+          <p class="text-xs text-[var(--color-muted)] mb-3">{t("people.replaceResultBody")}</p>
+          <div class="flex items-center gap-2">
+            <code class="text-xs text-[var(--color-text)] break-all flex-1 font-mono">{replaceResult().code}</code>
+            <CopyButton value={replaceResult().code} />
+          </div>
+          <p class="text-[10px] text-[var(--color-muted)] mt-2">
+            {t("people.replaceSuccessor")} {replaceResult().successor} · {t("people.replaceRotated")}: {replaceResult().rotated}
+          </p>
+          <Show
+            when={replaceResult().revokeError || replaceResult().rotationFailed.length > 0}
+          >
+            <div class="mt-2 text-[10px] text-amber-500">
+              <p>{t("people.replaceWarn")}</p>
+              <Show when={replaceResult().revokeError}>
+                <p>{replaceResult().revokeError}</p>
+              </Show>
+              <For each={replaceResult().rotationFailed}>
+                {(f) => <p>{f}</p>}
+              </For>
+            </div>
+          </Show>
         </section>
       </Show>
 
@@ -791,6 +835,15 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
                       class="px-2 py-1 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
                     >
                       {t("people.claim")}
+                    </button>
+                  </Show>
+                  <Show when={yourRole() === "owner" || yourRole() === "admin"}>
+                    <button
+                      onClick={() => openAction("replace", m)}
+                      disabled={busy()}
+                      class="px-2 py-1 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {t("people.replaceBtn")}
                     </button>
                   </Show>
                   <Show
