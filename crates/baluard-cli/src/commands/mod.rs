@@ -1616,6 +1616,198 @@ pub fn handle_collections(
     }
 }
 
+// ── Groups, policies, space lifecycle, activity (G11 phase 2) ──
+
+pub fn handle_groups(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: &crate::GroupAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::GroupAction;
+    require_daemon(mode, "groups")?;
+    let (route, payload): (&str, serde_json::Value) = match action {
+        GroupAction::List => ("groups.list", serde_json::json!({})),
+        GroupAction::Create { name } => {
+            ("groups.create", serde_json::json!({ "name": name.trim() }))
+        }
+        GroupAction::Rename { id, name } => (
+            "groups.rename",
+            serde_json::json!({ "id": id.trim(), "name": name.trim() }),
+        ),
+        GroupAction::Delete { id, .. } => ("groups.delete", serde_json::json!({ "id": id.trim() })),
+        GroupAction::AddMember { id, member_id } => (
+            "groups.member_add",
+            serde_json::json!({ "id": id.trim(), "member_id": member_id.trim() }),
+        ),
+        GroupAction::RemoveMember { id, member_id } => (
+            "groups.member_remove",
+            serde_json::json!({ "id": id.trim(), "member_id": member_id.trim() }),
+        ),
+    };
+    ensure_unlocked_daemon(socket)?;
+    if let GroupAction::Delete { yes, .. } = action {
+        confirm_destructive(
+            *yes,
+            "delete",
+            "access given only through the group is removed",
+        )?;
+    }
+    let data = post(socket, route, &payload)?;
+    match action {
+        GroupAction::List => {
+            for g in data["groups"].as_array().cloned().unwrap_or_default() {
+                let members: Vec<&str> = g["members"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|m| m.as_str()).collect())
+                    .unwrap_or_default();
+                println!(
+                    "{}  {}",
+                    g["id"].as_str().unwrap_or("?"),
+                    g["name"].as_str().unwrap_or("?")
+                );
+                if members.is_empty() {
+                    println!("  (no members)");
+                } else {
+                    for m in members {
+                        println!("  {m}");
+                    }
+                }
+            }
+        }
+        GroupAction::Create { .. } => {
+            println!("Group created: {}.", data["id"].as_str().unwrap_or("?"))
+        }
+        GroupAction::Rename { .. } => println!("Group renamed."),
+        GroupAction::Delete { .. } => {
+            println!("Group deleted. Access given only through it is removed.")
+        }
+        GroupAction::AddMember { .. } => println!("Member added to group."),
+        GroupAction::RemoveMember { .. } => println!("Member removed from group."),
+    }
+    Ok(())
+}
+
+pub fn handle_policies(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: &crate::PolicyAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::PolicyAction;
+    require_daemon(mode, "policies")?;
+    ensure_unlocked_daemon(socket)?;
+    match action {
+        PolicyAction::List => {
+            let data = post(socket, "policies.list", &serde_json::json!({}))?;
+            println!("{}", serde_json::to_string_pretty(&data["policies"])?);
+            Ok(())
+        }
+        PolicyAction::Set { json } => {
+            let parsed: serde_json::Value = serde_json::from_str(json.trim())
+                .map_err(|e| format!("policy payload must be a JSON object: {e}"))?;
+            if !parsed.is_object() {
+                return Err("policy payload must be a JSON object".into());
+            }
+            post(socket, "policies.set", &parsed)?;
+            println!("Policies updated.");
+            Ok(())
+        }
+    }
+}
+
+pub fn handle_space(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: &crate::SpaceAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::SpaceAction;
+    require_daemon(mode, "space")?;
+    let (route, payload): (&str, serde_json::Value) = match action {
+        SpaceAction::Prepare => ("space.prepare", serde_json::json!({})),
+        SpaceAction::Status => ("space.status", serde_json::json!({})),
+        SpaceAction::Flip => ("space.flip", serde_json::json!({})),
+        SpaceAction::SetPurpose { purpose } => (
+            "space.set_purpose",
+            serde_json::json!({ "purpose": purpose.trim() }),
+        ),
+        SpaceAction::KitEnable => ("space.kit_enable", serde_json::json!({})),
+        SpaceAction::KitDisable { .. } => ("space.kit_disable", serde_json::json!({})),
+        SpaceAction::KitStatus => ("space.kit_status", serde_json::json!({})),
+        SpaceAction::Migrate { clone_url } => (
+            "space.migrate",
+            serde_json::json!({ "clone_url": clone_url.trim() }),
+        ),
+    };
+    ensure_unlocked_daemon(socket)?;
+    if let SpaceAction::KitDisable { yes } = action {
+        confirm_destructive(
+            *yes,
+            "disable",
+            "a lost guardian could lock everyone out without a kit",
+        )?;
+    }
+    let data = post(socket, route, &payload)?;
+    match action {
+        SpaceAction::Prepare
+        | SpaceAction::Status
+        | SpaceAction::Flip
+        | SpaceAction::Migrate { .. } => {
+            println!("{}", serde_json::to_string(&data)?);
+        }
+        SpaceAction::SetPurpose { purpose } => {
+            println!("Purpose set to {}.", purpose.trim());
+        }
+        SpaceAction::KitEnable => match data["phrase"].as_str() {
+            Some(p) => {
+                println!("Recovery kit phrase (shown once; store it safely):");
+                println!("{p}");
+            }
+            None => println!("Recovery kit updated (a second admin confirmed)."),
+        },
+        SpaceAction::KitDisable { .. } => println!(
+            "Recovery kit removed ({}).",
+            if data["removed"].as_bool().unwrap_or(false) {
+                "kit existed"
+            } else {
+                "no kit present"
+            }
+        ),
+        SpaceAction::KitStatus => {
+            if data["enabled"].as_bool().unwrap_or(false) {
+                println!("Recovery kit is enabled.");
+            } else {
+                println!(
+                    "Recovery kit is NOT enabled. Enable one so a lost guardian cannot lock everyone out."
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn handle_activity(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    limit: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "activity")?;
+    ensure_unlocked_daemon(socket)?;
+    let data = post(
+        socket,
+        "activity.events",
+        &serde_json::json!({ "limit": limit }),
+    )?;
+    for e in data.as_array().cloned().unwrap_or_default() {
+        println!(
+            "{}  {}  {}  {}",
+            e["seq"].as_u64().unwrap_or(0),
+            e["at"].as_u64().unwrap_or(0),
+            e["kind"].as_str().unwrap_or("?"),
+            e["detail"].as_str().unwrap_or("")
+        );
+    }
+    Ok(())
+}
+
 // ── Members + pending asks (G11 phase 1) ──
 
 /// Contact cards and the Level 2 identity check. Daemon-only: the
@@ -1817,6 +2009,250 @@ pub fn handle_members(
                 if let Some(msg) = f.as_str() {
                     println!("Rotation failed: {msg}");
                 }
+            }
+            Ok(())
+        }
+        MemberAction::Remove {
+            member_ids,
+            yes,
+            offline_override,
+        } => {
+            ensure_unlocked_daemon(socket)?;
+            confirm_destructive(
+                *yes,
+                "remove",
+                "removal rotates the keys of every collection these members could open",
+            )?;
+            let data = post(
+                socket,
+                "members.remove",
+                &serde_json::json!({
+                    "member_ids": member_ids,
+                    "offline_override": offline_override
+                }),
+            )?;
+            println!(
+                "Removed {} member(s).",
+                data["removed"].as_array().map(|a| a.len()).unwrap_or(0)
+            );
+            println!(
+                "Forge seats struck: {}. Collection keys rotated (new epoch).",
+                data["seats_struck"].as_u64().unwrap_or(0)
+            );
+            for s in data["unstruck_seats"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+            {
+                if let Some(m) = s.as_str() {
+                    println!("Seat not struck: {m}");
+                }
+            }
+            Ok(())
+        }
+        MemberAction::Reset { member_id, yes } => {
+            ensure_unlocked_daemon(socket)?;
+            confirm_destructive(
+                *yes,
+                "reset",
+                "the member's groups and grants are pruned; they rejoin with the code below",
+            )?;
+            let data = post(
+                socket,
+                "members.reset",
+                &serde_json::json!({ "member_id": member_id.trim() }),
+            )?;
+            println!(
+                "Member reset. Successor row: {}.",
+                data["successor_id"].as_str().unwrap_or("?")
+            );
+            let code = data["reset_code"]
+                .as_str()
+                .filter(|c| !c.is_empty())
+                .ok_or("daemon returned no reset code; the member cannot rejoin without it")?;
+            println!("Reset code (one-time; give it to the member to rejoin):");
+            println!("{code}");
+            println!("Re-grant their shared folders and groups after they rejoin.");
+            Ok(())
+        }
+        MemberAction::Transfer { member_id, yes } => {
+            ensure_unlocked_daemon(socket)?;
+            confirm_destructive(
+                *yes,
+                "transfer",
+                "you keep admin rank; the target becomes owner",
+            )?;
+            post(
+                socket,
+                "members.transfer",
+                &serde_json::json!({ "member_id": member_id.trim() }),
+            )?;
+            println!("Ownership transferred to {}.", member_id.trim());
+            Ok(())
+        }
+        MemberAction::Claim { member_id } => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(
+                socket,
+                "members.claim",
+                &serde_json::json!({ "member_id": member_id.trim() }),
+            )?;
+            if data["executed"].as_bool().unwrap_or(false) {
+                println!(
+                    "Ownership claimed: {} is now the owner. This rides the next sync.",
+                    member_id.trim()
+                );
+            } else if data["armed"].as_bool().unwrap_or(false) {
+                let until = data["window_until"].as_u64().unwrap_or(0);
+                let days = until.saturating_sub(now_secs()) / 86_400;
+                println!(
+                    "Claim armed: the current owner has {days} day(s) to cancel it with members contest-cancel."
+                );
+                println!(
+                    "The claim executes automatically after the window (window_until: {until})."
+                );
+            } else {
+                println!("Claim recorded.");
+            }
+            Ok(())
+        }
+        MemberAction::ContestStatus => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(socket, "members.contest_status", &serde_json::json!({}))?;
+            if data["pending"].as_bool().unwrap_or(false) {
+                let until = data["window_until"].as_u64().unwrap_or(0);
+                let days = until.saturating_sub(now_secs()) / 86_400;
+                println!(
+                    "Ownership claim pending: {} -> {} ({} day(s) left).",
+                    data["old_owner_id"].as_str().unwrap_or("?"),
+                    data["new_owner_id"].as_str().unwrap_or("?"),
+                    days
+                );
+                println!("Cancel with members contest-cancel (owner only).");
+            } else {
+                println!("No ownership claim is pending.");
+            }
+            Ok(())
+        }
+        MemberAction::ContestCancel => {
+            ensure_unlocked_daemon(socket)?;
+            post(socket, "members.contest_cancel", &serde_json::json!({}))?;
+            println!("Pending ownership claim cancelled.");
+            Ok(())
+        }
+        MemberAction::SetEmail {
+            member_id,
+            email,
+            clear,
+        } => {
+            ensure_unlocked_daemon(socket)?;
+            if *clear && email.is_some() {
+                return Err("pass either --email or --clear, not both".into());
+            }
+            if !*clear && email.is_none() {
+                return Err("pass --email <address> to set one, or --clear to remove it".into());
+            }
+            let value = if *clear {
+                serde_json::Value::Null
+            } else {
+                let v = email.as_deref().unwrap_or("").trim();
+                if v.is_empty() {
+                    return Err("empty --email; use --clear to remove the address".into());
+                }
+                serde_json::json!(v)
+            };
+            post(
+                socket,
+                "members.set_email",
+                &serde_json::json!({ "member_id": member_id.trim(), "email": value }),
+            )?;
+            if *clear {
+                println!("Email cleared.");
+            } else {
+                println!("Email updated.");
+            }
+            Ok(())
+        }
+        MemberAction::SetMinor { member_id, minor } => {
+            ensure_unlocked_daemon(socket)?;
+            post(
+                socket,
+                "members.set_minor",
+                &serde_json::json!({ "member_id": member_id.trim(), "minor": minor }),
+            )?;
+            if *minor {
+                println!("Minor flag set.");
+            } else {
+                println!("Minor flag cleared.");
+            }
+            Ok(())
+        }
+        MemberAction::Leave => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(socket, "members.leave", &serde_json::json!({}))?;
+            println!(
+                "Departure request filed for member {}. An admin approves it with members approve-leave.",
+                data["member_id"].as_str().unwrap_or("?")
+            );
+            Ok(())
+        }
+        MemberAction::Leaves => {
+            ensure_unlocked_daemon(socket)?;
+            let data = post(socket, "members.leave_list", &serde_json::json!({}))?;
+            let rows = data["pending"].as_array().cloned().unwrap_or_default();
+            if rows.is_empty() {
+                println!("No pending departures.");
+                return Ok(());
+            }
+            for r in rows {
+                println!(
+                    "{}  {:<8}  {}",
+                    r["member_id"].as_str().unwrap_or("?"),
+                    r["role"].as_str().unwrap_or("?"),
+                    r["display_name"].as_str().unwrap_or("")
+                );
+            }
+            Ok(())
+        }
+        MemberAction::ApproveLeave {
+            member_id,
+            yes,
+            offline_override,
+        } => {
+            ensure_unlocked_daemon(socket)?;
+            confirm_destructive(
+                *yes,
+                "approve-leave",
+                "this rotates every collection key the leaver could open and re-issues the kit",
+            )?;
+            let data = post(
+                socket,
+                "members.leave_approve",
+                &serde_json::json!({
+                    "member_id": member_id.trim(),
+                    "offline_override": offline_override
+                }),
+            )?;
+            println!(
+                "Departure executed ({}). Collections rotated: {}.",
+                data["reason"].as_str().unwrap_or("left"),
+                data["collections_rotated"].as_u64().unwrap_or(0)
+            );
+            if let Some(p) = data["new_kit_phrase"].as_str() {
+                println!("New recovery kit phrase (shown once; store it safely):");
+                println!("{p}");
+            }
+            for f in data["rotation_failed"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+            {
+                if let Some(m) = f.as_str() {
+                    println!("Rotation failed: {m}");
+                }
+            }
+            if let Some(e) = data["kit_reissue_failed"].as_str() {
+                println!("Kit re-issue failed: {e}");
             }
             Ok(())
         }
@@ -3237,6 +3673,48 @@ fn first_device_id(vault_path: &str) -> String {
     String::new()
 }
 
+/// Gate for irreversible member operations. --yes skips; a terminal
+/// gets a typed confirmation; anything else (scripts without --yes)
+/// refuses rather than guessing.
+pub fn confirm_destructive(
+    yes: bool,
+    word: &str,
+    consequence: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if yes {
+        return Ok(());
+    }
+    if std::env::var_os("BALUARD_NO_PROMPT").is_some() {
+        return Err(
+            "refusing without confirmation under BALUARD_NO_PROMPT; pass --yes to proceed"
+                .to_string()
+                .into(),
+        );
+    }
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() {
+        use std::io::{BufRead, Write};
+        println!("This is irreversible: {consequence}.");
+        print!("Type '{word}' to confirm: ");
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        if line.trim().trim_matches(['\'', '"']) == word {
+            return Ok(());
+        }
+    }
+    Err("refusing without confirmation; pass --yes to proceed"
+        .to_string()
+        .into())
+}
+
+pub fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 pub fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
     if std::env::var_os("BALUARD_NO_PROMPT").is_some() {
         return Ok(String::new());
@@ -4490,7 +4968,7 @@ pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std:
             target,
             ciphers,
             all,
-        } => vaults_copy_items(&source, &target, &ciphers, *all, cli),
+        } => vaults_copy_items(source, target, ciphers, *all, cli),
         VaultAction::Repoint { slug, url } => vaults_repoint(slug, url),
         VaultAction::RecoverKit { slug, device_name } => {
             vaults_recover_kit(slug, device_name.as_deref())
