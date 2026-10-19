@@ -48,17 +48,17 @@ Every reviewer dispatch carries, self-contained:
 5. Update the unit row and the findings log in the same commit as the fix. Rejections and dups log at phase checkpoint.
 6. A unit is `verified` only when its fixes are committed with green tests AND both reviewer slots are done.
 
-Status legend for unit rows: `todo` -> `prc` -> `pra` (both reviewers in) -> `triage` (verdicts logged) -> `fixed` -> `verified`.
+Status legend for unit rows: `todo` -> `reviewing` (dispatched, at least one reviewer in) -> `reviewed` (both in) -> `triaged` (verdicts logged) -> `fixed` -> `verified`. Reviewer attribution lives in the finding IDs (`F-<UNIT>-<PRC|PRA>-NN`), not in the status.
 
 ## Phase A: trust core
 
 | Unit | Scope | ~LOC | Focus | Status |
 |------|-------|------|-------|--------|
-| A1 crypto-primitives | crates/baluard-core/src/crypto/{aead,hkdf_derive,hpke_wrap,kdf,signature,totp}.rs | 2.4K | KDF params, nonce and domain separation, zeroize coverage, TOTP window, timing safety | todo |
-| A2 webauthn-ceremony | crates/baluard-core/src/crypto/webauthn/ | 1K | Challenge freshness, CeremonyCache TTL/FIFO/eviction, ES256 verify, counter monotonicity, SEC-1 boundary | todo |
-| A3 key-hierarchy | crates/baluard-core/src/keys/ | 0.9K | HKDF info labels, epoch derivation, SGK vs item key separation, RootKey handling | todo |
+| A1 crypto-primitives | crates/baluard-core/src/crypto/{aead,hkdf_derive,hpke_wrap,kdf,signature,totp}.rs | 2.4K | KDF params, nonce and domain separation, zeroize coverage, TOTP window, timing safety | reviewing |
+| A2 webauthn-ceremony | crates/baluard-core/src/crypto/webauthn/ | 1K | Challenge freshness, CeremonyCache TTL/FIFO/eviction, ES256 verify, counter monotonicity, SEC-1 boundary | reviewing |
+| A3 key-hierarchy | crates/baluard-core/src/keys/ | 0.9K | HKDF info labels, epoch derivation, SGK vs item key separation, RootKey handling | reviewing |
 | A4 vault-format | crates/baluard-core/src/vault/{envelope,padding,keywrap,canary,cipher,index,manifest,slug,events,templates,avatar,attachment,identity,registry}.rs | 4.5K | Envelope shape, tier fit metadata leakage, index key derivation, canary verification, atomic staging | todo |
-| A5 handle-crud-unlock | crates/baluard-core/src/vault/handle.rs (slice: unlock/lock/CRUD/index hooks) | ~4.5K slice | Unlock tail (keywrap + canaries), already-unlocked short-circuit, index rebuild hooks, zeroize on drop | todo |
+| A5 handle-crud-unlock | crates/baluard-core/src/vault/handle.rs (slice: unlock/lock/CRUD/index hooks) | ~4.5K slice | Unlock tail (keywrap + canaries), already-unlocked short-circuit, index rebuild hooks, zeroize on drop | reviewing |
 | A6a handle-rotation-rekey | crates/baluard-core/src/vault/handle.rs (slice: rotate_identity, rotate_recovery_phrase, rotate_root_key, revoke_device_and_rekey, force_evict_and_rotate, epoch helpers, adopt_rekey_txn_root) | ~2.2K slice | Rekey coverage of every artifact class, crash markers, HPKE wraps for all devices, survivor adoption ordering, fail-closed txn adoption | todo |
 | A6b handle-space-wiring | crates/baluard-core/src/vault/handle.rs (slice: quorum/kit/approval gate fns, member ops, policies, contacts/reveals/package wrappers, collection_rotate_key) | ~1.6K slice | Gate logic before delegation, kit enable-over binding, minor-record path, wrapper-to-module contract drift | todo |
 | A7 device-fleet | crates/baluard-core/src/{device_manager,devices,device_privkey,emergency,recovery,recovery_sheet,secret_file,health,integrity}.rs | ~5K | Revoke-and-rekey preconditions, BIP-39 recovery, escrow rebuild, integrity walk | todo |
@@ -117,6 +117,32 @@ Format: `| ID | Unit | Sev | Finding (one line) | Verdict | Fix commit / note |`
 
 | ID | Unit | Sev | Finding | Verdict | Fix commit / note |
 |----|------|-----|---------|---------|-------------------|
+| F-A1-PRA-01 | A1 | S1 | hpke_wrap.rs:105 `recipient_priv.to_bytes()` copy of device privkey lands on stack unzeroized | unverified | |
+| F-A1-PRA-02 | A1 | S1 | aead.rs:104 `build_nonce` shard id = 4 UUID bytes, birthday bound ~2^16 objects; canary counter hardcoded 0 risks nonce reuse | unverified | |
+| F-A1-PRA-03 | A1 | S2 | signature.rs uses ZIP-215 `verify`, not `verify_strict`; malleable sigs vs quorum/dedup barriers | unverified | |
+| F-A1-PRA-04 | A1 | S2 | totp.rs `urldecode` casts decoded bytes to chars, corrupts multibyte percent-encoded issuer/label | unverified | |
+| F-A1-PRA-05 | A1 | S3 | `build_aad` omits envelope header version byte; version tamper does not fail auth | unverified | |
+| F-A1-PRA-06 | A1 | S3 | kdf.rs `auto_calibrate` bakes the calibration salt into the returned KdfParams | unverified | |
+| F-A2-PRA-01 | A2 | S1 | store.rs Drop clears shared store on any clone drop, can wipe `take_new_credentials` before caller extracts | unverified | |
+| F-A2-PRA-02 | A2 | S1 | store.rs stores full COSE key (private scalar) into `key_value`; `PasskeyData::zeroize` never clears it | unverified | |
+| F-A2-PRA-03 | A2 | S2 | ceremony.rs generates local challenge instead of accepting an RP challenge (peer assumes external RP server; Phase-1 local-first design may reject) | unverified | |
+| F-A2-PRA-04 | A2 | S2 | counter update stores `counter.unwrap_or(0)`, not `max(stored, new)`; assertion extract failure falls back to 0 | unverified | |
+| F-A2-PRA-05 | A2 | S2 | CeremonyCache eviction picks an arbitrary expired entry, and duplicate-id insert evicts an unrelated ceremony | unverified | |
+| F-A3-PRA-01 | A3 | S1 | hierarchy.rs stack temps in `generate`/`from_bytes`/`item_key_expand` hold raw key bytes unzeroized | unverified | |
+| F-A3-PRA-02 | A3 | S1 | `derive_item_key` epoch check is `debug_assert` only: release builds ignore the epoch arg and fail open | unverified | |
+| F-A3-PRA-03 | A3 | S1 | rotation.rs wrap context `keywrap:rotation:{epoch}` lacks vault/device binding; cross-vault transplant passes tag verification | unverified | |
+| F-A3-PRA-04 | A3 | S1 | quorum `div_ceil(2)` = bare 50% for even N (epoch.rs + devices.rs); split-brain on N=4 | unverified | |
+| F-A3-PRA-05 | A3 | S3 | `derive_avatar_key` returns bare `[u8; 32]`, no zeroizing wrapper | unverified | |
+| F-A5-PRA-01 | A5 | S1 | unlock skips canary verification when `meta/kek-canary.enc` missing (empty vec -> verify bypassed) | unverified | |
+| F-A5-PRA-02 | A5 | S1 | `UnlockedState::drop` never zeroes `devkey_seal`; `IdentityKeys`/ed25519 SigningKey has no zeroize | unverified | |
+| F-A5-PRA-03 | A5 | S1 | `Cipher` plaintext has no Drop/Zeroize; `zeroize_decrypted_cipher` not wired into CRUD drops | unverified | |
+| F-A5-PRA-04 | A5 | S2 | update_cipher history-preservation `else if` chained at wrong level; wipes history when password unchanged and caller sent empty | unverified | |
+| F-A5-PRA-05 | A5 | S2 | update_cipher overwrites `kind` wholesale; passkeys in `fido2_credentials` destroyed when caller omits them | unverified | |
+| F-A5-PRA-06 | A5 | S2 | delete_folder hardcodes flat `ciphers/{id}.enc` path; collection-resident ciphers keep dangling folder_id | unverified | |
+| F-A5-PRA-07 | A5 | S2 | collect_descendant_ids loops forever on a folder parent cycle (insert result ignored) | unverified | |
+| F-A5-PRA-08 | A5 | S2 | delete_cipher/purge_old_trash remove the envelope but orphan `entries/{id}` attachment dirs | unverified | |
+| F-A5-PRA-09 | A5 | S3 | restore_cipher/purge_old_trash skip the `writes_allowed()` gate every other mutator has | unverified | |
+| F-A5-PRA-10 | A5 | S3 | rename_folder lacks the sibling duplicate-name check create_folder_with_parent enforces | unverified | |
 
 ### Phase B findings
 
