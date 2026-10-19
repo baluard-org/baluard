@@ -112,30 +112,7 @@ try {
       ),
     SITE_URL,
   );
-  // A real user lands on the site tab by switching to it; switching also
-  // drives the badge's onActivated path.
-  await sw.evaluate(
-    (site) =>
-      new Promise((r) =>
-        chrome.tabs.query({}, (tabs) => {
-          const tab = tabs.find((t) => t.url && t.url.startsWith(site));
-          if (tab) chrome.tabs.update(tab.id, { active: true }, () => void chrome.runtime.lastError);
-          r();
-        }),
-      ),
-    SITE_URL,
-  );
-  // Probe: what do onUpdated's change and Tab args carry on a real nav?
-  await sw.evaluate(() => {
-    self.__ev = [];
-    chrome.tabs.onUpdated.addListener((id, ch, tab) =>
-      self.__ev.push([ch.url || null, (tab && tab.url) || null, tab && tab.status, tab && tab.active]),
-    );
-  });
-  await sitePage.reload();
-  await new Promise((r) => setTimeout(r, 3000));
-  const urlProbe = await sw.evaluate(() => self.__ev);
-  console.log(`URL PROBE: ${JSON.stringify(urlProbe)}`);
+  await new Promise((r) => setTimeout(r, 1000));
 
   let badge = "";
   for (let i = 0; i < 20 && badge !== "1"; i++) {

@@ -189,6 +189,12 @@ e2e-desktop *ARGS:
 e2e-extension *ARGS:
 	bash e2e/extension/run-e2e-extension.sh
 
+# Geckodriver v0.36.0 lives in e2e/extension/.tools (one-time fetch); the
+# popup runs as a tab per the B4 origin split in the ff.mjs header.
+# Firefox extension e2e: real Firefox + real NMH + real daemon.
+e2e-extension-firefox *ARGS:
+	bash e2e/extension/run-e2e-extension-firefox.sh
+
 # Decode the committed golden backup vector with the reference decryptor
 # (scripts/decrypt_backup.py). Needs: pip install argon2-cffi cryptography
 # (Python's stdlib has neither Argon2id nor AES-GCM). Exits 0 only when the
