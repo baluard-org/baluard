@@ -129,7 +129,7 @@ Implications:
 * **JS/TS**: ES modules, SolidJS, Vite. Tailwind for layout. `crypto.getRandomValues` only (never `Math.random`).
 * **Protobuf**: proto3, `baluard.vault` package. Compiled via prost in daemon + CLI.
 * **Security**: AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket 0600. Zeroize on drop for key material, TOTP secrets, and passkey private keys.
-* **WebAuthn/Passkey**: passkey-rs 0.5.x for ceremony. ES256 only. Private key encrypted under item key, never crosses IPC, zeroized on drop. Counter `max(local, remote)` for git-sync safety.
+* **WebAuthn/Passkey**: passkey-rs 0.5.x for ceremony. ES256 only. Private key encrypted under item key, never crosses IPC, zeroized on drop. Counter: synced/provider passkeys carry BE=BS=1 with the counter pinned to 0 and never incremented (W3C L3 multi-device guidance); `max(local, remote)` applies only to device-bound legacy counters on git-sync.
 
 ## DEBUG LOGGING
 `just desktop-debug` runs the desktop app with `BALUARD_DEBUG=1`. Logs go to `./logs/` at cwd.
@@ -256,7 +256,7 @@ Passkeys are stored **inside `LoginData::fido2_credentials: Option<Vec<PasskeyDa
 - **CLI**: `baluard passkey list/delete/rename`. `--credential-id` required for delete/rename.
 - **delete/rename semantics**: take `(cipher_id, credential_id)`. Only the matching `PasskeyData` is removed/renamed. Login cipher itself is preserved unless it has no other data (no password, no TOTP, no URIs) and only one passkey is removed.
 - **Private key**: encrypted under cipher item key, never crosses IPC, zeroized on drop
-- **Counter**: `max(local, remote)` on git-sync. `PasskeyIndex` indexes all ciphers' fido2 credentials for fast lookup during assertion.
+- **Counter**: `max(local, remote)` on git-sync for device-bound counters; provider/synced passkeys stay 0 (never incremented). `PasskeyIndex` indexes all ciphers' fido2 credentials for fast lookup during assertion; the provider path narrows it to the selected credential via `PasskeyIndex::single`.
 - **Two-phase ceremony** (Phase 1 trust model): `challenge_*` runs the ceremony + caches state, `finish_*` consumes state + persists cipher. Echo-back of passkey_data accepted in Phase 1 (same-process desktop). Phase 2 (browser extension) MUST store results in `CeremonyState` to prevent client forgery: see SEC-1 in `docs/plan-passkey-support.md`.
 - **BaluardCredentialStore** trait impl: bridges passkey-rs `CredentialStore` to cipher envelopes. `Arc<Mutex<StoreInner>>` for mutation tracking via `take_new_credentials()` + `take_counter_updates()`.
 
