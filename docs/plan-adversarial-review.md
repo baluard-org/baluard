@@ -58,7 +58,7 @@ Status legend for unit rows: `todo` -> `reviewing` (dispatched, at least one rev
 | A2 webauthn-ceremony | crates/baluard-core/src/crypto/webauthn/ | 1K | Challenge freshness, CeremonyCache TTL/FIFO/eviction, ES256 verify, counter monotonicity, SEC-1 boundary | reviewing |
 | A3 key-hierarchy | crates/baluard-core/src/keys/ | 0.9K | HKDF info labels, epoch derivation, SGK vs item key separation, RootKey handling | reviewing |
 | A4 vault-format | crates/baluard-core/src/vault/{envelope,padding,keywrap,canary,cipher,index,manifest,slug,events,templates,avatar,attachment,identity,registry}.rs | 4.5K | Envelope shape, tier fit metadata leakage, index key derivation, canary verification, atomic staging | todo |
-| A5 handle-crud-unlock | crates/baluard-core/src/vault/handle.rs (slice: unlock/lock/CRUD/index hooks) | ~4.5K slice | Unlock tail (keywrap + canaries), already-unlocked short-circuit, index rebuild hooks, zeroize on drop | reviewing |
+| A5 handle-crud-unlock | crates/baluard-core/src/vault/handle.rs (slice: unlock/lock/CRUD/index hooks) | ~4.5K slice | Unlock tail (keywrap + canaries), already-unlocked short-circuit, index rebuild hooks, zeroize on drop | reviewed |
 | A6a handle-rotation-rekey | crates/baluard-core/src/vault/handle.rs (slice: rotate_identity, rotate_recovery_phrase, rotate_root_key, revoke_device_and_rekey, force_evict_and_rotate, epoch helpers, adopt_rekey_txn_root) | ~2.2K slice | Rekey coverage of every artifact class, crash markers, HPKE wraps for all devices, survivor adoption ordering, fail-closed txn adoption | todo |
 | A6b handle-space-wiring | crates/baluard-core/src/vault/handle.rs (slice: quorum/kit/approval gate fns, member ops, policies, contacts/reveals/package wrappers, collection_rotate_key) | ~1.6K slice | Gate logic before delegation, kit enable-over binding, minor-record path, wrapper-to-module contract drift | todo |
 | A7 device-fleet | crates/baluard-core/src/{device_manager,devices,device_privkey,emergency,recovery,recovery_sheet,secret_file,health,integrity}.rs | ~5K | Revoke-and-rekey preconditions, BIP-39 recovery, escrow rebuild, integrity walk | todo |
@@ -143,6 +143,24 @@ Format: `| ID | Unit | Sev | Finding (one line) | Verdict | Fix commit / note |`
 | F-A5-PRA-08 | A5 | S2 | delete_cipher/purge_old_trash remove the envelope but orphan `entries/{id}` attachment dirs | unverified | |
 | F-A5-PRA-09 | A5 | S3 | restore_cipher/purge_old_trash skip the `writes_allowed()` gate every other mutator has | unverified | |
 | F-A5-PRA-10 | A5 | S3 | rename_folder lacks the sibling duplicate-name check create_folder_with_parent enforces | unverified | |
+| F-A5-PRC-01 | A5 | S1 | dup of F-A5-PRA-01 (canary skip); adds: zero-byte file behaves as missing, `change_master_password` has the same `exists()` skip, rotate_recovery_phrase comment states the fail-closed intent | unverified | |
+| F-A5-PRC-02 | A5 | S1 | dup of F-A5-PRA-03 (cipher plaintext zeroize); adds: `zeroize_decrypted_cipher` itself skips Identity/BankAccount/Passport/DriversLicense/URIs/password_history/fido2 key_value, and is called only from rotation paths | unverified | |
+| F-A5-PRC-03 | A5 | S1 | dup of F-A5-PRA-02 (devkey_seal unzeroized); adds: `derive_kek` returns plain `[u8;32]`, unlock_tail locals never wiped, devkey_seal() returns a plain copy | unverified | |
+| F-A5-PRC-04 | A5 | S1 | runtime state.rs:8062 `cipher_to_json` serializes `kind` wholesale: fido2 `private_key`/`prf_key` cross IPC inside get_cipher payload, contradicting the never-crosses-IPC invariant | cross-slice: verify under B5 | |
+| F-A5-PRC-05 | A5 | S2 | lock() spawns normalize_timestamps_bg that resets mtimes of everything under trash/ to vault creation; purge_old_trash(30) judges by mtime, so after one lock+unlock the whole trash purges | unverified | |
+| F-A5-PRC-06 | A5 | S2 | dup of F-A5-PRA-06 (delete_folder flat path); adds trashed ciphers also skipped | unverified | |
+| F-A5-PRC-07 | A5 | S2 | rebuild_tag_index rebuilds from cipher metas only, pruning empty tags made by create_tag; runtime calls it after every update | unverified | |
+| F-A5-PRC-08 | A5 | S2 | index staleness check compares id sets only; a pulled edit to an existing cipher does not invalidate, no rebuild after pull | unverified | |
+| F-A5-PRC-09 | A5 | S2 | dup of F-A5-PRA-08 (purge orphans attachments) | unverified | |
+| F-A5-PRC-10 | A5 | S2 | save_profile_and_strip_settings uses get_settings().unwrap_or_default(); a settings.enc decrypt/parse failure writes defaults back over the real encrypted settings | unverified | |
+| F-A5-PRC-11 | A5 | S2 | dup of F-A5-PRA-09 (writes_allowed gate); adds assign_cipher_to_collection | unverified | |
+| F-A5-PRC-12 | A5 | S2 | clear_failed_attempts failure after state already Unlocked returns Err, leaving the vault unlocked with a reported failure | unverified | |
+| F-A5-PRC-13 | A5 | S2 | list_folders hard-fails on one corrupt per-fact file so save_folders heal never runs; also deletes folders.json contradicting its own reads-never-delete comment | unverified | |
+| F-A5-PRC-14 | A5 | S2 | dup of F-A5-PRA-04 + F-A5-PRA-05 (history contract + wholesale kind replace destroying fido2_credentials) | unverified | |
+| F-A5-PRC-15 | A5 | S2 | save_settings can erase device names: device_display_names() swallows errors to empty map, writes device_names: None | unverified | |
+| F-A5-PRC-16 | A5 | S2 | locked get_settings falls back to plaintext legacy meta/settings.json for policy fields (unauthenticated) when settings.enc exists | unverified | |
+| F-A5-PRC-17 | A5 | S2 | rename_tag/delete_tag abort mid-loop on first failure; earlier ciphers rewritten, index not rebuilt | unverified | |
+| F-A5-PRC-18 | A5 | S3 | bundle: dup of F-A5-PRA-10 (rename_folder dup names); plus dead legacy branch in get_settings/load_profile, derive_item_key/unlocked panic paths, CrossEpoch error-type drift in decrypt_cipher_bytes no-local branch, rebuild_index failure after write lands (caller retry duplicates), trash move and collection move non-atomic two-step | unverified | |
 
 ### Phase B findings
 
