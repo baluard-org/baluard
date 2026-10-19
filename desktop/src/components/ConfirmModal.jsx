@@ -49,6 +49,7 @@ export default function ConfirmModal(props) {
                 {props.cancelLabel || t("entry.cancel")}
               </Button>
               <Button
+                data-testid="confirm-accept"
                 onClick={() => { props.onConfirm?.(); props.onClose?.(); }}
                 variant={props.confirmVariant}
                 class={`flex-1 py-2.5 ${props.confirmClass || ""}`}
