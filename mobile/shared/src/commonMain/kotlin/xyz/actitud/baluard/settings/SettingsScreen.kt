@@ -993,6 +993,37 @@ fun SettingsScreen(
                         onPauseOrDispose { }
                     }
 
+                    // Passkey provider (G10 §10): deep-link to the system
+                    // default-credential-provider page. The service component
+                    // is never toggled here — only the user can choose a
+                    // provider, and disabling ours would remove Baluard from
+                    // that registry invisibly.
+                    if (xyz.actitud.baluard.platform.credentialProviderSupported) {
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(t("settings.passkeyProvider"), style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    t("settings.passkeyProviderHint"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            TextButton(onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        android.content.Intent("android.settings.CREDENTIAL_PROVIDER_SETTINGS")
+                                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                }
+                            }) { Text(t("settings.passkeyProviderOpen")) }
+                        }
+                    }
+
                     // Autofill services: mirrors the system provider state;
                     // flipping it opens the system picker.
                     Row(
