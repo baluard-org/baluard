@@ -377,6 +377,326 @@ fn e2e_space_settings_set_get() {
         .stderr(predicates::str::contains("between 1 and 5"));
 }
 
+/// G11 phase 2: the full CLI org-admin surface against a family vault.
+/// Groups, policies, space lifecycle/kit, the D61 claim surface, the
+/// leave journey, member bookkeeping, activity, and the destructive
+/// gate (no --yes refuses in non-interactive runs).
+#[test]
+fn e2e_cli_org_admin_surface() {
+    let guard = spawn_daemon(TempDir::new().expect("tmp"));
+
+    // Family vault (kit auto-enabled, Shared collection, Guardians group).
+    baluard_daemon(&guard)
+        .args([
+            "init",
+            "--name",
+            "Admin Surface",
+            "--slug",
+            "baluard-adminsurf",
+            "--family",
+            "--json",
+        ])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-adminsurf"])
+        .assert()
+        .success();
+    baluard_daemon(&guard).args(["unlock"]).assert().success();
+
+    // Groups: create, list, member add, rename.
+    let create_out = baluard_daemon(&guard)
+        .args(["groups", "create", "Sitters"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let create_text = String::from_utf8(create_out).expect("utf8");
+    let sitters_id = create_text
+        .lines()
+        .find(|l| l.contains("Group created:"))
+        .and_then(|l| l.split("Group created: ").nth(1))
+        .map(|s| s.trim_end_matches('.').to_string())
+        .expect("group id from create output");
+    baluard_daemon(&guard)
+        .args(["groups", "list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Guardians"))
+        .stdout(predicates::str::contains("Sitters"));
+
+    // Policies: set + read back.
+    // Policies mirror the space-knob vocabulary (validate_value is the
+    // same table space-settings uses).
+    baluard_daemon(&guard)
+        .args(["policies", "set", r#"{"join_approval":"code"}"#])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Policies updated."));
+    baluard_daemon(&guard)
+        .args(["policies", "list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("join_approval"));
+    baluard_daemon(&guard)
+        .args(["policies", "set", r#"{"bogus_key":1}"#])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not a policy"));
+
+    // Member bookkeeping: set-email shows in the roster; the owner row
+    // refuses the minor flag; a bogus id refuses loudly.
+    let out = baluard_daemon(&guard)
+        .args(["members", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).expect("utf8");
+    let self_id = text
+        .lines()
+        .find(|l| l.starts_with('*'))
+        .expect("self row")
+        .split_whitespace()
+        .nth(1)
+        .expect("member id token")
+        .to_string();
+    baluard_daemon(&guard)
+        .args([
+            "members",
+            "set-email",
+            &self_id,
+            "--email",
+            "owner@e2e.test",
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Email updated."));
+    baluard_daemon(&guard)
+        .args(["members", "list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("owner@e2e.test"));
+    baluard_daemon(&guard)
+        .args(["members", "set-minor", &self_id, "--minor"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("cannot be flagged"));
+    baluard_daemon(&guard)
+        .args([
+            "members",
+            "set-minor",
+            "00000000-0000-0000-0000-000000000000",
+            "--minor",
+        ])
+        .assert()
+        .failure();
+
+    // D61 claim surface: nothing pending; the owner row refuses a
+    // self-departure until ownership moves.
+    baluard_daemon(&guard)
+        .args(["members", "contest-status"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No ownership claim is pending."));
+    baluard_daemon(&guard)
+        .args(["members", "leave"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("transfer ownership"));
+
+    // Space lifecycle: family creation leaves the kit enabled and the
+    // vault flipped.
+    baluard_daemon(&guard)
+        .args(["space", "kit-status"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("enabled."));
+    baluard_daemon(&guard)
+        .args(["space", "status"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(r#""flipped":true"#));
+
+    // Destructive gate: no --yes in a non-interactive run refuses
+    // before any request is sent.
+    baluard_daemon(&guard)
+        .args(["members", "reset", &self_id])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("refusing without confirmation"));
+
+    // Activity: the timeline endpoint answers with rows or an empty list.
+    baluard_daemon(&guard)
+        .args(["activity", "--limit", "5"])
+        .assert()
+        .success();
+
+    // Destructive executions on a fixture member (minimal live Editor
+    // row per the G26 recipe). Reset with --yes issues a code; the
+    // member leaves and the admin approves the departure; a re-invited
+    // style row is removed with --yes. set-email --clear rounds out
+    // the email surface.
+    let member_id = "11111111-2222-3333-4444-555555555555";
+    let member_path = guard
+        .path()
+        .join("data")
+        .join("vaults")
+        .join("baluard-adminsurf")
+        .join("meta")
+        .join("members")
+        .join(format!("{member_id}.json"));
+    std::fs::create_dir_all(member_path.parent().unwrap()).expect("members dir");
+    std::fs::write(
+        &member_path,
+        format!(
+            r#"{{"id":"{member_id}","display_name":"Fixture Member","role":"editor","trust":"channel"}}"#
+        ),
+    )
+    .expect("write member row");
+
+    baluard_daemon(&guard)
+        .args(["members", "reset", member_id, "--yes"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Member reset. Successor row:"))
+        .stdout(predicates::str::contains("Reset code"));
+    // The fixture row is now tombstoned; removal of a reset row refuses.
+    baluard_daemon(&guard)
+        .args(["members", "remove", member_id, "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("already tombstoned"));
+
+    // A live row: removal executes the full ceremony.
+    let member2 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    // Group keys wrap to the member's share key, so the fixture row
+    // needs the identity wrap/signing keys; the founder row carries a
+    // usable pair to copy.
+    let founder_row: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            guard
+                .path()
+                .join("data")
+                .join("vaults")
+                .join("baluard-adminsurf")
+                .join("meta")
+                .join("members")
+                .join(format!("{self_id}.json")),
+        )
+        .expect("read founder row"),
+    )
+    .expect("parse founder row");
+    let identity_keys = format!(
+        r#","identity_signing_pubkey":"{}","identity_wrap_pubkey":"{}""#,
+        founder_row["identity_signing_pubkey"]
+            .as_str()
+            .unwrap_or(""),
+        founder_row["identity_wrap_pubkey"].as_str().unwrap_or("")
+    );
+    let member2_row = |name: &str| {
+        format!(
+            r#"{{"id":"{member2}","display_name":"{name}","role":"viewer","trust":"channel"{identity_keys}}}"#
+        )
+    };
+    std::fs::write(
+        guard
+            .path()
+            .join("data")
+            .join("vaults")
+            .join("baluard-adminsurf")
+            .join("meta")
+            .join("members")
+            .join(format!("{member2}.json")),
+        member2_row("Fixture Two"),
+    )
+    .expect("write member row 2");
+    baluard_daemon(&guard)
+        .args(["groups", "add-member", &sitters_id, member2])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Member added"));
+    baluard_daemon(&guard)
+        .args(["groups", "rename", &sitters_id, "Sitters2"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Group renamed."));
+    baluard_daemon(&guard)
+        .args(["groups", "delete", &sitters_id, "--yes"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Group deleted."));
+    baluard_daemon(&guard)
+        .args(["groups", "delete", &sitters_id, "--yes"])
+        .assert()
+        .failure();
+    baluard_daemon(&guard)
+        .args(["members", "remove", member2, "--yes"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Removed 1 member(s)."));
+
+    // set-email --clear clears the owner's address.
+    baluard_daemon(&guard)
+        .args(["members", "set-email", &self_id, "--clear"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Email cleared."));
+    baluard_daemon(&guard)
+        .args(["members", "set-email", &self_id])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("pass --email"));
+
+    // Leave journey: the fixture re-joins (fresh row), files a
+    // departure, and the admin approves it with --yes.
+    std::fs::write(
+        guard
+            .path()
+            .join("data")
+            .join("vaults")
+            .join("baluard-adminsurf")
+            .join("meta")
+            .join("members")
+            .join(format!("{member2}.json")),
+        member2_row("Fixture Two"),
+    )
+    .expect("rewrite member row 2");
+    baluard_daemon(&guard)
+        .args(["members", "leaves"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No pending departures."));
+    let leave_dir = guard
+        .path()
+        .join("data")
+        .join("vaults")
+        .join("baluard-adminsurf")
+        .join("meta")
+        .join("members")
+        .join(member2)
+        .join("leave.json");
+    std::fs::create_dir_all(leave_dir.parent().unwrap()).expect("leave dir");
+    std::fs::write(
+        &leave_dir,
+        r#"{"format":"baluard.leave.v1","requested_at":1}"#,
+    )
+    .expect("write leave record");
+    baluard_daemon(&guard)
+        .args(["members", "leaves"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Fixture Two"));
+    baluard_daemon(&guard)
+        .args(["members", "approve-leave", member2, "--yes"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Departure executed"))
+        .stdout(predicates::str::contains("Collections rotated: 0."));
+}
+
 /// Parse daemon-mode `init --json`: the JSON object is its own stdout line
 /// after human progress lines.
 fn daemon_init_json(guard: &DaemonGuard, slug: &str) -> serde_json::Value {

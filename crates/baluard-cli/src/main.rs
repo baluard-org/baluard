@@ -240,6 +240,32 @@ enum Commands {
         action: MemberAction,
     },
 
+    /// Manage shared-folder access groups (admin).
+    Groups {
+        #[command(subcommand)]
+        action: GroupAction,
+    },
+
+    /// Advisory policy recommendations (admin).
+    Policies {
+        #[command(subcommand)]
+        action: PolicyAction,
+    },
+
+    /// Space lifecycle: team-shape conversion, purpose, and the
+    /// recovery kit.
+    Space {
+        #[command(subcommand)]
+        action: SpaceAction,
+    },
+
+    /// Recent share events for this vault.
+    Activity {
+        /// How many events to show (max 500).
+        #[arg(long, default_value_t = 50)]
+        limit: u64,
+    },
+
     /// Contact cards and the Level 2 identity check.
     Contacts {
         #[command(subcommand)]
@@ -612,6 +638,83 @@ enum MemberAction {
         #[arg(long)]
         no_revoke: bool,
     },
+    /// Remove members from the vault. Rotates the keys of every
+    /// collection they could open. Destructive.
+    Remove {
+        /// Member ids from `baluard members list`.
+        member_ids: Vec<String>,
+        /// Confirm without the typed prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Proceed while the provider seat check is unreachable.
+        #[arg(long)]
+        offline_override: bool,
+    },
+    /// Reset a member row (lost or stolen device). The member rejoins
+    /// with the one-time reset code; groups and grants are pruned and
+    /// must be re-granted. Destructive.
+    Reset {
+        /// Member id from `baluard members list`.
+        member_id: String,
+        /// Confirm without the typed prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Hand ownership to another member (you keep admin rank).
+    Transfer {
+        /// Member id from `baluard members list`.
+        member_id: String,
+        /// Confirm without the typed prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Claim ownership when the owner cannot act (admin rank). On a
+    /// family vault this starts the owner's contest window instead of
+    /// taking effect immediately.
+    Claim {
+        /// Member id from `baluard members list`.
+        member_id: String,
+    },
+    /// Show a pending ownership claim against the current owner.
+    ContestStatus,
+    /// Cancel a pending ownership claim (owner only).
+    ContestCancel,
+    /// Set or clear a member's email (empty --email clears it).
+    SetEmail {
+        /// Member id from `baluard members list`.
+        member_id: String,
+        /// New email, or omit with --clear to remove it.
+        #[arg(long)]
+        email: Option<String>,
+        /// Remove the email instead of setting one.
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Flag or unflag a member as a minor (family vaults only).
+    SetMinor {
+        /// Member id from `baluard members list`.
+        member_id: String,
+        /// Set the flag; omit to clear it.
+        #[arg(long)]
+        minor: bool,
+    },
+    /// File your own departure request. Owners must transfer first.
+    Leave,
+    /// List pending departure requests (admin).
+    Leaves,
+    /// Execute an approved departure: removal with tombstone 'left',
+    /// collection-key rotation for everything the leaver could open,
+    /// and a kit re-issue (new phrase shown once) if a kit existed.
+    ApproveLeave {
+        /// Member id from `baluard members leaves`.
+        member_id: String,
+        /// Confirm without the typed prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Proceed while the provider seat check is unreachable.
+        #[arg(long)]
+        offline_override: bool,
+    },
     /// List pending asks: join confirmations and access requests.
     Requests,
     /// Confirm a pending join (the member becomes a space member).
@@ -634,6 +737,91 @@ enum MemberAction {
     Deny {
         request_id: String,
         requester_member_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum GroupAction {
+    /// List access groups with their members.
+    List,
+    /// Create an access group. Grants can target it by name.
+    Create {
+        /// Group name.
+        name: String,
+    },
+    /// Rename a group.
+    Rename {
+        /// Group id from `baluard groups list`.
+        id: String,
+        /// New group name.
+        name: String,
+    },
+    /// Delete a group. Access given only through the group is removed.
+    Delete {
+        /// Group id from `baluard groups list`.
+        id: String,
+        /// Confirm without the typed prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Add a member to a group.
+    AddMember {
+        /// Group id from `baluard groups list`.
+        id: String,
+        /// Member id from `baluard members list`.
+        member_id: String,
+    },
+    /// Remove a member from a group.
+    RemoveMember {
+        /// Group id from `baluard groups list`.
+        id: String,
+        /// Member id from `baluard members list`.
+        member_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyAction {
+    /// List advisory policy recommendations.
+    List,
+    /// Replace the recommendations with a JSON object. Advisory only:
+    /// members see the suggestions, nothing is enforced.
+    Set {
+        /// JSON object, e.g. '{"share_defaults":"ask"}'.
+        json: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SpaceAction {
+    /// Prepare the space (write the member-wrap scaffolding).
+    Prepare,
+    /// Show the space status report.
+    Status,
+    /// Convert the vault to team shape (org conversion; needs a
+    /// family or organization purpose).
+    Flip,
+    /// Set the vault purpose: family or org. Immutable once set.
+    SetPurpose {
+        /// family or org.
+        purpose: String,
+    },
+    /// Enable the Space Recovery Kit (or rotate it, showing the new
+    /// phrase once). Second-admin confirmation applies when armed.
+    KitEnable,
+    /// Disable the recovery kit (needs a kit to exist). Confirm with
+    /// --yes or the typed prompt.
+    KitDisable {
+        /// Confirm without the typed prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Show whether the recovery kit is enabled.
+    KitStatus,
+    /// Move the vault's git remote to a new clone URL.
+    Migrate {
+        /// New repository clone URL.
+        clone_url: String,
     },
 }
 
@@ -1727,6 +1915,20 @@ fn main() {
 
         Commands::Members { action } => {
             commands::handle_members(mode, cli.socket.as_deref(), &action)
+        }
+
+        Commands::Groups { action } => {
+            commands::handle_groups(mode, cli.socket.as_deref(), &action)
+        }
+
+        Commands::Policies { action } => {
+            commands::handle_policies(mode, cli.socket.as_deref(), &action)
+        }
+
+        Commands::Space { action } => commands::handle_space(mode, cli.socket.as_deref(), &action),
+
+        Commands::Activity { limit } => {
+            commands::handle_activity(mode, cli.socket.as_deref(), limit)
         }
 
         Commands::Contacts { action } => {
