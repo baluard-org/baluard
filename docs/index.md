@@ -60,3 +60,4 @@
 | [Plan: Family Spaces](plan-family-spaces.md) | One family vault born team-shaped: purpose flag, minors, kit rules, approved departure, contest window, founding copy. Steps 1-8 landed backend-side |
 | [Plan: Merged Search & Autofill](plan-merged-search.md) | G24: daemon fan-out over merge-eligible unlocked vaults with the personal_merge/merge_opt_in consent model. Steps 1-9 landed |
 | [Plan: Mobile Second Vault](plan-mobile-second-vault.md) | Create a named personal vault from the phone switcher (FFI display_name, phase-scoped cancel). Shipped 2026-10-16 |
+| [Plan: Hardware-Backed Key Seal](plan-hardware-backed-keys.md) | Secure Enclave / TPM wrapping of the device-key seal: closes the offline brute-force window (threat model D) and the audit-C3 keyring asymmetry, without touching wire format or recovery. Planned; phases 0-3 scoped |
