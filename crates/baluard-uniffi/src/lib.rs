@@ -1680,6 +1680,7 @@ impl MobileVault {
         request_json: String,
         origin: String,
         client_data_json: Option<String>,
+        client_data_hash: Option<String>,
         user_verified: bool,
     ) -> Result<String, BaluardError> {
         self.state
@@ -1687,6 +1688,7 @@ impl MobileVault {
                 &request_json,
                 &origin,
                 client_data_json.as_deref(),
+                client_data_hash.as_deref(),
                 user_verified,
             )
             .await
@@ -1701,6 +1703,7 @@ impl MobileVault {
         origin: String,
         credential_id: String,
         client_data_json: Option<String>,
+        client_data_hash: Option<String>,
         user_verified: bool,
     ) -> Result<String, BaluardError> {
         self.state
@@ -1709,6 +1712,7 @@ impl MobileVault {
                 &origin,
                 &credential_id,
                 client_data_json.as_deref(),
+                client_data_hash.as_deref(),
                 user_verified,
             )
             .await
@@ -2586,7 +2590,13 @@ mod tests {
         .to_string();
 
         let reg = vault
-            .passkey_provider_register(request.clone(), "https://example.com".into(), None, true)
+            .passkey_provider_register(
+                request.clone(),
+                "https://example.com".into(),
+                None,
+                None,
+                true,
+            )
             .await
             .expect("provider register");
         let r: serde_json::Value = serde_json::from_str(&reg).unwrap();
@@ -2635,6 +2645,7 @@ mod tests {
                 "https://example.com".into(),
                 r["credential_id"].as_str().unwrap().into(),
                 None,
+                None,
                 true,
             )
             .await
@@ -2658,6 +2669,7 @@ mod tests {
                 assertion_request.clone(),
                 "https://example.com".into(),
                 r["credential_id"].as_str().unwrap().into(),
+                None,
                 None,
                 false,
             )

@@ -545,6 +545,7 @@ pub async fn run_provider_registration(
     origin: &Url,
     request_json: &str,
     client_data_json: Option<Vec<u8>>,
+    client_data_hash: Option<Vec<u8>>,
     user_verified: bool,
     index: &PasskeyIndex,
 ) -> Result<ProviderRegistrationResult, String> {
@@ -590,14 +591,26 @@ pub async fn run_provider_registration(
     let mut client = Client::new(authenticator);
 
     let cdj_ref = client_data_json.as_deref();
-    let created = match cdj_ref {
-        Some(cdj) => {
-            let hash = Sha256::digest(cdj).to_vec();
-            client
-                .register(origin, options, DefaultClientDataWithCustomHash(hash))
-                .await
-        }
-        None => client.register(origin, options, DefaultClientData).await,
+    // Browser provider flows hand only the digest of their own client data
+    // (the framework's getClientDataHash); the browser replaces the served
+    // clientDataJSON with its own when forwarding, so signing the given hash
+    // is the correct behavior there. Callers supplying full bytes take the
+    // override path below.
+    let created = if let Some(hash) = client_data_hash.as_deref() {
+        client
+            .register(
+                origin,
+                options,
+                DefaultClientDataWithCustomHash(hash.to_vec()),
+            )
+            .await
+    } else if let Some(cdj) = cdj_ref {
+        let hash = Sha256::digest(cdj).to_vec();
+        client
+            .register(origin, options, DefaultClientDataWithCustomHash(hash))
+            .await
+    } else {
+        client.register(origin, options, DefaultClientData).await
     }
     .map_err(|e| format!("Registration failed: {e:?}"))?;
 
@@ -642,6 +655,7 @@ pub async fn run_provider_assertion(
     request_json: &str,
     credential_id_b64: &str,
     client_data_json: Option<Vec<u8>>,
+    client_data_hash: Option<Vec<u8>>,
     user_verified: bool,
     index: &PasskeyIndex,
 ) -> Result<ProviderAssertionResult, String> {
@@ -686,18 +700,23 @@ pub async fn run_provider_assertion(
     let mut client = Client::new(authenticator);
 
     let cdj_ref = client_data_json.as_deref();
-    let authenticated = match cdj_ref {
-        Some(cdj) => {
-            let hash = Sha256::digest(cdj).to_vec();
-            client
-                .authenticate(origin, options, DefaultClientDataWithCustomHash(hash))
-                .await
-        }
-        None => {
-            client
-                .authenticate(origin, options, DefaultClientData)
-                .await
-        }
+    let authenticated = if let Some(hash) = client_data_hash.as_deref() {
+        client
+            .authenticate(
+                origin,
+                options,
+                DefaultClientDataWithCustomHash(hash.to_vec()),
+            )
+            .await
+    } else if let Some(cdj) = cdj_ref {
+        let hash = Sha256::digest(cdj).to_vec();
+        client
+            .authenticate(origin, options, DefaultClientDataWithCustomHash(hash))
+            .await
+    } else {
+        client
+            .authenticate(origin, options, DefaultClientData)
+            .await
     }
     .map_err(|e| format!("Assertion failed: {e:?}"))?;
 
@@ -879,6 +898,7 @@ mod provider_tests {
             &origin,
             &create_options_json(&[9u8; 32], Some(RP), "required", None, -7, false),
             None,
+            None,
             true,
             &empty_index(),
         )
@@ -894,6 +914,7 @@ mod provider_tests {
         let result = run_provider_registration(
             &origin,
             &create_options_json(&challenge, Some(RP), "required", None, -7, true),
+            None,
             None,
             true,
             &empty_index(),
@@ -953,6 +974,7 @@ mod provider_tests {
             &origin,
             &create_options_json(&[1u8; 32], Some(RP), "required", None, -7, false),
             Some(browser_cdj.to_vec()),
+            None,
             true,
             &empty_index(),
         )
@@ -985,6 +1007,7 @@ mod provider_tests {
                 false,
             ),
             None,
+            None,
             true,
             &index,
         )
@@ -999,6 +1022,7 @@ mod provider_tests {
         let err = run_provider_registration(
             &origin,
             &create_options_json(&[1u8; 32], Some(RP), "required", None, -257, false),
+            None,
             None,
             true,
             &empty_index(),
@@ -1015,6 +1039,7 @@ mod provider_tests {
             &origin,
             &create_options_json(&[2u8; 32], None, "required", None, -7, false),
             None,
+            None,
             true,
             &empty_index(),
         )
@@ -1025,6 +1050,7 @@ mod provider_tests {
         let err = run_provider_registration(
             &origin,
             &create_options_json(&[3u8; 32], Some("other.com"), "required", None, -7, false),
+            None,
             None,
             true,
             &empty_index(),
@@ -1041,6 +1067,7 @@ mod provider_tests {
             &origin,
             &create_options_json(&[4u8; 32], Some(RP), "required", None, -7, false),
             None,
+            None,
             false,
             &empty_index(),
         )
@@ -1052,6 +1079,7 @@ mod provider_tests {
         let result = run_provider_registration(
             &origin,
             &create_options_json(&[5u8; 32], Some(RP), "discouraged", None, -7, false),
+            None,
             None,
             false,
             &empty_index(),
@@ -1075,6 +1103,7 @@ mod provider_tests {
             &assertion_options_json(&[10u8; 32], Some(RP), "required", Some(&[outsider])),
             &reg.credential_id_b64,
             None,
+            None,
             true,
             &index,
         )
@@ -1095,6 +1124,7 @@ mod provider_tests {
             &assertion_options_json(&[11u8; 32], Some(RP), "required", None),
             &reg.credential_id_b64,
             None,
+            None,
             true,
             &foreign,
         )
@@ -1108,6 +1138,7 @@ mod provider_tests {
             &assertion_options_json(&[11u8; 32], Some("other.com"), "required", None),
             &reg.credential_id_b64,
             None,
+            None,
             true,
             &index,
         )
@@ -1120,6 +1151,7 @@ mod provider_tests {
             &origin,
             &assertion_options_json(&[12u8; 32], Some(RP), "required", None),
             &reg.credential_id_b64,
+            None,
             None,
             false,
             &index,
@@ -1138,6 +1170,7 @@ mod provider_tests {
                 Some(&[&reg.credential_id_b64]),
             ),
             &reg.credential_id_b64,
+            None,
             None,
             true,
             &index,
@@ -1191,6 +1224,7 @@ mod provider_tests {
             &assertion_options_json(&[15u8; 32], Some(RP), "required", None),
             &reg.credential_id_b64,
             Some(browser_cdj.to_vec()),
+            None,
             true,
             &index,
         )
