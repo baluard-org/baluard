@@ -162,9 +162,9 @@ Surface: Mobile. Missing: register / assert. Platform WebAuthn APIs make this th
 Surface: CLI. Missing: every sharing command (members, approvals, collections, groups, policies, activity). With the CLI first-class, this is in scope, in two phases:
 
 - **Phase 1 (M) - the Bitwarden shape:** share an item to a space, collection list/assign, member list, member confirm. LANDED (2026-10-09): `baluard collections list|create|assign|grant|revoke` and `baluard members list|requests|approve-join|deny-join|approve|deny` (two queues: joins via `requests.*`, access asks via `collections.requests_*`). Phase 2 stays first item after 1.0.
-- **Phase 2 (L) - full admin:** invite, remove, roles, groups, policies, approvals, activity. Peer precedent: the 1Password CLI is a full admin surface (`user provision/confirm/suspend`, `group` CRUD, vault permission grants); the Bitwarden CLI deliberately keeps deep admin in the web console. A first-class Baluard CLI ships both phases - phase 2 may land just after 1.0.
+- **Phase 2 (L) - full admin:** invite, remove, roles, groups, policies, approvals, activity. Peer precedent: the 1Password CLI is a full admin surface (`user provision/confirm/suspend`, `group` CRUD, vault permission grants); the Bitwarden CLI deliberately keeps deep admin in the web console. A first-class Baluard CLI ships both phases.
 
-Decision: committed (2026-10-03, Esteban). Phase 1 in the CLI parity track; phase 2 first item after 1.0.
+Decision: committed (2026-10-03, Esteban); phase 2 promoted into the 1.0 scope (2026-10-19, Esteban - 'important for 1.0 release'). Remaining surface: members remove/reset/transfer/claim/contest, set-email, set-minor, leave approval, groups, policies, space lifecycle (prepare/flip/purpose/kit/migrate), activity.
 
 ### G12. iOS depth
 Surface: Mobile. Missing: autofill provider (Phase 7) plus the iOS actuals behind several partial cells above. Effort: L. Value: the second mobile platform. Decision: already planned as Phase 7; the remaining iOS actuals ride along.
@@ -211,7 +211,7 @@ Surface: Desktop + Mobile + CLI. CLOSED (2026-10-18): see the Closed table.
 
 Every 1.0-track gap is closed; what remains is scheduled or parked:
 
-1. **Post-1.0:** G11 phase 2 (full CLI admin - invite/remove/transfer/claim/reset, groups, policies, approvals, activity), G10 (mobile passkey ceremonies), G12 (iOS depth).
+1. **1.0 track:** G11 phase 2 (full CLI admin - remove/transfer/claim/reset, groups, policies, activity), promoted 2026-10-19. **Post-1.0:** G10 (mobile passkey ceremonies), G12 (iOS depth).
 3. **Parked on demand:** G23 (mobile admin ops: repoint/migrate, commit revocation).
 
 ## Out of parity scope by design

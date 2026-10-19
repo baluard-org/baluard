@@ -54,9 +54,9 @@ Status legend for unit rows: `todo` -> `reviewing` (dispatched, at least one rev
 
 | Unit | Scope | ~LOC | Focus | Status |
 |------|-------|------|-------|--------|
-| A1 crypto-primitives | crates/baluard-core/src/crypto/{aead,hkdf_derive,hpke_wrap,kdf,signature,totp}.rs | 2.4K | KDF params, nonce and domain separation, zeroize coverage, TOTP window, timing safety | reviewing |
-| A2 webauthn-ceremony | crates/baluard-core/src/crypto/webauthn/ | 1K | Challenge freshness, CeremonyCache TTL/FIFO/eviction, ES256 verify, counter monotonicity, SEC-1 boundary | reviewing |
-| A3 key-hierarchy | crates/baluard-core/src/keys/ | 0.9K | HKDF info labels, epoch derivation, SGK vs item key separation, RootKey handling | reviewing |
+| A1 crypto-primitives | crates/baluard-core/src/crypto/{aead,hkdf_derive,hpke_wrap,kdf,signature,totp}.rs | 2.4K | KDF params, nonce and domain separation, zeroize coverage, TOTP window, timing safety | triaged |
+| A2 webauthn-ceremony | crates/baluard-core/src/crypto/webauthn/ | 1K | Challenge freshness, CeremonyCache TTL/FIFO/eviction, ES256 verify, counter monotonicity, SEC-1 boundary | triaged |
+| A3 key-hierarchy | crates/baluard-core/src/keys/ | 0.9K | HKDF info labels, epoch derivation, SGK vs item key separation, RootKey handling | triaged |
 | A4 vault-format | crates/baluard-core/src/vault/{envelope,padding,keywrap,canary,cipher,index,manifest,slug,events,templates,avatar,attachment,identity,registry}.rs | 4.5K | Envelope shape, tier fit metadata leakage, index key derivation, canary verification, atomic staging | todo |
 | A5 handle-crud-unlock | crates/baluard-core/src/vault/handle.rs (slice: unlock/lock/CRUD/index hooks) | ~4.5K slice | Unlock tail (keywrap + canaries), already-unlocked short-circuit, index rebuild hooks, zeroize on drop | reviewed |
 | A6a handle-rotation-rekey | crates/baluard-core/src/vault/handle.rs (slice: rotate_identity, rotate_recovery_phrase, rotate_root_key, revoke_device_and_rekey, force_evict_and_rotate, epoch helpers, adopt_rekey_txn_root) | ~2.2K slice | Rekey coverage of every artifact class, crash markers, HPKE wraps for all devices, survivor adoption ordering, fail-closed txn adoption | todo |
@@ -117,22 +117,38 @@ Format: `| ID | Unit | Sev | Finding (one line) | Verdict | Fix commit / note |`
 
 | ID | Unit | Sev | Finding | Verdict | Fix commit / note |
 |----|------|-----|---------|---------|-------------------|
-| F-A1-PRA-01 | A1 | S1 | hpke_wrap.rs:105 `recipient_priv.to_bytes()` copy of device privkey lands on stack unzeroized | unverified | |
-| F-A1-PRA-02 | A1 | S1 | aead.rs:104 `build_nonce` shard id = 4 UUID bytes, birthday bound ~2^16 objects; canary counter hardcoded 0 risks nonce reuse | unverified | |
-| F-A1-PRA-03 | A1 | S2 | signature.rs uses ZIP-215 `verify`, not `verify_strict`; malleable sigs vs quorum/dedup barriers | unverified | |
-| F-A1-PRA-04 | A1 | S2 | totp.rs `urldecode` casts decoded bytes to chars, corrupts multibyte percent-encoded issuer/label | unverified | |
-| F-A1-PRA-05 | A1 | S3 | `build_aad` omits envelope header version byte; version tamper does not fail auth | unverified | |
-| F-A1-PRA-06 | A1 | S3 | kdf.rs `auto_calibrate` bakes the calibration salt into the returned KdfParams | unverified | |
-| F-A2-PRA-01 | A2 | S1 | store.rs Drop clears shared store on any clone drop, can wipe `take_new_credentials` before caller extracts | unverified | |
-| F-A2-PRA-02 | A2 | S1 | store.rs stores full COSE key (private scalar) into `key_value`; `PasskeyData::zeroize` never clears it | unverified | |
-| F-A2-PRA-03 | A2 | S2 | ceremony.rs generates local challenge instead of accepting an RP challenge (peer assumes external RP server; Phase-1 local-first design may reject) | unverified | |
-| F-A2-PRA-04 | A2 | S2 | counter update stores `counter.unwrap_or(0)`, not `max(stored, new)`; assertion extract failure falls back to 0 | unverified | |
-| F-A2-PRA-05 | A2 | S2 | CeremonyCache eviction picks an arbitrary expired entry, and duplicate-id insert evicts an unrelated ceremony | unverified | |
-| F-A3-PRA-01 | A3 | S1 | hierarchy.rs stack temps in `generate`/`from_bytes`/`item_key_expand` hold raw key bytes unzeroized | unverified | |
-| F-A3-PRA-02 | A3 | S1 | `derive_item_key` epoch check is `debug_assert` only: release builds ignore the epoch arg and fail open | unverified | |
-| F-A3-PRA-03 | A3 | S1 | rotation.rs wrap context `keywrap:rotation:{epoch}` lacks vault/device binding; cross-vault transplant passes tag verification | unverified | |
-| F-A3-PRA-04 | A3 | S1 | quorum `div_ceil(2)` = bare 50% for even N (epoch.rs + devices.rs); split-brain on N=4 | unverified | |
-| F-A3-PRA-05 | A3 | S3 | `derive_avatar_key` returns bare `[u8; 32]`, no zeroizing wrapper | unverified | |
+| F-A1-PRA-01 | A1 | S1 | hpke_wrap.rs:105 `recipient_priv.to_bytes()` copy of device privkey lands on stack unzeroized | confirmed | |
+| F-A1-PRA-02 | A1 | S1 | aead.rs:104 `build_nonce` shard id = 4 UUID bytes, birthday bound ~2^16 objects; canary counter hardcoded 0 risks nonce reuse | partially confirmed (legacy counter path; current cipher/index/attachment writes use 96-bit OsRng nonces; the live instance is the canary fixed nonce, folded into F-A2-PRC-16) | |
+| F-A1-PRA-03 | A1 | S2 | signature.rs uses ZIP-215 `verify`, not `verify_strict`; malleable sigs vs quorum/dedup barriers | confirmed | |
+| F-A1-PRA-04 | A1 | S2 | totp.rs `urldecode` casts decoded bytes to chars, corrupts multibyte percent-encoded issuer/label | confirmed | |
+| F-A1-PRA-05 | A1 | S3 | `build_aad` omits envelope header version byte; version tamper does not fail auth | confirmed | |
+| F-A1-PRA-06 | A1 | S3 | kdf.rs `auto_calibrate` bakes the calibration salt into the returned KdfParams | confirmed | |
+| F-A2-PRA-01 | A2 | S1 | store.rs Drop clears shared store on any clone drop, can wipe `take_new_credentials` before caller extracts | confirmed | |
+| F-A2-PRA-02 | A2 | S1 | store.rs stores full COSE key (private scalar) into `key_value`; `PasskeyData::zeroize` never clears it | confirmed | |
+| F-A2-PRA-03 | A2 | S2 | ceremony.rs generates local challenge instead of accepting an RP challenge (peer assumes external RP server; Phase-1 local-first design may reject) | rejected (Phase-1 local-first design: Baluard IS the relying party; the second reviewer did not flag it either) | |
+| F-A2-PRA-04 | A2 | S2 | counter update stores `counter.unwrap_or(0)`, not `max(stored, new)`; assertion extract failure falls back to 0 | confirmed | |
+| F-A2-PRA-05 | A2 | S2 | CeremonyCache eviction picks an arbitrary expired entry, and duplicate-id insert evicts an unrelated ceremony | confirmed | |
+| F-A3-PRA-01 | A3 | S1 | hierarchy.rs stack temps in `generate`/`from_bytes`/`item_key_expand` hold raw key bytes unzeroized | confirmed | |
+| F-A3-PRA-02 | A3 | S1 | `derive_item_key` epoch check is `debug_assert` only: release builds ignore the epoch arg and fail open | confirmed | |
+| F-A3-PRA-03 | A3 | S1 | rotation.rs wrap context `keywrap:rotation:{epoch}` lacks vault/device binding; cross-vault transplant passes tag verification | confirmed, low (implicit recipient-key binding limits the transplant; align with the P7 convention anyway) | |
+| F-A3-PRA-04 | A3 | S1 | quorum `div_ceil(2)` = bare 50% for even N (epoch.rs + devices.rs); split-brain on N=4 | confirmed (fix: strict majority N/2+1) | |
+| F-A3-PRA-05 | A3 | S3 | `derive_avatar_key` returns bare `[u8; 32]`, no zeroizing wrapper | confirmed | |
+| F-A2-PRC-01 | A2 | S1 | registration route serializes full passkey_data (private_key) into the response and finish_register trusts the echoed data; key_value carries the private COSE scalar (SEC-1 closure) | confirmed | |
+| F-A2-PRC-02 | A2 | S1 | dup of F-A2-PRA-02 (zeroize skips key_value) | confirmed (dup) | |
+| F-A2-PRC-03 | A2 | S1 | store/index materialize every vault passkey as plain heap per ceremony; passkey-types Passkey is Clone-only, Drop clear() does not wipe, full-vault conversion not RP-filtered | confirmed | |
+| F-A1-PRC-04 | A1 | S1 | derived Debug on TotpParams (secret) and PasskeyData (private_key, prf_key) prints key material under BALUARD_DEBUG | confirmed | |
+| F-A1-PRC-05 | A1 | S1 | aes-gcm/aes/argon2 run without their zeroize features; key schedules and Argon2 blocks stay in freed memory | confirmed | |
+| F-A2-PRC-06 | A2 | S2 | CeremonyCache::remove returns expired states; TTL not enforced at consumption | confirmed | |
+| F-A2-PRC-07 | A2 | S2 | assertion counter persisted only via client echo at finish (crash reuses counters, concurrent asserts emit duplicates, forged u32::MAX bricks credential) | confirmed (known-open SEC-1) | |
+| F-A1-PRC-08 | A1 | S2 | aead::decrypt authenticates the on-disk envelope.aad; only 4 call sites recompute expected AAD, so same-key file swap/rollback is unbound for the rest (fold in the F-A1-PRA-05 version byte) | confirmed | |
+| F-A3-PRC-09 | A3 | S2 | dup of F-A3-PRA-02 (derive_item_key silent in release) | confirmed (dup) | |
+| F-A1-PRC-10 | A1 | S2 | dup of F-A1-PRA-03 (verify vs verify_strict; callers pass untrusted keys: cards, contacts, reveals, rosters) | confirmed (dup) | |
+| F-A1-PRC-11 | A1 | S2 | calibration floor protects memory only (tc can reach 1 at 32 MiB) and derive_kek trusts unbounded plaintext KDF params (hostile memory_kib DoS at unlock) | confirmed | |
+| F-A1-PRC-12 | A1 | S2 | master password not NFKC-normalized (backup container does); NFC/NFD keyboard variance breaks cross-device unlock | confirmed | |
+| F-A1-PRC-13 | A1 | S2 | dup of F-A1-PRA-04 (urldecode Latin-1); adds: secret= not percent-decoded, to_uppercase expansion accepts non-base32 | confirmed (dup) | |
+| F-A3-PRC-14 | A3 | S3 | dup of F-A3-PRA-01 + F-A1-PRA-01 (stack/heap temp sweep); adds unwrap_key returning plain Vec and Clone impls | confirmed (dup) | |
+| F-A3-PRC-15 | A3 | S3 | mlock not reference-counted; dropping one key may unlock a page other live keys sit on | confirmed as accepted (best-effort by design, no fix) | |
+| F-A2-PRC-16 | A2 | S3 | bundle: canary fixed nonce (fold F-A1-PRA-02), quorum div_ceil (dup F-A3-PRA-04), misplaced doc comments in hkdf_derive.rs, rotation wrap context (dup F-A3-PRA-03), PasskeyIndex silently overwrites duplicate credential ids, allow_credentials None picks account by HashMap order, and rp_id substring URI match attaches passkeys to lookalike domains (use UriMatchStrategy instead) | partially confirmed (all real; severity per sub-item, match fix via UriMatchStrategy) | |
 | F-A5-PRA-01 | A5 | S1 | unlock skips canary verification when `meta/kek-canary.enc` missing (empty vec -> verify bypassed) | confirmed | |
 | F-A5-PRA-02 | A5 | S1 | `UnlockedState::drop` never zeroes `devkey_seal`; `IdentityKeys`/ed25519 SigningKey has no zeroize | confirmed | |
 | F-A5-PRA-03 | A5 | S1 | `Cipher` plaintext has no Drop/Zeroize; `zeroize_decrypted_cipher` not wired into CRUD drops | confirmed | |
