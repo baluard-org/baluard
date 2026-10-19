@@ -28,6 +28,7 @@ ssh-key = { version = "0.7.0-rc.10", features = ["ed25519", "ecdsa"] }
 
 [features]
 default = ["git-sync"]
+passkey-ceremony = ["baluard-core/passkey-ceremony"]
 git-sync = ["baluard-core/git-sync"]
 
 [dev-dependencies]
