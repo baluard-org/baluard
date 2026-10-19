@@ -95,11 +95,11 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 
 | Feature | CLI | Desktop | Mobile |
 |---|---|---|---|
-| Space create / flip | None | Yes | Yes |
-| Members (invite, remove, transfer, claim, reset) | Partial (list, invite, stage replies, role changes, both approval queues; no remove/transfer/claim/reset) | Yes | Yes |
+| Space create / flip | Yes (`space` prepare/flip/set-purpose + kit + migrate) | Yes | Yes |
+| Members (invite, remove, transfer, claim, reset) | Yes (full admin: remove, reset, transfer, claim + contest window, set-email, set-minor, leave journey) | Yes | Yes |
 | Join approvals | Yes (`members stage` + `approve-join` / `deny-join`) | Yes | Yes |
-| Space user groups | None (rides G11 phase 2) | Yes | Yes |
-| Collections CRUD + grants | None | Yes | Yes |
+| Space user groups | Yes (`groups` CRUD + membership) | Yes | Yes |
+| Collections CRUD + grants | Yes (`collections` list/create/assign/grant/revoke/delete) | Yes | Yes |
 | File an entry into a collection | Yes (`collections assign <cipher>`) | Yes (detail-view move, `cipher.set_collection`) | Yes (edit/create picker, `setCollection`) |
 | Access asks / requests | Yes (`members requests` + `approve` / `deny`) | Yes | Yes |
 | Space settings (all knobs) | Yes (`settings space get` / `space-set`) | Yes | Yes |
@@ -161,16 +161,16 @@ Surface: Mobile. Missing: register / assert. Platform WebAuthn APIs make this th
 ### G11. CLI sharing surface (phased)
 Surface: CLI. Missing: every sharing command (members, approvals, collections, groups, policies, activity). With the CLI first-class, this is in scope, in two phases:
 
-- **Phase 1 (M) - the Bitwarden shape:** share an item to a space, collection list/assign, member list, member confirm. LANDED (2026-10-09): `baluard collections list|create|assign|grant|revoke` and `baluard members list|requests|approve-join|deny-join|approve|deny` (two queues: joins via `requests.*`, access asks via `collections.requests_*`). Phase 2 stays first item after 1.0.
-- **Phase 2 (L) - full admin:** invite, remove, roles, groups, policies, approvals, activity. Peer precedent: the 1Password CLI is a full admin surface (`user provision/confirm/suspend`, `group` CRUD, vault permission grants); the Bitwarden CLI deliberately keeps deep admin in the web console. A first-class Baluard CLI ships both phases.
+- **Phase 1 (M) - the Bitwarden shape:** share an item to a space, collection list/assign, member list, member confirm. LANDED (2026-10-09): `baluard collections list|create|assign|grant|revoke` and `baluard members list|requests|approve-join|deny-join|approve|deny` (two queues: joins via `requests.*`, access asks via `collections.requests_*`).
+- **Phase 2 (L) - full admin.** LANDED (2026-10-19): `members remove|reset|transfer|claim|contest-status|contest-cancel|set-email|set-minor|leave|leaves|approve-leave` (irreversible verbs gated behind a typed confirm or `--yes`), `groups list|create|rename|delete|add-member|remove-member`, `policies list|set`, `space prepare|status|flip|set-purpose|kit-enable|kit-disable|kit-status|migrate`, and `activity`. Every verb rides an existing daemon route; the e2e flow `e2e_cli_org_admin_surface` pins the surface.
 
-Decision: committed (2026-10-03, Esteban); phase 2 promoted into the 1.0 scope (2026-10-19, Esteban - 'important for 1.0 release'). Remaining surface: members remove/reset/transfer/claim/contest, set-email, set-minor, leave approval, groups, policies, space lifecycle (prepare/flip/purpose/kit/migrate), activity.
+Decision: committed (2026-10-03, Esteban); phase 2 promoted into the 1.0 scope (2026-10-19) and landed the same day. CLOSED.
 
 ### G12. iOS depth
 Surface: Mobile. Missing: autofill provider (Phase 7) plus the iOS actuals behind several partial cells above. Effort: L. Value: the second mobile platform. Decision: already planned as Phase 7; the remaining iOS actuals ride along.
 
 ### G13. Space user groups on mobile
-Surface: Mobile + CLI. CLOSED (2026-10-10): mobile half landed - People > Groups card (create, rename, member add/remove, two-tap delete whose copy states that access given only through the group is removed, matching the core's grant-row pruning). The CLI part still rides G11 phase 2.
+Surface: Mobile + CLI. CLOSED (2026-10-10 mobile, 2026-10-19 CLI): mobile landed the People > Groups card (create, rename, member add/remove, two-tap delete whose copy states that access given only through the group is removed, matching the core's grant-row pruning); the CLI half landed as `baluard groups` in the G11 phase 2 wave.
 
 ### G14. CLI trash surface
 Surface: CLI. CLOSED (2026-10-03): see the Closed table.
@@ -211,7 +211,7 @@ Surface: Desktop + Mobile + CLI. CLOSED (2026-10-18): see the Closed table.
 
 Every 1.0-track gap is closed; what remains is scheduled or parked:
 
-1. **1.0 track:** G11 phase 2 (full CLI admin - remove/transfer/claim/reset, groups, policies, activity), promoted 2026-10-19. **Post-1.0:** G10 (mobile passkey ceremonies), G12 (iOS depth).
+1. **1.0 track:** G11 phase 2 LANDED (2026-10-19). The gap backlog is empty; 1.0 release-engineering scoping is the remaining conversation. **Post-1.0:** G10 (mobile passkey ceremonies), G12 (iOS depth).
 3. **Parked on demand:** G23 (mobile admin ops: repoint/migrate, commit revocation).
 
 ## Out of parity scope by design
@@ -220,7 +220,7 @@ Every 1.0-track gap is closed; what remains is scheduled or parked:
 - Browser extension Phase 2 (passkey ceremony, QR cross-device assertion): tracked in the browser extension plan, not here.
 - Desktop-only platform features (Touch ID, Windows Hello, tray) stay platform features.
 - iOS lags Android until Phase 7 lands; rows already say so.
-- Commit revocation is CLI-first by usefulness, not by omission: signed history is audited where scripts run. G11 phase 1 brings the sharing item ops to the CLI; the full admin surface follows in phase 2.
+- Commit revocation is CLI-first by usefulness, not by omission: signed history is audited where scripts run. The CLI sharing surface is complete (phase 1 2026-10-09, phase 2 2026-10-19).
 
 ## Closed
 
@@ -248,6 +248,7 @@ Every 1.0-track gap is closed; what remains is scheduled or parked:
 | G6 | this wave (kit) | kit status/replace/disable in Settings > Space with the fixed-threshold asks approved in the pending list, plus phrase-only kit recovery from onboarding that adopts the vault and hands off to unlock; the emergency escrow stays desktop-shaped |
 | G23 | parked | commit revocation stays CLI-first; repoint/migrate covered by CLI and desktop, kit recovery covers the phone-side loss story - rows return on demand |
 | G11 phase 1 | this wave | collections list/create/assign/grant/revoke plus members list and both pending queues: `approve-join`/`deny-join` over `requests.*` and `approve`/`deny` over `collections.requests_*`; the review caught that join confirmation and access asks are separate route families and the first draft wired only one |
+| G11 phase 2 | this wave | full CLI org admin: member remove/reset/transfer/claim/contest/set-email/set-minor plus the leave journey, `groups` CRUD, `policies`, `space` lifecycle + kit + migrate, `activity`; typed-confirm gate on irreversible verbs |
 
 ## Keeping this document current
 
