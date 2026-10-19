@@ -8,6 +8,7 @@ export function Button(props) {
   return (
     <button
       type={props.type || "button"}
+      data-testid={props["data-testid"]}
       onClick={props.onClick}
       disabled={props.disabled}
       class={`px-4 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed ${
