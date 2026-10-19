@@ -244,14 +244,13 @@ Everything outstanding lives here. Done waves live in the sections below; gap-le
 | # | Item | Notes |
 |---|------|-------|
 | 1 | **1.0 release engineering scoping** | The main open conversation. The old A-F pending matrix was restructured away in an earlier doc rewrite and predates ~20 shipped waves anyway - rebuild the release-engineering scope from scratch (versioning, packaging/installers per platform, signing, update story, docs/user guide, support surface). |
-| 2 | Firefox extension e2e leg | Deferred until Chromium was green; Chromium Ring 1 + Ring 2 are deterministic green (2026-10-17), so the Firefox leg is unblocked. |
-| 3 | Desktop e2e flow coverage | Harness (tauri-driver) is deterministic; only unlock + password-health flows exist. Candidates: vault CRUD, sharing surfaces, settings modals. |
+| 2 | Desktop e2e flow coverage (beyond CRUD) | The full entry-crud flow shipped green (2026-10-19) alongside unlock and password-health. Remaining candidates: sharing surfaces, settings modals. |
 
 ### Waiting on Esteban
 
 | # | Item | Notes |
 |---|------|-------|
-| 4 | Manual tests | Encrypted backup (desktop + phone) - mobile recovery PDF via SAF - desktop passkey rename - generator history - desktop family vault + kit card - D61 claim card - second-vault create/cancel - share-as-file on a Login - localized Security check (mobile + desktop) - desktop plain exports via the save dialog - folder-hierarchy re-import - shared-folder picker - stolen-device replace (CLI `members replace-device`, desktop People tab, mobile People screen). |
+| 4 | Manual tests | Encrypted backup (desktop + phone) - mobile recovery PDF via SAF - desktop passkey rename - generator history - desktop family vault + kit card - D61 claim card - second-vault create/cancel - share-as-file on a Login - localized Security check (mobile + desktop) - desktop plain exports via the save dialog - folder-hierarchy re-import - shared-folder picker - stolen-device replace (CLI `members replace-device`, desktop People tab, mobile People screen) - GitHub browser sign-in connect on desktop (Sync tab click-through). |
 | 5 | Decrypt-vector CI re-enable | Workflow is manual-dispatch per the no-remote-CI directive; the argon2 argument fix (049f972) is unverifiable until one dispatch runs. |
 
 ### Parked (decided - do not pick up without Esteban)

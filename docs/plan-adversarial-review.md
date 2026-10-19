@@ -58,15 +58,16 @@ Status legend for unit rows: `todo` -> `prc` -> `pra` (both reviewers in) -> `tr
 | A2 webauthn-ceremony | crates/baluard-core/src/crypto/webauthn/ | 1K | Challenge freshness, CeremonyCache TTL/FIFO/eviction, ES256 verify, counter monotonicity, SEC-1 boundary | todo |
 | A3 key-hierarchy | crates/baluard-core/src/keys/ | 0.9K | HKDF info labels, epoch derivation, SGK vs item key separation, RootKey handling | todo |
 | A4 vault-format | crates/baluard-core/src/vault/{envelope,padding,keywrap,canary,cipher,index,manifest,slug,events,templates,avatar,attachment,identity,registry}.rs | 4.5K | Envelope shape, tier fit metadata leakage, index key derivation, canary verification, atomic staging | todo |
-| A5 handle-crud-unlock | crates/baluard-core/src/vault/handle.rs (slice: unlock/lock/CRUD/index hooks) | ~6K slice | Unlock tail (keywrap + canaries), already-unlocked short-circuit, index rebuild hooks, zeroize on drop | todo |
-| A6 handle-rotation-rekey | crates/baluard-core/src/vault/handle.rs (slice: rotation/rekey/epoch txn/survivor adoption) | ~6K slice | Rekey coverage of every artifact class, crash markers, HPKE wraps for all devices, survivor adoption ordering | todo |
+| A5 handle-crud-unlock | crates/baluard-core/src/vault/handle.rs (slice: unlock/lock/CRUD/index hooks) | ~4.5K slice | Unlock tail (keywrap + canaries), already-unlocked short-circuit, index rebuild hooks, zeroize on drop | todo |
+| A6a handle-rotation-rekey | crates/baluard-core/src/vault/handle.rs (slice: rotate_identity, rotate_recovery_phrase, rotate_root_key, revoke_device_and_rekey, force_evict_and_rotate, epoch helpers, adopt_rekey_txn_root) | ~2.2K slice | Rekey coverage of every artifact class, crash markers, HPKE wraps for all devices, survivor adoption ordering, fail-closed txn adoption | todo |
+| A6b handle-space-wiring | crates/baluard-core/src/vault/handle.rs (slice: quorum/kit/approval gate fns, member ops, policies, contacts/reveals/package wrappers, collection_rotate_key) | ~1.6K slice | Gate logic before delegation, kit enable-over binding, minor-record path, wrapper-to-module contract drift | todo |
 | A7 device-fleet | crates/baluard-core/src/{device_manager,devices,device_privkey,emergency,recovery,recovery_sheet,secret_file,health,integrity}.rs | ~5K | Revoke-and-rekey preconditions, BIP-39 recovery, escrow rebuild, integrity walk | todo |
 | A8 space-engine | crates/baluard-core/src/vault/{space,space_meta,family,groups}.rs | 3.5K | Wrap chains (gkwrap/ckwrap), purpose union classification, flip invariants, pair gate | todo |
 | A9 space-governance | crates/baluard-core/src/vault/{members,approvals,policies,access_requests}.rs | 4.5K | Signed quorum asks, fixed kit thresholds, minor record protection, leave journey rotations, contest window | todo |
 | A10 space-resources | crates/baluard-core/src/vault/{collections,outbox,reveals,contacts,packages}.rs | 5.3K | Revoke-with-rotation, grant sweep convergence, reveal expiry model, guest opt-in policy check | todo |
 | A11 vault-creation | crates/baluard-core/src/vault/{creation,recovery_kit}.rs | 1.9K | Builder chain atomicity, kit escrow issuance, phrase returned exactly once | todo |
 
-Megafile slices (A5, A6, B1, B2, B5, B6, B8): dispatch defines anchors by symbol names from the live source at dispatch time; the slice boundaries recorded here are thematic, not line ranges. If a slice overshoots ~7K lines at dispatch, split it and renumber as -a/-b in this table.
+Megafile slices (A5, A6a, A6b, B1, B2, B5, B6, B8): dispatch defines anchors by symbol names from the live source at dispatch time; the slice boundaries recorded here are thematic, not line ranges. If a slice overshoots ~7K lines at dispatch, split it and renumber as -a/-b in this table. handle.rs (18.5K lines) is split three ways per the anchors above.
 
 ## Phase B: sync + IPC
 
