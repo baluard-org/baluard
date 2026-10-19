@@ -104,6 +104,7 @@ The highest-value layer and the cheapest. The CLI is the executable spec, so thi
   does not wrap as a Page — the harness drives it over a flat CDP session
   (`cdp-popup.mjs`). Firefox remains deferred. The wave also fixed two real
   toolbar-badge bugs (permission-gated `change.url`; internal `send()` shape).
+- Status (2026-10-19): Firefox GREEN - `just e2e-extension-firefox` drives the real Firefox build (geckodriver, temporary add-on install, real NMH + daemon) through pairing and an explicit-url matches probe. Two Firefox facts shaped it: extension pages opened as TABS carry sender.tab set, so background.js's B4 sender split now classifies extension-owned pages by ORIGIN (`sender.id` + `sender.url` under `chrome.runtime.getURL("")`) instead of by surface - web pages can never claim that origin, so the privilege boundary holds on both engines; and the popup-as-tab boot sees itself as the active tab, so its boot-time match pass is empty by design and matches are asserted via an explicit-url `bridge.match` probe over the same popup->worker->NMH->daemon chain. The toolbar badge is a toolbar-surface feature and stays covered by the Chromium ring.
 
 ## Feature-to-layer map
 
