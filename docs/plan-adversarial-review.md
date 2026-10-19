@@ -5,7 +5,7 @@
 
 ## Method
 
-Two independent external peer reviewers (R1 and R2) review every unit, read-only. The name-to-slot mapping lives in the dispatch commands, never in tracked docs or commits (no-naming rule). Both reviews for a unit land before any triage, so neither reviewer anchors the other.
+Two independent external peer reviewers (PRC and PRA) review every unit, read-only. The name-to-slot mapping lives in the dispatch commands, never in tracked docs or commits (no-naming rule). Both reviews for a unit land before any triage, so neither reviewer anchors the other.
 
 The orchestrator (this agent) triages every finding zero-trust against the code, applies confirmed fixes, runs the test suite, and updates this doc. Reviewers never edit code.
 
@@ -48,7 +48,7 @@ Every reviewer dispatch carries, self-contained:
 5. Update the unit row and the findings log in the same commit as the fix. Rejections and dups log at phase checkpoint.
 6. A unit is `verified` only when its fixes are committed with green tests AND both reviewer slots are done.
 
-Status legend for unit rows: `todo` -> `r1` (first reviewer in) -> `r2` (both in) -> `triage` (verdicts logged) -> `fixed` -> `verified`.
+Status legend for unit rows: `todo` -> `prc` -> `pra` (both reviewers in) -> `triage` (verdicts logged) -> `fixed` -> `verified`.
 
 ## Phase A: trust core
 
