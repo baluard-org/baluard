@@ -8,7 +8,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.fragment.app.FragmentActivity
+import androidx.credentials.CreatePublicKeyCredentialResponse
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import androidx.credentials.GetCredentialResponse
+import androidx.credentials.PublicKeyCredential
+import androidx.credentials.exceptions.CreateCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.provider.PendingIntentHandler
 import xyz.actitud.baluard.autofill.AutofillSaveToken
+import xyz.actitud.baluard.passkeys.OriginValidator
+import xyz.actitud.baluard.passkeys.PasskeyRequest
+import xyz.actitud.baluard.passkeys.PasskeyRequestManager
+import xyz.actitud.baluard.passkeys.PasskeyUiRequest
+import xyz.actitud.baluard.passkeys.UnlockReturnLeg
 import xyz.actitud.baluard.platform.AppContextHolder
 import xyz.actitud.baluard.platform.AutofillSavePrefill
 import xyz.actitud.baluard.ui.App
@@ -29,6 +42,106 @@ class MainActivity : FragmentActivity() {
 
     /** Captured login from the autofill save prompt, until the editor seeds. */
     private var autofillSavePrefill by mutableStateOf<AutofillSavePrefill?>(null)
+
+    /**
+     * Staged passkey provider request (G10): re-read from the intent and
+     * proven ours via [PasskeyRequestManager] — intent extras alone are
+     * never authority (§11).
+     */
+    private var passkeyRequest by mutableStateOf<PasskeyUiRequest?>(null)
+
+    private val originValidator by lazy { OriginValidator(this) }
+
+    // Fulfillment legs are short one-shot IO on the main-process session.
+    private val passkeyScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.Dispatchers.Main.immediate +
+            kotlinx.coroutines.SupervisorJob(),
+    )
+
+    private fun extractPasskeyRequest(intent: Intent?): PasskeyUiRequest? {
+        val id = intent?.getStringExtra(
+            xyz.actitud.baluard.passkeys.BaluardCredentialProviderService.EXTRA_REQUEST_ID,
+        ) ?: return null
+        return when (val staged = PasskeyRequestManager.peek(id)) {
+            is PasskeyRequest.Create -> PasskeyUiRequest.Create(
+                id = staged.id,
+                requestJson = staged.requestJson,
+                rpId = staged.rpId,
+                rpName = staged.rpName,
+                userName = staged.userName,
+                origin = staged.origin,
+                clientDataHash = staged.clientDataHash,
+            )
+
+            is PasskeyRequest.Assert -> PasskeyUiRequest.Assert(
+                id = staged.id,
+                requestJson = staged.requestJson,
+                rpId = staged.rpId,
+                origin = staged.origin,
+                clientDataHash = staged.clientDataHash,
+                credentialId = staged.credentialId,
+                allowCredentialIds = staged.allowCredentialIds,
+            )
+
+            is PasskeyRequest.Unlock -> PasskeyUiRequest.Unlock(id = staged.id)
+            null -> null
+        }
+    }
+
+    private fun completePasskey(resultJson: String) {
+        val request = passkeyRequest ?: return
+        val result = Intent()
+        when (request) {
+            is PasskeyUiRequest.Create -> PendingIntentHandler.setCreateCredentialResponse(
+                result,
+                CreatePublicKeyCredentialResponse(resultJson),
+            )
+
+            is PasskeyUiRequest.Assert -> PendingIntentHandler.setGetCredentialResponse(
+                result,
+                GetCredentialResponse(PublicKeyCredential(resultJson)),
+            )
+
+            is PasskeyUiRequest.Unlock -> return
+        }
+        PasskeyRequestManager.consume(request.id)
+        passkeyRequest = null
+        setResult(RESULT_OK, result)
+        finish()
+    }
+
+    private fun cancelPasskey() {
+        val request = passkeyRequest ?: return
+        val result = Intent()
+        when (request) {
+            is PasskeyUiRequest.Create -> PendingIntentHandler.setCreateCredentialException(
+                result,
+                CreateCredentialCancellationException(),
+            )
+
+            is PasskeyUiRequest.Assert -> PendingIntentHandler.setGetCredentialException(
+                result,
+                GetCredentialCancellationException(),
+            )
+
+            is PasskeyUiRequest.Unlock -> return
+        }
+        PasskeyRequestManager.consume(request.id)
+        passkeyRequest = null
+        setResult(RESULT_OK, result)
+        finish()
+    }
+
+    private fun completePasskeyUnlock() {
+        val request = passkeyRequest as? PasskeyUiRequest.Unlock ?: return
+        PasskeyRequestManager.consume(request.id)
+        passkeyRequest = null
+        passkeyScope.launch {
+            val answered = UnlockReturnLeg.answer(this@MainActivity, originValidator)
+            if (!answered) setResult(RESULT_CANCELED)
+            finish()
+        }
+    }
 
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,6 +170,29 @@ class MainActivity : FragmentActivity() {
         // death) must NOT re-seed a form the user already dismissed.
         if (savedInstanceState == null) {
             autofillSavePrefill = extractAutofillSave(intent)
+            passkeyRequest = extractPasskeyRequest(intent)
+        } else if (intent?.getStringExtra(
+                xyz.actitud.baluard.passkeys.BaluardCredentialProviderService.EXTRA_REQUEST_ID,
+            ) != null && passkeyRequest == null
+        ) {
+            // Recreation after process death: the in-memory manager died with
+            // it, so the staged request is unrecoverable — close the sheet
+            // cleanly instead of hanging it (agy BLOCKER-followup).
+            val result = Intent()
+            if (intent.action == xyz.actitud.baluard.passkeys.BaluardCredentialProviderService.ACTION_CREATE_PASSKEY) {
+                PendingIntentHandler.setCreateCredentialException(
+                    result,
+                    androidx.credentials.exceptions.CreateCredentialNoCreateOptionException(),
+                )
+            } else {
+                PendingIntentHandler.setGetCredentialException(
+                    result,
+                    androidx.credentials.exceptions.NoCredentialException(),
+                )
+            }
+            setResult(RESULT_OK, result)
+            finish()
+            return
         }
         setContent {
             // testTagsAsResourceId exposes Modifier.testTag values as
@@ -70,6 +206,10 @@ class MainActivity : FragmentActivity() {
                 App(
                     savePrefill = autofillSavePrefill,
                     onSavePrefillConsumed = { autofillSavePrefill = null },
+                    passkeyRequest = passkeyRequest,
+                    onPasskeyResult = { completePasskey(it) },
+                    onPasskeyCancel = { cancelPasskey() },
+                    onPasskeyUnlockComplete = { completePasskeyUnlock() },
                 )
             }
         }
@@ -79,6 +219,7 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         autofillSavePrefill = extractAutofillSave(intent)
+        extractPasskeyRequest(intent)?.let { passkeyRequest = it }
     }
 
     private fun extractAutofillSave(intent: Intent?): AutofillSavePrefill? {
@@ -116,6 +257,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        passkeyScope.cancel()
         AppContextHolder.clearActivity(this)
         super.onDestroy()
     }
