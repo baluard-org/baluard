@@ -3,6 +3,7 @@
 //! Holds an unlocked VaultHandle in memory behind a shared lock.
 //! The daemon routes gateway actions through this state.
 
+use baluard_core::crypto::webauthn::CeremonyState;
 use baluard_core::vault::handle::{CipherRead, VaultHandle};
 use base64::Engine;
 use std::path::PathBuf;
@@ -2150,6 +2151,367 @@ impl VaultState {
                 };
                 drop(cipher);
                 handle.update_cipher(id, &input).map_err(|e| e.to_string())
+            }
+            _ => Err("Not a Login cipher".into()),
+        }
+    }
+
+    // ── Provider-grade passkey ceremonies (plan-mobile-passkeys §8) ──
+    //
+    // The Android credential-provider surface. Pending credentials stay
+    // Rust-side behind ceremony ids (SEC-1); responses are
+    // PublicKeyCredential.toJSON()-shaped strings handed straight back to the
+    // calling platform.
+
+    fn vault_passkey_index(
+        &self,
+        guard: &tokio::sync::RwLockReadGuard<'_, Option<VaultHandle>>,
+    ) -> Result<baluard_core::crypto::webauthn::PasskeyIndex, String> {
+        use baluard_core::vault::handle::CipherRead;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
+        let mut ciphers = Vec::new();
+        for meta in &metas {
+            if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
+                ciphers.push(c.clone());
+            }
+        }
+        Ok(baluard_core::crypto::webauthn::PasskeyIndex::from_boxed_ciphers(&ciphers))
+    }
+
+    /// Run a provider registration ceremony. Args are discrete (UniFFI calls
+    /// this directly): the RP's create-options JSON, the validated origin, an
+    /// optional base64url clientDataHash from a privileged browser caller,
+    /// and the per-call UV grant.
+    ///
+    /// Returns `{ ceremony_id, attestation_response, rp_id, credential_id,
+    /// user_name }`; the fresh credential is held pending until
+    /// `passkey_store_registered` consumes it.
+    pub async fn passkey_provider_register(
+        &self,
+        request_json: &str,
+        origin: &str,
+        client_data_json_b64: Option<&str>,
+        user_verified: bool,
+    ) -> Result<String, String> {
+        use base64::Engine;
+
+        self.ceremony_cache.evict_expired().await;
+        let origin_url = url::Url::parse(origin).map_err(|e| format!("Invalid origin: {e}"))?;
+        let client_data_json = match client_data_json_b64.filter(|s| !s.is_empty()) {
+            Some(b64) => Some(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(b64.trim_end_matches('='))
+                    .map_err(|_| "client_data_json is not valid base64url".to_string())?,
+            ),
+            None => None,
+        };
+
+        let guard = self.inner.read().await;
+        let index = self.vault_passkey_index(&guard)?;
+        drop(guard);
+
+        let result = baluard_core::crypto::webauthn::run_provider_registration(
+            &origin_url,
+            request_json,
+            client_data_json,
+            user_verified,
+            &index,
+        )
+        .await?;
+
+        let ceremony_id = hex::encode(rand::random::<[u8; 32]>());
+        self.ceremony_cache
+            .insert(
+                ceremony_id.clone(),
+                CeremonyState::ProviderRegistration {
+                    passkey_data: Box::new(result.passkey_data.clone()),
+                    rp_id: result.rp_id.clone(),
+                    user_name: result.user_name.clone(),
+                    created_at: std::time::Instant::now(),
+                },
+            )
+            .await;
+
+        Ok(serde_json::json!({
+            "ceremony_id": ceremony_id,
+            "attestation_response": serde_json::from_str::<serde_json::Value>(
+                &result.attestation_response,
+            )
+            .unwrap_or_default(),
+            "rp_id": result.rp_id,
+            "credential_id": result.credential_id_b64,
+            "user_name": result.user_name,
+        })
+        .to_string())
+    }
+
+    /// Run a provider assertion ceremony for one selected credential.
+    /// Returns `{ ceremony_id, assertion_response, new_counter }`.
+    pub async fn passkey_provider_assert(
+        &self,
+        request_json: &str,
+        origin: &str,
+        credential_id: &str,
+        client_data_json_b64: Option<&str>,
+        user_verified: bool,
+    ) -> Result<String, String> {
+        use base64::Engine;
+
+        self.ceremony_cache.evict_expired().await;
+        let origin_url = url::Url::parse(origin).map_err(|e| format!("Invalid origin: {e}"))?;
+        let client_data_json = match client_data_json_b64.filter(|s| !s.is_empty()) {
+            Some(b64) => Some(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(b64.trim_end_matches('='))
+                    .map_err(|_| "client_data_json is not valid base64url".to_string())?,
+            ),
+            None => None,
+        };
+
+        let guard = self.inner.read().await;
+        let index = self.vault_passkey_index(&guard)?;
+        drop(guard);
+
+        let result = baluard_core::crypto::webauthn::run_provider_assertion(
+            &origin_url,
+            request_json,
+            credential_id,
+            client_data_json,
+            user_verified,
+            &index,
+        )
+        .await?;
+
+        let ceremony_id = hex::encode(rand::random::<[u8; 32]>());
+        self.ceremony_cache
+            .insert(
+                ceremony_id.clone(),
+                CeremonyState::ProviderAssertion {
+                    cipher_id: result.cipher_id,
+                    credential_id: result.credential_id_b64.clone(),
+                    new_counter: result.new_counter,
+                    created_at: std::time::Instant::now(),
+                },
+            )
+            .await;
+
+        Ok(serde_json::json!({
+            "ceremony_id": ceremony_id,
+            "assertion_response": serde_json::from_str::<serde_json::Value>(
+                &result.assertion_response,
+            )
+            .unwrap_or_default(),
+            "new_counter": result.new_counter,
+        })
+        .to_string())
+    }
+
+    /// Consume a pending provider registration: file the credential into the
+    /// chosen existing Login (`cipher_id`) or a new one built from
+    /// `new_login` (`{name, username?, uri?}`; uri defaults to
+    /// `https://<rp_id>`). Pending state lives only Rust-side, so nothing
+    /// client-supplied can choose the key material.
+    pub async fn passkey_store_registered(
+        &self,
+        ceremony_id: &str,
+        cipher_id: Option<&str>,
+        new_login: Option<&str>,
+    ) -> Result<String, String> {
+        // Peek-validate-then-remove: a locked vault or malformed input must
+        // not consume the pending ceremony (the fresh passkey exists only in
+        // this cache; losing it here would lock the user out of the RP).
+        let state = self
+            .ceremony_cache
+            .get(ceremony_id)
+            .await
+            .ok_or("Ceremony not found or expired")?;
+        let (pk_data, rp_id) = match &state {
+            CeremonyState::ProviderRegistration {
+                passkey_data: boxed_pk,
+                rp_id,
+                ..
+            } => ((&**boxed_pk).clone(), rp_id.clone()),
+            _ => return Err("Expected a provider registration ceremony".into()),
+        };
+        {
+            let guard = self.inner.read().await;
+            if guard.as_ref().is_none() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+        }
+        let parsed_cipher_id = match cipher_id.filter(|s| !s.is_empty()) {
+            Some(id_str) => {
+                Some(uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?)
+            }
+            None => None,
+        };
+
+        // Consume the ceremony; values from the peeked clone stay valid (a
+        // concurrent consumer would have made remove() return None here).
+        self.ceremony_cache
+            .remove(ceremony_id)
+            .await
+            .ok_or("Ceremony expired during validation")?;
+
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+
+        if let Some(id) = parsed_cipher_id {
+            // (existing-cipher append below holds the write guard throughout)
+            use baluard_core::vault::handle::CipherRead;
+            let cipher = match handle.get_cipher(id) {
+                Ok(CipherRead::Decrypted(c)) => c,
+                _ => return Err("Cipher not found".into()),
+            };
+            match &cipher.kind {
+                baluard_core::types::CipherKind::Login(data) => {
+                    let mut list = data.fido2_credentials.clone().unwrap_or_default();
+                    list.push(pk_data.clone());
+                    let mut updated = data.clone();
+                    updated.fido2_credentials = Some(list);
+                    let input = baluard_core::types::CipherInput {
+                        name: cipher.name.clone(),
+                        folder_id: cipher.folder_id,
+                        collection_id: None,
+                        favorite: cipher.favorite,
+                        reprompt: cipher.reprompt,
+                        tags: cipher.tags.clone(),
+                        kind: baluard_core::types::CipherKind::Login(updated),
+                        notes: cipher.notes.clone(),
+                        custom_fields: cipher.custom_fields.clone(),
+                        created_at: Some(cipher.created_at),
+                        password_history: cipher.password_history.clone(),
+                        attachments: cipher.attachments.clone(),
+                        archived: cipher.archived,
+                    };
+                    drop(cipher);
+                    handle
+                        .update_cipher(id, &input)
+                        .map_err(|e| e.to_string())?;
+                    return Ok(serde_json::json!({
+                        "cipher_id": id.to_string(),
+                        "credential_id": pk_data.credential_id,
+                    })
+                    .to_string());
+                }
+                _ => return Err("Not a Login cipher".into()),
+            }
+        }
+
+        // New login. Rides the state-layer add path so family/org vaults get
+        // the member add-routing defaults instead of a flat admin-only write.
+        let login: serde_json::Value = match new_login.filter(|s| !s.is_empty()) {
+            Some(s) => serde_json::from_str(s).map_err(|e| format!("Invalid new_login: {e}"))?,
+            None => serde_json::json!({}),
+        };
+        let name = login["name"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| pk_data.rp_name.clone().unwrap_or_else(|| rp_id.clone()));
+        let username = login["username"].as_str().map(|s| s.to_string());
+        let uri = login["uri"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("https://{}", pk_data.rp_id));
+        let input = baluard_core::types::CipherInput {
+            name,
+            folder_id: None,
+            collection_id: None,
+            favorite: false,
+            reprompt: false,
+            tags: vec!["passkey".to_string()],
+            kind: baluard_core::types::CipherKind::Login(baluard_core::types::LoginData {
+                username,
+                uris: vec![baluard_core::types::LoginUri {
+                    uri,
+                    match_strategy: baluard_core::types::UriMatchStrategy::Domain,
+                }],
+                fido2_credentials: Some(vec![pk_data.clone()]),
+                ..Default::default()
+            }),
+            notes: None,
+            custom_fields: Vec::new(),
+            created_at: None,
+            password_history: Vec::new(),
+            attachments: Vec::new(),
+            archived: false,
+        };
+        let payload = serde_json::to_string(&input).map_err(|e| format!("Serialize error: {e}"))?;
+        drop(guard);
+        let cipher_id = self.add_cipher(&payload).await.map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "cipher_id": cipher_id,
+            "credential_id": pk_data.credential_id,
+        })
+        .to_string())
+    }
+
+    /// Consume a pending provider assertion. Synced-model counters stay zero,
+    /// so this is normally a no-op; a nonzero counter is written back to the
+    /// credential (max of stored and observed).
+    pub async fn passkey_consume_assertion(&self, ceremony_id: &str) -> Result<String, String> {
+        let state = self
+            .ceremony_cache
+            .remove(ceremony_id)
+            .await
+            .ok_or("Ceremony not found or expired")?;
+        let (cipher_id, credential_id, new_counter) = match &state {
+            CeremonyState::ProviderAssertion {
+                cipher_id,
+                credential_id,
+                new_counter,
+                ..
+            } => (*cipher_id, credential_id.clone(), *new_counter),
+            _ => return Err("Expected a provider assertion ceremony".into()),
+        };
+        if new_counter == 0 {
+            return Ok(serde_json::json!({ "recorded": 0 }).to_string());
+        }
+
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        use baluard_core::vault::handle::CipherRead;
+        let cipher = match handle.get_cipher(cipher_id) {
+            Ok(CipherRead::Decrypted(c)) => c,
+            _ => return Err("Cipher not found".into()),
+        };
+        match &cipher.kind {
+            baluard_core::types::CipherKind::Login(data) => {
+                let mut list = data.fido2_credentials.clone().unwrap_or_default();
+                let found = list.iter_mut().find(|pk| pk.credential_id == credential_id);
+                let Some(pk) = found else {
+                    return Err(format!("Credential not found: {credential_id}"));
+                };
+                if new_counter > pk.counter {
+                    pk.counter = new_counter;
+                }
+                let recorded = pk.counter;
+                let mut updated = data.clone();
+                updated.fido2_credentials = Some(list);
+                let input = baluard_core::types::CipherInput {
+                    name: cipher.name.clone(),
+                    folder_id: cipher.folder_id,
+                    collection_id: None,
+                    favorite: cipher.favorite,
+                    reprompt: cipher.reprompt,
+                    tags: cipher.tags.clone(),
+                    kind: baluard_core::types::CipherKind::Login(updated),
+                    notes: cipher.notes.clone(),
+                    custom_fields: cipher.custom_fields.clone(),
+                    created_at: Some(cipher.created_at),
+                    password_history: cipher.password_history.clone(),
+                    attachments: cipher.attachments.clone(),
+                    archived: cipher.archived,
+                };
+                drop(cipher);
+                handle
+                    .update_cipher(cipher_id, &input)
+                    .map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({ "recorded": recorded }).to_string())
             }
             _ => Err("Not a Login cipher".into()),
         }

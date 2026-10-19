@@ -45,6 +45,7 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 # FFI boundary). Core stays idiomatic Rust with no UniFFI annotations.
 # WebAuthn authenticator ceremony (Phase 1)
 passkey = { workspace = true, optional = true }
+passkey-types = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 public-suffix = { workspace = true, optional = true }
 regex-lite = { workspace = true, optional = true }
@@ -62,6 +63,9 @@ core-foundation-sys = "0.8"
 
 [dev-dependencies]
 proptest.workspace = true
+# Assertion-signature oracle for the passkey provider tests (§8 of
+# plan-mobile-passkeys); production code never touches p256 directly.
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdsa", "std"] }
 tokio.workspace = true
 tempfile = "3"
 serial_test = "3"
@@ -75,7 +79,7 @@ public-suffix = "0.1"
 [features]
 default = ["full"]
 full = ["git-sync", "passkey-ceremony", "uri-match"]
-passkey-ceremony = ["dep:passkey", "dep:url", "dep:public-suffix", "dep:coset", "dep:tokio"]
+passkey-ceremony = ["dep:passkey", "dep:passkey-types", "passkey-types/serialize_bytes_as_base64_string", "dep:url", "dep:public-suffix", "dep:coset", "dep:tokio"]
 # Autofill URI matching (Phase 6): reuses the url + public-suffix deps already
 # pulled by passkey-ceremony; regex-lite is matcher-only.
 uri-match = ["dep:url", "dep:public-suffix", "dep:regex-lite"]
