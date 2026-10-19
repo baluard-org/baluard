@@ -323,20 +323,34 @@ export function compareVersions(a, b) {
 
 // ── Popup / content-script message routing ──
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // The extension's own origin base (invariant): chrome-extension://<id>/ on
+  // Chromium, moz-extension://<uuid>/ on Firefox.
+  const ownBase = chrome.runtime.getURL("");
   if (!msg || typeof msg.action !== "string") return;
 
   // B4 privilege split, enforced BEFORE anything else:
+  //   extension-origin page        => extension-owned page (popup/offscreen).
+  //                                  Full routing. An origin check, not a
+  //                                  surface check: Firefox sets sender.tab
+  //                                  on extension pages living in tabs (its
+  //                                  tab-borne popups/options), and a web
+  //                                  page can never claim the extension's
+  //                                  moz-extension origin.
   //   sender.tab present           => content script inside a page
   //                                  principal. ONLY the two inline routes
   //                                  are allowed; everything else is dropped
   //                                  (a page-compromised path must not reach
   //                                  vault.get/vault.add from a tab).
-  //   sender.id === extension id   => extension-owned page (popup/offscreen).
-  //                                  Full routing.
   //   anything else                => dropped.
-  const fromContentScript = !!(sender && sender.tab);
   const fromExtensionPage =
-    !fromContentScript && sender && sender.id === chrome.runtime.id;
+    sender &&
+    sender.id === chrome.runtime.id &&
+    typeof sender.url === "string" &&
+    // getURL("") is the extension's own origin base on every engine
+    // (chrome-extension://<id>/ on Chromium, moz-extension://<uuid>/ on
+    // Firefox, where runtime.id is the addon id and the uuid differs).
+    sender.url.startsWith(ownBase);
+  const fromContentScript = !fromExtensionPage && !!(sender && sender.tab);
   if (!fromContentScript && !fromExtensionPage) {
     console.warn("[baluard-sw] dropped message from unknown sender");
     return false;
