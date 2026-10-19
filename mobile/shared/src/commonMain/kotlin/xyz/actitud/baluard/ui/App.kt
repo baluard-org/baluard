@@ -125,6 +125,12 @@ fun App(
     // prefilled create editor, after unlock if the vault was locked.
     savePrefill: xyz.actitud.baluard.platform.AutofillSavePrefill? = null,
     onSavePrefillConsumed: () -> Unit = {},
+    // Passkey provider fulfillment (G10 §9): the staged framework request
+    // (validated at the trampoline gate) rendered as a full-screen overlay.
+    passkeyRequest: xyz.actitud.baluard.passkeys.PasskeyUiRequest? = null,
+    onPasskeyResult: (String) -> Unit = {},
+    onPasskeyCancel: () -> Unit = {},
+    onPasskeyUnlockComplete: () -> Unit = {},
 ) {
     BaluardTheme {
         Surface(
@@ -193,6 +199,14 @@ fun App(
             if (savePrefill != null) {
                 detailOrigin = null
                 nav = Nav.Edit(null)
+            }
+        }
+        // Passkey provider unlock leg (plan §4): the sheet waits for a
+        // re-list; fire once when the in-app unlock completes. The callback
+        // closes MainActivity with the fresh Begin response.
+        LaunchedEffect(passkeyRequest, unlocked) {
+            if (passkeyRequest is xyz.actitud.baluard.passkeys.PasskeyUiRequest.Unlock && unlocked) {
+                onPasskeyUnlockComplete()
             }
         }
         // Multi-Space switch (S4-9): a cached, still-unlocked target adopts
@@ -828,6 +842,38 @@ fun App(
                 },
             )
         }
+            // Passkey fulfillment overlay: renders over the hub (or over the
+            // unlock screen once a locked vault is unlocked — auth.vault()
+            // gates it, so a locked mid-flow lock re-routes to unlock).
+            passkeyRequest?.let { pk ->
+                when (pk) {
+                    is xyz.actitud.baluard.passkeys.PasskeyUiRequest.Create ->
+                        auth.vault()?.let { vault ->
+                            Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                                xyz.actitud.baluard.ui.passkey.PasskeyCreateScreen(
+                                    vault = vault,
+                                    request = pk,
+                                    onResult = onPasskeyResult,
+                                    onCancel = onPasskeyCancel,
+                                )
+                            }
+                        }
+
+                    is xyz.actitud.baluard.passkeys.PasskeyUiRequest.Assert ->
+                        auth.vault()?.let { vault ->
+                            Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                                xyz.actitud.baluard.ui.passkey.PasskeyAssertScreen(
+                                    vault = vault,
+                                    request = pk,
+                                    onResult = onPasskeyResult,
+                                    onCancel = onPasskeyCancel,
+                                )
+                            }
+                        }
+
+                    is xyz.actitud.baluard.passkeys.PasskeyUiRequest.Unlock -> Unit
+                }
+            }
             // Global toasts (desktop toastSignal parity): stacked bottom-center.
             ToastHost(
                 Modifier
