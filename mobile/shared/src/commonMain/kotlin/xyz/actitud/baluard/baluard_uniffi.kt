@@ -1023,6 +1023,14 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1237,6 +1245,14 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_notices_list(`ptr`: Pointer,`refreshTransport`: Byte,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_open_shared_contact(`ptr`: Pointer,`revealB64`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_passkey_consume_assertion(`ptr`: Pointer,`ceremonyId`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_passkey_provider_assert(`ptr`: Pointer,`requestJson`: RustBuffer.ByValue,`origin`: RustBuffer.ByValue,`credentialId`: RustBuffer.ByValue,`clientDataJson`: RustBuffer.ByValue,`userVerified`: Byte,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_passkey_provider_register(`ptr`: Pointer,`requestJson`: RustBuffer.ByValue,`origin`: RustBuffer.ByValue,`clientDataJson`: RustBuffer.ByValue,`userVerified`: Byte,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_passkey_store_registered(`ptr`: Pointer,`ceremonyId`: RustBuffer.ByValue,`cipherId`: RustBuffer.ByValue,`newLogin`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_policies_list(`ptr`: Pointer,
     ): Long
@@ -1696,6 +1712,14 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_open_shared_contact(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_consume_assertion(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_provider_assert(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_provider_register(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_store_registered(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_policies_list(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_rename_folder(
@@ -2125,6 +2149,18 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_open_shared_contact() != 22263.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_consume_assertion() != 28749.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_provider_assert() != 16224.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_provider_register() != 19300.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_store_registered() != 26442.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_policies_list() != 28869.toShort()) {
@@ -3690,6 +3726,34 @@ public interface MobileVaultInterface {
      * boundary; only the current code does).
      */
     suspend fun `openSharedContact`(`revealB64`: kotlin.String): kotlin.String
+    
+    /**
+     * Consume a pending provider assertion (records a nonzero counter;
+     * synced-model counters stay zero).
+     */
+    suspend fun `passkeyConsumeAssertion`(`ceremonyId`: kotlin.String): kotlin.String
+    
+    /**
+     * Run a provider assertion ceremony for one selected credential.
+     * Returns `{ ceremony_id, assertion_response, new_counter }`.
+     */
+    suspend fun `passkeyProviderAssert`(`requestJson`: kotlin.String, `origin`: kotlin.String, `credentialId`: kotlin.String, `clientDataJson`: kotlin.String?, `userVerified`: kotlin.Boolean): kotlin.String
+    
+    /**
+     * Run a provider registration ceremony. `request_json` is the RP's
+     * create options; `client_data_json` (base64url of the caller-built
+     * JSON) comes from privileged browser callers — the signature covers its
+     * SHA-256 and the response carries it verbatim. Returns
+     * `{ ceremony_id, attestation_response, rp_id, credential_id,
+     * user_name }`; file the credential with passkeyStoreRegistered.
+     */
+    suspend fun `passkeyProviderRegister`(`requestJson`: kotlin.String, `origin`: kotlin.String, `clientDataJson`: kotlin.String?, `userVerified`: kotlin.Boolean): kotlin.String
+    
+    /**
+     * File a pending provider registration into the vault: an existing
+     * Login's id, or `new_login` JSON `{name, username?}` for a fresh entry.
+     */
+    suspend fun `passkeyStoreRegistered`(`ceremonyId`: kotlin.String, `cipherId`: kotlin.String?, `newLogin`: kotlin.String?): kotlin.String
     
     /**
      * Published advisory org policies (S4-6): {policies: {knob:
@@ -6186,6 +6250,110 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_open_shared_contact(
                 thisPtr,
                 FfiConverterString.lower(`revealB64`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Consume a pending provider assertion (records a nonzero counter;
+     * synced-model counters stay zero).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `passkeyConsumeAssertion`(`ceremonyId`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_passkey_consume_assertion(
+                thisPtr,
+                FfiConverterString.lower(`ceremonyId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Run a provider assertion ceremony for one selected credential.
+     * Returns `{ ceremony_id, assertion_response, new_counter }`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `passkeyProviderAssert`(`requestJson`: kotlin.String, `origin`: kotlin.String, `credentialId`: kotlin.String, `clientDataJson`: kotlin.String?, `userVerified`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_passkey_provider_assert(
+                thisPtr,
+                FfiConverterString.lower(`requestJson`),FfiConverterString.lower(`origin`),FfiConverterString.lower(`credentialId`),FfiConverterOptionalString.lower(`clientDataJson`),FfiConverterBoolean.lower(`userVerified`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Run a provider registration ceremony. `request_json` is the RP's
+     * create options; `client_data_json` (base64url of the caller-built
+     * JSON) comes from privileged browser callers — the signature covers its
+     * SHA-256 and the response carries it verbatim. Returns
+     * `{ ceremony_id, attestation_response, rp_id, credential_id,
+     * user_name }`; file the credential with passkeyStoreRegistered.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `passkeyProviderRegister`(`requestJson`: kotlin.String, `origin`: kotlin.String, `clientDataJson`: kotlin.String?, `userVerified`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_passkey_provider_register(
+                thisPtr,
+                FfiConverterString.lower(`requestJson`),FfiConverterString.lower(`origin`),FfiConverterOptionalString.lower(`clientDataJson`),FfiConverterBoolean.lower(`userVerified`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * File a pending provider registration into the vault: an existing
+     * Login's id, or `new_login` JSON `{name, username?}` for a fresh entry.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `passkeyStoreRegistered`(`ceremonyId`: kotlin.String, `cipherId`: kotlin.String?, `newLogin`: kotlin.String?) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_passkey_store_registered(
+                thisPtr,
+                FfiConverterString.lower(`ceremonyId`),FfiConverterOptionalString.lower(`cipherId`),FfiConverterOptionalString.lower(`newLogin`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },

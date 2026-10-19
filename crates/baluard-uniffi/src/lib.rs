@@ -1663,6 +1663,84 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    // ── Passkey provider ceremonies (plan-mobile-passkeys section 8) ──
+    //
+    // Pending credentials stay Rust-side behind ceremony ids (SEC-1); the
+    // attestation/assertion responses are PublicKeyCredential.toJSON()-shaped
+    // JSON handed straight to the calling platform.
+
+    /// Run a provider registration ceremony. `request_json` is the RP's
+    /// create options; `client_data_json` (base64url of the caller-built
+    /// JSON) comes from privileged browser callers — the signature covers its
+    /// SHA-256 and the response carries it verbatim. Returns
+    /// `{ ceremony_id, attestation_response, rp_id, credential_id,
+    /// user_name }`; file the credential with passkeyStoreRegistered.
+    pub async fn passkey_provider_register(
+        &self,
+        request_json: String,
+        origin: String,
+        client_data_json: Option<String>,
+        user_verified: bool,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .passkey_provider_register(
+                &request_json,
+                &origin,
+                client_data_json.as_deref(),
+                user_verified,
+            )
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Run a provider assertion ceremony for one selected credential.
+    /// Returns `{ ceremony_id, assertion_response, new_counter }`.
+    pub async fn passkey_provider_assert(
+        &self,
+        request_json: String,
+        origin: String,
+        credential_id: String,
+        client_data_json: Option<String>,
+        user_verified: bool,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .passkey_provider_assert(
+                &request_json,
+                &origin,
+                &credential_id,
+                client_data_json.as_deref(),
+                user_verified,
+            )
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// File a pending provider registration into the vault: an existing
+    /// Login's id, or `new_login` JSON `{name, username?}` for a fresh entry.
+    pub async fn passkey_store_registered(
+        &self,
+        ceremony_id: String,
+        cipher_id: Option<String>,
+        new_login: Option<String>,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .passkey_store_registered(&ceremony_id, cipher_id.as_deref(), new_login.as_deref())
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Consume a pending provider assertion (records a nonzero counter;
+    /// synced-model counters stay zero).
+    pub async fn passkey_consume_assertion(
+        &self,
+        ceremony_id: String,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .passkey_consume_assertion(&ceremony_id)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Address book for the Level 2 contact check: rows carry the
     /// verification code both sides compare out-of-band.
     pub async fn contacts_list(&self) -> Result<String, BaluardError> {
@@ -2478,6 +2556,126 @@ mod tests {
     }
 
     // ── G2: import/export through the FFI (real vault, real crypto) ─────
+    #[tokio::test]
+    async fn passkey_provider_flow_via_ffi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pw".to_string(), "dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pw".to_string()).await.unwrap();
+
+        let challenge = "Y2hhbGxlbmdlLWJ5dGVzLWZpeGVkLTEyMzQ1Njc4";
+        let request = serde_json::json!({
+            "publicKey": {
+                "rp": {"id": "example.com", "name": "Example"},
+                "user": {
+                    "id": "dGVzdC11c2VyLWlkLTAwMDE",
+                    "name": "u@example.com",
+                    "displayName": "User One"
+                },
+                "challenge": challenge,
+                "pubKeyCredParams": [{"type": "public-key", "alg": -7}],
+                "authenticatorSelection": {
+                    "residentKey": "required",
+                    "userVerification": "required"
+                },
+                "extensions": {"credProps": true}
+            }
+        })
+        .to_string();
+
+        let reg = vault
+            .passkey_provider_register(request.clone(), "https://example.com".into(), None, true)
+            .await
+            .expect("provider register");
+        let r: serde_json::Value = serde_json::from_str(&reg).unwrap();
+        let ceremony_id = r["ceremony_id"].as_str().unwrap().to_string();
+        assert_eq!(r["rp_id"], "example.com");
+        assert_eq!(r["user_name"], "u@example.com");
+        // Browser-shaped response: base64url string fields.
+        // The attestation rides the envelope one level deeper: the
+        // PublicKeyCredential object itself is `attestation_response`.
+        let att = &r["attestation_response"];
+        assert!(att["response"]["authenticatorData"].is_string());
+        assert!(att["response"]["clientDataJSON"].is_string());
+        assert_eq!(att["type"], "public-key");
+        assert_eq!(
+            att["clientExtensionResults"]["credProps"]["rk"],
+            serde_json::json!(true)
+        );
+
+        // Pending credential is consumed into a new Login.
+        let stored = vault
+            .passkey_store_registered(
+                ceremony_id.clone(),
+                None,
+                Some(r#"{"name":"Example"}"#.into()),
+            )
+            .await
+            .expect("store registered");
+        let s: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        let cipher_id = s["cipher_id"].as_str().unwrap().to_string();
+        assert_eq!(s["credential_id"], r["credential_id"]);
+        assert_eq!(vault.list_ciphers().await.unwrap().len(), 1);
+
+        // The stored entry is assertable through the provider surface.
+        let assertion_request = serde_json::json!({
+            "publicKey": {
+                "challenge": challenge,
+                "rpId": "example.com",
+                "userVerification": "required",
+                "allowCredentials": [{"type": "public-key", "id": r["credential_id"]}]
+            }
+        })
+        .to_string();
+        let assertion = vault
+            .passkey_provider_assert(
+                assertion_request.clone(),
+                "https://example.com".into(),
+                r["credential_id"].as_str().unwrap().into(),
+                None,
+                true,
+            )
+            .await
+            .expect("provider assert");
+        let a: serde_json::Value = serde_json::from_str(&assertion).unwrap();
+        assert_eq!(a["new_counter"], 0, "synced model keeps the counter zero");
+        assert!(a["assertion_response"]["response"]["signature"].is_string());
+        assert!(a["assertion_response"]["response"]["userHandle"].is_string());
+        let consumed = vault
+            .passkey_consume_assertion(a["ceremony_id"].as_str().unwrap().into())
+            .await
+            .expect("consume assertion");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&consumed).unwrap()["recorded"],
+            0
+        );
+
+        // UV gate: Required plus no grant refuses.
+        let err = vault
+            .passkey_provider_assert(
+                assertion_request.clone(),
+                "https://example.com".into(),
+                r["credential_id"].as_str().unwrap().into(),
+                None,
+                false,
+            )
+            .await
+            .expect_err("required UV without a grant must fail");
+        assert!(format!("{err}").contains("Assertion failed"), "got: {err}");
+
+        // Pending state stays Rust-side: the FFI response never carries the
+        // private key, and the stored cipher holds it encrypted.
+        let reg_text = format!("{reg}");
+        assert!(!reg_text.contains("private_key"), "key leaked over FFI");
+        let detail = vault
+            .get_cipher(cipher_id, true)
+            .await
+            .expect("cipher readable");
+        assert!(format!("{detail}").contains("private_key"));
+    }
+
     #[tokio::test]
     async fn import_export_roundtrip_via_ffi() {
         let tmp = tempfile::tempdir().unwrap();
