@@ -27,6 +27,7 @@
 | [Translations & Localization](translations.md) | Guide for adding and maintaining desktop and mobile language translations |
 | [Progress](progress.md) | Implementation status, review history, pending work |
 | [E2E Testing Plan](e2e-testing.md) | The four-surface E2E strategy (CLI+daemon, Android Maestro, desktop WebdriverIO, extension Playwright): principles, harness conventions, phases, CI design. Phase 1 done; Phase 2 flows green on device |
+| [Adversarial Review Map](plan-adversarial-review.md) | Whole-repo review program: 36 review units across 4 phases (trust core, sync+IPC, clients, cross-cutting), dispatch contract, per-unit status, findings log. Active |
 | [Cover Commit Policy](threat-model.md#t14-cover-commit-correlation) | Timing-noise scheduling rules and rationale |
 
 ## Design
