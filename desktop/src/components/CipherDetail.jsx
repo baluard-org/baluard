@@ -899,6 +899,7 @@ export default function CipherDetail(props) {
             <Show when={!foreign()}>
             <>
               <button
+                data-testid="detail-edit"
                 onClick={startEdit}
                 class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
               >
@@ -922,6 +923,7 @@ export default function CipherDetail(props) {
                 </button>
               </Show>
               <button
+                data-testid="detail-delete"
                 onClick={() => props.onDelete?.(cipher().id)}
                 class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
               >

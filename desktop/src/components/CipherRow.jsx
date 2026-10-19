@@ -14,6 +14,7 @@ export default function CipherRow(props) {
 
   return (
     <button
+      data-testid="cipher-row"
       onClick={() => props.onSelect?.(props.cipher)}
       class={`w-full px-4 py-3 rounded-xl text-left transition-all cursor-pointer flex items-center gap-3 ${
         props.active

@@ -254,14 +254,14 @@ export default function AddEditCipherForm(props) {
       <>
         <div>
           <label class={FIELD_LABEL}>{t("entry.user")}</label>
-          <input placeholder={t("entry.usernamePlaceholder")} class={INPUT_CLS} value={newCipher().username} onInput={e => update("username", e.target.value)} {...SECURE_INPUT} />
+          <input data-testid="form-username" placeholder={t("entry.usernamePlaceholder")} class={INPUT_CLS} value={newCipher().username} onInput={e => update("username", e.target.value)} {...SECURE_INPUT} />
         </div>
 
         {/* Password generator */}
         <div>
           <div class="mb-1.5"><label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.pass")}</label></div>
           <div class="relative flex items-center">
-            <input placeholder={t("entry.passwordPlaceholder")} type={showPassword() ? "text" : "password"} class={MONO_CLS + " pr-44"} value={newCipher().password} onInput={e => update("password", e.target.value)} {...SECURE_INPUT} />
+            <input data-testid="form-password" placeholder={t("entry.passwordPlaceholder")} type={showPassword() ? "text" : "password"} class={MONO_CLS + " pr-44"} value={newCipher().password} onInput={e => update("password", e.target.value)} {...SECURE_INPUT} />
             <div class="absolute right-2 flex items-center gap-1.5">
               <button type="button" onClick={() => setShowPassword(!showPassword())} class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer border border-transparent hover:border-[var(--color-border)]" title={showPassword() ? t("common.hide") : t("common.show")}>
                 <Show when={showPassword()} fallback={<IconEye class="w-4 h-4" />}><IconEyeOff class="w-4 h-4" /></Show>
@@ -404,7 +404,7 @@ export default function AddEditCipherForm(props) {
 
           <div>
             <label class={FIELD_LABEL}>{t("entry.itemName")}</label>
-            <input placeholder={t("entry.namePlaceholder")} class={INPUT_CLS} value={newCipher().name} onInput={e => update("name", e.target.value)} {...SECURE_INPUT} />
+            <input data-testid="form-name" placeholder={t("entry.namePlaceholder")} class={INPUT_CLS} value={newCipher().name} onInput={e => update("name", e.target.value)} {...SECURE_INPUT} />
           </div>
 
           {/* Folder selector */}
@@ -697,7 +697,7 @@ export default function AddEditCipherForm(props) {
         </div>
       </div>
       <div class="flex gap-3 p-8 pt-0">
-        <button onClick={handleSave} class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99]">
+        <button data-testid="form-save" onClick={handleSave} class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99]">
           {t("entry.save")}
         </button>
         <button onClick={cancel} class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99]">
