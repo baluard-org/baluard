@@ -133,34 +133,34 @@ Format: `| ID | Unit | Sev | Finding (one line) | Verdict | Fix commit / note |`
 | F-A3-PRA-03 | A3 | S1 | rotation.rs wrap context `keywrap:rotation:{epoch}` lacks vault/device binding; cross-vault transplant passes tag verification | unverified | |
 | F-A3-PRA-04 | A3 | S1 | quorum `div_ceil(2)` = bare 50% for even N (epoch.rs + devices.rs); split-brain on N=4 | unverified | |
 | F-A3-PRA-05 | A3 | S3 | `derive_avatar_key` returns bare `[u8; 32]`, no zeroizing wrapper | unverified | |
-| F-A5-PRA-01 | A5 | S1 | unlock skips canary verification when `meta/kek-canary.enc` missing (empty vec -> verify bypassed) | unverified | |
-| F-A5-PRA-02 | A5 | S1 | `UnlockedState::drop` never zeroes `devkey_seal`; `IdentityKeys`/ed25519 SigningKey has no zeroize | unverified | |
-| F-A5-PRA-03 | A5 | S1 | `Cipher` plaintext has no Drop/Zeroize; `zeroize_decrypted_cipher` not wired into CRUD drops | unverified | |
-| F-A5-PRA-04 | A5 | S2 | update_cipher history-preservation `else if` chained at wrong level; wipes history when password unchanged and caller sent empty | unverified | |
-| F-A5-PRA-05 | A5 | S2 | update_cipher overwrites `kind` wholesale; passkeys in `fido2_credentials` destroyed when caller omits them | unverified | |
-| F-A5-PRA-06 | A5 | S2 | delete_folder hardcodes flat `ciphers/{id}.enc` path; collection-resident ciphers keep dangling folder_id | unverified | |
-| F-A5-PRA-07 | A5 | S2 | collect_descendant_ids loops forever on a folder parent cycle (insert result ignored) | unverified | |
-| F-A5-PRA-08 | A5 | S2 | delete_cipher/purge_old_trash remove the envelope but orphan `entries/{id}` attachment dirs | unverified | |
-| F-A5-PRA-09 | A5 | S3 | restore_cipher/purge_old_trash skip the `writes_allowed()` gate every other mutator has | unverified | |
-| F-A5-PRA-10 | A5 | S3 | rename_folder lacks the sibling duplicate-name check create_folder_with_parent enforces | unverified | |
-| F-A5-PRC-01 | A5 | S1 | dup of F-A5-PRA-01 (canary skip); adds: zero-byte file behaves as missing, `change_master_password` has the same `exists()` skip, rotate_recovery_phrase comment states the fail-closed intent | unverified | |
-| F-A5-PRC-02 | A5 | S1 | dup of F-A5-PRA-03 (cipher plaintext zeroize); adds: `zeroize_decrypted_cipher` itself skips Identity/BankAccount/Passport/DriversLicense/URIs/password_history/fido2 key_value, and is called only from rotation paths | unverified | |
-| F-A5-PRC-03 | A5 | S1 | dup of F-A5-PRA-02 (devkey_seal unzeroized); adds: `derive_kek` returns plain `[u8;32]`, unlock_tail locals never wiped, devkey_seal() returns a plain copy | unverified | |
-| F-A5-PRC-04 | A5 | S1 | runtime state.rs:8062 `cipher_to_json` serializes `kind` wholesale: fido2 `private_key`/`prf_key` cross IPC inside get_cipher payload, contradicting the never-crosses-IPC invariant | cross-slice: verify under B5 | |
-| F-A5-PRC-05 | A5 | S2 | lock() spawns normalize_timestamps_bg that resets mtimes of everything under trash/ to vault creation; purge_old_trash(30) judges by mtime, so after one lock+unlock the whole trash purges | unverified | |
-| F-A5-PRC-06 | A5 | S2 | dup of F-A5-PRA-06 (delete_folder flat path); adds trashed ciphers also skipped | unverified | |
-| F-A5-PRC-07 | A5 | S2 | rebuild_tag_index rebuilds from cipher metas only, pruning empty tags made by create_tag; runtime calls it after every update | unverified | |
-| F-A5-PRC-08 | A5 | S2 | index staleness check compares id sets only; a pulled edit to an existing cipher does not invalidate, no rebuild after pull | unverified | |
-| F-A5-PRC-09 | A5 | S2 | dup of F-A5-PRA-08 (purge orphans attachments) | unverified | |
-| F-A5-PRC-10 | A5 | S2 | save_profile_and_strip_settings uses get_settings().unwrap_or_default(); a settings.enc decrypt/parse failure writes defaults back over the real encrypted settings | unverified | |
-| F-A5-PRC-11 | A5 | S2 | dup of F-A5-PRA-09 (writes_allowed gate); adds assign_cipher_to_collection | unverified | |
-| F-A5-PRC-12 | A5 | S2 | clear_failed_attempts failure after state already Unlocked returns Err, leaving the vault unlocked with a reported failure | unverified | |
-| F-A5-PRC-13 | A5 | S2 | list_folders hard-fails on one corrupt per-fact file so save_folders heal never runs; also deletes folders.json contradicting its own reads-never-delete comment | unverified | |
-| F-A5-PRC-14 | A5 | S2 | dup of F-A5-PRA-04 + F-A5-PRA-05 (history contract + wholesale kind replace destroying fido2_credentials) | unverified | |
-| F-A5-PRC-15 | A5 | S2 | save_settings can erase device names: device_display_names() swallows errors to empty map, writes device_names: None | unverified | |
-| F-A5-PRC-16 | A5 | S2 | locked get_settings falls back to plaintext legacy meta/settings.json for policy fields (unauthenticated) when settings.enc exists | unverified | |
-| F-A5-PRC-17 | A5 | S2 | rename_tag/delete_tag abort mid-loop on first failure; earlier ciphers rewritten, index not rebuilt | unverified | |
-| F-A5-PRC-18 | A5 | S3 | bundle: dup of F-A5-PRA-10 (rename_folder dup names); plus dead legacy branch in get_settings/load_profile, derive_item_key/unlocked panic paths, CrossEpoch error-type drift in decrypt_cipher_bytes no-local branch, rebuild_index failure after write lands (caller retry duplicates), trash move and collection move non-atomic two-step | unverified | |
+| F-A5-PRA-01 | A5 | S1 | unlock skips canary verification when `meta/kek-canary.enc` missing (empty vec -> verify bypassed) | confirmed | |
+| F-A5-PRA-02 | A5 | S1 | `UnlockedState::drop` never zeroes `devkey_seal`; `IdentityKeys`/ed25519 SigningKey has no zeroize | confirmed | |
+| F-A5-PRA-03 | A5 | S1 | `Cipher` plaintext has no Drop/Zeroize; `zeroize_decrypted_cipher` not wired into CRUD drops | confirmed | |
+| F-A5-PRA-04 | A5 | S2 | update_cipher history-preservation `else if` chained at wrong level; wipes history when password unchanged and caller sent empty | confirmed | |
+| F-A5-PRA-05 | A5 | S2 | update_cipher overwrites `kind` wholesale; passkeys in `fido2_credentials` destroyed when caller omits them | confirmed | |
+| F-A5-PRA-06 | A5 | S2 | delete_folder hardcodes flat `ciphers/{id}.enc` path; collection-resident ciphers keep dangling folder_id | confirmed | |
+| F-A5-PRA-07 | A5 | S2 | collect_descendant_ids loops forever on a folder parent cycle (insert result ignored) | confirmed | |
+| F-A5-PRA-08 | A5 | S2 | delete_cipher/purge_old_trash remove the envelope but orphan `entries/{id}` attachment dirs | confirmed | |
+| F-A5-PRA-09 | A5 | S3 | restore_cipher/purge_old_trash skip the `writes_allowed()` gate every other mutator has | confirmed | |
+| F-A5-PRA-10 | A5 | S3 | rename_folder lacks the sibling duplicate-name check create_folder_with_parent enforces | confirmed | |
+| F-A5-PRC-01 | A5 | S1 | dup of F-A5-PRA-01 (canary skip); adds: zero-byte file behaves as missing, `change_master_password` has the same `exists()` skip, rotate_recovery_phrase comment states the fail-closed intent | confirmed | |
+| F-A5-PRC-02 | A5 | S1 | dup of F-A5-PRA-03 (cipher plaintext zeroize); adds: `zeroize_decrypted_cipher` itself skips Identity/BankAccount/Passport/DriversLicense/URIs/password_history/fido2 key_value, and is called only from rotation paths | confirmed | |
+| F-A5-PRC-03 | A5 | S1 | dup of F-A5-PRA-02 (devkey_seal unzeroized); adds: `derive_kek` returns plain `[u8;32]`, unlock_tail locals never wiped, devkey_seal() returns a plain copy | confirmed | |
+| F-A5-PRC-04 | A5 | S1 | runtime state.rs:8062 `cipher_to_json` serializes `kind` wholesale: fido2 `private_key`/`prf_key` cross IPC inside get_cipher payload, contradicting the never-crosses-IPC invariant | cross-slice: confirmed (ciphertext-only, not decryptable client-side, but a stated-invariant break; skip_serializing fix at types.rs) | |
+| F-A5-PRC-05 | A5 | S2 | lock() spawns normalize_timestamps_bg that resets mtimes of everything under trash/ to vault creation; purge_old_trash(30) judges by mtime, so after one lock+unlock the whole trash purges | confirmed | |
+| F-A5-PRC-06 | A5 | S2 | dup of F-A5-PRA-06 (delete_folder flat path); adds trashed ciphers also skipped | confirmed | |
+| F-A5-PRC-07 | A5 | S2 | rebuild_tag_index rebuilds from cipher metas only, pruning empty tags made by create_tag; runtime calls it after every update | confirmed | |
+| F-A5-PRC-08 | A5 | S2 | index staleness check compares id sets only; a pulled edit to an existing cipher does not invalidate, no rebuild after pull | confirmed | |
+| F-A5-PRC-09 | A5 | S2 | dup of F-A5-PRA-08 (purge orphans attachments) | confirmed | |
+| F-A5-PRC-10 | A5 | S2 | save_profile_and_strip_settings uses get_settings().unwrap_or_default(); a settings.enc decrypt/parse failure writes defaults back over the real encrypted settings | confirmed | |
+| F-A5-PRC-11 | A5 | S2 | dup of F-A5-PRA-09 (writes_allowed gate); adds assign_cipher_to_collection | confirmed | |
+| F-A5-PRC-12 | A5 | S2 | clear_failed_attempts failure after state already Unlocked returns Err, leaving the vault unlocked with a reported failure | confirmed | |
+| F-A5-PRC-13 | A5 | S2 | list_folders hard-fails on one corrupt per-fact file so save_folders heal never runs; also deletes folders.json contradicting its own reads-never-delete comment | partially confirmed (hard-fail real; the folders.json removal is the intentional legacy-migration cleanup) | |
+| F-A5-PRC-14 | A5 | S2 | dup of F-A5-PRA-04 + F-A5-PRA-05 (history contract + wholesale kind replace destroying fido2_credentials) | confirmed | |
+| F-A5-PRC-15 | A5 | S2 | save_settings can erase device names: device_display_names() swallows errors to empty map, writes device_names: None | confirmed | |
+| F-A5-PRC-16 | A5 | S2 | locked get_settings falls back to plaintext legacy meta/settings.json for policy fields (unauthenticated) when settings.enc exists | confirmed | |
+| F-A5-PRC-17 | A5 | S2 | rename_tag/delete_tag abort mid-loop on first failure; earlier ciphers rewritten, index not rebuilt | confirmed | |
+| F-A5-PRC-18 | A5 | S3 | bundle: dup of F-A5-PRA-10 (rename_folder dup names); plus dead legacy branch in get_settings/load_profile, derive_item_key/unlocked panic paths, CrossEpoch error-type drift in decrypt_cipher_bytes no-local branch, rebuild_index failure after write lands (caller retry duplicates), trash move and collection move non-atomic two-step | partially confirmed (rename dup + CrossEpoch drift + rebuild-after-write real; panicking derive_item_key/unlocked are the by-design twins of try_/is_unlocked; dead branch and atomic-move refactors deferred) | |
 
 ### Phase B findings
 
