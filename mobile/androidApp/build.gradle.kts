@@ -28,6 +28,9 @@ kotlin {
             // Inline autofill chips (InlineSuggestionUi) for the
             // "Display autofill suggestions: Inline" option (plan 2b/S2).
             implementation("androidx.autofill:autofill:1.1.0")
+            // Credential provider surface (G10): the line Bitwarden pins;
+            // BiometricPromptData and the provider APIs need 1.5+, not 1.3.x.
+            implementation("androidx.credentials:credentials:1.6.0")
         }
     }
 }

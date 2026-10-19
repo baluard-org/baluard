@@ -32,7 +32,9 @@ class AuthViewModel(private val repo: VaultRepository) {
         }
         return out
     }
-    private val session = MultiVaultSession()
+    // Process-wide store: the main-process passkey provider service reads
+    // the same unlocked handles (SharedVaultSession doc).
+    private val session = SharedVaultSession.multi
 
     /**
      * KEK retained from the most recent biometric quick-unlock of the ACTIVE

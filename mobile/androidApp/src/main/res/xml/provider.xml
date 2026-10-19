@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Passkeys only for v1 (plan §2): no TYPE_PASSWORD_CREDENTIAL yet. -->
+<credentials xmlns:android="http://schemas.android.com/apk/res/android">
+    <capability android:name="androidx.credentials.TYPE_PUBLIC_KEY_CREDENTIAL" />
+</credentials>
