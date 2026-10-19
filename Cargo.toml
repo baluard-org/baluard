@@ -97,6 +97,8 @@ uniffi = "0.28"
 
 # WebAuthn / FIDO2
 passkey = { version = "0.5", default-features = false }
+# Response JSON must be browser-shaped (base64url strings, PublicKeyCredential.toJSON).
+passkey-types = { version = "0.5", features = ["serialize_bytes_as_base64_string"] }
 webauthn-rs = { version = "0.5", default-features = false }
 webauthn-rs-proto = { version = "0.5", default-features = false }
 webauthn-rs-core = { version = "0.5", default-features = false }

@@ -95,6 +95,15 @@ impl PasskeyIndex {
     pub fn entries(&self) -> &HashMap<Vec<u8>, (Passkey, PasskeyData, Uuid)> {
         &self.entries
     }
+
+    /// A single-entry index. Provider assertions pin the ceremony to the
+    /// user's selected credential so the authenticator cannot serve any other
+    /// vault entry.
+    pub fn single(pk: Passkey, data: PasskeyData, cipher_id: Uuid) -> Self {
+        let mut entries = HashMap::new();
+        entries.insert(pk.credential_id.to_vec(), (pk, data, cipher_id));
+        Self { entries }
+    }
 }
 
 /// Convert `PasskeyData` → `passkey_types::Passkey`.
