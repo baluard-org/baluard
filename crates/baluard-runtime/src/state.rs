@@ -2195,20 +2195,22 @@ impl VaultState {
         request_json: &str,
         origin: &str,
         client_data_json_b64: Option<&str>,
+        client_data_hash_b64: Option<&str>,
         user_verified: bool,
     ) -> Result<String, String> {
         use base64::Engine;
 
         self.ceremony_cache.evict_expired().await;
         let origin_url = url::Url::parse(origin).map_err(|e| format!("Invalid origin: {e}"))?;
-        let client_data_json = match client_data_json_b64.filter(|s| !s.is_empty()) {
-            Some(b64) => Some(
-                base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .decode(b64.trim_end_matches('='))
-                    .map_err(|_| "client_data_json is not valid base64url".to_string())?,
-            ),
-            None => None,
+        let decode_b64 = |b64: Option<&str>| match b64.filter(|s| !s.is_empty()) {
+            Some(s) => base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(s.trim_end_matches('='))
+                .map(Some)
+                .map_err(|_| format!("{s} is not valid base64url").replace("s", "client data")),
+            None => Ok(None),
         };
+        let client_data_json = decode_b64(client_data_json_b64)?;
+        let client_data_hash = decode_b64(client_data_hash_b64)?;
 
         let guard = self.inner.read().await;
         let index = self.vault_passkey_index(&guard)?;
@@ -2218,6 +2220,7 @@ impl VaultState {
             &origin_url,
             request_json,
             client_data_json,
+            client_data_hash,
             user_verified,
             &index,
         )
@@ -2257,20 +2260,22 @@ impl VaultState {
         origin: &str,
         credential_id: &str,
         client_data_json_b64: Option<&str>,
+        client_data_hash_b64: Option<&str>,
         user_verified: bool,
     ) -> Result<String, String> {
         use base64::Engine;
 
         self.ceremony_cache.evict_expired().await;
         let origin_url = url::Url::parse(origin).map_err(|e| format!("Invalid origin: {e}"))?;
-        let client_data_json = match client_data_json_b64.filter(|s| !s.is_empty()) {
-            Some(b64) => Some(
-                base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .decode(b64.trim_end_matches('='))
-                    .map_err(|_| "client_data_json is not valid base64url".to_string())?,
-            ),
-            None => None,
+        let decode_b64 = |b64: Option<&str>| match b64.filter(|s| !s.is_empty()) {
+            Some(s) => base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(s.trim_end_matches('='))
+                .map(Some)
+                .map_err(|_| "client data is not valid base64url".to_string()),
+            None => Ok(None),
         };
+        let client_data_json = decode_b64(client_data_json_b64)?;
+        let client_data_hash = decode_b64(client_data_hash_b64)?;
 
         let guard = self.inner.read().await;
         let index = self.vault_passkey_index(&guard)?;
@@ -2281,6 +2286,7 @@ impl VaultState {
             request_json,
             credential_id,
             client_data_json,
+            client_data_hash,
             user_verified,
             &index,
         )
