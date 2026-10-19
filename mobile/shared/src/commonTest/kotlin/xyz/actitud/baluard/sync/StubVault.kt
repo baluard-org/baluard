@@ -127,6 +127,11 @@ open class StubVault(
     override suspend fun `memberLeaveFile`(): String = err()
     override suspend fun `memberSetRole`(`memberId`: kotlin.String, `role`: kotlin.String): String = err()
     override suspend fun `contactsList`(): String = err()
+    // G10 passkey provider surfaces: same err() discipline.
+    override suspend fun `passkeyProviderRegister`(requestJson: kotlin.String, origin: kotlin.String, clientDataJson: kotlin.String?, userVerified: kotlin.Boolean): String = err()
+    override suspend fun `passkeyProviderAssert`(requestJson: kotlin.String, origin: kotlin.String, credentialId: kotlin.String, clientDataJson: kotlin.String?, userVerified: kotlin.Boolean): String = err()
+    override suspend fun `passkeyStoreRegistered`(ceremonyId: kotlin.String, cipherId: kotlin.String?, newLogin: kotlin.String?): String = err()
+    override suspend fun `passkeyConsumeAssertion`(ceremonyId: kotlin.String): String = err()
     override suspend fun `myContactCard`(): String = err()
     override suspend fun `contactImportCard`(card: kotlin.String): String = err()
     override suspend fun `contactMarkVerified`(pubkey: kotlin.String): String = err()
