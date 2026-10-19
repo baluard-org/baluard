@@ -118,6 +118,31 @@
              noHistory activity is destroyed on stop and the auth result
              would never reach the autofill session. It finishes itself. -->
 
+        <!-- Passkey credential provider (G10, plan §4): main process by
+             design — the Begin phase needs decrypted usernames from the same
+             unlocked session the app holds (SharedVaultSession). The
+             trampoline is exported=false so only our own PendingIntents can
+             launch it (extraction protection). -->
+        <service
+            android:name=".passkeys.BaluardCredentialProviderService"
+            android:enabled="true"
+            android:exported="true"
+            android:label="Baluard"
+            android:permission="android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.credentials.CredentialProviderService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.credentials.provider"
+                android:resource="@xml/provider" />
+        </service>
+
+        <activity
+            android:name=".passkeys.PasskeyTrampolineActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Baluard.Autofill" />
+
         <!-- Native lib: the Rust cdylib (libbaluard.so) is packaged per-ABI
              under jniLibs/<abi>/ by the host build (cargo-ndk or manual copy).
              System.loadLibrary("baluard") resolves it at runtime. -->
