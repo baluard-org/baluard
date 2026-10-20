@@ -82,6 +82,9 @@ class PasskeyTrampolineActivity : ComponentActivity() {
                 failSilently(intent.action)
                 return@launch
             }
+            if (xyz.actitud.baluard.BuildConfig.BALUARD_E2E) {
+                android.util.Log.e("PasskeyTramp", "staged=${staged.first.javaClass.simpleName} id=${staged.first.id}")
+            }
             PasskeyRequestManager.put(staged.first, frameworkGet, frameworkBegin)
             val appIntent = Intent(this@PasskeyTrampolineActivity, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
