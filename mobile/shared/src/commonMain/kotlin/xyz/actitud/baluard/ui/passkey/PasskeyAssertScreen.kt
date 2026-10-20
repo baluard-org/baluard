@@ -85,7 +85,10 @@ fun PasskeyAssertScreen(
             try {
                 val assert = vault.passkeyProviderAssert(
                     request.requestJson,
-                    request.origin,
+                    // Ceremony origin is the rp.id web form; the
+                    // platform-layer origin (apk-key-hash for native
+                    // callers) is not a parseable URL for passkey-rs.
+                    "https://" + request.rpId,
                     credentialId,
                     null,
                     request.clientDataHash,
@@ -115,7 +118,10 @@ fun PasskeyAssertScreen(
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(request.rpId, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    request.origin,
+                    // Ceremony origin is the rp.id web form; the
+                    // platform-layer origin (apk-key-hash for native
+                    // callers) is not a parseable URL for passkey-rs.
+                    "https://" + request.rpId,
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                 )
