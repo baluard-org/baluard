@@ -362,7 +362,19 @@
     "tabGroups": "Grupos",
     "tabContacts": "Contactos",
     "tabOutboxes": "Buzones",
-    "tabSpace": "Bóveda"
+    "tabSpace": "Bóveda",
+    "hwTitle": "Proteger con el chip de seguridad de este dispositivo",
+    "hwDesc": "Un disco o respaldo robado solo no puede abrir esta bóveda, ni siquiera con la contraseña.",
+    "hwOn": "Esta bóveda está protegida por el chip de seguridad.",
+    "hwOff": "Esta bóveda no está protegida por el chip de seguridad.",
+    "hwEnable": "Activar",
+    "hwDisable": "Desactivar",
+    "hwEnableTitle": "¿Activar la protección del chip de seguridad?",
+    "hwEnableBody": "Un disco o respaldo robado solo ya no podrá abrir esta bóveda, ni siquiera con la contraseña. Si el chip de este dispositivo muere, este dispositivo necesitará la frase de recuperación para volver a unirse, como cualquier dispositivo nuevo.",
+    "hwDisableTitle": "¿Desactivar la protección del chip de seguridad?",
+    "hwDisableBody": "Vuelve a la protección solo con contraseña: un disco robado podría atacarse sin conexión. La bóveda sigue sincronizándose y recuperándose con normalidad.",
+    "hwEnabledToast": "La protección del chip de seguridad está activada.",
+    "hwDisabledToast": "La protección del chip de seguridad está desactivada."
   },
   "sync": {
     "title": "Sincronización de bóveda",
@@ -672,7 +684,8 @@
     "default": "Predeterminado",
     "download": "Descargar",
     "close": "Cerrar",
-    "sending": "Enviando..."
+    "sending": "Enviando...",
+    "pleaseWait": "Trabajando…"
   },
   "clone": {
     "title": "Descargar caja fuerte",

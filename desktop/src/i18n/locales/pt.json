@@ -15,7 +15,8 @@
     "default": "Padrão",
     "download": "Baixar",
     "close": "Fechar",
-    "sending": "Enviando..."
+    "sending": "Enviando...",
+    "pleaseWait": "Trabalhando…"
   },
   "login": {
     "title": "Baluard",
@@ -392,7 +393,19 @@
     "tabGroups": "Grupos",
     "tabContacts": "Contatos",
     "tabOutboxes": "Caixas de saída",
-    "tabSpace": "Cofre"
+    "tabSpace": "Cofre",
+    "hwTitle": "Proteger com o chip de segurança deste dispositivo",
+    "hwDesc": "Um disco ou backup roubado sozinho não pode abrir este cofre, nem mesmo com a senha.",
+    "hwOn": "Este cofre está protegido pelo chip de segurança.",
+    "hwOff": "Este cofre não está protegido pelo chip de segurança.",
+    "hwEnable": "Ativar",
+    "hwDisable": "Desativar",
+    "hwEnableTitle": "Ativar a proteção do chip de segurança?",
+    "hwEnableBody": "Um disco ou backup roubado sozinho não poderá mais abrir este cofre, nem mesmo com a senha. Se o chip deste dispositivo morrer, este dispositivo precisará da frase de recuperação para voltar, como qualquer dispositivo novo.",
+    "hwDisableTitle": "Desativar a proteção do chip de segurança?",
+    "hwDisableBody": "Volta à proteção apenas por senha: um disco roubado poderia ser atacado offline. O cofre continua sincronizando e recuperando normalmente.",
+    "hwEnabledToast": "A proteção do chip de segurança está ativada.",
+    "hwDisabledToast": "A proteção do chip de segurança está desativada."
   },
   "sync": {
     "title": "Sincronização do Cofre",
