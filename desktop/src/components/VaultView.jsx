@@ -412,7 +412,7 @@ export default function VaultView() {
                       >
                         <IconUsers class="w-3.5 h-3.5 shrink-0" />
                         <span class="truncate">{col.name}</span>
-                        <span class="ml-auto text-[10px] font-mono text-[var(--color-muted)]">{ciphers().filter(c => cipherCollectionId(c) === col.id).length}</span>
+                        <span class="ml-auto text-[10px] font-mono text-[var(--color-muted)]">{vault.ciphers().filter(c => cipherCollectionId(c) === col.id).length}</span>
                       </button>
                     )}
                   </For>

@@ -21,6 +21,10 @@ export default function RepromptModal(props) {
   window.__baluardReprompt = {
     show: (cb) => { if (cb) repromptCallback = cb; setShow(true); setPassword(""); setFailed(false); },
     hide: () => setShow(false),
+    // Dev/e2e-only: the delegated onInput signal cannot be driven from a
+    // WebDriver synthetic fill, so automation submits through here. The
+    // production build strips the DEV branch entirely.
+    ...(import.meta.env.DEV ? { submit: (pw) => { setPassword(pw); handleConfirm(); } } : {}),
   };
 
   async function handleConfirm() {
@@ -67,6 +71,7 @@ export default function RepromptModal(props) {
           </Show>
           
           <Input
+            data-testid="reprompt-input"
             type="password"
             autocomplete="current-password"
             placeholder={t("login.passwordPlaceholder")}
@@ -83,6 +88,7 @@ export default function RepromptModal(props) {
               class="flex-1 py-2.5 font-mono text-xs uppercase"
             >{t("entry.cancel")}</Button>
             <Button
+              data-testid="reprompt-confirm"
               onClick={handleConfirm}
               variant="primary"
               class="flex-1 py-2.5 font-mono text-xs uppercase bg-red-600 border-transparent text-white hover:bg-red-700 focus-visible:ring-red-600"
