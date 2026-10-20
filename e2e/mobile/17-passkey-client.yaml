@@ -1,0 +1,80 @@
+# Passkey provider E2E (Baluard client leg, plan-mobile-passkeys §12).
+# Exercises the full provider loop deterministically: the in-app E2E client
+# (PasskeyClientActivity, reachable only when BALUARD_E2E) plays the RP role
+# while Baluard's own credential provider services the request — framework
+# Begin, origin validation, listing, trampoline, fulfillment screens, master
+# -password UV gate, ceremony, and the framework response, for both the
+# create and the assertion legs.
+#
+# PRE-LAUNCH (before this flow; Maestro cannot start non-exported
+# activities): `adb root` then `adb shell am start -n
+# xyz.actitud.baluard/.passkeys.PasskeyClientActivity`. The client activity
+# is E2E-only (BALUARD_E2E builds). Boundary: this flow drives 16 steps
+# through the full create ceremony (sheet, trampoline, unlock,
+# fulfillment, UV gate) but its final result asserts hit a Maestro
+# accessibility-snapshot quirk on the client screen's status TextView —
+# nodes visible to uiautomator and screencaps stay invisible to Maestro's
+# selector engine even via contentDescription. The on-device proof for
+# both legs lives in the manual journey (create + assertion, screenshots). Device state required: emulator
+# (x86_64, API 35), flow 01's vault exists, `settings put secure
+# credential_service/credential_service_primary` points at
+# BaluardCredentialProviderService. Force-stop the app first so the vault
+# session is locked and the unlock-first journey shape is deterministic.
+appId: xyz.actitud.baluard
+---
+- tapOn:
+    text: "Close sheet"
+    optional: true
+- assertVisible: "Create passkey"
+# --- CREATE leg -------------------------------------------------------------
+- tapOn: "Create passkey"
+- assertVisible:
+    text: ".*Create passkey to sign in to.*"
+- tapOn: "Continue"
+# Locked session routes through unlock-first fulfillment.
+- extendedWaitUntil:
+    visible: "Master password"
+    timeout: 90000
+- tapOn:
+    id: "e2e/unlock/password"
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- hideKeyboard
+- tapOn:
+    id: "e2e/unlock/submit"
+# Fulfillment screen; its Continue raises the master-password UV gate
+# (the RP asks userVerification=required).
+- extendedWaitUntil:
+    visible: "Save a passkey"
+    timeout: 90000
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Verify it's you"
+    timeout: 90000
+- tapOn: "Master password"
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- hideKeyboard
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "CREATE OK"
+    timeout: 90000
+# --- ASSERTION leg ----------------------------------------------------------
+- tapOn: "Sign in with passkey"
+- extendedWaitUntil:
+    visible:
+      text: ".*Use your saved passkey for.*"
+    timeout: 90000
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "CHOOSE A PASSKEY"
+    timeout: 90000
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Verify it's you"
+    timeout: 90000
+- tapOn: "Master password"
+- inputText: ${BALUARD_E2E_MASTER_PW}
+- hideKeyboard
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "GET OK"
+    timeout: 90000
