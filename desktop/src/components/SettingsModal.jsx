@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon, getDesktopPrefs, setTrayOnly, getRenderState, setCompatibleRendering } from "../lib/daemon.js";
+import ConfirmModal from "./ConfirmModal.jsx";
 import { sanitizeError, generatePassphrase } from "../lib/utils.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { invoke } from "@tauri-apps/api/core";
@@ -130,6 +131,12 @@ export default function SettingsModal() {
   const [backupBusy, setBackupBusy] = createSignal(false);
   let backupDialogRef;
 
+  // Device security chip (progressive enhancement): the card renders
+  // only when the probe reports a usable chip; devices without one see
+  // nothing (docs/plan-hardware-backed-keys.md §2).
+  const [hwStatus, setHwStatus] = createSignal(null);
+  const [hwBusy, setHwBusy] = createSignal(false);
+  const [hwConfirm, setHwConfirm] = createSignal(null); // "enable" | "disable" | null
   const [healthBusy, setHealthBusy] = createSignal(false);
   const [healthOpen, setHealthOpen] = createSignal(false);
   const [healthReport, setHealthReport] = createSignal(null);
@@ -161,6 +168,30 @@ export default function SettingsModal() {
       toastError(sanitizeError(e, t));
     } finally {
       setHealthBusy(false);
+    }
+  }
+
+  async function loadHwStatus() {
+    try {
+      setHwStatus(JSON.parse(await daemon("vault.hw_status")));
+    } catch {
+      setHwStatus({ capable: false });
+    }
+  }
+
+  async function hwToggle() {
+    const mode = hwConfirm();
+    setHwConfirm(null);
+    if (!mode) return;
+    setHwBusy(true);
+    try {
+      await daemon(mode === "enable" ? "vault.hw_enable" : "vault.hw_disable");
+      await loadHwStatus();
+      toastSuccess(t(mode === "enable" ? "settings.hwEnabledToast" : "settings.hwDisabledToast"));
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setHwBusy(false);
     }
   }
 
@@ -204,6 +235,7 @@ export default function SettingsModal() {
       if (isOpen) {
         loadSettings();
         setImportSource("");
+        loadHwStatus();
       }
     },
   );
@@ -922,6 +954,41 @@ export default function SettingsModal() {
               </Show>
 
               <Show when={activeTab() === "data"}>
+                {/* Device security chip: AND-wraps this device's key seal
+                    with the platform keystore. Hidden unless capable. */}
+                <Show when={hwStatus()?.capable}>
+                  <div class="space-y-3 mb-6" data-testid="hw-guard-card">
+                    <div class="flex items-center justify-between">
+                      <div class="flex flex-col flex-1 pr-4">
+                        <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.hwTitle")}</span>
+                        <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.hwDesc")}</span>
+                        <span class="text-[10px] text-[var(--color-muted)] mt-0.5">
+                          {hwStatus()?.enabled ? t("settings.hwOn") : t("settings.hwOff")}
+                        </span>
+                      </div>
+                      <button
+                        data-testid="hw-toggle"
+                        onClick={() => setHwConfirm(hwStatus()?.enabled ? "disable" : "enable")}
+                        disabled={hwBusy()}
+                        class="px-5 py-2.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                      >
+                        {hwBusy() ? t("common.pleaseWait") : hwStatus()?.enabled ? t("settings.hwDisable") : t("settings.hwEnable")}
+                      </button>
+                    </div>
+                  </div>
+                </Show>
+
+                <ConfirmModal
+                  show={!!hwConfirm()}
+                  idPrefix="hw-guard"
+                  title={t(hwConfirm() === "enable" ? "settings.hwEnableTitle" : "settings.hwDisableTitle")}
+                  body={t(hwConfirm() === "enable" ? "settings.hwEnableBody" : "settings.hwDisableBody")}
+                  confirmLabel={t(hwConfirm() === "enable" ? "settings.hwEnable" : "settings.hwDisable")}
+                  confirmVariant={hwConfirm() === "disable" ? "danger" : "primary"}
+                  onConfirm={hwToggle}
+                  onClose={() => setHwConfirm(null)}
+                />
+
                 {/* Security check: whole-vault password analysis, run on demand. */}
                 <div class="space-y-3 mb-6">
                   <div class="flex items-center justify-between">
