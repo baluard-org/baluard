@@ -849,7 +849,10 @@ fun App(
                 when (pk) {
                     is xyz.actitud.baluard.passkeys.PasskeyUiRequest.Create ->
                         auth.vault()?.let { vault ->
-                            Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                            Surface(
+                                modifier = Modifier.fillMaxSize().statusBarsPadding(),
+                                color = MaterialTheme.colorScheme.background,
+                            ) {
                                 xyz.actitud.baluard.ui.passkey.PasskeyCreateScreen(
                                     vault = vault,
                                     request = pk,
@@ -861,7 +864,10 @@ fun App(
 
                     is xyz.actitud.baluard.passkeys.PasskeyUiRequest.Assert ->
                         auth.vault()?.let { vault ->
-                            Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                            Surface(
+                                modifier = Modifier.fillMaxSize().statusBarsPadding(),
+                                color = MaterialTheme.colorScheme.background,
+                            ) {
                                 xyz.actitud.baluard.ui.passkey.PasskeyAssertScreen(
                                     vault = vault,
                                     request = pk,

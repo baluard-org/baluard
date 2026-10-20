@@ -136,6 +136,14 @@
                 android:name="android.credentials.provider"
                 android:resource="@xml/provider" />
         </service>
+        <!-- E2E-only Credential Manager client (plan §12 loopback affordance):
+             drives the provider from the client side deterministically where
+             Chrome would race Google Password Manager. Launched by the harness
+             via adb (root); never reachable from any UI. -->
+        <activity
+            android:name=".passkeys.PasskeyClientActivity"
+            android:exported="false"
+            android:excludeFromRecents="true" />
 
         <activity
             android:name=".passkeys.PasskeyTrampolineActivity"

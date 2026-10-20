@@ -171,6 +171,12 @@ class MainActivity : FragmentActivity() {
         if (savedInstanceState == null) {
             autofillSavePrefill = extractAutofillSave(intent)
             passkeyRequest = extractPasskeyRequest(intent)
+            if (BuildConfig.BALUARD_E2E) {
+                android.util.Log.e(
+                    "PasskeyMain",
+                    "onCreate extract=${passkeyRequest?.javaClass?.simpleName} action=${intent?.action}",
+                )
+            }
         } else if (intent?.getStringExtra(
                 xyz.actitud.baluard.passkeys.BaluardCredentialProviderService.EXTRA_REQUEST_ID,
             ) != null && passkeyRequest == null
