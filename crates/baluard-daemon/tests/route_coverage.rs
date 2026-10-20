@@ -4751,6 +4751,28 @@ async fn vault_search_fans_out_and_skips_locked_and_ineligible() {
 }
 
 #[tokio::test]
+async fn hw_seal_status_and_fail_closed_toggle() {
+    // The pin_quick_unlock pattern: drive the VaultState methods directly
+    // (the daemon arms are one-line passthroughs; their token classification
+    // is pinned by the handler-side token_lists test).
+    let (_tmp, state) = open_unlocked("hwseal").await;
+
+    // No platform keystore is installed in tests: capable false, and the
+    // status still reports the seal kind honestly.
+    assert!(baluard_core::hwkey::installed().is_none());
+    let v: serde_json::Value = serde_json::from_str(&state.hw_status().await.unwrap()).unwrap();
+    assert_eq!(v["capable"], serde_json::Value::Bool(false));
+    assert_eq!(v["seal"], "v1");
+    assert_eq!(v["enabled"], serde_json::Value::Bool(false));
+
+    // The toggle fails closed with no chip: never a silent no-op.
+    let err = state.hw_enable().await.unwrap_err();
+    assert!(err.contains("security chip"), "refusal: {err}");
+    let err = state.hw_disable().await.unwrap_err();
+    assert!(err.contains("security chip"), "refusal: {err}");
+}
+
+#[tokio::test]
 async fn vault_search_explicit_slug_includes_org_space() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());

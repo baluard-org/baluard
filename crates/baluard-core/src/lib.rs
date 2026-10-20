@@ -11,6 +11,7 @@ pub mod devices;
 pub mod emergency;
 pub mod generator;
 pub mod health;
+pub mod hwkey;
 pub mod import;
 pub mod integrity;
 pub mod keys;

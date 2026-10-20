@@ -108,6 +108,12 @@ pub enum VaultError {
 
     #[error("vault is locked")]
     Locked,
+    /// The v2-hw devkey seal demands the device security chip and the chip
+    /// is unavailable (missing, disabled, or refusing). Distinct from
+    /// Locked so surfaces never read a hardware failure as a password
+    /// failure; the rescue is the phrase path, not a retry.
+    #[error("this vault is guarded by this device's security chip and the chip is unavailable")]
+    HardwareUnavailable,
 
     #[error("invalid operation: {0}")]
     InvalidOperation(String),

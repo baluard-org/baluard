@@ -222,6 +222,7 @@ const TOKEN_EXEMPT_ACTIONS: &[&str] = &[
     "vault.info",
     "vault.biometric_status",
     "vault.pin_status",
+    "vault.hw_status",
     "provider.list",
     "provider.connect_start",
     "provider.connect_poll",
@@ -5047,6 +5048,24 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         // pin_status: pre-unlock-safe (in-memory escrow check), NOT token-gated.
         // pin_enable / pin_disable: token-gated (require an unlocked session).
         // pin_unlock: host-level (intercepted above), NOT token-gated.
+        // ── Hardware-backed devkey seal ──
+        // hw_status: pre-unlock-safe (probe + file kind), NOT token-gated.
+        // hw_enable / hw_disable: token-gated (need the unlocked seal key).
+        "vault.hw_status" => match state.hw_status().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.hw_enable" => match state.hw_enable().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.hw_disable" => match state.hw_disable().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
         "vault.pin_status" => match state.pin_status().await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
@@ -6559,9 +6578,7 @@ mod tests {
 
         // Match-arm literals that are NOT IPC actions (provider names,
         // status strings in provider-sync matches).
-        const NON_ACTIONS: &[&str] = &[
-            "code", "codeberg", "done", "failed", "github", "gitlab", "state",
-        ];
+        const NON_ACTIONS: &[&str] = &["codeberg", "done", "failed", "github", "gitlab"];
 
         let exempt: std::collections::BTreeSet<&str> =
             TOKEN_EXEMPT_ACTIONS.iter().copied().collect();
@@ -6608,6 +6625,7 @@ mod tests {
             "vault.info",
             "vault.lock",
             "vault.pin_status",
+            "vault.hw_status",
         ];
         let expected: std::collections::BTreeSet<&str> = expected_exempt.iter().copied().collect();
         assert_eq!(
