@@ -84,6 +84,18 @@ object OriginRules {
     fun isFetchableHost(host: String, allowLocal: Boolean): Boolean {
         val h = host.trim().trimEnd('.').lowercase()
         if (h.isEmpty()) return false
+        // Loopback shape is fetchable only under the debug affordance.
+        if (isLocalRpHost(h, true)) return allowLocal
+        if (h.contains(':')) return false // non-loopback IPv6 literal
+        if (h.endsWith(".local") || h.endsWith(".internal")) return false
+        return !Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(h)
+    }
+
+    /** Loopback detection shared by the SSRF guard and the E2E native-app
+     *  grant: localhost, .localhost, ::1, and 127/8 under [allowLocal]. */
+    fun isLocalRpHost(host: String, allowLocal: Boolean): Boolean {
+        val h = host.trim().trimEnd('.').lowercase()
+        if (h.isEmpty()) return false
         if (h == "localhost" || h.endsWith(".localhost")) return allowLocal
         if (h.contains(':')) return allowLocal && (h == "[::1]" || h == "::1") // IPv6 literal
         if (Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(h)) {
@@ -92,8 +104,7 @@ object OriginRules {
             if (octets.any { it !in 0..255 }) return false
             return octets[0] == 127
         }
-        if (h.endsWith(".local") || h.endsWith(".internal")) return false
-        return true
+        return false
     }
 
     /**

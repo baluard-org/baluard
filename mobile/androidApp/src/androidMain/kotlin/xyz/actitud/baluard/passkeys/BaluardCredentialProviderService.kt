@@ -51,6 +51,9 @@ class BaluardCredentialProviderService : CredentialProviderService() {
         cancellationSignal: CancellationSignal,
         callback: OutcomeReceiver<BeginCreateCredentialResponse, androidx.credentials.exceptions.CreateCredentialException>,
     ) {
+        if (xyz.actitud.baluard.BuildConfig.BALUARD_E2E) {
+            android.util.Log.e("PasskeySvc", "beginCreate type=${request.type}")
+        }
         val job = scope.launch {
             runCatching { handleCreateQuery(request) }
                 .onSuccess { callback.onResult(it) }

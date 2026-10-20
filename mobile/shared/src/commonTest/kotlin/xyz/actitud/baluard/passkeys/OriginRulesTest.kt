@@ -83,4 +83,14 @@ class OriginRulesTest {
         assertFalse(OriginRules.rpIdCoversOriginHost("example.com", "example.org"))
         assertFalse(OriginRules.rpIdCoversOriginHost("", "example.com"))
     }
+
+    @Test
+    fun isLocalRpHost_matchesTheFetchGuard() {
+        assertTrue(OriginRules.isLocalRpHost("localhost", allowLocal = true))
+        assertTrue(OriginRules.isLocalRpHost("e2e.localhost", allowLocal = true))
+        assertTrue(OriginRules.isLocalRpHost("127.0.0.1", allowLocal = true))
+        assertFalse(OriginRules.isLocalRpHost("localhost", allowLocal = false))
+        assertFalse(OriginRules.isLocalRpHost("example.com", allowLocal = true))
+        assertFalse(OriginRules.isLocalRpHost("attacker.local", allowLocal = true))
+    }
 }
