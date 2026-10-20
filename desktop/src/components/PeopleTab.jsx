@@ -515,7 +515,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
           window is the notice; the owner (and only the owner) can cancel
           it before it matures. */}
       <Show when={claimInfo()}>
-        <section class="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
+        <section data-testid="claim-card" class="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
           <h3 class="text-sm font-bold text-[var(--color-text)] mb-1">{t("people.contestTitle")}</h3>
           <p class="text-xs text-[var(--color-text)] mb-1">
             {t("people.contestBody")
@@ -525,6 +525,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
           <p class="text-xs text-[var(--color-muted)] mb-3">{t("people.contestHint")}</p>
           <Show when={yourRole() === "owner"}>
             <button
+              data-testid="claim-cancel"
               onClick={() => setClaimConfirm(true)}
               class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 transition-all cursor-pointer"
             >
@@ -769,7 +770,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
         <ul class="space-y-2">
           <For each={members()}>
             {(m) => (
-              <li class="flex items-center gap-2 p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+              <li class="flex items-center gap-2 p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]" data-testid="member-row">
                 <div class="flex-1 min-w-0">
                   <div class="text-xs font-bold text-[var(--color-text)] truncate">
                     {m.display_name}
@@ -864,6 +865,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
                   </Show>
                   <Show when={(yourRole() === "owner" || yourRole() === "admin") && m.role !== "owner"}>
                     <select
+                      data-testid="role-select"
                       value={m.role}
                       disabled={busy() || roleBusyId() === m.id}
                       onChange={(e) => changeRole(m, e.currentTarget.value)}

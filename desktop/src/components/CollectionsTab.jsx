@@ -189,12 +189,13 @@ export default function CollectionsTab() {
         <p class="text-xs text-[var(--color-muted)] mb-3">{t("collections.createSubtitle")}</p>
         <div class="flex gap-2">
           <Input
+            data-testid="collections-name-input"
             placeholder={t("collections.namePlaceholder")}
             value={newName()}
             onInput={(e) => setNewName(e.currentTarget.value)}
             onKeyDown={(e) => e.key === "Enter" && void createCollection()}
           />
-          <Button variant="primary" onClick={() => void createCollection()} disabled={busy() || !newName().trim()}>
+          <Button variant="primary" data-testid="collections-create" onClick={() => void createCollection()} disabled={busy() || !newName().trim()}>
             {t("collections.createButton")}
           </Button>
         </div>
@@ -207,13 +208,14 @@ export default function CollectionsTab() {
           <ul class="space-y-2">
             <For each={vault.collections()}>
               {(col) => (
-                <li class="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+                <li class="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]" data-testid="collection-row">
                   <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-xs font-bold text-[var(--color-text)] flex-1 truncate">{col.name}</span>
                     <span class="text-[10px] font-mono text-[var(--color-muted)]">
                       {(col.grants || []).length} {t("collections.grantCount")}
                     </span>
                     <button
+                      data-testid="collections-manage"
                       onClick={() => setGrantsFor(grantsFor() === col.id ? null : col.id)}
                       class="text-[10px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-text)] cursor-pointer"
                     >
@@ -281,6 +283,7 @@ export default function CollectionsTab() {
                           when={grantKind() === "group"}
                           fallback={
                             <select
+                              data-testid="grant-member"
                               class="text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[var(--color-text)] cursor-pointer"
                               value={grantMember()}
                               onChange={(e) => setGrantMember(e.currentTarget.value)}
@@ -308,6 +311,7 @@ export default function CollectionsTab() {
                           </select>
                         </Show>
                         <select
+                          data-testid="grant-access"
                           class="text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[var(--color-text)] cursor-pointer"
                           value={grantAccess()}
                           onChange={(e) => setGrantAccess(e.currentTarget.value)}
@@ -324,7 +328,7 @@ export default function CollectionsTab() {
                           value={grantDays()}
                           onInput={(e) => setGrantDays(e.currentTarget.value)}
                         />
-                        <Button onClick={() => void grant(col)} disabled={busy()}>
+                        <Button data-testid="grant-add" onClick={() => void grant(col)} disabled={busy()}>
                           {t("collections.grantButton")}
                         </Button>
                       </div>

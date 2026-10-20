@@ -42,6 +42,7 @@ export function Input(props) {
       aria-label={props["aria-label"]}
       aria-describedby={props["aria-describedby"]}
       aria-invalid={props["aria-invalid"]}
+      data-testid={props["data-testid"]}
     />
   );
 }
