@@ -2570,22 +2570,22 @@ mod tests {
         vault.unlock("pw".to_string()).await.unwrap();
 
         let challenge = "Y2hhbGxlbmdlLWJ5dGVzLWZpeGVkLTEyMzQ1Njc4";
+        // The credential manager delivers the INNER creation options (no W3C
+        // publicKey wrapper); androidx validates user.name at the top level.
         let request = serde_json::json!({
-            "publicKey": {
-                "rp": {"id": "example.com", "name": "Example"},
-                "user": {
-                    "id": "dGVzdC11c2VyLWlkLTAwMDE",
-                    "name": "u@example.com",
-                    "displayName": "User One"
-                },
-                "challenge": challenge,
-                "pubKeyCredParams": [{"type": "public-key", "alg": -7}],
-                "authenticatorSelection": {
-                    "residentKey": "required",
-                    "userVerification": "required"
-                },
-                "extensions": {"credProps": true}
-            }
+            "rp": {"id": "example.com", "name": "Example"},
+            "user": {
+                "id": "dGVzdC11c2VyLWlkLTAwMDE",
+                "name": "u@example.com",
+                "displayName": "User One"
+            },
+            "challenge": challenge,
+            "pubKeyCredParams": [{"type": "public-key", "alg": -7}],
+            "authenticatorSelection": {
+                "residentKey": "required",
+                "userVerification": "required"
+            },
+            "extensions": {"credProps": true}
         })
         .to_string();
 
@@ -2631,12 +2631,10 @@ mod tests {
 
         // The stored entry is assertable through the provider surface.
         let assertion_request = serde_json::json!({
-            "publicKey": {
-                "challenge": challenge,
-                "rpId": "example.com",
-                "userVerification": "required",
-                "allowCredentials": [{"type": "public-key", "id": r["credential_id"]}]
-            }
+            "challenge": challenge,
+            "rpId": "example.com",
+            "userVerification": "required",
+            "allowCredentials": [{"type": "public-key", "id": r["credential_id"]}]
         })
         .to_string();
         let assertion = vault
