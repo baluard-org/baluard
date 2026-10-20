@@ -196,6 +196,13 @@ try {
     await new Promise((r) => setTimeout(r, 300));
   }
   assert(cancelled, "claim card never cleared after cancel");
+  // Wire truth: the pending contest record is consumed, not just hidden.
+  const wire = await browser.execute(async () => {
+    const m = await import("/src/lib/daemon.js");
+    const r = JSON.parse(await m.daemon("members.contest_status"));
+    return r;
+  });
+  assert(wire.pending === false, `claim cancel never reached the wire: ${JSON.stringify(wire).slice(0, 120)}`);
   console.log("PASS claim cancel");
 
   console.log("PASS sharing");
