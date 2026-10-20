@@ -155,7 +155,7 @@ uninstall:
 # fast; dev boxes do not). The env var routes keyring-backed paths to their
 # fail-closed fallbacks (crate::keyring_disabled).
 test: _sysdeps-core
-	BALUARD_DISABLE_KEYRING=1 {{ linuxbrew_env }} cargo test
+	BALUARD_DISABLE_KEYRING=1 BALUARD_DISABLE_HWKEY=1 {{ linuxbrew_env }} cargo test
 
 # Run tests in release mode
 # See the BALUARD_DISABLE_KEYRING note on `test`.

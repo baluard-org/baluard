@@ -7407,6 +7407,87 @@ impl VaultState {
     // session without re-running Argon2id. Nothing PIN-derivable touches
     // disk. See `pin::PinEscrow` for the full security model.
 
+    // Hardware-backed devkey seal (progressive enhancement; plan:
+    // docs/plan-hardware-backed-keys.md). Devices without a usable chip
+    // report capable:false and every toggle call fails closed.
+
+    /// Pre-unlock safe: chip capability + the devkey file's seal kind.
+    pub async fn hw_status(&self) -> Result<String, String> {
+        use baluard_core::vault::device_privkey::PrivkeyFileKind;
+        let cap = baluard_core::hwkey::probe_status();
+        let (capable, reason) = match &cap {
+            baluard_core::hwkey::HwCapability::Available { .. } => (true, serde_json::Value::Null),
+            baluard_core::hwkey::HwCapability::Unavailable { reason } => {
+                (false, serde_json::Value::String(reason.clone()))
+            }
+        };
+        let kind = baluard_core::vault::device_privkey::file_kind(
+            &self.vault_path.join("meta/device-privkey.json"),
+        );
+        let seal = match kind {
+            PrivkeyFileKind::Sealed => "v1",
+            PrivkeyFileKind::SealedHw => "v2-hw",
+            PrivkeyFileKind::LegacyPlaintext => "legacy",
+            PrivkeyFileKind::Absent => "absent",
+        };
+        Ok(serde_json::json!({
+            "capable": capable,
+            "reason": reason,
+            "seal": seal,
+            "enabled": seal == "v2-hw",
+        })
+        .to_string())
+    }
+
+    /// Enable the hardware seal (the settings toggle). Requires an
+    /// unlocked session (the seal subkey lives on the handle).
+    pub async fn hw_enable(&self) -> Result<String, String> {
+        let seal = self
+            .devkey_seal()
+            .await
+            .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
+        if baluard_core::hwkey::available().is_none() {
+            return Err("This device has no usable security chip.".to_string());
+        }
+        let vault_id =
+            baluard_core::vault::registry::BaluardMarker::read_from_vault(&self.vault_path)
+                .map_err(|e| format!("read vault marker: {e}"))?
+                .map(|m| m.vault_id)
+                .ok_or_else(|| "vault marker missing".to_string())?;
+        let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
+        baluard_core::vault::device_privkey::enable_hw_seal(
+            &self.vault_path.join("meta/device-privkey.json"),
+            &seal,
+            vault_id,
+            device_id,
+        )
+        .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({"enabled": true, "backend": match baluard_core::hwkey::probe_status() {
+            baluard_core::hwkey::HwCapability::Available { backend } => backend,
+            _ => "unknown".to_string(),
+        }})
+        .to_string())
+    }
+
+    /// Disable the hardware seal: downgrade to v1. Needs the chip once.
+    pub async fn hw_disable(&self) -> Result<String, String> {
+        let seal = self
+            .devkey_seal()
+            .await
+            .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
+        let hw = baluard_core::hwkey::available()
+            .ok_or_else(|| "This device has no usable security chip.".to_string())?;
+        let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
+        baluard_core::vault::device_privkey::disable_hw_seal(
+            &self.vault_path.join("meta/device-privkey.json"),
+            &*hw,
+            &seal,
+            device_id,
+        )
+        .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({"enabled": false}).to_string())
+    }
+
     /// Is PIN Quick Unlock enabled for this vault THIS session?
     /// Pre-unlock safe: it is an in-memory check, independent of the handle.
     pub async fn pin_status(&self) -> Result<String, String> {
