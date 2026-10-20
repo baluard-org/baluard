@@ -82,6 +82,13 @@ class OriginValidator(
                     .digest(callingAppInfo.signingCertBytes()),
                 Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
             )
+        if (OriginRules.isLocalRpHost(relyingPartyId, allowLocal)) {
+            // Plan §12 loopback affordance: unprivileged E2E callers against a
+            // loopback rp need no live DAL statement — there is no public
+            // domain to publish one on. allowLocal is false outside E2E/debug
+            // builds, so this grant is compiled out of release.
+            return OriginDecision.Android(origin)
+        }
         val cacheKey = "$relyingPartyId|${callingAppInfo.packageName}|$fingerprint"
         dalCache[cacheKey]?.let { entry ->
             val ttl = if (entry.granted) OriginRules.DAL_SUCCESS_TTL_MS else OriginRules.DAL_FAILURE_TTL_MS

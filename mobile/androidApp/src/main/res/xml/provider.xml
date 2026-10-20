@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Passkeys only for v1 (plan §2): no TYPE_PASSWORD_CREDENTIAL yet. -->
-<credentials xmlns:android="http://schemas.android.com/apk/res/android">
-    <capability android:name="androidx.credentials.TYPE_PUBLIC_KEY_CREDENTIAL" />
-</credentials>
+<!-- Capabilities per the framework parser (CredentialProviderInfoFactory
+     reads a NULL-namespace "name" attribute — android:name parses to null
+     and the provider silently loses every capability). Passkeys only for
+     v1 (plan §2). -->
+<credential-provider xmlns:android="http://schemas.android.com/apk/res/android">
+    <capabilities>
+        <capability name="androidx.credentials.TYPE_PUBLIC_KEY_CREDENTIAL" />
+    </capabilities>
+</credential-provider>
