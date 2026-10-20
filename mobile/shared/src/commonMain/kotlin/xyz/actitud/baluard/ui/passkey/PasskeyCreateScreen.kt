@@ -73,7 +73,10 @@ fun PasskeyCreateScreen(
             try {
                 val register = vault.passkeyProviderRegister(
                     request.requestJson,
-                    request.origin,
+                    // Ceremony origin is the rp.id web form; the
+                    // platform-layer origin (apk-key-hash for native
+                    // callers) is not a parseable URL for passkey-rs.
+                    "https://" + request.rpId,
                     null,
                     request.clientDataHash,
                     needsUv, // verified by the password check just performed
