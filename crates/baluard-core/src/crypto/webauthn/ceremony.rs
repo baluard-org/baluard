@@ -531,9 +531,10 @@ fn override_client_data_json(
 
 /// Run a provider registration ceremony.
 ///
-/// `request_json` is the RP's `publicKey` creation options (the
-/// `CredentialCreationOptions` wire shape); the challenge, UV level,
-/// `excludeCredentials`, and extension requests ride inside it.
+/// `request_json` is the `PublicKeyCredentialCreationOptions` — the INNER
+/// WebAuthn options without the W3C `CredentialCreationOptions` `publicKey`
+/// wrapper, which is what the Android credential manager delivers (androidx
+/// validates `user.name` at the top level).
 /// `client_data_json` is set by privileged browser callers that build their
 /// own client data: the signature covers its SHA-256 and the response's
 /// `clientDataJSON` is replaced with these exact bytes, so the relying party
@@ -549,13 +550,13 @@ pub async fn run_provider_registration(
     user_verified: bool,
     index: &PasskeyIndex,
 ) -> Result<ProviderRegistrationResult, String> {
-    let options: CredentialCreationOptions =
+    let mut public_key: PublicKeyCredentialCreationOptions =
         serde_json::from_str(request_json).map_err(|e| format!("Invalid create options: {e}"))?;
-    let rp_id = effective_rp_id(origin, options.public_key.rp.id.as_deref())?;
+    let rp_id = effective_rp_id(origin, public_key.rp.id.as_deref())?;
 
     // Fail-closed duplicate refusal before any key material is minted. The
     // library's own exclude check merely consults the UI hint and proceeds.
-    if let Some(exclude) = &options.public_key.exclude_credentials {
+    if let Some(exclude) = &public_key.exclude_credentials {
         for desc in exclude {
             if let Some((pk, _, _)) = index.entries().get(&*desc.id) {
                 if pk.rp_id == rp_id {
@@ -567,11 +568,10 @@ pub async fn run_provider_registration(
         }
     }
 
-    let rp_name = options.public_key.rp.name.clone();
-    let user_name = options.public_key.user.name.clone();
+    let rp_name = public_key.rp.name.clone();
+    let user_name = public_key.user.name.clone();
 
     // Force discoverable storage for account selection (map_rk reads this).
-    let mut public_key = options.public_key;
     let mut selection = public_key
         .authenticator_selection
         .take()
@@ -579,7 +579,6 @@ pub async fn run_provider_registration(
     selection.resident_key = Some(ResidentKeyRequirement::Required);
     selection.require_resident_key = true;
     public_key.authenticator_selection = Some(selection);
-    let options = CredentialCreationOptions { public_key };
 
     let store = BaluardCredentialStore::from_index(index);
     let extraction_clone = store.clone();
@@ -588,7 +587,10 @@ pub async fn run_provider_registration(
         store,
         BaluardUserValidation::with_user_verified(user_verified),
     );
-    let mut client = Client::new(authenticator);
+    // The provider path validates caller origins platform-side; the loopback
+    // E2E affordance (plan §12) needs passkey-rs' web-origin check to accept
+    // the https://localhost ceremony origin.
+    let mut client = Client::new(authenticator).allows_insecure_localhost(true);
 
     let cdj_ref = client_data_json.as_deref();
     // Browser provider flows hand only the digest of their own client data
@@ -596,21 +598,34 @@ pub async fn run_provider_registration(
     // clientDataJSON with its own when forwarding, so signing the given hash
     // is the correct behavior there. Callers supplying full bytes take the
     // override path below.
+    // passkey-rs' Client::register takes the W3C wrapper; re-wrap the parsed
+    // inner options at the call boundary (one branch executes, so build
+    // per-branch).
     let created = if let Some(hash) = client_data_hash.as_deref() {
         client
             .register(
                 origin,
-                options,
+                CredentialCreationOptions { public_key },
                 DefaultClientDataWithCustomHash(hash.to_vec()),
             )
             .await
     } else if let Some(cdj) = cdj_ref {
         let hash = Sha256::digest(cdj).to_vec();
         client
-            .register(origin, options, DefaultClientDataWithCustomHash(hash))
+            .register(
+                origin,
+                CredentialCreationOptions { public_key },
+                DefaultClientDataWithCustomHash(hash),
+            )
             .await
     } else {
-        client.register(origin, options, DefaultClientData).await
+        client
+            .register(
+                origin,
+                CredentialCreationOptions { public_key },
+                DefaultClientData,
+            )
+            .await
     }
     .map_err(|e| format!("Registration failed: {e:?}"))?;
 
@@ -659,9 +674,9 @@ pub async fn run_provider_assertion(
     user_verified: bool,
     index: &PasskeyIndex,
 ) -> Result<ProviderAssertionResult, String> {
-    let options: CredentialRequestOptions =
+    let mut options: passkey::types::webauthn::PublicKeyCredentialRequestOptions =
         serde_json::from_str(request_json).map_err(|e| format!("Invalid request options: {e}"))?;
-    let rp_id = effective_rp_id(origin, options.public_key.rp_id.as_deref())?;
+    let rp_id = effective_rp_id(origin, options.rp_id.as_deref())?;
 
     let cred_bytes = decode_credential_id_b64(credential_id_b64)?;
     let (pk, pk_data, cipher_id) = index
@@ -671,7 +686,7 @@ pub async fn run_provider_assertion(
     if pk.rp_id != rp_id {
         return Err("credential belongs to a different site".to_string());
     }
-    if let Some(allow) = &options.public_key.allow_credentials {
+    if let Some(allow) = &options.allow_credentials {
         if !allow.is_empty() && !allow.iter().any(|d| *d.id == *cred_bytes) {
             return Err("credential was not requested by this site".to_string());
         }
@@ -684,7 +699,7 @@ pub async fn run_provider_assertion(
     pk_narrowed.counter = None;
     let narrowed = PasskeyIndex::single(pk_narrowed, pk_data.clone(), *cipher_id);
     let mut options = options;
-    options.public_key.allow_credentials = Some(vec![PublicKeyCredentialDescriptor {
+    options.allow_credentials = Some(vec![PublicKeyCredentialDescriptor {
         ty: PublicKeyCredentialType::PublicKey,
         id: Bytes::from(cred_bytes.clone()),
         transports: None,
@@ -697,25 +712,42 @@ pub async fn run_provider_assertion(
         store,
         BaluardUserValidation::with_user_verified(user_verified),
     );
-    let mut client = Client::new(authenticator);
+    // The provider path validates caller origins platform-side; the loopback
+    // E2E affordance (plan §12) needs passkey-rs' web-origin check to accept
+    // the https://localhost ceremony origin.
+    let mut client = Client::new(authenticator).allows_insecure_localhost(true);
 
     let cdj_ref = client_data_json.as_deref();
     let authenticated = if let Some(hash) = client_data_hash.as_deref() {
         client
             .authenticate(
                 origin,
-                options,
+                CredentialRequestOptions {
+                    public_key: options,
+                },
                 DefaultClientDataWithCustomHash(hash.to_vec()),
             )
             .await
     } else if let Some(cdj) = cdj_ref {
         let hash = Sha256::digest(cdj).to_vec();
         client
-            .authenticate(origin, options, DefaultClientDataWithCustomHash(hash))
+            .authenticate(
+                origin,
+                CredentialRequestOptions {
+                    public_key: options,
+                },
+                DefaultClientDataWithCustomHash(hash),
+            )
             .await
     } else {
         client
-            .authenticate(origin, options, DefaultClientData)
+            .authenticate(
+                origin,
+                CredentialRequestOptions {
+                    public_key: options,
+                },
+                DefaultClientData,
+            )
             .await
     }
     .map_err(|e| format!("Assertion failed: {e:?}"))?;
@@ -802,7 +834,9 @@ mod provider_tests {
         if cred_props {
             pk.insert("extensions".into(), json!({"credProps": true}));
         }
-        serde_json::to_string(&json!({"publicKey": Value::Object(pk)})).unwrap()
+        // The Android credential-manager contract delivers the INNER options
+        // (no W3C publicKey wrapper); serde parses it directly.
+        serde_json::to_string(&Value::Object(pk)).unwrap()
     }
 
     fn assertion_options_json(
@@ -825,7 +859,7 @@ mod provider_tests {
                 .collect();
             o.insert("allowCredentials".into(), Value::Array(list));
         }
-        serde_json::to_string(&json!({"publicKey": Value::Object(o)})).unwrap()
+        serde_json::to_string(&Value::Object(o)).unwrap()
     }
 
     fn empty_index() -> PasskeyIndex {
