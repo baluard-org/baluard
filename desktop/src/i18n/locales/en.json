@@ -15,7 +15,8 @@
     "default": "Default",
     "download": "Download",
     "close": "Close",
-    "sending": "Sending..."
+    "sending": "Sending...",
+    "pleaseWait": "Working…"
   },
   "login": {
     "title": "Baluard",
@@ -392,7 +393,19 @@
     "tabGroups": "Groups",
     "tabContacts": "Contacts",
     "tabOutboxes": "Outboxes",
-    "tabSpace": "Vault"
+    "tabSpace": "Vault",
+    "hwTitle": "Guard with this device's security chip",
+    "hwDesc": "A stolen disk or backup alone cannot open this vault, even with the password.",
+    "hwOn": "This vault is guarded by the security chip.",
+    "hwOff": "This vault is not guarded by the security chip.",
+    "hwEnable": "Turn on",
+    "hwDisable": "Turn off",
+    "hwEnableTitle": "Turn on the security chip guard?",
+    "hwEnableBody": "A stolen disk or backup alone will no longer be able to open this vault, even with the password. If this device's chip dies, this device will need the recovery phrase to rejoin, like any new device.",
+    "hwDisableTitle": "Turn off the security chip guard?",
+    "hwDisableBody": "Back to password-only protection: a stolen disk could be attacked offline. The vault still syncs and recovers as usual.",
+    "hwEnabledToast": "Security chip guard is on.",
+    "hwDisabledToast": "Security chip guard is off."
   },
   "sync": {
     "title": "Vault Sync",
