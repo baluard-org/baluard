@@ -100,6 +100,43 @@ SEED_PATH=$(printf '%s\n' "$SEED_JSON" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
 BALUARD_PASSWORD="$BALUARD_E2E_PW" "$CLI" add login --name "Weak Entry" --username u \
   --password 123 --direct --vault-path "$SEED_PATH" > /dev/null 2>&1
 
+# Sharing-flow fixtures: a second LIVE member row (identity keys copied from
+# the founder row - grants and group ops refuse rows without share keys) and
+# a pending D61 ownership-claim record whose amber card the owner can cancel.
+# Fixture recipe from the G26/G11 e2e waves; sandbox-local and disposable.
+MEMBER_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+FOUNDER_ROW="$(ls "$SEED_PATH"/meta/members/*.json 2>/dev/null | head -1)"
+if [[ -n "$FOUNDER_ROW" ]]; then
+  python3 - "$FOUNDER_ROW" "$SEED_PATH" "$MEMBER_ID" << 'PYSEED'
+import json, sys, time
+from pathlib import Path
+founder = json.loads(Path(sys.argv[1]).read_text())
+seed_path, member_id = Path(sys.argv[2]), sys.argv[3]
+now = int(time.time())
+row = {
+    "id": member_id,
+    "display_name": "E2E Member",
+    "email": "member@e2e.test",
+    "role": "editor",
+    "trust": "channel",
+    "identity_signing_pubkey": founder.get("identity_signing_pubkey"),
+    "identity_wrap_pubkey": founder.get("identity_wrap_pubkey"),
+}
+d = seed_path / "meta" / "members"
+(d / f"{member_id}.json").write_text(json.dumps(row, indent=1))
+cdir = seed_path / "meta" / "contests"
+contest = {
+    "format": "baluard.ownership-contest.v1",
+    "old_owner_id": founder["id"],
+    "new_owner_id": member_id,
+    "confirmed_at": now,
+    "window_until": now + 30 * 86400,
+}
+cdir.mkdir(parents=True, exist_ok=True)
+(cdir / "ownership-claim.json").write_text(json.dumps(contest, indent=1))
+PYSEED
+fi
+
 # Frontend dev server for the debug binary's devUrl. Invoke the binary
 # directly: killing the npx wrapper can orphan the real vite process.
 (cd "$ROOT/desktop" && exec ./node_modules/.bin/vite --port 1420 --strictPort) > "$WORK/vite.log" 2>&1 &
