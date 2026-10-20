@@ -111,6 +111,14 @@ fn main() -> anyhow::Result<()> {
 
     init_debug_logging();
 
+    // Hardware-backed key seal (progressive enhancement): install the
+    // platform keystore when this build carries one. Devices without a
+    // backend compile or probe stay on seal v1 with zero behavior change
+    // (docs/plan-hardware-backed-keys.md §0).
+    if let Some(store) = baluard_core::hwkey::platform_store() {
+        baluard_core::hwkey::install(store);
+    }
+
     // Test-fixture kill switch: when the spawning parent goes away
     // (SIGKILLed test runner, OOM kill, crash), no Drop guard can run,
     // so the daemon would sit orphaned forever — 1816 of them once
