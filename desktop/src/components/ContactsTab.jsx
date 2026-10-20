@@ -116,7 +116,7 @@ export default function ContactsTab() {
             </div>
             <div>
               <p class="text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">{t("contacts.myCodeLabel")}</p>
-              <code class="text-xs font-mono text-[var(--color-text)]">{myCard().verification_code}</code>
+              <code data-testid="contacts-my-code" class="text-xs font-mono text-[var(--color-text)]">{myCard().verification_code}</code>
             </div>
           </div>
         </Show>

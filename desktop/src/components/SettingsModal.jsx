@@ -989,6 +989,7 @@ export default function SettingsModal() {
                       <span class="text-[10px] font-normal text-[var(--color-muted)]">{t("settings.exportBackupHint")}</span>
                     </button>
                     <button
+                      data-testid="backup-encrypted"
                       onClick={() => window.__baluardReprompt?.show(() => openBackupPass("export"))}
                       disabled={exporting()}
                       class="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
@@ -1059,6 +1060,7 @@ export default function SettingsModal() {
             <Show when={backupMode()}>
               <div
                 ref={backupDialogRef}
+                data-testid="backup-pass-dialog"
                 class="fixed inset-0 bg-black/60 flex items-center justify-center z-[110]"
                 onClick={() => !backupBusy() && closeBackupPass()}
               >
@@ -1075,6 +1077,7 @@ export default function SettingsModal() {
                   </p>
                   <div class="flex gap-2">
                     <input
+                      data-testid="backup-pass-input"
                       value={backupPw()}
                       onInput={(e) => setBackupPw(e.currentTarget.value)}
                       type={backupMode() === "export" ? "text" : "password"}
@@ -1110,6 +1113,7 @@ export default function SettingsModal() {
                     />
                     <label class="flex items-start gap-2 text-xs text-[var(--color-text)] cursor-pointer">
                       <input
+                        data-testid="backup-saved-ack"
                         type="checkbox"
                         checked={backupPwSaved()}
                         onChange={(e) => setBackupPwSaved(e.currentTarget.checked)}
@@ -1120,6 +1124,7 @@ export default function SettingsModal() {
                   </Show>
                   <div class="flex justify-end gap-2 pt-1">
                     <button
+                      data-testid="backup-cancel"
                       onClick={closeBackupPass}
                       disabled={backupBusy()}
                       class="px-4 py-2 rounded-xl text-xs text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-40"
@@ -1127,6 +1132,7 @@ export default function SettingsModal() {
                       {t("common.cancel")}
                     </button>
                     <button
+                      data-testid="backup-confirm"
                       onClick={confirmBackup}
                       disabled={
                         backupBusy() ||
