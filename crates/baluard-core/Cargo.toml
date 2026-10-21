@@ -77,7 +77,7 @@ url = "2"
 public-suffix = "0.1"
 
 [features]
-hw-seal = ["dep:secure-enclave-rs"]
+hw-seal = ["dep:secure-enclave-rs", "dep:tss-esapi"]
 default = ["full"]
 full = ["git-sync", "passkey-ceremony", "uri-match"]
 passkey-ceremony = ["dep:passkey", "dep:passkey-types", "passkey-types/serialize_bytes_as_base64_string", "dep:url", "dep:public-suffix", "dep:coset", "dep:tokio"]
@@ -105,3 +105,9 @@ foreign-types = "0.3"
 
 [target.'cfg(all(target_os = "macos"))'.dependencies]
 secure-enclave-rs = { version = "1", optional = true }
+
+[target.'cfg(all(target_os = "linux"))'.dependencies]
+# TPM 2.0 backend over the TCG ESYS stack; links libtss2-esys/mu/rc
+# (tpm2-tss-devel). Talks to /dev/tpmrm0 through the kernel resource
+# manager by default; the TSS2_TCTI_* env vars override.
+tss-esapi = { version = "7.6", optional = true }
