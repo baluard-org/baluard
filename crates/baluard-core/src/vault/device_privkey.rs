@@ -417,7 +417,6 @@ pub fn open_bytes_hw(
         .ecdh(binding, &crate::hwkey::EphemeralPub(peer))
         .map_err(|_| crate::hwkey::hw_unavailable_error())?;
     let ck = crate::hwkey::combine_seal_inputs(&hw_secret, seal_key);
-    let aad = hw_aad(&peer);
     let mut pt = crate::crypto::aead::decrypt(&ck, &envelope)
         .map_err(|_| VaultError::Corrupt("devkey seal key mismatch".into()))?;
     let inner = String::from_utf8(pt.clone())

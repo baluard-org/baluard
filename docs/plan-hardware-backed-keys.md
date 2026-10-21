@@ -1,6 +1,6 @@
 # Hardware-Backed Key Seal (Secure Enclave / TPM)
 
-- Status: Phases 0 + core seal LANDED 2026-10-20 (trait, probe, kill-switch, vault.hw_status routes, v2-hw seal with mock tests, desktop toggle). Phase 1's macOS backend is committed behind the hw-seal feature but needs on-device verification plus the keychain-access-groups entitlement + provisioning profile (persistent SE keys require them). Phases 2-3 (Windows PCP, Linux tss-esapi) unstarted.
+- Status: Phases 0 + core seal LANDED 2026-10-20 (trait, probe, kill-switch, vault.hw_status routes, v2-hw seal with mock tests, desktop toggle). Phase 1's macOS backend is committed behind the hw-seal feature but needs on-device verification plus the keychain-access-groups entitlement + provisioning profile (persistent SE keys require them). Phase 3's Linux TPM backend LANDED 2026-10-21 and is verified against this box's real TPM (Intel PTT): build needs `tpm2-tss-devel` plus `tss` group membership, the one-chip-key shared-slot design below, and real-chip tests via `BALUARD_HW_KEY_TEST=1`. Phase 2 (Windows PCP) unstarted.
 - Date: 2026-10-18
 - Author: Esteban
 - Related: `docs/threat-model.md` (adversary D: local disk access), `crates/baluard-core/src/vault/device_privkey.rs` (the file this plan protects), `crates/baluard-core/src/biometric.rs` (audit C3 asymmetry note that first deferred this), `docs/post-quantum-readiness.md` (identity-layer posture)
@@ -50,7 +50,7 @@ Silent operation: on all three platforms the ECDH primitive chosen for Phase 1-3
 |---|---|---|
 | macOS 15+ | Secure Enclave P-256 key agreement (`SecureEnclave.P256`, keychain-persisted reference, app-scoped ACL) | Every qualifying Mac (T2/Apple Silicon) has an SE. Key material is generated inside the SE and is non-exportable by construction. Keychain ACL binds the reference to the daemon's bundle ID; the stable signing identifier (`xyz.actitud.baluard.daemon`) is load-bearing here (P2 gotcha: ad-hoc re-signs re-prompt and can strand the reference). |
 | Windows 11 | TPM 2.0 via CNG Platform Crypto Provider (PCP) | `Microsoft Platform Crypto Provider` keys are TPM-resident and non-exportable. Windows Hello KeyCredential is the consent-gated variant for Phase 5, not the base wrap. |
-| Linux (Ubuntu 26.04, Fedora 43) | TPM 2.0 via `tss-esapi` (TSS 2.0 ESAPI) | Hardware presence varies (VMs, older boxes). Probe-or-hide is mandatory. CI uses `swtpm`. |
+| Linux (Ubuntu 26.04, Fedora 43) | TPM 2.0 via `tss-esapi` (TSS 2.0 ESAPI) | Hardware presence varies (VMs, older boxes). Probe-or-hide is mandatory. CI uses `swtpm`. Implemented 2026-10-21 with three firmware-reality deviations recorded in `hwkey/tpm.rs`: ONE shared chip key per TPM (slot-constrained parts like Intel PTT expose only a handful of persistent slots; vault separation rides the password-derived seal subkey either way), key identity by TPM name (outside info never shows in the public area), and a per-command session matrix (ESYS refuses sessionless hierarchy commands but misbehaves with sessions on TR open and keygen).
 
 Mobile (Android Keystore / iOS SEP via UniFFI) is parked with G12-adjacent work; the trait interface below is built so the platform impls drop in later without core changes.
 

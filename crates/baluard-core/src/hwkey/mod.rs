@@ -68,6 +68,10 @@ pub trait HardwareKeyStore: Send + Sync {
     /// `peer`. Must be silent (no per-use user consent) - the v2-hw seal
     /// runs on every unlock and password change.
     fn ecdh(&self, binding: &str, peer: &EphemeralPub) -> Result<SharedSecret, BaluardError>;
+    /// Idempotent. Implementations whose key is shared infrastructure
+    /// (the TPM backend: slot-constrained firmwares get one chip key
+    /// for all vaults) treat this as a no-op - disable downsizes the
+    /// seal to v1 and leaves the key in place.
     fn delete_binding(&self, binding: &str) -> Result<(), BaluardError>;
 }
 
@@ -152,6 +156,9 @@ pub fn combine_seal_inputs(hw_secret: &[u8; 32], kek_subkey: &[u8; 32]) -> [u8; 
 #[cfg(all(target_os = "macos", feature = "hw-seal"))]
 pub mod secure_enclave;
 
+#[cfg(all(target_os = "linux", feature = "hw-seal"))]
+pub mod tpm;
+
 /// The platform keystore for THIS device, per the platform matrix (plan
 /// §3.3). Returns None where no backend is compiled - the progressive
 /// default on Linux/Windows until their phases land.
@@ -160,7 +167,16 @@ pub fn platform_store() -> Option<Arc<dyn HardwareKeyStore>> {
     {
         Some(secure_enclave::SecureEnclaveStore::new())
     }
-    #[cfg(not(all(target_os = "macos", feature = "hw-seal")))]
+    #[cfg(all(target_os = "linux", feature = "hw-seal"))]
+    {
+        tpm::TpmStore::new()
+            .ok()
+            .map(|s| s as Arc<dyn HardwareKeyStore>)
+    }
+    #[cfg(not(any(
+        all(target_os = "macos", feature = "hw-seal"),
+        all(target_os = "linux", feature = "hw-seal")
+    )))]
     {
         None
     }
