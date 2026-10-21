@@ -1,6 +1,6 @@
 # Hardware-Backed Key Seal (Secure Enclave / TPM)
 
-- Status: Planned (scoping complete, not started)
+- Status: Phases 0 + core seal LANDED 2026-10-20 (trait, probe, kill-switch, vault.hw_status routes, v2-hw seal with mock tests, desktop toggle). Phase 1's macOS backend is committed behind the hw-seal feature but needs on-device verification plus the keychain-access-groups entitlement + provisioning profile (persistent SE keys require them). Phases 2-3 (Windows PCP, Linux tss-esapi) unstarted.
 - Date: 2026-10-18
 - Author: Esteban
 - Related: `docs/threat-model.md` (adversary D: local disk access), `crates/baluard-core/src/vault/device_privkey.rs` (the file this plan protects), `crates/baluard-core/src/biometric.rs` (audit C3 asymmetry note that first deferred this), `docs/post-quantum-readiness.md` (identity-layer posture)
