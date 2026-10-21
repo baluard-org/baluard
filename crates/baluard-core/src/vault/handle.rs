@@ -5103,12 +5103,18 @@ impl VaultHandle {
                 Some(member) => hex::decode(&member.kek_canary)
                     .map_err(|_| VaultError::Corrupt("member canary".into()))?,
                 None => {
-                    if self.path.join("meta/kek-canary.enc").exists() {
-                        std::fs::read(self.path.join("meta/kek-canary.enc"))
-                            .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?
-                    } else {
-                        Vec::new()
-                    }
+                    // Fail closed: the canary is the direct KEK proof. A
+                    // missing file means incomplete or tampered metadata,
+                    // and the old exists-guard let unlock proceed with an
+                    // unverified password.
+                    std::fs::read(self.path.join("meta/kek-canary.enc")).map_err(|e| {
+                        match e.kind() {
+                            std::io::ErrorKind::NotFound => VaultError::Corrupt(
+                                "kek canary is missing; vault metadata is incomplete".into(),
+                            ),
+                            _ => VaultError::Metadata(format!("reading kek canary: {e}")),
+                        }
+                    })?
                 }
             },
         };
@@ -5408,11 +5414,15 @@ impl VaultHandle {
         let old_kek = kdf::derive_kek(old_password, &self.kdf_params)?;
         let old_session_key = hkdf_derive::derive_session_key(&old_kek)?;
         let old_devkey_seal = hkdf_derive::derive_devkey_seal_key(&old_kek)?;
-        if self.path.join("meta/kek-canary.enc").exists() {
-            let canary_data = std::fs::read(self.path.join("meta/kek-canary.enc"))?;
-            super::canary::verify_kek_canary(&old_session_key, &canary_data)
-                .map_err(|_| VaultError::Corrupt("old master password incorrect".into()))?;
-        }
+        let canary_data =
+            std::fs::read(self.path.join("meta/kek-canary.enc")).map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => VaultError::Corrupt(
+                    "kek canary is missing; vault metadata is incomplete".into(),
+                ),
+                _ => VaultError::Metadata(format!("reading kek canary: {e}")),
+            })?;
+        super::canary::verify_kek_canary(&old_session_key, &canary_data)
+            .map_err(|_| VaultError::Corrupt("old master password incorrect".into()))?;
 
         // C1 pre-check: a sealed devkey file must open under the OLD seal
         // key BEFORE we rotate anything, otherwise a later failure would
@@ -5604,7 +5614,9 @@ impl VaultHandle {
             }
         }
 
-        let dirs = ["ciphers", "trash", "meta"];
+        // trash stays out: its mtime carries deletion time for purge_old_trash;
+        // normalizing it made the next unlock-time purge wipe every trashed entry
+        let dirs = ["ciphers", "meta"];
         for dir_name in &dirs {
             normalize_dir(&vault_path.join(dir_name), target);
         }
@@ -13172,6 +13184,61 @@ mod tests {
         let rows = handle.list_trash_entries().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1, None);
+    }
+
+    #[test]
+    fn unlock_fails_closed_without_password_canary() {
+        let (dir, password) = create_test_vault();
+        std::fs::remove_file(dir.path().join("meta/kek-canary.enc")).unwrap();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        let err = handle.unlock(&password).unwrap_err();
+        assert!(
+            err.to_string().contains("canary"),
+            "expected a canary failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn change_password_fails_closed_without_password_canary() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        std::fs::remove_file(dir.path().join("meta/kek-canary.enc")).unwrap();
+        assert!(
+            handle
+                .change_master_password(&password, "new-password-123")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn lock_normalization_leaves_trash_mtimes_alone() {
+        let (dir, _password) = create_test_vault();
+        let vault_path = dir.path().to_path_buf();
+        std::fs::create_dir_all(vault_path.join("trash")).unwrap();
+        let trashed = vault_path.join("trash/00000000-0000-0000-0000-00000000000x.enc");
+        std::fs::write(&trashed, b"x").unwrap();
+        let live = vault_path.join("ciphers/00000000-0000-0000-0000-00000000000y.enc");
+        std::fs::write(&live, b"x").unwrap();
+
+        let old = filetime::FileTime::from_unix_time(1_000_000, 0);
+        filetime::set_file_mtime(&trashed, old).unwrap();
+        filetime::set_file_mtime(&live, old).unwrap();
+
+        VaultHandle::normalize_timestamps_bg(&vault_path, 2_000_000);
+
+        let epoch = std::time::UNIX_EPOCH;
+        let trash_mtime = std::fs::metadata(&trashed).unwrap().modified().unwrap();
+        assert_eq!(
+            trash_mtime,
+            epoch + std::time::Duration::from_secs(1_000_000),
+            "trash mtimes carry deletion time; normalizing them makes the next purge_old_trash wipe every trashed entry"
+        );
+        let cipher_mtime = std::fs::metadata(&live).unwrap().modified().unwrap();
+        assert_eq!(
+            cipher_mtime,
+            epoch + std::time::Duration::from_secs(2_000_000)
+        );
     }
 
     #[test]
