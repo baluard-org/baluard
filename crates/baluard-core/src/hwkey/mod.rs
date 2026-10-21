@@ -159,9 +159,12 @@ pub mod secure_enclave;
 #[cfg(all(target_os = "linux", feature = "hw-seal"))]
 pub mod tpm;
 
+#[cfg(all(target_os = "windows", feature = "hw-seal"))]
+pub mod pcp;
+
 /// The platform keystore for THIS device, per the platform matrix (plan
 /// §3.3). Returns None where no backend is compiled - the progressive
-/// default on Linux/Windows until their phases land.
+/// default on platforms without a landed backend.
 pub fn platform_store() -> Option<Arc<dyn HardwareKeyStore>> {
     #[cfg(all(target_os = "macos", feature = "hw-seal"))]
     {
@@ -173,9 +176,14 @@ pub fn platform_store() -> Option<Arc<dyn HardwareKeyStore>> {
             .ok()
             .map(|s| s as Arc<dyn HardwareKeyStore>)
     }
+    #[cfg(all(target_os = "windows", feature = "hw-seal"))]
+    {
+        Some(pcp::PcpStore::new())
+    }
     #[cfg(not(any(
         all(target_os = "macos", feature = "hw-seal"),
-        all(target_os = "linux", feature = "hw-seal")
+        all(target_os = "linux", feature = "hw-seal"),
+        all(target_os = "windows", feature = "hw-seal")
     )))]
     {
         None
