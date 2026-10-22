@@ -1031,6 +1031,16 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1165,6 +1175,10 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_get_pending_conflict_details(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_get_settings(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_git_credentials_set(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_git_remote_url(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_group_create(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1324,6 +1338,8 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_clone_vault_start(`provider`: RustBuffer.ByValue,`cloneUrl`: RustBuffer.ByValue,`localPath`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_baluard_uniffi_fn_func_clone_vault_start_custom(`cloneUrl`: RustBuffer.ByValue,`localPath`: RustBuffer.ByValue,`credentialsJson`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_baluard_uniffi_fn_func_connect_pat(`provider`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_create_vault(`path`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
@@ -1342,6 +1358,10 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_baluard_uniffi_fn_func_generate_recovery_phrase(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_baluard_uniffi_fn_func_git_hostkey_trust(`attemptId`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_func_git_probe(`url`: RustBuffer.ByValue,`credentialsJson`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_baluard_uniffi_fn_func_init_data_dir(`dataDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_baluard_uniffi_fn_func_list_vault_repos(`provider`: RustBuffer.ByValue,
@@ -1484,6 +1504,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_clone_vault_start(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_func_clone_vault_start_custom(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_func_connect_pat(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_create_vault(
@@ -1501,6 +1523,10 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_func_generate_password(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_generate_recovery_phrase(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_func_git_hostkey_trust(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_func_git_probe(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_init_data_dir(
     ): Short
@@ -1631,6 +1657,10 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_get_pending_conflict_details(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_get_settings(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_git_credentials_set(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_git_remote_url(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_group_create(
     ): Short
@@ -1809,6 +1839,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_func_clone_vault_start() != 40767.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_func_clone_vault_start_custom() != 52156.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_func_connect_pat() != 41335.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1834,6 +1867,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_generate_recovery_phrase() != 12798.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_func_git_hostkey_trust() != 20498.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_func_git_probe() != 63765.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_init_data_dir() != 61336.toShort()) {
@@ -2029,6 +2068,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_get_settings() != 44276.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_git_credentials_set() != 54670.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_git_remote_url() != 28756.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_group_create() != 31990.toShort()) {
@@ -3470,6 +3515,19 @@ public interface MobileVaultInterface {
      * Get current vault settings as JSON string.
      */
     suspend fun `getSettings`(): kotlin.String
+    
+    /**
+     * Custom-remote credentials: store or update the device-local files.
+     * Payload JSON: {host, token?, username?, ssh_passphrase?, ssh_key_b64?};
+     * present fields update, an empty string clears. Not a cover mutation:
+     * the artifacts are gitignored device-local state.
+     */
+    suspend fun `gitCredentialsSet`(`payload`: kotlin.String): kotlin.String
+    
+    /**
+     * The vault's origin remote URL, for credential and sync UIs.
+     */
+    suspend fun `gitRemoteUrl`(): kotlin.String
     
     /**
      * Create a group. Payload {"name"}. Returns {"id"}.
@@ -5232,6 +5290,57 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_get_settings(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Custom-remote credentials: store or update the device-local files.
+     * Payload JSON: {host, token?, username?, ssh_passphrase?, ssh_key_b64?};
+     * present fields update, an empty string clears. Not a cover mutation:
+     * the artifacts are gitignored device-local state.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `gitCredentialsSet`(`payload`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_git_credentials_set(
+                thisPtr,
+                FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * The vault's origin remote URL, for credential and sync UIs.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `gitRemoteUrl`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_git_remote_url(
                 thisPtr,
                 
             )
@@ -8318,6 +8427,27 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
     )
     }
 
+        /**
+         * Custom-remote clone: no provider, request-time credentials. The
+         * credentials ride the shared callback machinery into the clone and
+         * persist into the cloned vault's device-local files after the rename.
+         * Payload JSON: {token?, username?, ssh_passphrase?, ssh_key_b64?}.
+         */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `cloneVaultStartCustom`(`cloneUrl`: kotlin.String, `localPath`: kotlin.String, `credentialsJson`: kotlin.String?) : MobileCloneJob {
+        return uniffiRustCallAsync(
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_clone_vault_start_custom(FfiConverterString.lower(`cloneUrl`),FfiConverterString.lower(`localPath`),FfiConverterOptionalString.lower(`credentialsJson`),),
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_pointer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_pointer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_pointer(future) },
+        // lift function
+        { FfiConverterTypeMobileCloneJob.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
      suspend fun `connectPat`(`provider`: MobileProvider, `token`: kotlin.String, `config`: MobileProviderConfig) {
@@ -8466,6 +8596,48 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
     )
     }
     
+
+        /**
+         * Bless a daemon-observed SSH host key by attempt id. Device-level:
+         * during a first clone there is no vault and no session token, so this
+         * is deliberately pre-unlock. Commits only what the daemon itself
+         * observed.
+         */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `gitHostkeyTrust`(`attemptId`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_git_hostkey_trust(FfiConverterString.lower(`attemptId`),),
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+        /**
+         * Custom-remote test connection: an ls-remote pre-flight. Returns
+         * {ok:true} or {ok:false, kind, detail} where kind distinguishes an
+         * untrusted host key (chain into the trust flow), an auth rejection, an
+         * empty remote, and everything unreachable. Stores nothing.
+         */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `gitProbe`(`url`: kotlin.String, `credentialsJson`: kotlin.String?) : kotlin.String {
+        return uniffiRustCallAsync(
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_git_probe(FfiConverterString.lower(`url`),FfiConverterOptionalString.lower(`credentialsJson`),),
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
 
         /**
          * Set the platform-specific data directory (used by Android/iOS to point at app storage).
