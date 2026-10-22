@@ -1505,8 +1505,8 @@ impl SyncEngine {
         let mut remote = repo
             .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
-        let mut fetch_opts = FetchOptions::new();
         let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
+        let mut fetch_opts = FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
         let refspec = format!("refs/heads/*:refs/remotes/{remote_name}/*");
         remote
@@ -3275,7 +3275,7 @@ impl SyncEngine {
         provider: Option<crate::providers::types::Provider>,
         progress: std::sync::Arc<std::sync::Mutex<CloneProgress>>,
     ) -> Result<Repository, BaluardError> {
-        Self::clone_remote_cancelable(url, target, provider, progress, None)
+        Self::clone_remote_cancelable(url, target, provider, progress, None, None)
     }
 
     pub fn clone_remote_cancelable(
@@ -3284,60 +3284,73 @@ impl SyncEngine {
         provider: Option<crate::providers::types::Provider>,
         progress: std::sync::Arc<std::sync::Mutex<CloneProgress>>,
         cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        creds: Option<CredentialConfig>,
     ) -> Result<Repository, BaluardError> {
         validate_git_url(url)?;
         crate::sync::tls::ensure_tls_roots();
         let mut builder = RepoBuilder::new();
-        let cred_config = CredentialConfig::load_with_hint(target, provider);
+        // Custom remotes carry request-time credentials (the target vault
+        // directory does not exist yet, so the vault-file arm of
+        // load_with_hint cannot see them). They ride the shared callback
+        // machinery: in-memory SSH keys, per-type attempt caps,
+        // host-bound tokens, and the hostkey observation stash feeding
+        // the trust flow.
         let mut fetch_opts = FetchOptions::new();
-        let https_token = cred_config.expose_token();
         let prog = progress.clone();
         let cancel = cancel_flag.clone();
-        let mut callbacks = git2::RemoteCallbacks::new();
-        callbacks.credentials(move |_url, username_from_url, allowed_types| {
-            if allowed_types.contains(git2::CredentialType::SSH_KEY) {
-                let user = username_from_url.unwrap_or("git");
-                if let Ok(cred) = git2::Cred::ssh_key_from_agent(user) {
-                    return Ok(cred);
-                }
-            }
-            if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-                if let Some(ref token) = https_token {
-                    let user = username_from_url.unwrap_or("git");
-                    return git2::Cred::userpass_plaintext(user, token.as_str());
-                }
-            }
-            if allowed_types.contains(git2::CredentialType::DEFAULT) {
-                return git2::Cred::default();
-            }
-            Err(git2::Error::from_str("no credential source available"))
-        });
-        callbacks.certificate_check(|cert, host| {
-            use git2::CertificateCheckStatus;
-            use git2::cert::SshHostKeyType;
-            if let Some(hostkey) = cert.as_hostkey() {
-                let key_type = match hostkey.hostkey_type() {
-                    Some(SshHostKeyType::Ed255219) => "ssh-ed25519",
-                    Some(SshHostKeyType::Rsa) => "ssh-rsa",
-                    Some(SshHostKeyType::Dss) => "ssh-dss",
-                    Some(SshHostKeyType::Ecdsa256) => "ecdsa-sha2-nistp256",
-                    Some(SshHostKeyType::Ecdsa384) => "ecdsa-sha2-nistp384",
-                    Some(SshHostKeyType::Ecdsa521) => "ecdsa-sha2-nistp521",
-                    _ => "",
-                };
-                let key = hostkey.hostkey().unwrap_or(&[]);
-                match crate::sync::known_hosts::verify_host_key(host, key_type, key) {
-                    crate::sync::known_hosts::HostKeyResult::Known => {
-                        Ok(CertificateCheckStatus::CertificateOk)
+        let mut callbacks = match creds.as_ref() {
+            Some(c) => crate::sync::credentials::build_callbacks(c),
+            None => {
+                let cred_config = CredentialConfig::load_with_hint(target, provider);
+                let https_token = cred_config.expose_token();
+                let mut cb = git2::RemoteCallbacks::new();
+                cb.credentials(move |_url, username_from_url, allowed_types| {
+                    if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+                        let user = username_from_url.unwrap_or("git");
+                        if let Ok(cred) = git2::Cred::ssh_key_from_agent(user) {
+                            return Ok(cred);
+                        }
                     }
-                    _ => Err(git2::Error::from_str(&format!(
-                        "SSH host key for {host} not in known_hosts"
-                    ))),
-                }
-            } else {
-                Ok(CertificateCheckStatus::CertificatePassthrough)
+                    if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                        if let Some(ref token) = https_token {
+                            let user = username_from_url.unwrap_or("git");
+                            return git2::Cred::userpass_plaintext(user, token.as_str());
+                        }
+                    }
+                    if allowed_types.contains(git2::CredentialType::DEFAULT) {
+                        return git2::Cred::default();
+                    }
+                    Err(git2::Error::from_str("no credential source available"))
+                });
+                cb.certificate_check(|cert, host| {
+                    use git2::CertificateCheckStatus;
+                    use git2::cert::SshHostKeyType;
+                    if let Some(hostkey) = cert.as_hostkey() {
+                        let key_type = match hostkey.hostkey_type() {
+                            Some(SshHostKeyType::Ed255219) => "ssh-ed25519",
+                            Some(SshHostKeyType::Rsa) => "ssh-rsa",
+                            Some(SshHostKeyType::Dss) => "ssh-dss",
+                            Some(SshHostKeyType::Ecdsa256) => "ecdsa-sha2-nistp256",
+                            Some(SshHostKeyType::Ecdsa384) => "ecdsa-sha2-nistp384",
+                            Some(SshHostKeyType::Ecdsa521) => "ecdsa-sha2-nistp521",
+                            _ => "",
+                        };
+                        let key = hostkey.hostkey().unwrap_or(&[]);
+                        match crate::sync::known_hosts::verify_host_key(host, key_type, key) {
+                            crate::sync::known_hosts::HostKeyResult::Known => {
+                                Ok(CertificateCheckStatus::CertificateOk)
+                            }
+                            _ => Err(git2::Error::from_str(&format!(
+                                "SSH host key for {host} not in known_hosts"
+                            ))),
+                        }
+                    } else {
+                        Ok(CertificateCheckStatus::CertificatePassthrough)
+                    }
+                });
+                cb
             }
-        });
+        };
         callbacks.transfer_progress(move |p| {
             if let Some(ref flag) = cancel {
                 if flag.load(std::sync::atomic::Ordering::Relaxed) {
@@ -3523,6 +3536,35 @@ impl SyncEngine {
             serde_json::to_string_pretty(&record)
                 .map_err(|e| SyncError::Git(format!("save head: {e}")))?,
         )?;
+        Ok(())
+    }
+
+    /// Probe a remote URL with optional credentials: a ls-remote against
+    /// HEAD. Used by the custom-remote test-connection pre-flight. Never
+    /// writes anything; failures carry the scrubbed message plus the
+    /// hostkey marker when an untrusted key interrupted the handshake.
+    pub fn probe_remote(url: &str, creds: Option<&CredentialConfig>) -> Result<(), BaluardError> {
+        validate_git_url(url)?;
+        crate::sync::tls::ensure_tls_roots();
+        let empty_cfg;
+        let callbacks = match creds.as_ref() {
+            Some(c) => crate::sync::credentials::build_callbacks(c),
+            None => {
+                empty_cfg = CredentialConfig::default();
+                crate::sync::credentials::build_callbacks(&empty_cfg)
+            }
+        };
+        let mut remote = git2::Remote::create_detached(url)
+            .map_err(|e| SyncError::Git(format!("remote: {e}")))?;
+        remote
+            .connect_auth(git2::Direction::Fetch, Some(callbacks), None)
+            .map_err(|e| SyncError::Git(format!("connect: {e}")))?;
+        let heads = remote
+            .list()
+            .map_err(|e| SyncError::Git(format!("list: {e}")))?;
+        if heads.is_empty() {
+            return Err(SyncError::Git("the remote is empty (no branches)".into()).into());
+        }
         Ok(())
     }
 

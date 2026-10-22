@@ -280,6 +280,9 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     // Custom-remote SSH host-key trust: device-level, pre-unlock (no vault
     // exists during a first clone). Commits only daemon-observed keys.
     "git.git_hostkey_trust",
+    // Custom-remote test connection: an ls-remote pre-flight. Host-level,
+    // stores nothing.
+    "git.git_probe",
     // G24 step 6 (plan section 4.10): the CLI fan-out search. Token-gated
     // IN PLACE against the active vault (same trust as vaults.list_full_all)
     // because the payload crosses vault boundaries.
@@ -1304,6 +1307,12 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     // class as vaults.list.
     if req.action.as_str() == "git.git_hostkey_trust" {
         return handle_git_hostkey_trust(req);
+    }
+    // Custom-remote probe: a test-connection ls-remote before anything is
+    // written. Host-level (probe target vaults do not exist yet). Request
+    // credentials stay in memory and are never stored.
+    if req.action.as_str() == "git.git_probe" {
+        return handle_git_probe(req);
     }
     // S2 IS-6 passphrase-guest reveal: host-level and vault-agnostic —
     // a guest has NO vault ("Open a shared file" on first-run). Pure
@@ -2960,6 +2969,11 @@ struct CloneParams {
     display_name: String,
     provider: Option<baluard_core::providers::types::Provider>,
     provider_str: Option<String>,
+    /// Request-time custom credentials: the target vault directory does
+    /// not exist pre-clone, so the vault-file credential arm cannot see
+    /// them. Persisted into the clone after registration.
+    #[cfg(feature = "git-sync")]
+    creds: Option<baluard_core::sync::credentials::CredentialConfig>,
 }
 
 #[cfg(feature = "git-sync")]
@@ -3083,6 +3097,116 @@ fn handle_git_hostkey_trust(req: GatewayRequest) -> GatewayResponse {
         ),
         Err(e) => err_response(e),
     }
+}
+
+/// `git.git_probe`: test a custom remote URL with optional credentials.
+/// Runs a ls-remote against the remote's HEAD and returns a structured
+/// result the UI can map to plain language. Never writes anything.
+#[cfg(feature = "git-sync")]
+fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
+    use base64::Engine as _;
+    let v: serde_json::Value = match serde_json::from_str(&req.payload) {
+        Ok(v) => v,
+        Err(e) => return err_response(format!("Invalid payload: {e}")),
+    };
+    let Some(url) = v["url"].as_str().map(str::to_string) else {
+        return err_response("Missing 'url' in payload".to_string());
+    };
+    // Optional credentials, same shape as the clone payload.
+    let creds = match v.get("credentials") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(c) => {
+            let token = c["token"].as_str().unwrap_or("");
+            let username = c["username"].as_str().unwrap_or("");
+            let passphrase = c["ssh_passphrase"].as_str().unwrap_or("");
+            let key_b64 = c["ssh_key_b64"].as_str().unwrap_or("");
+            if token.is_empty()
+                && username.is_empty()
+                && passphrase.is_empty()
+                && key_b64.is_empty()
+            {
+                None
+            } else {
+                let ssh_key_pem = if key_b64.is_empty() {
+                    None
+                } else {
+                    match base64::engine::general_purpose::STANDARD.decode(key_b64.trim()) {
+                        Ok(b) => match String::from_utf8(b) {
+                            Ok(pem) => Some(pem),
+                            Err(_) => {
+                                return err_response(
+                                    "SSH key material is not valid UTF-8".to_string(),
+                                );
+                            }
+                        },
+                        Err(_) => {
+                            return err_response("ssh_key_b64 is not valid base64".to_string());
+                        }
+                    }
+                };
+                let host = baluard_core::sync::credentials::extract_host(&url);
+                let host = match host {
+                    Some(h) if !h.is_empty() => h,
+                    _ => return err_response("cannot derive the host from the URL".to_string()),
+                };
+                Some(
+                    baluard_core::sync::credentials::CredentialConfig::in_memory(
+                        if token.is_empty() {
+                            None
+                        } else {
+                            Some(token.to_string())
+                        },
+                        if username.is_empty() {
+                            None
+                        } else {
+                            Some(username.to_string())
+                        },
+                        ssh_key_pem,
+                        if passphrase.is_empty() {
+                            None
+                        } else {
+                            Some(passphrase.to_string())
+                        },
+                        Some(host),
+                    ),
+                )
+            }
+        }
+    };
+
+    let result = std::thread::spawn(move || {
+        baluard_core::sync::engine::SyncEngine::probe_remote(&url, creds.as_ref())
+    });
+
+    match result.join() {
+        Ok(Ok(())) => ok_resp(serde_json::json!({ "ok": true }).to_string(), None),
+        Ok(Err(e)) => {
+            let msg = baluard_core::sync::credentials::format_sync_error(&e);
+            let kind = if msg.contains("host_key_untrusted") {
+                "host-untrusted"
+            } else if msg.contains("empty") {
+                "empty"
+            } else if msg.contains("authentication")
+                || msg.contains("Permission denied")
+                || msg.contains("401")
+                || msg.contains("403")
+            {
+                "auth-rejected"
+            } else {
+                "unreachable"
+            };
+            ok_resp(
+                serde_json::json!({ "ok": false, "kind": kind, "detail": msg }).to_string(),
+                None,
+            )
+        }
+        Err(_) => err_response("probe task panicked".to_string()),
+    }
+}
+
+#[cfg(not(feature = "git-sync"))]
+fn handle_git_probe(_req: GatewayRequest) -> GatewayResponse {
+    err_response("git-sync feature not enabled".to_string())
 }
 
 async fn handle_enroll_with_phrase(
@@ -3341,6 +3465,76 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
         Some(provider_str.to_string())
     };
 
+    // Request-time custom credentials (custom-remote clones): token,
+    // username, SSH passphrase, pasted/picked key. Bound to the URL host
+    // at construction so a redirect can never capture them.
+    #[cfg(feature = "git-sync")]
+    let creds = match v.get("credentials") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(c) => {
+            use base64::Engine as _;
+            let token = c["token"].as_str().unwrap_or("");
+            let username = c["username"].as_str().unwrap_or("");
+            let passphrase = c["ssh_passphrase"].as_str().unwrap_or("");
+            let key_b64 = c["ssh_key_b64"].as_str().unwrap_or("");
+            if token.is_empty()
+                && username.is_empty()
+                && passphrase.is_empty()
+                && key_b64.is_empty()
+            {
+                None
+            } else {
+                let ssh_key_pem = if key_b64.is_empty() {
+                    None
+                } else {
+                    match base64::engine::general_purpose::STANDARD.decode(key_b64.trim()) {
+                        Ok(b) => match String::from_utf8(b) {
+                            Ok(pem) => Some(pem),
+                            Err(_) => {
+                                return err_response(
+                                    "SSH key material is not valid UTF-8".to_string(),
+                                );
+                            }
+                        },
+                        Err(_) => {
+                            return err_response("ssh_key_b64 is not valid base64".to_string());
+                        }
+                    }
+                };
+                let host = baluard_core::sync::credentials::extract_host(&clone_url);
+                let host = match host {
+                    Some(h) if !h.is_empty() => h,
+                    _ => {
+                        return err_response(
+                            "cannot derive the host from the clone URL".to_string(),
+                        );
+                    }
+                };
+                Some(
+                    baluard_core::sync::credentials::CredentialConfig::in_memory(
+                        if token.is_empty() {
+                            None
+                        } else {
+                            Some(token.to_string())
+                        },
+                        if username.is_empty() {
+                            None
+                        } else {
+                            Some(username.to_string())
+                        },
+                        ssh_key_pem,
+                        if passphrase.is_empty() {
+                            None
+                        } else {
+                            Some(passphrase.to_string())
+                        },
+                        Some(host),
+                    ),
+                )
+            }
+        }
+    };
+
     // C11: same gate as vault.create — the slug joins a filesystem path.
     if let Err(e) = baluard_core::vault::slug::validate_slug(&slug) {
         return err_response(format!("Invalid vault slug '{slug}': {e}"));
@@ -3409,6 +3603,7 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
             display_name,
             provider,
             provider_str: provider_str_owned,
+            creds,
         })
     });
 
@@ -3432,12 +3627,15 @@ fn run_clone_to_completion(params: CloneParams) {
         display_name,
         provider,
         provider_str,
+        creds,
     } = params;
-    let result = baluard_core::sync::engine::SyncEngine::clone_remote(
+    let result = baluard_core::sync::engine::SyncEngine::clone_remote_cancelable(
         &clone_url,
         &target,
         provider,
         progress.clone(),
+        None,
+        creds.clone(),
     );
     match result {
         Ok(_repo) => {
@@ -3496,6 +3694,22 @@ fn run_clone_to_completion(params: CloneParams) {
                 s.phase = "failed".to_string();
                 s.error = Some(format!("Registration failed: {msg}"));
                 return;
+            }
+            // Persist the request-time credentials into the clone so the
+            // next sync authenticates the same way. A failure surfaces in
+            // the job error: a clone that cannot re-authenticate on the
+            // next sync is not a finished join.
+            if let Some(cfg) = creds.as_ref() {
+                if let Err(persist_err) =
+                    baluard_core::sync::credentials::persist_in_memory(&target, cfg)
+                {
+                    let mut s = state.lock().unwrap();
+                    s.phase = "failed".to_string();
+                    s.error = Some(format!(
+                        "Cloned, but storing the credentials failed: {persist_err}"
+                    ));
+                    return;
+                }
             }
             let mut s = state.lock().unwrap();
             s.phase = "done".to_string();
@@ -5716,25 +5930,44 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // would 422 on the already-existing name) and use this URL directly.
             let existing_clone_url = payload["clone_url"].as_str().map(|s| s.to_string());
 
-            // Resolve provider
-            let prov_type = match baluard_core::providers::types::Provider::all()
-                .iter()
-                .find(|p| p.to_string() == provider)
-            {
-                Some(p) => *p,
-                None => return err_response(format!("Unknown provider: {provider}")),
+            // Custom remote: the repository URL is user-supplied and
+            // required — there is no forge API to create the repo and no
+            // provider token. Credentials live in meta/git-credentials.json
+            // (stored via vault.git_credentials_set) and are read by the
+            // sync engine's credential chain at transport time.
+            let is_custom = provider == "custom";
+            if is_custom && existing_clone_url.is_none() {
+                return err_response("A custom remote needs the full repository URL (clone URL)");
+            }
+
+            // Resolve provider (skipped for custom remotes).
+            let prov_type = if is_custom {
+                None
+            } else {
+                match baluard_core::providers::types::Provider::all()
+                    .iter()
+                    .find(|p| p.to_string() == provider)
+                {
+                    Some(p) => Some(*p),
+                    None => return err_response(format!("Unknown provider: {provider}")),
+                }
             };
 
-            // Load token from keyring
-            let state_file =
-                baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
-            let info = match state_file.get(prov_type) {
-                Some(i) => i,
-                None => return err_response(format!("{provider} not connected")),
-            };
-            let token = match ensure_valid_token(prov_type, info).await {
-                Ok(t) => t,
-                Err(e) => return e,
+            // Load token from keyring (skipped for custom remotes).
+            let token = if is_custom {
+                None
+            } else {
+                let prov = prov_type.expect("checked above");
+                let state_file =
+                    baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+                let info = match state_file.get(prov) {
+                    Some(i) => i,
+                    None => return err_response(format!("{provider} not connected")),
+                };
+                match ensure_valid_token(prov, info).await {
+                    Ok(t) => Some(t),
+                    Err(e) => return e,
+                }
             };
 
             // Default repo name to vault slug if not provided
@@ -5763,17 +5996,30 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let remote_url: String = if let Some(url) = existing_clone_url {
                 url
             } else {
+                let prov_type = prov_type.expect("repo creation implies a forge provider");
+                let token = token.as_ref().expect("repo creation implies a token");
+                let state_file =
+                    baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+                let info = match state_file.get(prov_type) {
+                    Some(i) => i,
+                    None => return err_response(format!("{provider} not connected")),
+                };
                 let prov = match baluard_core::providers::provider_for(prov_type, info.config()) {
                     Ok(p) => p,
                     Err(e) => return err_response(e.to_string()),
                 };
-                match prov.create_private_repo(&token, &effective_name).await {
+                match prov.create_private_repo(token, &effective_name).await {
                     Ok(r) => r.clone_url,
                     Err(e) => return err_response(format!("Failed to create repo: {e}")),
                 }
             };
             #[cfg(not(feature = "git-sync"))]
-            let _ = (existing_clone_url, effective_name.as_str(), info, token);
+            let _ = (
+                existing_clone_url,
+                effective_name.as_str(),
+                prov_type,
+                token,
+            );
 
             // Init git repo + add remote + push (blocking git ops)
             #[cfg(feature = "git-sync")]
@@ -5858,7 +6104,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked()
                     {
                         if let Some(entry) = reg.get_mut(&slug_for_reg) {
-                            entry.provider = Some(provider_clone);
+                            // Custom remotes carry no provider: forge
+                            // automation (seat grants, repo listing) is
+                            // manual by design.
+                            entry.provider = if is_custom {
+                                None
+                            } else {
+                                Some(provider_clone)
+                            };
                             entry.remote_url = Some(remote_url.clone());
                             let now = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)

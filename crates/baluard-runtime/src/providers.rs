@@ -459,6 +459,7 @@ pub fn clone_and_register(
         provider,
         progress,
         cancel_flag,
+        None,
     );
 
     if let Err(e) = clone_res {
