@@ -742,6 +742,13 @@ enum SyncOutcome {
     },
 }
 
+/// Error formatting for sync outcomes: a pending host-key observation rides
+/// as the marker JSON so UIs can render the trust flow.
+#[cfg(feature = "git-sync")]
+fn format_sync_err(e: &baluard_core::error::BaluardError) -> String {
+    baluard_core::sync::credentials::format_sync_error(e)
+}
+
 /// Blocking pull → merge → push. Returns the outcome + conflict count.
 ///
 /// Network failures map to [`SyncOutcome::Offline`]; everything else is a
@@ -771,7 +778,7 @@ fn run_sync_cycle(
         Ok(SyncCycleOutcome::NeedsDecision { pending }) => {
             Ok(SyncOutcome::NeedsDecision { pending })
         }
-        Err(e) => Err(format!("{e}")),
+        Err(e) => Err(format_sync_err(&e)),
     }
 }
 
@@ -809,7 +816,7 @@ fn run_pull_only(
         // shadow it if it came first (review F1).
         Err(ref e) if is_access_denied_error(e) => return Ok(PullOutcome::AccessDenied),
         Err(ref e) if is_network_error(e) => return Ok(PullOutcome::Offline),
-        Err(e) => return Err(format!("{e}")),
+        Err(e) => return Err(format_sync_err(&e)),
     };
     match engine.pull(&repo, "origin") {
         // A background pull that hits a conflict: keep local via the same
@@ -842,7 +849,7 @@ fn run_pull_only(
         // Access-denied before network: same shadowing rule as above.
         Err(ref e) if is_access_denied_error(e) => Ok(PullOutcome::AccessDenied),
         Err(ref e) if is_network_error(e) => Ok(PullOutcome::Offline),
-        Err(e) => Err(format!("{e}")),
+        Err(e) => Err(format_sync_err(&e)),
     }
 }
 

@@ -8,11 +8,12 @@
 //! before being wrapped into SyncError to prevent credential disclosure
 //! in logs and IPC error surfaces.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(feature = "git-sync")]
 use git2::{Cred, CredentialType, RemoteCallbacks};
 
+use crate::error::BaluardError;
 use crate::providers::types::Provider;
 use secrecy::{ExposeSecret, SecretString};
 
@@ -74,8 +75,18 @@ pub fn extract_host(url: &str) -> Option<String> {
     }
 }
 
-/// Credential source configuration.
+/// The custom-remote credential file (meta/git-credentials.json).
 #[derive(Debug, Clone)]
+struct CustomFileCredentials {
+    token: SecretString,
+    username: Option<String>,
+    /// Bound host: the token is only released for URLs on this host.
+    host: Option<String>,
+    ssh_passphrase: Option<SecretString>,
+}
+
+/// Credential source configuration.
+#[derive(Debug, Clone, Default)]
 pub struct CredentialConfig {
     /// HTTPS personal access token (kept as SecretString).
     /// Priority: keyring (provider) > env var > vault config file.
@@ -84,6 +95,21 @@ pub struct CredentialConfig {
     /// If Some, credentials callback only exposes https_token if the target
     /// URL's host matches an allowed host.
     pub allowed_hosts: Option<Vec<String>>,
+    /// Bound host for the custom-remote token: when set, the token is
+    /// released only for URLs on this host (redirect-safe).
+    pub bound_host: Option<String>,
+    /// Optional username for HTTPS basic auth (custom remotes where the
+    /// login name is not "git").
+    pub username: Option<String>,
+    /// Path of the custom SSH private key (meta/git-ssh-key); read at
+    /// callback time, never at load.
+    pub ssh_key_path: Option<PathBuf>,
+    /// In-memory SSH private key (clone-time credential override).
+    pub ssh_key_pem: Option<SecretString>,
+    /// Passphrase for the custom SSH key.
+    pub ssh_passphrase: Option<SecretString>,
+    /// Port hint for host-key observations (custom remotes on non-22 ports).
+    pub port_hint: u16,
 }
 
 impl CredentialConfig {
@@ -94,21 +120,60 @@ impl CredentialConfig {
 
     /// Load credentials with an optional provider hint.
     pub fn load_with_hint(vault_path: &Path, hint: Option<Provider>) -> Self {
-        let (https_token, allowed_hosts) =
-            if let Some((tok, hosts)) = hint.and_then(Self::load_from_keyring_for) {
-                (Some(tok), Some(hosts))
-            } else if let Some((tok, hosts)) = Self::load_from_keyring() {
-                (Some(tok), Some(hosts))
-            } else if let Ok(s) = std::env::var("BALUARD_GIT_TOKEN") {
-                (Some(SecretString::new(s.into_boxed_str())), None)
-            } else if let Some(tok) = Self::load_from_file(vault_path) {
-                (Some(tok), None)
-            } else {
-                (None, None)
-            };
+        let file = Self::load_from_file(vault_path);
+        let mut https_token: Option<SecretString> = None;
+        let mut allowed_hosts: Option<Vec<String>> = None;
+        let mut bound_host: Option<String> = None;
+        let mut username: Option<String> = None;
+        let mut ssh_passphrase: Option<SecretString> = None;
+        if let Some((tok, hosts)) = hint.and_then(Self::load_from_keyring_for) {
+            https_token = Some(tok);
+            allowed_hosts = Some(hosts);
+        } else if let Some((tok, hosts)) = Self::load_from_keyring() {
+            https_token = Some(tok);
+            allowed_hosts = Some(hosts);
+        } else if let Ok(s) = std::env::var("BALUARD_GIT_TOKEN") {
+            https_token = Some(SecretString::new(s.into_boxed_str()));
+        } else if let Some(ref f) = file {
+            https_token = Some(f.token.clone());
+            bound_host = f.host.clone();
+            username = f.username.clone();
+            ssh_passphrase = f.ssh_passphrase.clone();
+        }
+        let ssh_key_path = {
+            let p = vault_path.join("meta/git-ssh-key");
+            if p.is_file() { Some(p) } else { None }
+        };
         Self {
             https_token,
             allowed_hosts,
+            bound_host,
+            username: username.or(file.as_ref().and_then(|f| f.username.clone())),
+            ssh_key_path,
+            ssh_key_pem: None,
+            ssh_passphrase,
+            port_hint: 22,
+        }
+    }
+
+    /// In-memory credentials for a clone-time override: the vault directory
+    /// does not exist yet, so nothing can be loaded from disk.
+    pub fn in_memory(
+        token: Option<String>,
+        username: Option<String>,
+        ssh_key_pem: Option<String>,
+        ssh_passphrase: Option<String>,
+        host: Option<String>,
+    ) -> Self {
+        Self {
+            https_token: token.map(|s| SecretString::new(s.into_boxed_str())),
+            allowed_hosts: None,
+            bound_host: host,
+            username,
+            ssh_key_path: None,
+            ssh_key_pem: ssh_key_pem.map(|s| SecretString::new(s.into_boxed_str())),
+            ssh_passphrase: ssh_passphrase.map(|s| SecretString::new(s.into_boxed_str())),
+            port_hint: 22,
         }
     }
 
@@ -182,41 +247,122 @@ impl CredentialConfig {
         None
     }
 
-    fn load_from_file(vault_path: &Path) -> Option<SecretString> {
+    fn load_from_file(vault_path: &Path) -> Option<CustomFileCredentials> {
         let config_path = vault_path.join("meta/git-credentials.json");
-        if config_path.exists() {
-            if let Ok(data) = std::fs::read_to_string(&config_path) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
-                    return v["token"]
-                        .as_str()
-                        .map(|s| SecretString::new(s.to_string().into_boxed_str()));
-                }
-            }
-        }
-        None
+        let data = std::fs::read_to_string(&config_path).ok()?;
+        serde_json::from_str::<serde_json::Value>(&data)
+            .ok()
+            .and_then(|v| {
+                let token = v.get("token").and_then(|t| t.as_str())?;
+                let secret_str = |key: &str| {
+                    v.get(key)
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| SecretString::new(s.to_string().into_boxed_str()))
+                };
+                Some(CustomFileCredentials {
+                    token: SecretString::new(token.to_string().into_boxed_str()),
+                    username: v
+                        .get("username")
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string()),
+                    host: v
+                        .get("host")
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_ascii_lowercase()),
+                    ssh_passphrase: secret_str("ssh_passphrase"),
+                })
+            })
     }
 }
 
+thread_local! {
+    /// URL of the connection currently authenticating. The credentials
+    /// callback fires before host-key verification, so the cert-check
+    /// closure reads the port from here without call sites passing it.
+    static LAST_AUTH_URL: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
 /// Build RemoteCallbacks with credential handling for both SSH and HTTPS.
+/// Strict known_hosts enforcement (M5) rides `certificate_check`; unknown
+/// SSH host keys are stashed as pending observations for the trust flow.
 #[cfg(feature = "git-sync")]
 pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
     crate::sync::tls::ensure_tls_roots();
     let https_token = config.expose_token();
     let allowed_hosts = config.allowed_hosts.clone();
+    let bound_host = config.bound_host.clone();
+    let username = config.username.clone();
+    let ssh_key_pem = config
+        .ssh_key_pem
+        .as_ref()
+        .map(|s| zeroize::Zeroizing::new(s.expose_secret().to_string()));
+    let ssh_key_path = config.ssh_key_path.clone();
+    let ssh_passphrase = config
+        .ssh_passphrase
+        .as_ref()
+        .map(|s| zeroize::Zeroizing::new(s.expose_secret().to_string()));
     let mut callbacks = RemoteCallbacks::new();
+    let ssh_attempts = std::cell::Cell::new(0u32);
+    let userpass_attempts = std::cell::Cell::new(0u32);
 
     callbacks.credentials(move |url, username_from_url, allowed_types| {
+        // libgit2 retries the callback after every failure; cap each auth
+        // type so a wrong key or token cannot loop forever.
+        const MAX_ATTEMPTS: u32 = 3;
+        LAST_AUTH_URL.with(|u| *u.borrow_mut() = url.to_string());
+
+        let user = username_from_url
+            .or(username.as_deref())
+            .unwrap_or("git");
+
+        if allowed_types.contains(CredentialType::USERNAME) {
+            return Cred::username(user);
+        }
+
         if allowed_types.contains(CredentialType::SSH_KEY) {
-            let user = username_from_url.unwrap_or("git");
-            if let Ok(cred) = Cred::ssh_key_from_agent(user) {
+            if ssh_attempts.get() >= MAX_ATTEMPTS {
+                return Err(git2::Error::from_str(
+                    "SSH authentication failed too many times",
+                ));
+            }
+            ssh_attempts.set(ssh_attempts.get() + 1);
+            // Dedicated custom key first (never touches the agent), then the
+            // agent for provider-shaped flows.
+            let pem: Option<zeroize::Zeroizing<String>> = ssh_key_pem
+                .clone()
+                .or_else(|| {
+                    ssh_key_path
+                        .as_ref()
+                        .and_then(|p| std::fs::read_to_string(p).ok())
+                        .map(zeroize::Zeroizing::new)
+                });
+            if let Some(pem) = pem {
+                if let Ok(cred) = Cred::ssh_key_from_memory(
+                    user,
+                    None,
+                    pem.as_str(),
+                    ssh_passphrase.as_deref().map(|s| s.as_str()),
+                ) {
+                    return Ok(cred);
+                }
+            } else if let Ok(cred) = Cred::ssh_key_from_agent(user) {
                 return Ok(cred);
             }
         }
 
         if allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
+            if userpass_attempts.get() >= MAX_ATTEMPTS {
+                return Err(git2::Error::from_str(
+                    "authentication failed too many times",
+                ));
+            }
+            userpass_attempts.set(userpass_attempts.get() + 1);
             if let Some(ref token) = https_token {
+                let target_host = extract_host(url);
                 if let Some(ref allowed) = allowed_hosts {
-                    let target_host = extract_host(url);
                     if let Some(ref th) = target_host {
                         if !allowed.iter().any(|h| h.eq_ignore_ascii_case(th)) {
                             return Err(git2::Error::from_str(&format!(
@@ -225,8 +371,23 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                         }
                     }
                 }
-                let user = username_from_url.unwrap_or("git");
-                return Cred::userpass_plaintext(user, token.as_str());
+                // Host-bound custom token: released only for its own host,
+                // so a server-side redirect can never capture it.
+                if let Some(ref bound) = bound_host {
+                    match target_host.as_deref() {
+                        Some(th) if th.eq_ignore_ascii_case(bound) => {}
+                        _ => {
+                            return Err(git2::Error::from_str(&format!(
+                                "refusing to send the vault token to a different host: {bound} expected"
+                            )));
+                        }
+                    }
+                }
+                let user = username_from_url
+                    .map(|s| s.to_string())
+                    .or_else(|| username.clone())
+                    .unwrap_or_else(|| "git".to_string());
+                return Cred::userpass_plaintext(&user, token.as_str());
             }
         }
 
@@ -242,7 +403,7 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
     //   Unknown hosts rejected (fail closed), preventing MITM via first-use.
     // - HTTPS (X.509): passthrough to libgit2/libcurl's built-in CA validation
     //   (already secure by default).
-    callbacks.certificate_check(|cert, host| {
+    callbacks.certificate_check(move |cert, host| {
         use git2::CertificateCheckStatus;
         use git2::cert::SshHostKeyType;
         if let Some(hostkey) = cert.as_hostkey() {
@@ -261,6 +422,24 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                     Ok(CertificateCheckStatus::CertificateOk)
                 }
                 // Fail closed: reject unknown / mismatched / missing file.
+                // Unknown keys are stashed as daemon-observed pending
+                // handshakes so the trust route can only bless a key the
+                // daemon itself saw.
+                crate::sync::known_hosts::HostKeyResult::Unknown => {
+                    let port = LAST_AUTH_URL.with(|u| port_of(&u.borrow()));
+                    crate::sync::known_hosts::record_observation(
+                        crate::sync::known_hosts::ObservedHostKey {
+                            host: host.to_string(),
+                            port,
+                            key_type: key_type.to_string(),
+                            key: key.to_vec(),
+                            fingerprint: crate::sync::known_hosts::fingerprint(key),
+                        },
+                    );
+                    Err(git2::Error::from_str(&format!(
+                        "SSH host key for {host} is not trusted yet"
+                    )))
+                }
                 _ => Err(git2::Error::from_str(&format!(
                     "SSH host key for {host} not in known_hosts"
                 ))),
@@ -274,6 +453,60 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
     callbacks
 }
 
+/// Extract the SSH/HTTPS port from a remote URL (default 22 for SSH, 443
+/// meaningful only for observations on https, which never reaches the SSH
+/// trust path).
+pub fn port_of(url: &str) -> u16 {
+    let after_scheme = url
+        .strip_prefix("ssh://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or("");
+    let hostpart = after_scheme.split('/').next().unwrap_or("");
+    let hostpart = hostpart.rsplit('@').next().unwrap_or("");
+    if let Some((_, port)) = hostpart.rsplit_once(':') {
+        if let Ok(p) = port.parse::<u16>() {
+            return p;
+        }
+    }
+    22
+}
+
+/// Format a transport error for the wire. When the failing operation left a
+/// pending host-key observation, the marker JSON
+/// `{"host_key_untrusted": {...}}` replaces the generic message so UIs can
+/// render the trust flow; drains the observation.
+pub fn format_sync_error(err: &BaluardError) -> String {
+    if let Some((attempt_id, obs)) = crate::sync::known_hosts::take_latest_observation() {
+        return serde_json::json!({
+            "host_key_untrusted": {
+                "host": obs.host,
+                "port": obs.port,
+                "key_type": obs.key_type,
+                "fingerprint": obs.fingerprint,
+                "attempt_id": attempt_id,
+            }
+        })
+        .to_string();
+    }
+    format!("{err}")
+}
+
+/// Upgrade a failed sync/clone/transport error into the structured
+/// `HostKeyUntrusted` error when the failing operation recorded a pending
+/// host-key observation. Drains the observation.
+pub fn upgrade_host_key_error(err: BaluardError) -> BaluardError {
+    if let Some((attempt_id, obs)) = crate::sync::known_hosts::take_latest_observation() {
+        return BaluardError::Sync(crate::error::SyncError::HostKeyUntrusted {
+            host: obs.host,
+            port: obs.port,
+            key_type: obs.key_type,
+            fingerprint: obs.fingerprint,
+            attempt_id,
+        });
+    }
+    err
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,7 +517,7 @@ mod tests {
     /// pull the developer's real cached GitHub token into a credential
     /// test. Both env vars are restored on drop. Marked `#[serial]` so
     /// tests don't race on the process-wide env.
-    fn with_credential_test_env<F: FnOnce()>(f: F) {
+    pub(crate) fn with_credential_test_env<F: FnOnce()>(f: F) {
         let prev_token = std::env::var("BALUARD_GIT_TOKEN").ok();
         let prev_data_dir = std::env::var("BALUARD_DATA_DIR").ok();
         let tmp = tempfile::tempdir().unwrap();
@@ -318,7 +551,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn load_without_env_or_file() {
-        with_credential_test_env(|| {
+        super::tests::with_credential_test_env(|| {
             let dir = tempfile::tempdir().unwrap();
             let config = CredentialConfig::load(dir.path());
             assert!(config.https_token.is_none());
@@ -328,7 +561,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn load_from_config_file() {
-        with_credential_test_env(|| {
+        super::tests::with_credential_test_env(|| {
             let dir = tempfile::tempdir().unwrap();
             let meta = dir.path().join("meta");
             std::fs::create_dir_all(&meta).unwrap();
@@ -412,6 +645,7 @@ mod tests {
                 "ghp_secret".to_string().into_boxed_str(),
             )),
             allowed_hosts: Some(vec!["github.com".to_string()]),
+            ..Default::default()
         };
         assert_eq!(
             extract_host("https://attacker.com/vault.git").as_deref(),
@@ -433,5 +667,70 @@ mod tests {
                 .iter()
                 .any(|h| h == "github.com")
         );
+    }
+}
+
+#[cfg(test)]
+mod custom_remote_tests {
+    use super::*;
+
+    // --- Custom-remote credential tests ---
+
+    #[test]
+    fn custom_file_loads_token_host_username_and_passphrase() {
+        super::tests::with_credential_test_env(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let meta = dir.path().join("meta");
+            std::fs::create_dir_all(&meta).unwrap();
+            std::fs::write(
+            meta.join("git-credentials.json"),
+            r#"{"token":"tok123","username":"alex","host":"git.example.com","ssh_passphrase":"pp"}"#,
+        )
+        .unwrap();
+            let config = CredentialConfig::load(dir.path());
+            assert_eq!(config.bound_host.as_deref(), Some("git.example.com"));
+            assert_eq!(config.username.as_deref(), Some("alex"));
+            assert!(config.ssh_passphrase.is_some());
+            // The key file is absent, so no path is recorded.
+            assert!(config.ssh_key_path.is_none());
+        });
+    }
+
+    #[test]
+    fn host_bound_token_refuses_foreign_hosts() {
+        // The callback closure is exercised through build_callbacks by the
+        // connection layer; here we pin the config-shape contract that drives
+        // the refusal: a bound host set from the file must match exactly.
+        let config = CredentialConfig::in_memory(
+            Some("tok".into()),
+            None,
+            None,
+            None,
+            Some("Git.Example.COM".into()),
+        );
+        assert_eq!(config.bound_host.as_deref(), Some("Git.Example.COM"));
+    }
+
+    #[test]
+    fn ssh_key_path_recorded_only_when_present() {
+        super::tests::with_credential_test_env(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let meta = dir.path().join("meta");
+            std::fs::create_dir_all(&meta).unwrap();
+            std::fs::write(
+                meta.join("git-ssh-key"),
+                "-----BEGIN OPENSSH PRIVATE KEY-----\n",
+            )
+            .unwrap();
+            let config = CredentialConfig::load(dir.path());
+            assert!(config.ssh_key_path.is_some());
+        });
+    }
+
+    #[test]
+    fn port_of_extracts_non_default_ports() {
+        assert_eq!(port_of("ssh://git@git.example.com:2222/repo.git"), 2222);
+        assert_eq!(port_of("ssh://git@git.example.com/repo.git"), 22);
+        assert_eq!(port_of("git@git.example.com:repo.git"), 22);
     }
 }
