@@ -611,6 +611,41 @@ pub fn apply_custom_credentials(
     Ok(())
 }
 
+/// Write a clone-time in-memory credential configuration into the cloned
+/// vault's device-local files so the next sync authenticates the same way.
+/// Only the credential families the config actually carries are written.
+pub fn persist_in_memory(vault_path: &Path, cfg: &CredentialConfig) -> Result<(), String> {
+    let host = cfg
+        .bound_host
+        .clone()
+        .ok_or_else(|| "credential config carries no bound host".to_string())?;
+    let token = cfg
+        .https_token
+        .as_ref()
+        .map(|s| s.expose_secret().to_string());
+    let ssh_key_pem = cfg
+        .ssh_key_pem
+        .as_ref()
+        .map(|s| s.expose_secret().to_string());
+    let ssh_passphrase = cfg
+        .ssh_passphrase
+        .as_ref()
+        .map(|s| s.expose_secret().to_string());
+    if token.is_none() && ssh_key_pem.is_none() && ssh_passphrase.is_none() {
+        return Ok(());
+    }
+    apply_custom_credentials(
+        vault_path,
+        &host,
+        &CustomCredentialsUpdate {
+            token,
+            username: cfg.username.clone(),
+            ssh_passphrase,
+            ssh_key_pem,
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
