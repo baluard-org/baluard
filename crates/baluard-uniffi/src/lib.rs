@@ -659,6 +659,25 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Custom-remote credentials: store or update the device-local files.
+    /// Payload JSON: {host, token?, username?, ssh_passphrase?, ssh_key_b64?};
+    /// present fields update, an empty string clears. Not a cover mutation:
+    /// the artifacts are gitignored device-local state.
+    pub async fn git_credentials_set(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .git_credentials_set(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// The vault's origin remote URL, for credential and sync UIs.
+    pub async fn git_remote_url(&self) -> Result<String, BaluardError> {
+        self.state
+            .git_remote_url()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// G16: create-or-reuse this vault's private repo on the connected
     /// provider and wire it as the sync remote (origin, first push,
     /// registry entry). Self-heals a repo left over from a prior
@@ -2269,6 +2288,230 @@ pub async fn clone_vault_start(
     })??;
 
     Ok(std::sync::Arc::new(MobileCloneJob { cancel_flag }))
+}
+
+/// Custom-remote clone: no provider, request-time credentials. The
+/// credentials ride the shared callback machinery into the clone and
+/// persist into the cloned vault's device-local files after the rename.
+/// Payload JSON: {token?, username?, ssh_passphrase?, ssh_key_b64?}.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn clone_vault_start_custom(
+    clone_url: String,
+    local_path: String,
+    credentials_json: Option<String>,
+) -> Result<std::sync::Arc<MobileCloneJob>, BaluardError> {
+    use base64::Engine as _;
+    let creds = match credentials_json.as_deref() {
+        None | Some("") => None,
+        Some(json) => {
+            let v: serde_json::Value =
+                serde_json::from_str(json).map_err(|e| BaluardError::InvalidInput {
+                    detail: format!("invalid credentials payload: {e}"),
+                })?;
+            let token = v["token"].as_str().unwrap_or("");
+            let username = v["username"].as_str().unwrap_or("");
+            let passphrase = v["ssh_passphrase"].as_str().unwrap_or("");
+            let key_b64 = v["ssh_key_b64"].as_str().unwrap_or("");
+            if token.is_empty()
+                && username.is_empty()
+                && passphrase.is_empty()
+                && key_b64.is_empty()
+            {
+                None
+            } else {
+                let ssh_key_pem = if key_b64.is_empty() {
+                    None
+                } else {
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(key_b64.trim())
+                        .map_err(|_| BaluardError::InvalidInput {
+                            detail: "ssh_key_b64 is not valid base64".into(),
+                        })?;
+                    Some(
+                        String::from_utf8(bytes).map_err(|_| BaluardError::InvalidInput {
+                            detail: "SSH key material is not valid UTF-8".into(),
+                        })?,
+                    )
+                };
+                let host = baluard_core::sync::credentials::extract_host(&clone_url)
+                    .filter(|h| !h.is_empty())
+                    .ok_or_else(|| BaluardError::InvalidInput {
+                        detail: "cannot derive the host from the clone URL".into(),
+                    })?;
+                Some(
+                    baluard_core::sync::credentials::CredentialConfig::in_memory(
+                        if token.is_empty() {
+                            None
+                        } else {
+                            Some(token.to_string())
+                        },
+                        if username.is_empty() {
+                            None
+                        } else {
+                            Some(username.to_string())
+                        },
+                        ssh_key_pem,
+                        if passphrase.is_empty() {
+                            None
+                        } else {
+                            Some(passphrase.to_string())
+                        },
+                        Some(host),
+                    ),
+                )
+            }
+        }
+    };
+    let path = std::path::PathBuf::from(local_path);
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag_clone = cancel_flag.clone();
+
+    tokio::task::spawn_blocking(move || {
+        baluard_runtime::providers::clone_and_register_with_credentials(
+            None,
+            &clone_url,
+            &path,
+            Some(flag_clone),
+            creds,
+        )
+    })
+    .await
+    .map_err(|e| BaluardError::Vault {
+        detail: e.to_string(),
+    })??;
+
+    Ok(std::sync::Arc::new(MobileCloneJob { cancel_flag }))
+}
+
+/// Custom-remote test connection: an ls-remote pre-flight. Returns
+/// {ok:true} or {ok:false, kind, detail} where kind distinguishes an
+/// untrusted host key (chain into the trust flow), an auth rejection, an
+/// empty remote, and everything unreachable. Stores nothing.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn git_probe(
+    url: String,
+    credentials_json: Option<String>,
+) -> Result<String, BaluardError> {
+    use base64::Engine as _;
+    let creds = match credentials_json.as_deref() {
+        None | Some("") => None,
+        Some(json) => {
+            let v: serde_json::Value =
+                serde_json::from_str(json).map_err(|e| BaluardError::InvalidInput {
+                    detail: format!("invalid credentials payload: {e}"),
+                })?;
+            let token = v["token"].as_str().unwrap_or("");
+            let username = v["username"].as_str().unwrap_or("");
+            let passphrase = v["ssh_passphrase"].as_str().unwrap_or("");
+            let key_b64 = v["ssh_key_b64"].as_str().unwrap_or("");
+            if token.is_empty()
+                && username.is_empty()
+                && passphrase.is_empty()
+                && key_b64.is_empty()
+            {
+                None
+            } else {
+                let ssh_key_pem = if key_b64.is_empty() {
+                    None
+                } else {
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(key_b64.trim())
+                        .map_err(|_| BaluardError::InvalidInput {
+                            detail: "ssh_key_b64 is not valid base64".into(),
+                        })?;
+                    Some(
+                        String::from_utf8(bytes).map_err(|_| BaluardError::InvalidInput {
+                            detail: "SSH key material is not valid UTF-8".into(),
+                        })?,
+                    )
+                };
+                let host = baluard_core::sync::credentials::extract_host(&url)
+                    .filter(|h| !h.is_empty())
+                    .ok_or_else(|| BaluardError::InvalidInput {
+                        detail: "cannot derive the host from the URL".into(),
+                    })?;
+                Some(
+                    baluard_core::sync::credentials::CredentialConfig::in_memory(
+                        if token.is_empty() {
+                            None
+                        } else {
+                            Some(token.to_string())
+                        },
+                        if username.is_empty() {
+                            None
+                        } else {
+                            Some(username.to_string())
+                        },
+                        ssh_key_pem,
+                        if passphrase.is_empty() {
+                            None
+                        } else {
+                            Some(passphrase.to_string())
+                        },
+                        Some(host),
+                    ),
+                )
+            }
+        }
+    };
+    tokio::task::spawn_blocking(move || {
+        baluard_core::sync::engine::SyncEngine::probe_remote(&url, creds.as_ref())
+    })
+    .await
+    .map_err(|e| BaluardError::Network {
+        detail: format!("join: {e}"),
+    })?
+    .map(|()| r#"{"ok": true}"#.to_string())
+    .or_else(|e| {
+        let msg = baluard_core::sync::credentials::format_sync_error(&e);
+        let kind = if msg.contains("host_key_untrusted") {
+            "host-untrusted"
+        } else if msg.contains("empty") {
+            "empty"
+        } else if msg.contains("authentication")
+            || msg.contains("Permission denied")
+            || msg.contains("401")
+            || msg.contains("403")
+        {
+            "auth-rejected"
+        } else {
+            "unreachable"
+        };
+        Ok(serde_json::json!({ "ok": false, "kind": kind, "detail": msg }).to_string())
+    })
+}
+
+/// Bless a daemon-observed SSH host key by attempt id. Device-level:
+/// during a first clone there is no vault and no session token, so this
+/// is deliberately pre-unlock. Commits only what the daemon itself
+/// observed.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn git_hostkey_trust(attempt_id: String) -> Result<String, BaluardError> {
+    tokio::task::spawn_blocking(move || {
+        let Some(obs) = baluard_core::sync::known_hosts::take_observation(&attempt_id) else {
+            return Err(BaluardError::Vault {
+                detail: "no pending host-key request with that id (it may have expired); reconnect and try again".into(),
+            });
+        };
+        let fingerprint = obs.fingerprint.clone();
+        let host = obs.host.clone();
+        let port = obs.port;
+        let key_type = obs.key_type.clone();
+        baluard_core::sync::known_hosts::trust_host_key(&obs)
+            .map_err(|e| BaluardError::Vault { detail: e })?;
+        Ok(serde_json::json!({
+            "trusted": true,
+            "host": host,
+            "port": port,
+            "key_type": key_type,
+            "fingerprint": fingerprint,
+        })
+        .to_string())
+    })
+    .await
+    .map_err(|e| BaluardError::Network {
+        detail: format!("join: {e}"),
+    })?
 }
 
 #[uniffi::export(async_runtime = "tokio")]

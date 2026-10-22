@@ -6211,6 +6211,20 @@ pub fn is_access_denied_error(e: &BaluardError) -> bool {
 mod tests {
 
     #[test]
+    fn probe_rejects_disallowed_schemes() {
+        let err = SyncEngine::probe_remote("file:///tmp/nope", None);
+        assert!(err.is_err(), "file:// must refuse without e2e-hooks");
+    }
+
+    #[test]
+    fn probe_reports_unreachable_host() {
+        // Port 1 on loopback: nothing listens, the connect fails fast.
+        let err = SyncEngine::probe_remote("https://127.0.0.1:1/nope.git", None).unwrap_err();
+        let msg = err.to_string();
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
     fn validate_git_url_rejects_userinfo_and_control_chars() {
         // Secrets ride the credential fields, never the URL.
         assert!(validate_git_url("https://user:pass@git.example.com/repo.git").is_err());
