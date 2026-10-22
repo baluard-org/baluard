@@ -3456,7 +3456,7 @@ fn run_clone_to_completion(params: CloneParams) {
             let _ = std::fs::remove_dir_all(&target);
             let mut s = state.lock().unwrap();
             s.phase = "failed".to_string();
-            s.error = Some(format!("{e}"));
+            s.error = Some(baluard_core::sync::credentials::format_sync_error(&e));
         }
     }
 }
@@ -5934,7 +5934,9 @@ fn sync_push(
         engine.commit_all(&repo, "").map_err(|e| format!("{e}"))?;
         committed = true;
     }
-    engine.push(&repo, "origin").map_err(|e| format!("{e}"))?;
+    engine
+        .push(&repo, "origin")
+        .map_err(|e| baluard_core::sync::credentials::format_sync_error(&e))?;
     let msg = if committed {
         "Committed pending changes and pushed to origin."
     } else {
@@ -5959,7 +5961,9 @@ fn sync_pull(
     }
     engine.recover_state().map_err(|e| format!("{e}"))?;
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
-    let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
+    let result = engine
+        .pull(&repo, "origin")
+        .map_err(|e| baluard_core::sync::credentials::format_sync_error(&e))?;
     let mut msg = match result {
         baluard_core::sync::engine::PullResult::AlreadyUpToDate => {
             "Already up to date.".to_string()
@@ -6013,7 +6017,9 @@ fn sync_revoke(
     let seq = engine
         .append_revocation(&repo, commit, reason)
         .map_err(|e| format!("{e}"))?;
-    engine.push(&repo, "origin").map_err(|e| format!("{e}"))?;
+    engine
+        .push(&repo, "origin")
+        .map_err(|e| baluard_core::sync::credentials::format_sync_error(&e))?;
     Ok(format!("Revoked {commit} (entry #{seq}). Manifest pushed."))
 }
 

@@ -210,6 +210,17 @@ pub enum SyncError {
 
     #[error("network error: {0}")]
     Network(String),
+
+    /// An SSH host key was presented that is not in known_hosts. Carries the
+    /// daemon-observed details plus the attempt id the trust route consumes.
+    #[error("SSH host key for {host} is not trusted yet (fingerprint {fingerprint})")]
+    HostKeyUntrusted {
+        host: String,
+        port: u16,
+        key_type: String,
+        fingerprint: String,
+        attempt_id: String,
+    },
 }
 
 /// Key lifecycle and epoch errors.
