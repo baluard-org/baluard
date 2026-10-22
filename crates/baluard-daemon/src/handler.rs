@@ -3174,11 +3174,22 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
         }
     };
 
-    let result = std::thread::spawn(move || {
-        baluard_core::sync::engine::SyncEngine::probe_remote(&url, creds.as_ref())
+    // libgit2 exposes no per-operation connect timeout, so an unreachable
+    // host can park the worker for minutes; the route returns a timeout to
+    // the client and the worker dies whenever the OS gives up.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(baluard_core::sync::engine::SyncEngine::probe_remote(
+            &url,
+            creds.as_ref(),
+        ));
     });
+    let result = rx.recv_timeout(std::time::Duration::from_secs(20));
 
-    match result.join() {
+    match result {
+        Err(_) => err_response(
+            "the server did not answer within 20 seconds; check the address".to_string(),
+        ),
         Ok(Ok(())) => ok_resp(serde_json::json!({ "ok": true }).to_string(), None),
         Ok(Err(e)) => {
             let msg = baluard_core::sync::credentials::format_sync_error(&e);
