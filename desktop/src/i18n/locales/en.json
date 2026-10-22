@@ -405,7 +405,19 @@
     "hwDisableTitle": "Turn off the security chip guard?",
     "hwDisableBody": "Back to password-only protection: a stolen disk could be attacked offline. The vault still syncs and recovers as usual.",
     "hwEnabledToast": "Security chip guard is on.",
-    "hwDisabledToast": "Security chip guard is off."
+    "hwDisabledToast": "Security chip guard is off.",
+    "hwConsentTitle": "Confirm on every unlock",
+    "hwConsentDesc": "The chip asks for your fingerprint or face each time this vault opens. Stops someone who knows your password from opening it on this device.",
+    "hwConsentStatusOn": "Confirmation on",
+    "hwConsentStatusOff": "Confirmation off",
+    "hwConsentOnTitle": "Ask for confirmation on every unlock?",
+    "hwConsentOnBody": "Your device's security chip will ask for your fingerprint or face every time this vault is unlocked. The vault's data stays protected at rest either way. If the chip dies or biometry is reset, the recovery phrase brings this device back in.",
+    "hwConsentOffTitle": "Turn off confirmation on unlock?",
+    "hwConsentOffBody": "The vault stays protected by the security chip at rest, but unlocking will no longer ask for your fingerprint or face.",
+    "hwConsentOn": "Ask to confirm",
+    "hwConsentOff": "Stop confirming",
+    "hwConsentOnToast": "The chip will confirm every unlock.",
+    "hwConsentOffToast": "Silent unlock restored."
   },
   "sync": {
     "title": "Vault Sync",
