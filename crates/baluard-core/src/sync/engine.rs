@@ -3400,6 +3400,23 @@ struct RevocationTracker {
 /// only, never shipped binaries): also permits file:// and absolute paths.
 /// Rejects: git://, and all other schemes.
 pub fn validate_git_url(url: &str) -> Result<(), BaluardError> {
+    if url.chars().any(|c| c.is_control()) {
+        return Err(
+            SyncError::Git("invalid URL: control characters are not allowed".into()).into(),
+        );
+    }
+    // Secrets ride the credential fields, never the URL: user:pass@ would
+    // otherwise land the password in the registry, .git/config, and UI
+    // displays.
+    if let Some(rest) = url.strip_prefix("https://") {
+        if rest.contains('@') {
+            return Err(SyncError::Git(
+                "invalid URL: put the username and token in the credential fields, not the URL"
+                    .into(),
+            )
+            .into());
+        }
+    }
     if url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("git@") {
         return Ok(());
     }
@@ -6145,6 +6162,17 @@ pub fn is_access_denied_error(e: &BaluardError) -> bool {
 #[cfg(test)]
 #[cfg(feature = "git-sync")]
 mod tests {
+
+    #[test]
+    fn validate_git_url_rejects_userinfo_and_control_chars() {
+        // Secrets ride the credential fields, never the URL.
+        assert!(validate_git_url("https://user:pass@git.example.com/repo.git").is_err());
+        assert!(validate_git_url("https://git.example.com/repo.git").is_ok());
+        assert!(validate_git_url("https://git.example.com/repo.git\n").is_err());
+        // ssh usernames are legitimate and stay accepted.
+        assert!(validate_git_url("ssh://git@git.example.com:2222/repo.git").is_ok());
+        assert!(validate_git_url("git@git.example.com:repo.git").is_ok());
+    }
     use super::*;
 
     #[test]
