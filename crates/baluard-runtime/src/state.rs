@@ -7430,24 +7430,45 @@ impl VaultState {
             PrivkeyFileKind::LegacyPlaintext => "legacy",
             PrivkeyFileKind::Absent => "absent",
         };
+        let consent_supported = baluard_core::hwkey::installed()
+            .map(|s| s.supports_consent())
+            .unwrap_or(false);
+        let consent = if seal == "v2-hw" {
+            baluard_core::vault::device_privkey::file_consents(&self.vault_path)
+        } else {
+            false
+        };
         Ok(serde_json::json!({
             "capable": capable,
             "reason": reason,
             "seal": seal,
             "enabled": seal == "v2-hw",
+            "consent_supported": consent_supported,
+            "consent": consent,
         })
         .to_string())
     }
 
     /// Enable the hardware seal (the settings toggle). Requires an
     /// unlocked session (the seal subkey lives on the handle).
-    pub async fn hw_enable(&self) -> Result<String, String> {
+    pub async fn hw_enable(&self, consent: bool) -> Result<String, String> {
         let seal = self
             .devkey_seal()
             .await
             .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
         if baluard_core::hwkey::available().is_none() {
             return Err("This device has no usable security chip.".to_string());
+        }
+        if consent {
+            let supported = baluard_core::hwkey::available()
+                .map(|s| s.supports_consent())
+                .unwrap_or(false);
+            if !supported {
+                return Err(
+                    "This device's security chip cannot require confirmation on each unlock."
+                        .to_string(),
+                );
+            }
         }
         let vault_id =
             baluard_core::vault::registry::BaluardMarker::read_from_vault(&self.vault_path)
@@ -7460,6 +7481,7 @@ impl VaultState {
             &seal,
             vault_id,
             device_id,
+            consent,
         )
         .map_err(|e| format!("{e}"))?;
         Ok(serde_json::json!({"enabled": true, "backend": match baluard_core::hwkey::probe_status() {
@@ -7486,6 +7508,27 @@ impl VaultState {
         )
         .map_err(|e| format!("{e}"))?;
         Ok(serde_json::json!({"enabled": false}).to_string())
+    }
+
+    /// Switch the hw seal between silent and per-use-consent modes. Needs
+    /// the unlocked seal subkey (it re-keys the devkey file) and the chip.
+    pub async fn hw_set_consent(&self, consent: bool) -> Result<String, String> {
+        let seal = self
+            .devkey_seal()
+            .await
+            .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
+        if baluard_core::hwkey::available().is_none() {
+            return Err("This device has no usable security chip.".to_string());
+        }
+        let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
+        let changed = baluard_core::vault::device_privkey::set_hw_seal_consent(
+            &self.vault_path.join("meta/device-privkey.json"),
+            &seal,
+            device_id,
+            consent,
+        )
+        .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({"consent": consent, "changed": changed}).to_string())
     }
 
     /// Is PIN Quick Unlock enabled for this vault THIS session?

@@ -4766,7 +4766,7 @@ async fn hw_seal_status_and_fail_closed_toggle() {
     assert_eq!(v["enabled"], serde_json::Value::Bool(false));
 
     // The toggle fails closed with no chip: never a silent no-op.
-    let err = state.hw_enable().await.unwrap_err();
+    let err = state.hw_enable(false).await.unwrap_err();
     assert!(err.contains("security chip"), "refusal: {err}");
     let err = state.hw_disable().await.unwrap_err();
     assert!(err.contains("security chip"), "refusal: {err}");

@@ -587,6 +587,15 @@ async fn refresh_connected_tokens_if_needed() {
 }
 
 /// route vault-level requests to a specific vault in the host map.
+/// Boolean flag from a JSON payload; absent or unparseable payloads
+/// default to false (the pre-consent behavior).
+fn extract_flag(payload: &str, key: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|v| v[key].as_bool())
+        .unwrap_or(false)
+}
+
 fn extract_slug(payload: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(payload).ok()?;
     v.get("slug")
@@ -5056,10 +5065,20 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
-        "vault.hw_enable" => match state.hw_enable().await {
+        "vault.hw_enable" => match state.hw_enable(extract_flag(&req.payload, "consent")).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+
+        "vault.hw_set_consent" => {
+            match state
+                .hw_set_consent(extract_flag(&req.payload, "consent"))
+                .await
+            {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
 
         "vault.hw_disable" => match state.hw_disable().await {
             Ok(json) => ok_resp(json, token_str),
