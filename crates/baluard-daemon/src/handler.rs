@@ -5335,6 +5335,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        // The vault's origin remote URL, for credential and sync UIs.
+        "vault.remote_url" => match state.git_remote_url().await {
+            Ok(url) => {
+                let json = serde_json::json!({ "url": url }).to_string();
+                ok_resp(json, token_str)
+            }
+            Err(e) => err_response(e),
+        },
+
         // Custom-remote credentials: token-gated (writes into the vault
         // directory), but device-local gitignored artifacts — not a cover
         // mutation. The payload carries secrets and zeroizes below.
