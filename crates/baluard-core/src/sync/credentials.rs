@@ -507,6 +507,110 @@ pub fn upgrade_host_key_error(err: BaluardError) -> BaluardError {
     err
 }
 
+/// The payload for the custom-remote credential writer. Present fields
+/// update; an empty string clears that field. Absent fields stay untouched.
+#[derive(Debug, Clone, Default)]
+pub struct CustomCredentialsUpdate {
+    pub token: Option<String>,
+    pub username: Option<String>,
+    pub ssh_passphrase: Option<String>,
+    /// PEM private key material (paste or device pick); written to
+    /// meta/git-ssh-key. An empty string removes the key file.
+    pub ssh_key_pem: Option<String>,
+}
+
+/// Apply a custom-credentials update to the vault's device-local files.
+/// `meta/git-credentials.json` is rewritten atomically (0600) with the
+/// merged fields; key bytes land in `meta/git-ssh-key` (0600). The remote
+/// host must be supplied whenever the token is set so the stored
+/// credential stays host-bound.
+pub fn apply_custom_credentials(
+    vault_path: &Path,
+    host: &str,
+    update: &CustomCredentialsUpdate,
+) -> Result<(), String> {
+    let host_norm = host.trim().to_ascii_lowercase();
+    if host_norm.is_empty() {
+        return Err("custom remote host is required".into());
+    }
+
+    // Merge with the existing file first.
+    let config_path = vault_path.join("meta/git-credentials.json");
+    let mut fields: serde_json::Map<String, serde_json::Value> =
+        std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|d| serde_json::from_str(&d).ok())
+            .and_then(|v: serde_json::Value| v.as_object().cloned())
+            .unwrap_or_default();
+
+    let secret = |v: &Option<String>| {
+        v.as_deref().map(|s| {
+            if s.trim().is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(s.to_string())
+            }
+        })
+    };
+
+    if update.token.is_some() {
+        match secret(&update.token) {
+            Some(serde_json::Value::Null) | None => {
+                fields.remove("token");
+                fields.remove("host");
+            }
+            Some(v) => {
+                fields.insert("token".into(), v);
+                fields.insert("host".into(), host_norm.clone().into());
+            }
+        }
+    }
+    if let Some(v) = secret(&update.username) {
+        if v.is_null() {
+            fields.remove("username");
+        } else {
+            fields.insert("username".into(), v);
+        }
+    }
+    if let Some(v) = secret(&update.ssh_passphrase) {
+        if v.is_null() {
+            fields.remove("ssh_passphrase");
+        } else {
+            fields.insert("ssh_passphrase".into(), v);
+        }
+    }
+
+    // All token-bearing fields cleared: remove the file entirely.
+    if fields.get("token").is_none()
+        && fields.get("ssh_passphrase").is_none()
+        && fields.get("username").is_none()
+    {
+        let _ = std::fs::remove_file(&config_path);
+    } else {
+        let pretty = serde_json::to_vec(&serde_json::Value::Object(fields))
+            .map_err(|e| format!("credential serialization failed: {e}"))?;
+        crate::secret_file::write_secret_file(&config_path, &pretty)
+            .map_err(|e| format!("cannot write the credential file: {e}"))?;
+    }
+
+    if let Some(pem) = update.ssh_key_pem.as_deref() {
+        let key_path = vault_path.join("meta/git-ssh-key");
+        if pem.trim().is_empty() {
+            let _ = std::fs::remove_file(&key_path);
+        } else {
+            // Normalize the trailing newline: pasted keys lose it and
+            // OpenSSH-format parsers require it.
+            let mut normalized = pem.to_string();
+            if !normalized.ends_with('\n') {
+                normalized.push('\n');
+            }
+            crate::secret_file::write_secret_file(&key_path, normalized.as_bytes())
+                .map_err(|e| format!("cannot write the SSH key: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -672,6 +776,74 @@ mod tests {
 
 #[cfg(test)]
 mod custom_remote_tests {
+
+    #[test]
+    fn custom_credentials_writer_merges_updates_and_clears() {
+        let dir = tempfile::tempdir().unwrap();
+        let vp = dir.path();
+
+        // Set: token + host binding + username.
+        apply_custom_credentials(
+            vp,
+            "Git.Example.COM",
+            &CustomCredentialsUpdate {
+                token: Some("tok1".into()),
+                username: Some("alex".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(vp.join("meta/git-credentials.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["token"], "tok1");
+        assert_eq!(v["host"], "git.example.com");
+        assert_eq!(v["username"], "alex");
+
+        // Untouched fields survive a partial update; empty clears.
+        apply_custom_credentials(
+            vp,
+            "git.example.com",
+            &CustomCredentialsUpdate {
+                username: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(vp.join("meta/git-credentials.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["token"], "tok1");
+        assert!(v.get("username").is_none());
+
+        // Key file written with normalized newline, 0600.
+        apply_custom_credentials(
+            vp,
+            "git.example.com",
+            &CustomCredentialsUpdate {
+                ssh_key_pem: Some("-----BEGIN OPENSSH PRIVATE KEY-----".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let key = std::fs::read_to_string(vp.join("meta/git-ssh-key")).unwrap();
+        assert!(key.ends_with('\n'));
+
+        // Clearing the token removes the file.
+        apply_custom_credentials(
+            vp,
+            "git.example.com",
+            &CustomCredentialsUpdate {
+                token: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!vp.join("meta/git-credentials.json").exists());
+    }
+
     use super::*;
 
     // --- Custom-remote credential tests ---
