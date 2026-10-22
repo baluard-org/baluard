@@ -340,6 +340,8 @@ impl SyncEngine {
             "meta/index.enc.*",
             // P8b: local revocation verification tracker.
             "meta/revocations-verified.json",
+            // Custom remotes: device-local SSH deploy key.
+            "meta/git-ssh-key",
             // S4 hardening: the grant-expiry sweep's crash-recovery marker
             // carries content keys — local-only by construction.
             "meta/.sweep-pending.json",
@@ -956,6 +958,8 @@ impl SyncEngine {
             "meta/index.enc",
             // P8b: local revocation verification tracker.
             "meta/revocations-verified.json",
+            // Custom remotes: device-local SSH deploy key.
+            "meta/git-ssh-key",
             // S4 hardening: the grant-expiry sweep's crash-recovery marker
             // carries content keys — local-only by construction.
             "meta/.sweep-pending.json",
@@ -6046,6 +6050,7 @@ meta/member-unlock.json
 meta/recovery-signer.key
 meta/kdf-attempts.json
 meta/git-credentials.json
+meta/git-ssh-key
 
 # Legacy plaintext metadata (now encrypted as folders.enc/tags.enc/activity.enc)
 meta/folders.json

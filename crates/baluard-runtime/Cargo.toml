@@ -25,6 +25,7 @@ reqwest = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 ssh-key = { version = "0.7.0-rc.10", features = ["ed25519", "ecdsa"] }
+git2 = { workspace = true }
 
 [features]
 default = ["git-sync"]
