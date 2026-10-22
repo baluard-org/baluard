@@ -65,6 +65,20 @@ export default function SyncTab() {
   const [advClientId, setAdvClientId] = createSignal("");
   const [advInstanceUrl, setAdvInstanceUrl] = createSignal("");
   const [advPat, setAdvPat] = createSignal("");
+
+// ── Custom remote (use my own server) ──
+const [showCustom, setShowCustom] = createSignal(false);
+const [customAck, setCustomAck] = createSignal(false);
+const [customUrl, setCustomUrl] = createSignal("");
+const [customToken, setCustomToken] = createSignal("");
+const [customUsername, setCustomUsername] = createSignal("");
+const [customKeyPem, setCustomKeyPem] = createSignal("");
+const [customPubKey, setCustomPubKey] = createSignal("");
+const [customPassphrase, setCustomPassphrase] = createSignal("");
+const [customBusy, setCustomBusy] = createSignal(null);
+const [customProbeOk, setCustomProbeOk] = createSignal(false);
+const [customTrust, setCustomTrust] = createSignal(null);
+const [customError, setCustomError] = createSignal(null);
   // Web-OAuth (Codeberg PKCE): auth URL opened in browser, status polled.
   const [webOAuthUrl, setWebOAuthUrl] = createSignal(null);
   // State C: collapsible git-power-user panel (status + directional push/pull).
@@ -336,7 +350,6 @@ export default function SyncTab() {
     }
   }
 
-  // ── Push / Pull ──
 
   // Primary one-click sync: pull remote changes in first, then push local
   // changes up. Bidirectional, handles the common "edited on two devices"
@@ -584,6 +597,130 @@ export default function SyncTab() {
                       );
                     }}
                   </For>
+                </div>
+
+                {/* Custom remote: power users pointing at their own Git server. */}
+                <div class="border-t border-[var(--color-border)] pt-3 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCustom(!showCustom())}
+                    class="flex items-center gap-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                  >
+                    <span class="text-[8px]">{showCustom() ? "\u25BE" : "\u25B8"}</span>
+                    {t("sync.customToggle")}
+                  </button>
+                  <Show when={showCustom()}>
+                    <div class="rounded-lg border border-[var(--color-warning)] bg-[var(--color-surface)] p-3 space-y-2">
+                      <p class="text-[10px] leading-relaxed text-[var(--color-text)]">
+                        {t("sync.customWarn")}
+                      </p>
+                      <label class="flex items-center gap-2 text-[10px] text-[var(--color-muted)] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={customAck()}
+                          onChange={(e) => setCustomAck(e.target.checked)}
+                        />
+                        {t("sync.customAck")}
+                      </label>
+                    </div>
+                    <div class={customAck() ? "space-y-2" : "space-y-2 opacity-50 pointer-events-none"}>
+                      <input
+                        data-testid="custom-url"
+                        type="text"
+                        value={customUrl()}
+                        onInput={(e) => setCustomUrl(e.target.value)}
+                        placeholder={t("sync.customUrlPlaceholder")}
+                        class="w-full px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                      />
+                      <div class="grid grid-cols-2 gap-2">
+                        <input
+                          data-testid="custom-token"
+                          type="password"
+                          value={customToken()}
+                          onInput={(e) => setCustomToken(e.target.value)}
+                          placeholder={t("sync.customToken")}
+                          class="px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                        />
+                        <input
+                          type="text"
+                          value={customUsername()}
+                          onInput={(e) => setCustomUsername(e.target.value)}
+                          placeholder={t("sync.customUsername")}
+                          class="px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                        />
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <Button
+                          data-testid="custom-gen-key"
+                          variant="secondary"
+                          disabled={customBusy() !== null}
+                          onClick={doGenerateKey}
+                        >
+                          {t("sync.customGenKey")}
+                        </Button>
+                        <span class="text-[10px] text-[var(--color-muted)]">
+                          {t("sync.customGenKeyHint")}
+                        </span>
+                      </div>
+                      <Show when={customPubKey()}>
+                        <p class="text-[9px] text-[var(--color-muted)] break-all font-mono">
+                          {customPubKey()}
+                        </p>
+                      </Show>
+                      <input
+                        type="password"
+                        value={customPassphrase()}
+                        onInput={(e) => setCustomPassphrase(e.target.value)}
+                        placeholder={t("sync.customPassphrase")}
+                        class="w-full px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                      />
+                      <div class="flex items-center gap-2">
+                        <Button
+                          data-testid="custom-probe"
+                          variant="secondary"
+                          disabled={!customUrl() || customBusy() !== null}
+                          onClick={doCustomProbe}
+                        >
+                          {t("sync.customProbe")}
+                        </Button>
+                        <Button
+                          data-testid="custom-setup"
+                          disabled={!customUrl() || customBusy() !== null}
+                          onClick={doCustomSetup}
+                        >
+                          {t("sync.customUse")}
+                        </Button>
+                      </div>
+                      <Show when={customProbeOk()}>
+                        <p class="text-[10px] text-[var(--color-success)]">
+                          {t("sync.customProbeOk")}
+                        </p>
+                      </Show>
+                      <Show when={customTrust()}>
+                        {(trust) => (
+                          <div class="rounded-lg border border-[var(--color-warning)] p-3 space-y-1">
+                            <p class="text-[10px] text-[var(--color-text)]">
+                              {t("sync.customTrustTitle")}
+                            </p>
+                            <p class="text-[10px] text-[var(--color-muted)] font-mono break-all">
+                              {trust().key_type} {trust().fingerprint}
+                            </p>
+                            <Button
+                              data-testid="custom-trust"
+                              variant="secondary"
+                              disabled={customBusy() !== null}
+                              onClick={doCustomTrust}
+                            >
+                              {t("sync.customTrustCta")}
+                            </Button>
+                          </div>
+                        )}
+                      </Show>
+                      <Show when={customError()}>
+                        <p class="text-[10px] text-[var(--color-danger)] break-all">{customError()}</p>
+                      </Show>
+                    </div>
+                  </Show>
                 </div>
 
                 {/* Advanced Options: override client_id (independence) or instance (self-hosted). */}
