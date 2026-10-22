@@ -3211,7 +3211,6 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
                 None,
             )
         }
-        Err(_) => err_response("probe task panicked".to_string()),
     }
 }
 
