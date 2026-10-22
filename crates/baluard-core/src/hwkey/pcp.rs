@@ -366,7 +366,14 @@ impl HardwareKeyStore for PcpStore {
         }
     }
 
-    fn create_binding(&self, vault_id: Uuid) -> Result<String, BaluardError> {
+    fn create_binding(
+        &self,
+        vault_id: Uuid,
+        consent: crate::hwkey::HwConsent,
+    ) -> Result<String, BaluardError> {
+        if consent.is_per_use() {
+            return Err(VaultError::HardwareConsentUnavailable.into());
+        }
         let binding = crate::hwkey::binding_tag(vault_id);
         let prov = Self::open_provider()?;
         if Self::open_key(prov.0, &binding)?.is_some() {
@@ -395,7 +402,14 @@ impl HardwareKeyStore for PcpStore {
         Ok(binding)
     }
 
-    fn ecdh_ephemeral(&self, binding: &str) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+    fn ecdh_ephemeral(
+        &self,
+        binding: &str,
+        consent: crate::hwkey::HwConsent,
+    ) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+        if consent.is_per_use() {
+            return Err(VaultError::HardwareConsentUnavailable.into());
+        }
         let prov = Self::open_provider()?;
         let Some(chip) = Self::open_key(prov.0, binding)? else {
             return Err(crate::hwkey::hw_unavailable_error());
@@ -405,7 +419,15 @@ impl HardwareKeyStore for PcpStore {
         Ok((peer, secret))
     }
 
-    fn ecdh(&self, binding: &str, peer: &EphemeralPub) -> Result<SharedSecret, BaluardError> {
+    fn ecdh(
+        &self,
+        binding: &str,
+        peer: &EphemeralPub,
+        consent: crate::hwkey::HwConsent,
+    ) -> Result<SharedSecret, BaluardError> {
+        if consent.is_per_use() {
+            return Err(VaultError::HardwareConsentUnavailable.into());
+        }
         let prov = Self::open_provider()?;
         let Some(chip) = Self::open_key(prov.0, binding)? else {
             return Err(crate::hwkey::hw_unavailable_error());

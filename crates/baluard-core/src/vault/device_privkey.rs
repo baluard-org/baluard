@@ -93,6 +93,20 @@ pub enum PrivkeyFileKind {
     Absent,
 }
 
+/// Whether an hw-sealed file demands per-use confirmation. Pre-unlock
+/// safe (reads only the outer JSON mode flag, never decrypts); false for
+/// every other file kind or a damaged file.
+pub fn file_consents(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|f| serde_json::from_str::<serde_json::Value>(&f).ok())
+        .and_then(|v| {
+            (v["type"].as_str() == Some(SEAL_TYPE_HW))
+                .then_some(v["consent"].as_bool() == Some(true))
+        })
+        .unwrap_or(false)
+}
+
 pub fn file_kind(path: &Path) -> PrivkeyFileKind {
     if !path.exists() {
         return PrivkeyFileKind::Absent;
@@ -282,8 +296,9 @@ pub fn rotate_seal_key(
                     .as_str()
                     .and_then(|s| Uuid::parse_str(s).ok())
             });
+            let mode = crate::hwkey::HwConsent::from_flag(v["consent"].as_bool() == Some(true));
             let inner = open_bytes_hw(&*hw, old_seal_key, file.as_bytes())?;
-            let bytes = seal_bytes_hw(&*hw, &binding, new_seal_key, &inner, id)?;
+            let bytes = seal_bytes_hw(&*hw, &binding, new_seal_key, &inner, id, mode)?;
             super::write_vault_file(path, &bytes).map_err(|e| {
                 BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
             })?;
@@ -325,10 +340,11 @@ pub fn seal_bytes_hw(
     seal_key: &[u8; 32],
     inner_json: &str,
     device_id: Option<Uuid>,
+    consent: crate::hwkey::HwConsent,
 ) -> Result<Vec<u8>, BaluardError> {
     // The backend mints the ephemeral in its own primitive family and
     // discards the private half - only its chip can reproduce the secret.
-    let (peer, hw_secret) = hw.ecdh_ephemeral(binding)?;
+    let (peer, hw_secret) = hw.ecdh_ephemeral(binding, consent)?;
     let ck = crate::hwkey::combine_seal_inputs(&hw_secret, seal_key);
 
     let nonce = crate::crypto::aead::build_random_nonce();
@@ -340,10 +356,11 @@ pub fn seal_bytes_hw(
         update_seq: 0,
         tier: None,
     };
-    // AAD binds purpose AND the stored peer bytes: an attacker editing the
-    // file's ephemeral_pub fails AEAD authentication outright instead of
-    // merely deriving a wrong secret.
-    let aad = hw_aad(&peer.0);
+    // AAD binds purpose, the consent mode byte, AND the stored peer
+    // bytes: an attacker editing ephemeral_pub or flipping the consent
+    // flag fails AEAD authentication outright instead of merely deriving
+    // a wrong secret.
+    let aad = hw_aad(&peer.0, consent.is_per_use());
     let envelope = crate::crypto::aead::encrypt(&ck, inner_json.as_bytes(), &aad, &nonce, header)?;
     let serialized = crate::vault::envelope::serialize(&envelope)?;
     let mut doc = serde_json::json!({
@@ -351,6 +368,9 @@ pub fn seal_bytes_hw(
         "envelope": base64::engine::general_purpose::STANDARD.encode(serialized),
         "ephemeral_pub": base64::engine::general_purpose::STANDARD.encode(peer.0),
         "hw_binding": binding,
+        // Recorded so status copy and the open path know the mode; the
+        // chip's own ACL stays authoritative against tampering.
+        "consent": consent.is_per_use(),
     });
     let id = device_id.or_else(|| outer_device_id(inner_json));
     if let Some(id) = id {
@@ -359,9 +379,13 @@ pub fn seal_bytes_hw(
     Ok(doc.to_string().into_bytes())
 }
 
-/// v2-hw AAD: purpose string + the exact stored ephemeral bytes.
-fn hw_aad(peer: &[u8; 65]) -> Vec<u8> {
+/// v2-hw AAD: purpose string + consent mode byte + the exact stored
+/// ephemeral bytes, so flipping the flag or editing the ephemeral fails
+/// AEAD outright. (Uniform since the consent wave: v2-hw files from the
+/// one-day Phase 0 window re-enable through the toggle or phrase path.)
+fn hw_aad(peer: &[u8; 65], consent: bool) -> Vec<u8> {
     let mut aad = SEAL_TYPE_HW.as_bytes().to_vec();
+    aad.push(u8::from(consent));
     aad.extend_from_slice(peer);
     aad
 }
@@ -411,14 +435,30 @@ pub fn open_bytes_hw(
         .map_err(|e| VaultError::Corrupt(format!("hw-sealed devkey base64: {e}")))?;
     let envelope = crate::vault::envelope::deserialize(&serialized)?;
 
+    // The chip's ACL is authoritative, but a consent file on a backend
+    // that cannot verify users must fail closed, never downgrade.
+    let consent_flag = v["consent"].as_bool() == Some(true);
+    let consent = crate::hwkey::HwConsent::from_flag(consent_flag);
+    if consent.is_per_use() && !hw.supports_consent() {
+        return Err(VaultError::HardwareConsentUnavailable.into());
+    }
+
     // Chip first so a hardware failure surfaces as the typed unavailable
     // error, not an opaque AEAD mismatch.
     let hw_secret = hw
-        .ecdh(binding, &crate::hwkey::EphemeralPub(peer))
+        .ecdh(binding, &crate::hwkey::EphemeralPub(peer), consent)
         .map_err(|_| crate::hwkey::hw_unavailable_error())?;
     let ck = crate::hwkey::combine_seal_inputs(&hw_secret, seal_key);
+    let aad = hw_aad(&peer, consent_flag);
     let mut pt = crate::crypto::aead::decrypt(&ck, &envelope)
         .map_err(|_| VaultError::Corrupt("devkey seal key mismatch".into()))?;
+    // decrypt() authenticates the envelope's OWN stored AAD; the expected
+    // AAD is a separate, caller-derived input. Compare them so a tampered
+    // consent flag (or ephemeral) fails the open outright.
+    if envelope.aad.as_slice() != aad.as_slice() {
+        pt.zeroize();
+        return Err(VaultError::Corrupt("devkey seal key mismatch".into()).into());
+    }
     let inner = String::from_utf8(pt.clone())
         .map_err(|e| VaultError::Corrupt(format!("devkey plaintext utf8: {e}")))?;
     pt.zeroize();
@@ -433,17 +473,22 @@ pub fn enable_hw_seal(
     seal_key: &[u8; 32],
     vault_id: Uuid,
     device_id: Option<Uuid>,
+    consent: bool,
 ) -> Result<bool, BaluardError> {
     let Some(hw) = crate::hwkey::available() else {
         return Err(VaultError::Locked.into()); // typed unavailable; surfaces map it
     };
+    let mode = crate::hwkey::HwConsent::from_flag(consent);
+    if mode.is_per_use() && !hw.supports_consent() {
+        return Err(VaultError::HardwareConsentUnavailable.into());
+    }
     match file_kind(path) {
         PrivkeyFileKind::Absent => Ok(false),
         PrivkeyFileKind::SealedHw => Ok(false),
         PrivkeyFileKind::LegacyPlaintext | PrivkeyFileKind::Sealed => {
             let inner = read_privkey_file(path, Some(seal_key))?;
-            let binding = hw.create_binding(vault_id)?;
-            let bytes = seal_bytes_hw(&*hw, &binding, seal_key, &inner, device_id)?;
+            let binding = hw.create_binding(vault_id, mode)?;
+            let bytes = seal_bytes_hw(&*hw, &binding, seal_key, &inner, device_id, mode)?;
             super::write_vault_file(path, &bytes).map_err(|e| {
                 BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
             })?;
@@ -474,6 +519,48 @@ pub fn disable_hw_seal(
     if let Some(b) = binding {
         let _ = hw.delete_binding(&b);
     }
+    Ok(true)
+}
+
+/// Switch an hw-sealed file between silent and per-use-consent modes:
+/// opens under the CURRENT mode, re-keys under a binding of the NEW mode,
+/// and deletes the old binding. Ok(false) when not hw-sealed or already
+/// in the requested mode.
+pub fn set_hw_seal_consent(
+    path: &Path,
+    seal_key: &[u8; 32],
+    device_id: Option<Uuid>,
+    consent: bool,
+) -> Result<bool, BaluardError> {
+    if file_kind(path) != PrivkeyFileKind::SealedHw {
+        return Ok(false);
+    }
+    let hw = crate::hwkey::available().ok_or_else(crate::hwkey::hw_unavailable_error)?;
+    if consent && !hw.supports_consent() {
+        return Err(VaultError::HardwareConsentUnavailable.into());
+    }
+    let file = std::fs::read_to_string(path)
+        .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
+    let v: serde_json::Value = serde_json::from_str(&file)
+        .map_err(|e| VaultError::Corrupt(format!("hw-sealed devkey json: {e}")))?;
+    let old_binding = v["hw_binding"]
+        .as_str()
+        .ok_or_else(|| VaultError::Corrupt("hw-sealed devkey missing binding".into()))?;
+    if crate::hwkey::HwConsent::from_flag(v["consent"].as_bool() == Some(true)).is_per_use()
+        == consent
+    {
+        return Ok(false);
+    }
+    let vault_id = crate::hwkey::binding_vault_id(old_binding)
+        .ok_or_else(|| VaultError::Corrupt("hw-sealed devkey binding is not a vault tag".into()))?;
+    let inner = open_bytes_hw(&*hw, seal_key, file.as_bytes())?;
+    let mode = crate::hwkey::HwConsent::from_flag(consent);
+    let binding = hw.create_binding(vault_id, mode)?;
+    let bytes = seal_bytes_hw(&*hw, &binding, seal_key, &inner, device_id, mode)?;
+    super::write_vault_file(path, &bytes).map_err(|e| {
+        BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
+    })?;
+    let _ = hw.delete_binding(old_binding);
     Ok(true)
 }
 
@@ -561,12 +648,24 @@ mod tests {
                 backend: "test-mock".into(),
             }
         }
-        fn create_binding(&self, vault_id: Uuid) -> Result<String, BaluardError> {
-            Ok(crate::hwkey::binding_tag(vault_id))
+        fn supports_consent(&self) -> bool {
+            true
+        }
+        fn create_binding(
+            &self,
+            vault_id: Uuid,
+            consent: crate::hwkey::HwConsent,
+        ) -> Result<String, BaluardError> {
+            Ok(if consent.is_per_use() {
+                crate::hwkey::consent_binding_tag(vault_id)
+            } else {
+                crate::hwkey::binding_tag(vault_id)
+            })
         }
         fn ecdh_ephemeral(
             &self,
             binding: &str,
+            _consent: crate::hwkey::HwConsent,
         ) -> Result<(crate::hwkey::EphemeralPub, crate::hwkey::SharedSecret), BaluardError>
         {
             use sha2::{Digest, Sha256};
@@ -585,6 +684,7 @@ mod tests {
             &self,
             binding: &str,
             peer: &crate::hwkey::EphemeralPub,
+            _consent: crate::hwkey::HwConsent,
         ) -> Result<crate::hwkey::SharedSecret, BaluardError> {
             use sha2::{Digest, Sha256};
             let mut h = Sha256::new();
@@ -598,9 +698,7 @@ mod tests {
         }
     }
 
-    /// The keystore registry and the kill-switch env var are
-    /// process-global; every hw test holds this for its whole body.
-    static HW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    use crate::hwkey::TEST_STORE_LOCK as HW_LOCK;
 
     /// The kill-switch env var may be preset for the whole `just test`
     /// process; the mock tests need it cleared for their body and the
@@ -641,7 +739,7 @@ mod tests {
         let p = tmp_path("hw-roundtrip");
         seal_file(&p, INNER, &[7u8; 32], None).unwrap();
         let vault_id = Uuid::new_v4();
-        assert!(enable_hw_seal(&p, &[7u8; 32], vault_id, None).unwrap());
+        assert!(enable_hw_seal(&p, &[7u8; 32], vault_id, None, false).unwrap());
         assert_eq!(file_kind(&p), PrivkeyFileKind::SealedHw);
         let raw = std::fs::read_to_string(&p).unwrap();
         assert!(!raw.contains("x25519_private"));
@@ -663,7 +761,7 @@ mod tests {
         install_mock();
         let p = tmp_path("hw-and");
         seal_file(&p, INNER, &[7u8; 32], None).unwrap();
-        enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None).unwrap();
+        enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None, false).unwrap();
 
         // Hardware missing: fail closed even with the right password, and
         // the error must name the chip - never read as a password failure.
@@ -690,12 +788,12 @@ mod tests {
         let p = tmp_path("hw-enable-gate");
         seal_file(&p, INNER, &[7u8; 32], None).unwrap();
         // No chip installed: the toggle fails closed, file untouched.
-        assert!(enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None).is_err());
+        assert!(enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None, false).is_err());
         assert_eq!(file_kind(&p), PrivkeyFileKind::Sealed);
         install_mock();
-        assert!(enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None).unwrap());
+        assert!(enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None, false).unwrap());
         // Second enable: no-op.
-        assert!(!enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None).unwrap());
+        assert!(!enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None, false).unwrap());
         crate::hwkey::uninstall();
         hw_env_restore(_old_env);
         std::fs::remove_file(&p).ok();
@@ -710,7 +808,7 @@ mod tests {
         let p = tmp_path("hw-disable");
         let vault_id = Uuid::new_v4();
         seal_file(&p, INNER, &[7u8; 32], None).unwrap();
-        enable_hw_seal(&p, &[7u8; 32], vault_id, None).unwrap();
+        enable_hw_seal(&p, &[7u8; 32], vault_id, None, false).unwrap();
         let binding = {
             let raw = std::fs::read_to_string(&p).unwrap();
             let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -738,7 +836,7 @@ mod tests {
         install_mock();
         let p = tmp_path("hw-rekey");
         seal_file(&p, INNER, &[1u8; 32], None).unwrap();
-        enable_hw_seal(&p, &[1u8; 32], Uuid::new_v4(), None).unwrap();
+        enable_hw_seal(&p, &[1u8; 32], Uuid::new_v4(), None, false).unwrap();
         let eph_before = {
             let raw = std::fs::read_to_string(&p).unwrap();
             let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -771,7 +869,7 @@ mod tests {
         let _old_env = hw_env_clear();
         let p = tmp_path("hw-rescue");
         seal_file(&p, INNER, &[7u8; 32], None).unwrap();
-        enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None).unwrap();
+        enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None, false).unwrap();
         crate::hwkey::uninstall();
         assert!(read_privkey_file(&p, Some(&[7u8; 32])).is_err());
 
@@ -793,7 +891,7 @@ mod tests {
         install_mock();
         let p = tmp_path("hw-killswitch");
         seal_file(&p, INNER, &[7u8; 32], None).unwrap();
-        enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None).unwrap();
+        enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None, false).unwrap();
         // SAFETY: test-only env mutation in a single-threaded test; no
         // other test in this binary reads the var concurrently.
         #[allow(unsafe_op_in_unsafe_fn)]
@@ -825,5 +923,153 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["device_id"].as_str(), Some(id.to_string().as_str()));
         std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn hw_consent_roundtrip_and_mode_switch() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        let m = install_mock();
+        let p = tmp_path("hw-consent");
+        let vault_id = Uuid::new_v4();
+        seal_file(&p, INNER, &[7u8; 32], None).unwrap();
+
+        // Enable in consent mode: the binding is the consent tag.
+        assert!(enable_hw_seal(&p, &[7u8; 32], vault_id, None, true).unwrap());
+        let raw = std::fs::read_to_string(&p).unwrap();
+        assert!(
+            raw.contains("\"consent\":true"),
+            "file records the mode: {raw}"
+        );
+        assert!(raw.contains("baluard-hwc:"));
+
+        // Open works (the mock verifies users trivially); password change
+        // preserves the mode.
+        assert_eq!(read_privkey_file(&p, Some(&[7u8; 32])).unwrap(), INNER);
+        assert!(rotate_seal_key(&p, &[7u8; 32], &[9u8; 32], None).unwrap());
+        let raw = std::fs::read_to_string(&p).unwrap();
+        assert!(raw.contains("\"consent\":true"));
+
+        // Switch to silent: re-keys under the plain tag and deletes the
+        // consent binding.
+        assert!(set_hw_seal_consent(&p, &[9u8; 32], None, false).unwrap());
+        let raw = std::fs::read_to_string(&p).unwrap();
+        assert!(raw.contains("\"consent\":false"));
+        assert!(raw.contains("baluard-hw:") && !raw.contains("baluard-hwc:"));
+        assert_eq!(read_privkey_file(&p, Some(&[9u8; 32])).unwrap(), INNER);
+        assert!(
+            m.deleted
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|b| b.contains("baluard-hwc:"))
+        );
+
+        // Switching again is a no-op.
+        assert!(!set_hw_seal_consent(&p, &[9u8; 32], None, false).unwrap());
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn hw_consent_file_refuses_on_non_consenting_store() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        install_mock();
+        let p = tmp_path("hw-consent-refuse");
+        let vault_id = Uuid::new_v4();
+        seal_file(&p, INNER, &[7u8; 32], None).unwrap();
+        assert!(enable_hw_seal(&p, &[7u8; 32], vault_id, None, true).unwrap());
+
+        // Swap in a store that cannot verify users: a consent-sealed file
+        // must fail closed with the typed consent error, never downgrade.
+        struct Consentless;
+        impl crate::hwkey::HardwareKeyStore for Consentless {
+            fn probe(&self) -> crate::hwkey::HwCapability {
+                crate::hwkey::HwCapability::Available {
+                    backend: "consentless".into(),
+                }
+            }
+            fn create_binding(
+                &self,
+                _: Uuid,
+                _: crate::hwkey::HwConsent,
+            ) -> Result<String, BaluardError> {
+                Ok(crate::hwkey::binding_tag(Uuid::new_v4()))
+            }
+            fn ecdh_ephemeral(
+                &self,
+                _: &str,
+                _: crate::hwkey::HwConsent,
+            ) -> Result<(crate::hwkey::EphemeralPub, crate::hwkey::SharedSecret), BaluardError>
+            {
+                Err(VaultError::HardwareConsentUnavailable.into())
+            }
+            fn ecdh(
+                &self,
+                _: &str,
+                _: &crate::hwkey::EphemeralPub,
+                _: crate::hwkey::HwConsent,
+            ) -> Result<crate::hwkey::SharedSecret, BaluardError> {
+                Err(VaultError::HardwareConsentUnavailable.into())
+            }
+            fn delete_binding(&self, _: &str) -> Result<(), BaluardError> {
+                Ok(())
+            }
+        }
+        crate::hwkey::install(std::sync::Arc::new(Consentless));
+        let err = read_privkey_file(&p, Some(&[7u8; 32])).unwrap_err();
+        assert!(
+            err.to_string().contains("demands confirmation"),
+            "consent refusal must be typed, got: {err}"
+        );
+        // Enabling consent on such a store refuses too.
+        let p2 = tmp_path("hw-consent-refuse2");
+        seal_file(&p2, INNER, &[7u8; 32], None).unwrap();
+        assert!(enable_hw_seal(&p2, &[7u8; 32], vault_id, None, true).is_err());
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+        std::fs::remove_file(&p).ok();
+        std::fs::remove_file(&p2).ok();
+    }
+
+    #[test]
+    fn hw_consent_flag_is_aad_bound_and_legacy_files_open() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        install_mock();
+        let p = tmp_path("hw-aad-flag");
+        let vault_id = Uuid::new_v4();
+        seal_file(&p, INNER, &[7u8; 32], None).unwrap();
+        enable_hw_seal(&p, &[7u8; 32], vault_id, None, true).unwrap();
+
+        // Tampering the consent flag flips the AAD: AEAD must refuse the
+        // downgrade instead of silently opening without confirmation.
+        let raw = std::fs::read_to_string(&p).unwrap();
+        let tampered = raw.replace("\"consent\":true", "\"consent\":false");
+        assert_ne!(raw, tampered);
+        super::super::write_vault_file(&p, tampered.as_bytes()).unwrap();
+        assert!(read_privkey_file(&p, Some(&[7u8; 32])).is_err());
+
+        // The mirror direction: faking consent on a silent file is
+        // refused too - both tamper directions are AAD-bound.
+        let p2 = tmp_path("hw-aad-legacy");
+        seal_file(&p2, INNER, &[7u8; 32], None).unwrap();
+        enable_hw_seal(&p2, &[7u8; 32], vault_id, None, false).unwrap();
+        let raw2 = std::fs::read_to_string(&p2).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&raw2).unwrap();
+        v.as_object_mut()
+            .expect("hw file is an object")
+            .insert("consent".into(), serde_json::Value::Bool(true));
+        super::super::write_vault_file(&p2, v.to_string().as_bytes()).unwrap();
+        assert!(read_privkey_file(&p2, Some(&[7u8; 32])).is_err());
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+        std::fs::remove_file(&p).ok();
+        std::fs::remove_file(&p2).ok();
     }
 }

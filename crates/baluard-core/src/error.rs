@@ -115,6 +115,22 @@ pub enum VaultError {
     #[error("this vault is guarded by this device's security chip and the chip is unavailable")]
     HardwareUnavailable,
 
+    /// The vault demands per-use chip confirmation (Touch ID-class) but
+    /// this device's chip cannot verify the user. The rescue is the
+    /// phrase path, not a retry.
+    #[error(
+        "this vault demands confirmation on every unlock and this device's security chip cannot do that"
+    )]
+    HardwareConsentUnavailable,
+
+    /// A per-use chip confirmation was cancelled or failed. Retryable
+    /// when it was a decline; a persistent failure after a biometry reset
+    /// means the chip key is gone and the phrase path is the rescue.
+    #[error(
+        "this vault's security chip confirmation failed - try again, or recover this device with the recovery phrase"
+    )]
+    HardwareAuthFailed,
+
     #[error("invalid operation: {0}")]
     InvalidOperation(String),
 

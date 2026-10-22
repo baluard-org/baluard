@@ -56,18 +56,37 @@ pub enum HwCapability {
 /// quick-unlock's `quick-unlock:<vault_id>`.
 pub trait HardwareKeyStore: Send + Sync {
     fn probe(&self) -> HwCapability;
-    /// Create (or return the existing) binding for this vault.
-    fn create_binding(&self, vault_id: Uuid) -> Result<String, BaluardError>;
+    /// Whether this backend's chips can demand the platform's own user
+    /// verification on a chip ECDH. Default: no - `PerUse` then refuses
+    /// with `HardwareConsentUnavailable` everywhere.
+    fn supports_consent(&self) -> bool {
+        false
+    }
+    /// Create (or return the existing) binding for this vault. A `PerUse`
+    /// binding names a SEPARATE key whose every use demands user
+    /// verification.
+    fn create_binding(&self, vault_id: Uuid, consent: HwConsent) -> Result<String, BaluardError>;
     /// Generate a fresh ephemeral input IN THE BACKEND'S PRIMITIVE FAMILY
     /// (the seal layer cannot know it - SE needs a P-256 point) and return
     /// it with the ECDH against the binding's non-exportable key. The
     /// seal layer stores the public half; [`Self::ecdh`] must reproduce
-    /// the same secret from the stored bytes.
-    fn ecdh_ephemeral(&self, binding: &str) -> Result<(EphemeralPub, SharedSecret), BaluardError>;
+    /// the same secret from the stored bytes. `PerUse` demands the
+    /// platform's user verification on this call.
+    fn ecdh_ephemeral(
+        &self,
+        binding: &str,
+        consent: HwConsent,
+    ) -> Result<(EphemeralPub, SharedSecret), BaluardError>;
     /// ECDH between the binding's non-exportable key and a stored
-    /// `peer`. Must be silent (no per-use user consent) - the v2-hw seal
-    /// runs on every unlock and password change.
-    fn ecdh(&self, binding: &str, peer: &EphemeralPub) -> Result<SharedSecret, BaluardError>;
+    /// `peer`. `Silent` must never prompt - the v2-hw seal runs on every
+    /// unlock and password change; `PerUse` demands the platform's user
+    /// verification each call.
+    fn ecdh(
+        &self,
+        binding: &str,
+        peer: &EphemeralPub,
+        consent: HwConsent,
+    ) -> Result<SharedSecret, BaluardError>;
     /// Idempotent. Implementations whose key is shared infrastructure
     /// (the TPM backend: slot-constrained firmwares get one chip key
     /// for all vaults) treat this as a no-op - disable downsizes the
@@ -75,9 +94,56 @@ pub trait HardwareKeyStore: Send + Sync {
     fn delete_binding(&self, binding: &str) -> Result<(), BaluardError>;
 }
 
-/// Deterministic per-vault binding tag.
+/// Whether a chip ECDH demands the platform's own user verification
+/// (Touch ID-class) before releasing its secret. `Silent` keys guard the
+/// vault at rest; `PerUse` keys additionally refuse an on-device password
+/// thief who cannot pass biometry - the Phase 5 upgrade.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HwConsent {
+    Silent,
+    PerUse,
+}
+
+impl HwConsent {
+    pub fn from_flag(flag: bool) -> Self {
+        if flag {
+            HwConsent::PerUse
+        } else {
+            HwConsent::Silent
+        }
+    }
+
+    pub fn is_per_use(self) -> bool {
+        matches!(self, HwConsent::PerUse)
+    }
+}
+
+/// Deterministic per-vault binding tag (silent keys).
 pub fn binding_tag(vault_id: Uuid) -> String {
     format!("baluard-hw:{vault_id}")
+}
+
+/// Per-use-consent keys live in a SEPARATE binding (and a separate chip
+/// key with its verification ACL): a silent file must never be opened by
+/// a consenting key or vice versa.
+pub fn consent_binding_tag(vault_id: Uuid) -> String {
+    format!("baluard-hwc:{vault_id}")
+}
+
+pub fn binding_tag_for(vault_id: Uuid, consent: HwConsent) -> String {
+    if consent.is_per_use() {
+        consent_binding_tag(vault_id)
+    } else {
+        binding_tag(vault_id)
+    }
+}
+
+/// Inverse of [`binding_tag`]/[`consent_binding_tag`].
+pub fn binding_vault_id(binding: &str) -> Option<Uuid> {
+    binding
+        .strip_prefix("baluard-hwc:")
+        .or_else(|| binding.strip_prefix("baluard-hw:"))
+        .and_then(|id| Uuid::parse_str(id).ok())
 }
 
 fn hw_disabled() -> bool {
@@ -197,6 +263,12 @@ pub fn hw_unavailable_error() -> BaluardError {
     BaluardError::from(VaultError::HardwareUnavailable)
 }
 
+/// Serializes every test that touches the process-global keystore
+/// registry (and the kill-switch env var) across ALL test modules - the
+/// registry races otherwise, because cargo runs test modules in parallel.
+#[cfg(test)]
+pub(crate) static TEST_STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,12 +284,20 @@ mod tests {
                 backend: "mock".into(),
             }
         }
-        fn create_binding(&self, vault_id: Uuid) -> Result<String, BaluardError> {
+        fn supports_consent(&self) -> bool {
+            true
+        }
+        fn create_binding(
+            &self,
+            vault_id: Uuid,
+            _consent: HwConsent,
+        ) -> Result<String, BaluardError> {
             Ok(binding_tag(vault_id))
         }
         fn ecdh_ephemeral(
             &self,
             binding: &str,
+            _consent: HwConsent,
         ) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
             use sha2::{Digest, Sha256};
             // Random-looking fresh public in the mock's opaque format.
@@ -229,7 +309,12 @@ mod tests {
             h.update(peer);
             Ok((EphemeralPub(peer), Zeroizing::new(h.finalize().into())))
         }
-        fn ecdh(&self, binding: &str, peer: &EphemeralPub) -> Result<SharedSecret, BaluardError> {
+        fn ecdh(
+            &self,
+            binding: &str,
+            peer: &EphemeralPub,
+            _consent: HwConsent,
+        ) -> Result<SharedSecret, BaluardError> {
             // binding and peer are both opaque here; derive deterministically.
             use sha2::{Digest, Sha256};
             let mut h = Sha256::new();
@@ -244,6 +329,7 @@ mod tests {
 
     #[test]
     fn install_probe_and_available_flow() {
+        let _g = TEST_STORE_LOCK.lock().unwrap();
         uninstall();
         assert_eq!(
             probe_status(),
@@ -261,8 +347,10 @@ mod tests {
             }
         );
         let s = available().expect("available with mock installed");
-        let b = s.create_binding(Uuid::new_v4()).unwrap();
-        let secret = s.ecdh(&b, &EphemeralPub([7u8; 65])).expect("mock ecdh");
+        let b = s.create_binding(Uuid::new_v4(), HwConsent::Silent).unwrap();
+        let secret = s
+            .ecdh(&b, &EphemeralPub([7u8; 65]), HwConsent::Silent)
+            .expect("mock ecdh");
         assert_eq!(secret.len(), 32);
         uninstall();
         assert!(available().is_none());
@@ -270,6 +358,7 @@ mod tests {
 
     #[test]
     fn binding_tag_namespaces_by_vault() {
+        // Pure string shaping; no registry access, no lock needed.
         let a = binding_tag(Uuid::new_v4());
         let b = binding_tag(Uuid::new_v4());
         assert_ne!(a, b);

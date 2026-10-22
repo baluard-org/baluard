@@ -248,7 +248,14 @@ impl HardwareKeyStore for TpmStore {
         }
     }
 
-    fn create_binding(&self, _vault_id: Uuid) -> Result<String, BaluardError> {
+    fn create_binding(
+        &self,
+        _vault_id: Uuid,
+        consent: crate::hwkey::HwConsent,
+    ) -> Result<String, BaluardError> {
+        if consent.is_per_use() {
+            return Err(VaultError::HardwareConsentUnavailable.into());
+        }
         let mut ctx = self.ctx.lock().unwrap_or_else(|p| p.into_inner());
         let public = Self::ecdh_public_template()?;
 
@@ -336,7 +343,14 @@ impl HardwareKeyStore for TpmStore {
         Ok(format!("{BINDING_PREFIX}{slot_raw:08x}"))
     }
 
-    fn ecdh_ephemeral(&self, binding: &str) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+    fn ecdh_ephemeral(
+        &self,
+        binding: &str,
+        consent: crate::hwkey::HwConsent,
+    ) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+        if consent.is_per_use() {
+            return Err(VaultError::HardwareConsentUnavailable.into());
+        }
         let handle = Self::parse_handle(binding)?;
         let mut ctx = self.ctx.lock().unwrap_or_else(|p| p.into_inner());
         // Load OUTSIDE the auth session: TR_FromTPMPublic under a
@@ -356,7 +370,15 @@ impl HardwareKeyStore for TpmStore {
         )
     }
 
-    fn ecdh(&self, binding: &str, peer: &EphemeralPub) -> Result<SharedSecret, BaluardError> {
+    fn ecdh(
+        &self,
+        binding: &str,
+        peer: &EphemeralPub,
+        consent: crate::hwkey::HwConsent,
+    ) -> Result<SharedSecret, BaluardError> {
+        if consent.is_per_use() {
+            return Err(VaultError::HardwareConsentUnavailable.into());
+        }
         let handle = Self::parse_handle(binding)?;
         let peer_point = Self::point_from_x962(&peer.0)?;
         let mut ctx = self.ctx.lock().unwrap_or_else(|p| p.into_inner());
