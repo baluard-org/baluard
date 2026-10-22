@@ -711,6 +711,29 @@ impl MobileVault {
         Ok(new)
     }
 
+    /// Custom-remote setup: wire a user-supplied repository URL as the
+    /// sync remote. No provider token, no repo creation — credentials
+    /// were stored device-side via git_credentials_set and the sync
+    /// engine reads them at transport time. Vault must be unlocked (the
+    /// first push signs a commit).
+    pub async fn setup_sync_custom(&self, clone_url: String) -> Result<String, BaluardError> {
+        if !self.state.is_unlocked().await {
+            return Err(BaluardError::Vault {
+                detail: "Vault is locked. Unlock first.".into(),
+            });
+        }
+        let seal = self.state.devkey_seal().await;
+        let new = baluard_runtime::providers::setup_sync_remote_custom(
+            &self.state.vault_path,
+            seal,
+            clone_url,
+        )
+        .await
+        .map_err(|e| BaluardError::Vault { detail: e })?;
+        self.state.activate_autosync_after_remote().await;
+        Ok(new)
+    }
+
     /// Fleet snapshot: {devices: [{name, device_id, enrolled_at, ...}],
     /// total}. Key material is masked daemon-side.
     pub async fn devices_list(&self) -> Result<String, BaluardError> {

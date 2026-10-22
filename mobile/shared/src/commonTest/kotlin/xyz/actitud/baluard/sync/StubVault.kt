@@ -205,6 +205,7 @@ override suspend fun `myRole`(): String = err()
     // Custom-remote credential surfaces — the stub never exercises them.
     override suspend fun `gitCredentialsSet`(payload: String): String = err()
     override suspend fun `gitRemoteUrl`(): String = err()
+    override suspend fun `setupSyncCustom`(cloneUrl: String): String = err()
     override suspend fun `devicesList`(): String = err()
     override suspend fun `deviceRevoke`(deviceId: String): String = err()
     override suspend fun `spaceKitStatus`(): String = err()

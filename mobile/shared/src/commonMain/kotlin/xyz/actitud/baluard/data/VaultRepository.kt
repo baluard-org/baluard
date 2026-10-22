@@ -25,6 +25,8 @@ import xyz.actitud.baluard.enrollDeviceWithPhrase as uniffiEnrollDeviceWithPhras
 import xyz.actitud.baluard.listVaultRepos as uniffiListVaultRepos
 import xyz.actitud.baluard.startDeviceFlow as uniffiStartDeviceFlow
 import xyz.actitud.baluard.webOauthStart as uniffiWebOauthStart
+import xyz.actitud.baluard.gitProbe as uniffiGitProbe
+import xyz.actitud.baluard.gitHostkeyTrust as uniffiGitHostkeyTrust
 import xyz.actitud.baluard.webOauthStatus as uniffiWebOauthStatus
 
 /**
@@ -919,6 +921,23 @@ class VaultRepository {
         repoName: String,
         cloneUrl: String? = null,
     ): String = vault.setupSync(provider, repoName, cloneUrl)
+
+    /** Custom remote: wire a user-supplied URL; credentials ride the
+     *  device-local files stored via gitCredentialsSet. */
+    suspend fun setupSyncCustom(vault: MobileVault, cloneUrl: String): String =
+        vault.setupSyncCustom(cloneUrl)
+
+    /** Store the custom remote's credentials (device-local, 0600). */
+    suspend fun gitCredentialsSet(vault: MobileVault, payload: String): String =
+        vault.gitCredentialsSet(payload)
+
+    /** Test a remote URL with optional credentials; structured result. */
+    suspend fun gitProbe(url: String, credentialsJson: String?): String =
+        uniffiGitProbe(url, credentialsJson ?: "")
+
+    /** Bless a daemon-observed SSH host key by attempt id. */
+    suspend fun gitHostkeyTrust(attemptId: String): String =
+        uniffiGitHostkeyTrust(attemptId)
 
     /** Repos that look like Baluard vaults on the connected account. */
     suspend fun listVaultRepos(provider: MobileProvider): List<MobileRepo> =
