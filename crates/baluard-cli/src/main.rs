@@ -162,6 +162,33 @@ enum Commands {
     },
 
     /// Search entries by name or username.
+    /// Custom Git remote: store the vault's access credentials
+    /// (device-local, gitignored, 0600). Present flags update; flags with
+    /// empty values clear that field. Absent flags stay untouched.
+    Credentials {
+        #[command(subcommand)]
+        action: CredentialsAction,
+    },
+    /// Custom Git remote: test the connection (an ls-remote pre-flight).
+    /// Candidate credentials ride the flags; with none, the vault's
+    /// stored credentials apply.
+    GitProbe {
+        /// The repository URL to test.
+        url: String,
+        #[arg(long)]
+        token: Option<String>,
+        #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
+        ssh_passphrase: Option<String>,
+        /// PEM private key material (device file or paste).
+        #[arg(long)]
+        key_file: Option<String>,
+    },
+    /// Custom Git remote: bless an SSH host key the daemon observed
+    /// (by attempt id from a failed operation). Never accepts key
+    /// material — the daemon commits what it saw.
+    GitTrust { attempt_id: String },
     Search {
         /// Text to match (case-insensitive substring).
         query: String,
@@ -481,6 +508,39 @@ enum VaultAction {
         slug: String,
         /// Device name for the recovered device (prompted when omitted).
         device_name: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum CredentialsAction {
+    /// Store or update credentials for this vault's custom remote.
+    Set {
+        /// The remote host the token is bound to (release happens only
+        /// when the URL host matches).
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        token: Option<String>,
+        #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
+        ssh_passphrase: Option<String>,
+        /// Path to a PEM private key file; contents are stored
+        /// device-side (the key never rides git).
+        #[arg(long)]
+        key_file: Option<String>,
+    },
+    /// Clear stored credentials (each flag empties that field; with all
+    /// secret fields empty the file is removed).
+    Clear {
+        #[arg(long)]
+        token: bool,
+        #[arg(long)]
+        username: bool,
+        #[arg(long)]
+        ssh_passphrase: bool,
+        #[arg(long)]
+        key: bool,
     },
 }
 
@@ -1865,6 +1925,27 @@ fn main() {
             }
         },
 
+        Commands::Credentials { action } => {
+            commands::handle_credentials(mode, cli.socket.as_deref(), action)
+        }
+        Commands::GitProbe {
+            url,
+            token,
+            username,
+            ssh_passphrase,
+            key_file,
+        } => commands::handle_git_probe(
+            mode,
+            cli.socket.as_deref(),
+            &url,
+            token,
+            username,
+            ssh_passphrase,
+            key_file,
+        ),
+        Commands::GitTrust { attempt_id } => {
+            commands::handle_git_trust(mode, cli.socket.as_deref(), &attempt_id)
+        }
         Commands::Search { query, all, vault } => {
             commands::handle_search(mode, cli.socket.as_deref(), &query, all, vault.as_deref())
         }
