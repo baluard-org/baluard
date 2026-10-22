@@ -185,9 +185,27 @@ export default function SettingsModal() {
     if (!mode) return;
     setHwBusy(true);
     try {
-      await daemon(mode === "enable" ? "vault.hw_enable" : "vault.hw_disable");
+      if (mode === "enable") {
+        await daemon("vault.hw_enable", { consent: false });
+      } else if (mode === "disable") {
+        await daemon("vault.hw_disable");
+      } else {
+        // "consent-on" | "consent-off": re-key between the silent and
+        // per-use-confirmation chip keys.
+        await daemon("vault.hw_set_consent", { consent: mode === "consent-on" });
+      }
       await loadHwStatus();
-      toastSuccess(t(mode === "enable" ? "settings.hwEnabledToast" : "settings.hwDisabledToast"));
+      toastSuccess(
+        t(
+          mode === "enable"
+            ? "settings.hwEnabledToast"
+            : mode === "disable"
+              ? "settings.hwDisabledToast"
+              : mode === "consent-on"
+                ? "settings.hwConsentOnToast"
+                : "settings.hwConsentOffToast",
+        ),
+      );
     } catch (e) {
       toastError(sanitizeError(e, t));
     } finally {
@@ -975,16 +993,38 @@ export default function SettingsModal() {
                         {hwBusy() ? t("common.pleaseWait") : hwStatus()?.enabled ? t("settings.hwDisable") : t("settings.hwEnable")}
                       </button>
                     </div>
+                    {/* Per-use confirmation (Phase 5): the chip demands the
+                        platform's own verification on every unlock. Only
+                        offered when the seal is on and the chip supports it. */}
+                    <Show when={hwStatus()?.enabled && hwStatus()?.consent_supported}>
+                      <div class="flex items-center justify-between border-t border-[var(--color-border)] pt-3">
+                        <div class="flex flex-col flex-1 pr-4">
+                          <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.hwConsentTitle")}</span>
+                          <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.hwConsentDesc")}</span>
+                          <span class="text-[10px] text-[var(--color-muted)] mt-0.5">
+                            {hwStatus()?.consent ? t("settings.hwConsentStatusOn") : t("settings.hwConsentStatusOff")}
+                          </span>
+                        </div>
+                        <button
+                          data-testid="hw-consent-toggle"
+                          onClick={() => setHwConfirm(hwStatus()?.consent ? "consent-off" : "consent-on")}
+                          disabled={hwBusy()}
+                          class="px-5 py-2.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                        >
+                          {hwBusy() ? t("common.pleaseWait") : hwStatus()?.consent ? t("settings.hwConsentOff") : t("settings.hwConsentOn")}
+                        </button>
+                      </div>
+                    </Show>
                   </div>
                 </Show>
 
                 <ConfirmModal
                   show={!!hwConfirm()}
                   idPrefix="hw-guard"
-                  title={t(hwConfirm() === "enable" ? "settings.hwEnableTitle" : "settings.hwDisableTitle")}
-                  body={t(hwConfirm() === "enable" ? "settings.hwEnableBody" : "settings.hwDisableBody")}
-                  confirmLabel={t(hwConfirm() === "enable" ? "settings.hwEnable" : "settings.hwDisable")}
-                  confirmVariant={hwConfirm() === "disable" ? "danger" : "primary"}
+                  title={t(hwConfirm() === "enable" ? "settings.hwEnableTitle" : hwConfirm() === "disable" ? "settings.hwDisableTitle" : hwConfirm() === "consent-on" ? "settings.hwConsentOnTitle" : "settings.hwConsentOffTitle")}
+                  body={t(hwConfirm() === "enable" ? "settings.hwEnableBody" : hwConfirm() === "disable" ? "settings.hwDisableBody" : hwConfirm() === "consent-on" ? "settings.hwConsentOnBody" : "settings.hwConsentOffBody")}
+                  confirmLabel={t(hwConfirm() === "enable" ? "settings.hwEnable" : hwConfirm() === "disable" ? "settings.hwDisable" : hwConfirm() === "consent-on" ? "settings.hwConsentOn" : "settings.hwConsentOff")}
+                  confirmVariant={hwConfirm() === "disable" || hwConfirm() === "consent-off" ? "danger" : "primary"}
                   onConfirm={hwToggle}
                   onClose={() => setHwConfirm(null)}
                 />

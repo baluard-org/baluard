@@ -374,7 +374,19 @@
     "hwDisableTitle": "¿Desactivar la protección del chip de seguridad?",
     "hwDisableBody": "Vuelve a la protección solo con contraseña: un disco robado podría atacarse sin conexión. La bóveda sigue sincronizándose y recuperándose con normalidad.",
     "hwEnabledToast": "La protección del chip de seguridad está activada.",
-    "hwDisabledToast": "La protección del chip de seguridad está desactivada."
+    "hwDisabledToast": "La protección del chip de seguridad está desactivada.",
+    "hwConsentTitle": "Confirmar en cada desbloqueo",
+    "hwConsentDesc": "El chip pedirá tu huella o tu cara cada vez que se abra esta bóveda. Evita que alguien que conoce tu contraseña la abra en este dispositivo.",
+    "hwConsentStatusOn": "Confirmación activada",
+    "hwConsentStatusOff": "Confirmación desactivada",
+    "hwConsentOnTitle": "¿Pedir confirmación en cada desbloqueo?",
+    "hwConsentOnBody": "El chip de seguridad de tu dispositivo pedirá tu huella o tu cara cada vez que se desbloquee esta bóveda. Los datos quedan protegidos en reposo de cualquier forma. Si el chip se avería o se restablecen los datos biométricos, la frase de recuperación vuelve a conectar este dispositivo.",
+    "hwConsentOffTitle": "¿Desactivar la confirmación al desbloquear?",
+    "hwConsentOffBody": "La bóveda sigue protegida por el chip de seguridad en reposo, pero el desbloqueo ya no pedirá tu huella o tu cara.",
+    "hwConsentOn": "Pedir confirmación",
+    "hwConsentOff": "Dejar de confirmar",
+    "hwConsentOnToast": "El chip confirmará cada desbloqueo.",
+    "hwConsentOffToast": "Desbloqueo silencioso restaurado."
   },
   "sync": {
     "title": "Sincronización de bóveda",
