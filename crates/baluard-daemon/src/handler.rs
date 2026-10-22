@@ -277,6 +277,9 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     // enforcement happens in core against settings.enc decrypted with
     // the phrase-recovered Root Key.
     "vault.enroll_with_phrase",
+    // Custom-remote SSH host-key trust: device-level, pre-unlock (no vault
+    // exists during a first clone). Commits only daemon-observed keys.
+    "git.git_hostkey_trust",
     // G24 step 6 (plan section 4.10): the CLI fan-out search. Token-gated
     // IN PLACE against the active vault (same trust as vaults.list_full_all)
     // because the payload crosses vault boundaries.
@@ -1293,6 +1296,14 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     // real policy from settings.enc decrypted with the recovered Root Key.
     if req.action.as_str() == "vault.enroll_with_phrase" {
         return handle_enroll_with_phrase(req, host).await;
+    }
+    // Custom-remote SSH host-key trust: HOST-level (device-level — during a
+    // first clone there is no vault and no session token). The route takes
+    // only an attempt id and commits what the daemon itself observed, so a
+    // compromised client can never bless a key it chose. Same-UID trust
+    // class as vaults.list.
+    if req.action.as_str() == "git.git_hostkey_trust" {
+        return handle_git_hostkey_trust(req);
     }
     // S2 IS-6 passphrase-guest reveal: host-level and vault-agnostic —
     // a guest has NO vault ("Open a shared file" on first-run). Pure
@@ -3034,6 +3045,46 @@ async fn handle_join_introduce(
 /// from the request slug, falling back to the ACTIVE vault (the CLI posts
 /// only the phrase). The C22 rate limiter keys on the vault path — same
 /// budget as unlock attempts; the phrase is zeroized on every exit.
+/// `git.git_hostkey_trust`: bless a daemon-observed SSH host key. Consumes
+/// the pending observation (one trust per handshake) and appends the
+/// known_hosts line. Never accepts key material from the client.
+fn handle_git_hostkey_trust(req: GatewayRequest) -> GatewayResponse {
+    let attempt_id = serde_json::from_str::<serde_json::Value>(&req.payload)
+        .ok()
+        .and_then(|v| {
+            v.get("attempt_id")
+                .and_then(|a| a.as_str())
+                .map(String::from)
+        });
+    let Some(attempt_id) = attempt_id else {
+        return err_response("Missing 'attempt_id' in payload".to_string());
+    };
+    let Some(obs) = baluard_core::sync::known_hosts::take_observation(&attempt_id) else {
+        return err_response(
+            "no pending host-key request with that id (it may have expired); reconnect and try again"
+                .to_string(),
+        );
+    };
+    let fingerprint = obs.fingerprint.clone();
+    let host = obs.host.clone();
+    let port = obs.port;
+    let key_type = obs.key_type.clone();
+    match baluard_core::sync::known_hosts::trust_host_key(&obs) {
+        Ok(()) => ok_resp(
+            serde_json::json!({
+                "trusted": true,
+                "host": host,
+                "port": port,
+                "key_type": key_type,
+                "fingerprint": fingerprint,
+            })
+            .to_string(),
+            None,
+        ),
+        Err(e) => err_response(e),
+    }
+}
+
 async fn handle_enroll_with_phrase(
     mut req: GatewayRequest,
     host: &SharedVaultHost,
@@ -5069,6 +5120,18 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+
+        // Custom-remote credentials: token-gated (writes into the vault
+        // directory), but device-local gitignored artifacts — not a cover
+        // mutation. The payload carries secrets and zeroizes below.
+        "vault.git_credentials_set" => {
+            let resp = match state.git_credentials_set(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            };
+            req.payload.zeroize();
+            resp
+        }
 
         "vault.hw_set_consent" => {
             match state

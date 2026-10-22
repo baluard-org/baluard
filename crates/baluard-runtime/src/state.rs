@@ -7449,6 +7449,71 @@ impl VaultState {
         .to_string())
     }
 
+    /// Store or update the custom-remote credentials (device-local files).
+    /// Token-gated but NOT a cover mutation: the artifacts are gitignored
+    /// device-local state with nothing to sync.
+    pub async fn git_credentials_set(&self, payload: &str) -> Result<String, String> {
+        use base64::Engine as _;
+        #[derive(serde::Deserialize)]
+        struct Payload {
+            host: String,
+            #[serde(default)]
+            token: Option<String>,
+            #[serde(default)]
+            username: Option<String>,
+            #[serde(default)]
+            ssh_passphrase: Option<String>,
+            #[serde(default)]
+            ssh_key_b64: Option<String>,
+        }
+        let p: Payload =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid payload: {e}"))?;
+        if p.host.trim().is_empty() {
+            return Err("custom remote host is required".into());
+        }
+        let ssh_pem = match p.ssh_key_b64.as_deref() {
+            None | Some("") => None,
+            Some(b64) => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64.trim())
+                    .map_err(|_| "ssh_key_b64 is not valid base64".to_string())?;
+                Some(
+                    String::from_utf8(bytes)
+                        .map_err(|_| "SSH key material is not valid UTF-8".to_string())?,
+                )
+            }
+        };
+        let update = baluard_core::sync::credentials::CustomCredentialsUpdate {
+            token: p.token,
+            username: p.username,
+            ssh_passphrase: p.ssh_passphrase,
+            ssh_key_pem: ssh_pem,
+        };
+        baluard_core::sync::credentials::apply_custom_credentials(
+            &self.vault_path,
+            &p.host,
+            &update,
+        )?;
+        Ok(r#"{"stored": true}"#.to_string())
+    }
+
+    /// The remote URL of the vault's origin, for the UI's test-connection
+    /// and credential flows.
+    pub async fn git_remote_url(&self) -> Result<String, String> {
+        let path = self.vault_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let repo =
+                git2::Repository::open(&path).map_err(|e| format!("git open failed: {e}"))?;
+            repo.find_remote("origin")
+                .map_err(|e| format!("no origin remote: {e}"))?
+                .url()
+                .map(|s| s.to_string())
+                .ok_or_else(|| "origin has no URL".to_string())
+        })
+        .await
+        .map_err(|e| format!("join error: {e}"))?
+    }
+
     /// Enable the hardware seal (the settings toggle). Requires an
     /// unlocked session (the seal subkey lives on the handle).
     pub async fn hw_enable(&self, consent: bool) -> Result<String, String> {
