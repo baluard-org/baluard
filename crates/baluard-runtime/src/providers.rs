@@ -444,6 +444,20 @@ pub fn clone_and_register(
     local_path: &Path,
     cancel_flag: Option<Arc<AtomicBool>>,
 ) -> Result<(), BaluardError> {
+    clone_and_register_with_credentials(provider, clone_url, local_path, cancel_flag, None)
+}
+
+/// Custom-remote clone: request-time credentials ride the shared callback
+/// machinery into the clone and persist into the cloned vault's
+/// device-local files after the rename, so the next sync authenticates
+/// the same way.
+pub fn clone_and_register_with_credentials(
+    provider: Option<Provider>,
+    clone_url: &str,
+    local_path: &Path,
+    cancel_flag: Option<Arc<AtomicBool>>,
+    creds: Option<baluard_core::sync::credentials::CredentialConfig>,
+) -> Result<(), BaluardError> {
     sweep_partial_clones(local_path);
 
     let partial_path = PathBuf::from(format!("{}.partial", local_path.display()));
@@ -459,7 +473,7 @@ pub fn clone_and_register(
         provider,
         progress,
         cancel_flag,
-        None,
+        creds.clone(),
     );
 
     if let Err(e) = clone_res {
@@ -491,8 +505,15 @@ pub fn clone_and_register(
         let _ = std::fs::remove_dir_all(local_path);
     }
 
-    std::fs::rename(&partial_path, local_path)
-        .map_err(|e| VaultError::Metadata(format!("renaming partial clone: {e}")).into())
+    std::fs::rename(&partial_path, local_path).map_err(|e| {
+        BaluardError::Vault(VaultError::Metadata(format!("renaming partial clone: {e}")))
+    })?;
+
+    if let Some(cfg) = creds.as_ref() {
+        baluard_core::sync::credentials::persist_in_memory(local_path, cfg)
+            .map_err(|e| VaultError::Metadata(format!("persisting credentials: {e}")))?;
+    }
+    Ok(())
 }
 
 /// Disconnect a provider.
