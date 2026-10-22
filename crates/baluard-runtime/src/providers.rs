@@ -516,6 +516,105 @@ pub fn clone_and_register_with_credentials(
     Ok(())
 }
 
+/// Custom-remote setup: the repository URL is user-supplied; there is no
+/// provider token and no repo creation. Credentials were already stored
+/// device-side via apply_custom_credentials and the sync engine's
+/// credential chain reads them at transport time. The registry entry
+/// carries provider None: forge automation stays manual by design.
+#[cfg(feature = "git-sync")]
+pub async fn setup_sync_remote_custom(
+    vault_path: &Path,
+    devkey_seal: Option<[u8; 32]>,
+    clone_url: String,
+) -> Result<String, String> {
+    let git_path = vault_path.to_path_buf();
+    let seal = devkey_seal;
+    let remote_url = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let engine = SyncEngine::new(&git_path, "baluard-mobile", seal.as_ref());
+        let git_repo = match engine.open_repo() {
+            Ok(r) => r,
+            Err(open_err) => {
+                if git_path.join(".git").exists() {
+                    return Err(format!(
+                        "Git open failed (vault repo already initialized): {open_err}"
+                    ));
+                }
+                engine
+                    .init_repo()
+                    .map_err(|e| format!("Git init failed: {e}"))?
+            }
+        };
+        if let Ok(existing) = engine.get_remote_url(&git_repo, "origin") {
+            if existing != clone_url {
+                return Err(format!(
+                    "Remote 'origin' already set to {existing}; disconnect sync first"
+                ));
+            }
+        } else {
+            engine
+                .add_remote(&git_repo, "origin", &clone_url)
+                .map_err(|e| format!("Failed to add remote: {e}"))?;
+        }
+        let status = engine
+            .status(&git_repo)
+            .map_err(|e| format!("Status check failed: {e}"))?;
+        if status.is_dirty() {
+            engine
+                .commit_all(&git_repo, "")
+                .map_err(|e| format!("Commit failed: {e}"))?;
+        }
+        // The same raced-first-push tolerance as the provider path.
+        let mut push_err: Option<BaluardError> = None;
+        for attempt in 0..3u8 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+            match engine.push(&git_repo, "origin") {
+                Ok(()) => {
+                    push_err = None;
+                    break;
+                }
+                Err(e) => {
+                    if engine.remote_head_matches_local(&git_repo, "origin") {
+                        push_err = None;
+                        break;
+                    }
+                    push_err = Some(e);
+                }
+            }
+        }
+        if let Some(e) = push_err {
+            return Err(format!("First push failed: {e}"));
+        }
+        Ok(clone_url)
+    })
+    .await
+    .map_err(|e| format!("Task join: {e}"))??;
+
+    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+        let slug = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
+            .ok()
+            .flatten()
+            .map(|m| m.slug);
+        if let Some(slug) = slug {
+            if let Some(entry) = reg.get_mut(&slug) {
+                // Custom remotes carry no provider: seat grants and repo
+                // listing are manual by design.
+                entry.provider = None;
+                entry.remote_url = Some(remote_url.clone());
+                entry.last_synced = Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                );
+            }
+            let _ = reg.save_locked();
+        }
+    }
+    Ok(remote_url)
+}
+
 /// Disconnect a provider.
 pub async fn disconnect(provider: Provider) -> Result<(), BaluardError> {
     revoke_and_disconnect(provider)
