@@ -62,9 +62,10 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonObject
 import xyz.actitud.baluard.MobileProvider
@@ -292,6 +293,14 @@ fun SettingsScreen(
             var gitPat by remember { mutableStateOf("") }
             var gitRepo by remember { mutableStateOf("") }
             var gitBusy by remember { mutableStateOf(false) }
+            // Custom remote (use my own server).
+            var gitCustom by remember { mutableStateOf(false) }
+            var gitCustomUrl by remember { mutableStateOf("") }
+            var gitCustomToken by remember { mutableStateOf("") }
+            var gitCustomUsername by remember { mutableStateOf("") }
+            var gitCustomProbeMsg by remember { mutableStateOf<String?>(null) }
+            var gitCustomTrustJson by remember { mutableStateOf<String?>(null) }
+            var gitCustomOk by remember { mutableStateOf(false) }
 
             SectionCard(title = t("settings.sync")) {
                 ToggleRow(t("settings.syncOnUnlock"), config.syncOnUnlock) {
@@ -337,6 +346,31 @@ fun SettingsScreen(
             if (showGitBackup) {
                 // The PAT is a secret: every close path scrubs the
                 // fields so it never lingers in Compose state.
+                // Candidate credentials for the probe, and the stored
+                // payload for the custom confirm. The host strips scheme,
+                // userinfo, path, and port — bound-host release compares
+                // bare host names.
+                fun gitCustomHost(): String {
+                    val raw = gitCustomUrl.trim()
+                    val afterScheme = raw.substringAfter("://", raw)
+                    val afterUser = afterScheme.substringAfter("@", afterScheme)
+                    val hostPart = afterUser.substringBefore('/').substringBefore(':')
+                    return hostPart.lowercase()
+                }
+
+                fun gitCredsJson(): String? {
+                    if (gitCustomToken.isBlank() && gitCustomUsername.isBlank()) return null
+                    return buildJsonObject {
+                        put("host", JsonPrimitive(gitCustomHost()))
+                        if (gitCustomToken.isNotBlank()) {
+                            put("token", JsonPrimitive(gitCustomToken.trim()))
+                        }
+                        if (gitCustomUsername.isNotBlank()) {
+                            put("username", JsonPrimitive(gitCustomUsername.trim()))
+                        }
+                    }.toString()
+                }
+
                 fun closeGitBackup() {
                     if (!gitBusy) {
                         gitPat = ""
@@ -364,8 +398,11 @@ fun SettingsScreen(
                                     MobileProvider.CODEBERG,
                                 ).forEach { p ->
                                     FilterChip(
-                                        selected = gitProvider == p,
-                                        onClick = { gitProvider = p },
+                                        selected = gitProvider == p && !gitCustom,
+                                        onClick = {
+                                            gitCustom = false
+                                            gitProvider = p
+                                        },
                                         label = {
                                             Text(
                                                 when (p) {
@@ -377,6 +414,163 @@ fun SettingsScreen(
                                         },
                                     )
                                 }
+                                FilterChip(
+                                    selected = gitCustom,
+                                    onClick = { gitCustom = true },
+                                    label = { Text(t("settings.customChip")) },
+                                )
+                            }
+                            if (gitCustom) {
+                                Text(
+                                    t("settings.customWarn"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                OutlinedTextField(
+                                    value = gitCustomUrl,
+                                    onValueChange = {
+                                        gitCustomUrl = it
+                                        gitCustomOk = false
+                                        gitCustomProbeMsg = null
+                                    },
+                                    label = { Text(t("settings.customUrl")) },
+                                    singleLine = true,
+                                    enabled = !gitBusy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    OutlinedTextField(
+                                        value = gitCustomToken,
+                                        onValueChange = { gitCustomToken = it },
+                                        label = { Text(t("settings.customToken")) },
+                                        singleLine = true,
+                                        enabled = !gitBusy,
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    OutlinedTextField(
+                                        value = gitCustomUsername,
+                                        onValueChange = { gitCustomUsername = it },
+                                        label = { Text(t("settings.customUsername")) },
+                                        singleLine = true,
+                                        enabled = !gitBusy,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    TextButton(
+                                        enabled = !gitBusy && gitCustomUrl.isNotBlank(),
+                                        onClick = {
+                                            scope.launch {
+                                                gitBusy = true
+                                                try {
+                                                    val res =
+                                                        repo?.gitProbe(
+                                                            gitCustomUrl.trim(),
+                                                            gitCredsJson(),
+                                                        )
+                                                    val obj =
+                                                        Json.parseToJsonElement(res ?: "{}") as? JsonObject
+                                                    val ok =
+                                                        obj?.get("ok")?.jsonPrimitive
+                                                            ?.content == "true"
+                                                    if (ok) {
+                                                        gitCustomOk = true
+                                                        gitCustomTrustJson = null
+                                                        gitCustomProbeMsg =
+                                                            t("settings.customProbeOk")
+                                                    } else {
+                                                        val kind =
+                                                            obj?.get("kind")?.jsonPrimitive
+                                                                ?.content ?: "unreachable"
+                                                        val detail =
+                                                            obj?.get("detail")?.jsonPrimitive
+                                                                ?.content ?: ""
+                                                        if (kind == "host-untrusted") {
+                                                            gitCustomTrustJson = detail
+                                                            gitCustomProbeMsg =
+                                                                t("settings.customTrustAsk")
+                                                        } else {
+                                                            gitCustomProbeMsg = detail
+                                                        }
+                                                    }
+                                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    gitCustomProbeMsg =
+                                                        (e.message ?: "").removePrefix("detail=")
+                                                }
+                                                gitBusy = false
+                                            }
+                                        },
+                                    ) { Text(t("settings.customProbe")) }
+                                }
+                                gitCustomProbeMsg?.let {
+                                    Text(
+                                        it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                gitCustomTrustJson?.let { trustJson ->
+                                    val obj =
+                                        Json.parseToJsonElement(trustJson) as? JsonObject
+                                    val fp =
+                                        (obj?.get("fingerprint") as? JsonObject)?.get(
+                                            "host_key_untrusted",
+                                        ) ?: obj?.get("fingerprint")
+                                    Text(
+                                        fp?.toString() ?: trustJson,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    TextButton(
+                                        enabled = !gitBusy,
+                                        onClick = {
+                                            scope.launch {
+                                                gitBusy = true
+                                                try {
+                                                    val marker =
+                                                        Json.parseToJsonElement(trustJson)
+                                                            .jsonObject["host_key_untrusted"]
+                                                    val attemptId =
+                                                        marker?.jsonObject?.get("attempt_id")
+                                                            ?.jsonPrimitive?.content
+                                                    if (attemptId != null) {
+                                                        repo?.gitHostkeyTrust(attemptId)
+                                                        gitCustomTrustJson = null
+                                                    }
+                                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    gitCustomProbeMsg =
+                                                        (e.message ?: "").removePrefix("detail=")
+                                                }
+                                                gitBusy = false
+                                            }
+                                        },
+                                    ) { Text(t("settings.customTrustCta")) }
+                                }
+                            } else {
+                                OutlinedTextField(
+                                    value = gitPat,
+                                    onValueChange = { gitPat = it },
+                                    label = { Text(t("settings.gitPat")) },
+                                    supportingText = { Text(t("settings.gitPatHint")) },
+                                    singleLine = true,
+                                    enabled = !gitBusy,
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                OutlinedTextField(
+                                    value = gitRepo,
+                                    onValueChange = { gitRepo = it },
+                                    label = { Text(t("settings.gitRepo")) },
+                                    supportingText = { Text(t("settings.gitRepoHint")) },
+                                    singleLine = true,
+                                    enabled = !gitBusy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
                             }
                             OutlinedTextField(
                                 value = gitPat,
@@ -406,6 +600,28 @@ fun SettingsScreen(
                                 gitBusy = true
                                 scope.launch {
                                     try {
+                                        if (gitCustom) {
+                                            val payload = buildJsonObject {
+                                                put("host", JsonPrimitive(gitCustomHost()))
+                                                if (gitCustomToken.isNotBlank()) {
+                                                    put("token", JsonPrimitive(gitCustomToken.trim()))
+                                                }
+                                                if (gitCustomUsername.isNotBlank()) {
+                                                    put(
+                                                        "username",
+                                                        JsonPrimitive(gitCustomUsername.trim()),
+                                                    )
+                                                }
+                                            }
+                                            repo?.gitCredentialsSet(vault, payload.toString())
+                                            repo?.setupSyncCustom(vault, gitCustomUrl.trim())
+                                            gitCustomToken = ""
+                                            gitCustomUrl = ""
+                                            showGitBackup = false
+                                            Toast.success(t("settings.customDone"))
+                                            onSyncNudge()
+                                            return@launch
+                                        }
                                         if (gitPat.isNotBlank()) {
                                             repo?.connectPat(
                                                 gitProvider,

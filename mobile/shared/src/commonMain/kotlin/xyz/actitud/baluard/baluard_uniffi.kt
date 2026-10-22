@@ -1041,6 +1041,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1287,6 +1289,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_set_settings(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_setup_sync(`ptr`: Pointer,`provider`: RustBuffer.ByValue,`repoName`: RustBuffer.ByValue,`cloneUrl`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_setup_sync_custom(`ptr`: Pointer,`cloneUrl`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_should_auto_lock(`ptr`: Pointer,
     ): Long
@@ -1770,6 +1774,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync_custom(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_flip(
@@ -2236,6 +2242,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync() != 18821.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync_custom() != 32129.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock() != 5891.toShort()) {
@@ -3880,6 +3889,15 @@ public interface MobileVaultInterface {
      * unlocked (the first push signs a commit).
      */
     suspend fun `setupSync`(`provider`: MobileProvider, `repoName`: kotlin.String, `cloneUrl`: kotlin.String?): kotlin.String
+    
+    /**
+     * Custom-remote setup: wire a user-supplied repository URL as the
+     * sync remote. No provider token, no repo creation — credentials
+     * were stored device-side via git_credentials_set and the sync
+     * engine reads them at transport time. Vault must be unlocked (the
+     * first push signs a commit).
+     */
+    suspend fun `setupSyncCustom`(`cloneUrl`: kotlin.String): kotlin.String
     
     /**
      * Whether the vault should auto-lock NOW (idle >= the vault's
@@ -6725,6 +6743,34 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_setup_sync(
                 thisPtr,
                 FfiConverterTypeMobileProvider.lower(`provider`),FfiConverterString.lower(`repoName`),FfiConverterOptionalString.lower(`cloneUrl`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Custom-remote setup: wire a user-supplied repository URL as the
+     * sync remote. No provider token, no repo creation — credentials
+     * were stored device-side via git_credentials_set and the sync
+     * engine reads them at transport time. Vault must be unlocked (the
+     * first push signs a commit).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setupSyncCustom`(`cloneUrl`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_setup_sync_custom(
+                thisPtr,
+                FfiConverterString.lower(`cloneUrl`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
