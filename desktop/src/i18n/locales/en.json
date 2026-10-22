@@ -495,7 +495,22 @@
     "migratePlaceholder": "https://github.com/you/baluard-vault",
     "migrateAction": "Move sync",
     "migrateConfirmBody": "Everyone you share with is told about the new address and follows on their next sync. Move now?",
-    "migratedToast": "Sync moved. Everyone follows on their next sync."
+    "migratedToast": "Sync moved. Everyone follows on their next sync.",
+    "customToggle": "Use my own server",
+    "customWarn": "A custom server means you manage it: repository creation, clone access for members, and removal all happen on the server by hand. Baluard stores the credentials only on this device.",
+    "customAck": "I understand I manage this server myself",
+    "customUrlPlaceholder": "Repository URL (https:// or ssh://)",
+    "customToken": "Access token",
+    "customUsername": "Username (optional)",
+    "customGenKey": "Generate key",
+    "customGenKeyHint": "Give the public key to your server by hand",
+    "customPassphrase": "Key passphrase (optional)",
+    "customProbe": "Test connection",
+    "customUse": "Use this remote",
+    "customProbeOk": "Connection OK.",
+    "customTrustTitle": "The server's host key is not trusted yet. Check the fingerprint out-of-band, then trust it:",
+    "customTrustCta": "Trust this key",
+    "customBadUrl": "That does not look like a repository URL."
   },
   "autosync": {
     "upToDate": "All changes synced",

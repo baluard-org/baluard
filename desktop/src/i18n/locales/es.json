@@ -464,7 +464,22 @@
     "migratePlaceholder": "https://github.com/tu/baluard-vault",
     "migrateAction": "Mover sincronización",
     "migrateConfirmBody": "Se avisará la nueva dirección a quien comparte la bóveda y la seguirán en su próxima sincronización. ¿Mover ahora?",
-    "migratedToast": "Sincronización movida. Todos la seguirán en su próxima sincronización."
+    "migratedToast": "Sincronización movida. Todos la seguirán en su próxima sincronización.",
+    "customToggle": "Usar mi propio servidor",
+    "customWarn": "Con un servidor propio tú lo gestionas: crear el repositorio, dar acceso de clonado a los miembros y eliminarlos se hace a mano en el servidor. Baluard guarda las credenciales solo en este dispositivo.",
+    "customAck": "Entiendo que yo gestiono este servidor",
+    "customUrlPlaceholder": "URL del repositorio (https:// o ssh://)",
+    "customToken": "Token de acceso",
+    "customUsername": "Usuario (opcional)",
+    "customGenKey": "Generar clave",
+    "customGenKeyHint": "Dale la clave pública a tu servidor a mano",
+    "customPassphrase": "Frase de la clave (opcional)",
+    "customProbe": "Probar conexión",
+    "customUse": "Usar este remoto",
+    "customProbeOk": "Conexión correcta.",
+    "customTrustTitle": "La clave del servidor aún no es de confianza. Verifica la huella por otro medio y confírmala:",
+    "customTrustCta": "Confiar en esta clave",
+    "customBadUrl": "Eso no parece una URL de repositorio."
   },
   "autosync": {
     "upToDate": "Todos los cambios sincronizados",
