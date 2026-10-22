@@ -405,7 +405,19 @@
     "hwDisableTitle": "Desativar a proteção do chip de segurança?",
     "hwDisableBody": "Volta à proteção apenas por senha: um disco roubado poderia ser atacado offline. O cofre continua sincronizando e recuperando normalmente.",
     "hwEnabledToast": "A proteção do chip de segurança está ativada.",
-    "hwDisabledToast": "A proteção do chip de segurança está desativada."
+    "hwDisabledToast": "A proteção do chip de segurança está desativada.",
+    "hwConsentTitle": "Confirmar a cada desbloqueio",
+    "hwConsentDesc": "O chip pedirá sua digital ou seu rosto cada vez que este cofre for aberto. Impede que alguém que conheça sua senha o abra neste dispositivo.",
+    "hwConsentStatusOn": "Confirmação ativada",
+    "hwConsentStatusOff": "Confirmação desativada",
+    "hwConsentOnTitle": "Pedir confirmação a cada desbloqueio?",
+    "hwConsentOnBody": "O chip de segurança do seu dispositivo pedirá sua digital ou seu rosto cada vez que este cofre for desbloqueado. Os dados ficam protegidos em repouso de qualquer forma. Se o chip falhar ou a biometria for redefinida, a frase de recuperação traz este dispositivo de volta.",
+    "hwConsentOffTitle": "Desativar a confirmação ao desbloquear?",
+    "hwConsentOffBody": "O cofre continua protegido pelo chip de segurança em repouso, mas o desbloqueio não pedirá mais sua digital ou seu rosto.",
+    "hwConsentOn": "Pedir confirmação",
+    "hwConsentOff": "Parar de confirmar",
+    "hwConsentOnToast": "O chip confirmará cada desbloqueio.",
+    "hwConsentOffToast": "Desbloqueio silencioso restaurado."
   },
   "sync": {
     "title": "Sincronização do Cofre",

@@ -212,6 +212,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.hw_status",
     "vault.hw_enable",
     "vault.hw_disable",
+    "vault.hw_set_consent",
     "vault.import",
     "vault.export",
     "vault.list",
