@@ -52,7 +52,10 @@ trap cleanup EXIT
 # (lib.rs's sidecar spawn). A stale copy serves old wire shapes (the
 # health kind/n fields went dark exactly this way), so rebuild the daemon
 # and CLI, then restage the copy the app actually runs.
-PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-/usr/lib64/pkgconfig}" cargo build -p baluard-daemon -p baluard-cli > /dev/null 2>&1 || {
+# hw-seal rides along so the sidecar's security-chip probe works on
+# hardware-capable machines (the desktop toggle needs it in the daemon;
+# machines without a chip are unaffected - the probe reports honestly).
+PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-/usr/lib64/pkgconfig}" cargo build -p baluard-daemon -p baluard-cli --features baluard-daemon/hw-seal > /dev/null 2>&1 || {
   echo "cargo build failed"; exit 1;
 }
 TRIPLE="$(rustc -Vv | sed -n 's/host: //p')"
