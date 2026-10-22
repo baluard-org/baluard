@@ -2380,6 +2380,189 @@ pub fn handle_members(
 /// vault.search (G24 step 6): the CLI's executable spec of the daemon
 /// fan-out contract. Daemon-only - the merge-eligibility machinery lives in
 /// the daemon's host map, so --direct has nothing to fan out over.
+/// Custom-remote credentials: set or clear (device-local, gitignored).
+pub fn handle_credentials(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: crate::CredentialsAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::CredentialsAction as CA;
+    require_daemon(mode, "credentials")?;
+    ensure_unlocked_daemon(socket)?;
+    let payload = match action {
+        CA::Set {
+            host,
+            token,
+            username,
+            ssh_passphrase,
+            key_file,
+        } => {
+            use base64::Engine as _;
+            let mut obj = serde_json::Map::new();
+            obj.insert("host".into(), serde_json::Value::String(host));
+            if let Some(v) = token {
+                obj.insert("token".into(), serde_json::Value::String(v));
+            }
+            if let Some(v) = username {
+                obj.insert("username".into(), serde_json::Value::String(v));
+            }
+            if let Some(v) = ssh_passphrase {
+                obj.insert("ssh_passphrase".into(), serde_json::Value::String(v));
+            }
+            if let Some(path) = key_file {
+                let pem = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("cannot read the key file: {e}"))?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(pem.as_bytes());
+                obj.insert("ssh_key_b64".into(), serde_json::Value::String(b64));
+            }
+            serde_json::Value::Object(obj).to_string()
+        }
+        CA::Clear {
+            token,
+            username,
+            ssh_passphrase,
+            key,
+        } => {
+            use base64::Engine as _;
+            let mut obj = serde_json::Map::new();
+            if let Some(host) = std::env::var("BALUARD_CREDENTIALS_HOST").ok() {
+                obj.insert("host".into(), serde_json::Value::String(host));
+            } else {
+                // The route requires a host even on clear; read the
+                // vault's current origin so `credentials clear` needs no
+                // flags.
+                let resp = client::request_to("vault.remote_url", "{}", socket)?;
+                if !resp.success {
+                    return Err(resp.error_message.into());
+                }
+                let url: serde_json::Value = serde_json::from_str(&resp.payload)?;
+                let host = baluard_core::sync::credentials::extract_host(
+                    url["url"].as_str().unwrap_or(""),
+                )
+                .unwrap_or_default();
+                obj.insert("host".into(), serde_json::Value::String(host));
+            }
+            if token {
+                obj.insert("token".into(), serde_json::Value::String(String::new()));
+            }
+            if username {
+                obj.insert("username".into(), serde_json::Value::String(String::new()));
+            }
+            if ssh_passphrase {
+                obj.insert(
+                    "ssh_passphrase".into(),
+                    serde_json::Value::String(String::new()),
+                );
+            }
+            if key {
+                obj.insert(
+                    "ssh_key_b64".into(),
+                    serde_json::Value::String(String::new()),
+                );
+            }
+            serde_json::Value::Object(obj).to_string()
+        }
+    };
+    let resp = client::request_to("vault.git_credentials_set", &payload, socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    println!("Credentials stored.");
+    Ok(())
+}
+
+/// Custom-remote test connection (ls-remote pre-flight).
+pub fn handle_git_probe(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    url: &str,
+    token: Option<String>,
+    username: Option<String>,
+    ssh_passphrase: Option<String>,
+    key_file: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "git-probe")?;
+    use base64::Engine as _;
+    let mut obj = serde_json::Map::new();
+    obj.insert("url".into(), serde_json::Value::String(url.to_string()));
+    if token.is_some() || username.is_some() || ssh_passphrase.is_some() || key_file.is_some() {
+        let mut c = serde_json::Map::new();
+        if let Some(v) = token {
+            c.insert("token".into(), serde_json::Value::String(v));
+        }
+        if let Some(v) = username {
+            c.insert("username".into(), serde_json::Value::String(v));
+        }
+        if let Some(v) = ssh_passphrase {
+            c.insert("ssh_passphrase".into(), serde_json::Value::String(v));
+        }
+        if let Some(path) = key_file {
+            let pem = std::fs::read_to_string(&path)
+                .map_err(|e| format!("cannot read the key file: {e}"))?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(pem.as_bytes());
+            c.insert("ssh_key_b64".into(), serde_json::Value::String(b64));
+        }
+        obj.insert("credentials".into(), serde_json::Value::Object(c));
+    }
+    let resp = client::request_to(
+        "git.git_probe",
+        &serde_json::Value::Object(obj).to_string(),
+        socket,
+    )?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    if data["ok"].as_bool().unwrap_or(false) {
+        println!("Connection OK.");
+        return Ok(());
+    }
+    let kind = data["kind"].as_str().unwrap_or("unreachable");
+    let detail = data["detail"].as_str().unwrap_or("");
+    match kind {
+        "host-untrusted" => {
+            // Surface the trust flow inputs from the marker JSON.
+            let marker: serde_json::Value =
+                serde_json::from_str(detail).unwrap_or(serde_json::Value::Null);
+            let h = marker["host_key_untrusted"]["host"].as_str().unwrap_or("");
+            let fp = marker["fingerprint"].as_str().unwrap_or("");
+            let kt = marker["key_type"].as_str().unwrap_or("");
+            let aid = marker["attempt_id"].as_str().unwrap_or("");
+            println!("The server's host key is not trusted yet.");
+            println!("Host: {h}");
+            println!("Key type: {kt}");
+            println!("Fingerprint: {fp}");
+            println!("Trust it with: baluard git-trust {aid}");
+            std::process::exit(2);
+        }
+        _ => {
+            println!("Connection failed ({kind}): {detail}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Bless a daemon-observed SSH host key.
+pub fn handle_git_trust(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    attempt_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_daemon(mode, "git-trust")?;
+    let payload = serde_json::json!({ "attempt_id": attempt_id }).to_string();
+    let resp = client::request_to("git.git_hostkey_trust", &payload, socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    println!(
+        "Host key trusted: {} ({})",
+        data["host"].as_str().unwrap_or(""),
+        data["fingerprint"].as_str().unwrap_or("")
+    );
+    Ok(())
+}
+
 pub fn handle_search(
     mode: ConnectMode,
     socket: Option<&str>,

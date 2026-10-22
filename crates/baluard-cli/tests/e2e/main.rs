@@ -735,6 +735,168 @@ fn daemon_init_json(guard: &DaemonGuard, slug: &str) -> serde_json::Value {
 /// signature) — A's pull accepts the commit that its first-parent roster
 /// cannot yet vouch for. The old refusal boundary flipped deliberately
 /// when enrollment propagation shipped.
+// ── Custom-remote HTTPS fixture: a real TLS + basic-auth git server ──
+
+struct GitServerGuard {
+    child: std::process::Child,
+    port: u16,
+    #[allow(dead_code)]
+    dir: tempfile::TempDir,
+}
+
+impl Drop for GitServerGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Spawn the python HTTPS git server (e2e/git-server/http-git-server.py)
+/// with a throwaway CA-trusted cert for 127.0.0.1 and one bare repo.
+/// Returns the server plus the repo URL and credentials.
+fn spawn_git_server() -> (GitServerGuard, String, &'static str, &'static str) {
+    let dir = tempfile::tempdir().expect("git server tmp");
+    let repos = dir.path().join("repos");
+    std::fs::create_dir_all(&repos).expect("repos dir");
+    let cert = dir.path().join("cert.pem");
+    let key = dir.path().join("key.pem");
+    let ok = std::process::Command::new("openssl")
+        .args(["req", "-x509", "-newkey", "rsa:2048", "-keyout"])
+        .arg(&key)
+        .arg("-out")
+        .arg(&cert)
+        .args(["-days", "1", "-nodes", "-subj", "/CN=127.0.0.1"])
+        .args(["-addext", "subjectAltName=IP:127.0.0.1"])
+        .status()
+        .expect("openssl must be on PATH");
+    assert!(ok.success(), "cert generation failed");
+
+    let repo = repos.join("custom.git");
+    let ok = std::process::Command::new("git")
+        .args(["init", "--bare", "-b", "main"])
+        .arg(&repo)
+        .status()
+        .expect("git must be on PATH");
+    assert!(ok.success(), "bare repo init failed");
+
+    // A fixed high port keeps the flow deterministic; a busy port fails
+    // loudly rather than silently skipping coverage.
+    let port = 24000 + (std::process::id() % 20000) as u16;
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e/git-server/http-git-server.py");
+    let child = std::process::Command::new("python3")
+        .arg(&script)
+        .args(["--port", &port.to_string()])
+        .arg("--cert")
+        .arg(&cert)
+        .arg("--key")
+        .arg(&key)
+        .arg("--repos")
+        .arg(&repos)
+        .args(["--user", "alex", "--pass", "secret"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("python3 must be on PATH");
+    std::thread::sleep(Duration::from_millis(1200));
+    let url = format!("https://127.0.0.1:{port}/custom.git");
+    (GitServerGuard { child, port, dir }, url, "alex", "secret")
+}
+
+#[test]
+fn e2e_custom_remote_https_push_pull() {
+    let (server, url, user, pass) = spawn_git_server();
+    let _ = (&server.port, user, pass);
+
+    // The daemon must trust the server's throwaway CA: point OpenSSL's
+    // per-process roots at it before the daemon spawns (libgit2 inherits
+    // OpenSSL's env). Process-wide is safe: no other e2e flow speaks TLS.
+    // SAFETY: single-threaded test start; the env is process-global TLS
+    // config for children spawned by this test.
+    let cert_path = server_dir_cert(&server);
+    unsafe {
+        std::env::set_var("SSL_CERT_FILE", &cert_path);
+    }
+
+    let tmp = tempfile::tempdir().expect("tmp");
+    let guard = spawn_daemon(tmp);
+    baluard_daemon(&guard)
+        .args([
+            "init",
+            "--name",
+            "Custom E2E",
+            "--slug",
+            "baluard-e2e-cr",
+            "--json",
+        ])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["vaults", "switch", "baluard-e2e-cr"])
+        .assert()
+        .success();
+    baluard_daemon(&guard).arg("unlock").assert().success();
+
+    // Store host-bound credentials, wire the custom remote, push and pull.
+    baluard_daemon(&guard)
+        .args([
+            "credentials",
+            "set",
+            "--host",
+            "127.0.0.1",
+            "--token",
+            pass,
+            "--username",
+            user,
+        ])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["sync", "remote", &url])
+        .assert()
+        .success();
+    baluard_daemon(&guard)
+        .args(["sync", "push"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    baluard_daemon(&guard)
+        .args(["sync", "pull"])
+        .assert()
+        .success();
+
+    // The probe with candidate credentials reports a healthy connection.
+    let probe = baluard_daemon(&guard)
+        .args(["git-probe", &url, "--token", pass, "--username", user])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert!(String::from_utf8(probe).unwrap().contains("Connection OK"));
+
+    // Probe with a wrong token is refused by the server.
+    baluard_daemon(&guard)
+        .args(["git-probe", &url, "--token", "wrong", "--username", user])
+        .assert()
+        .failure();
+
+    // The credential file is device-local and host-bound on disk.
+    let cred_file = guard
+        ._tmp
+        .path()
+        .join("data/vaults/baluard-e2e-cr/meta/git-credentials.json");
+    let raw = std::fs::read_to_string(&cred_file).expect("credential file exists");
+    assert!(raw.contains("\"host\":\"127.0.0.1\""));
+}
+
+/// The throwaway CA the server was started with (OpenSSL trust root).
+fn server_dir_cert(server: &GitServerGuard) -> std::path::PathBuf {
+    server.dir.path().join("cert.pem")
+}
+
 #[test]
 fn e2e_multi_device_join_and_sync() {
     let guard = spawn_daemon(tempfile::Builder::new().prefix("e2emd").tempdir().unwrap());
