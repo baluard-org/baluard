@@ -36,6 +36,25 @@ const TAG_PREFIX: &str = "baluard-hw:";
 
 pub struct SecureEnclaveStore;
 
+/// Cached result of the consent-capability probe: a REAL throwaway
+/// keygen with the per-use ACL. Static because Apple silicon without a
+/// Touch ID sensor (Mac mini/Studio) has a working Secure Enclave but can
+/// never create such a key - declaring consent there would surface a
+/// broken toggle.
+static CONSENT_CAPABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Map a secure-enclave-rs failure to the typed surface: an auth failure
+/// or cancellation is retryable (distinct copy), everything else means
+/// the key or chip is gone (phrase rescue).
+fn map_se_err(e: secure_enclave_rs::Error) -> BaluardError {
+    match e {
+        secure_enclave_rs::Error::AuthFailed | secure_enclave_rs::Error::UserCancelled => {
+            VaultError::HardwareAuthFailed.into()
+        }
+        _ => crate::hwkey::hw_unavailable_error(),
+    }
+}
+
 impl SecureEnclaveStore {
     pub fn new() -> Arc<Self> {
         Arc::new(Self)
@@ -61,24 +80,56 @@ impl HardwareKeyStore for SecureEnclaveStore {
         }
     }
 
-    fn create_binding(&self, vault_id: Uuid) -> Result<String, BaluardError> {
-        let tag = Self::tag_for(vault_id);
+    fn supports_consent(&self) -> bool {
+        *CONSENT_CAPABLE.get_or_init(|| {
+            SecureEnclaveKey::generate(&SecureEnclaveKeyOptions {
+                tag: b"baluard-hw:consent-probe",
+                access_flags: SecAccessControlFlags::PRIVATE_KEY_USAGE
+                    | SecAccessControlFlags::BIOMETRY_CURRENT_SET,
+                permanent: false,
+            })
+            .is_ok()
+        })
+    }
+
+    fn create_binding(
+        &self,
+        vault_id: Uuid,
+        consent: crate::hwkey::HwConsent,
+    ) -> Result<String, BaluardError> {
+        let tag = if consent.is_per_use() {
+            crate::hwkey::consent_binding_tag(vault_id).into_bytes()
+        } else {
+            Self::tag_for(vault_id)
+        };
         // Idempotent per vault: reuse the persisted chip key when present.
         if SecureEnclaveKey::get(&tag).is_ok() {
             return Ok(
                 String::from_utf8(tag).map_err(|_| VaultError::Corrupt("hwkey tag utf8".into()))?
             );
         }
+        // Per-use keys carry BIOMETRY_CURRENT_SET: every agreement pops
+        // Touch ID, and re-enrolled biometry invalidates the key (the
+        // phrase path rescues). Silent keys keep the empty flags.
+        let access_flags = if consent.is_per_use() {
+            SecAccessControlFlags::PRIVATE_KEY_USAGE | SecAccessControlFlags::BIOMETRY_CURRENT_SET
+        } else {
+            SecAccessControlFlags::empty()
+        };
         SecureEnclaveKey::generate(&SecureEnclaveKeyOptions {
             tag: &tag,
-            access_flags: SecAccessControlFlags::empty(),
+            access_flags,
             permanent: true,
         })
         .map_err(|e| VaultError::Metadata(format!("hwkey SE generate: {e}")))?;
         Ok(String::from_utf8(tag).map_err(|_| VaultError::Corrupt("hwkey tag utf8".into()))?)
     }
 
-    fn ecdh_ephemeral(&self, binding: &str) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+    fn ecdh_ephemeral(
+        &self,
+        binding: &str,
+        _consent: crate::hwkey::HwConsent,
+    ) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
         let chip = SecureEnclaveKey::get(binding.as_bytes())
             .map_err(|_| crate::hwkey::hw_unavailable_error())?;
         // Throwaway in-memory SE key as the fresh peer input: SE keys can
@@ -100,7 +151,12 @@ impl HardwareKeyStore for SecureEnclaveStore {
         Ok((EphemeralPub(peer), secret))
     }
 
-    fn ecdh(&self, binding: &str, peer: &EphemeralPub) -> Result<SharedSecret, BaluardError> {
+    fn ecdh(
+        &self,
+        binding: &str,
+        peer: &EphemeralPub,
+        _consent: crate::hwkey::HwConsent,
+    ) -> Result<SharedSecret, BaluardError> {
         let chip = SecureEnclaveKey::get(binding.as_bytes())
             .map_err(|_| crate::hwkey::hw_unavailable_error())?;
         derive(binding, &chip, &peer.0)
@@ -126,8 +182,8 @@ fn derive(
     peer: &[u8],
 ) -> Result<SharedSecret, BaluardError> {
     let _ = binding;
-    let secret = secure_enclave_rs::derive_shared_secret(chip, peer, 32, &[])
-        .map_err(|_| crate::hwkey::hw_unavailable_error())?;
+    let secret =
+        secure_enclave_rs::derive_shared_secret(chip, peer, 32, &[]).map_err(map_se_err)?;
     let mut out = [0u8; 32];
     out.copy_from_slice(&secret);
     Ok(Zeroizing::new(out))
