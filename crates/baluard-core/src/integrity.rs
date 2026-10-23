@@ -64,11 +64,10 @@ impl IntegrityManifest {
         }
         let data = serde_json::to_string_pretty(self)
             .map_err(|e| IntegrityError::Corrupt(format!("serialize manifest: {e}")))?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, &data)
-            .map_err(|e| IntegrityError::Io(format!("write manifest tmp: {e}")))?;
-        std::fs::rename(&tmp, &path)
-            .map_err(|e| IntegrityError::Io(format!("rename manifest: {e}")))?;
+        // Signed manifest: owner-only perms from the first byte via the
+        // shared writer (no world-readable window, no symlinkable temp).
+        crate::secret_file::write_secret_file(&path, data.as_bytes())
+            .map_err(|e| IntegrityError::Io(format!("write manifest: {e}")))?;
         Ok(())
     }
 

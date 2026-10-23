@@ -99,8 +99,9 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
     let mut reused = Vec::new();
     let mut old = Vec::new();
 
-    // Build password -> cipher list for reuse detection
-    let mut password_map: std::collections::HashMap<String, Vec<(String, String)>> =
+    // Build password-digest -> cipher list for reuse detection. The map
+    // never holds plaintext passwords.
+    let mut password_map: std::collections::HashMap<[u8; 32], Vec<(String, String)>> =
         std::collections::HashMap::new();
 
     for cipher in ciphers {
@@ -114,8 +115,10 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
             continue;
         }
 
-        // Weak: too short, or in common list
-        let is_weak = pw.len() < 8
+        // Weak: too short, or in common list. Byte length undercounts
+        // multi-byte scripts, so count chars.
+        let pw_chars = pw.chars().count();
+        let is_weak = pw_chars < 8
             || COMMON_PASSWORDS.contains(&pw.to_lowercase().as_str())
             || is_all_same_char(pw)
             || is_sequential(pw);
@@ -124,8 +127,8 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
             weak.push(HealthEntry {
                 cipher_id: cipher.id.to_string(),
                 name: cipher.name.clone(),
-                reason: if pw.len() < 8 {
-                    format!("Too short ({} chars, minimum 8)", pw.len())
+                reason: if pw_chars < 8 {
+                    format!("Too short ({} chars, minimum 8)", pw_chars)
                 } else if COMMON_PASSWORDS.contains(&pw.to_lowercase().as_str()) {
                     "Common password".into()
                 } else if is_all_same_char(pw) {
@@ -135,7 +138,7 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
                 } else {
                     "Weak".into()
                 },
-                kind: if pw.len() < 8 {
+                kind: if pw_chars < 8 {
                     "short".into()
                 } else if COMMON_PASSWORDS.contains(&pw.to_lowercase().as_str()) {
                     "common".into()
@@ -146,7 +149,7 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
                 } else {
                     "weak".into()
                 },
-                n: (pw.len() < 8).then_some(pw.len() as u64),
+                n: (pw_chars < 8).then_some(pw_chars as u64),
             });
         }
 
@@ -168,9 +171,14 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
             });
         }
 
-        // Track for reuse
+        // Track for reuse, keyed on a digest: plaintext passwords must
+        // not sit in a heap map for the whole scan.
+        let pw_key: [u8; 32] = {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(pw.as_bytes()).into()
+        };
         password_map
-            .entry(pw.to_string())
+            .entry(pw_key)
             .or_default()
             .push((cipher.id.to_string(), cipher.name.clone()));
     }

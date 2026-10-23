@@ -42,8 +42,17 @@ pub fn write_secret_file(path: &Path, contents: &[u8]) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
 
     let write_result = file.write_all(contents);
+    // Flush to platter before the rename: without sync_all a power loss
+    // right after the rename can leave a zero-length canary/keywrap and
+    // brick the vault. A failed fsync fails the write.
+    let sync_result = if write_result.is_ok() {
+        file.sync_all()
+    } else {
+        Ok(())
+    };
     drop(file);
-    if let Err(e) = write_result {
+    let result = sync_result.and(write_result);
+    if let Err(e) = result {
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
@@ -120,8 +129,18 @@ pub fn open_secret_blob(
         .decode(enc)
         .map_err(|e| crate::error::VaultError::Corrupt(format!("sealed blob base64: {e}")))?;
     let envelope = crate::vault::envelope::deserialize(&serialized)?;
-    crate::crypto::aead::decrypt(key, &envelope)
-        .map_err(|_| crate::error::VaultError::Corrupt("sealed blob key mismatch".into()).into())
+    let pt = crate::crypto::aead::decrypt(key, &envelope)
+        .map_err(|_| crate::error::VaultError::Corrupt("sealed blob key mismatch".into()))?;
+    // The outer "type" field is unauthenticated JSON; the purpose lives
+    // in the AEAD AAD, so compare against it (same check open_bytes_hw
+    // makes) or a re-labeled blob opens under another purpose.
+    if envelope.aad != marker.as_bytes() {
+        return Err(crate::error::VaultError::Corrupt(
+            "sealed blob was sealed for a different purpose".into(),
+        )
+        .into());
+    }
+    Ok(pt)
 }
 
 /// True when the file content is the sealed format for ANY purpose. A false

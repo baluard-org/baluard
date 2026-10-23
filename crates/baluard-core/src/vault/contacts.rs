@@ -231,6 +231,15 @@ pub fn upsert_contact(
         .iter_mut()
         .find(|e| e.card.identity_signing_pubkey == card.identity_signing_pubkey)
     {
+        // Cards are public and self-signed: without this guard, replaying
+        // an older card would roll the stored identity back to a
+        // rotated-out (possibly compromised) wrap key while keeping trust.
+        if card.created_at < entry.card.created_at {
+            return Err(VaultError::InvalidOperation(
+                "That contact card is older than the one already stored.".into(),
+            )
+            .into());
+        }
         entry.card = card.clone();
         let new_trust = if rank(&floor) > rank(&entry.trust) {
             floor
@@ -422,6 +431,27 @@ mod tests {
         // 64-bit comparison code: short enough to read aloud, long
         // enough that offline pubkey-swap preimage search is infeasible.
         assert_eq!(card_a.card.verification_code().len(), 16);
+    }
+
+    #[test]
+    fn older_card_replay_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = [7u8; 64];
+        let key = derive_contacts_key(&root).unwrap();
+        let signing = crate::crypto::signature::generate_ed25519_keypair().0;
+        let vk = signing.verifying_key();
+        let mk = |ts: u64| ContactCard {
+            display_name: "A".into(),
+            email: None,
+            identity_signing_pubkey: hex::encode(vk.as_bytes()),
+            identity_wrap_pubkey: hex::encode([9u8; 32]),
+            created_at: ts,
+        };
+        upsert_contact(dir.path(), &key, &mk(1_700_000_100), ContactTrust::Channel, 1).unwrap();
+        // A replayed OLDER (still validly signed) card must not roll the
+        // stored identity back to a possibly rotated-out wrap key.
+        assert!(upsert_contact(dir.path(), &key, &mk(1_700_000_000), ContactTrust::Channel, 2)
+            .is_err());
     }
 
     #[test]

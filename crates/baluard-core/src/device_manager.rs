@@ -545,7 +545,7 @@ impl DeviceManagerStore for FileDeviceManagerStore {
                 EpochInfo::new(0)
             };
 
-            let seen_nonces = load_seen_nonces(&self.vault_path);
+            let seen_nonces = load_seen_nonces(&self.vault_path)?;
             (registry, epoch, seen_nonces)
         };
 
@@ -819,7 +819,9 @@ impl DeviceManager {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs();
-                    let _ = std::fs::write(&abort_path, format!("aborted at {ts}"));
+                    // Propagated: other devices must see the abort; a
+                    // silently dropped marker wedges them on the stale txn.
+                    atomic_write(&abort_path, &format!("aborted at {ts}"))?;
                 }
             }
         }
@@ -1006,22 +1008,23 @@ impl DeviceManager {
         let mut device_pubs = self.registry.encryption_public_keys();
         if let Some(vp) = self.store.as_ref().and_then(|store| store.vault_path()) {
             if crate::vault::space_meta::shape_flipped(vp) {
+                // Strict roster read: a directory that cannot be read or a
+                // damaged row must fail the rotation, not default the device
+                // to admin-equivalent.
+                let member_rows = crate::vault::members::list_members_strict(vp)
+                    .map_err(|e| DeviceError::Keystore(format!("member roster unreadable: {e}")))?;
                 device_pubs.retain(|(dev_id, _)| {
                     crate::vault::members::member_id_for_device(vp, *dev_id)
                         .and_then(|m| {
-                            crate::vault::members::list_members(vp)
-                                .ok()
-                                .and_then(|rows| {
-                                    rows.iter().find(|r| r.id == m).map(|r| {
-                                        matches!(
-                                            r.role,
-                                            crate::vault::members::MemberRole::Owner
-                                                | crate::vault::members::MemberRole::Admin
-                                        )
-                                    })
-                                })
+                            member_rows.iter().find(|r| r.id == m).map(|r| {
+                                matches!(
+                                    r.role,
+                                    crate::vault::members::MemberRole::Owner
+                                        | crate::vault::members::MemberRole::Admin
+                                )
+                            })
                         })
-                        .unwrap_or(true) // unresolved = legacy device = admin-equivalent
+                        .unwrap_or(true) // no member row = legacy device = admin-equivalent
                 });
             }
         }
@@ -1229,11 +1232,20 @@ impl DeviceManager {
             )));
         }
 
+        let registry_before = self.registry.clone();
         let revoked = self.registry.revoke(target_device_id)?;
         let revoked_name = revoked.name.clone();
 
-        // Initiate rotation with self as initiator
-        let (new_root, tx) = self.initiate_rotation(self_device_id)?;
+        // Initiate rotation with self as initiator. On rotation failure the
+        // registry is restored: a half-revoked in-memory fleet must never
+        // reach auto_save.
+        let (new_root, tx) = match self.initiate_rotation(self_device_id) {
+            Ok(r) => r,
+            Err(e) => {
+                self.registry = registry_before;
+                return Err(e);
+            }
+        };
         let new_epoch = tx.new_epoch;
 
         // H9 fix: Always self-acknowledge and commit on revocation.
@@ -1274,6 +1286,7 @@ impl DeviceManager {
         &mut self,
         surviving_device_id: Uuid,
     ) -> Result<ForceEvictResult, BaluardError> {
+        let registry_before = self.registry.clone();
         let evicted = self.registry.force_evict(surviving_device_id)?;
         let evicted_count = evicted.len();
 
@@ -1281,8 +1294,15 @@ impl DeviceManager {
         let surviving_count = self.registry.count();
         let quorum_needed = self.registry.quorum_required();
 
-        // Immediately initiate rotation
-        let (new_root, tx) = self.initiate_rotation(surviving_device_id)?;
+        // Immediately initiate rotation; restore the registry on failure so
+        // the eviction is never persisted without its epoch change.
+        let (new_root, tx) = match self.initiate_rotation(surviving_device_id) {
+            Ok(r) => r,
+            Err(e) => {
+                self.registry = registry_before;
+                return Err(e);
+            }
+        };
         let new_epoch = tx.new_epoch;
 
         // Single surviving device = self-ack = immediate commit
@@ -1392,7 +1412,7 @@ impl DeviceManager {
         tag.copy_from_slice(&tag_bytes);
 
         // Step 4: HPKE-unwrap Root Key (P7: context-bound AAD)
-        let root_key_bytes = crate::crypto::hpke_wrap::unwrap_key(
+        let mut root_key_bytes = crate::crypto::hpke_wrap::unwrap_key(
             &eph_pub,
             &ct,
             &tag,
@@ -1400,9 +1420,11 @@ impl DeviceManager {
             "recovery-keywrap",
         )?;
         let rk_arr: [u8; 64] = root_key_bytes
+            .as_slice()
             .try_into()
             .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
         let root_key = RootKey::from_bytes(rk_arr);
+        zeroize::Zeroize::zeroize(&mut root_key_bytes);
 
         // Step 5: Determine current epoch from vault data (H7 fix)
         let current_epoch = Self::determine_epoch_from_vault(&vault_path);
@@ -1464,7 +1486,10 @@ impl DeviceManager {
             }
         }
 
-        // Step 11: Write device-privkey.json for CLI/rotation use
+        // Step 11: Write device-privkey.json for CLI/rotation use.
+        // Owner-only from the first byte via the shared secret-file writer:
+        // the old write-then-chmod had a world-readable window and a fixed
+        // symlinkable temp name, for raw private-key material.
         let ed_priv_bytes = ed25519_signing.to_bytes();
         let privkey_data = serde_json::json!({
             "device_id": new_device_id.to_string(),
@@ -1472,17 +1497,11 @@ impl DeviceManager {
             "ed25519_private": hex::encode(ed_priv_bytes),
         });
         let privkey_path = vault_path.join("meta/device-privkey.json");
-        let privkey_tmp = privkey_path.with_extension("json.tmp");
-        std::fs::write(
-            &privkey_tmp,
-            serde_json::to_string_pretty(&privkey_data).unwrap(),
-        )?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
-        }
-        std::fs::rename(&privkey_tmp, &privkey_path)?;
+        let privkey_json = serde_json::to_string_pretty(&privkey_data).unwrap();
+        crate::secret_file::write_secret_file(&privkey_path, privkey_json.as_bytes())
+            .map_err(|e| BaluardError::Device(DeviceError::Keystore(format!(
+                "write device privkey: {e}"
+            ))))?;
         let _ = crate::vault::device_privkey::write_device_id(&vault_path, new_device_id);
 
         // Step 12: Persist recovered state
@@ -1582,7 +1601,7 @@ impl DeviceManager {
         tag.copy_from_slice(&tag_bytes);
 
         // Step 4: HPKE-unwrap Root Key (P7: context-bound AAD)
-        let root_key_bytes = crate::crypto::hpke_wrap::unwrap_key(
+        let mut root_key_bytes = crate::crypto::hpke_wrap::unwrap_key(
             &eph_pub,
             &ct,
             &tag,
@@ -1590,9 +1609,11 @@ impl DeviceManager {
             "recovery-keywrap",
         )?;
         let rk_arr: [u8; 64] = root_key_bytes
+            .as_slice()
             .try_into()
             .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
         let root_key = RootKey::from_bytes(rk_arr);
+        zeroize::Zeroize::zeroize(&mut root_key_bytes);
 
         // Step 4b: Read the REAL enrollment policy, decrypted with the
         // phrase-recovered Root Key. Callers may enroll a fresh clone that
@@ -1651,6 +1672,28 @@ impl DeviceManager {
             return Err(DeviceError::AlreadyEnrolled(payload.device_id.to_string()).into());
         }
 
+        // Close the clone-time window BEFORE any enrollment side effect:
+        // this history's enrollment proofs (if any) were only STRUCTURALLY
+        // checked at clone — the cloner had no Root Key. Now the phrase
+        // recovered it, so re-verify the whole fetched history with
+        // root-keyed checks; a forged CURRENT-epoch enrollment in the
+        // cloned line fails the enrollment here (fail-closed).
+        // Historical-epoch proofs (a rotation happened after that join)
+        // fall back to the structural checks: the current Root Key cannot
+        // testify about proofs minted under an earlier root. Errors
+        // propagate — a broken repo or a failed derivation fails the
+        // enrollment rather than skipping the screen.
+        // No-op on vaults without a git repo.
+        #[cfg(feature = "git-sync")]
+        if vault_path.join(".git").exists() {
+            use crate::sync::engine::{EnrollVerifyKey, ProofMode, SyncEngine};
+            let proof_epoch = Self::determine_epoch_from_vault(&vault_path);
+            let vk = EnrollVerifyKey::from_root_key(root_key.as_bytes(), proof_epoch)?;
+            let engine = SyncEngine::new(&vault_path, &payload.device_id.to_string(), None);
+            let repo = engine.open_repo()?;
+            SyncEngine::verify_fetched_history(&repo, ProofMode::RootAllowHistorical, Some(&vk))?;
+        }
+
         // Step 7: Enroll into EXISTING registry (non-destructive — old devices stay)
         let entry = self.registry.enroll_with_id(
             payload.device_id,
@@ -1698,26 +1741,6 @@ impl DeviceManager {
         // recovery phrase is the only way to produce one.
         let proof_epoch = Self::determine_epoch_from_vault(&vault_path);
         Self::write_enrollment_proof(&vault_path, &entry, root_key.as_bytes(), proof_epoch)?;
-
-        // Close the clone-time window: this history's enrollment proofs (if
-        // any) were only STRUCTURALLY checked at clone — the cloner had no
-        // Root Key. Now the phrase recovered it, so re-verify the whole
-        // fetched history with root-keyed checks; a forged CURRENT-epoch
-        // enrollment in the cloned line fails the enrollment here
-        // (fail-closed). Historical-epoch proofs (a rotation happened
-        // after that join) fall back to the structural checks: the current
-        // Root Key cannot testify about proofs minted under an earlier
-        // root. Errors propagate — a broken repo or a failed derivation
-        // fails the enrollment rather than skipping the screen.
-        // No-op on vaults without a git repo.
-        #[cfg(feature = "git-sync")]
-        if vault_path.join(".git").exists() {
-            use crate::sync::engine::{EnrollVerifyKey, ProofMode, SyncEngine};
-            let vk = EnrollVerifyKey::from_root_key(root_key.as_bytes(), proof_epoch)?;
-            let engine = SyncEngine::new(&vault_path, &payload.device_id.to_string(), None);
-            let repo = engine.open_repo()?;
-            SyncEngine::verify_fetched_history(&repo, ProofMode::RootAllowHistorical, Some(&vk))?;
-        }
 
         // Peer review fix: device-privkey.json is the CALLER's responsibility.
         // The method returns the private keys in RecoveryResult; the caller
@@ -1956,36 +1979,29 @@ pub struct RecoveryResult {
     pub ed25519_signing: ed25519_dalek::SigningKey,
 }
 
-/// Load seen nonces from vault directory. Returns empty vec if file missing.
-fn load_seen_nonces(vault_path: &Path) -> Vec<String> {
+/// Load seen nonces from vault directory. A corrupt file fails closed:
+/// resetting to empty would re-open enrollment replay.
+fn load_seen_nonces(vault_path: &Path) -> Result<Vec<String>, BaluardError> {
     let path = vault_path.join("meta/seen-nonces.json");
     if !path.exists() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|data| serde_json::from_str(&data).ok())
-        .unwrap_or_default()
+    let data = std::fs::read_to_string(&path)
+        .map_err(|e| BaluardError::Device(DeviceError::Keystore(format!(
+            "seen-nonces unreadable: {e}"
+        ))))?;
+    serde_json::from_str(&data)
+        .map_err(|e| BaluardError::Device(DeviceError::Keystore(format!(
+            "seen-nonces corrupt: {e}"
+        ))))
 }
 
-/// Atomic file write: write to temp file then rename.
-/// Prevents corruption from crash mid-write. Sets 0600 permissions on Unix.
+/// Atomic file write: delegate to the shared secret-file writer (0600
+/// from the first byte, O_EXCL temp, rename over a pre-planted symlink
+/// — the old write-then-chmod had both holes).
 fn atomic_write(path: &Path, data: &str) -> Result<(), BaluardError> {
-    let tmp_path = path.with_file_name(format!(
-        "{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy()
-    ));
-    std::fs::write(&tmp_path, data)
-        .map_err(|e| DeviceError::Keystore(format!("atomic write tmp: {e}")))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| DeviceError::Keystore(format!("atomic write chmod: {e}")))?;
-    }
-    std::fs::rename(&tmp_path, path)
-        .map_err(|e| DeviceError::Keystore(format!("atomic write rename: {e}")))?;
-    Ok(())
+    crate::secret_file::write_secret_file(path, data.as_bytes())
+        .map_err(|e| BaluardError::Device(DeviceError::Keystore(format!("atomic write: {e}"))))
 }
 
 /// Compute a hash of a rekey transaction for ack binding.

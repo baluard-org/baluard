@@ -41,10 +41,21 @@ impl RecoveryPhrase {
         // Parse via Mnemonic for validation, then extract entropy.
         let mnemonic =
             Mnemonic::parse_normalized(phrase).map_err(|e| CryptoError::Bip39(e.to_string()))?;
-        let raw_entropy = mnemonic.to_entropy();
-        let mut entropy = Zeroizing::new([0u8; 32]);
-        let len = raw_entropy.len().min(32);
-        entropy[..len].copy_from_slice(&raw_entropy[..len]);
+        let mut raw_entropy = mnemonic.to_entropy();
+        // Zero-padding a 12-word phrase to 32 bytes would silently derive
+        // the key of a DIFFERENT 24-word phrase; reject instead.
+        if raw_entropy.len() != 32 {
+            let len = raw_entropy.len();
+            zeroize::Zeroize::zeroize(&mut raw_entropy);
+            return Err(CryptoError::Bip39(format!(
+                "recovery phrase must be 24 words (got entropy for {len} bytes)"
+            )));
+        }
+        let entropy = Zeroizing::new(
+            raw_entropy
+                .try_into()
+                .expect("32-byte entropy checked above"),
+        );
         Ok(Self { entropy })
     }
 
@@ -103,6 +114,18 @@ mod tests {
     #[test]
     fn invalid_phrase_fails() {
         assert!(RecoveryPhrase::from_phrase("not a valid phrase").is_err());
+    }
+
+    #[test]
+    fn twelve_word_phrase_rejected_not_zero_padded() {
+        // A valid 12-word mnemonic carries 16 bytes of entropy; zero-padding
+        // it to 32 used to derive the key of a DIFFERENT 24-word phrase.
+        let mut ent = [0u8; 16];
+        use rand::RngCore;
+        rand::rngs::OsRng.fill_bytes(&mut ent);
+        let mnemonic = Mnemonic::from_entropy(&ent).unwrap();
+        let err = RecoveryPhrase::from_phrase(&mnemonic.to_string());
+        assert!(err.is_err(), "12-word phrase must be rejected");
     }
 
     #[test]

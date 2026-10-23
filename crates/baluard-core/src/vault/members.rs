@@ -830,6 +830,41 @@ pub fn list_members(vault_path: &Path) -> Result<Vec<MemberFile>, BaluardError> 
     Ok(members)
 }
 
+/// Strict variant for security decisions: a directory that exists but
+/// cannot be read, or a row that exists but is damaged, is an ERROR —
+/// the lenient [`list_members`] skips them, which would make a rotation
+/// grant every device admin-equivalent wraps.
+pub fn list_members_strict(vault_path: &Path) -> Result<Vec<MemberFile>, BaluardError> {
+    let dir = vault_path.join(MEMBERS_DIR);
+    let mut members = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        // No directory = legacy vault (pre-S1a): empty roster.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(members),
+        Err(e) => {
+            return Err(VaultError::Metadata(format!(
+                "member roster unreadable: {e}"
+            ))
+            .into())
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let json = std::fs::read_to_string(&path).map_err(|e| {
+            VaultError::Metadata(format!("member row {} unreadable: {e}", path.display()))
+        })?;
+        let member: MemberFile = serde_json::from_str(&json).map_err(|e| {
+            VaultError::Metadata(format!("member row {} damaged: {e}", path.display()))
+        })?;
+        members.push(member);
+    }
+    members.sort_by(|a, b| b.id.as_bytes().cmp(a.id.as_bytes()));
+    Ok(members)
+}
+
 /// S1a-4: record the member's current identity signing pubkey and the
 /// rotation timestamp. Self-service: any bound member updates their own
 /// record (policy table row `meta/members/<own_id>/**`). The delta is
