@@ -3364,14 +3364,16 @@ impl SyncEngine {
                         };
                         let key = hostkey.hostkey().unwrap_or(&[]);
                         let obs_port = crate::sync::credentials::port_of(&last_url.borrow());
-                        match crate::sync::known_hosts::verify_host_key(
+                        let verdict = crate::sync::known_hosts::verify_host_key(
                             host, obs_port, key_type, key,
-                        ) {
+                        );
+                        match verdict {
                             crate::sync::known_hosts::HostKeyResult::Known => {
                                 Ok(CertificateCheckStatus::CertificateOk)
                             }
                             crate::sync::known_hosts::HostKeyResult::Unknown
-                            | crate::sync::known_hosts::HostKeyResult::Missing => {
+                            | crate::sync::known_hosts::HostKeyResult::Missing
+                            | crate::sync::known_hosts::HostKeyResult::UnknownOtherType => {
                                 if !key.is_empty() {
                                     crate::sync::known_hosts::record_observation(
                                         crate::sync::known_hosts::ObservedHostKey {
@@ -3381,6 +3383,10 @@ impl SyncEngine {
                                             key: key.to_vec(),
                                             fingerprint: crate::sync::known_hosts::fingerprint(key),
                                             changed: false,
+                                            known_other_type: matches!(
+                                                verdict,
+                                                crate::sync::known_hosts::HostKeyResult::UnknownOtherType
+                                            ),
                                         },
                                     );
                                 }
@@ -3400,6 +3406,7 @@ impl SyncEngine {
                                             key: key.to_vec(),
                                             fingerprint: crate::sync::known_hosts::fingerprint(key),
                                             changed: true,
+                                            known_other_type: false,
                                         },
                                     );
                                 }

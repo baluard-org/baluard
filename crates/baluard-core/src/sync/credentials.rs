@@ -414,10 +414,6 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
     let mut callbacks = RemoteCallbacks::new();
     let ssh_attempts = std::cell::Cell::new(0u32);
     let userpass_attempts = std::cell::Cell::new(0u32);
-
-    let mut callbacks = RemoteCallbacks::new();
-    let ssh_attempts = std::cell::Cell::new(0u32);
-    let userpass_attempts = std::cell::Cell::new(0u32);
     callbacks.credentials(move |url, username_from_url, allowed_types| {
         credentials_attempt(
             config,
@@ -452,7 +448,8 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                 let p = port_of(&u.borrow());
                 (p != 22).then_some(p)
             })).unwrap_or(22);
-            match crate::sync::known_hosts::verify_host_key(host, obs_port, key_type, key) {
+            let verdict = crate::sync::known_hosts::verify_host_key(host, obs_port, key_type, key);
+            match verdict {
                 crate::sync::known_hosts::HostKeyResult::Known => {
                     Ok(CertificateCheckStatus::CertificateOk)
                 }
@@ -464,7 +461,8 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                 // situation as Unknown on a fresh machine: offer the key for
                 // the first-contact trust flow.
                 crate::sync::known_hosts::HostKeyResult::Unknown
-                | crate::sync::known_hosts::HostKeyResult::Missing => {
+                | crate::sync::known_hosts::HostKeyResult::Missing
+                | crate::sync::known_hosts::HostKeyResult::UnknownOtherType => {
                     crate::sync::known_hosts::record_observation(
                         crate::sync::known_hosts::ObservedHostKey {
                             host: host.to_string(),
@@ -473,6 +471,10 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                             key: key.to_vec(),
                             fingerprint: crate::sync::known_hosts::fingerprint(key),
                             changed: false,
+                            known_other_type: matches!(
+                                verdict,
+                                crate::sync::known_hosts::HostKeyResult::UnknownOtherType
+                            ),
                         },
                     );
                     Err(git2::Error::from_str(&format!(
@@ -491,6 +493,7 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                             key: key.to_vec(),
                             fingerprint: crate::sync::known_hosts::fingerprint(key),
                             changed: true,
+                            known_other_type: false,
                         },
                     );
                     Err(git2::Error::from_str(&format!(
@@ -570,6 +573,7 @@ pub fn format_sync_error_for(err: &BaluardError, url: Option<&str>) -> String {
                 "key_type": obs.key_type,
                 "fingerprint": obs.fingerprint,
                 "changed": obs.changed,
+                "known_other_type": obs.known_other_type,
                 "attempt_id": attempt_id,
             }
         })
@@ -1097,6 +1101,7 @@ mod custom_remote_tests {
             key: b"k".to_vec(),
             fingerprint: "SHA256:abc".into(),
             changed: false,
+            known_other_type: true,
         });
         let marker = format_sync_error(&err);
         let v: serde_json::Value = serde_json::from_str(&marker).expect("marker is JSON");
@@ -1105,6 +1110,7 @@ mod custom_remote_tests {
         assert_eq!(inner["port"], 2222);
         assert_eq!(inner["key_type"], "ssh-ed25519");
         assert_eq!(inner["fingerprint"], "SHA256:abc");
+        assert_eq!(inner["known_other_type"], true);
         let id = inner["attempt_id"].as_str().expect("attempt id");
         assert_eq!(id.len(), 32);
         // Consumed by the trust route's take_observation(id).
