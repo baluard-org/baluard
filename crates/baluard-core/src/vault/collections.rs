@@ -257,17 +257,18 @@ pub fn list_member_collections(
         else {
             continue;
         };
-        // Direct grant first (its per-member wrap is the shortest
-        // path); group grants ride gkwrap → ckwrap.
-        let ck = if let Some(direct) = file
+        // Direct wrap first; a stale or missing direct wrap must not hide
+        // a group grant that would still open the collection.
+        let has_direct = file
             .grants
             .iter()
-            .find(|g| g.target.member_id() == Some(*member_id) && !is_grant_expired(g, now))
-            .map(|g| g.expires_at)
-        {
-            let _ = direct;
+            .any(|g| g.target.member_id() == Some(*member_id) && !is_grant_expired(g, now));
+        let ck = if has_direct {
             open_grant_wrap(vault_path, &id, member_id, wrapping_secret).ok()
         } else {
+            None
+        }
+        .or_else(|| {
             file.grants.iter().find_map(|g| {
                 let gid = g.target.group_id()?;
                 crate::vault::groups::open_ck_through_group(
@@ -279,7 +280,7 @@ pub fn list_member_collections(
                 )
                 .ok()
             })
-        };
+        });
         let Some(ck) = ck else {
             continue;
         };
@@ -313,6 +314,8 @@ pub fn list_member_collections(
                             .is_some_and(|ms| ms.contains(member_id))
                 })
                 .filter_map(|g| g.expires_at)
+                // 0 is the no-expiry IPC convention, never a real instant
+                .filter(|e| *e != 0)
                 .min(),
         });
     }
@@ -355,15 +358,15 @@ fn collections_dir(vault_path: &Path) -> PathBuf {
 
 /// SGK-derived wrap key for collection content keys. Epoch-bound, so a Root
 /// Key rotation invalidates every wrap and the rotation paths re-seal.
-fn ck_wrap_key(sgk: &SpaceGroupKey) -> [u8; 32] {
+fn ck_wrap_key(sgk: &SpaceGroupKey) -> Zeroizing<[u8; 32]> {
     use hkdf::Hkdf;
     use sha2::Sha256;
     let mut info = Vec::with_capacity(CK_WRAP_INFO.len() + 8);
     info.extend_from_slice(CK_WRAP_INFO);
     info.extend_from_slice(&sgk.epoch().to_le_bytes());
     let hkdf = Hkdf::<Sha256>::new(None, sgk.as_bytes());
-    let mut key = [0u8; 32];
-    hkdf.expand(&info, &mut key)
+    let mut key = Zeroizing::new([0u8; 32]);
+    hkdf.expand(&info, key.as_mut())
         .expect("32 bytes is valid output length for HKDF-SHA256");
     key
 }
@@ -407,7 +410,7 @@ pub fn create_collection(
     // refuse at the source instead.
     if list_collections(vault_path, sgk)?
         .into_iter()
-        .any(|(_, existing)| existing.eq_ignore_ascii_case(name.trim()))
+        .any(|(_, existing)| existing.to_lowercase() == name.trim().to_lowercase())
     {
         return Err(VaultError::InvalidOperation(format!(
             "A collection named {name} already exists."
@@ -539,12 +542,17 @@ pub fn list_collections(
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
+        // Hostile-repo guard: never follow a symlink and never read a file
+        // past the cap (the read-then-check shape allocates before checking).
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !meta.is_file() || meta.len() > MAX_COLLECTION_FILE_BYTES as u64 {
+            continue;
+        }
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        if bytes.len() > MAX_COLLECTION_FILE_BYTES {
-            continue;
-        }
         let Ok(file) = serde_json::from_slice::<CollectionFile>(&bytes) else {
             continue;
         };
@@ -583,7 +591,7 @@ pub fn rename_collection(
     // name-based surface ambiguous.
     if list_collections(vault_path, sgk)?
         .into_iter()
-        .any(|(f, existing)| f.id != *id && existing.eq_ignore_ascii_case(name.trim()))
+        .any(|(f, existing)| f.id != *id && existing.to_lowercase() == name.trim().to_lowercase())
     {
         return Err(VaultError::InvalidOperation(format!(
             "A collection named {name} already exists."
@@ -804,8 +812,16 @@ pub fn rewrap_grant_wraps(
         };
         match wrap_pub {
             Some(wrap_pub) => {
-                write_grant_wrap(vault_path, id, &member_id, &wrap_pub, new_ck)?;
-                done += 1;
+                // A malformed (non-empty, non-hex) wrap pubkey must not abort
+                // the loop after the collection already flipped keys: treat
+                // it like the legacy case and kill the stale wrap.
+                let valid = hex::decode(&wrap_pub).is_ok_and(|pk| pk.len() == 32);
+                if !valid {
+                    let _ = std::fs::remove_file(&path);
+                } else {
+                    write_grant_wrap(vault_path, id, &member_id, &wrap_pub, new_ck)?;
+                    done += 1;
+                }
             }
             // Ungated, expired, tombstoned, gone, or legacy: the stale
             // wrap must die.
@@ -853,7 +869,21 @@ pub fn rewrap_own_grant_wraps(
         collected.push((id, ck));
     }
     for (id, ck) in &collected {
-        write_grant_wrap(vault_path, id, member_id, new_wrap_pub_hex, ck)?;
+        if let Err(e) = write_grant_wrap(vault_path, id, member_id, new_wrap_pub_hex, ck) {
+            // Roll already-flipped wraps back under the old secret so a
+            // retry stays possible; a wrap we cannot restore is removed
+            // (fail-safe: the member loses that grant rather than holding
+            // a stale-key wrap).
+            use x25519_dalek::PublicKey;
+            let old_pub_hex = hex::encode(PublicKey::from(old_secret).as_bytes());
+            for (rid, rck) in &collected {
+                let path = grant_wrap_path(vault_path, rid, member_id);
+                if write_grant_wrap(vault_path, rid, member_id, &old_pub_hex, rck).is_err() {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            return Err(e);
+        }
     }
     Ok(collected.len())
 }
@@ -891,7 +921,23 @@ pub fn upsert_grant(
         GrantTarget::Group { id } => {
             // The group must exist; membership validity is checked at
             // mint time (tombstoned members hold no gkwraps).
-            crate::vault::groups::parse_group_file(vault_path, id)?;
+            let group = crate::vault::groups::parse_group_file(vault_path, id)?;
+            // Same Viewer rule as member grants: a write/manage grant that
+            // reaches a Viewer through the group would pass locally and
+            // wedge their sync at commit verification.
+            if matches!(
+                grant.access,
+                CollectionAccess::Write | CollectionAccess::Manage
+            ) && group.members.iter().any(|mid| {
+                crate::vault::members::member_file_by_id(vault_path, *mid)
+                    .is_some_and(|m| m.role == crate::vault::members::MemberRole::Viewer)
+            }) {
+                return Err(VaultError::InvalidOperation(
+                    "Groups containing Viewers cannot be given write or manage access."
+                        .into(),
+                )
+                .into());
+            }
             None
         }
     };
@@ -902,25 +948,16 @@ pub fn upsert_grant(
         .into());
     }
     let target = grant.target.clone();
-    if let Some(slot) = file.grants.iter_mut().find(|g| g.target == target) {
-        *slot = grant;
-    } else {
-        if file.grants.len() >= MAX_GRANTS {
-            return Err(VaultError::InvalidOperation(
-                "This collection has reached its member limit.".into(),
-            )
-            .into());
-        }
-        file.grants.push(grant);
-    }
-    save_collection(vault_path, &file)?;
+    // Mint wraps BEFORE the grant row lands: a wrap failure then returns
+    // an error with no granted-but-unwrappable state on disk.
     match &target {
         // P1: mint the per-member CK wrap when the member record carries an
         // identity wrap pubkey (legacy rows stay SGK-covered until the
         // Team-shape flip).
         GrantTarget::Member { id } => {
             if let Some(wrap_pub) = member
-                .and_then(|m| m.identity_wrap_pubkey)
+                .as_ref()
+                .and_then(|m| m.identity_wrap_pubkey.clone())
                 .filter(|w| !w.is_empty())
             {
                 let ck = unwrap_ck(&file, sgk)?;
@@ -934,6 +971,18 @@ pub fn upsert_grant(
             crate::vault::groups::grant_minted_for_group(vault_path, sgk, id, collection_id, &ck)?;
         }
     }
+    if let Some(slot) = file.grants.iter_mut().find(|g| g.target == target) {
+        *slot = grant;
+    } else {
+        if file.grants.len() >= MAX_GRANTS {
+            return Err(VaultError::InvalidOperation(
+                "This collection has reached its member limit.".into(),
+            )
+            .into());
+        }
+        file.grants.push(grant);
+    }
+    save_collection(vault_path, &file)?;
     Ok(file)
 }
 
@@ -997,6 +1046,9 @@ pub struct SweptRotation {
     /// Hex directory under ciphers/ and trash/; None when the def has no
     /// dir salt (no cipher paths can exist).
     pub dir: Option<String>,
+    /// Groups whose ckwrap refresh failed during the rotation; empty
+    /// means every live group can open the rotated collection.
+    pub failed_groups: Vec<Uuid>,
 }
 
 /// The sweep's full result: expired grants removed plus every key rotation
@@ -1021,12 +1073,13 @@ pub(crate) fn rotate_key_for_removal(
     collection_id: &Uuid,
     evict_member: Option<&Uuid>,
 ) -> Result<Option<SweptRotation>, BaluardError> {
-    let Some((file, name)) = list_collections(vault_path, sgk)?
-        .into_iter()
-        .find(|(f, _)| f.id == *collection_id)
-    else {
+    // Resolve by id straight from the file: list_collections silently drops
+    // entries whose name fails to decrypt, which would turn a damaged
+    // collection into a silently skipped security-critical rotation.
+    if !collections_file_path(vault_path, collection_id).exists() {
         return Ok(None);
-    };
+    }
+    let (file, name) = open_collection(vault_path, sgk, collection_id)?;
     let old_ck = unwrap_ck(&file, sgk)?;
     let mut updated = file;
     updated.grants.retain(|g| {
@@ -1040,11 +1093,12 @@ pub(crate) fn rotate_key_for_removal(
     rand::rngs::OsRng.fill_bytes(new_ck.as_mut());
     updated.ck_wrapped = wrap_ck(sgk, &new_ck, &updated.id)?;
     updated.name_enc = seal_name(&new_ck, &updated.id, &name)?;
-    let rotation = SweptRotation {
+    let mut rotation = SweptRotation {
         collection_id: updated.id,
         old_ck,
         new_ck: new_ck.clone(),
         dir: collection_dir(&updated),
+        failed_groups: Vec::new(),
     };
     // Marker BEFORE the def flips, mirroring the sweep's crash window.
     write_sweep_pending(vault_path, std::slice::from_ref(&rotation))?;
@@ -1062,10 +1116,11 @@ pub(crate) fn rotate_key_for_removal(
                 &updated.id,
                 &new_ck,
             ) {
-                eprintln!(
-                    "rotate: could not refresh group {id}'s key for collection {} ({e})",
-                    updated.id
-                );
+                // Carry the failure instead of only logging: an admin
+                // revoke must not read as success when a group lost the
+                // rotated collection.
+                rotation.failed_groups.push(*id);
+                let _ = e;
             }
         }
     }
@@ -1107,6 +1162,7 @@ pub fn sweep_expired_grants(
             old_ck,
             new_ck: new_ck.clone(),
             dir: collection_dir(&updated),
+            failed_groups: Vec::new(),
         };
         pending.push(rotation.clone());
         // Marker before the def flips: any crash after this point
@@ -1182,6 +1238,7 @@ impl SweptRotation {
             old_ck,
             new_ck,
             dir,
+            failed_groups: Vec::new(),
         })
     }
 }
@@ -1254,6 +1311,17 @@ pub fn delete_collection(vault_path: &Path, id: &Uuid) -> Result<(), BaluardErro
     std::fs::remove_file(&path)
         .map_err(|_| VaultError::InvalidOperation("That collection no longer exists.".into()))?;
     let _ = std::fs::remove_dir_all(grant_wraps_dir(vault_path, id));
+    // Drop the group ckwraps too, so stale wraps of the dead key do not
+    // linger (layout: meta/groups/<group>/<collection>.ckwrap).
+    let ckwrap_name = format!("{id}.ckwrap");
+    if let Ok(groups) = std::fs::read_dir(crate::vault::groups::groups_dir(vault_path)) {
+        for entry in groups.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let _ = std::fs::remove_file(p.join(&ckwrap_name));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1263,8 +1331,44 @@ pub fn collect_content_keys(
     vault_path: &Path,
     sgk: &SpaceGroupKey,
 ) -> Result<CollectedKeys, BaluardError> {
+    // Walk the collection files directly: list_collections skips files
+    // whose NAME fails to decrypt, which would leave that collection's CK
+    // un-re-sealed across the SGK swap and lose every entry under it. The
+    // name is irrelevant here; the key unwrap fails closed on damage.
     let mut cks = Vec::new();
-    for (file, _) in list_collections(vault_path, sgk)? {
+    let dir = collections_dir(vault_path);
+    if !dir.is_dir() {
+        return Ok(cks);
+    }
+    for entry in std::fs::read_dir(&dir)?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        // Hostile-repo guard + strict damage handling: a well-named file
+        // that cannot be read/parsed must FAIL the rotation, or its
+        // collection silently keeps a CK sealed to the dead epoch.
+        let meta = std::fs::symlink_metadata(&path)
+            .map_err(|e| VaultError::Metadata(format!("collection stat: {e}")))?;
+        if !meta.is_file() {
+            continue;
+        }
+        if meta.len() > MAX_COLLECTION_FILE_BYTES as u64 {
+            return Err(VaultError::InvalidOperation(
+                "A collection file is too large to rotate.".into(),
+            )
+            .into());
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|e| VaultError::Metadata(format!("collection read: {e}")))?;
+        let file: CollectionFile = serde_json::from_slice(&bytes)
+            .map_err(|_| VaultError::InvalidOperation("A collection file is damaged.".into()))?;
+        if file.format != FORMAT {
+            return Err(VaultError::InvalidOperation(
+                "A collection file has an unsupported format.".into(),
+            )
+            .into());
+        }
         cks.push((file.id, unwrap_ck(&file, sgk)?));
     }
     Ok(cks)
@@ -1368,6 +1472,34 @@ mod tests {
         let rows = list_collections(&path, &sgk).unwrap();
         let names: Vec<&str> = rows.iter().map(|(_, n)| n.as_str()).collect();
         assert_eq!(names, vec!["Finance", "Servers"]);
+    }
+
+    #[test]
+    fn duplicate_names_refused_case_insensitive_unicode() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        create_collection(&path, &sgk, "Álbum").unwrap();
+        assert!(
+            create_collection(&path, &sgk, "álbum").is_err(),
+            "unicode case fold must count as duplicate"
+        );
+    }
+
+    #[test]
+    fn rotation_fails_closed_on_damaged_collection() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_collection(&path, &sgk, "Vault Money").unwrap();
+        // Corrupt the sealed name so list_collections would silently drop
+        // the file; the rotation must error instead of reporting "not found"
+        // (a silently skipped revoke-with-rotation leaves the evicted
+        // member's old key live).
+        let p = collections_file_path(&path, &file.id);
+        let mut damaged: CollectionFile =
+            serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        damaged.name_enc = serde_json::json!({"not": "a sealed blob"});
+        std::fs::write(&p, serde_json::to_vec(&damaged).unwrap()).unwrap();
+        assert!(rotate_key_for_removal(&path, &sgk, &file.id, None).is_err());
     }
 
     #[test]

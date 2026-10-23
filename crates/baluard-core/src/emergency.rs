@@ -66,15 +66,10 @@ pub fn save_emergency_config(
     }
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| VaultError::Metadata(format!("emergency config serialization: {e}")))?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &json)?;
-    std::fs::rename(&tmp, &path)?;
-    // C3 fix: harden permissions after rename
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
+    // Secret-carrying config (wrapped root key): owner-only from the
+    // first byte via the shared writer, not write-then-chmod.
+    crate::secret_file::write_secret_file(&path, json.as_bytes())
+        .map_err(|e| VaultError::Metadata(format!("emergency config write: {e}")))?;
     Ok(())
 }
 
@@ -123,9 +118,12 @@ pub fn initiate_emergency_request(vault_path: &Path) -> Result<(), BaluardError>
     let mut config = load_emergency_config(vault_path)?
         .ok_or_else(|| VaultError::Metadata("emergency access not configured".into()))?;
 
-    if matches!(config.status, EmergencyStatus::Revoked) {
+    // Only an INACTIVE (or already-pending) configuration may move to
+    // Requested. Downgrading an owner-signed Approved config to an
+    // unsigned Requested used to silently destroy the approval.
+    if matches!(config.status, EmergencyStatus::Approved | EmergencyStatus::Revoked) {
         return Err(VaultError::Metadata(
-            "Access Denied: emergency access has been permanently revoked by the owner".into(),
+            "Access Denied: emergency access is already approved or revoked by the owner".into(),
         )
         .into());
     }
@@ -217,15 +215,22 @@ pub fn recover_emergency_root_key(
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&tag_bytes);
 
-    let decrypted =
-        hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, contact_privkey, "emergency-escrow")?;
+    let mut decrypted = crate::crypto::hpke_wrap::unwrap_key(
+        &eph_pub,
+        &ct,
+        &tag,
+        contact_privkey,
+        "emergency-escrow",
+    )?;
 
     if decrypted.len() != 64 {
+        zeroize::Zeroize::zeroize(&mut decrypted);
         return Err(VaultError::Corrupt("decrypted key is invalid length".into()).into());
     }
 
     let mut root_key = [0u8; 64];
     root_key.copy_from_slice(&decrypted);
+    zeroize::Zeroize::zeroize(&mut decrypted);
 
     Ok(root_key)
 }

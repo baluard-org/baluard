@@ -7428,6 +7428,7 @@ impl VaultState {
             PrivkeyFileKind::Sealed => "v1",
             PrivkeyFileKind::SealedHw => "v2-hw",
             PrivkeyFileKind::LegacyPlaintext => "legacy",
+            PrivkeyFileKind::Damaged => "damaged",
             PrivkeyFileKind::Absent => "absent",
         };
         let consent_supported = baluard_core::hwkey::installed()

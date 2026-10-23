@@ -80,7 +80,7 @@ struct OutboxEntryPayload {
 }
 
 /// Owner-side record for one outbox.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OwnerOutbox {
     pub outbox_id: Uuid,
     pub path: String,
@@ -93,6 +93,19 @@ pub struct OwnerOutbox {
     /// Hex content key (inside the sealed registry blob).
     pub content_key_hex: String,
     pub published: Vec<PublishedRef>,
+}
+
+impl std::fmt::Debug for OwnerOutbox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OwnerOutbox")
+            .field("outbox_id", &self.outbox_id)
+            .field("path", &self.path)
+            .field("recipient_signing_pub", &self.recipient_signing_pub)
+            .field("recipient_wrap_pub", &self.recipient_wrap_pub)
+            .field("content_key_hex", &"[redacted]")
+            .field("published", &self.published)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,7 +121,7 @@ struct OwnerRegistry {
 }
 
 /// Recipient-side record for one linked outbox.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OutboxLink {
     pub outbox_id: Uuid,
     pub path: String,
@@ -120,6 +133,19 @@ pub struct OutboxLink {
     pub owner_signing_pubkey: String,
     pub owner_name: String,
     pub owner_vault_id: Uuid,
+}
+
+impl std::fmt::Debug for OutboxLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutboxLink")
+            .field("outbox_id", &self.outbox_id)
+            .field("path", &self.path)
+            .field("content_key_hex", &"[redacted]")
+            .field("owner_signing_pubkey", &self.owner_signing_pubkey)
+            .field("owner_name", &self.owner_name)
+            .field("owner_vault_id", &self.owner_vault_id)
+            .finish()
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -222,23 +248,29 @@ fn git_open(outbox: &Path) -> Result<git2::Repository, BaluardError> {
     // always its own repository, created here on first publish.
     match git2::Repository::open(outbox) {
         Ok(repo) => Ok(repo),
-        Err(_) => {
+        // Only a missing repo is created fresh; a corrupt or foreign repo
+        // must fail instead of being silently re-inited in place.
+        Err(e) if e.code() == git2::ErrorCode::NotFound => {
             git2::Repository::init(outbox).map_err(|e| deny(&format!("outbox repo init: {e}")))
         }
+        Err(e) => Err(deny(&format!("outbox folder is not a usable repository: {e}"))),
     }
 }
 
 fn git_commit(outbox: &Path, message: &str) -> Result<bool, BaluardError> {
     let repo = git_open(outbox)?;
     let mut index = repo.index().map_err(|e| deny(&format!("index: {e}")))?;
+    // Stage only outbox-owned paths: the folder is user-picked, so a
+    // blanket "*" would commit and push unrelated files sitting in it.
     // update_all stages tracked-file DELETIONS (unpublish/revoke);
     // add_all alone only adds/updates, leaving removed files in the
     // tree for every clone.
+    const OWNED: [&str; 3] = [OUTBOX_MARKER, "share", ENTRIES_DIR];
     index
-        .update_all(["*"].iter(), None)
+        .update_all(OWNED.iter(), None)
         .map_err(|e| deny(&format!("stage removals: {e}")))?;
     index
-        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .add_all(OWNED.iter(), git2::IndexAddOption::DEFAULT, None)
         .map_err(|e| deny(&format!("stage: {e}")))?;
     index
         .write()
@@ -294,12 +326,24 @@ fn find_record<'a>(
         .ok_or_else(|| deny("this folder is not a shared outbox you own (publish first)"))
 }
 
+/// Read a sender-controlled file, refusing symlinks and oversized
+/// content before anything hits memory (an outbox arrives as a cloned
+/// git repo; git can carry symlinks, e.g. at /dev/zero).
+fn read_hostile(path: &Path, cap: u64, what: &str) -> Result<Vec<u8>, BaluardError> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| deny(&format!("{what}: {e}")))?;
+    if !meta.is_file() {
+        return Err(deny(&format!("{what} is not a regular file")));
+    }
+    if meta.len() > cap {
+        return Err(deny(&format!("{what} is too large")));
+    }
+    std::fs::read(path).map_err(|e| deny(&format!("{what}: {e}")))
+}
+
 fn read_marker(outbox: &Path) -> Result<OutboxMarker, BaluardError> {
-    let marker: OutboxMarker = serde_json::from_str(
-        &std::fs::read_to_string(outbox.join(OUTBOX_MARKER))
-            .map_err(|e| deny(&format!("outbox marker unreadable: {e}")))?,
-    )
-    .map_err(|e| deny(&format!("outbox marker unreadable: {e}")))?;
+    let data = read_hostile(&outbox.join(OUTBOX_MARKER), 256 * 1024, "outbox marker unreadable")?;
+    let marker: OutboxMarker =
+        serde_json::from_slice(&data).map_err(|e| deny(&format!("outbox marker unreadable: {e}")))?;
     marker.owner_card.verify()?;
     Ok(marker)
 }
@@ -472,14 +516,34 @@ pub fn publish_entry(
         }
     };
 
-    // Marker: write on create; verify on reuse.
+    // Marker: verify a pre-existing one BEFORE any persistence, so a
+    // foreign or mismatched marker errors without leaving a registry
+    // record wedged to this path.
     let marker_path = outbox_path.join(OUTBOX_MARKER);
     if marker_path.exists() {
         let marker = read_marker(outbox_path)?;
         if marker.outbox_id != outbox_id {
             return Err(deny("outbox marker does not match this outbox"));
         }
-    } else {
+    }
+
+    // Persist the registry record BEFORE the marker/keywrap/entries land:
+    // a crash between those writes and the old late registration used to
+    // wedge the folder (next publish minted a new id and refused the
+    // stale marker, with no record to revoke).
+    if existing.is_none() {
+        outboxes.push(OwnerOutbox {
+            outbox_id,
+            path: path_str.clone(),
+            recipient_signing_pub: recipient_signing_pub_hex.to_string(),
+            recipient_wrap_pub: wrap_hex.to_string(),
+            content_key_hex: hex::encode(&content_key[..]),
+            published: Vec::new(),
+        });
+        save_owner_registry(vault_path, registry_key, &outboxes)?;
+    }
+
+    if !marker_path.exists() {
         let owner_vault_id = crate::vault::handle::VaultHandle::vault_id_for_path(vault_path)?;
         let marker = OutboxMarker {
             format: 1,
@@ -567,7 +631,8 @@ pub fn publish_entry(
         c
     };
 
-    // Registry update.
+    // Registry update. Fresh outboxes already have their record (persisted
+    // before the marker); this only refreshes the mutable fields.
     let record = PublishedRef { cipher_id, digest };
     let mut entries = 1usize;
     if let Some(o) = outboxes.iter_mut().find(|o| o.path == path_str) {
@@ -575,15 +640,6 @@ pub fn publish_entry(
         o.published.push(record);
         o.recipient_wrap_pub = wrap_hex.to_string();
         entries = o.published.len();
-    } else {
-        outboxes.push(OwnerOutbox {
-            outbox_id,
-            path: path_str,
-            recipient_signing_pub: recipient_signing_pub_hex.to_string(),
-            recipient_wrap_pub: wrap_hex.to_string(),
-            content_key_hex: hex::encode(&content_key[..]),
-            published: vec![record],
-        });
     }
     save_owner_registry(vault_path, registry_key, &outboxes)?;
 
@@ -644,9 +700,10 @@ pub fn revoke_outbox(
     // unrelated folder's entries/ directory.
     find_record(&outboxes, outbox_path)?;
     let path_str = norm_path(outbox_path);
-    outboxes.retain(|o| o.path != path_str);
-    save_owner_registry(vault_path, registry_key, &outboxes)?;
 
+    // Files and commit FIRST, registry drop LAST: a failed removal or
+    // commit then leaves the record intact, so revoke stays retryable
+    // and the recipient's access can still be cut.
     let entries_dir = outbox_path.join(ENTRIES_DIR);
     if entries_dir.exists() {
         std::fs::remove_dir_all(&entries_dir).map_err(|e| deny(&format!("entries remove: {e}")))?;
@@ -661,6 +718,9 @@ pub fn revoke_outbox(
     }
     git_commit(outbox_path, "revoke outbox")?;
     git_push_best_effort(outbox_path);
+
+    outboxes.retain(|o| o.path != path_str);
+    save_owner_registry(vault_path, registry_key, &outboxes)?;
     Ok(())
 }
 
@@ -692,15 +752,13 @@ pub fn open_entry(
     let entry_path = outbox_path
         .join(ENTRIES_DIR)
         .join(format!("{cipher_id}.enc"));
-    // Size bound BEFORE reading: a hostile oversized file must not get
-    // pulled into memory wholesale.
-    let file_len = std::fs::metadata(&entry_path)
-        .map(|m| m.len())
-        .map_err(|e| deny(&format!("entry unreadable: {e}")))?;
-    if file_len as usize > MAX_ENTRY_PAYLOAD_BYTES * 2 {
-        return Err(deny("shared entry is too large"));
-    }
-    let blob = std::fs::read(&entry_path).map_err(|e| deny(&format!("entry unreadable: {e}")))?;
+    // Symlink + size bound BEFORE reading: a hostile oversized file must
+    // not get pulled into memory wholesale.
+    let blob = read_hostile(
+        &entry_path,
+        (MAX_ENTRY_PAYLOAD_BYTES * 2) as u64,
+        "entry unreadable",
+    )?;
     let purpose = format!("{ENTRY_PURPOSE_PREFIX}/{}", marker.outbox_id);
     let purpose = format!("{purpose}/{cipher_id}");
     let doc = crate::secret_file::open_secret_blob(&key, &blob, &purpose)
@@ -768,11 +826,13 @@ pub fn link_outbox(
     outbox_path: &Path,
 ) -> Result<OutboxLink, BaluardError> {
     let marker = read_marker(outbox_path)?;
-    let kw: OutboxKeywrap = serde_json::from_str(
-        &std::fs::read_to_string(outbox_path.join(KEYWRAP_FILE))
-            .map_err(|e| deny(&format!("outbox keywrap unreadable: {e}")))?,
-    )
-    .map_err(|e| deny(&format!("outbox keywrap unreadable: {e}")))?;
+    let kw_data = read_hostile(
+        &outbox_path.join(KEYWRAP_FILE),
+        256 * 1024,
+        "outbox keywrap unreadable",
+    )?;
+    let kw: OutboxKeywrap = serde_json::from_slice(&kw_data)
+        .map_err(|e| deny(&format!("outbox keywrap unreadable: {e}")))?;
 
     use base64::Engine as _;
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -897,7 +957,6 @@ pub fn list_entries(
             }
         }
     }
-    let _ = marker;
     Ok(out)
 }
 
