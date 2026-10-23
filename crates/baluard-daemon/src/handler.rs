@@ -3168,7 +3168,8 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
                             Some(passphrase.to_string())
                         },
                         Some(host),
-                    ),
+                    )
+                    .with_url_hint(&url),
                 )
             }
         }
@@ -3177,6 +3178,7 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
     // libgit2 exposes no per-operation connect timeout, so an unreachable
     // host can park the worker for minutes; the route returns a timeout to
     // the client and the worker dies whenever the OS gives up.
+    let url_for_err = url.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(baluard_core::sync::engine::SyncEngine::probe_remote(
@@ -3192,8 +3194,11 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
         ),
         Ok(Ok(())) => ok_resp(serde_json::json!({ "ok": true }).to_string(), None),
         Ok(Err(e)) => {
-            let msg = baluard_core::sync::credentials::format_sync_error(&e);
-            let kind = if msg.contains("host_key_untrusted") {
+            let msg =
+                baluard_core::sync::credentials::format_sync_error_for(&e, Some(&url_for_err));
+            let kind = if msg.contains("changed") && msg.contains("known_hosts") {
+                "host-changed"
+            } else if msg.contains("host_key_untrusted") {
                 "host-untrusted"
             } else if msg.contains("empty") {
                 "empty"
@@ -3449,6 +3454,7 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
     let Some(clone_url) = v["clone_url"].as_str().map(str::to_string) else {
         return err_response("Missing 'clone_url' in clone payload".to_string());
     };
+    let clone_url_port = baluard_core::sync::credentials::port_of(&clone_url);
     let Some(slug) = v["slug"].as_str().map(str::to_string) else {
         return err_response("Missing 'slug' in clone payload".to_string());
     };
@@ -3539,7 +3545,8 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
                             Some(passphrase.to_string())
                         },
                         Some(host),
-                    ),
+                    )
+                    .with_url_hint(&format!("ssh://host:{clone_url_port}")),
                 )
             }
         }
