@@ -413,7 +413,12 @@ const [customError, setCustomError] = createSignal(null);
     try {
       const m = JSON.parse(detail || "{}").host_key_untrusted;
       if (!m) return null;
-      return { key_type: m.key_type, fingerprint: m.fingerprint, attempt_id: m.attempt_id };
+      return {
+        key_type: m.key_type,
+        fingerprint: m.fingerprint,
+        attempt_id: m.attempt_id,
+        known_other_type: m.known_other_type === true,
+      };
     } catch {
       return null;
     }
@@ -814,6 +819,11 @@ const [customError, setCustomError] = createSignal(null);
                             <p class="text-[10px] text-[var(--color-muted)] font-mono break-all">
                               {trust().key_type} {trust().fingerprint}
                             </p>
+                            <Show when={trust().known_other_type}>
+                              <p class="text-[10px] text-[var(--color-warning)]">
+                                {t("sync.customTrustOtherType")}
+                              </p>
+                            </Show>
                             <Button
                               data-testid="custom-trust"
                               variant="secondary"

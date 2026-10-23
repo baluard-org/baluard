@@ -479,6 +479,7 @@
     "customProbeOk": "Conexión correcta.",
     "customTrustTitle": "La clave del servidor aún no es de confianza. Verifica la huella por otro medio y confírmala:",
     "customTrustCta": "Confiar en esta clave",
+    "customTrustOtherType": "Este servidor ya tiene una clave de otro tipo registrada.",
     "customChangedTitle": "La clave del servidor ha cambiado",
     "customChangedBody": "La clave es distinta de la que confirmaste antes. Si tienes la certeza de que el servidor cambió y no es una interceptación, borra la línea antigua de este servidor en tu archivo known_hosts y vuelve a probar la conexión.",
     "customBadUrl": "Eso no parece una URL de repositorio."

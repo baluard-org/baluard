@@ -510,6 +510,7 @@
     "customProbeOk": "Connection OK.",
     "customTrustTitle": "The server's host key is not trusted yet. Check the fingerprint out-of-band, then trust it:",
     "customTrustCta": "Trust this key",
+    "customTrustOtherType": "This host already has a key of another type on file.",
     "customChangedTitle": "This server's host key changed",
     "customChangedBody": "The key differs from the one you confirmed before. If you are sure the server changed and this is not an interception, remove the old line for this host from your SSH known_hosts file, then test the connection again.",
     "customBadUrl": "That does not look like a repository URL."
