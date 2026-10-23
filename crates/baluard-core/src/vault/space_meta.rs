@@ -243,6 +243,15 @@ pub fn reseal_store(vault_path: &Path, root: &RootKey, smk: &[u8; 32]) -> Result
 /// caller; the report names members that can never be wrapped so the
 /// 7b flip gate has its readiness counts.
 pub fn prepare(vault_path: &Path, root: &RootKey) -> Result<PrepareReport, BaluardError> {
+    // Once the vault is team-shaped, a fresh SMK would orphan every
+    // member-visible file sealed under the old key. The re-mint below
+    // exists to converge the pre-flip crash window only.
+    if shape_flipped(vault_path) && open_store(vault_path, root).is_err() {
+        return Err(VaultError::InvalidOperation(
+            "This vault's shared storage is damaged; a recovery is required before members can be managed.".into(),
+        )
+        .into());
+    }
     let existing = open_store(vault_path, root).ok();
     let smk = match &existing {
         Some(smk) => Zeroizing::new(**smk),

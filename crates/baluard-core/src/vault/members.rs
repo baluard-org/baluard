@@ -162,16 +162,17 @@ pub fn list_device_bindings(vault_path: &Path, member_id: Uuid) -> Vec<DeviceBin
         let Some(id_str) = name.strip_suffix(".json") else {
             continue;
         };
-        // The filename must be a UUID; the payload's device_id is the
-        // authority and the member filter runs below.
-        if Uuid::parse_str(id_str).is_err() {
+        // The filename must be a UUID AND match the payload's
+        // device_id: a planted file naming another device in the
+        // payload strikes it at removal time otherwise.
+        let Ok(stem_id) = Uuid::parse_str(id_str) else {
             continue;
-        }
+        };
         let Ok(json) = std::fs::read_to_string(entry.path()) else {
             continue;
         };
         if let Ok(b) = serde_json::from_str::<DeviceBinding>(&json) {
-            if b.member_id == member_id {
+            if b.member_id == member_id && b.device_id == stem_id {
                 out.push(b);
             }
         }
@@ -262,15 +263,23 @@ pub fn list_leave_records(vault_path: &Path) -> Result<Vec<PendingLeave>, Baluar
         if !path.exists() {
             continue;
         }
-        let data = std::fs::read_to_string(&path)
-            .map_err(|e| BaluardError::from(VaultError::Metadata(format!("read leave: {e}"))))?;
-        let record: serde_json::Value = serde_json::from_str(&data).map_err(|_| {
-            BaluardError::from(VaultError::Corrupt("leave record malformed".into()))
-        })?;
+        // A malformed or oversized record is one member's hostile
+        // subtree write — skip it (the listing stays usable) instead of
+        // blinding every pending departure.
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !meta.is_file() || meta.len() > 64 * 1024 {
+            continue;
+        }
+        let Ok(data) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(&data) else {
+            continue;
+        };
         if record["format"].as_str() != Some(LEAVE_FORMAT) {
-            return Err(BaluardError::from(VaultError::Corrupt(
-                "leave record format".into(),
-            )));
+            continue;
         }
         out.push(PendingLeave {
             member_id: member.id,
@@ -325,6 +334,22 @@ pub struct OwnershipContest {
     pub confirmed_at: u64,
     /// Unix seconds after which a re-touch claim executes.
     pub window_until: u64,
+    /// The signed approvals the gate collected at arm time. The record
+    /// rides an Admin-writable directory, so ids and timestamps alone
+    /// prove nothing — execution re-verifies these signatures against
+    /// the live member rows and the live threshold. Legacy records
+    /// without the set are refused (re-run the claim).
+    #[serde(default)]
+    pub approvals: Vec<crate::vault::approvals::ApprovalEntry>,
+    /// Digest of the gated ask, bound into every signature above.
+    #[serde(default)]
+    pub params_digest: String,
+    /// The ask nonce the signatures cover.
+    #[serde(default)]
+    pub nonce: String,
+    /// The ask timestamp inside every signature above.
+    #[serde(default)]
+    pub ask_initiated_at: u64,
 }
 
 fn contest_path(vault_path: &Path) -> PathBuf {
@@ -355,14 +380,26 @@ pub fn write_ownership_contest(
     vault_path: &Path,
     old_owner_id: Uuid,
     new_owner_id: Uuid,
+    approvals: Vec<crate::vault::approvals::ApprovalEntry>,
+    params_digest: String,
+    nonce: String,
+    ask_initiated_at: u64,
 ) -> Result<OwnershipContest, BaluardError> {
     let now = unix_now();
+    // The window derives from the gate's signed ask time: execution
+    // re-derives and requires the equality, so a restored record with
+    // a tampered window_until never executes.
+    let ask_time = if ask_initiated_at != 0 { ask_initiated_at } else { now };
     let record = OwnershipContest {
         format: OWNERSHIP_CONTEST_FORMAT.to_string(),
         old_owner_id,
         new_owner_id,
         confirmed_at: now,
-        window_until: now + OWNERSHIP_CONTEST_WINDOW_SECS,
+        window_until: ask_time + OWNERSHIP_CONTEST_WINDOW_SECS,
+        approvals,
+        params_digest,
+        nonce,
+        ask_initiated_at,
     };
     let path = contest_path(vault_path);
     if let Some(parent) = path.parent() {
@@ -377,7 +414,16 @@ pub fn write_ownership_contest(
 }
 
 pub fn consume_ownership_contest(vault_path: &Path) {
-    let _ = std::fs::remove_file(contest_path(vault_path));
+    let path = contest_path(vault_path);
+    // Leave a nonce-keyed marker behind: a restored record (git
+    // history) dies on sight against it.
+    if let Some(record) = load_ownership_contest(vault_path) {
+        let marker = vault_path.join("meta/contests/ownership-claim.cancelled");
+        if std::fs::create_dir_all(marker.parent().unwrap_or(vault_path)).is_ok() {
+            let _ = std::fs::write(&marker, record.nonce.as_bytes());
+        }
+    }
+    let _ = std::fs::remove_file(path);
 }
 
 /// True when the pending record names this exact ask and the window
@@ -389,6 +435,18 @@ pub fn ownership_contest_elapsed(
     new_owner_id: Uuid,
 ) -> Option<OwnershipContest> {
     let record = load_ownership_contest(vault_path)?;
+    // A cancelled record is dead even if the plaintext record is later
+    // restored from git history: the cancel leaves a marker keyed on
+    // the record's nonce (local restores can still win a file war on
+    // one device, but the marker rides the same Admin sync row).
+    let marker = vault_path.join("meta/contests/ownership-claim.cancelled");
+    if marker.exists() {
+        if let Ok(text) = std::fs::read_to_string(&marker) {
+            if text.trim() == record.nonce {
+                return None;
+            }
+        }
+    }
     if record.old_owner_id == old_owner_id
         && record.new_owner_id == new_owner_id
         && unix_now() >= record.window_until
@@ -495,25 +553,19 @@ pub fn reset_member(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    // Tombstone: clear the identity so no client treats the old key as
-    // current; park it in `previous` so stale-contact reconciliation
-    // downgrades address book entries that still carry it.
+    // Destructive step last: the successor row and the invite land
+    // BEFORE the tombstone, so a failure anywhere above leaves the old
+    // row live and the operation simply retryable (the previous order
+    // stranded a tombstoned member when the invite step failed).
+    // Tombstone prep: clear the identity so no client treats the old
+    // key as current; park it in `previous` so stale-contact
+    // reconciliation downgrades address book entries that still carry
+    // it. P1: the tombstone must not keep a usable wrap identity — the
+    // per-member collection wraps would otherwise survive re-keying.
     old.identity_signing_pubkey_previous = old.identity_signing_pubkey.take();
     old.identity_rotation_signature = None;
-    // P1: the tombstone must not keep a usable wrap identity — the
-    // per-member collection wraps would otherwise survive re-keying.
     old.identity_wrap_pubkey = None;
-    old.reset = Some(MemberReset {
-        successor: successor_id,
-        at: now,
-    });
-    super::write_vault_file(
-        &path,
-        serde_json::to_string_pretty(&old).unwrap().as_bytes(),
-    )
-    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write tombstone: {e}"))))?;
-    let successor = MemberFile {
-        id: successor_id,
+    let successor = MemberFile {        id: successor_id,
         display_name: old.display_name.clone(),
         // The successor keeps the predecessor's self-declared email (the
         // admin can correct it; the rejoin introduction can supersede).
@@ -542,6 +594,15 @@ pub fn reset_member(
         replacement_template,
         false,
     )?;
+    old.reset = Some(MemberReset {
+        successor: successor_id,
+        at: now,
+    });
+    super::write_vault_file(
+        &path,
+        serde_json::to_string_pretty(&old).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write tombstone: {e}"))))?;
     Ok((successor_id, code))
 }
 
@@ -589,21 +650,13 @@ pub fn remove_member(
     )
     .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write removal: {e}"))))?;
     // Collect the member's device ids (bindings stay on disk, inert).
+    // Payload-validated: a planted file naming ANOTHER member's device
+    // must not strike it at removal time (the filename alone proves
+    // nothing — the binding's device_id + member_id pair is the
+    // authority, the same rule list_device_bindings applies).
     let mut devices = Vec::new();
-    let devices_dir = vault_path
-        .join(MEMBERS_DIR)
-        .join(member_id.to_string())
-        .join("devices");
-    if let Ok(entries) = std::fs::read_dir(&devices_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let Some(stem) = name.strip_suffix(".json") else {
-                continue;
-            };
-            if let Ok(id) = Uuid::parse_str(stem) {
-                devices.push(id);
-            }
-        }
+    for b in list_device_bindings(vault_path, member_id) {
+        devices.push(b.device_id);
     }
     Ok(devices)
 }
@@ -760,6 +813,7 @@ pub fn member_file_for_device(
     device_id: Uuid,
 ) -> Option<(std::path::PathBuf, MemberFile)> {
     let dir = vault_path.join(MEMBERS_DIR);
+    let mut matches: Vec<(std::path::PathBuf, MemberFile)> = Vec::new();
     for entry in std::fs::read_dir(&dir).ok()?.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         let Some(stem) = name.strip_suffix(".json") else {
@@ -771,21 +825,36 @@ pub fn member_file_for_device(
             .join(stem)
             .join("devices")
             .join(format!("{device_id}.json"));
-        if !binding.exists() {
-            continue;
-        }
-        if let Ok(json) = std::fs::read_to_string(entry.path()) {
-            if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
-                if member.id.to_string() == stem
-                    && member.reset.is_none()
-                    && member.removed.is_none()
-                {
-                    return Some((entry.path(), member));
+        if let Ok(json) = std::fs::read_to_string(&binding) {
+            // The binding payload is the authority: a file whose
+            // device_id names another member proves nothing (the same
+            // rule the strict resolver applies) and read_dir order must
+            // not pick a winner.
+            if let Ok(b) = serde_json::from_str::<DeviceBinding>(&json) {
+                if b.device_id != device_id || b.member_id.to_string() != stem {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            if let Ok(row) = std::fs::read_to_string(entry.path()) {
+                if let Ok(member) = serde_json::from_str::<MemberFile>(&row) {
+                    if member.id.to_string() == stem
+                        && member.reset.is_none()
+                        && member.removed.is_none()
+                    {
+                        matches.push((entry.path(), member));
+                    }
                 }
             }
         }
     }
-    None
+    // A device bound in more than one subtree is damage — refuse rather
+    // than let directory order decide which member acts.
+    if matches.len() != 1 {
+        return None;
+    }
+    matches.pop()
 }
 
 /// S1a-5: one member row by id.
@@ -1159,8 +1228,14 @@ pub fn create_invite(
     }
     // S2 IS-5: pair Space policy — owner plus one editor/viewer, no
     // more; admin+ roles never mint on a Space. Refusing at mint time
-    // keeps the bad invite out of the join queue entirely.
-    super::space::pair_gate(vault_path, role)?;
+    // keeps the bad invite out of the join queue entirely. A
+    // successor-bound reset invite skips the seat count: the reset
+    // replaces the bound row (whose seat frees at the tombstone that
+    // follows), so counting it would deadlock the stolen-device
+    // journey.
+    if target_member.is_none() {
+        super::space::pair_gate(vault_path, role)?;
+    }
     // Family-spaces section 5: the minor flag is mintable only on a
     // family vault, and never on a reset invite (the successor row
     // carries the flag over from the old row instead).
@@ -1276,13 +1351,29 @@ pub fn consume_pending_invite(
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("pending invite: {e}"))))?;
     let pending: PendingInviteFile = serde_json::from_str(&data)
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("pending invite: {e}"))))?;
+    // TTL: a leaked invite code must not stay valid forever. Records
+    // with created_at 0 (pre-dating the field) keep the old behavior; a
+    // future-dated created_at is refused as damage (it would never age
+    // out).
+    const INVITE_TTL_SECS: u64 = 30 * 24 * 3600;
+    if pending.created_at != 0
+        && (pending.created_at.saturating_sub(unix_now()) > 10 * 60
+            || unix_now().saturating_sub(pending.created_at) >= INVITE_TTL_SECS)
+    {
+        // Self-clean: the record is dead either way, and removing it
+        // here only affects an already-expired invite.
+        let _ = std::fs::remove_file(&path);
+        return Err(BaluardError::from(VaultError::InvalidOperation(
+            "this invitation has expired; ask for a fresh one".into(),
+        )));
+    }
     if pending.secret_hash != sha256_hex(secret.as_bytes()) {
-        return Err(BaluardError::from(VaultError::Metadata(format!(
-            "introduction secret does not match the invite (stored {}, got {}) — file: {}",
-            pending.secret_hash,
-            sha256_hex(secret.as_bytes()),
-            path.display()
-        ))));
+        // No hash or path in the message: it reaches untrusted hands
+        // (the joiner typing a wrong code) and would leak crackable
+        // material and server layout.
+        return Err(BaluardError::from(VaultError::InvalidOperation(
+            "the introduction secret does not match this invitation".into(),
+        )));
     }
     std::fs::remove_file(&path)
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("consume invite: {e}"))))?;
@@ -1693,6 +1784,44 @@ pub fn create_introduction_with_email(
 mod tests {
     use super::*;
 
+    /// A leaked invite code must not stay valid forever: consumption
+    /// past the TTL refuses and removes the pending file.
+    #[test]
+    fn invite_expired_refuses_consumption() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path();
+        let code = create_invite(
+            vault,
+            Uuid::new_v4(),
+            MemberRole::Editor,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        // Find the pending file and backdate it past the TTL.
+        let dir = vault.join(INVITES_DIR);
+        let path = std::fs::read_dir(&dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut pending: PendingInviteFile =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        pending.created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 31 * 24 * 3600;
+        std::fs::write(&path, serde_json::to_vec(&pending).unwrap()).unwrap();
+
+        let err = consume_pending_invite(vault, pending.invite_id, &code).unwrap_err();
+        assert!(err.to_string().contains("expired"), "{err}");
+        assert!(!path.exists(), "stale pending file removed");
+    }
+
     /// §4.8-1: the People listing walks row files only — device binding
     /// subtrees and junk files are skipped, rows sort deterministically,
     /// and a missing directory (legacy vault) is an empty list.
@@ -1988,7 +2117,11 @@ mod tests {
                 .join(member_id.to_string())
                 .join("devices")
                 .join(format!("{device_id}.json")),
-            "{}",
+            serde_json::json!({
+                "device_id": device_id.to_string(),
+                "member_id": member_id.to_string(),
+            })
+            .to_string(),
         )
         .unwrap();
         assert_eq!(join_status(vault), (true, true));

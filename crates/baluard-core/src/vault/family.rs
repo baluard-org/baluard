@@ -364,7 +364,8 @@ mod tests {
                 2,
                 approvals::list_pending(&path_for_present)[0].initiated_at,
                 &verifier,
-            ),
+            )
+            .unwrap(),
             approvals::ApprovalOutcome::Approved
         );
         assert!(approvals::list_pending(&path_for_present).is_empty());
@@ -614,11 +615,15 @@ mod tests {
         let _ = handle.ownership_claim(claimant.id).unwrap_err();
         assert!(crate::vault::members::load_ownership_contest(&path).is_some());
 
-        // Expiry executes through the re-touch: rewind the record and
-        // claim again. The elapsed record is the gate proof, so no
-        // second approval is demanded.
+        // Expiry executes through the re-touch: rewind the record's
+        // clock fields consistently (ask time drives the window, so both
+        // move together) and claim again. The elapsed record is the gate
+        // proof, so no second approval is demanded.
         let mut expired = crate::vault::members::load_ownership_contest(&path).unwrap();
-        expired.window_until = crate::vault::members::unix_now_pub().saturating_sub(1);
+        expired.ask_initiated_at =
+            crate::vault::members::unix_now_pub().saturating_sub(31 * 24 * 3600);
+        expired.window_until =
+            crate::vault::members::unix_now_pub().saturating_sub(24 * 3600);
         let contest_file = path.join("meta/contests/ownership-claim.json");
         std::fs::write(&contest_file, serde_json::to_vec(&expired).unwrap()).unwrap();
         handle.ownership_claim(claimant.id).unwrap();
@@ -627,6 +632,84 @@ mod tests {
             Some(claimant.id)
         );
         assert!(!contest_file.exists());
+    }
+
+    /// A hand-written contest record (ids and timestamps alone, no
+    /// embedded approvals) never executes: the elapsed window is not
+    /// proof — the record must carry what the gate collected.
+    #[test]
+    fn ownership_claim_refuses_forged_contest_record() {
+        let (_temp, mut handle, _pw) = family_vault();
+        setup_family_vault(&mut handle).unwrap();
+        let path = handle.path.clone();
+        let claimant = crate::vault::members::MemberFile {
+            id: uuid::Uuid::new_v4(),
+            display_name: "Dad".into(),
+            email: None,
+            role: crate::vault::members::MemberRole::Admin,
+            trust: crate::vault::members::TrustLevel::Verified,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            removed_reason: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        crate::vault::members::write_member(&path, &claimant).unwrap();
+        let founder_id = crate::vault::members::owner_member_id(&path).unwrap();
+        std::fs::remove_file(
+            path.join("meta/members")
+                .join(founder_id.to_string())
+                .join("devices")
+                .join(format!("{}.json", handle.device_id)),
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            &path,
+            &crate::vault::members::DeviceBinding {
+                device_id: handle.device_id,
+                member_id: claimant.id,
+            },
+        )
+        .unwrap();
+
+        // Forge the record directly: window "elapsed", no approvals,
+        // no gate ever ran.
+        let now = crate::vault::members::unix_now_pub();
+        let forged = serde_json::json!({
+            "format": "baluard.ownership-contest.v1",
+            "old_owner_id": founder_id.to_string(),
+            "new_owner_id": claimant.id.to_string(),
+            "confirmed_at": now - 100,
+            "window_until": now - 1,
+            "approvals": [],
+        });
+        std::fs::create_dir_all(path.join("meta/contests")).unwrap();
+        let contest_file = path.join("meta/contests/ownership-claim.json");
+        std::fs::write(&contest_file, forged.to_string()).unwrap();
+
+        let err = handle
+            .ownership_claim(claimant.id)
+            .expect_err("a forged contest record must never execute");
+        // The forged record fails verification, is consumed, and the
+        // claim falls through to a fresh gated arm — ownership never
+        // moved.
+        assert!(
+            err.to_string()
+                .contains("confirmed but not executed"),
+            "{err}"
+        );
+        assert_ne!(
+            crate::vault::members::owner_member_id(&path),
+            Some(claimant.id),
+            "ownership unchanged"
+        );
+        let rearmed = crate::vault::members::load_ownership_contest(&path)
+            .expect("fresh gated record replaced the forged one");
+        assert!(!rearmed.params_digest.is_empty());
     }
 
     #[test]

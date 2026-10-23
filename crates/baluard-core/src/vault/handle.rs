@@ -216,6 +216,18 @@ pub struct MemberRemovalReport {
     pub transport_usernames: Vec<String>,
 }
 
+/// Signatures collected by a satisfied quorum gate, plus the ask
+/// identity they signed — what a durable authorization record (the
+/// ownership contest) must carry and re-verify at execution.
+pub(crate) struct QuorumGrant {
+    pub entries: Vec<crate::vault::approvals::ApprovalEntry>,
+    pub params_digest: String,
+    pub nonce: String,
+    pub ask_initiated_at: u64,
+}
+
+
+
 impl VaultHandle {
     /// Open a vault from disk (locked state).
     /// Reads metadata files but does NOT decrypt anything.
@@ -409,6 +421,19 @@ impl VaultHandle {
     /// sync row, so every admin device sees the ask on its next pull.
     fn quorum_gate(&self, kind: &str, params: &serde_json::Value) -> Result<(), BaluardError> {
         let required = self.get_settings()?.quorum_admin_ops.unwrap_or(1).max(1);
+        self.run_approval_gate(kind, params, required).map(|_| ())
+    }
+
+    /// Gate variant that hands back the collected signatures, for ops
+    /// whose authorization must outlive the consumed record (the
+    /// ownership-contest record carries its approvals and re-verifies
+    /// them at execution).
+    pub(crate) fn quorum_gate_grant(
+        &self,
+        kind: &str,
+        params: &serde_json::Value,
+    ) -> Result<QuorumGrant, BaluardError> {
+        let required = self.get_settings()?.quorum_admin_ops.unwrap_or(1).max(1);
         self.run_approval_gate(kind, params, required)
     }
 
@@ -423,7 +448,9 @@ impl VaultHandle {
         let required = if !members_dir.exists() {
             1
         } else {
-            crate::vault::members::list_members(&self.path)?
+            // Strict roster: a damaged admin row must fail the gate, not
+            // shrink the threshold to 1.
+            crate::vault::members::list_members_strict(&self.path)?
                 .iter()
                 .filter(|m| {
                     m.reset.is_none()
@@ -437,7 +464,7 @@ impl VaultHandle {
                 .count()
                 .clamp(1, 2) as u8
         };
-        self.run_approval_gate(kind, params, required)
+        self.run_approval_gate(kind, params, required).map(|_| ())
     }
 
     /// Shared ask/approve machinery. `required` is the threshold for
@@ -448,7 +475,22 @@ impl VaultHandle {
         kind: &str,
         params: &serde_json::Value,
         required: u8,
-    ) -> Result<(), BaluardError> {
+    ) -> Result<QuorumGrant, BaluardError> {
+        // Replay hardening: the ask digest folds in a fingerprint of the
+        // state the op will mutate, so an executed op's harvested
+        // signatures die with the prestate — a restored record + deleted
+        // tombstone cannot re-approve an ask whose prestate moved.
+        let gate_params = match self.approval_prestate(kind, params) {
+            Some(pre) => {
+                let mut gp = params.clone();
+                gp["__prestate"] = pre;
+                gp
+            }
+            None => params.clone(),
+        };
+        let params = &gate_params;
+        let gate_digest = self.gate_digest(kind, params);
+        let now0 = crate::vault::collections::now_secs_pub();
         // The role gate runs at EVERY threshold: the required<=1 early
         // return used to skip it, which made root rotation (via the new
         // space.rotate_root surface) available to any unlocked session at
@@ -457,9 +499,14 @@ impl VaultHandle {
         // means the founding device is the admin by construction.
         if !self.path.join(crate::vault::members::MEMBERS_DIR).exists() {
             if required <= 1 {
-                crate::vault::approvals::consume_matching(&self.path, kind, params);
+                crate::vault::approvals::consume_matching(&self.path, kind, params)?;
             }
-            return Ok(());
+            return Ok(QuorumGrant {
+                entries: Vec::new(),
+                params_digest: gate_digest,
+                nonce: String::new(),
+                ask_initiated_at: now0,
+            });
         }
         let is_admin = matches!(
             crate::vault::members::member_role_for_device(&self.path, self.device_id),
@@ -473,8 +520,18 @@ impl VaultHandle {
         }
         if required <= 1 {
             // The knob dropped below the ask: nothing stays pending.
-            crate::vault::approvals::consume_matching(&self.path, kind, params);
-            return Ok(());
+            // The grant still carries a fresh nonce and the gate digest,
+            // so downstream durable records (the ownership contest) are
+            // distinguishable per arm even with no signatures inside.
+            crate::vault::approvals::consume_matching(&self.path, kind, params)?;
+            let mut nb = [0u8; 16];
+            rand::Rng::fill(&mut rand::rngs::OsRng, &mut nb);
+            return Ok(QuorumGrant {
+                entries: Vec::new(),
+                params_digest: gate_digest,
+                nonce: hex::encode(nb),
+                ask_initiated_at: now0,
+            });
         }
         let Some(member_id) =
             crate::vault::members::member_id_for_device(&self.path, self.device_id)
@@ -487,22 +544,17 @@ impl VaultHandle {
         // hand-written record cannot forge it (post-commit review
         // round): the gate counts only entries whose signature
         // verifies against the approver's member row.
-        let digest = crate::vault::approvals::op_digest(kind, params);
+        let digest = gate_digest;
         let now = crate::vault::collections::now_secs_pub();
-        // Confirming an existing ask signs ITS ask timestamp; raising a
-        // fresh one signs now. A stale ask is consumed first, so the
-        // call re-raises as a fresh initiator. The message binds the
-        // vault and the timestamp, so a signature harvested from git
-        // history cannot be replayed onto a fresh ask or into another
-        // Space.
         let existing = crate::vault::approvals::list_pending(&self.path)
             .into_iter()
             .find(|p| p.kind == kind && p.params_digest == digest);
+        let prior_entries = existing
+            .as_ref()
+            .map(|op| op.approvals.clone())
+            .unwrap_or_default();
         let (ask_time, stale) = match existing.as_ref() {
-            Some(op)
-                if now.saturating_sub(op.initiated_at)
-                    >= crate::vault::approvals::APPROVAL_STALE_SECS =>
-            {
+            Some(op) if crate::vault::approvals::ask_is_stale(op.initiated_at, now) => {
                 (now, true)
             }
             Some(op) => (op.initiated_at, false),
@@ -521,7 +573,7 @@ impl VaultHandle {
             }
         };
         if stale {
-            crate::vault::approvals::consume_matching(&self.path, kind, params);
+            crate::vault::approvals::consume_matching(&self.path, kind, params)?;
         }
         let identity = self.identity().ok_or_else(|| {
             VaultError::InvalidOperation(
@@ -593,6 +645,7 @@ impl VaultHandle {
             )
             .into());
         }
+        let entry_sig_for_grant = entry.sig.clone();
         match crate::vault::approvals::present(
             &self.path,
             kind,
@@ -601,8 +654,20 @@ impl VaultHandle {
             required,
             now,
             &verify_entry,
-        ) {
-            crate::vault::approvals::ApprovalOutcome::Approved => Ok(()),
+        )? {
+            crate::vault::approvals::ApprovalOutcome::Approved => {
+                let mut entries = prior_entries;
+                entries.push(crate::vault::approvals::ApprovalEntry {
+                    member: member_id,
+                    sig: entry_sig_for_grant,
+                });
+                Ok(QuorumGrant {
+                    entries,
+                    params_digest: digest,
+                    nonce: ask_nonce,
+                    ask_initiated_at: ask_time,
+                })
+            }
             crate::vault::approvals::ApprovalOutcome::Pending => {
                 Err(VaultError::InvalidOperation(format!(
                     "this change needs {required} admin approvals before it runs — ask another admin to confirm the same change"
@@ -621,6 +686,96 @@ impl VaultHandle {
                 )
                 .into())
             }
+        }
+    }
+
+    /// The ask digest the gate stores: op params folded with the
+    /// prestate fingerprint. Every site that must agree with a stored
+    /// record's digest (supersession keep-digests, confirmer matching)
+    /// goes through this, never raw op_digest.
+    fn gate_digest(&self, kind: &str, params: &serde_json::Value) -> String {
+        match self.approval_prestate(kind, params) {
+            Some(pre) => {
+                let mut gp = params.clone();
+                gp["__prestate"] = pre;
+                crate::vault::approvals::op_digest(kind, &gp)
+            }
+            None => crate::vault::approvals::op_digest(kind, params),
+        }
+    }
+
+    /// Fingerprint of the state a gated op will mutate, folded into the
+    /// ask digest. An executed op moves its own prestate, so the
+    /// harvested signatures on its consumed record can never re-approve
+    /// it — the restored-record replay dies on the digest mismatch.
+    /// Kinds without a meaningful prestate return None and keep the
+    /// params-only digest.
+    fn approval_prestate(
+        &self,
+        kind: &str,
+        params: &serde_json::Value,
+    ) -> Option<serde_json::Value> {
+        let member_state = |id: &Uuid| -> Option<serde_json::Value> {
+            crate::vault::members::member_file_by_id(&self.path, *id).map(|row| {
+                serde_json::json!({
+                    "role": row.role,
+                    "gone": row.reset.is_some() || row.removed.is_some(),
+                })
+            })
+        };
+        match kind {
+            "member_role" | "member_reset" | "member_remove" => {
+                let id = Uuid::parse_str(params.get("member_id")?.as_str()?).ok()?;
+                Some(member_state(&id)?)
+            }
+            "transfer_ownership" => {
+                let new_member_id =
+                    Uuid::parse_str(params.get("new_member_id")?.as_str()?).ok()?;
+                Some(serde_json::json!({
+                    "owner": crate::vault::members::owner_member_id(&self.path),
+                    "target": member_state(&new_member_id)?,
+                }))
+            }
+            "ownership_claim" => {
+                let new_owner_id =
+                    Uuid::parse_str(params.get("new_owner_id")?.as_str()?).ok()?;
+                Some(serde_json::json!({
+                    "owner": crate::vault::members::owner_member_id(&self.path),
+                    "target": member_state(&new_owner_id)?,
+                }))
+            }
+            "device_revoke" => {
+                // Binding-derived, synced-source only: the registry json
+                // diverges across devices (the device-state.json dual
+                // source), so a fleet fingerprint would make the two
+                // admins compute different digests for the same ask.
+                let dev = Uuid::parse_str(params.get("device_id")?.as_str()?).ok()?;
+                let holder = crate::vault::members::member_id_for_device(&self.path, dev);
+                let bound = holder
+                    .and_then(|m| {
+                        crate::vault::members::list_device_bindings(&self.path, m)
+                            .into_iter()
+                            .find(|b| b.device_id == dev)
+                            .map(|_| m)
+                    })
+                    .and_then(|m| crate::vault::members::member_file_by_id(&self.path, m))
+                    .map(|row| {
+                        serde_json::json!({
+                            "bound": true,
+                            "gone": row.reset.is_some() || row.removed.is_some(),
+                        })
+                    })
+                    .unwrap_or(serde_json::json!({"bound": false}));
+                Some(serde_json::json!({ "device": bound }))
+            }
+            "rotate_root_key" => Some(serde_json::json!({
+                "epoch": self.device_manager.current_epoch(),
+            })),
+            "quorum_lower" | "quorum_raise" => Some(serde_json::json!({
+                "knob": self.get_settings().ok()?.quorum_admin_ops,
+                "epoch": self.device_manager.current_epoch(),
+            })),
+            _ => None,
         }
     }
 
@@ -3593,13 +3748,17 @@ impl VaultHandle {
         // activity.enc history on the next load.
         let mut activity = self.load_activity_enc()?;
         for id in member_ids {
+            // Groups BEFORE the roster tombstone: the strict prune fails
+            // closed on a damaged group, and running it first means a
+            // failure never strands a half-removed member whose retry
+            // path would see the row already gone.
+            crate::vault::groups::prune_member(&self.path, self.unlocked().sgk()?, id)?;
             let devices = crate::vault::members::remove_member(&self.path, *id, reason)?;
             removed_members.push(*id);
             // S4-2 (review F3): group memberships die with the removal —
             // each affected group's GK rotates while the CURRENT SGK is
             // still held, so the removed member's gkwrap opens nothing
             // going forward.
-            crate::vault::groups::prune_member(&self.path, self.unlocked().sgk()?, id)?;
             // S3-7a: the removed member's identity-keyed wrap dies with
             // the tombstone (same semantics as the collection wraps).
             let _ = crate::vault::space_meta::remove_space_wrap(&self.path, id);
@@ -3726,8 +3885,8 @@ impl VaultHandle {
             crate::vault::approvals::consume_other_of_kind(
                 &self.path,
                 "transfer_ownership",
-                &crate::vault::approvals::op_digest("transfer_ownership", &params),
-            );
+                &self.gate_digest("transfer_ownership", &params),
+            )?;
             self.quorum_gate("transfer_ownership", &params)?;
         } else {
             // Confirmer path (review round): the house quorum pattern is
@@ -3749,7 +3908,7 @@ impl VaultHandle {
                 )
                 .into());
             }
-            let digest = crate::vault::approvals::op_digest("transfer_ownership", &params);
+            let digest = self.gate_digest("transfer_ownership", &params);
             let matching = crate::vault::approvals::list_pending(&self.path)
                 .iter()
                 .any(|p| p.kind == "transfer_ownership" && p.params_digest == digest);
@@ -3800,6 +3959,99 @@ impl VaultHandle {
         let m = if mp < 10 { mp + 3 } else { mp - 9 };
         let y = if m <= 2 { y + 1 } else { y };
         format!("{y:04}-{m:02}-{d:02}")
+    }
+
+    /// Re-verify a contest record's embedded approvals against the
+    /// live roster, live threshold, and this exact ask. The record file
+    /// rides an Admin-writable directory, so only the signatures make
+    /// it proof; ids and timestamps are decoration.
+    fn verify_contest_approvals(
+        &self,
+        record: &crate::vault::members::OwnershipContest,
+        ask: &serde_json::Value,
+    ) -> Result<(), BaluardError> {
+        let required = self.get_settings()?.quorum_admin_ops.unwrap_or(1).max(1);
+        let deny = |why: &str| {
+            BaluardError::from(VaultError::InvalidOperation(format!(
+                "the contest record does not prove this claim ({why}); re-run the claim to re-confirm it"
+            )))
+        };
+        // The digest is computed over the gate params — the ask plus the
+        // prestate fingerprint — exactly as the arm-time gate did.
+        let mut gate_ask = ask.clone();
+        if let Some(pre) = self.approval_prestate("ownership_claim", ask) {
+            gate_ask["__prestate"] = pre;
+        }
+        let digest = crate::vault::approvals::op_digest("ownership_claim", &gate_ask);
+        if record.params_digest != digest {
+            return Err(deny("the ask has changed since the record was written"));
+        }
+        // The window derives from the gate's signed ask time: a restored
+        // record with a tampered window_until never executes.
+        let ask_time = if record.ask_initiated_at != 0 {
+            record.ask_initiated_at
+        } else {
+            record.confirmed_at
+        };
+        if record.window_until
+            != ask_time.saturating_add(crate::vault::members::OWNERSHIP_CONTEST_WINDOW_SECS)
+        {
+            return Err(deny("the recorded window does not match the confirmed ask"));
+        }
+        // Below the two-admin knob the gate collected no signatures at
+        // arm time; the digest match above still proves a real gate run
+        // wrote the record, and the window plus the owner's cancel are
+        // the documented control there (quorum 2 is the cryptographic
+        // one).
+        if required <= 1 {
+            return Ok(());
+        }
+        let msg = crate::vault::approvals::approval_message(
+            "ownership_claim",
+            &record.params_digest,
+            self.vault_id,
+            record.ask_initiated_at,
+            &record.nonce,
+        );
+        let mut distinct = std::collections::HashSet::new();
+        for entry in &record.approvals {
+            let Some(row) = crate::vault::members::member_file_by_id(&self.path, entry.member)
+            else {
+                continue;
+            };
+            if !matches!(
+                row.role,
+                crate::vault::members::MemberRole::Owner | crate::vault::members::MemberRole::Admin
+            ) || row.reset.is_some()
+                || row.removed.is_some()
+            {
+                continue;
+            }
+            let Some(pub_hex) = row.identity_signing_pubkey.as_deref() else {
+                continue;
+            };
+            let (Ok(pk_bytes), Ok(sig_bytes)) = (hex::decode(pub_hex), hex::decode(&entry.sig))
+            else {
+                continue;
+            };
+            let (Ok(pk_arr), Ok(sig_arr)) = (
+                <[u8; 32]>::try_from(pk_bytes.as_slice()),
+                <[u8; 64]>::try_from(sig_bytes.as_slice()),
+            ) else {
+                continue;
+            };
+            let Ok(pk) = crate::crypto::signature::verifying_key_from_bytes(&pk_arr) else {
+                continue;
+            };
+            let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+            if crate::crypto::signature::verify(&pk, &msg, &sig).is_ok() {
+                distinct.insert(entry.member);
+            }
+        }
+        if distinct.len() < required as usize {
+            return Err(deny("too few live admin signatures verify"));
+        }
+        Ok(())
     }
 
     pub fn ownership_claim(&mut self, new_owner_id: uuid::Uuid) -> Result<(), BaluardError> {
@@ -3864,23 +4116,37 @@ impl VaultHandle {
                 old_member_id,
                 new_owner_id,
             ) {
-                // The elapsed record is durable proof the quorum gate
-                // was satisfied for this exact ask - no second gate.
-                crate::vault::members::consume_ownership_contest(&self.path);
-                crate::vault::members::commit_ownership_swap(
-                    &self.path,
-                    old_member_id,
-                    new_owner_id,
-                )?;
-                self.emit_share_event(
-                    crate::vault::events::ShareEventKind::OwnershipClaimed,
-                    format!(
-                        "ownership claimed from member {old_member_id} by member {new_owner_id} after the contest window opened {} (confirmed {}); every device sees this on its next sync",
-                        Self::iso_date_utc(record.window_until),
-                        Self::iso_date_utc(record.confirmed_at),
-                    ),
-                );
-                return Ok(());
+                // The elapsed record must still PROVE the gate: its
+                // embedded signatures re-verify against the live member
+                // rows and the live threshold, over this exact ask. A
+                // hand-written or legacy record (ids and timestamps
+                // alone) never executes. A FAILED verification consumes
+                // the record and falls through to the gated re-arm —
+                // refusing outright would wedge the claim on the very
+                // record that is broken.
+                let ask = serde_json::json!({
+                    "new_owner_id": new_owner_id,
+                    "old_owner_id": old_member_id,
+                });
+                if self.verify_contest_approvals(&record, &ask).is_err() {
+                    crate::vault::members::consume_ownership_contest(&self.path);
+                } else {
+                    crate::vault::members::consume_ownership_contest(&self.path);
+                    crate::vault::members::commit_ownership_swap(
+                        &self.path,
+                        old_member_id,
+                        new_owner_id,
+                    )?;
+                    self.emit_share_event(
+                        crate::vault::events::ShareEventKind::OwnershipClaimed,
+                        format!(
+                            "ownership claimed from member {old_member_id} by member {new_owner_id} after the contest window opened {} (confirmed {}); every device sees this on its next sync",
+                            Self::iso_date_utc(record.window_until),
+                            Self::iso_date_utc(record.confirmed_at),
+                        ),
+                    );
+                    return Ok(());
+                }
             } else if let Some(pending) = crate::vault::members::load_ownership_contest(&self.path)
             {
                 if pending.old_owner_id == old_member_id && pending.new_owner_id == new_owner_id {
@@ -3897,7 +4163,7 @@ impl VaultHandle {
                 // fresh (gated) claim supersede it.
             }
             let record = {
-                self.quorum_gate(
+                let grant = self.quorum_gate_grant(
                     "ownership_claim",
                     &serde_json::json!({
                         "new_owner_id": new_owner_id,
@@ -3908,6 +4174,10 @@ impl VaultHandle {
                     &self.path,
                     old_member_id,
                     new_owner_id,
+                    grant.entries,
+                    grant.params_digest,
+                    grant.nonce,
+                    grant.ask_initiated_at,
                 )?
             };
             self.emit_share_event(
@@ -15169,8 +15439,13 @@ mod tests {
         let owner_id = crate::vault::members::owner_member_id(dir.path()).unwrap();
 
         // Hand-written record: the owner's member id with a garbage
-        // signature, format 2 so it parses.
-        let digest = crate::vault::approvals::op_digest("rotate_root_key", &serde_json::json!({}));
+        // signature, format 2 so it parses. The digest folds in the
+        // gate's prestate fingerprint exactly as a raised ask does.
+        let mut gate_params = serde_json::json!({});
+        if let Some(pre) = handle.approval_prestate("rotate_root_key", &serde_json::json!({})) {
+            gate_params["__prestate"] = pre;
+        }
+        let digest = crate::vault::approvals::op_digest("rotate_root_key", &gate_params);
         let forged = serde_json::json!({
             "format": 2,
             "kind": "rotate_root_key",
