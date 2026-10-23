@@ -330,6 +330,17 @@ pub fn take_latest_observation() -> Option<(String, ObservedHostKey)> {
     Some((id, p.observed))
 }
 
+/// The most recent live observation, cloned (NOT drained): error surfaces
+/// need the fingerprint + attempt id to decorate failures, but the trust
+/// route consumes the observation by id afterwards.
+pub fn peek_latest_observation() -> Option<(String, ObservedHostKey)> {
+    let mut pending = pending_observations().lock().expect("pending lock");
+    let now = std::time::Instant::now();
+    pending.retain(|(_, p)| now.duration_since(p.at).as_secs() < OBSERVATION_TTL_SECS);
+    let (id, p) = pending.last()?;
+    Some((id.clone(), p.observed.clone()))
+}
+
 /// `SHA256:<base64-nopad>` fingerprint of the raw key bytes, the display form
 /// `ssh-keygen -lf` prints.
 pub fn fingerprint(key: &[u8]) -> String {

@@ -131,11 +131,18 @@ fn base_cmd(tmp: &TempDir) -> CliCommand {
 /// lifetime. The guard is built before the wait loop: a timeout or an early
 /// daemon crash drops the guard, which kills the child (no orphans).
 fn spawn_daemon(tmp: TempDir) -> DaemonGuard {
+    spawn_daemon_with(tmp, None)
+}
+
+/// `home` redirects $HOME for the daemon so $HOME/.ssh/known_hosts lands in
+/// a scratch dir (the SSH hostkey-trust flow must not touch the runner's
+/// real file).
+fn spawn_daemon_with(tmp: TempDir, home: Option<&std::path::Path>) -> DaemonGuard {
     let vault = tmp.path().join("vault");
     let socket = tmp.path().join("d.sock");
     std::fs::create_dir_all(tmp.path().join("data")).expect("data dir");
-    let child = Command::new(daemon_bin())
-        .arg("--socket")
+    let mut cmd = Command::new(daemon_bin());
+    cmd.arg("--socket")
         .arg(&socket)
         .arg("--vault-path")
         .arg(&vault)
@@ -146,9 +153,11 @@ fn spawn_daemon(tmp: TempDir) -> DaemonGuard {
         .env("BALUARD_DAEMON_DIE_WITH_PARENT", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .current_dir(tmp.path())
-        .spawn()
-        .expect("spawn baluard-daemon");
+        .current_dir(tmp.path());
+    if let Some(home) = home {
+        cmd.env("HOME", home);
+    }
+    let child = cmd.spawn().expect("spawn baluard-daemon");
 
     let mut guard = DaemonGuard {
         child,
@@ -749,6 +758,215 @@ impl Drop for GitServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+struct SshServerGuard {
+    child: std::process::Child,
+    dir: tempfile::TempDir,
+}
+
+impl Drop for SshServerGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// A user-mode sshd on loopback serving one bare repo. sshd cannot switch
+/// users without root, so sessions run as the invoking user; the URL carries
+/// that username explicitly. Returns (guard, url, client key path).
+fn spawn_ssh_server() -> (SshServerGuard, String, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("ssh server tmp");
+    for name in ["hostkey", "clientkey"] {
+        let ok = std::process::Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+            .arg(dir.path().join(name))
+            .status()
+            .expect("ssh-keygen must be on PATH");
+        assert!(ok.success(), "{name} generation failed");
+    }
+    std::fs::copy(
+        dir.path().join("clientkey.pub"),
+        dir.path().join("authorized_keys"),
+    )
+    .expect("pub key copy");
+
+    let repo = dir.path().join("repo.git");
+    let ok = std::process::Command::new("git")
+        .args(["init", "--bare", "-b", "main"])
+        .arg(&repo)
+        .status()
+        .expect("git must be on PATH");
+    assert!(ok.success(), "bare repo init failed");
+
+    let port = 21000 + (std::process::id() % 8000) as u16;
+    std::fs::write(
+        dir.path().join("sshd_config"),
+        format!(
+            "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nAuthorizedKeysFile {}\nPidFile {}\nUsePAM no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nStrictModes no\nLogLevel QUIET\n",
+            dir.path().join("hostkey").display(),
+            dir.path().join("authorized_keys").display(),
+            dir.path().join("sshd.pid").display(),
+        ),
+    )
+    .expect("sshd config write");
+
+    let child = std::process::Command::new("/usr/sbin/sshd")
+        .args(["-D", "-e", "-f"])
+        .arg(dir.path().join("sshd_config"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("/usr/sbin/sshd must exist");
+    let mut up = false;
+    for _ in 0..40 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            up = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert!(up, "sshd never listened on {port}");
+
+    let user = std::env::var("USER").unwrap_or_else(|_| {
+        String::from_utf8(
+            std::process::Command::new("id")
+                .arg("-un")
+                .output()
+                .expect("id")
+                .stdout,
+        )
+        .expect("utf8")
+        .trim()
+        .to_string()
+    });
+    let url = format!("ssh://{user}@127.0.0.1:{port}{}", repo.display());
+    let client_key = dir.path().join("clientkey");
+    (SshServerGuard { child, dir }, url, client_key)
+}
+
+/// The SSH trust lifecycle against a live sshd: untrusted-host probe names
+/// the fingerprint and the trust command, trusting by attempt id writes the
+/// host entry, and a key-authenticated push/pull completes the journey.
+#[test]
+fn e2e_ssh_custom_remote_trust_push() {
+    let (server, url, client_key) = spawn_ssh_server();
+    let tmp = tempfile::tempdir().expect("tmp");
+    let home = tempfile::tempdir().expect("home tmp");
+    let guard = spawn_daemon_with(tmp, Some(home.path()));
+    let home_path = home.path().to_path_buf();
+
+    // Base CLI env plus the scratch HOME (known_hosts must not touch the
+    // runner's real ~/.ssh).
+    let mut cmd = |args: &[&str]| {
+        baluard_daemon(&guard)
+            .env("HOME", &home_path)
+            .args(args)
+            .output()
+            .expect("run baluard")
+    };
+
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .arg(guard._tmp.path().join("vault"))
+        .status()
+        .expect("git init");
+
+    let out = cmd(&["init", "--slug", "ssht", "--json"]);
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = cmd(&["vaults", "switch", "baluard-ssht"]);
+    assert!(
+        out.status.success(),
+        "switch failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = cmd(&["unlock"]);
+    assert!(
+        out.status.success(),
+        "unlock failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // 1) First contact is refused with the fingerprint + trust command.
+    let url_for_probe = url.clone();
+    let out = baluard_daemon(&guard)
+        .env("HOME", &home_path)
+        .args(["git-probe", &url_for_probe, "--key-file"])
+        .arg(&client_key)
+        .output()
+        .expect("probe");
+    let probe_out = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success(),
+        "probe should fail untrusted: {probe_out}"
+    );
+    assert!(
+        probe_out.contains("Fingerprint: SHA256:"),
+        "no fingerprint: {probe_out}"
+    );
+    let aid: String = probe_out
+        .split("git-trust ")
+        .nth(1)
+        .map(|rest| rest.trim().to_string())
+        .expect("trust command printed");
+    assert!(!aid.is_empty(), "empty attempt id");
+
+    // 2) Trusting the observed key succeeds and names the host.
+    let out = cmd(&["git-trust", &aid]);
+    let trust_out = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "trust failed: {trust_out}");
+    assert!(
+        trust_out.contains("Host key trusted: 127.0.0.1"),
+        "{trust_out}"
+    );
+
+    // 3) The trusted host accepts the key: store credentials, wire the
+    // remote, push, pull.
+    let out = baluard_daemon(&guard)
+        .env("HOME", &home_path)
+        .args(["credentials", "set", "--host", "127.0.0.1", "--key-file"])
+        .arg(&client_key)
+        .output()
+        .expect("credentials set");
+    assert!(
+        out.status.success(),
+        "credentials set failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let out = cmd(&["sync", "remote", &url]);
+    assert!(
+        out.status.success(),
+        "sync remote failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let out = cmd(&["sync", "push"]);
+    assert!(
+        out.status.success(),
+        "push failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("pushed to origin"),
+        "no push confirmation"
+    );
+
+    let out = cmd(&["sync", "pull"]);
+    assert!(
+        out.status.success(),
+        "pull failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // 4) The trust entry landed in the scratch HOME, never the runner's.
+    let kh =
+        std::fs::read_to_string(home.path().join(".ssh/known_hosts")).expect("known_hosts written");
+    assert!(kh.contains("127.0.0.1"), "{kh}");
 }
 
 /// Spawn the python HTTPS git server (e2e/git-server/http-git-server.py)
