@@ -526,6 +526,11 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 3. **Metadata leakage via bucket sizes**: Standard logins mapped to 5KB, notes to 30KB/100KB, attachments to 250KB/2MB.
 4. **Offline sharing limitation**: Invites and revokes require push to remote git host.
 5. **Sync routed through daemon**: All sync commands default to daemon with `--direct` fallback.
+6. **Windows desktop IPC is stubbed**: the Tauri crate's non-unix `send_request_with_token` returns "IPC not yet implemented" (named-pipe transport is parked future work), so Windows desktop builds launch but cannot reach the daemon; the CLI/daemon pair is Unix-socket-only. Re-audited 2026-10-23 against the `cfg(not(unix))` stub. The 1.0 release must not publish Windows bundles as supported until this closes.
+7. **Custom Git servers get no forge automation**: with an own URL, repository creation, clone-seat grants, and member removal all happen on the server by hand; Baluard never talks to a custom host's API. The desktop/mobile wizards say so in the flow.
+8. **Changed SSH host keys are never one-click trustable** (structural): a same-type key change records a warning observation the trust route refuses; recovery means removing the old line from known_hosts by hand. Re-audited 2026-10-23 against the changed-flag gate.
+
+> The five original entries re-verified 2026-10-23: pull-bound revocation, out-of-band git credentials, the 5KB/30KB/100KB/250KB/2MB bucket ladder (types.rs), push-required invites/revokes, and daemon-first sync all still hold as written.
 
 ---
 
