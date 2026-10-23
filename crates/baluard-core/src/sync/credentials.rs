@@ -305,118 +305,128 @@ thread_local! {
     static LAST_AUTH_URL: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
+/// One credentials-callback attempt, extracted from build_callbacks: libgit2
+/// consumes the closure, so the per-type attempt caps and the host-bound
+/// token release are only unit-testable as a plain function.
+#[cfg(feature = "git-sync")]
+fn credentials_attempt(
+    cfg: &CredentialConfig,
+    url: &str,
+    username_from_url: Option<&str>,
+    allowed_types: git2::CredentialType,
+    ssh_attempts: &std::cell::Cell<u32>,
+    userpass_attempts: &std::cell::Cell<u32>,
+) -> Result<Cred, git2::Error> {
+    const MAX_ATTEMPTS: u32 = 3;
+    LAST_AUTH_URL.with(|u| *u.borrow_mut() = url.to_string());
+
+    let user = username_from_url
+        .or(cfg.username.as_deref())
+        .unwrap_or("git");
+
+    if allowed_types.contains(CredentialType::USERNAME) {
+        return Cred::username(user);
+    }
+
+    if allowed_types.contains(CredentialType::SSH_KEY) {
+        if ssh_attempts.get() >= MAX_ATTEMPTS {
+            return Err(git2::Error::from_str(
+                "SSH authentication failed too many times",
+            ));
+        }
+        ssh_attempts.set(ssh_attempts.get() + 1);
+        let pem: Option<zeroize::Zeroizing<String>> = cfg
+            .ssh_key_pem
+            .as_ref()
+            .map(|s| zeroize::Zeroizing::new(s.expose_secret().to_string()))
+            .or_else(|| {
+                cfg.ssh_key_path
+                    .as_ref()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .map(zeroize::Zeroizing::new)
+            });
+        if let Some(pem) = pem {
+            if let Ok(cred) = Cred::ssh_key_from_memory(
+                user,
+                None,
+                pem.as_str(),
+                cfg.ssh_passphrase.as_ref().map(|s| s.expose_secret()),
+            ) {
+                return Ok(cred);
+            }
+        } else if let Ok(cred) = Cred::ssh_key_from_agent(user) {
+            return Ok(cred);
+        }
+    }
+
+    if allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
+        if userpass_attempts.get() >= MAX_ATTEMPTS {
+            return Err(git2::Error::from_str(
+                "authentication failed too many times",
+            ));
+        }
+        userpass_attempts.set(userpass_attempts.get() + 1);
+        if let Some(ref token) = cfg.https_token {
+            let target_host = extract_host(url);
+            if let Some(ref allowed) = cfg.allowed_hosts {
+                if let Some(ref th) = target_host {
+                    if !allowed.iter().any(|h| h.eq_ignore_ascii_case(th)) {
+                        return Err(git2::Error::from_str(&format!(
+                            "refusing to send provider token to untrusted host: {th}"
+                        )));
+                    }
+                }
+            }
+            // Host-bound custom token: released only for its own host,
+            // so a server-side redirect can never capture it.
+            if let Some(ref bound) = cfg.bound_host {
+                match target_host.as_deref() {
+                    Some(th) if th.eq_ignore_ascii_case(bound) => {}
+                    _ => {
+                        return Err(git2::Error::from_str(&format!(
+                            "refusing to send the vault token to a different host: {bound} expected"
+                        )));
+                    }
+                }
+            }
+            let user = username_from_url
+                .map(|s| s.to_string())
+                .or_else(|| cfg.username.clone())
+                .unwrap_or_else(|| "git".to_string());
+            return Cred::userpass_plaintext(&user, token.expose_secret());
+        }
+    }
+
+    if allowed_types.contains(CredentialType::DEFAULT) {
+        return Cred::default();
+    }
+
+    Err(git2::Error::from_str("no credential source available"))
+}
+
 /// Build RemoteCallbacks with credential handling for both SSH and HTTPS.
 /// Strict known_hosts enforcement (M5) rides `certificate_check`; unknown
 /// SSH host keys are stashed as pending observations for the trust flow.
 #[cfg(feature = "git-sync")]
 pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
     crate::sync::tls::ensure_tls_roots();
-    let https_token = config.expose_token();
-    let allowed_hosts = config.allowed_hosts.clone();
-    let bound_host = config.bound_host.clone();
-    let username = config.username.clone();
-    let ssh_key_pem = config
-        .ssh_key_pem
-        .as_ref()
-        .map(|s| zeroize::Zeroizing::new(s.expose_secret().to_string()));
-    let ssh_key_path = config.ssh_key_path.clone();
-    let ssh_passphrase = config
-        .ssh_passphrase
-        .as_ref()
-        .map(|s| zeroize::Zeroizing::new(s.expose_secret().to_string()));
     let port_hint = config.port_hint;
     let mut callbacks = RemoteCallbacks::new();
     let ssh_attempts = std::cell::Cell::new(0u32);
     let userpass_attempts = std::cell::Cell::new(0u32);
 
+    let mut callbacks = RemoteCallbacks::new();
+    let ssh_attempts = std::cell::Cell::new(0u32);
+    let userpass_attempts = std::cell::Cell::new(0u32);
     callbacks.credentials(move |url, username_from_url, allowed_types| {
-        // libgit2 retries the callback after every failure; cap each auth
-        // type so a wrong key or token cannot loop forever.
-        const MAX_ATTEMPTS: u32 = 3;
-        LAST_AUTH_URL.with(|u| *u.borrow_mut() = url.to_string());
-
-        let user = username_from_url
-            .or(username.as_deref())
-            .unwrap_or("git");
-
-        if allowed_types.contains(CredentialType::USERNAME) {
-            return Cred::username(user);
-        }
-
-        if allowed_types.contains(CredentialType::SSH_KEY) {
-            if ssh_attempts.get() >= MAX_ATTEMPTS {
-                return Err(git2::Error::from_str(
-                    "SSH authentication failed too many times",
-                ));
-            }
-            ssh_attempts.set(ssh_attempts.get() + 1);
-            // Dedicated custom key first (never touches the agent), then the
-            // agent for provider-shaped flows.
-            let pem: Option<zeroize::Zeroizing<String>> = ssh_key_pem
-                .clone()
-                .or_else(|| {
-                    ssh_key_path
-                        .as_ref()
-                        .and_then(|p| std::fs::read_to_string(p).ok())
-                        .map(zeroize::Zeroizing::new)
-                });
-            if let Some(pem) = pem {
-                if let Ok(cred) = Cred::ssh_key_from_memory(
-                    user,
-                    None,
-                    pem.as_str(),
-                    ssh_passphrase.as_deref().map(|s| s.as_str()),
-                ) {
-                    return Ok(cred);
-                }
-            } else if let Ok(cred) = Cred::ssh_key_from_agent(user) {
-                return Ok(cred);
-            }
-        }
-
-        if allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
-            if userpass_attempts.get() >= MAX_ATTEMPTS {
-                return Err(git2::Error::from_str(
-                    "authentication failed too many times",
-                ));
-            }
-            userpass_attempts.set(userpass_attempts.get() + 1);
-            if let Some(ref token) = https_token {
-                let target_host = extract_host(url);
-                if let Some(ref allowed) = allowed_hosts {
-                    if let Some(ref th) = target_host {
-                        if !allowed.iter().any(|h| h.eq_ignore_ascii_case(th)) {
-                            return Err(git2::Error::from_str(&format!(
-                                "refusing to send provider token to untrusted host: {th}"
-                            )));
-                        }
-                    }
-                }
-                // Host-bound custom token: released only for its own host,
-                // so a server-side redirect can never capture it.
-                if let Some(ref bound) = bound_host {
-                    match target_host.as_deref() {
-                        Some(th) if th.eq_ignore_ascii_case(bound) => {}
-                        _ => {
-                            return Err(git2::Error::from_str(&format!(
-                                "refusing to send the vault token to a different host: {bound} expected"
-                            )));
-                        }
-                    }
-                }
-                let user = username_from_url
-                    .map(|s| s.to_string())
-                    .or_else(|| username.clone())
-                    .unwrap_or_else(|| "git".to_string());
-                return Cred::userpass_plaintext(&user, token.as_str());
-            }
-        }
-
-        if allowed_types.contains(CredentialType::DEFAULT) {
-            return Cred::default();
-        }
-
-        Err(git2::Error::from_str("no credential source available"))
+        credentials_attempt(
+            config,
+            url,
+            username_from_url,
+            allowed_types,
+            &ssh_attempts,
+            &userpass_attempts,
+        )
     });
 
     // M5 fix: enforce known_hosts for SSH connections, passthrough for HTTPS.
@@ -452,7 +462,7 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                 // daemon itself saw.
                 // Missing (no readable known_hosts yet) is the same trust
                 // situation as Unknown on a fresh machine: offer the key for
-                // the first-contact trust flow. Mismatch stays silent.
+                // the first-contact trust flow.
                 crate::sync::known_hosts::HostKeyResult::Unknown
                 | crate::sync::known_hosts::HostKeyResult::Missing => {
                     crate::sync::known_hosts::record_observation(
@@ -462,15 +472,31 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                             key_type: key_type.to_string(),
                             key: key.to_vec(),
                             fingerprint: crate::sync::known_hosts::fingerprint(key),
+                            changed: false,
                         },
                     );
                     Err(git2::Error::from_str(&format!(
                         "SSH host key for {host} is not trusted yet"
                     )))
                 }
-                crate::sync::known_hosts::HostKeyResult::Mismatch => Err(git2::Error::from_str(&format!(
-                    "SSH host key for {host} changed; if you are sure, remove the old line from your SSH known_hosts file"
-                ))),
+                // A changed key is recorded flagged so the surface can warn,
+                // but the trust route refuses changed observations — the key
+                // can never be blessed one-click.
+                crate::sync::known_hosts::HostKeyResult::Mismatch => {
+                    crate::sync::known_hosts::record_observation(
+                        crate::sync::known_hosts::ObservedHostKey {
+                            host: host.to_string(),
+                            port: obs_port,
+                            key_type: key_type.to_string(),
+                            key: key.to_vec(),
+                            fingerprint: crate::sync::known_hosts::fingerprint(key),
+                            changed: true,
+                        },
+                    );
+                    Err(git2::Error::from_str(&format!(
+                        "SSH host key for {host} changed; if you are sure, remove the old line from your SSH known_hosts file"
+                    )))
+                }
                 _ => Err(git2::Error::from_str(&format!(
                     "SSH host key for {host} not in known_hosts"
                 ))),
@@ -543,6 +569,7 @@ pub fn format_sync_error_for(err: &BaluardError, url: Option<&str>) -> String {
                 "port": obs.port,
                 "key_type": obs.key_type,
                 "fingerprint": obs.fingerprint,
+                "changed": obs.changed,
                 "attempt_id": attempt_id,
             }
         })
@@ -1008,6 +1035,7 @@ mod custom_remote_tests {
             key_type: "ssh-ed25519".into(),
             key: b"k".to_vec(),
             fingerprint: "SHA256:abc".into(),
+            changed: false,
         });
         let marker = format_sync_error(&err);
         let v: serde_json::Value = serde_json::from_str(&marker).expect("marker is JSON");
@@ -1022,6 +1050,73 @@ mod custom_remote_tests {
         assert!(crate::sync::known_hosts::take_observation(id).is_some());
     }
 
+    #[test]
+    fn attempt_cap_stops_the_credential_loop() {
+        // The deterministic failing shape: a tokenless USER_PASS request —
+        // every attempt errors ("no credential source available") until the
+        // budget is gone. (SSH legs can succeed via the box's ssh-agent, so
+        // their cap is transport-dependent; the counter logic is shared.)
+        let cfg = CredentialConfig::default();
+        let ssh = std::cell::Cell::new(0u32);
+        let up = std::cell::Cell::new(0u32);
+        let types = git2::CredentialType::USER_PASS_PLAINTEXT;
+        // libgit2 retries the callback after every failure; three failures
+        // exhaust the budget and the fourth call is refused up front.
+        for _ in 0..3 {
+            let Err(e) = credentials_attempt(&cfg, "ssh://git@h/x", None, types, &ssh, &up) else {
+                panic!("expected a failure while the budget lasts");
+            };
+            assert!(!e.message().contains("too many times"), "{e}");
+        }
+        let Err(e) = credentials_attempt(&cfg, "ssh://git@h/x", None, types, &ssh, &up) else {
+            panic!("expected the exhausted-budget refusal");
+        };
+        assert!(e.message().contains("too many times"), "{e}");
+    }
+
+    #[test]
+    fn bound_host_refuses_to_release_the_token_elsewhere() {
+        let cfg = CredentialConfig::in_memory(
+            Some("tok1".into()),
+            Some("alex".into()),
+            None,
+            None,
+            Some("git.example.com".into()),
+        );
+        let ssh = std::cell::Cell::new(0u32);
+        let up = std::cell::Cell::new(0u32);
+        let types = git2::CredentialType::USER_PASS_PLAINTEXT;
+        // Own host: released (Cred is not Debug, so judge by is_ok only).
+        assert!(matches!(
+            credentials_attempt(
+                &cfg,
+                "https://git.example.com/vault.git",
+                None,
+                types,
+                &ssh,
+                &up
+            ),
+            Ok(_)
+        ));
+        // Redirected host: refused with the bound message.
+        let Err(err) = credentials_attempt(
+            &cfg,
+            "https://attacker.com/vault.git",
+            None,
+            types,
+            &ssh,
+            &up,
+        ) else {
+            panic!("expected the bound-host refusal");
+        };
+        assert!(
+            err.message()
+                .contains("refusing to send the vault token to a different host"),
+            "{err}"
+        );
+    }
+
+    #[test]
     #[test]
     fn port_of_extracts_non_default_ports() {
         assert_eq!(port_of("ssh://git@git.example.com:2222/repo.git"), 2222);
