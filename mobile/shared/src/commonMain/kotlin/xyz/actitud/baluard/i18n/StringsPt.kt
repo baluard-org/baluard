@@ -363,6 +363,7 @@ internal val PT: Map<String, String> = mapOf(
     "settings.customProbe" to "Testar conexão",
     "settings.customProbeOk" to "Conexão OK.",
     "settings.customTrustAsk" to "A chave do servidor ainda não é confiável. Verifique a impressão e confirme.",
+    "settings.customTrustOtherType" to "Este servidor já tem uma chave de outro tipo registrada.",
     "settings.customTrustCta" to "Confiar nesta chave",
     "settings.customChangedTitle" to "A chave do servidor mudou",
     "settings.customChangedBody" to "A chave é diferente da que você confirmou antes. Se você tem certeza de que o servidor mudou e não é uma interceptação, apague a linha antiga deste servidor no seu arquivo known_hosts e teste a conexão novamente.",

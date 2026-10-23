@@ -529,14 +529,23 @@ fun SettingsScreen(
                                 gitCustomTrustJson?.let { trustJson ->
                                     val obj =
                                         Json.parseToJsonElement(trustJson) as? JsonObject
+                                    val inner =
+                                        obj?.get("host_key_untrusted") as? JsonObject
                                     val fp =
-                                        (obj?.get("host_key_untrusted") as? JsonObject)?.get("fingerprint")
-                                            ?: obj?.get("fingerprint")
+                                        inner?.get("fingerprint") ?: obj?.get("fingerprint")
                                     Text(
                                         fp?.toString() ?: trustJson,
                                         style = MaterialTheme.typography.bodySmall,
                                         modifier = Modifier.fillMaxWidth(),
                                     )
+                                    if (inner?.get("known_other_type")?.jsonPrimitive?.content == "true") {
+                                        Text(
+                                            t("settings.customTrustOtherType"),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    }
                                     TextButton(
                                         enabled = !gitBusy,
                                         onClick = {
