@@ -2064,12 +2064,11 @@ impl VaultState {
                     drop(cipher);
                     return handle.delete_cipher(id).map_err(|e| e.to_string());
                 }
+                // An empty list must stay an explicit Some: the core
+                // merge treats None as "keep existing credentials", so
+                // flattening it here would silently fail the delete.
                 let updated_data = baluard_core::types::LoginData {
-                    fido2_credentials: if fido2_list.is_empty() {
-                        None
-                    } else {
-                        Some(fido2_list)
-                    },
+                    fido2_credentials: Some(fido2_list),
                     ..data.clone()
                 };
                 let input = baluard_core::types::CipherInput {
@@ -4775,7 +4774,8 @@ impl VaultState {
     /// strips member keywraps at HEAD, but pre-flip members' keywraps in
     /// git history still unwrap the CURRENT root until a rotation bumps
     /// it — the flip surface prompts this immediately after a fresh flip.
-    /// Admin + quorum gates live in the core op.
+    /// Admin rank lives in the core op; the quorum gate lives in the
+    /// runtime caller (member_set_role / member_set_minor below).
     /// Family-spaces §5: set or clear the guardian-controlled minor
     /// flag on a live member row (admin-only, family vaults only).
     pub async fn member_set_minor(&self, payload: &str) -> Result<(), String> {
@@ -7859,6 +7859,10 @@ impl VaultState {
         let attach_id = req["attachment_id"]
             .as_str()
             .ok_or("missing attachment_id")?;
+        // Validate before any path use: the id later joins a filesystem
+        // path, and synced cipher meta is member-writable data.
+        let attach_uuid: uuid::Uuid =
+            attach_id.parse().map_err(|e| format!("invalid attachment_id: {e}"))?;
 
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
@@ -8601,6 +8605,25 @@ impl VaultState {
 pub type SharedVaultState = Arc<VaultState>;
 
 /// Serialize a decrypted cipher to JSON, matching the format returned by `get_cipher`.
+/// The nested kind mirrors the encrypted envelope shape, so it carries
+/// the passkey key material the flat fields above deliberately omit;
+/// strip it before the value crosses IPC.
+fn redact_kind_secrets(mut kind: serde_json::Value) -> serde_json::Value {
+    if let Some(creds) = kind
+        .get_mut("data")
+        .and_then(|d| d.get_mut("fido2_credentials"))
+        .and_then(|v| v.as_array_mut())
+    {
+        for cred in creds {
+            if let Some(obj) = cred.as_object_mut() {
+                obj.remove("private_key");
+                obj.remove("prf_key");
+            }
+        }
+    }
+    kind
+}
+
 fn cipher_to_json(c: &baluard_core::types::Cipher) -> serde_json::Value {
     let mut json = serde_json::json!({
         "id": c.id.to_string(),
@@ -8620,7 +8643,7 @@ fn cipher_to_json(c: &baluard_core::types::Cipher) -> serde_json::Value {
         "attachments": c.attachments,
         "custom_fields": c.custom_fields,
     });
-    json["kind"] = serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null);
+    json["kind"] = redact_kind_secrets(serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null));
     match &c.kind {
         baluard_core::types::CipherKind::Login(data) => {
             json["username"] = serde_json::json!(data.username);

@@ -35,15 +35,21 @@ fn collect_descendant_ids(
     let mut result = HashSet::new();
     result.insert(folder_id);
     let mut queue = vec![folder_id];
+    // Synced or corrupt data can carry a parent cycle; skipping the
+    // ids already visited is what keeps this walk finite.
     while let Some(current) = queue.pop() {
         for f in folders {
-            if f.parent_id == Some(current) {
-                result.insert(f.id);
+            if f.parent_id == Some(current) && result.insert(f.id) {
                 queue.push(f.id);
             }
         }
     }
     result
+}
+
+/// Parse the cipher id out of a `ciphers/` or `trash/` envelope path.
+fn cipher_id_of_envelope(path: &std::path::Path) -> Option<Uuid> {
+    path.file_stem()?.to_str().and_then(|s| Uuid::parse_str(s).ok())
 }
 
 pub struct VaultHandle {
@@ -168,6 +174,7 @@ impl UnlockedState {
 
 impl Drop for UnlockedState {
     fn drop(&mut self) {
+        use zeroize::Zeroize;
         if let Some(mut k) = self.root_key.take() {
             k.zeroize();
         }
@@ -176,6 +183,12 @@ impl Drop for UnlockedState {
         }
         self.session_key.zeroize();
         self.sync_key.zeroize();
+        // The devkey seal decrypts the device private key; it is a key
+        // exactly like the session/sync keys above.
+        self.devkey_seal.zeroize();
+        if let Some(mut k) = self.identity_wrap_key.take() {
+            k.zeroize();
+        }
     }
 }
 
@@ -1000,6 +1013,10 @@ impl VaultHandle {
 
         let flipped = crate::vault::space_meta::shape_flipped(&self.path);
         let mut keywraps = 0usize;
+        // Devices skipped during keywrap maintenance: a silent skip here
+        // would strand an admin without a wrap (or leave a demoted
+        // admin's wrap live) with nothing in the response to show for it.
+        let mut skipped_devices = 0usize;
         if flipped {
             if matches!(old_role, MemberRole::Admin) {
                 // device_maps_to_admin now reads Editor/Viewer for this
@@ -1011,18 +1028,22 @@ impl VaultHandle {
                 let reg = self.device_manager.registry.clone();
                 for binding in crate::vault::members::list_device_bindings(&self.path, member_id) {
                     let Some(entry) = reg.devices.get(&binding.device_id) else {
+                        skipped_devices += 1;
                         continue;
                     };
                     let Ok(enc) = hex::decode(&entry.encryption_public_key) else {
+                        skipped_devices += 1;
                         continue;
                     };
                     let Ok(enc32) = <[u8; 32]>::try_from(enc.as_slice()) else {
+                        skipped_devices += 1;
                         continue;
                     };
                     let recipient = x25519_dalek::PublicKey::from(enc32);
                     let Ok((eph, ct, tag)) =
                         hpke_wrap::wrap_key(root.as_bytes(), &recipient, "root-key-keywrap")
                     else {
+                        skipped_devices += 1;
                         continue;
                     };
                     let keywrap = serde_json::json!({
@@ -1051,6 +1072,7 @@ impl VaultHandle {
             "from": old_role,
             "role": new_role,
             "keywraps": keywraps,
+            "skipped_devices": skipped_devices,
         }))
     }
 
@@ -3130,6 +3152,9 @@ impl VaultHandle {
         let profile = self.load_profile()?;
         let settings = self.get_settings()?;
         let contacts = self.load_contacts()?;
+        // Device names ride settings.enc under the OUTGOING derivation;
+        // the post-marker save reads nothing from disk.
+        let device_names = self.stored_device_names()?;
         let avatar_path = self.path.join("meta/avatar.enc");
         let avatar_bytes = avatar_path
             .exists()
@@ -3156,7 +3181,14 @@ impl VaultHandle {
         files += 1;
         self.save_profile(&profile)?;
         files += 1;
-        self.save_settings(&settings)?;
+        self.write_settings_with_names(
+            &settings,
+            if device_names.is_empty() {
+                None
+            } else {
+                Some(device_names)
+            },
+        )?;
         files += 1;
         self.save_contacts(&contacts)?;
         files += 1;
@@ -4717,7 +4749,11 @@ impl VaultHandle {
             // member passwords too.
             let result = self.unlock_with_member_canary(&kek, canary);
             if result.is_ok() {
-                self.clear_failed_attempts()?;
+                // Best-effort: the unlock already succeeded, so a stuck
+                // counter file is a hygiene loss, not a failed unlock.
+                if let Err(e) = self.clear_failed_attempts() {
+                    eprintln!("warning: could not clear the failed-attempt counter: {e}");
+                }
                 // S1a-4: member devices can rotate their identity too —
                 // expose the wrap key to rotate_identity.
                 if let VaultState::Unlocked(u) = &mut self.state {
@@ -4751,7 +4787,11 @@ impl VaultHandle {
         // the on-disk attempt counter advances (brute-force protection).
         match self.unlock_with_kek(&kek) {
             Ok(()) => {
-                self.clear_failed_attempts()?;
+                // Best-effort: the unlock already succeeded, so a stuck
+                // counter file is a hygiene loss, not a failed unlock.
+                if let Err(e) = self.clear_failed_attempts() {
+                    eprintln!("warning: could not clear the failed-attempt counter: {e}");
+                }
                 // P1a: the master password is available only on THIS path —
                 // use it for the warned passphrase-fallback identity seal
                 // (keystore mode already cached inside unlock_with_kek).
@@ -5160,6 +5200,9 @@ impl VaultHandle {
         let tags = self.list_tags().ok();
         let profile = self.load_profile().ok();
         let settings = self.get_settings().ok();
+        // Device names are settings-enc-sealed under the OUTGOING SMK:
+        // capture before the swap, hand to the rewrite below.
+        let device_names = self.stored_device_names().ok();
         let contacts = self.load_contacts().ok();
         // The avatar read must happen INSIDE the dropped-SMK window:
         // post-marker crash bytes are root-domain, which neither the
@@ -5188,7 +5231,8 @@ impl VaultHandle {
             let _ = self.save_profile(&p);
         }
         if let Some(s) = settings {
-            let _ = self.save_settings(&s);
+            let names = device_names.clone().filter(|m| !m.is_empty());
+            let _ = self.write_settings_with_names(&s, names);
         }
         if let Some(c) = contacts {
             let _ = self.save_contacts(&c);
@@ -5221,6 +5265,9 @@ impl VaultHandle {
         let tags = self.list_tags().ok();
         let profile = self.load_profile().ok();
         let settings = self.get_settings().ok();
+        // Device names are settings-enc-sealed under the OUTGOING SMK:
+        // capture before the swap, hand to the rewrite below.
+        let device_names = self.stored_device_names().ok();
         let contacts = self.load_contacts().ok();
         let avatar_path = self.path.join("meta/avatar.enc");
         let avatar_bytes = avatar_path
@@ -5246,7 +5293,8 @@ impl VaultHandle {
             ok &= self.save_profile(&p).is_ok();
         }
         if let Some(s) = settings {
-            ok &= self.save_settings(&s).is_ok();
+            let names = device_names.clone().filter(|m| !m.is_empty());
+            ok &= self.write_settings_with_names(&s, names).is_ok();
         }
         if let Some(c) = contacts {
             ok &= self.save_contacts(&c).is_ok();
@@ -5289,6 +5337,9 @@ impl VaultHandle {
         let tags = self.list_tags().ok();
         let profile = self.load_profile().ok();
         let settings = self.get_settings().ok();
+        // Device names are settings-enc-sealed under the OUTGOING SMK:
+        // capture before the swap, hand to the rewrite below.
+        let device_names = self.stored_device_names().ok();
         let contacts = self.load_contacts().ok();
         let avatar_path = self.path.join("meta/avatar.enc");
         let avatar_bytes = avatar_path
@@ -5318,7 +5369,8 @@ impl VaultHandle {
             ok &= self.save_profile(&p).is_ok();
         }
         if let Some(s) = settings {
-            ok &= self.save_settings(&s).is_ok();
+            let names = device_names.clone().filter(|m| !m.is_empty());
+            ok &= self.write_settings_with_names(&s, names).is_ok();
         }
         if let Some(c) = contacts {
             ok &= self.save_contacts(&c).is_ok();
@@ -5607,8 +5659,9 @@ impl VaultHandle {
         // password at all (review F2 — the old exists()-skip copied from
         // change_master_password would let a deleted canary wave any
         // string through).
-        let old_kek = kdf::derive_kek(old_password, &self.kdf_params)?;
-        let old_session_key = hkdf_derive::derive_session_key(&old_kek)?;
+        // Zeroized on scope exit: both derive from the old password.
+        let old_kek = zeroize::Zeroizing::new(kdf::derive_kek(old_password, &self.kdf_params)?);
+        let old_session_key = zeroize::Zeroizing::new(hkdf_derive::derive_session_key(&old_kek)?);
         let canary_path = self.path.join("meta/kek-canary.enc");
         if !canary_path.exists() {
             return Err(VaultError::Corrupt(
@@ -5667,6 +5720,30 @@ impl VaultHandle {
                 .unwrap()
                 .as_bytes(),
         )?;
+
+        // Re-escrow the identity seed under the NEW phrase's pubkey.
+        // Without this the old phrase would keep recovering the
+        // identity forever, defeating the rotation.
+        if let VaultState::Unlocked(u) = &self.state {
+            if let Some(identity) = &u.identity {
+                let (esc_eph, esc_ct, esc_tag) = crate::crypto::hpke_wrap::wrap_key(
+                    &identity.seed(),
+                    &recovery_x25519_public,
+                    "identity-escrow",
+                )?;
+                let escrow = serde_json::json!({
+                    "ephemeral_public": hex::encode(esc_eph),
+                    "encrypted_key": hex::encode(esc_ct),
+                    "tag": hex::encode(esc_tag),
+                });
+                super::write_vault_file(
+                    &self.path.join("meta/identity-escrow.json"),
+                    serde_json::to_string_pretty(&escrow)
+                        .unwrap()
+                        .as_bytes(),
+                )?;
+            }
+        }
 
         Ok(phrase.phrase())
     }
@@ -6097,7 +6174,11 @@ impl VaultHandle {
         let (enc_fields, migrated_lang) = match encrypted {
             Some(e) => (Some(e), None),
             None => {
-                if legacy_path.exists() {
+                // Locked vaults with a live settings.enc must NOT fall
+                // through to the tamperable legacy plaintext: its
+                // policy fields are unauthenticated. The legacy file is
+                // only read when it is still the only source.
+                if legacy_path.exists() && !enc_path.exists() {
                     let data = std::fs::read_to_string(&legacy_path)?;
                     let v: serde_json::Value = serde_json::from_str(&data)
                         .map_err(|e| VaultError::Metadata(format!("settings parse: {e}")))?;
@@ -6219,6 +6300,25 @@ impl VaultHandle {
         &self,
         settings: &crate::vault::manifest::VaultSettings,
     ) -> Result<(), BaluardError> {
+        // Normal callers: read the stored map with the live key. The
+        // rotation paths must use write_settings_with_names instead —
+        // after the root swap this read would try the OLD file under
+        // the NEW key and fail.
+        let names = self.stored_device_names()?;
+        self.write_settings_with_names(
+            settings,
+            if names.is_empty() { None } else { Some(names) },
+        )
+    }
+
+    /// Settings rewrite with a caller-captured device-name map: the
+    /// rotation flows read the map BEFORE the root swap and hand it
+    /// back here afterwards.
+    pub(crate) fn write_settings_with_names(
+        &self,
+        settings: &crate::vault::manifest::VaultSettings,
+        device_names: Option<std::collections::HashMap<String, String>>,
+    ) -> Result<(), BaluardError> {
         let pub_path = self.path.join("meta/settings-pub.json");
         let enc_path = self.path.join("meta/settings.enc");
 
@@ -6249,12 +6349,9 @@ impl VaultHandle {
             default_uri_match: settings.default_uri_match,
             fetch_favicons: settings.fetch_favicons,
             slug: settings.slug.clone(),
-            // C5: preserve the encrypted device-name map across rewrites —
-            // VaultSettings does not carry it, so carry the stored value.
-            device_names: {
-                let names = self.device_display_names();
-                if names.is_empty() { None } else { Some(names) }
-            },
+            // C5: carry the caller-provided map across rewrites —
+            // VaultSettings does not carry it.
+            device_names,
             enrollment_policy: settings.enrollment_policy,
             space_invite_authority: settings.space_invite_authority,
             allow_viewer_export: settings.allow_viewer_export,
@@ -6319,6 +6416,30 @@ impl VaultHandle {
             .unwrap_or_default()
     }
 
+    /// Error-propagating read of the stored device-name map, for
+    /// rewrite paths: a transient settings.enc failure must not be
+    /// mistaken for "no names stored" and erase the map on save.
+    fn stored_device_names(
+        &self,
+    ) -> Result<std::collections::HashMap<String, String>, BaluardError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Ok(std::collections::HashMap::new()),
+        };
+        let enc_path = self.path.join("meta/settings.enc");
+        if !enc_path.exists() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let key = hkdf_derive::derive_settings_key(&unlocked.meta_ikm())
+            .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
+        let data = std::fs::read(&enc_path)?;
+        let envelope = crate::vault::envelope::deserialize(&data)?;
+        let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
+        let enc: crate::vault::manifest::EncryptedSettings = serde_json::from_slice(&decrypted)
+            .map_err(|e| VaultError::Metadata(format!("settings.enc parse: {e}")))?;
+        Ok(enc.device_names.unwrap_or_default())
+    }
+
     /// Fold plaintext device display names from meta/devices.json into the
     /// encrypted settings map and strip them from the registry file
     /// (audit C5: devices.json is git-tracked; names are PII). Idempotent —
@@ -6340,7 +6461,7 @@ impl VaultHandle {
         };
 
         // Fold every non-empty name into the encrypted map and blank it.
-        let mut names = self.device_display_names();
+        let mut names = self.stored_device_names()?;
         let mut folded = false;
         for (id, entry) in reg.devices.iter_mut() {
             if !entry.name.is_empty() {
@@ -6476,7 +6597,9 @@ impl VaultHandle {
         profile: &crate::vault::manifest::UserProfile,
     ) -> Result<(), BaluardError> {
         self.save_profile(profile)?;
-        let mut settings = self.get_settings().unwrap_or_default();
+        // A failed settings read must not become a default-shaped
+        // overwrite: the strip step would erase every stored field.
+        let mut settings = self.get_settings()?;
         settings.display_name = None;
         settings.subtitle = None;
         settings.avatar_ext = None;
@@ -6858,6 +6981,10 @@ impl VaultHandle {
                     continue;
                 }
                 saw_valid_file = true;
+                // Rotation coverage reads this listing: one damaged
+                // per-fact file must PROPAGATE (a silent skip would
+                // strand that folder at the old epoch). The save_folders
+                // rewrite heals the file once the vault is readable.
                 let data = std::fs::read(&path)?;
                 let envelope = crate::vault::envelope::deserialize(&data)?;
                 let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
@@ -7033,15 +7160,36 @@ impl VaultHandle {
             );
         }
         let mut folders = self.list_folders()?;
-        let folder = folders
+        let trimmed = new_name.trim();
+        // Mirror create_folder_with_parent's uniqueness rule: a rename
+        // must not mint a sibling with an identical name.
+        let parent_id = folders
+            .iter()
+            .find(|f| f.id == folder_id)
+            .ok_or_else(|| {
+                BaluardError::from(crate::error::VaultError::NotFound(format!(
+                    "folder {folder_id}"
+                )))
+            })?
+            .parent_id;
+        if folders
+            .iter()
+            .any(|f| f.id != folder_id && f.name == trimmed && f.parent_id == parent_id)
+        {
+            return Err(crate::error::VaultError::Metadata(format!(
+                "folder '{trimmed}' already exists"
+            ))
+            .into());
+        }
+        folders
             .iter_mut()
             .find(|f| f.id == folder_id)
             .ok_or_else(|| {
                 BaluardError::from(crate::error::VaultError::NotFound(format!(
                     "folder {folder_id}"
                 )))
-            })?;
-        folder.name = new_name.trim().to_string();
+            })?
+            .name = trimmed.to_string();
         self.save_folders(&folders)?;
         Ok(())
     }
@@ -7066,10 +7214,11 @@ impl VaultHandle {
         // Unassign all ciphers in any of the deleted folders
         let cipher_ids = self.list_cipher_ids()?;
         for cipher_id in cipher_ids {
-            let file_path = self.path.join(format!("ciphers/{cipher_id}.enc"));
-            if !file_path.exists() {
+            // Collection-resident copies live outside the flat dir;
+            // a hardcoded path left their folder_id dangling.
+            let Some(file_path) = self.cipher_file_path(cipher_id) else {
                 continue;
-            }
+            };
             let existing_bytes = std::fs::read(&file_path)?;
             let existing_file = cipher::CipherFile {
                 id: cipher_id,
@@ -7152,6 +7301,9 @@ impl VaultHandle {
     ) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
+        }
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
         // S3-7c review F7: resolve the target from the plaintext dir map —
         // no SGK needed, so granted members can move ciphers between
@@ -8177,6 +8329,13 @@ impl VaultHandle {
             }
             std::fs::remove_file(&trash_path)?;
             self.remove_integrity(&cipher_id.to_string());
+            // The envelope is gone; its attachment blobs (decryption
+            // keyed to this cipher) would otherwise linger forever as
+            // unpurgeable orphans.
+            let attach_dir = self.path.join("entries").join(cipher_id.to_string());
+            if attach_dir.is_dir() {
+                std::fs::remove_dir_all(&attach_dir)?;
+            }
             self.rebuild_index()?;
             Ok(())
         } else {
@@ -8327,6 +8486,9 @@ impl VaultHandle {
     /// collection dir, a personal cipher to the flat path). Collection
     /// restores need write scope (the path IS the membership).
     pub fn restore_cipher(&self, cipher_id: Uuid) -> Result<(), BaluardError> {
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
+        }
         let trash_path = self
             .trash_file_path(cipher_id)
             .ok_or_else(|| BaluardError::from(VaultError::CipherNotFound(cipher_id.to_string())))?;
@@ -8398,6 +8560,9 @@ impl VaultHandle {
         // §4.4 "restore/purge admin": time-based purge is admin-surface on
         // team vaults. The daemon's best-effort unlock-time call swallows
         // the member refusal, so member devices simply no-op.
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
+        }
         if self.path.join("meta/members").is_dir() {
             let is_admin = matches!(
                 crate::vault::members::member_role_for_device(&self.path, self.device_id),
@@ -8429,6 +8594,13 @@ impl VaultHandle {
                     if let Ok(metadata) = std::fs::metadata(&ipath) {
                         if let Ok(modified) = metadata.modified() {
                             if modified < limit {
+                                if let Some(id) = cipher_id_of_envelope(&ipath) {
+                                    let attach_dir =
+                                        self.path.join("entries").join(id.to_string());
+                                    if attach_dir.is_dir() {
+                                        std::fs::remove_dir_all(&attach_dir)?;
+                                    }
+                                }
                                 std::fs::remove_file(&ipath)?;
                                 count += 1;
                             }
@@ -8440,6 +8612,12 @@ impl VaultHandle {
             if let Ok(metadata) = std::fs::metadata(&path) {
                 if let Ok(modified) = metadata.modified() {
                     if modified < limit {
+                        if let Some(id) = cipher_id_of_envelope(&path) {
+                            let attach_dir = self.path.join("entries").join(id.to_string());
+                            if attach_dir.is_dir() {
+                                std::fs::remove_dir_all(&attach_dir)?;
+                            }
+                        }
                         std::fs::remove_file(&path)?;
                         count += 1;
                     }
@@ -8577,33 +8755,65 @@ impl VaultHandle {
             crate::types::CipherKind::Login(data) => data.password.clone(),
             _ => None,
         };
-        if let Some(ref old_pw) = old_password {
-            if old_password != new_password {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let mut history = existing_cipher.password_history.clone();
-                history.push(crate::types::PasswordHistoryEntry {
-                    password: old_pw.clone(),
-                    last_used_date: now,
-                });
-                // Cap history at 10 entries (BW parity default is 5, but 10 is more practical)
-                const MAX_PASSWORD_HISTORY: usize = 10;
-                if history.len() > MAX_PASSWORD_HISTORY {
-                    history.drain(0..history.len() - MAX_PASSWORD_HISTORY);
-                }
-                input_owned.password_history = history;
+        if old_password.is_some() && old_password != new_password {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let mut history = existing_cipher.password_history.clone();
+            history.push(crate::types::PasswordHistoryEntry {
+                password: old_password.clone().unwrap_or_default(),
+                last_used_date: now,
+            });
+            // Cap history at 10 entries (BW parity default is 5, but 10 is more practical)
+            const MAX_PASSWORD_HISTORY: usize = 10;
+            if history.len() > MAX_PASSWORD_HISTORY {
+                history.drain(0..history.len() - MAX_PASSWORD_HISTORY);
+            }
+            input_owned.password_history = history;
 
-                // Update password_revision_date on LoginData
-                if let crate::types::CipherKind::Login(ref mut data) = input_owned.kind {
-                    data.password_revision_date = Some(now);
-                }
+            // Update password_revision_date on LoginData
+            if let crate::types::CipherKind::Login(ref mut data) = input_owned.kind {
+                data.password_revision_date = Some(now);
             }
         } else if input_owned.password_history.is_empty() {
-            // Preserve existing history if caller didn't provide one and password didn't change.
-            // History is append-only: passing password_history: vec![] preserves existing history.
+            // History is append-only and core-managed: a caller-sent
+            // empty list on an unchanged password preserves what the
+            // vault already stores instead of wiping it.
             input_owned.password_history = existing_cipher.password_history.clone();
+        }
+
+        // Passkeys are core-managed like history: an update that omits
+        // fido2_credentials (None) must not delete them; an explicit
+        // empty list still means "remove all".
+        if let (
+            crate::types::CipherKind::Login(new_data),
+            crate::types::CipherKind::Login(old_data),
+        ) = (&mut input_owned.kind, &existing_cipher.kind)
+        {
+            if new_data.fido2_credentials.is_none() {
+                new_data.fido2_credentials = old_data.fido2_credentials.clone();
+            } else if let (Some(new_creds), Some(old_creds)) =
+                (&mut new_data.fido2_credentials, &old_data.fido2_credentials)
+            {
+                // A redacted round-trip (the IPC kind strips key
+                // material) must not overwrite live credentials with
+                // keyless copies: inherit the stored secrets by id.
+                for cred in new_creds.iter_mut() {
+                    if cred.private_key.is_none() || cred.prf_key.is_none() {
+                        if let Some(stored) =
+                            old_creds.iter().find(|c| c.credential_id == cred.credential_id)
+                        {
+                            if cred.private_key.is_none() {
+                                cred.private_key = stored.private_key.clone();
+                            }
+                            if cred.prf_key.is_none() {
+                                cred.prf_key = stored.prf_key.clone();
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         let item_key = self.resolve_item_key(unlocked, &file_path, cipher_id, key_epoch)?;
@@ -9006,10 +9216,10 @@ impl VaultHandle {
                 .iter()
                 .any(|t| t.eq_ignore_ascii_case(&old_normalized))
             {
-                // Decrypt full cipher
-                let cipher = self.get_cipher(meta.id)?;
-                let cipher = match cipher {
-                    CipherRead::Decrypted(c) => c,
+                // Tolerate an unreadable cipher: aborting mid-loop
+                // leaves a half-applied rename and a stale index.
+                let cipher = match self.get_cipher(meta.id) {
+                    Ok(CipherRead::Decrypted(c)) => c,
                     _ => continue,
                 };
 
@@ -9064,9 +9274,8 @@ impl VaultHandle {
                 .iter()
                 .any(|t| t.eq_ignore_ascii_case(&normalized))
             {
-                let cipher = self.get_cipher(meta.id)?;
-                let cipher = match cipher {
-                    CipherRead::Decrypted(c) => c,
+                let cipher = match self.get_cipher(meta.id) {
+                    Ok(CipherRead::Decrypted(c)) => c,
                     _ => continue,
                 };
 
@@ -9432,20 +9641,23 @@ impl VaultHandle {
             // revoke_device_and_rekey). Attachments live outside the cipher
             // envelope; skipping them strands every blob at the old epoch.
             for attach_meta in &existing.attachments {
+                // Validate the id before it touches a path: meta rides
+                // the shared sync row, so a traversal-shaped id must
+                // fail here, not probe the filesystem.
+                let attach_uuid: Uuid = attach_meta
+                    .id
+                    .parse()
+                    .map_err(|e| VaultError::Corrupt(format!("attachment id not a uuid: {e}")))?;
                 let attach_dir = self
                     .path
                     .join("entries")
                     .join(cipher_id.to_string())
                     .join("attachments");
-                let attach_path = attach_dir.join(format!("{}.enc", attach_meta.id));
+                let attach_path = attach_dir.join(format!("{}.enc", attach_uuid));
                 if !attach_path.exists() {
                     continue;
                 }
                 let enc_blob = std::fs::read(&attach_path)?;
-                let attach_uuid: Uuid = attach_meta
-                    .id
-                    .parse()
-                    .map_err(|e| VaultError::Corrupt(format!("attachment id not a uuid: {e}")))?;
                 let mut plaintext = crate::vault::attachment::decrypt_attachment(
                     self.vault_id,
                     *cipher_id,
@@ -9655,6 +9867,22 @@ impl VaultHandle {
         // convergent choice.
         let old_space_smk =
             crate::vault::space_meta::open_store(&self.path, self.unlocked().root()?).ok();
+        // Outgoing root, captured pre-swap: the kit rewrap must verify
+        // the kit's root_check against the root the kit was sealed
+        // under, not the post-swap state.
+        let outgoing_root = self.unlocked().root()?.clone();
+        // Device names are settings-enc-sealed: capture them pre-swap so
+        // the post-swap rewrite does not read the old file under the
+        // new key.
+        let old_device_names = self.stored_device_names()?;
+        // Refuse a tampered kit BEFORE the point of no return: the
+        // post-commit rewrap would otherwise fail with the rotation
+        // marker armed (the vault wedged until finalize).
+        if crate::vault::recovery_kit::kit_exists(&self.path)? {
+            let kit = crate::vault::recovery_kit::load_kit(&self.path)?
+                .ok_or_else(|| VaultError::Corrupt("recovery kit vanished mid-rotation".into()))?;
+            crate::vault::recovery_kit::verify_root_check(&outgoing_root, &kit)?;
+        }
         // S1b-1: the activity log rides the meta IKM — read pre-swap.
         // Local-only per-device file: an unreadable log (key-source
         // transition) reads as empty; the post-swap save re-seals it.
@@ -9716,7 +9944,14 @@ impl VaultHandle {
         self.save_tags_enc(&index)?;
         self.save_profile(&old_profile)?;
         self.save_activity_enc(&old_activity)?;
-        self.save_settings(&old_settings)?;
+        self.write_settings_with_names(
+            &old_settings,
+            if old_device_names.is_empty() {
+                None
+            } else {
+                Some(old_device_names)
+            },
+        )?;
         self.save_generator_history(&old_generator)?;
         // S1a-3: address book re-encrypted under the new contacts key.
         self.save_contacts(&old_contacts)?;
@@ -9790,7 +10025,7 @@ impl VaultHandle {
         Self::rewrap_recovery_key(&self.path, &new_root_key)?;
         // S4-7: the Space Recovery Kit's phrase must keep working after
         // a rotation — rewrap to the NEW root (absent kit is a no-op).
-        crate::vault::recovery_kit::rewrap_kit(&self.path, &new_root_key)?;
+        crate::vault::recovery_kit::rewrap_kit(&self.path, &outgoing_root, &new_root_key)?;
 
         // Success: only now clear the rotation state. Every fallible step
         // above propagated its error while the guard was still armed, so a
@@ -9859,11 +10094,59 @@ impl VaultHandle {
                     k.zeroize();
                 }
             }
-            crate::types::CipherKind::Identity(_)
-            | crate::types::CipherKind::BankAccount(_)
-            | crate::types::CipherKind::DriversLicense(_)
-            | crate::types::CipherKind::Passport(_)
-            | crate::types::CipherKind::SecureNote => {}
+            crate::types::CipherKind::Identity(d) => {
+                for secret in [
+                    d.username.as_mut(),
+                    d.email.as_mut(),
+                    d.passport_number.as_mut(),
+                    d.license_number.as_mut(),
+                    d.ssn.as_mut(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    secret.zeroize();
+                }
+            }
+            crate::types::CipherKind::BankAccount(d) => {
+                for secret in [
+                    d.account_number.as_mut(),
+                    d.routing_number.as_mut(),
+                    d.branch_number.as_mut(),
+                    d.pin.as_mut(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    secret.zeroize();
+                }
+            }
+            crate::types::CipherKind::DriversLicense(d) => {
+                for secret in [d.license_number.as_mut(), d.date_of_birth.as_mut()]
+                    .into_iter()
+                    .flatten()
+                {
+                    secret.zeroize();
+                }
+            }
+            crate::types::CipherKind::Passport(d) => {
+                for secret in [d.passport_number.as_mut(), d.date_of_birth.as_mut()]
+                    .into_iter()
+                    .flatten()
+                {
+                    secret.zeroize();
+                }
+            }
+            crate::types::CipherKind::SecureNote => {}
+        }
+        // URIs and history carry account identifiers too.
+        if let crate::types::CipherKind::Login(d) = &mut existing.kind {
+            for uri in d.uris.iter_mut() {
+                uri.uri.zeroize();
+            }
+        }
+        for entry in existing.password_history.iter_mut() {
+            entry.password.zeroize();
         }
     }
 
@@ -10052,20 +10335,23 @@ impl VaultHandle {
                 }
             };
             for attach_meta in &existing.attachments {
+                // Validate the id before it touches a path: meta rides
+                // the shared sync row, so a traversal-shaped id must
+                // fail here, not probe the filesystem.
+                let attach_uuid: Uuid = attach_meta
+                    .id
+                    .parse()
+                    .map_err(|e| VaultError::Corrupt(format!("attachment id not a uuid: {e}")))?;
                 let attach_dir = self
                     .path
                     .join("entries")
                     .join(cipher_id.to_string())
                     .join("attachments");
-                let attach_path = attach_dir.join(format!("{}.enc", attach_meta.id));
+                let attach_path = attach_dir.join(format!("{}.enc", attach_uuid));
                 if !attach_path.exists() {
                     continue;
                 }
                 let enc_blob = std::fs::read(&attach_path)?;
-                let attach_uuid: Uuid = attach_meta
-                    .id
-                    .parse()
-                    .map_err(|e| VaultError::Corrupt(format!("attachment id not a uuid: {e}")))?;
                 let mut plaintext = crate::vault::attachment::decrypt_attachment(
                     self.vault_id,
                     *cipher_id,
@@ -10213,6 +10499,22 @@ impl VaultHandle {
         // convergent choice.
         let old_space_smk =
             crate::vault::space_meta::open_store(&self.path, self.unlocked().root()?).ok();
+        // Outgoing root, captured pre-swap: the kit rewrap must verify
+        // the kit's root_check against the root the kit was sealed
+        // under, not the post-swap state.
+        let outgoing_root = self.unlocked().root()?.clone();
+        // Device names are settings-enc-sealed: capture them pre-swap so
+        // the post-swap rewrite does not read the old file under the
+        // new key.
+        let old_device_names = self.stored_device_names()?;
+        // Refuse a tampered kit BEFORE the point of no return: the
+        // post-commit rewrap would otherwise fail with the rotation
+        // marker armed (the vault wedged until finalize).
+        if crate::vault::recovery_kit::kit_exists(&self.path)? {
+            let kit = crate::vault::recovery_kit::load_kit(&self.path)?
+                .ok_or_else(|| VaultError::Corrupt("recovery kit vanished mid-rotation".into()))?;
+            crate::vault::recovery_kit::verify_root_check(&outgoing_root, &kit)?;
+        }
         // S1b-1: the activity log rides the meta IKM — read pre-swap.
         // Local-only per-device file: an unreadable log (key-source
         // transition) reads as empty; the post-swap save re-seals it.
@@ -10273,7 +10575,14 @@ impl VaultHandle {
         self.save_tags_enc(&index)?;
         self.save_profile(&old_profile)?;
         self.save_activity_enc(&old_activity)?;
-        self.save_settings(&old_settings)?;
+        self.write_settings_with_names(
+            &old_settings,
+            if old_device_names.is_empty() {
+                None
+            } else {
+                Some(old_device_names)
+            },
+        )?;
         self.save_generator_history(&old_generator)?;
         // S1a-3: address book re-encrypted under the new contacts key.
         self.save_contacts(&old_contacts)?;
@@ -10346,7 +10655,7 @@ impl VaultHandle {
         Self::rewrap_recovery_key(&self.path, &new_root_key)?;
         // S4-7: the Space Recovery Kit's phrase must keep working after
         // a rotation — rewrap to the NEW root (absent kit is a no-op).
-        crate::vault::recovery_kit::rewrap_kit(&self.path, &new_root_key)?;
+        crate::vault::recovery_kit::rewrap_kit(&self.path, &outgoing_root, &new_root_key)?;
 
         // Success: only now clear the rotation state (same ordering rationale
         // as rotate_root_key — the marker must survive any failure).
@@ -13391,7 +13700,9 @@ mod tests {
 
         let folders = handle.list_folders().unwrap();
         assert!(folders.iter().any(|f| f.id == folder));
-        assert!(handle.get_settings().is_ok());
+        if let Err(e) = handle.get_settings() {
+            panic!("get_settings failed: {e}");
+        }
     }
 
     #[test]
@@ -13635,6 +13946,97 @@ mod tests {
     }
 
     #[test]
+    fn update_cipher_preserves_passkeys_and_history() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let mut login = crate::types::LoginData::default();
+        login.username = Some("alex@example.com".into());
+        login.password = Some("correct horse".into());
+        let mut passkey = crate::types::PasskeyData::default();
+        passkey.credential_id = "cred-1".into();
+        passkey.key_type = "public-key".into();
+        passkey.key_algorithm = "ES256".into();
+        passkey.key_curve = "P-256".into();
+        passkey.key_value = "AA".into();
+        passkey.rp_id = "bank.example".into();
+        passkey.aaguid = uuid::Uuid::nil();
+        passkey.private_key = Some(vec![1, 2, 3, 4]);
+        login.fido2_credentials = Some(vec![passkey]);
+        let input = CipherInput {
+            name: "Bank".into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::Login(login),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+        let id = handle.add_cipher(&input).unwrap();
+
+        // Seed one history entry through a real password change.
+        let mut renamed = input.clone();
+        renamed.name = "Bank Renamed".into();
+        if let crate::types::CipherKind::Login(ref mut d) = renamed.kind {
+            d.password = Some("battery staple".into());
+        }
+        handle.update_cipher(id, &renamed).unwrap();
+        let after_change = match handle.get_cipher(id).unwrap() {
+            CipherRead::Decrypted(c) => c,
+            _ => panic!("cipher missing"),
+        };
+        assert_eq!(after_change.password_history.len(), 1);
+
+        // An update that omits fido2_credentials and sends empty history
+        // must not destroy either: both are core-managed state.
+        let mut touch = renamed.clone();
+        touch.name = "Bank Final".into();
+        if let crate::types::CipherKind::Login(ref mut d) = touch.kind {
+            d.fido2_credentials = None;
+            d.password = Some("battery staple".into());
+        }
+        touch.password_history = vec![];
+        handle.update_cipher(id, &touch).unwrap();
+
+        let final_cipher = match handle.get_cipher(id).unwrap() {
+            CipherRead::Decrypted(c) => c,
+            _ => panic!("cipher missing"),
+        };
+        assert_eq!(final_cipher.name, "Bank Final");
+        let creds = match &final_cipher.kind {
+            crate::types::CipherKind::Login(d) => d.fido2_credentials.as_ref().unwrap(),
+            _ => panic!("kind changed"),
+        };
+        assert_eq!(creds.len(), 1);
+        assert_eq!(creds[0].credential_id, "cred-1");
+        assert_eq!(creds[0].private_key.as_deref(), Some(&[1u8, 2, 3, 4][..]));
+        assert_eq!(final_cipher.password_history.len(), 1);
+
+        // An explicit empty list still deletes passkeys (caller intent).
+        let mut wipe = touch.clone();
+        if let crate::types::CipherKind::Login(ref mut d) = wipe.kind {
+            d.fido2_credentials = Some(vec![]);
+        }
+        handle.update_cipher(id, &wipe).unwrap();
+        let wiped = match handle.get_cipher(id).unwrap() {
+            CipherRead::Decrypted(c) => c,
+            _ => panic!("cipher missing"),
+        };
+        match &wiped.kind {
+            crate::types::CipherKind::Login(d) => {
+                assert!(d.fido2_credentials.as_ref().unwrap().is_empty());
+            }
+            _ => panic!("kind changed"),
+        }
+    }
+
     fn update_cipher_changes_name() {
         let (dir, password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
