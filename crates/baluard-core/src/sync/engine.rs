@@ -1505,7 +1505,11 @@ impl SyncEngine {
         let mut remote = repo
             .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
-        let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
+        let cfg = self
+            .credential_config
+            .clone()
+            .with_url_hint(remote.url().unwrap_or(""));
+        let callbacks = crate::sync::credentials::build_callbacks(&cfg);
         let mut fetch_opts = FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
         let refspec = format!("refs/heads/*:refs/remotes/{remote_name}/*");
@@ -1563,7 +1567,11 @@ impl SyncEngine {
         let Ok(mut remote) = repo.find_remote(remote_name) else {
             return false;
         };
-        let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
+        let cfg = self
+            .credential_config
+            .clone()
+            .with_url_hint(remote.url().unwrap_or(""));
+        let callbacks = crate::sync::credentials::build_callbacks(&cfg);
         {
             let Ok(_connection) = remote.connect_auth(Direction::Push, Some(callbacks), None)
             else {
@@ -1596,8 +1604,12 @@ impl SyncEngine {
         // Push to matching branch name on remote
         let push_refspec = format!("{refname}:refs/heads/{branch}");
 
+        let cfg = self
+            .credential_config
+            .clone()
+            .with_url_hint(remote.url().unwrap_or(""));
+        let callbacks = crate::sync::credentials::build_callbacks(&cfg);
         let mut push_options = PushOptions::new();
-        let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
         push_options.remote_callbacks(callbacks);
 
         remote
@@ -1648,8 +1660,12 @@ impl SyncEngine {
         // first announcement ever; network failure = stale tip, the push
         // below fails non-ff and the next cycle retries).
         if let Ok(mut remote) = repo.find_remote(remote_name) {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let callbacks = crate::sync::credentials::build_callbacks(&cfg);
             let mut fetch_opts = FetchOptions::new();
-            let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
             fetch_opts.remote_callbacks(callbacks);
             let refspec =
                 format!("refs/heads/{GOSSIP_BRANCH}:refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
@@ -1766,8 +1782,12 @@ impl SyncEngine {
         let mut remote = repo
             .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        let cfg = self
+            .credential_config
+            .clone()
+            .with_url_hint(remote.url().unwrap_or(""));
+        let callbacks = crate::sync::credentials::build_callbacks(&cfg);
         let mut push_options = PushOptions::new();
-        let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
         push_options.remote_callbacks(callbacks);
         remote
             .push(
@@ -1955,8 +1975,12 @@ impl SyncEngine {
                 .find_remote(remote_name)
                 .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
 
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let callbacks = crate::sync::credentials::build_callbacks(&cfg);
             let mut fetch_opts = FetchOptions::new();
-            let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
             fetch_opts.remote_callbacks(callbacks);
 
             let refspec = format!("refs/heads/*:refs/remotes/{remote_name}/*");
@@ -3211,6 +3235,7 @@ impl SyncEngine {
         callbacks.certificate_check(|cert, host| {
             use git2::CertificateCheckStatus;
             use git2::cert::SshHostKeyType;
+            let obs_port = crate::sync::credentials::port_of(url);
             if let Some(hostkey) = cert.as_hostkey() {
                 let key_type = match hostkey.hostkey_type() {
                     Some(SshHostKeyType::Ed255219) => "ssh-ed25519",
@@ -3222,7 +3247,7 @@ impl SyncEngine {
                     _ => "",
                 };
                 let key = hostkey.hostkey().unwrap_or(&[]);
-                match crate::sync::known_hosts::verify_host_key(host, key_type, key) {
+                match crate::sync::known_hosts::verify_host_key(host, obs_port, key_type, key) {
                     crate::sync::known_hosts::HostKeyResult::Known => {
                         Ok(CertificateCheckStatus::CertificateOk)
                     }
@@ -3303,6 +3328,7 @@ impl SyncEngine {
             None => {
                 let cred_config = CredentialConfig::load_with_hint(target, provider);
                 let https_token = cred_config.expose_token();
+                let last_url_ref = std::cell::RefCell::new(url.to_string());
                 let mut cb = git2::RemoteCallbacks::new();
                 cb.credentials(move |_url, username_from_url, allowed_types| {
                     if allowed_types.contains(git2::CredentialType::SSH_KEY) {
@@ -3322,7 +3348,8 @@ impl SyncEngine {
                     }
                     Err(git2::Error::from_str("no credential source available"))
                 });
-                cb.certificate_check(|cert, host| {
+                let last_url = last_url_ref.clone();
+                cb.certificate_check(move |cert, host| {
                     use git2::CertificateCheckStatus;
                     use git2::cert::SshHostKeyType;
                     if let Some(hostkey) = cert.as_hostkey() {
@@ -3336,9 +3363,29 @@ impl SyncEngine {
                             _ => "",
                         };
                         let key = hostkey.hostkey().unwrap_or(&[]);
-                        match crate::sync::known_hosts::verify_host_key(host, key_type, key) {
+                        let obs_port = crate::sync::credentials::port_of(&last_url.borrow());
+                        match crate::sync::known_hosts::verify_host_key(
+                            host, obs_port, key_type, key,
+                        ) {
                             crate::sync::known_hosts::HostKeyResult::Known => {
                                 Ok(CertificateCheckStatus::CertificateOk)
+                            }
+                            crate::sync::known_hosts::HostKeyResult::Unknown
+                            | crate::sync::known_hosts::HostKeyResult::Missing => {
+                                if !key.is_empty() {
+                                    crate::sync::known_hosts::record_observation(
+                                        crate::sync::known_hosts::ObservedHostKey {
+                                            host: host.to_string(),
+                                            port: obs_port,
+                                            key_type: key_type.to_string(),
+                                            key: key.to_vec(),
+                                            fingerprint: crate::sync::known_hosts::fingerprint(key),
+                                        },
+                                    );
+                                }
+                                Err(git2::Error::from_str(&format!(
+                                    "SSH host key for {host} is not trusted yet"
+                                )))
                             }
                             _ => Err(git2::Error::from_str(&format!(
                                 "SSH host key for {host} not in known_hosts"
