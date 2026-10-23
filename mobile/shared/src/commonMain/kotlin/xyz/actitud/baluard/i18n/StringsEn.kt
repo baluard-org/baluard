@@ -390,6 +390,7 @@ internal val EN: Map<String, String> = mapOf(
     "settings.gitBackupFailed" to "Could not set up the backup repository.",
     "settings.customChip" to "Custom server",
     "settings.customWarn" to "You manage this server: repository creation, clone access, and removal happen there by hand. Credentials stay on this device only.",
+    "settings.customSshNote" to "Sign in with an access token. SSH keys are set up from the desktop app.",
     "settings.customUrl" to "Repository URL",
     "settings.customToken" to "Access token",
     "settings.customUsername" to "Username",
