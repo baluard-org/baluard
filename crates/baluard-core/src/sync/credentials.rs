@@ -109,7 +109,7 @@ pub struct CredentialConfig {
     /// Passphrase for the custom SSH key.
     pub ssh_passphrase: Option<SecretString>,
     /// Port hint for host-key observations (custom remotes on non-22 ports).
-    pub port_hint: u16,
+    pub port_hint: Option<u16>,
 }
 
 impl CredentialConfig {
@@ -121,6 +121,26 @@ impl CredentialConfig {
     /// Load credentials with an optional provider hint.
     pub fn load_with_hint(vault_path: &Path, hint: Option<Provider>) -> Self {
         let file = Self::load_from_file(vault_path);
+        // A host-bound custom credential must win outright: letting the
+        // keyring or BALUARD_GIT_TOKEN arm win would send that token to the
+        // custom server unbound.
+        if let Some(ref f) = file {
+            if f.host.is_some() {
+                return Self {
+                    https_token: Some(f.token.clone()),
+                    allowed_hosts: None,
+                    bound_host: f.host.clone(),
+                    username: f.username.clone(),
+                    ssh_key_path: {
+                        let p = vault_path.join("meta/git-ssh-key");
+                        if p.is_file() { Some(p) } else { None }
+                    },
+                    ssh_key_pem: None,
+                    ssh_passphrase: f.ssh_passphrase.clone(),
+                    port_hint: None,
+                };
+            }
+        }
         let mut https_token: Option<SecretString> = None;
         let mut allowed_hosts: Option<Vec<String>> = None;
         let mut bound_host: Option<String> = None;
@@ -152,7 +172,7 @@ impl CredentialConfig {
             ssh_key_path,
             ssh_key_pem: None,
             ssh_passphrase,
-            port_hint: 22,
+            port_hint: None,
         }
     }
 
@@ -173,7 +193,7 @@ impl CredentialConfig {
             ssh_key_path: None,
             ssh_key_pem: ssh_key_pem.map(|s| SecretString::new(s.into_boxed_str())),
             ssh_passphrase: ssh_passphrase.map(|s| SecretString::new(s.into_boxed_str())),
-            port_hint: 22,
+            port_hint: None,
         }
     }
 
@@ -304,6 +324,7 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
         .ssh_passphrase
         .as_ref()
         .map(|s| zeroize::Zeroizing::new(s.expose_secret().to_string()));
+    let port_hint = config.port_hint;
     let mut callbacks = RemoteCallbacks::new();
     let ssh_attempts = std::cell::Cell::new(0u32);
     let userpass_attempts = std::cell::Cell::new(0u32);
@@ -417,7 +438,11 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                 _ => "",
             };
             let key = hostkey.hostkey().unwrap_or(&[]);
-            match crate::sync::known_hosts::verify_host_key(host, key_type, key) {
+            let obs_port = port_hint.or_else(|| LAST_AUTH_URL.with(|u| {
+                let p = port_of(&u.borrow());
+                (p != 22).then_some(p)
+            })).unwrap_or(22);
+            match crate::sync::known_hosts::verify_host_key(host, obs_port, key_type, key) {
                 crate::sync::known_hosts::HostKeyResult::Known => {
                     Ok(CertificateCheckStatus::CertificateOk)
                 }
@@ -430,11 +455,10 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                 // the first-contact trust flow. Mismatch stays silent.
                 crate::sync::known_hosts::HostKeyResult::Unknown
                 | crate::sync::known_hosts::HostKeyResult::Missing => {
-                    let port = LAST_AUTH_URL.with(|u| port_of(&u.borrow()));
                     crate::sync::known_hosts::record_observation(
                         crate::sync::known_hosts::ObservedHostKey {
                             host: host.to_string(),
-                            port,
+                            port: obs_port,
                             key_type: key_type.to_string(),
                             key: key.to_vec(),
                             fingerprint: crate::sync::known_hosts::fingerprint(key),
@@ -444,6 +468,9 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                         "SSH host key for {host} is not trusted yet"
                     )))
                 }
+                crate::sync::known_hosts::HostKeyResult::Mismatch => Err(git2::Error::from_str(&format!(
+                    "SSH host key for {host} changed; if you are sure, remove the old line from your SSH known_hosts file"
+                ))),
                 _ => Err(git2::Error::from_str(&format!(
                     "SSH host key for {host} not in known_hosts"
                 ))),
@@ -455,6 +482,16 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
     });
 
     callbacks
+}
+
+impl CredentialConfig {
+    /// Record the URL's port so the certificate check can attribute the
+    /// observed host key correctly (SSH auth happens after the hostkey
+    /// exchange, so the callback URL arrives too late).
+    pub fn with_url_hint(mut self, url: &str) -> Self {
+        self.port_hint = Some(port_of(url));
+        self
+    }
 }
 
 /// Extract the SSH/HTTPS port from a remote URL (default 22 for SSH, 443
@@ -480,9 +517,26 @@ pub fn port_of(url: &str) -> u16 {
 /// `{"host_key_untrusted": {...}}` replaces the generic message so UIs can
 /// render the trust flow; drains the observation.
 pub fn format_sync_error(err: &BaluardError) -> String {
+    format_sync_error_for(err, None)
+}
+
+/// Host-scoped variant: only an observation for THIS URL's host decorates the
+/// error, so a background sync to another server cannot misattribute its
+/// fingerprint here.
+pub fn format_sync_error_for(err: &BaluardError, url: Option<&str>) -> String {
+    let scoped = url.map(|u| (extract_host(u), u.to_string()));
+    let matches_scope = |obs_host: &str, obs_port: u16| -> bool {
+        match &scoped {
+            None => true,
+            Some((Some(h), raw)) => h.eq_ignore_ascii_case(obs_host) && port_of(raw) == obs_port,
+            Some((None, _)) => true,
+        }
+    };
     // Peek, never drain: the trust route consumes the observation by id
     // after the surface reports it.
-    if let Some((attempt_id, obs)) = crate::sync::known_hosts::peek_latest_observation() {
+    if let Some((attempt_id, obs)) = crate::sync::known_hosts::peek_latest_observation()
+        .filter(|(_, obs)| matches_scope(&obs.host, obs.port))
+    {
         return serde_json::json!({
             "host_key_untrusted": {
                 "host": obs.host,
@@ -943,6 +997,32 @@ mod custom_remote_tests {
     }
 
     #[test]
+    #[test]
+    fn host_key_marker_schema_is_stable() {
+        // Golden shape: daemon error decoration, the CLI probe parser, and
+        // both GUI trust flows read these exact keys — a rename here breaks
+        // every surface at once.
+        let err = BaluardError::Sync(crate::error::SyncError::Git("connect failed".into()));
+        crate::sync::known_hosts::record_observation(crate::sync::known_hosts::ObservedHostKey {
+            host: "git.example.com".into(),
+            port: 2222,
+            key_type: "ssh-ed25519".into(),
+            key: b"k".to_vec(),
+            fingerprint: "SHA256:abc".into(),
+        });
+        let marker = format_sync_error(&err);
+        let v: serde_json::Value = serde_json::from_str(&marker).expect("marker is JSON");
+        let inner = &v["host_key_untrusted"];
+        assert_eq!(inner["host"], "git.example.com");
+        assert_eq!(inner["port"], 2222);
+        assert_eq!(inner["key_type"], "ssh-ed25519");
+        assert_eq!(inner["fingerprint"], "SHA256:abc");
+        let id = inner["attempt_id"].as_str().expect("attempt id");
+        assert_eq!(id.len(), 32);
+        // Consumed by the trust route's take_observation(id).
+        assert!(crate::sync::known_hosts::take_observation(id).is_some());
+    }
+
     fn port_of_extracts_non_default_ports() {
         assert_eq!(port_of("ssh://git@git.example.com:2222/repo.git"), 2222);
         assert_eq!(port_of("ssh://git@git.example.com/repo.git"), 22);

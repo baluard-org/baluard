@@ -212,6 +212,10 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.hw_status",
     "vault.hw_enable",
     "vault.hw_disable",
+    // Custom-remote probe + hostkey trust (the desktop Sync tab's own-server
+    // expansion). Host-level daemon routes; no secrets cross.
+    "git.git_probe",
+    "git.git_hostkey_trust",
     "vault.hw_set_consent",
     "vault.import",
     "vault.export",

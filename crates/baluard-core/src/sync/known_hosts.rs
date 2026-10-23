@@ -39,7 +39,7 @@ pub enum HostKeyResult {
 pub(crate) static TEST_HOME_LOCK: std::sync::Mutex<Option<std::path::PathBuf>> =
     std::sync::Mutex::new(None);
 
-pub fn verify_host_key(host: &str, key_type: &str, key: &[u8]) -> HostKeyResult {
+pub fn verify_host_key(host: &str, port: u16, key_type: &str, key: &[u8]) -> HostKeyResult {
     let path = known_hosts_path();
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
@@ -47,15 +47,24 @@ pub fn verify_host_key(host: &str, key_type: &str, key: &[u8]) -> HostKeyResult 
     };
 
     let mut found_match = false;
-    let mut found_key_for_host = false;
+    let _found_key_for_host = false;
 
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        // Skip hashed entries (|1|...). Only plaintext entries are supported.
+        // Hashed entries (|1|salt|hash): Debian/Ubuntu default to
+        // HashKnownHosts yes, so skipping them would blind the verifier to
+        // existing trust. Match by HMAC-SHA1 over both candidate forms.
         if line.starts_with("|1|") {
+            if let Some(verdict) = verify_hashed_entry(line, host, port, key_type, key) {
+                match verdict {
+                    HashedVerdict::Known => found_match = true,
+                    HashedVerdict::Changed => return HostKeyResult::Mismatch,
+                    HashedVerdict::OtherHost => {}
+                }
+            }
             continue;
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -110,7 +119,10 @@ pub fn verify_host_key(host: &str, key_type: &str, key: &[u8]) -> HostKeyResult 
         if !any_match {
             continue;
         }
-        found_key_for_host = true;
+        // Same host under a different key type is a NEW key, not a changed
+        // one (OpenSSH keeps one line per type; libssh2 does not reorder its
+        // preference from known_hosts). Only the same type with different
+        // bytes is the MITM signal.
         if entry_key_type != key_type {
             continue;
         }
@@ -121,19 +133,84 @@ pub fn verify_host_key(host: &str, key_type: &str, key: &[u8]) -> HostKeyResult 
         if entry_key == key {
             found_match = true;
         } else {
-            // Key type matches but key bytes differ — possible MITM.
             return HostKeyResult::Mismatch;
         }
     }
 
     if found_match {
         HostKeyResult::Known
-    } else if found_key_for_host {
-        // Host is in known_hosts with a different key type — suspicious but
-        // treat as mismatch (same effect: reject).
-        HostKeyResult::Mismatch
     } else {
         HostKeyResult::Unknown
+    }
+}
+
+/// Verdict for a hashed known_hosts line against the live handshake.
+enum HashedVerdict {
+    Known,
+    Changed,
+    OtherHost,
+}
+
+/// OpenSSH hashed-entry form: `|1|base64(salt)|base64(HMAC-SHA1(salt, host))`.
+/// The hashed string is whatever host form was written (bare or `[h]:port`),
+/// so both candidate forms are tried.
+fn verify_hashed_entry(
+    line: &str,
+    host: &str,
+    port: u16,
+    key_type: &str,
+    key: &[u8],
+) -> Option<HashedVerdict> {
+    use base64::Engine as _;
+    use hmac::Mac;
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    if fields.len() < 3 {
+        return None;
+    }
+    // fields[0] is "|1|<salt>|<hash>"; split('|') would yield a leading
+    // empty piece, so strip the prefix instead.
+    let rest = fields[0].strip_prefix("|1|")?;
+    let mut parts = rest.split('|');
+    let salt = base64::engine::general_purpose::STANDARD
+        .decode(parts.next()?)
+        .ok()?;
+    let digest = base64::engine::general_purpose::STANDARD
+        .decode(parts.next()?)
+        .ok()?;
+
+    type HmacSha1 = hmac::Hmac<sha1::Sha1>;
+    let expected = HmacSha1::new_from_slice(&salt).ok();
+    let host_matches_hash = move |candidate: &str| -> bool {
+        let Some(mut mac) = expected.clone() else {
+            return false;
+        };
+        mac.update(candidate.as_bytes());
+        mac.finalize().into_bytes().as_slice() == digest.as_slice()
+    };
+    let bare = host.to_string();
+    let ported = format!("[{host}]:{port}");
+    let is_our_host = port == 22 && host_matches_hash(&bare)
+        || port != 22 && host_matches_hash(&ported)
+        // The entry may have been written with the other form (e.g. the
+        // default port recorded bare, or a non-default port recorded bare).
+        || host_matches_hash(&bare)
+        || host_matches_hash(&ported);
+    if !is_our_host {
+        return Some(HashedVerdict::OtherHost);
+    }
+    // Same host: the key type and bytes decide.
+    let entry_key = base64::engine::general_purpose::STANDARD
+        .decode(fields[2])
+        .ok()?;
+    if fields[1] == key_type {
+        if entry_key == key {
+            Some(HashedVerdict::Known)
+        } else {
+            Some(HashedVerdict::Changed)
+        }
+    } else {
+        // Different type under our hashed host: a new key, not a changed one.
+        None
     }
 }
 
@@ -143,8 +220,12 @@ pub fn verify_host_key(host: &str, key_type: &str, key: &[u8]) -> HostKeyResult 
 /// `BALUARD_DATA_DIR`). Returns the canonical path even if the file does not
 /// exist (caller handles the read failure).
 fn known_hosts_path() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".ssh").join("known_hosts");
+    // Some Android contexts set HOME to / or /data; the app data dir is the
+    // only writable, app-scoped location there.
+    if !cfg!(target_os = "android") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(".ssh").join("known_hosts");
+        }
     }
     if let Some(profile) = std::env::var_os("USERPROFILE") {
         return PathBuf::from(profile).join(".ssh").join("known_hosts");
@@ -295,6 +376,11 @@ fn pending_observations() -> &'static Mutex<Vec<(String, PendingObservation)>> {
 /// Record a host key observed during a failed handshake. Returns the attempt
 /// id the trust route must present.
 pub fn record_observation(observed: ObservedHostKey) -> String {
+    // An unreadable key cannot be fingerprinted or trusted later; recording
+    // it would mint an attempt id for a bogus entry.
+    if observed.key.is_empty() {
+        return String::new();
+    }
     let mut pending = pending_observations().lock().expect("pending lock");
     let now = std::time::Instant::now();
     pending.retain(|(_, p)| now.duration_since(p.at).as_secs() < OBSERVATION_TTL_SECS);
@@ -384,7 +470,6 @@ pub fn trust_host_key(observed: &ObservedHostKey) -> Result<(), String> {
         observed.key_type.as_str(),
         "ssh-ed25519"
             | "ssh-rsa"
-            | "ssh-dss"
             | "ecdsa-sha2-nistp256"
             | "ecdsa-sha2-nistp384"
             | "ecdsa-sha2-nistp521"
@@ -412,27 +497,37 @@ pub fn trust_host_key(observed: &ObservedHostKey) -> Result<(), String> {
             continue;
         }
         if line.starts_with("|1|") {
-            // Hashed entries cannot be attributed to this host; refuse rather
-            // than risk a second trust relationship for it.
-            return Err(
-                "your known_hosts file uses hashed entries; add this host key yourself or ask your administrator"
-                    .into(),
-            );
+            // With hashed matching implemented, only a hashed entry FOR THIS
+            // host blocks (its key bytes/type cannot be safely rewritten); an
+            // unrelated hashed line is none of ours.
+            if let Some(HashedVerdict::Known | HashedVerdict::Changed) =
+                verify_hashed_entry(line, host, observed.port, &observed.key_type, &observed.key)
+            {
+                return Err(
+                    "your known_hosts file already has a hashed entry for this host; add this host key yourself or ask your administrator"
+                        .into(),
+                );
+            }
+            continue;
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 3 {
             continue;
         }
         let entry_pattern = parts[0];
+        let entry_type = parts[1];
         for pattern in entry_pattern.split(',') {
             let pattern = pattern
                 .trim_start_matches('@')
                 .split(',')
                 .next()
                 .unwrap_or(pattern);
-            // Only exact host-form matches count as conflicts (wildcards are
-            // the user's own broader trust and are not ours to rewrite).
-            if pattern == host || pattern == entry_host(host, observed.port) {
+            // Only exact host-form matches count as conflicts, scoped to the
+            // same key type (a second type is a new line, like OpenSSH).
+            // Wildcards are the user's own broader trust, not ours to rewrite.
+            if (pattern == host || pattern == entry_host(host, observed.port))
+                && entry_type == observed.key_type
+            {
                 return Err(
                     "a different key is already recorded for this host; remove the old entry first if you really want to replace it"
                         .into(),
@@ -548,7 +643,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // SAFETY: test is single-threaded for this env var; not used elsewhere.
         let _home = HomeGuard::set(dir.path());
-        let result = verify_host_key("github.com", "ssh-ed25519", &[1, 2, 3]);
+        let result = verify_host_key("github.com", 22, "ssh-ed25519", &[1, 2, 3]);
         assert_eq!(result, HostKeyResult::Missing);
     }
 
@@ -568,7 +663,7 @@ mod tests {
         )
         .unwrap();
         let _home = HomeGuard::set(dir.path());
-        let result = verify_host_key("github.com", "ssh-ed25519", key);
+        let result = verify_host_key("github.com", 22, "ssh-ed25519", key);
         assert_eq!(result, HostKeyResult::Known);
     }
 
@@ -588,17 +683,17 @@ mod tests {
         let _home = HomeGuard::set(dir.path());
         // First host pattern matches
         assert_eq!(
-            verify_host_key("github.com", "ssh-ed25519", key),
+            verify_host_key("github.com", 22, "ssh-ed25519", key),
             HostKeyResult::Known
         );
         // Second host pattern also matches
         assert_eq!(
-            verify_host_key("192.30.255.112", "ssh-ed25519", key),
+            verify_host_key("192.30.255.112", 22, "ssh-ed25519", key),
             HostKeyResult::Known
         );
         // Non-matching host
         assert_eq!(
-            verify_host_key("evil.com", "ssh-ed25519", key),
+            verify_host_key("evil.com", 22, "ssh-ed25519", key),
             HostKeyResult::Unknown
         );
     }
@@ -674,10 +769,96 @@ mod custom_trust_tests {
             };
             assert!(std::fs::read_to_string(&kh).unwrap().contains(&want));
 
-            // A hashed entry in the file blocks trust entirely.
-            let _ = std::fs::write(&kh, "|1|salt|hash ssh-ed25519 AAAA\n");
+            // A hashed entry FOR THIS HOST blocks trust (its key bytes and
+            // type cannot be safely rewritten); unrelated hashed entries are
+            // none of ours.
+            let salt = [7u8; 16];
+            use hmac::Mac;
+            type HmacSha1 = hmac::Hmac<sha1::Sha1>;
+            let mut mac = HmacSha1::new_from_slice(&salt).unwrap();
+            mac.update(b"[git.example.com]:2222");
+            let digest = mac.finalize().into_bytes();
+            use base64::Engine as _;
+            let enc = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+            let hashed_line = format!(
+                "|1|{}|{} ssh-ed25519 {}",
+                enc(&salt),
+                enc(&digest),
+                enc(b"k2")
+            );
+            let _ = std::fs::write(&kh, hashed_line + "\n");
             let err = trust_host_key(&other).unwrap_err();
             assert!(err.contains("hashed"), "{err}");
+            // An unrelated hashed entry (different host) does not block.
+            let mut mac2 = HmacSha1::new_from_slice(&salt).unwrap();
+            mac2.update(b"other.example.com");
+            let other_line = format!(
+                "|1|{}|{} ssh-ed25519 {}",
+                enc(&salt),
+                enc(mac2.finalize().into_bytes().as_slice()),
+                enc(b"k3")
+            );
+            let _ = std::fs::write(&kh, other_line + "\n");
+            // (same key as the recorded one would conflict only on plaintext;
+            // here the file has no plaintext entry, so trust appends)
+            assert!(trust_host_key(&other).is_ok());
+        });
+    }
+
+    #[test]
+    fn hashed_entries_match_and_change_refuses() {
+        with_test_home(|home| {
+            let kh = home.join(".ssh").join("known_hosts");
+            std::fs::create_dir_all(kh.parent().unwrap()).unwrap();
+            use hmac::Mac;
+            type HmacSha1 = hmac::Hmac<sha1::Sha1>;
+            use base64::Engine as _;
+            let enc = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+            let salt = [9u8; 16];
+            let mut mac = HmacSha1::new_from_slice(&salt).unwrap();
+            mac.update(b"git.example.com");
+            let line = format!(
+                "|1|{}|{} ssh-ed25519 {}",
+                enc(&salt),
+                enc(mac.finalize().into_bytes().as_slice()),
+                enc(b"k1")
+            );
+            std::fs::write(&kh, line + "\n").unwrap();
+            // Same host + same type + same bytes: Known despite hashing.
+            assert_eq!(
+                verify_host_key("git.example.com", 22, "ssh-ed25519", b"k1"),
+                HostKeyResult::Known
+            );
+            // Same type, different bytes: Mismatch (changed key).
+            assert_eq!(
+                verify_host_key("git.example.com", 22, "ssh-ed25519", b"k2"),
+                HostKeyResult::Mismatch
+            );
+            // Different type under our hashed host: a new key, not changed.
+            assert_eq!(
+                verify_host_key("git.example.com", 22, "ssh-rsa", b"k1"),
+                HostKeyResult::Unknown
+            );
+        });
+    }
+
+    #[test]
+    fn different_key_type_on_plaintext_host_is_unknown_not_mismatch() {
+        with_test_home(|home| {
+            let kh = home.join(".ssh").join("known_hosts");
+            std::fs::create_dir_all(kh.parent().unwrap()).unwrap();
+            use base64::Engine as _;
+            let enc = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+            let line = format!("git.example.com ssh-ed25519 {}", enc(b"k1"));
+            std::fs::write(&kh, line + "\n").unwrap();
+            assert_eq!(
+                verify_host_key("git.example.com", 22, "ssh-ed25519", b"k2"),
+                HostKeyResult::Mismatch
+            );
+            assert_eq!(
+                verify_host_key("git.example.com", 22, "ssh-rsa", b"k1"),
+                HostKeyResult::Unknown
+            );
         });
     }
 
