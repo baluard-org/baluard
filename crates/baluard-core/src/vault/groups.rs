@@ -222,6 +222,16 @@ pub fn create_group(
             VaultError::InvalidOperation("This vault has reached its group limit.".into()).into(),
         );
     }
+    // Same uniqueness invariant as collections, Unicode case-folded.
+    let folded = name.trim().to_lowercase();
+    for (_, existing) in list_groups(vault_path, sgk)? {
+        if existing.to_lowercase() == folded {
+            return Err(VaultError::InvalidOperation(
+                "A group with this name already exists.".into(),
+            )
+            .into());
+        }
+    }
     let id = Uuid::new_v4();
     let mut gk = Zeroizing::new([0u8; 32]);
     rand::rngs::OsRng.fill_bytes(gk.as_mut());
@@ -250,6 +260,48 @@ fn count_group_files(dir: &Path) -> Result<usize, BaluardError> {
 
 /// Walk every well-formed group def; malformed rows skip inert (the
 /// member-directory discipline). Sorted by decrypted name.
+/// Strict file-level group enumeration for SECURITY decisions: read
+/// and parse errors propagate instead of skipping, so a damaged group
+/// can never silently keep a leaver's gkwrap or strand its GK across a
+/// rotation. Name decryption stays out (callers may not need it).
+pub fn list_group_files(vault_path: &Path) -> Result<Vec<GroupFile>, BaluardError> {
+    let mut out = Vec::new();
+    let dir = groups_dir(vault_path);
+    if !dir.is_dir() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(&dir)?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|e| VaultError::Metadata(format!("group read: {e}")))?;
+        if bytes.len() > MAX_GROUP_FILE_BYTES {
+            return Err(VaultError::InvalidOperation(
+                "A group file is too large to process.".into(),
+            )
+            .into());
+        }
+        let file: GroupFile = serde_json::from_slice(&bytes)
+            .map_err(|_| VaultError::InvalidOperation("A group file is damaged.".into()))?;
+        if file.format != FORMAT {
+            return Err(VaultError::InvalidOperation(
+                "A group file has an unsupported format.".into(),
+            )
+            .into());
+        }
+        if path.file_stem().and_then(|x| x.to_str()) != Some(file.id.to_string().as_str()) {
+            return Err(VaultError::InvalidOperation(
+                "A group file does not match its id.".into(),
+            )
+            .into());
+        }
+        out.push(file);
+    }
+    Ok(out)
+}
+
 pub fn list_groups(
     vault_path: &Path,
     sgk: &SpaceGroupKey,
@@ -296,6 +348,16 @@ pub fn rename_group(
     name: &str,
 ) -> Result<GroupFile, BaluardError> {
     validate_name(name)?;
+    // Same uniqueness invariant as collections, Unicode case-folded.
+    let folded = name.trim().to_lowercase();
+    for (other, existing) in list_groups(vault_path, sgk)? {
+        if other.id != *id && existing.to_lowercase() == folded {
+            return Err(VaultError::InvalidOperation(
+                "A group with this name already exists.".into(),
+            )
+            .into());
+        }
+    }
     let mut file = parse_group_file(vault_path, id)?;
     let gk = unwrap_gk(&file, sgk)?;
     file.name_enc = seal_name(&gk, id, name.trim())?;
@@ -581,15 +643,12 @@ pub fn remove_group_member(
     let old_gk = unwrap_gk(&file, sgk)?;
     let name = decrypt_name(&file, &old_gk)?;
 
-    // Rotate: fresh GK, re-seal the def (key wrap AND name).
-    let mut new_gk = Zeroizing::new([0u8; 32]);
-    rand::rngs::OsRng.fill_bytes(new_gk.as_mut());
-    file.gk_wrapped = wrap_gk(sgk, &new_gk, id)?;
-    file.name_enc = seal_name(&new_gk, id, &name)?;
-    save_group(vault_path, &file)?;
-
-    // Re-seal every ckwrap under the new GK — the CK VALUES never move.
+    // Verify phase: open every ckwrap under the old GK BEFORE any
+    // persisted mutation — the def flip is the commit point, and a
+    // damaged ckwrap discovered after it would be sealed under a GK
+    // nobody holds.
     let dir = gkwraps_dir(vault_path, id);
+    let mut ck_wraps = Vec::new();
     if dir.is_dir() {
         for entry in std::fs::read_dir(&dir)?.flatten() {
             let path = entry.path();
@@ -603,8 +662,23 @@ pub fn remove_group_member(
                 continue;
             };
             let ck = open_ckwrap_with_gk(vault_path, id, &cid, &old_gk)?;
-            write_ckwrap(vault_path, id, &cid, &new_gk, &ck)?;
+            ck_wraps.push((cid, ck));
         }
+    }
+
+    // Rotate: fresh GK, re-seal the def (key wrap AND name).
+    let mut new_gk = Zeroizing::new([0u8; 32]);
+    rand::rngs::OsRng.fill_bytes(new_gk.as_mut());
+    file.gk_wrapped = wrap_gk(sgk, &new_gk, id)?;
+    file.name_enc = seal_name(&new_gk, id, &name)?;
+    save_group(vault_path, &file)?;
+
+    // Commit done — the old GK stays in scope until every re-wrap is
+    // written; a write failure past this point surfaces as Err with the
+    // group named (a retry converges: the member is already out of the
+    // def, so prune skips this group).
+    for (cid, ck) in &ck_wraps {
+        write_ckwrap(vault_path, id, cid, &new_gk, ck)?;
     }
 
     // Survivor gkwraps rewrite under the new GK.
@@ -627,7 +701,9 @@ pub fn collect_group_keys(
     sgk: &SpaceGroupKey,
 ) -> Result<CollectedGroupKeys, BaluardError> {
     let mut out = Vec::new();
-    for (file, _) in list_groups(vault_path, sgk)? {
+    // Strict walk: a group the lenient listing skips would strand its GK
+    // under the dead SGK epoch — unrecoverable after the rotation.
+    for file in list_group_files(vault_path)? {
         out.push((file.id, unwrap_gk(&file, sgk)?));
     }
     Ok(out)
@@ -700,7 +776,9 @@ pub fn prune_member(
     member_id: &Uuid,
 ) -> Result<usize, BaluardError> {
     let mut pruned = 0;
-    for (file, _) in list_groups(vault_path, sgk)? {
+    // Strict walk: a damaged group must fail the removal, not leave the
+    // leaver's gkwrap live on a group nobody can rotate later.
+    for file in list_group_files(vault_path)? {
         if file.members.contains(member_id) {
             remove_group_member(vault_path, sgk, &file.id, member_id)?;
             pruned += 1;
@@ -826,6 +904,35 @@ mod tests {
         let secret = x25519_dalek::StaticSecret::from([seed; 32]);
         let pub_hex = hex::encode(x25519_dalek::PublicKey::from(&secret).as_bytes());
         (secret, pub_hex)
+    }
+
+    #[test]
+    fn rotation_fails_closed_on_damaged_group() {
+        let (_dir, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_group(&path, &sgk, "Servers").unwrap();
+        // A group the lenient listing silently drops would keep its GK
+        // sealed under the dead SGK epoch (collect_group_keys) and its
+        // leaver's gkwrap live (prune_member). The strict walk must
+        // error instead of skipping.
+        let p = group_file_path(&path, &file.id);
+        let mut damaged: GroupFile =
+            serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        damaged.gk_wrapped = serde_json::json!({"not": "a wrap"});
+        let leaver = Uuid::new_v4();
+        damaged.members.push(leaver);
+        std::fs::write(&p, serde_json::to_vec(&damaged).unwrap()).unwrap();
+        assert!(collect_group_keys(&path, &sgk).is_err());
+        assert!(prune_member(&path, &sgk, &leaver).is_err());
+    }
+
+    #[test]
+    fn group_names_are_unique_case_insensitive() {
+        let (_dir, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        create_group(&path, &sgk, "Servers").unwrap();
+        let err = create_group(&path, &sgk, "SERVERS").unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
     }
 
     #[test]

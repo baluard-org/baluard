@@ -159,10 +159,9 @@ fn catalog_path(vault_path: &Path) -> PathBuf {
 
 /// The approver set: live (non-tombstoned) Owner/Admin rows carrying a
 /// non-empty identity wrap pubkey, sorted by member id for determinism.
-pub fn approver_set(vault_path: &Path) -> Vec<(Uuid, String)> {
-    let mut out: Vec<(Uuid, String)> = members::list_members(vault_path)
-        .unwrap_or_default()
-        .into_iter()
+pub fn approver_set(vault_path: &Path) -> Result<Vec<(Uuid, String)>, BaluardError> {
+    // Strict roster: a damaged admin row must shrink no quorum.
+    let mut out: Vec<(Uuid, String)> = members::list_members_strict(vault_path)?.into_iter()
         .filter(|row| {
             row.removed.is_none()
                 && row.reset.is_none()
@@ -178,7 +177,7 @@ pub fn approver_set(vault_path: &Path) -> Vec<(Uuid, String)> {
         })
         .collect();
     out.sort_by_key(|(id, _)| *id);
-    out
+    Ok(out)
 }
 
 fn validate_note(note: &str) -> Result<String, BaluardError> {
@@ -268,7 +267,7 @@ pub fn submit_request(
             "You already have a pending request for this collection.",
         ));
     }
-    let approvers = approver_set(vault_path);
+    let approvers = approver_set(vault_path)?;
     if approvers.is_empty() {
         return Err(deny(
             "No administrator on this vault can receive access requests.",
@@ -1239,8 +1238,31 @@ mod tests {
             &member_row(admin_no_key, members::MemberRole::Admin, None),
         )
         .unwrap();
-        let set = approver_set(&path);
+        let set = approver_set(&path).unwrap();
         assert_eq!(set, vec![(owner_id, wrap)]);
+    }
+
+    #[test]
+    fn approver_set_fails_closed_on_damaged_row() {
+        let (_d, path) = temp_vault();
+        let (owner_id, wrap, _keys) = owner_with_key();
+        members::write_member(
+            &path,
+            &member_row(owner_id, members::MemberRole::Owner, Some(wrap.clone())),
+        )
+        .unwrap();
+        // A damaged ADMIN row must fail the set, not shrink the quorum
+        // the surviving rows can satisfy.
+        let admin = Uuid::new_v4();
+        let mut row = member_row(admin, members::MemberRole::Admin, Some("cc".repeat(32)));
+        row.email = Some("a".repeat(4_096));
+        members::write_member(&path, &row).unwrap();
+        let p = path
+            .join("meta/members")
+            .join(format!("{admin}.json"));
+        // Damage beyond repair: truncate the row file.
+        std::fs::write(&p, b"{").unwrap();
+        assert!(approver_set(&path).is_err());
     }
 
     #[test]

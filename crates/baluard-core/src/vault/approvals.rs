@@ -31,6 +31,8 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use uuid::Uuid;
 
+use crate::error::{BaluardError, VaultError};
+
 /// Directory under the vault root holding pending records.
 pub const APPROVALS_DIR: &str = "meta/approvals";
 
@@ -204,7 +206,7 @@ pub fn list_pending(vault_path: &Path) -> Vec<PendingOp> {
 /// (2026-10-01 review: a replayed ask could re-execute within the
 /// staleness window). Tombstones are plaintext, carry no keys, and
 /// ride the same Admin sync row.
-fn remove_matching(vault_path: &Path, kind: &str, digest: &str) {
+fn remove_matching(vault_path: &Path, kind: &str, digest: &str) -> Result<(), BaluardError> {
     let consumed_at = crate::vault::collections::now_secs_pub();
     for (path, op) in list_pending_paths(vault_path) {
         if op.kind == kind && op.params_digest == digest {
@@ -225,10 +227,13 @@ fn remove_matching(vault_path: &Path, kind: &str, digest: &str) {
                 "consumed_at": consumed_at,
             });
             let tomb_path = path.with_extension("json.consumed");
-            let _ = std::fs::write(&tomb_path, tomb.to_string().as_bytes());
-            let _ = std::fs::remove_file(path);
+            std::fs::write(&tomb_path, tomb.to_string().as_bytes())
+                .map_err(|e| VaultError::Metadata(format!("approval tombstone: {e}")))?;
+            std::fs::remove_file(path)
+                .map_err(|e| VaultError::Metadata(format!("approval consume: {e}")))?;
         }
     }
+    Ok(())
 }
 
 /// True when a consumed tombstone matches this exact ask. The tombstone
@@ -261,6 +266,17 @@ fn tombstoned(vault_path: &Path, kind: &str, digest: &str, nonce: &str) -> bool 
         }
     }
     false
+}
+
+/// How far ahead of local time an ask timestamp may sit before the
+/// record is treated as stale (a fast clock must not park an ask that
+/// never ages out). Shared by the gate and present() so both react to
+/// the same record identically.
+pub const FUTURE_SKEW_SECS: u64 = 10 * 60;
+
+pub fn ask_is_stale(initiated_at: u64, now: u64) -> bool {
+    initiated_at.saturating_sub(now) > FUTURE_SKEW_SECS
+        || now.saturating_sub(initiated_at) >= APPROVAL_STALE_SECS
 }
 
 fn record_path(vault_path: &Path, op: &PendingOp) -> std::path::PathBuf {
@@ -306,7 +322,7 @@ pub fn present(
     required: u8,
     now: u64,
     verify: &EntryVerifier,
-) -> ApprovalOutcome {
+) -> Result<ApprovalOutcome, BaluardError> {
     let digest = op_digest(kind, params);
     // Same ask already on record? Append (or short-circuit).
     let existing = list_pending(vault_path)
@@ -319,16 +335,19 @@ pub fn present(
         // refuse.
         let record_nonce = op.nonce.clone().unwrap_or_default();
         if tombstoned(vault_path, kind, &digest, &record_nonce) {
-            remove_matching(vault_path, kind, &digest);
-            return ApprovalOutcome::Consumed;
+            remove_matching(vault_path, kind, &digest)?;
+            return Ok(ApprovalOutcome::Consumed);
         }
-        // A stale ask is no longer confirmable: consume it and treat
-        // this call as a fresh ask (the confirming admin re-raises).
-        // The ask timestamp is inside the signed message, so a stale
-        // signature harvested from git history cannot be replayed onto
-        // a fresh ask either way.
-        if now.saturating_sub(op.initiated_at) >= APPROVAL_STALE_SECS {
-            remove_matching(vault_path, kind, &digest);
+        // A stale (or future-dated, see ask_is_stale) ask is no longer
+        // confirmable: consume it and treat this call as a fresh ask
+        // (the confirming admin re-raises). The ask timestamp is inside
+        // the signed message, so a stale signature harvested from git
+        // history cannot be replayed onto a fresh ask either way.
+        let skew = FUTURE_SKEW_SECS;
+        if op.initiated_at.saturating_sub(now) > skew
+            || now.saturating_sub(op.initiated_at) >= APPROVAL_STALE_SECS
+        {
+            remove_matching(vault_path, kind, &digest)?;
             return fresh_ask(
                 vault_path,
                 kind,
@@ -347,7 +366,7 @@ pub fn present(
         let mut seen = std::collections::HashSet::new();
         op.approvals.retain(|e| seen.insert(e.member));
         if op.approvals.iter().any(|e| e.member == entry.member) {
-            return ApprovalOutcome::AlreadyApproved;
+            return Ok(ApprovalOutcome::AlreadyApproved);
         }
         op.approvals.push(entry);
         // The LIVE threshold always governs: a record minted under a
@@ -355,12 +374,13 @@ pub fn present(
         // never approves below or above what the settings demand now.
         let effective = required;
         if op.approvals.len() >= effective as usize {
-            remove_matching(vault_path, kind, &digest);
-            return ApprovalOutcome::Approved;
+            remove_matching(vault_path, kind, &digest)?;
+            return Ok(ApprovalOutcome::Approved);
         }
         op.required = effective;
-        let _ = write_record(vault_path, &op);
-        return ApprovalOutcome::Pending;
+        write_record(vault_path, &op)
+            .map_err(|e| VaultError::Metadata(format!("approval record: {e}")))?;
+        return Ok(ApprovalOutcome::Pending);
     }
     fresh_ask(
         vault_path,
@@ -388,7 +408,7 @@ fn fresh_ask(
     now: u64,
     digest: String,
     nonce: &str,
-) -> ApprovalOutcome {
+) -> Result<ApprovalOutcome, BaluardError> {
     let op = PendingOp {
         format: 2,
         kind: kind.to_string(),
@@ -400,21 +420,27 @@ fn fresh_ask(
         params: Some(params.clone()),
         nonce: Some(nonce.to_string()),
     };
-    let _ = write_record(vault_path, &op);
-    ApprovalOutcome::Pending
+    // A Pending outcome that never hit disk would leave the confirming
+    // admin telling the initiator to chase an ask nobody can see.
+    write_record(vault_path, &op).map_err(|e| VaultError::Metadata(format!("approval record: {e}")))?;
+    Ok(ApprovalOutcome::Pending)
 }
 
 /// Remove a pending record after the op ran through another path or
 /// was superseded. Missing file = nothing to do.
-pub fn consume_matching(vault_path: &Path, kind: &str, params: &serde_json::Value) {
+pub fn consume_matching(
+    vault_path: &Path,
+    kind: &str,
+    params: &serde_json::Value,
+) -> Result<(), BaluardError> {
     let digest = op_digest(kind, params);
-    remove_matching(vault_path, kind, &digest);
+    remove_matching(vault_path, kind, &digest)
 }
 
 /// Remove every pending record of `kind` whose digest differs from
 /// `keep_digest` — a fresh ask supersedes older asks of the same kind
 /// (a new transfer target invalidates the old one).
-pub fn consume_other_of_kind(vault_path: &Path, kind: &str, keep_digest: &str) {
+pub fn consume_other_of_kind(vault_path: &Path, kind: &str, keep_digest: &str) -> Result<(), BaluardError> {
     let consumed_at = crate::vault::collections::now_secs_pub();
     for (path, op) in list_pending_paths(vault_path) {
         if op.kind == kind && op.params_digest != keep_digest {
@@ -430,15 +456,33 @@ pub fn consume_other_of_kind(vault_path: &Path, kind: &str, keep_digest: &str) {
                 "consumed_at": consumed_at,
             });
             let tomb_path = path.with_extension("json.consumed");
-            let _ = std::fs::write(&tomb_path, tomb.to_string().as_bytes());
-            let _ = std::fs::remove_file(path);
+            std::fs::write(&tomb_path, tomb.to_string().as_bytes())
+                .map_err(|e| VaultError::Metadata(format!("approval tombstone: {e}")))?;
+            std::fs::remove_file(path)
+                .map_err(|e| VaultError::Metadata(format!("approval consume: {e}")))?;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test shim: the real gate propagates IO errors; the assertions
+    /// only care about the outcome.
+    #[allow(dead_code)]
+    fn present(
+        vault_path: &Path,
+        kind: &str,
+        params: &serde_json::Value,
+        entry: ApprovalEntry,
+        required: u8,
+        now: u64,
+        verify: &EntryVerifier,
+    ) -> ApprovalOutcome {
+        super::present(vault_path, kind, params, entry, required, now, verify).unwrap()
+    }
 
     fn params(n: u64) -> serde_json::Value {
         serde_json::json!({ "n": n })
