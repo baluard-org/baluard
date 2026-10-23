@@ -799,7 +799,11 @@ fn spawn_ssh_server() -> (SshServerGuard, String, std::path::PathBuf) {
         .expect("git must be on PATH");
     assert!(ok.success(), "bare repo init failed");
 
-    let port = 21000 + (std::process::id() % 8000) as u16;
+    // Parallel flows in one test binary share the pid-derived base, so each
+    // server takes its own slot in the band.
+    static SSH_PORT_SEQ: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+    let seq = SSH_PORT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let port = 21000 + ((std::process::id() as u16) % 7000) + (seq as u16 % 10) * 100;
     std::fs::write(
         dir.path().join("sshd_config"),
         format!(
@@ -967,6 +971,152 @@ fn e2e_ssh_custom_remote_trust_push() {
     let kh =
         std::fs::read_to_string(home.path().join(".ssh/known_hosts")).expect("known_hosts written");
     assert!(kh.contains("127.0.0.1"), "{kh}");
+}
+
+/// The MITM half of the trust lifecycle: after a trusted journey, the
+/// operator regenerates the host key and sshd reloads it. The next probe
+/// must refuse as host-changed, offer NO attempt id (a changed key can
+/// never be blessed one-click), and the trust route must still refuse a
+/// stale id.
+#[test]
+fn e2e_ssh_changed_hostkey_refused() {
+    let (mut server, url, _client_key) = spawn_ssh_server();
+    let tmp = tempfile::tempdir().expect("tmp");
+    let home = tempfile::tempdir().expect("home tmp");
+    let guard = spawn_daemon_with(tmp, Some(home.path()));
+    let home_path = home.path().to_path_buf();
+
+    let mut cmd = |args: &[&str]| {
+        baluard_daemon(&guard)
+            .env("HOME", &home_path)
+            .args(args)
+            .output()
+            .expect("run baluard")
+    };
+
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .arg(guard._tmp.path().join("vault"))
+        .status()
+        .expect("git init");
+    let out = cmd(&["init", "--slug", "sshk", "--json"]);
+    assert!(out.status.success(), "init failed");
+    let out = cmd(&["vaults", "switch", "baluard-sshk"]);
+    assert!(out.status.success(), "switch failed");
+    let out = cmd(&["unlock"]);
+    assert!(out.status.success(), "unlock failed");
+
+    // Trusted first contact, exactly as the happy-path flow proves it.
+    let out = baluard_daemon(&guard)
+        .env("HOME", &home_path)
+        .args(["git-probe", &url, "--key-file"])
+        .arg(&_client_key)
+        .output()
+        .expect("probe");
+    let probe_out = String::from_utf8_lossy(&out.stdout);
+    let aid: String = probe_out
+        .split("git-trust ")
+        .nth(1)
+        .map(|rest| rest.trim().to_string())
+        .expect("trust command printed");
+    let out = cmd(&["git-trust", &aid]);
+    assert!(out.status.success(), "trust failed");
+
+    // The operator rotates the host key; sshd reloads it in place.
+    let port: u16 = url
+        .split("127.0.0.1:")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|p| p.parse().ok())
+        .expect("port in url");
+    let _ = server.child.kill();
+    let _ = server.child.wait();
+    // ssh-keygen prompts on an existing file, which would hang the flow.
+    let _ = std::fs::remove_file(server.dir.path().join("hostkey"));
+    let _ = std::fs::remove_file(server.dir.path().join("hostkey.pub"));
+    let ok = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(server.dir.path().join("hostkey"))
+        .status()
+        .expect("ssh-keygen");
+    assert!(ok.success(), "host key regeneration failed");
+    server.child = std::process::Command::new("/usr/sbin/sshd")
+        .args(["-D", "-e", "-f"])
+        .arg(server.dir.path().join("sshd_config"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sshd restart");
+    let mut up = false;
+    for _ in 0..40 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            up = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert!(up, "sshd never came back on {port}");
+
+    // The probe now refuses as host-changed and offers NO trust command.
+    let out = baluard_daemon(&guard)
+        .env("HOME", &home_path)
+        .args(["git-probe", &url, "--key-file"])
+        .arg(&_client_key)
+        .output()
+        .expect("probe after rotation");
+    let rotated = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success(),
+        "probe must fail after rotation: {rotated}"
+    );
+    assert!(
+        rotated.contains("host-changed"),
+        "expected the changed-key kind: {rotated}"
+    );
+    assert!(
+        rotated.contains("changed"),
+        "expected the changed-key message: {rotated}"
+    );
+    assert!(
+        !rotated.contains("git-trust "),
+        "a changed key must never offer one-click trust: {rotated}"
+    );
+
+    // Sync is refused with the same signal.
+    let out = cmd(&["sync", "push"]);
+    assert!(!out.status.success(), "push must fail after rotation");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("changed"),
+        "expected changed-key refusal: {err}"
+    );
+
+    // The CHANGED observation must never be blessable one-click: hand the
+    // trust route the very attempt id the changed probe minted.
+    let changed_aid: String = rotated
+        .split("attempt_id\":\"")
+        .nth(1)
+        .map(|rest| rest.chars().take(32).collect())
+        .expect("attempt id in the changed marker");
+    let out = cmd(&["git-trust", &changed_aid]);
+    assert!(
+        !out.status.success(),
+        "a changed key must never be trustable"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("changed"),
+        "expected the changed-key trust refusal: {err}"
+    );
+
+    // And a stale/bogus id still refuses with the usual message.
+    let out = cmd(&["git-trust", "deadbeefdeadbeefdeadbeefdeadbeef"]);
+    assert!(!out.status.success(), "stale trust must fail");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("no pending host-key request"),
+        "expected the stale-id refusal: {err}"
+    );
 }
 
 /// Spawn the python HTTPS git server (e2e/git-server/http-git-server.py)

@@ -3196,7 +3196,10 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
         Ok(Err(e)) => {
             let msg =
                 baluard_core::sync::credentials::format_sync_error_for(&e, Some(&url_for_err));
-            let kind = if msg.contains("changed") && msg.contains("known_hosts") {
+            let kind = if msg.contains("\"changed\":true") {
+                // A flagged marker: the host key changed (never trustable).
+                "host-changed"
+            } else if msg.contains("changed") && msg.contains("known_hosts") {
                 "host-changed"
             } else if msg.contains("host_key_untrusted") {
                 "host-untrusted"
