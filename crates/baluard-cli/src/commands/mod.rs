@@ -2423,7 +2423,6 @@ pub fn handle_credentials(
             ssh_passphrase,
             key,
         } => {
-            use base64::Engine as _;
             let mut obj = serde_json::Map::new();
             if let Some(host) = std::env::var("BALUARD_CREDENTIALS_HOST").ok() {
                 obj.insert("host".into(), serde_json::Value::String(host));
@@ -2533,6 +2532,9 @@ pub fn handle_git_probe(
             println!("Host: {h}");
             println!("Key type: {kt}");
             println!("Fingerprint: {fp}");
+            if inner["known_other_type"].as_bool() == Some(true) {
+                println!("Note: this host already has a key of another type in known_hosts.");
+            }
             println!("Trust it with: baluard git-trust {aid}");
             std::process::exit(2);
         }
