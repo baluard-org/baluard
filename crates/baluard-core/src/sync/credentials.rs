@@ -425,7 +425,11 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                 // Unknown keys are stashed as daemon-observed pending
                 // handshakes so the trust route can only bless a key the
                 // daemon itself saw.
-                crate::sync::known_hosts::HostKeyResult::Unknown => {
+                // Missing (no readable known_hosts yet) is the same trust
+                // situation as Unknown on a fresh machine: offer the key for
+                // the first-contact trust flow. Mismatch stays silent.
+                crate::sync::known_hosts::HostKeyResult::Unknown
+                | crate::sync::known_hosts::HostKeyResult::Missing => {
                     let port = LAST_AUTH_URL.with(|u| port_of(&u.borrow()));
                     crate::sync::known_hosts::record_observation(
                         crate::sync::known_hosts::ObservedHostKey {
@@ -476,7 +480,9 @@ pub fn port_of(url: &str) -> u16 {
 /// `{"host_key_untrusted": {...}}` replaces the generic message so UIs can
 /// render the trust flow; drains the observation.
 pub fn format_sync_error(err: &BaluardError) -> String {
-    if let Some((attempt_id, obs)) = crate::sync::known_hosts::take_latest_observation() {
+    // Peek, never drain: the trust route consumes the observation by id
+    // after the surface reports it.
+    if let Some((attempt_id, obs)) = crate::sync::known_hosts::peek_latest_observation() {
         return serde_json::json!({
             "host_key_untrusted": {
                 "host": obs.host,
@@ -493,9 +499,11 @@ pub fn format_sync_error(err: &BaluardError) -> String {
 
 /// Upgrade a failed sync/clone/transport error into the structured
 /// `HostKeyUntrusted` error when the failing operation recorded a pending
-/// host-key observation. Drains the observation.
+/// host-key observation. The observation stays pending for the trust route.
 pub fn upgrade_host_key_error(err: BaluardError) -> BaluardError {
-    if let Some((attempt_id, obs)) = crate::sync::known_hosts::take_latest_observation() {
+    // Peek, never drain: the trust route consumes the observation by id
+    // after the surface reports it.
+    if let Some((attempt_id, obs)) = crate::sync::known_hosts::peek_latest_observation() {
         return BaluardError::Sync(crate::error::SyncError::HostKeyUntrusted {
             host: obs.host,
             port: obs.port,

@@ -2524,10 +2524,11 @@ pub fn handle_git_probe(
             // Surface the trust flow inputs from the marker JSON.
             let marker: serde_json::Value =
                 serde_json::from_str(detail).unwrap_or(serde_json::Value::Null);
-            let h = marker["host_key_untrusted"]["host"].as_str().unwrap_or("");
-            let fp = marker["fingerprint"].as_str().unwrap_or("");
-            let kt = marker["key_type"].as_str().unwrap_or("");
-            let aid = marker["attempt_id"].as_str().unwrap_or("");
+            let inner = &marker["host_key_untrusted"];
+            let h = inner["host"].as_str().unwrap_or("");
+            let fp = inner["fingerprint"].as_str().unwrap_or("");
+            let kt = inner["key_type"].as_str().unwrap_or("");
+            let aid = inner["attempt_id"].as_str().unwrap_or("");
             println!("The server's host key is not trusted yet.");
             println!("Host: {h}");
             println!("Key type: {kt}");
