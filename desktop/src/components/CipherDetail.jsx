@@ -950,6 +950,7 @@ export default function CipherDetail(props) {
           </Show>
         }>
           <button
+            data-testid="detail-restore"
             onClick={() => vault.restoreCipher(cipher().id, t).then(() => { props.setViewCipher(null); props.setActivePane("welcome"); })}
             class="flex-1 py-3 px-4 rounded-xl border font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-green"
           >

@@ -276,6 +276,7 @@ export default function VaultView() {
               <For each={categories}>
                 {(cat) => (
                   <button
+                    data-testid={"category-" + cat.id}
                     onClick={() => { vault.setSelectedCategory(cat.name); vault.setSelectedFolder(null); vault.setSelectedTag(null); }}
                     class={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between text-left cursor-pointer ${
                       vault.selectedCategory() === cat.name
@@ -313,6 +314,7 @@ export default function VaultView() {
             <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
               <span>{t("vault.foldersTitle")}</span>
               <button
+                data-testid="new-folder"
                 onClick={() => setShowNewFolder(!showNewFolder())}
                 class="p-1 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
                 title={t("vault.newFolder")}
@@ -325,6 +327,7 @@ export default function VaultView() {
                 <div class="flex items-center gap-1 py-1.5 rounded-xl" style={{ "padding-left": "14px", "padding-right": "6px" }}>
                   <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
                   <input
+                    data-testid="new-folder-input"
                     class="flex-1 min-w-0 bg-transparent border-b border-[var(--color-primary)] text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-muted)] pb-px"
                     placeholder={t("vault.folderNamePlaceholder")}
                     autofocus
@@ -374,12 +377,14 @@ export default function VaultView() {
                       {tag => (
                         <div class="group relative">
                           <button
+                            data-testid="tag-pill"
                             onClick={() => { vault.setSelectedTag(vault.selectedTag() === tag ? null : tag); }}
                             class={`px-2 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${vault.selectedTag() === tag ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
                           >
                             {tag}
                           </button>
                           <button
+                            data-testid="tag-delete"
                             onClick={(e) => { e.stopPropagation(); setDeleteTagName(tag); }}
                             class="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-red-400 hover:border-red-400 flex items-center justify-center text-[9px] leading-none opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                             title={t("entry.delete")}
@@ -478,6 +483,7 @@ export default function VaultView() {
               </div>
             }>
               <button
+                data-testid="empty-trash"
                 onClick={async () => {
                   if (!filteredCiphers().length) return;
                   setShowEmptyTrashConfirm(true);
@@ -491,6 +497,7 @@ export default function VaultView() {
             </Show>
             <Show when={vault.selectedCategory() !== "Trash"}>
               <button
+                data-testid="generator-open"
                 onClick={() => setShowGenerator(true)}
                 class="p-2 rounded-xl bg-[var(--color-sidebar)] hover:bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-sm transition-all cursor-pointer"
                 title={t("generator.title")}
