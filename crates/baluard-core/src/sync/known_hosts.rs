@@ -27,6 +27,10 @@ pub enum HostKeyResult {
     Unknown,
     /// known_hosts file missing or unreadable (fail closed: reject).
     Missing,
+    /// No entry for THIS key type, but the host is known under a different
+    /// type. Still trust-offerable (OpenSSH keeps one line per type), and
+    /// the observation carries the hint so the trust card can say so.
+    UnknownOtherType,
     /// Host key does NOT match a known_hosts entry (potential MITM).
     Mismatch,
 }
@@ -47,7 +51,7 @@ pub fn verify_host_key(host: &str, port: u16, key_type: &str, key: &[u8]) -> Hos
     };
 
     let mut found_match = false;
-    let _found_key_for_host = false;
+    let mut other_type_seen = false;
 
     for line in content.lines() {
         let line = line.trim();
@@ -62,6 +66,7 @@ pub fn verify_host_key(host: &str, port: u16, key_type: &str, key: &[u8]) -> Hos
                 match verdict {
                     HashedVerdict::Known => found_match = true,
                     HashedVerdict::Changed => return HostKeyResult::Mismatch,
+                    HashedVerdict::OtherType => other_type_seen = true,
                     HashedVerdict::OtherHost => {}
                 }
             }
@@ -124,6 +129,7 @@ pub fn verify_host_key(host: &str, port: u16, key_type: &str, key: &[u8]) -> Hos
         // preference from known_hosts). Only the same type with different
         // bytes is the MITM signal.
         if entry_key_type != key_type {
+            other_type_seen = true;
             continue;
         }
         // Base64-decode the key (with and without padding)
@@ -139,6 +145,8 @@ pub fn verify_host_key(host: &str, port: u16, key_type: &str, key: &[u8]) -> Hos
 
     if found_match {
         HostKeyResult::Known
+    } else if other_type_seen {
+        HostKeyResult::UnknownOtherType
     } else {
         HostKeyResult::Unknown
     }
@@ -149,6 +157,8 @@ enum HashedVerdict {
     Known,
     Changed,
     OtherHost,
+    /// Our host under a different key type.
+    OtherType,
 }
 
 /// OpenSSH hashed-entry form: `|1|base64(salt)|base64(HMAC-SHA1(salt, host))`.
@@ -212,7 +222,7 @@ fn verify_hashed_entry(
         }
     } else {
         // Different type under our hashed host: a new key, not a changed one.
-        None
+        Some(HashedVerdict::OtherType)
     }
 }
 
@@ -360,6 +370,10 @@ pub struct ObservedHostKey {
     /// warning surface only; the trust route refuses them, so a changed key
     /// can never be blessed one-click.
     pub changed: bool,
+    /// True when known_hosts already holds the host under a DIFFERENT key
+    /// type. Purely informational: the trust offer is still valid, the
+    /// surface just says so.
+    pub known_other_type: bool,
 }
 
 const OBSERVATION_TTL_SECS: u64 = 300;
@@ -740,6 +754,7 @@ mod custom_trust_tests {
             key: b"raw-key-bytes".to_vec(),
             fingerprint: fingerprint(b"raw-key-bytes"),
             changed: false,
+            known_other_type: false,
         };
         let id = record_observation(obs.clone());
         let taken = take_observation(&id).expect("observation is live");
@@ -762,6 +777,7 @@ mod custom_trust_tests {
                 key: b"k1".to_vec(),
                 fingerprint: String::new(),
                 changed: false,
+                known_other_type: false,
             };
             trust_host_key(&observed).expect("first trust succeeds");
             let content = std::fs::read_to_string(&kh).unwrap();
@@ -852,13 +868,13 @@ mod custom_trust_tests {
             // Different type under our hashed host: a new key, not changed.
             assert_eq!(
                 verify_host_key("git.example.com", 22, "ssh-rsa", b"k1"),
-                HostKeyResult::Unknown
+                HostKeyResult::UnknownOtherType
             );
         });
     }
 
     #[test]
-    fn different_key_type_on_plaintext_host_is_unknown_not_mismatch() {
+    fn different_key_type_on_plaintext_host_is_unknown_other_type() {
         with_test_home(|home| {
             let kh = home.join(".ssh").join("known_hosts");
             std::fs::create_dir_all(kh.parent().unwrap()).unwrap();
@@ -872,7 +888,7 @@ mod custom_trust_tests {
             );
             assert_eq!(
                 verify_host_key("git.example.com", 22, "ssh-rsa", b"k1"),
-                HostKeyResult::Unknown
+                HostKeyResult::UnknownOtherType
             );
         });
     }
@@ -906,8 +922,74 @@ mod custom_trust_tests {
     }
 
     #[test]
-    fn trust_then_verify_roundtrip_is_known() {
+    fn known_other_type_hint_signals_on_plaintext_entries() {
         with_test_home(|home| {
+            // The host is known as ssh-ed25519; a handshake offering a
+            // different type is trust-offerable but must carry the hint.
+            let ssh = home.join(".ssh");
+            std::fs::create_dir_all(&ssh).unwrap();
+            use base64::Engine as _;
+            let k1 = crate::crypto::signature::generate_ed25519_keypair();
+            let pub1 = k1.1.as_bytes().to_vec();
+            let enc = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+            std::fs::write(
+                ssh.join("known_hosts"),
+                format!("git.example.com ssh-ed25519 {}\n", enc(&pub1)),
+            )
+            .unwrap();
+            assert!(matches!(
+                verify_host_key("git.example.com", 22, "ssh-ed25519", &pub1),
+                HostKeyResult::Known
+            ));
+            assert!(matches!(
+                verify_host_key("git.example.com", 22, "ecdsa-sha2-nistp256", b"other-key"),
+                HostKeyResult::UnknownOtherType
+            ));
+            // A host with no entry at all stays a plain Unknown.
+            assert!(matches!(
+                verify_host_key("other.example.com", 22, "ssh-ed25519", &pub1),
+                HostKeyResult::Unknown
+            ));
+        });
+    }
+
+    #[test]
+    fn known_other_type_hint_signals_on_hashed_entries() {
+        with_test_home(|home| {
+            let ssh = home.join(".ssh");
+            std::fs::create_dir_all(&ssh).unwrap();
+            use base64::Engine as _;
+            use hmac::Mac;
+            type HmacSha1 = hmac::Hmac<sha1::Sha1>;
+            let salt = b"0123456789abcdef";
+            let mac_of = |candidate: &str| -> String {
+                let mut mac = HmacSha1::new_from_slice(salt).unwrap();
+                mac.update(candidate.as_bytes());
+                base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
+            };
+            let k1 = crate::crypto::signature::generate_ed25519_keypair();
+            let pub1 = k1.1.as_bytes().to_vec();
+            let enc = base64::engine::general_purpose::STANDARD.encode(&pub1);
+            let hashed_host = format!(
+                "|1|{}|{}",
+                base64::engine::general_purpose::STANDARD.encode(salt),
+                mac_of("git.example.com")
+            );
+            std::fs::write(
+                ssh.join("known_hosts"),
+                format!("{hashed_host} ssh-ed25519 {enc}\n"),
+            )
+            .unwrap();
+            assert!(matches!(
+                verify_host_key("git.example.com", 22, "ecdsa-sha2-nistp256", b"other"),
+                HostKeyResult::UnknownOtherType
+            ));
+        });
+    }
+
+    #[test]
+    fn trust_then_verify_roundtrip_is_known() {
+        with_test_home(|_home| {
             let observed = ObservedHostKey {
                 host: "127.0.0.1".into(),
                 port: 22299,
@@ -915,6 +997,7 @@ mod custom_trust_tests {
                 key: b"k1".to_vec(),
                 fingerprint: fingerprint(b"k1"),
                 changed: false,
+                known_other_type: false,
             };
             trust_host_key(&observed).expect("trust");
             assert_eq!(
@@ -933,6 +1016,7 @@ mod custom_trust_tests {
             key: b"k".to_vec(),
             fingerprint: String::new(),
             changed: false,
+            known_other_type: false,
         };
         assert!(trust_host_key(&observed).is_err(), "newline host refused");
         let observed = ObservedHostKey {
@@ -942,6 +1026,7 @@ mod custom_trust_tests {
             key: b"k".to_vec(),
             fingerprint: String::new(),
             changed: false,
+            known_other_type: false,
         };
         assert!(
             trust_host_key(&observed).is_err(),
