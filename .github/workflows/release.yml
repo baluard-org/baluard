@@ -1,0 +1,200 @@
+# 1.0 release pipeline (SKELETON — review alongside the signing rulings).
+#
+# Fires only on a pushed v* tag or an explicit workflow_dispatch; pushing
+# this file alone runs nothing. The release job publishes a DRAFT release so
+# the artifacts can be inspected before going live.
+#
+# Signing status of record (each is an Esteban-side ruling, not code):
+#   - Linux: unsigned by decision (deb/rpm).
+#   - macOS: Developer ID + notarization when the certificate secrets below
+#     are filled in; without them the build is ad-hoc signed and the app
+#     needs right-click-open on first launch.
+#   - Windows: Authenticode placeholder; without it SmartScreen warns.
+# The version tag is the source of truth for the release name; the version
+# bump across Cargo.toml / tauri.conf.json / Android happens in the release
+# prep commit, not here.
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            protobuf-compiler \
+            rpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Stage daemon + CLI sidecars
+        run: |
+          TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
+          mkdir -p desktop/src-tauri/binaries
+          cargo build --release -p baluard-daemon -p baluard-cli
+          cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
+          cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
+
+      - name: Build desktop bundles (deb, rpm)
+        run: |
+          cd desktop
+          npm install
+          npm run tauri build -- --bundles deb,rpm
+
+      - name: Collect CLI + daemon archives
+        run: |
+          mkdir -p dist
+          cp target/release/baluard target/release/baluard-daemon dist/
+          tar czf "baluard-cli-linux-x86_64.tar.gz" -C dist baluard baluard-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            desktop/src-tauri/target/release/bundle/deb/*.deb
+            desktop/src-tauri/target/release/bundle/rpm/*.rpm
+            baluard-cli-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # TODO(signing): when the Developer ID certificate is provisioned, add
+      # an import step here (base64 P12 from secrets) and export
+      # APPLE_SIGNING_IDENTITY plus the notarytool credentials for the
+      # tauri build below. Without them tauri ad-hoc signs.
+      - name: Signing mode
+        run: |
+          if [ -n "${{ secrets.APPLE_CERTIFICATE_P12 }}" ]; then
+            echo "APPLE_SIGNING_IDENTITY=Developer ID Application" >> "$GITHUB_ENV"
+          else
+            echo "MACOS_ADHOC=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Stage daemon + CLI sidecars
+        run: |
+          TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
+          mkdir -p desktop/src-tauri/binaries
+          cargo build --release -p baluard-daemon -p baluard-cli
+          cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
+          cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
+
+      - name: Build desktop bundle (dmg)
+        run: |
+          cd desktop
+          npm install
+          npm run tauri build -- --bundles dmg
+
+      - name: Collect CLI + daemon archives
+        run: |
+          mkdir -p dist
+          cp target/release/baluard target/release/baluard-daemon dist/
+          tar czf "baluard-cli-macos-aarch64.tar.gz" -C dist baluard baluard-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            baluard-cli-macos-aarch64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # TODO(signing): Authenticode goes here (certificate secret or Azure
+      # Trusted Signing). Without it the installer is unsigned.
+      - name: Signing mode
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.WINDOWS_SIGNING_CERT }}" ]; then
+            echo "WINDOWS_SIGNING=1" >> "$GITHUB_ENV"
+          else
+            echo "WINDOWS_UNSIGNED=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Stage daemon + CLI sidecars
+        shell: bash
+        run: |
+          TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
+          mkdir -p desktop/src-tauri/binaries
+          cargo build --release -p baluard-daemon -p baluard-cli
+          cp target/release/baluard-daemon.exe "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE.exe"
+          cp target/release/baluard.exe "desktop/src-tauri/binaries/baluard-$TRIPLE.exe"
+
+      # Desktop installers are deliberately NOT built: the desktop app's
+      # daemon IPC is a cfg(not(unix)) stub (Known Limitations #6), so a
+      # Windows installer would ship an app that cannot reach its daemon.
+      # Restore the msi/nsis bundle step when named-pipe IPC lands.
+      - name: Collect CLI + daemon archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/baluard.exe target/release/baluard-daemon.exe dist/
+          tar czf baluard-cli-windows-x86_64.tar.gz -C dist baluard.exe baluard-daemon.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: baluard-cli-windows-x86_64.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Draft, never auto-published: the artifacts wait for human review
+        # (signing state, version pin, smoke status) before going live.
+        # On a tag push the tag names the release; on a manual dispatch the
+        # version comes from tauri.conf.json so a branch name can never
+        # become a release name.
+        run: |
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v$(node -p "require('./desktop/src-tauri/tauri.conf.json').version")"
+          fi
+          gh release create "$TAG" --draft --generate-notes --title "$TAG" artifacts/*/*
