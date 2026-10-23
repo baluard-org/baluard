@@ -77,6 +77,7 @@ export function FolderNode(props) {
             : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"
         }`}
         style={{ "padding-left": `${indent()}px`, "padding-right": "6px" }}
+        data-testid="folder-row"
         onClick={() => vault.setSelectedFolder(props.node.id)}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => { setHovered(false); }}

@@ -179,6 +179,7 @@ export default function GeneratorModal(props) {
             {/* Mode tabs */}
             <div class="px-6 py-3 border-b border-[var(--color-border)] shrink-0 bg-[var(--color-sidebar)]/30 flex gap-2">
               <button
+                data-testid="generator-tab-password"
                 onClick={() => setMode(MODE_PASSWORD)}
                 class={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
                   mode() === MODE_PASSWORD
@@ -189,6 +190,7 @@ export default function GeneratorModal(props) {
                 {t("generator.passwordTab")}
               </button>
               <button
+                data-testid="generator-tab-passphrase"
                 onClick={() => setMode(MODE_PASSPHRASE)}
                 class={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
                   mode() === MODE_PASSPHRASE
@@ -203,7 +205,7 @@ export default function GeneratorModal(props) {
             {/* Generator body */}
             <div class="p-6 flex flex-col shrink-0">
               {/* Result display */}
-              <div class="p-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm text-[var(--color-text)] text-center mb-4 select-all break-all min-h-[3rem] flex items-center justify-center">
+              <div data-testid="generator-result" class="p-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm text-[var(--color-text)] text-center mb-4 select-all break-all min-h-[3rem] flex items-center justify-center">
                 {result()}
               </div>
 
@@ -253,10 +255,10 @@ export default function GeneratorModal(props) {
 
               {/* Actions */}
               <div class="flex gap-2">
-                <button onClick={handleRegenerate} class="flex-1 py-2.5 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-bold cursor-pointer hover:border-[var(--color-primary)] transition-colors flex items-center justify-center gap-1.5">
+                <button data-testid="generator-regenerate" onClick={handleRegenerate} class="flex-1 py-2.5 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-bold cursor-pointer hover:border-[var(--color-primary)] transition-colors flex items-center justify-center gap-1.5">
                   <IconRefresh class="w-3.5 h-3.5" /> {t("generator.regenerate")}
                 </button>
-                <button onClick={handleCopy} class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5">
+                <button data-testid="generator-copy" onClick={handleCopy} class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5">
                   <Show when={copied()} fallback={<><IconCopy class="w-3.5 h-3.5" /> {t("generator.copy")}</>}>
                     <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5" /></span> {t("generator.copied")}
                   </Show>
@@ -265,6 +267,7 @@ export default function GeneratorModal(props) {
 
               {/* History toggle link */}
               <button
+                data-testid="generator-history-toggle"
                 onClick={() => setShowHistory(!showHistory())}
                 class="mt-3 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer text-center"
               >
@@ -284,7 +287,8 @@ export default function GeneratorModal(props) {
                   >
                     <For each={history()}>
                       {(entry) => (
-                        <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] group">
+                        <div
+                          data-testid="generator-history-row" class="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] group">
                           {/* Kind badge */}
                           <span class={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded ${entry.kind === "passphrase" ? "bg-purple-500/20 text-purple-400" : "bg-blue-500/20 text-blue-400"}`}>
                             {entry.kind === "passphrase" ? t("generator.passphraseWord") : t("generator.passwordWord")}

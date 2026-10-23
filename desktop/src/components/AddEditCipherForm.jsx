@@ -435,6 +435,7 @@ export default function AddEditCipherForm(props) {
                   type="text"
                   placeholder={t("entry.tagPlaceholder")}
                   class="w-full bg-transparent text-xs text-[var(--color-text)] outline-none py-1 px-1.5"
+                  data-testid="form-tags"
                   value={tagInput()}
                   onInput={e => setTagInput(e.target.value)}
                   onKeyDown={e => {
