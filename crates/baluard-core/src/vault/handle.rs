@@ -5118,9 +5118,9 @@ impl VaultHandle {
                 }
             },
         };
-        if !canary_data.is_empty() {
-            super::canary::verify_kek_canary(&session_key, &canary_data)?;
-        }
+        // No empty-skip: an empty canary can only be a corrupt member row or
+        // a truncated override, and skipping here verified nothing
+        super::canary::verify_kek_canary(&session_key, &canary_data)?;
 
         // S3-7b: team-shape member devices hold no Root Key. Their unlock
         // path is identity seed (device-local, KEK-sealed) → identity keys
