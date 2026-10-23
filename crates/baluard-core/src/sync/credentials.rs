@@ -997,7 +997,6 @@ mod custom_remote_tests {
     }
 
     #[test]
-    #[test]
     fn host_key_marker_schema_is_stable() {
         // Golden shape: daemon error decoration, the CLI probe parser, and
         // both GUI trust flows read these exact keys — a rename here breaks
@@ -1023,6 +1022,7 @@ mod custom_remote_tests {
         assert!(crate::sync::known_hosts::take_observation(id).is_some());
     }
 
+    #[test]
     fn port_of_extracts_non_default_ports() {
         assert_eq!(port_of("ssh://git@git.example.com:2222/repo.git"), 2222);
         assert_eq!(port_of("ssh://git@git.example.com/repo.git"), 22);
