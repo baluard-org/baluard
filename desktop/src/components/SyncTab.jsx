@@ -78,6 +78,7 @@ const [customPassphrase, setCustomPassphrase] = createSignal("");
 const [customBusy, setCustomBusy] = createSignal(null);
 const [customProbeOk, setCustomProbeOk] = createSignal(false);
 const [customTrust, setCustomTrust] = createSignal(null);
+const [customChanged, setCustomChanged] = createSignal(null);
 const [customError, setCustomError] = createSignal(null);
   // Web-OAuth (Codeberg PKCE): auth URL opened in browser, status polled.
   const [webOAuthUrl, setWebOAuthUrl] = createSignal(null);
@@ -386,6 +387,114 @@ const [customError, setCustomError] = createSignal(null);
     } catch (e) {
       setError(classifySyncError(e));
       setSubState("error");
+    }
+  }
+
+  // ── Custom remote handlers ──
+
+  function customHost() {
+    let h = customUrl().trim();
+    h = h.replace(/^[a-zA-Z][\w+.-]*:\/\//, "");
+    h = h.replace(/^[^@/]+@/, "");
+    h = h.split("/")[0].split(":")[0];
+    return h.toLowerCase();
+  }
+
+  function customCredentialsPayload() {
+    const payload = { host: customHost() };
+    if (customToken()) payload.token = customToken();
+    if (customUsername()) payload.username = customUsername();
+    if (customPassphrase()) payload.ssh_passphrase = customPassphrase();
+    if (customKeyPem()) payload.ssh_key_b64 = btoa(customKeyPem());
+    return payload;
+  }
+
+  function customMarkerInfo(detail) {
+    try {
+      const m = JSON.parse(detail || "{}").host_key_untrusted;
+      if (!m) return null;
+      return { key_type: m.key_type, fingerprint: m.fingerprint, attempt_id: m.attempt_id };
+    } catch {
+      return null;
+    }
+  }
+
+  async function doCustomProbe() {
+    setCustomBusy("probe");
+    setCustomProbeOk(false);
+    setCustomTrust(null);
+    setCustomChanged(null);
+    setCustomError(null);
+    try {
+      const raw = await daemon("git.git_probe", JSON.stringify({
+        url: customUrl().trim(),
+        credentials: customCredentialsPayload(),
+      }));
+      const res = JSON.parse(raw);
+      if (res.ok) {
+        setCustomProbeOk(true);
+      } else if (res.kind === "host-untrusted" || res.kind === "host-changed") {
+        const info = customMarkerInfo(res.detail);
+        if (info) {
+          if (res.kind === "host-changed") setCustomChanged(info);
+          else setCustomTrust(info);
+        } else {
+          setCustomError(res.detail || res.kind || "connection failed");
+        }
+      } else {
+        setCustomError(res.detail || res.kind || "connection failed");
+      }
+    } catch (e) {
+      setCustomError(sanitizeError(e, t));
+    } finally {
+      setCustomBusy(null);
+    }
+  }
+
+  async function doCustomTrust() {
+    const info = customTrust();
+    if (!info || !info.attempt_id) return;
+    setCustomBusy("trust");
+    try {
+      await daemon("git.git_hostkey_trust", JSON.stringify({ attempt_id: info.attempt_id }));
+      setCustomTrust(null);
+      await doCustomProbe();
+    } catch (e) {
+      setCustomError(sanitizeError(e, t));
+      setCustomBusy(null);
+    }
+  }
+
+  async function doGenerateKey() {
+    setCustomBusy("key");
+    try {
+      const res = JSON.parse(await daemon("ssh.generate_key", JSON.stringify({ key_type: "ed25519" })));
+      setCustomKeyPem(res.private_key || "");
+      setCustomPubKey(res.public_key || "");
+    } catch (e) {
+      setCustomError(sanitizeError(e, t));
+    } finally {
+      setCustomBusy(null);
+    }
+  }
+
+  async function doCustomSetup() {
+    setCustomBusy("setup");
+    setCustomError(null);
+    try {
+      const payload = customCredentialsPayload();
+      if (payload.token || payload.username || payload.ssh_passphrase || payload.ssh_key_b64) {
+        await daemon("vault.git_credentials_set", JSON.stringify(payload));
+      }
+      await daemon("vault.setup_sync", JSON.stringify({ provider: "custom", clone_url: customUrl().trim() }));
+      toastSuccess(t("sync.customUse"));
+      setCustomToken("");
+      setCustomPassphrase("");
+      await loadState();
+    } catch (e) {
+      setCustomError(sanitizeError(e, t));
+    } finally {
+      setCustomBusy(null);
     }
   }
 
@@ -713,6 +822,21 @@ const [customError, setCustomError] = createSignal(null);
                             >
                               {t("sync.customTrustCta")}
                             </Button>
+                          </div>
+                        )}
+                      </Show>
+                      <Show when={customChanged()}>
+                        {(chg) => (
+                          <div class="rounded-lg border border-[var(--color-danger)] p-3 space-y-1">
+                            <p class="text-[10px] font-medium text-[var(--color-danger)]">
+                              {t("sync.customChangedTitle")}
+                            </p>
+                            <p class="text-[10px] leading-relaxed text-[var(--color-text)]">
+                              {t("sync.customChangedBody")}
+                            </p>
+                            <p class="text-[10px] text-[var(--color-muted)] font-mono break-all">
+                              {chg().key_type} {chg().fingerprint}
+                            </p>
                           </div>
                         )}
                       </Show>
