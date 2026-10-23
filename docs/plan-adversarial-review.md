@@ -1,7 +1,7 @@
 # Adversarial Review Map
 
 > Whole-repo adversarial review program: unit map, dispatch contract, status tracker, findings log.
-> Status: ACTIVE. Sweep not started. The repo is ~185K LOC across 6 Rust crates, desktop, browser, and mobile, so the review is chunked into 36 units across 4 phases.
+> Status: ACTIVE. Phase A collection and triage complete; fixes underway. The repo is ~185K LOC across 6 Rust crates, desktop, browser, and mobile, so the review is chunked into 39 units across 5 phases (A-D plus the post-map feature phase E).
 
 ## Method
 
@@ -9,7 +9,7 @@ Two independent external peer reviewers (PRC and PRA) review every unit, read-on
 
 The orchestrator (this agent) triages every finding zero-trust against the code, applies confirmed fixes, runs the test suite, and updates this doc. Reviewers never edit code.
 
-Pacing is checkpoint-per-phase: after a phase closes, the orchestrator reports (units covered, findings by severity, fixes landed, rejections) and waits for a go/no-go before the next phase. Phase order: A (trust core) -> B (sync + IPC) -> C (client surfaces) -> D (cross-cutting).
+Pacing is checkpoint-per-phase: after a phase closes, the orchestrator reports (units covered, findings by severity, fixes landed, rejections) and waits for a go/no-go before the next phase. Phase order: A (trust core) -> B (sync + IPC) -> C (client surfaces) -> D (cross-cutting) -> E (post-map features).
 
 ## Ground rules
 
@@ -58,7 +58,7 @@ Status legend for unit rows: `todo` -> `reviewing` (dispatched, at least one rev
 | A2 webauthn-ceremony | crates/baluard-core/src/crypto/webauthn/ | 1K | Challenge freshness, CeremonyCache TTL/FIFO/eviction, ES256 verify, counter monotonicity, SEC-1 boundary | triaged |
 | A3 key-hierarchy | crates/baluard-core/src/keys/ | 0.9K | HKDF info labels, epoch derivation, SGK vs item key separation, RootKey handling | triaged |
 | A4 vault-format | crates/baluard-core/src/vault/{envelope,padding,keywrap,canary,cipher,index,manifest,slug,events,templates,avatar,attachment,identity,registry}.rs | 4.5K | Envelope shape, tier fit metadata leakage, index key derivation, canary verification, atomic staging | triaged |
-| A5 handle-crud-unlock | crates/baluard-core/src/vault/handle.rs (slice: unlock/lock/CRUD/index hooks) | ~4.5K slice | Unlock tail (keywrap + canaries), already-unlocked short-circuit, index rebuild hooks, zeroize on drop | reviewed |
+| A5 handle-crud-unlock | crates/baluard-core/src/vault/handle.rs (slice: unlock/lock/CRUD/index hooks) | ~4.5K slice | Unlock tail (keywrap + canaries), already-unlocked short-circuit, index rebuild hooks, zeroize on drop | triaged |
 | A6a handle-rotation-rekey | crates/baluard-core/src/vault/handle.rs (slice: rotate_identity, rotate_recovery_phrase, rotate_root_key, revoke_device_and_rekey, force_evict_and_rotate, epoch helpers, adopt_rekey_txn_root) | ~2.2K slice | Rekey coverage of every artifact class, crash markers, HPKE wraps for all devices, survivor adoption ordering, fail-closed txn adoption | triaged |
 | A6b handle-space-wiring | crates/baluard-core/src/vault/handle.rs (slice: quorum/kit/approval gate fns, member ops, policies, contacts/reveals/package wrappers, collection_rotate_key) | ~1.6K slice | Gate logic before delegation, kit enable-over binding, minor-record path, wrapper-to-module contract drift | triaged |
 | A7 device-fleet | crates/baluard-core/src/{device_manager,devices,device_privkey,emergency,recovery,recovery_sheet,secret_file,health,integrity}.rs | ~5K | Revoke-and-rekey preconditions, BIP-39 recovery, escrow rebuild, integrity walk | todo |
@@ -108,6 +108,18 @@ Megafile slices (A5, A6a, A6b, B1, B2, B5, B6, B8): dispatch defines anchors by 
 | D2 test-audit | crates/baluard-cli/tests/, desktop/src/\_\_tests\_\_/, browser/shared/tests/, mobile tests, proptest usage | tests | Failure-mode coverage vs happy-path bias, implementation-coupled assertions, test-only production hooks, e2e surface gaps | todo |
 | D3 i18n-copy | desktop/src/i18n/locales/{en,es,pt}.json + mobile Strings{En,Es,Pt}.kt + user-facing copy sweep | strings | Key parity (enforced by tests), plain-language rule (no "collection", no "space", no git/crypto terms), FocusTrap and aria coverage on new modals | todo |
 | D4 parity-claims | docs/feature-parity.md + docs/progress.md claims spot-checked against source | docs | Matrix rows that drifted, closed-gap ledger accuracy, progress claims without landing commits | todo |
+
+## Phase E: post-map features
+
+Features shipped or scoped after the map was drawn (2026-10-18) with no unit of their own. Same dual-review workflow; E3 dispatches once it lands.
+
+| Unit | Scope | ~LOC | Focus | Status |
+|------|-------|------|-------|--------|
+| E1 custom-git-remote | The self-hosted git server flow end to end: core custom-remote credential + hostkey-trust surface (sync/credentials.rs, known_hosts.rs), daemon custom setup/clone credentials/connection-probe routes, CLI custom-remote verbs and https test server, desktop and mobile "use my own git server" screens | ~4K | Hostkey trust model (TOFU, changed-key refusal, other-type keys, hashed entries matching their own port form), credential storage and zeroize, probe timeout honesty, trust-card copy vs actual enforcement; the pre-shipment hardening series (9fb1cb4..89114be) re-verified end to end | todo |
+| E2 hardware-key-seal | Hardware-backed key seal: Linux TPM and Windows PCP backends, per-use consent, daemon consent routes, desktop chip-card toggle | ~3K | Non-exportability assumptions per backend, consent gating vs route authz, seal unwrap fail-closed, backend parity drift | todo |
+| E3 mobile-passkey-provider | docs/plan-mobile-passkeys.md scope when it lands (provider ceremony flows) | TBD | Dispatch after landing; the in-flight ceremony work is its seed | planned |
+
+Preliminary observations folded into existing units at dispatch: duplicated `#[test]` attribute at sync/credentials.rs:1187 and unreachable match arms at sync/credentials.rs:503 and sync/engine.rs:3417 (B3); unused-mut at crypto/webauthn/ceremony.rs:677 and a dead test fn at vault/family.rs:1004 (D2).
 
 ## Findings log
 
@@ -220,7 +232,7 @@ Format: `| ID | Unit | Sev | Finding (one line) | Verdict | Fix commit / note |`
 | F-A3-PRC-14 | A3 | S3 | dup of F-A3-PRA-01 + F-A1-PRA-01 (stack/heap temp sweep); adds unwrap_key returning plain Vec and Clone impls | confirmed (dup) | |
 | F-A3-PRC-15 | A3 | S3 | mlock not reference-counted; dropping one key may unlock a page other live keys sit on | confirmed as accepted (best-effort by design, no fix) | |
 | F-A2-PRC-16 | A2 | S3 | bundle: canary fixed nonce (fold F-A1-PRA-02), quorum div_ceil (dup F-A3-PRA-04), misplaced doc comments in hkdf_derive.rs, rotation wrap context (dup F-A3-PRA-03), PasskeyIndex silently overwrites duplicate credential ids, allow_credentials None picks account by HashMap order, and rp_id substring URI match attaches passkeys to lookalike domains (use UriMatchStrategy instead) | partially confirmed (all real; severity per sub-item, match fix via UriMatchStrategy) | |
-| F-A5-PRA-01 | A5 | S1 | unlock skips canary verification when `meta/kek-canary.enc` missing (empty vec -> verify bypassed) | confirmed | |
+| F-A5-PRA-01 | A5 | S1 | unlock skips canary verification when `meta/kek-canary.enc` missing (empty vec -> verify bypassed) | fixed (3c24a5d fail-closed read; b220b49 verifies even an empty payload) | |
 | F-A5-PRA-02 | A5 | S1 | `UnlockedState::drop` never zeroes `devkey_seal`; `IdentityKeys`/ed25519 SigningKey has no zeroize | confirmed | |
 | F-A5-PRA-03 | A5 | S1 | `Cipher` plaintext has no Drop/Zeroize; `zeroize_decrypted_cipher` not wired into CRUD drops | confirmed | |
 | F-A5-PRA-04 | A5 | S2 | update_cipher history-preservation `else if` chained at wrong level; wipes history when password unchanged and caller sent empty | confirmed | |
@@ -230,11 +242,11 @@ Format: `| ID | Unit | Sev | Finding (one line) | Verdict | Fix commit / note |`
 | F-A5-PRA-08 | A5 | S2 | delete_cipher/purge_old_trash remove the envelope but orphan `entries/{id}` attachment dirs | confirmed | |
 | F-A5-PRA-09 | A5 | S3 | restore_cipher/purge_old_trash skip the `writes_allowed()` gate every other mutator has | confirmed | |
 | F-A5-PRA-10 | A5 | S3 | rename_folder lacks the sibling duplicate-name check create_folder_with_parent enforces | confirmed | |
-| F-A5-PRC-01 | A5 | S1 | dup of F-A5-PRA-01 (canary skip); adds: zero-byte file behaves as missing, `change_master_password` has the same `exists()` skip, rotate_recovery_phrase comment states the fail-closed intent | confirmed | |
+| F-A5-PRC-01 | A5 | S1 | dup of F-A5-PRA-01 (canary skip); adds: zero-byte file behaves as missing, `change_master_password` has the same `exists()` skip, rotate_recovery_phrase comment states the fail-closed intent | fixed (with F-A5-PRA-01; all three sites fail closed) | |
 | F-A5-PRC-02 | A5 | S1 | dup of F-A5-PRA-03 (cipher plaintext zeroize); adds: `zeroize_decrypted_cipher` itself skips Identity/BankAccount/Passport/DriversLicense/URIs/password_history/fido2 key_value, and is called only from rotation paths | confirmed | |
 | F-A5-PRC-03 | A5 | S1 | dup of F-A5-PRA-02 (devkey_seal unzeroized); adds: `derive_kek` returns plain `[u8;32]`, unlock_tail locals never wiped, devkey_seal() returns a plain copy | confirmed | |
 | F-A5-PRC-04 | A5 | S1 | runtime state.rs:8062 `cipher_to_json` serializes `kind` wholesale: fido2 `private_key`/`prf_key` cross IPC inside get_cipher payload, contradicting the never-crosses-IPC invariant | cross-slice: confirmed (ciphertext-only, not decryptable client-side, but a stated-invariant break; skip_serializing fix at types.rs) | |
-| F-A5-PRC-05 | A5 | S2 | lock() spawns normalize_timestamps_bg that resets mtimes of everything under trash/ to vault creation; purge_old_trash(30) judges by mtime, so after one lock+unlock the whole trash purges | confirmed | |
+| F-A5-PRC-05 | A5 | S2 | lock() spawns normalize_timestamps_bg that resets mtimes of everything under trash/ to vault creation; purge_old_trash(30) judges by mtime, so after one lock+unlock the whole trash purges | fixed (3c24a5d: trash stays out of normalization, mtime keeps deletion time) | |
 | F-A5-PRC-06 | A5 | S2 | dup of F-A5-PRA-06 (delete_folder flat path); adds trashed ciphers also skipped | confirmed | |
 | F-A5-PRC-07 | A5 | S2 | rebuild_tag_index rebuilds from cipher metas only, pruning empty tags made by create_tag; runtime calls it after every update | confirmed | |
 | F-A5-PRC-08 | A5 | S2 | index staleness check compares id sets only; a pulled edit to an existing cipher does not invalidate, no rebuild after pull | confirmed | |
