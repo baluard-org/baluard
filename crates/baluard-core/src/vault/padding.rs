@@ -11,12 +11,14 @@ use crate::types::Tier;
 /// Returns the padded content.
 pub fn pad(content: &[u8], tier: Tier) -> Result<Vec<u8>, VaultError> {
     let target = tier.padded_size();
-    if content.len() > target {
+    // The 4-byte length prefix rides INSIDE the tier, so content within
+    // 4 bytes of the tier cap would truncate on the prefix write.
+    if content.len() + Tier::LENGTH_PREFIX > target {
         return Err(VaultError::Padding(format!(
             "content {} bytes exceeds tier {} capacity {} bytes",
             content.len(),
             tier.code(),
-            target
+            target - Tier::LENGTH_PREFIX
         )));
     }
 
@@ -100,5 +102,10 @@ mod tests {
         let padded = pad(&content, Tier::Xs).unwrap();
         assert_eq!(padded.len(), Tier::Xs.padded_size());
         assert_eq!(unpad(&padded).unwrap(), content);
+
+        // One byte past the prefix-aware cap refuses instead of
+        // silently truncating the tail into the length prefix's space.
+        let over = vec![0xCDu8; n + 1];
+        assert!(pad(&over, Tier::Xs).is_err());
     }
 }
