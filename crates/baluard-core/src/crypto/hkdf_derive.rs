@@ -76,6 +76,19 @@ pub fn derive_index_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
     Ok(key)
 }
 
+/// Derive a 32-byte Recovery-Kit Check Key from Root Key.
+///
+/// Seals the recovery kit's root_check blob: a git-writer without the
+/// Root Key cannot mint or re-bind a kit, so rotation and recovery
+/// refuse kits whose public fields were swapped in git history.
+pub fn derive_kit_check_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(b"baluard-kit-root-check-v1", &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
 /// Derive a 32-byte Folders Key from Root Key.
 /// Used to encrypt/decrypt `meta/folders.enc`.
 pub fn derive_folders_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {

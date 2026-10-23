@@ -51,14 +51,17 @@ impl IdentityKeys {
     /// store).
     pub fn from_seed(seed: &[u8; 32]) -> Self {
         use sha2::{Digest, Sha512};
+        use zeroize::Zeroize;
         let signing = SigningKey::from_bytes(seed);
-        let hash = Sha512::digest(seed);
+        let mut hash = Sha512::digest(seed);
         let mut x25519_bytes = [0u8; 32];
         x25519_bytes.copy_from_slice(&hash[..32]);
+        hash.zeroize();
         x25519_bytes[0] &= 248;
         x25519_bytes[31] &= 127;
         x25519_bytes[31] |= 64;
         let wrapping = StaticSecret::from(x25519_bytes);
+        x25519_bytes.zeroize();
         Self { signing, wrapping }
     }
 
@@ -97,8 +100,11 @@ pub fn seal_identity(wrap_key: &[u8; 32], keys: &IdentityKeys) -> Result<Vec<u8>
 
 /// Open a sealed identity. Fails closed on wrong key or corrupt envelope.
 pub fn open_identity(wrap_key: &[u8; 32], sealed: &[u8]) -> Result<IdentityKeys, BaluardError> {
-    let seed = secret_file::open_secret_blob(wrap_key, sealed, "identity-v1")?;
-    IdentityKeys::from_seed_bytes(&seed)
+    use zeroize::Zeroize;
+    let mut seed = secret_file::open_secret_blob(wrap_key, sealed, "identity-v1")?;
+    let keys = IdentityKeys::from_seed_bytes(&seed);
+    seed.zeroize();
+    keys
 }
 
 /// How the identity sealing key is stored. Recorded in

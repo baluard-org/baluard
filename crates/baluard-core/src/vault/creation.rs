@@ -350,6 +350,23 @@ impl<'a> VaultCreator<'a> {
 
     /// Executes the ceremony transactionally, sets files, and returns a pre-unlocked handle.
     pub fn execute(mut self) -> Result<(VaultHandle, CeremonySecrets), BaluardError> {
+        // A failed Create never showed the recovery phrase, so the
+        // directory it scaffolded holds no user data; leaving it behind
+        // wedges every re-run behind AlreadyExists. Only a directory we
+        // created ourselves is removed — a pre-existing path the user
+        // pointed at must survive a failed ceremony untouched.
+        // Join/Recover touch an existing vault and are never cleaned up.
+        let creating = matches!(self.mode, CeremonyMode::Create);
+        let dir_did_not_exist = creating && !self.path.exists();
+        let path_for_cleanup = self.path.clone();
+        let result = self.execute_inner();
+        if dir_did_not_exist && result.is_err() {
+            let _ = std::fs::remove_dir_all(&path_for_cleanup);
+        }
+        result
+    }
+
+    fn execute_inner(mut self) -> Result<(VaultHandle, CeremonySecrets), BaluardError> {
         let mut ep: Box<dyn EntropyProvider> = match self.entropy.take() {
             Some(e) => e,
             None => Box::new(OsEntropy),
@@ -935,6 +952,12 @@ impl<'a> VaultCreator<'a> {
                 let identity_meta = serde_json::json!({
                     "mode": seal_mode,
                     "salt_hex": salt_hex,
+                    // The passphrase reader derives from these; omitting
+                    // them defaults to 8192 KiB/t=3, which can never
+                    // unseal a MobileLow-sealed identity.
+                    "memory_kib": kdf::create_params(KdfProfile::MobileLow).memory_kib,
+                    "time_cost": kdf::create_params(KdfProfile::MobileLow).time_cost,
+                    "parallelism": 1,
                     "keystore_key": format!("identity:{vault_id}"),
                     "recovery_pubkey_hex": hex::encode(recovery_x25519_public.as_bytes()),
                 });

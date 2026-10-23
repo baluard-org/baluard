@@ -33,8 +33,10 @@ use zeroize::Zeroize;
 /// invalidates every existing kit.
 const KIT_CONTEXT: &str = "space-recovery-kit";
 
-/// The only kit file version this binary reads.
-const KIT_FORMAT: u8 = 1;
+/// The only kit file version this binary reads. Version 2 added the
+/// root_check seal; version 1 kits cannot prove their public fields and
+/// must be re-enabled.
+const KIT_FORMAT: u8 = 2;
 
 /// Git-tracked location, riding the meta/** Admin sync row so the kit
 /// survives total machine loss.
@@ -62,6 +64,11 @@ pub struct RecoveryKitFile {
     #[serde(default)]
     pub verifier_pub: Option<String>,
     pub created_at: u64,
+    /// AEAD seal (under a Root-Key-derived subkey) over vault_id,
+    /// recipient_pub and verifier_pub. A git-writer without the Root
+    /// Key cannot re-bind the kit to their own keys: rotation and
+    /// recovery verify this before trusting either public field.
+    pub root_check: String,
 }
 
 /// Load the kit file. `None` when absent; a present-but-damaged file is
@@ -71,13 +78,29 @@ pub fn load_kit(vault_path: &Path) -> Result<Option<RecoveryKitFile>, BaluardErr
     if !path.exists() {
         return Ok(None);
     }
-    let meta = std::fs::metadata(&path)
+    // lstat, not stat: a symlinked kit (hostile committer) must not
+    // borrow its target's size metadata to slip past the cap, and the
+    // read itself is capped so a /dev/zero-style target cannot run the
+    // parser unbounded.
+    let meta = std::fs::symlink_metadata(&path)
         .map_err(|e| VaultError::Metadata(format!("stating recovery kit: {e}")))?;
+    if !meta.is_file() {
+        return Err(VaultError::Corrupt("recovery kit is not a regular file".into()).into());
+    }
     if meta.len() > MAX_KIT_BYTES {
         return Err(VaultError::Corrupt("recovery kit file is oversized".into()).into());
     }
-    let data = std::fs::read_to_string(&path)
+    use std::io::Read;
+    let mut limited = String::new();
+    std::fs::File::open(&path)
+        .map_err(|e| VaultError::Metadata(format!("reading recovery kit: {e}")))?
+        .take(MAX_KIT_BYTES + 1)
+        .read_to_string(&mut limited)
         .map_err(|e| VaultError::Metadata(format!("reading recovery kit: {e}")))?;
+    if limited.len() as u64 > MAX_KIT_BYTES {
+        return Err(VaultError::Corrupt("recovery kit file is oversized".into()).into());
+    }
+    let data = limited;
     let kit: RecoveryKitFile = serde_json::from_str(&data)
         .map_err(|e| VaultError::Corrupt(format!("recovery kit parsing: {e}")))?;
     if kit.format != KIT_FORMAT {
@@ -95,6 +118,110 @@ fn save_kit(vault_path: &Path, kit: &RecoveryKitFile) -> Result<(), BaluardError
         .map_err(|e| VaultError::Metadata(format!("recovery kit serialization: {e}")))?;
     crate::vault::write_vault_file(&vault_path.join(KIT_PATH), json.as_bytes())
         .map_err(|e| VaultError::Metadata(format!("writing recovery kit: {e}")))?;
+    Ok(())
+}
+
+/// Seal the kit's identity fields under a Root-Key-derived subkey so
+/// only a Root-Key holder (the minting device, or rotation) can produce
+/// or re-bind a valid kit.
+fn seal_root_check(
+    root_key: &RootKey,
+    vault_id: &str,
+    recipient_pub: &str,
+    verifier_pub: Option<&str>,
+    created_at: u64,
+) -> Result<String, BaluardError> {
+    let key = crate::crypto::hkdf_derive::derive_kit_check_key(root_key.as_bytes())
+        .map_err(|e| VaultError::Crypto(format!("kit check key: {e}")))?;
+    let payload = format!(
+        "{}|{}|{}|{}",
+        vault_id,
+        recipient_pub,
+        verifier_pub.unwrap_or(""),
+        created_at
+    );
+    let envelope = crate::crypto::aead::encrypt(
+        &key,
+        payload.as_bytes(),
+        KIT_CONTEXT.as_bytes(),
+        &crate::crypto::aead::build_random_nonce(),
+        crate::types::EnvelopeHeader {
+            version: 1,
+            alg_id: 1,
+            key_epoch: 0,
+            nonce_counter: 0,
+            update_seq: 0,
+            tier: None,
+        },
+    )
+    .map_err(|e| VaultError::Crypto(format!("kit check seal: {e}")))?;
+    // CipherEnvelope carries no serde impl, so the check blob is a
+    // fixed-order hex packing: nonce | ciphertext | tag.
+    Ok(format!(
+        "{}:{}:{}",
+        hex::encode(envelope.nonce),
+        hex::encode(&envelope.ciphertext),
+        hex::encode(envelope.tag)
+    ))
+}
+
+/// Verify a kit's root_check against a candidate Root Key. Fails
+/// closed: a kit whose public fields were swapped in git history does
+/// not open under the vault's real Root Key.
+pub fn verify_root_check(root_key: &RootKey, kit: &RecoveryKitFile) -> Result<(), BaluardError> {
+    let key = crate::crypto::hkdf_derive::derive_kit_check_key(root_key.as_bytes())
+        .map_err(|e| VaultError::Crypto(format!("kit check key: {e}")))?;
+    // created_at anchors the kit enable-over approval, so it is sealed
+    // alongside the key material fields.
+    // Fixed-order hex packing written by seal_root_check (no serde on
+    // CipherEnvelope): nonce | ciphertext | tag.
+    let parts: Vec<&str> = kit.root_check.split(':').collect();
+    if parts.len() != 3 {
+        return Err(VaultError::Corrupt("recovery kit check is malformed".into()).into());
+    }
+    let nonce_vec = hex::decode(parts[0])
+        .map_err(|e| VaultError::Corrupt(format!("recovery kit check nonce: {e}")))?;
+    let ct_vec = hex::decode(parts[1])
+        .map_err(|e| VaultError::Corrupt(format!("recovery kit check ciphertext: {e}")))?;
+    let tag_vec = hex::decode(parts[2])
+        .map_err(|e| VaultError::Corrupt(format!("recovery kit check tag: {e}")))?;
+    let (nonce_arr, tag_arr) = match (nonce_vec.try_into(), tag_vec.try_into()) {
+        (Ok(n), Ok(t)) => (n, t),
+        _ => return Err(VaultError::Corrupt("recovery kit check is malformed".into()).into()),
+    };
+    let envelope = crate::types::CipherEnvelope {
+        header: crate::types::EnvelopeHeader {
+            version: 1,
+            alg_id: 1,
+            key_epoch: 0,
+            nonce_counter: 0,
+            update_seq: 0,
+            tier: None,
+        },
+        nonce: nonce_arr,
+        aad: KIT_CONTEXT.as_bytes().to_vec(),
+        ciphertext: ct_vec,
+        tag: tag_arr,
+    };
+    let plaintext = crate::crypto::aead::decrypt(&key, &envelope)
+        .map_err(|_| {
+            VaultError::Corrupt(
+                "recovery kit does not match this vault's root key; re-enable the kit".into(),
+            )
+        })?;
+    let expected = format!(
+        "{}|{}|{}|{}",
+        kit.vault_id,
+        kit.recipient_pub,
+        kit.verifier_pub.as_deref().unwrap_or(""),
+        kit.created_at
+    );
+    if plaintext != expected.as_bytes() {
+        return Err(VaultError::Corrupt(
+            "recovery kit fields were modified after minting; re-enable the kit".into(),
+        )
+        .into());
+    }
     Ok(())
 }
 
@@ -126,19 +253,27 @@ pub fn enable_kit(
     let (ephemeral_pub, ciphertext, tag) =
         hpke_wrap::wrap_key(root_key.as_bytes(), &recipient, KIT_CONTEXT)?;
 
-    // SigningKey::verifying_key is inherent in ed25519_dalek 2 (no
-    // trait import needed).
     let verifier_pub = kit_signing_key(&phrase).verifying_key();
+    let recipient_hex = hex::encode(recipient.as_bytes());
+    let verifier_hex = hex::encode(verifier_pub.as_bytes());
 
+    let kit_created_at = crate::vault::collections::now_secs_pub();
     let kit = RecoveryKitFile {
-        format: 1,
+        format: KIT_FORMAT,
         vault_id: vault_id.to_string(),
-        recipient_pub: hex::encode(recipient.as_bytes()),
+        recipient_pub: recipient_hex.clone(),
         ephemeral_pub: hex::encode(&ephemeral_pub),
         encrypted_key: hex::encode(&ciphertext),
         tag: hex::encode(tag),
-        verifier_pub: Some(hex::encode(verifier_pub.as_bytes())),
-        created_at: crate::vault::collections::now_secs_pub(),
+        verifier_pub: Some(verifier_hex.clone()),
+        created_at: kit_created_at,
+        root_check: seal_root_check(
+            root_key,
+            &vault_id.to_string(),
+            &recipient_hex,
+            Some(&verifier_hex),
+            kit_created_at,
+        )?,
     };
     save_kit(vault_path, &kit)?;
     Ok(phrase.phrase())
@@ -180,11 +315,19 @@ pub fn disable_kit(vault_path: &Path) -> Result<bool, BaluardError> {
 
 /// Root rotation: rewrap the kit to the NEW Root Key so the phrase in
 /// the safe keeps working. Absent kit is a no-op; present-but-damaged
-/// propagates (P4).
-pub fn rewrap_kit(vault_path: &Path, new_root_key: &RootKey) -> Result<(), BaluardError> {
+/// propagates (P4). The kit's root_check must open under the CURRENT
+/// root first: a kit whose public fields were swapped in git history
+/// is refused instead of re-wrapping the new root to the attacker's
+/// key.
+pub fn rewrap_kit(
+    vault_path: &Path,
+    current_root: &RootKey,
+    new_root_key: &RootKey,
+) -> Result<(), BaluardError> {
     let Some(mut kit) = load_kit(vault_path)? else {
         return Ok(());
     };
+    verify_root_check(current_root, &kit)?;
     let recipient_bytes: [u8; 32] = hex::decode(&kit.recipient_pub)
         .map_err(|e| VaultError::Corrupt(format!("recovery kit recipient hex: {e}")))?
         .try_into()
@@ -196,6 +339,13 @@ pub fn rewrap_kit(vault_path: &Path, new_root_key: &RootKey) -> Result<(), Balua
     kit.ephemeral_pub = hex::encode(&ephemeral_pub);
     kit.encrypted_key = hex::encode(&ciphertext);
     kit.tag = hex::encode(tag);
+    kit.root_check = seal_root_check(
+        new_root_key,
+        &kit.vault_id,
+        &kit.recipient_pub,
+        kit.verifier_pub.as_deref(),
+        kit.created_at,
+    )?;
     save_kit(vault_path, &kit)?;
     Ok(())
 }
@@ -240,7 +390,12 @@ pub fn recover_root_from_kit(
     let root_bytes: [u8; 64] = decrypted
         .try_into()
         .map_err(|_| VaultError::Corrupt("recovered root key is invalid length".into()))?;
-    Ok(RootKey::from_bytes(root_bytes))
+    let root = RootKey::from_bytes(root_bytes);
+    // The unwrapped key must open the kit's seal: a git-swapped kit
+    // (recipient or verifier fields rewritten) refuses here instead of
+    // arming an attacker-chosen key for the next rotation.
+    verify_root_check(&root, &kit)?;
+    Ok(root)
 }
 
 #[cfg(test)]
@@ -285,7 +440,7 @@ mod tests {
         // Rotation: the rewrap keeps the same phrase working against
         // the NEW root and only the new root.
         let new_root = random_root();
-        rewrap_kit(&path, &new_root).expect("rewrap");
+        rewrap_kit(&path, &root, &new_root).expect("rewrap");
         let recovered = recover_root_from_kit(&path, vid, &phrase).expect("recover after rotate");
         assert_eq!(recovered.as_bytes(), new_root.as_bytes());
 
@@ -312,5 +467,33 @@ mod tests {
         let (_dir, path) = temp_vault("kit-damaged");
         std::fs::write(path.join(KIT_PATH), "{ not json").expect("write torn kit");
         assert!(load_kit(&path).is_err());
+    }
+
+    #[test]
+    fn git_swapped_kit_fields_refuse_recovery_and_rewrap() {
+        let (_dir, path) = temp_vault("kit-swap");
+        let vid = Uuid::new_v4();
+        let root = random_root();
+        let phrase = enable_kit(&path, &root, vid).expect("enable");
+
+        // A git-writer swaps recipient_pub (and the wrap fields) to
+        // redirect the NEXT rotation's root key. No valid root_check
+        // exists for that swap.
+        let mut kit = load_kit(&path).expect("load").expect("kit");
+        kit.recipient_pub = hex::encode([7u8; 32]);
+        std::fs::write(
+            path.join(KIT_PATH),
+            serde_json::to_string(&kit).expect("serialize"),
+        )
+        .expect("write swapped kit");
+
+        let swapped = load_kit(&path).expect("load").expect("kit");
+        assert!(verify_root_check(&root, &swapped).is_err());
+        let new_root = random_root();
+        assert!(rewrap_kit(&path, &root, &new_root).is_err());
+
+        // Recovery with the TRUE phrase also refuses: the phrase opens
+        // the swapped wrap, but the result cannot open the kit's seal.
+        assert!(recover_root_from_kit(&path, vid, &phrase).is_err());
     }
 }

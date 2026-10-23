@@ -21,7 +21,9 @@ use crate::types::{CipherEnvelope, EnvelopeHeader};
 //   [41+aad_len..41+aad_len+tag_len]  tag: [u8; 16]
 //   [rest]    ciphertext
 
-const HEADER_SIZE: usize = 27;
+// Header: version(1) + alg_id(2) + key_epoch(8) + nonce_counter(8)
+// + update_seq(8) + tier(1) = 28 bytes.
+const HEADER_SIZE: usize = 28;
 const NONCE_SIZE: usize = 12;
 const TAG_SIZE: usize = 16;
 const AAD_LEN_SIZE: usize = 2;
@@ -40,6 +42,11 @@ pub fn serialize(envelope: &CipherEnvelope) -> Result<Vec<u8>, VaultError> {
         })
         .unwrap_or(0);
 
+    if envelope.aad.len() > u16::MAX as usize {
+        return Err(VaultError::Corrupt(
+            "envelope AAD exceeds the wire format's 64 KiB bound".into(),
+        ));
+    }
     let aad_len = envelope.aad.len() as u16;
     let total_size = HEADER_SIZE
         + NONCE_SIZE
@@ -91,6 +98,11 @@ pub fn deserialize(data: &[u8]) -> Result<CipherEnvelope, VaultError> {
 
     let alg_id = u16::from_le_bytes(data[pos..pos + 2].try_into().unwrap());
     pos += 2;
+    if alg_id != crate::ALG_AES_256_GCM {
+        return Err(VaultError::Corrupt(format!(
+            "unsupported envelope algorithm: {alg_id}"
+        )));
+    }
     let key_epoch = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
     pos += 8;
     let nonce_counter = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());

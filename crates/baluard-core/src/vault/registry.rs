@@ -228,18 +228,10 @@ impl VaultRegistry {
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| RegistryError::Serialize(e.to_string()))?;
 
-        // Atomic write: temp file + rename
-        let tmp_path = path.with_extension("tmp");
-        std::fs::write(&tmp_path, &json).map_err(|e| RegistryError::Io(e.to_string()))?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| RegistryError::Io(e.to_string()))?;
-        }
-
-        std::fs::rename(&tmp_path, path).map_err(|e| RegistryError::Io(e.to_string()))?;
+        // 0600 from the first byte (no umask window) via the shared
+        // secret-file primitive: tmp name is random, symlink-safe.
+        crate::secret_file::write_secret_file(path, json.as_bytes())
+            .map_err(|e| RegistryError::Io(e.to_string()))?;
 
         Ok(())
     }
@@ -314,7 +306,7 @@ impl VaultRegistry {
         if entry.merge_opt_in == Some(false) {
             return false;
         }
-        if !crate::vault::space::is_space(&entry.path) {
+        if !is_space_conservative(&entry.path) {
             return true;
         }
         entry.merge_ceiling_seen
@@ -435,6 +427,27 @@ impl std::fmt::Display for RegistryError {
 }
 
 impl std::error::Error for RegistryError {}
+
+/// Merge-eligibility classification that fails CLOSED on a damaged
+/// settings-pub.json: an unreadable or unparseable shape flag counts as
+/// a Space (merge needs the ceiling cache), never as a personal vault.
+fn is_space_conservative(vault_path: &Path) -> bool {
+    if crate::vault::space::read_purpose(vault_path) != crate::vault::space::SpacePurpose::Absent {
+        return true;
+    }
+    if crate::vault::space_meta::shape_flipped(vault_path) {
+        return true;
+    }
+    let flag_path = vault_path.join("meta/settings-pub.json");
+    if !flag_path.exists() {
+        return false;
+    }
+    std::fs::read_to_string(&flag_path)
+        .ok()
+        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
+        .and_then(|v| v.get("space").and_then(|s| s.as_bool()))
+        .unwrap_or(true)
+}
 
 #[cfg(test)]
 mod tests {

@@ -50,12 +50,24 @@ pub fn encrypt_attachment(
     key_epoch: u64,
     update_seq: u64,
 ) -> Result<Vec<u8>, VaultError> {
-    let tier = Tier::fit(plaintext.len()).ok_or_else(|| {
-        VaultError::InvalidTier(format!(
-            "attachment too large for any tier: {} bytes",
-            plaintext.len()
-        ))
-    })?;
+    let tier = {
+        // The documented cap, checked against the PLAINTEXT length:
+        // Tier::fit alone admits up to ~2 MB (XL) which silently
+        // exceeds the 1.9 MB limit.
+        if plaintext.len() > MAX_ATTACHMENT_SIZE {
+            return Err(VaultError::InvalidTier(format!(
+                "attachment exceeds the {} byte limit: {} bytes",
+                MAX_ATTACHMENT_SIZE,
+                plaintext.len()
+            )));
+        }
+        Tier::fit(plaintext.len()).ok_or_else(|| {
+            VaultError::InvalidTier(format!(
+                "attachment too large for any tier: {} bytes",
+                plaintext.len()
+            ))
+        })?
+    };
     let padded = padding::pad(plaintext, tier)?;
 
     let aad = aead::build_attachment_aad(
