@@ -510,6 +510,8 @@
     "customProbeOk": "Conexão OK.",
     "customTrustTitle": "A chave do servidor ainda não é confiável. Verifique a impressão por outro meio e confirme:",
     "customTrustCta": "Confiar nesta chave",
+    "customChangedTitle": "A chave do servidor mudou",
+    "customChangedBody": "A chave é diferente da que você confirmou antes. Se você tem certeza de que o servidor mudou e não é uma interceptação, apague a linha antiga deste servidor no seu arquivo known_hosts e teste a conexão novamente.",
     "customBadUrl": "Isso não parece uma URL de repositório."
   },
   "autosync": {

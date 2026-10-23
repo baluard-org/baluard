@@ -300,6 +300,7 @@ fun SettingsScreen(
             var gitCustomUsername by remember { mutableStateOf("") }
             var gitCustomProbeMsg by remember { mutableStateOf<String?>(null) }
             var gitCustomTrustJson by remember { mutableStateOf<String?>(null) }
+            var gitCustomChangedJson by remember { mutableStateOf<String?>(null) }
             var gitCustomOk by remember { mutableStateOf(false) }
 
             SectionCard(title = t("settings.sync")) {
@@ -477,6 +478,7 @@ fun SettingsScreen(
                                                     if (ok) {
                                                         gitCustomOk = true
                                                         gitCustomTrustJson = null
+                                                        gitCustomChangedJson = null
                                                         gitCustomProbeMsg =
                                                             t("settings.customProbeOk")
                                                     } else {
@@ -490,7 +492,14 @@ fun SettingsScreen(
                                                             gitCustomTrustJson = detail
                                                             gitCustomProbeMsg =
                                                                 t("settings.customTrustAsk")
+                                                        } else if (kind == "host-changed") {
+                                                            gitCustomTrustJson = null
+                                                            gitCustomChangedJson = detail
+                                                            gitCustomProbeMsg =
+                                                                t("settings.customChangedTitle")
                                                         } else {
+                                                            gitCustomTrustJson = null
+                                                            gitCustomChangedJson = null
                                                             gitCustomProbeMsg = detail
                                                         }
                                                     }
@@ -516,9 +525,8 @@ fun SettingsScreen(
                                     val obj =
                                         Json.parseToJsonElement(trustJson) as? JsonObject
                                     val fp =
-                                        (obj?.get("fingerprint") as? JsonObject)?.get(
-                                            "host_key_untrusted",
-                                        ) ?: obj?.get("fingerprint")
+                                        (obj?.get("host_key_untrusted") as? JsonObject)?.get("fingerprint")
+                                            ?: obj?.get("fingerprint")
                                     Text(
                                         fp?.toString() ?: trustJson,
                                         style = MaterialTheme.typography.bodySmall,
@@ -550,6 +558,27 @@ fun SettingsScreen(
                                             }
                                         },
                                     ) { Text(t("settings.customTrustCta")) }
+                                }
+                                gitCustomChangedJson?.let { changedJson ->
+                                    val obj =
+                                        Json.parseToJsonElement(changedJson) as? JsonObject
+                                    val fp =
+                                        (obj?.get("host_key_untrusted") as? JsonObject)?.get("fingerprint")
+                                            ?: obj?.get("fingerprint")
+                                    Text(
+                                        t("settings.customChangedTitle"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                    Text(
+                                        t("settings.customChangedBody"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        fp?.toString() ?: changedJson,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
                                 }
                             } else {
                                 OutlinedTextField(
