@@ -187,14 +187,16 @@ fn verify_hashed_entry(
         mac.update(candidate.as_bytes());
         mac.finalize().into_bytes().as_slice() == digest.as_slice()
     };
+    // The hashed string is the exact host form OpenSSH hashed at write time:
+    // bare for port 22, [host]:port otherwise. Trying both forms would let a
+    // bare port-22 entry false-Mismatch a port-2222 handshake.
     let bare = host.to_string();
     let ported = format!("[{host}]:{port}");
-    let is_our_host = port == 22 && host_matches_hash(&bare)
-        || port != 22 && host_matches_hash(&ported)
-        // The entry may have been written with the other form (e.g. the
-        // default port recorded bare, or a non-default port recorded bare).
-        || host_matches_hash(&bare)
-        || host_matches_hash(&ported);
+    let is_our_host = if port == 22 {
+        host_matches_hash(&bare)
+    } else {
+        host_matches_hash(&ported)
+    };
     if !is_our_host {
         return Some(HashedVerdict::OtherHost);
     }
@@ -857,6 +859,34 @@ mod custom_trust_tests {
             );
             assert_eq!(
                 verify_host_key("git.example.com", 22, "ssh-rsa", b"k1"),
+                HostKeyResult::Unknown
+            );
+        });
+    }
+
+    #[test]
+    fn hashed_bare_entry_for_port_22_never_matches_non_default_port() {
+        with_test_home(|home| {
+            let kh = home.join(".ssh").join("known_hosts");
+            std::fs::create_dir_all(kh.parent().unwrap()).unwrap();
+            use hmac::Mac;
+            type HmacSha1 = hmac::Hmac<sha1::Sha1>;
+            use base64::Engine as _;
+            let enc = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+            let salt = [5u8; 16];
+            let mut mac = HmacSha1::new_from_slice(&salt).unwrap();
+            // The entry hashes the BARE host (a port-22 trust).
+            mac.update(b"git.example.com");
+            let line = format!(
+                "|1|{}|{} ssh-ed25519 {}",
+                enc(&salt),
+                enc(mac.finalize().into_bytes().as_slice()),
+                enc(b"k1")
+            );
+            std::fs::write(&kh, line + "\n").unwrap();
+            // A port-2222 handshake on the same host must NOT inherit it.
+            assert_eq!(
+                verify_host_key("git.example.com", 2222, "ssh-ed25519", b"k1"),
                 HostKeyResult::Unknown
             );
         });
