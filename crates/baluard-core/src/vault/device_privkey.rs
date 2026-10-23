@@ -90,6 +90,10 @@ pub enum PrivkeyFileKind {
     Sealed,
     SealedHw,
     LegacyPlaintext,
+    /// The file exists but cannot be read or parsed. Distinct from Absent:
+    /// rotation must fail closed on damage instead of treating the key as
+    /// missing and leaving it sealed to a dead KEK.
+    Damaged,
     Absent,
 }
 
@@ -112,13 +116,13 @@ pub fn file_kind(path: &Path) -> PrivkeyFileKind {
         return PrivkeyFileKind::Absent;
     }
     let Ok(data) = std::fs::read_to_string(path) else {
-        return PrivkeyFileKind::Absent;
+        return PrivkeyFileKind::Damaged;
     };
     match serde_json::from_str::<serde_json::Value>(&data) {
         Ok(v) if v["type"].as_str() == Some(SEAL_TYPE) => PrivkeyFileKind::Sealed,
         Ok(v) if v["type"].as_str() == Some(SEAL_TYPE_HW) => PrivkeyFileKind::SealedHw,
         Ok(v) if v["x25519_private"].is_string() => PrivkeyFileKind::LegacyPlaintext,
-        _ => PrivkeyFileKind::Absent,
+        _ => PrivkeyFileKind::Damaged,
     }
 }
 
@@ -180,6 +184,15 @@ pub fn open_bytes(seal_key: &[u8; 32], file: &[u8]) -> Result<String, BaluardErr
     let envelope = crate::vault::envelope::deserialize(&serialized)?;
     let mut pt = crate::crypto::aead::decrypt(seal_key, &envelope)
         .map_err(|_| VaultError::Corrupt("devkey seal key mismatch".into()))?;
+    // Purpose lives in the AEAD AAD; the outer "type" JSON is
+    // unauthenticated and proves nothing on its own.
+    if envelope.aad != SEAL_TYPE.as_bytes() {
+        pt.zeroize();
+        return Err(VaultError::Corrupt(
+            "sealed devkey was sealed for a different purpose".into(),
+        )
+        .into());
+    }
     let inner = String::from_utf8(pt.clone())
         .map_err(|e| VaultError::Corrupt(format!("devkey plaintext utf8: {e}")))?;
     pt.zeroize();
@@ -242,6 +255,10 @@ pub fn read_privkey_file(path: &Path, seal_key: Option<&[u8; 32]>) -> Result<Str
         }
         PrivkeyFileKind::LegacyPlaintext => std::fs::read_to_string(path)
             .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")).into()),
+        PrivkeyFileKind::Damaged => Err(VaultError::Corrupt(
+            "device private key file is damaged".into(),
+        )
+        .into()),
     }
 }
 
@@ -272,6 +289,10 @@ pub fn rotate_seal_key(
 ) -> Result<bool, BaluardError> {
     match file_kind(path) {
         PrivkeyFileKind::Absent => Ok(false),
+        PrivkeyFileKind::Damaged => Err(VaultError::Corrupt(
+            "device private key file is damaged; refusing to rotate its seal key".into(),
+        )
+        .into()),
         PrivkeyFileKind::LegacyPlaintext => {
             let inner = std::fs::read_to_string(path)
                 .map_err(|e| VaultError::Metadata(format!("reading legacy privkey: {e}")))?;
@@ -485,6 +506,11 @@ pub fn enable_hw_seal(
     match file_kind(path) {
         PrivkeyFileKind::Absent => Ok(false),
         PrivkeyFileKind::SealedHw => Ok(false),
+        PrivkeyFileKind::Damaged => Err(VaultError::Corrupt(
+            "device private key file is damaged; refusing to move it to the hardware seal"
+                .into(),
+        )
+        .into()),
         PrivkeyFileKind::LegacyPlaintext | PrivkeyFileKind::Sealed => {
             let inner = read_privkey_file(path, Some(seal_key))?;
             let binding = hw.create_binding(vault_id, mode)?;
