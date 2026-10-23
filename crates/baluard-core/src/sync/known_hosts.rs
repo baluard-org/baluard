@@ -355,6 +355,11 @@ pub struct ObservedHostKey {
     pub key: Vec<u8>,
     /// `SHA256:<base64>` fingerprint (OpenSSH display form).
     pub fingerprint: String,
+    /// True when the host was already known under the same key type with
+    /// DIFFERENT bytes — a possible MITM. Changed observations power the
+    /// warning surface only; the trust route refuses them, so a changed key
+    /// can never be blessed one-click.
+    pub changed: bool,
 }
 
 const OBSERVATION_TTL_SECS: u64 = 300;
@@ -459,6 +464,12 @@ fn entry_host(host: &str, port: u16) -> String {
 /// to the host, so an existing trust relationship for it cannot be ruled out;
 /// the user manages those themselves). Never overwrites an existing line.
 pub fn trust_host_key(observed: &ObservedHostKey) -> Result<(), String> {
+    if observed.changed {
+        return Err(
+            "this host key changed; if you are sure, remove the old line from your SSH known_hosts file"
+                .into(),
+        );
+    }
     let host = observed.host.trim();
     if host.is_empty()
         || !host
@@ -728,6 +739,7 @@ mod custom_trust_tests {
             key_type: "ssh-ed25519".into(),
             key: b"raw-key-bytes".to_vec(),
             fingerprint: fingerprint(b"raw-key-bytes"),
+            changed: false,
         };
         let id = record_observation(obs.clone());
         let taken = take_observation(&id).expect("observation is live");
@@ -749,6 +761,7 @@ mod custom_trust_tests {
                 key_type: "ssh-ed25519".into(),
                 key: b"k1".to_vec(),
                 fingerprint: String::new(),
+                changed: false,
             };
             trust_host_key(&observed).expect("first trust succeeds");
             let content = std::fs::read_to_string(&kh).unwrap();
@@ -893,6 +906,25 @@ mod custom_trust_tests {
     }
 
     #[test]
+    fn trust_then_verify_roundtrip_is_known() {
+        with_test_home(|home| {
+            let observed = ObservedHostKey {
+                host: "127.0.0.1".into(),
+                port: 22299,
+                key_type: "ssh-ed25519".into(),
+                key: b"k1".to_vec(),
+                fingerprint: fingerprint(b"k1"),
+                changed: false,
+            };
+            trust_host_key(&observed).expect("trust");
+            assert_eq!(
+                verify_host_key("127.0.0.1", 22299, "ssh-ed25519", b"k1"),
+                HostKeyResult::Known
+            );
+        });
+    }
+
+    #[test]
     fn trust_sanitizes_host_and_key_type() {
         let observed = ObservedHostKey {
             host: "evil.example.com\nbad".into(),
@@ -900,6 +932,7 @@ mod custom_trust_tests {
             key_type: "ssh-ed25519".into(),
             key: b"k".to_vec(),
             fingerprint: String::new(),
+            changed: false,
         };
         assert!(trust_host_key(&observed).is_err(), "newline host refused");
         let observed = ObservedHostKey {
@@ -908,6 +941,7 @@ mod custom_trust_tests {
             key_type: "made-up-alg".into(),
             key: b"k".to_vec(),
             fingerprint: String::new(),
+            changed: false,
         };
         assert!(
             trust_host_key(&observed).is_err(),

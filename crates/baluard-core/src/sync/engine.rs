@@ -3380,11 +3380,31 @@ impl SyncEngine {
                                             key_type: key_type.to_string(),
                                             key: key.to_vec(),
                                             fingerprint: crate::sync::known_hosts::fingerprint(key),
+                                            changed: false,
                                         },
                                     );
                                 }
                                 Err(git2::Error::from_str(&format!(
                                     "SSH host key for {host} is not trusted yet"
+                                )))
+                            }
+                            // A changed key is recorded flagged for the
+                            // warning surface; the trust route refuses it.
+                            crate::sync::known_hosts::HostKeyResult::Mismatch => {
+                                if !key.is_empty() {
+                                    crate::sync::known_hosts::record_observation(
+                                        crate::sync::known_hosts::ObservedHostKey {
+                                            host: host.to_string(),
+                                            port: obs_port,
+                                            key_type: key_type.to_string(),
+                                            key: key.to_vec(),
+                                            fingerprint: crate::sync::known_hosts::fingerprint(key),
+                                            changed: true,
+                                        },
+                                    );
+                                }
+                                Err(git2::Error::from_str(&format!(
+                                    "SSH host key for {host} changed; if you are sure, remove the old line from your SSH known_hosts file"
                                 )))
                             }
                             _ => Err(git2::Error::from_str(&format!(
