@@ -3177,14 +3177,23 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
 
     // libgit2 exposes no per-operation connect timeout, so an unreachable
     // host can park the worker for minutes; the route returns a timeout to
-    // the client and the worker dies whenever the OS gives up.
+    // the client and the worker dies whenever the OS gives up. Parked
+    // workers are bounded so repeated probes of a dead address cannot
+    // accumulate threads without limit.
+    static PROBE_WORKERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    const MAX_PROBE_WORKERS: usize = 8;
+    if PROBE_WORKERS.load(std::sync::atomic::Ordering::Relaxed) >= MAX_PROBE_WORKERS {
+        return err_response(
+            "too many pending connection tests; try again in a moment".to_string(),
+        );
+    }
+    PROBE_WORKERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let url_for_err = url.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(baluard_core::sync::engine::SyncEngine::probe_remote(
-            &url,
-            creds.as_ref(),
-        ));
+        let result = baluard_core::sync::engine::SyncEngine::probe_remote(&url, creds.as_ref());
+        PROBE_WORKERS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        let _ = tx.send(result);
     });
     let result = rx.recv_timeout(std::time::Duration::from_secs(20));
 
@@ -3723,10 +3732,21 @@ fn run_clone_to_completion(params: CloneParams) {
                 if let Err(persist_err) =
                     baluard_core::sync::credentials::persist_in_memory(&target, cfg)
                 {
+                    // A clone that cannot re-authenticate is not a finished
+                    // join: roll back the directory and the registry entry
+                    // written just above, mirroring the registration-failure
+                    // path.
+                    let _ = std::fs::remove_dir_all(&target);
+                    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked()
+                    {
+                        let _ = reg.remove(&slug);
+                        let _ = reg.save_locked();
+                    }
                     let mut s = state.lock().unwrap();
                     s.phase = "failed".to_string();
                     s.error = Some(format!(
-                        "Cloned, but storing the credentials failed: {persist_err}"
+                        "Cloned, but storing the credentials failed: {persist_err}. \
+The clone was removed; set up the credentials again and retry."
                     ));
                     return;
                 }
@@ -6259,7 +6279,12 @@ fn sync_remote(
     engine
         .add_remote(&repo, "origin", url)
         .map_err(|e| format!("{e}"))?;
-    Ok(format!("Remote 'origin' set to: {url}"))
+    let mut msg = format!("Remote 'origin' set to: {url}");
+    // A credential file bound to the previous host can never match again.
+    if baluard_core::sync::credentials::clear_stale_custom_credentials(vault_path, url) {
+        msg.push_str(" Stored custom credentials were for the previous host and were removed.");
+    }
+    Ok(msg)
 }
 
 #[cfg(feature = "git-sync")]

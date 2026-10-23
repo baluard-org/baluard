@@ -427,6 +427,11 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                Text(
+                                    t("settings.customSshNote"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                                 OutlinedTextField(
                                     value = gitCustomUrl,
                                     onValueChange = {

@@ -596,6 +596,36 @@ pub fn upgrade_host_key_error(err: BaluardError) -> BaluardError {
     err
 }
 
+/// Clear meta/git-credentials.json when its bound host no longer matches
+/// the vault's remote. The bound-host release refuses any other host, so a
+/// stale file can only produce confusing failures; repointing the remote is
+/// the moment the old binding loses its purpose. Returns true when a file
+/// was removed.
+pub fn clear_stale_custom_credentials(vault_path: &Path, new_url: &str) -> bool {
+    let config_path = vault_path.join("meta/git-credentials.json");
+    let Ok(data) = std::fs::read_to_string(&config_path) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) else {
+        return false;
+    };
+    let Some(bound) = v.get("host").and_then(|h| h.as_str()) else {
+        return false;
+    };
+    let Some(new_host) = extract_host(new_url) else {
+        return false;
+    };
+    if bound.eq_ignore_ascii_case(new_host.trim()) {
+        return false;
+    }
+    let _ = std::fs::remove_file(&config_path);
+    true
+}
+
+/// Fields the user supplies at once for a custom remote. At rest the token,
+/// username, and passphrase share meta/git-credentials.json (0600) while the
+/// key body lives beside it in meta/git-ssh-key (0600): same directory, same
+/// perms, same trust domain, so splitting the passphrase out buys nothing.
 /// The payload for the custom-remote credential writer. Present fields
 /// update; an empty string clears that field. Absent fields stay untouched.
 #[derive(Debug, Clone, Default)]
@@ -971,6 +1001,37 @@ mod custom_remote_tests {
     use super::*;
 
     // --- Custom-remote credential tests ---
+
+    #[test]
+    fn clear_stale_credentials_removes_only_a_foreign_binding() {
+        super::tests::with_credential_test_env(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let meta = dir.path().join("meta");
+            std::fs::create_dir_all(&meta).unwrap();
+            let cfg_path = meta.join("git-credentials.json");
+            std::fs::write(&cfg_path, r#"{"token":"tok123","host":"git.old.example"}"#).unwrap();
+
+            // Same host (case-insensitive): the file stays.
+            assert!(!super::clear_stale_custom_credentials(
+                dir.path(),
+                "https://Git.Old.Example/repo.git"
+            ));
+            assert!(cfg_path.exists());
+
+            // A different host: the file is removed.
+            assert!(super::clear_stale_custom_credentials(
+                dir.path(),
+                "https://git.new.example/repo.git"
+            ));
+            assert!(!cfg_path.exists());
+
+            // No file: a quiet no-op.
+            assert!(!super::clear_stale_custom_credentials(
+                dir.path(),
+                "https://git.third.example/repo.git"
+            ));
+        });
+    }
 
     #[test]
     fn custom_file_loads_token_host_username_and_passphrase() {

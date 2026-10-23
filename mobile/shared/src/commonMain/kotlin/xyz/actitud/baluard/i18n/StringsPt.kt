@@ -356,6 +356,7 @@ internal val PT: Map<String, String> = mapOf(
     "settings.gitBackupFailed" to "Não foi possível configurar o repositório de backup.",
     "settings.customChip" to "Servidor próprio",
     "settings.customWarn" to "Você gerencia este servidor: criar o repositório, dar acesso e remover acontecem lá manualmente. As credenciais ficam apenas neste dispositivo.",
+    "settings.customSshNote" to "Entre com um token de acesso. As chaves SSH são configuradas pelo app de desktop.",
     "settings.customUrl" to "URL do repositório",
     "settings.customToken" to "Token de acesso",
     "settings.customUsername" to "Usuário",
