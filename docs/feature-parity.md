@@ -78,6 +78,7 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Feature | CLI | Desktop | Mobile |
 |---|---|---|---|
 | Git remote setup | Yes (`sync init`, `sync remote`) | Yes | Yes |
+| Custom Git server (own URL + token/SSH key) | Yes (`credentials set`, `git-probe`, `git-trust`) | Yes (Sync tab, own-server expansion) | Yes (git-backup wizard, Custom chip) |
 | Manual sync cycle | Yes | Yes | Yes |
 | Auto-sync | Partial (daemon mode rides the daemon's autosync; `--direct` is manual) | Yes (debounced push, event pull) | Yes (debounced push, event pull, activates when a remote attaches) |
 | Conflict resolution | None (conflicts error out) | Yes | Yes |
@@ -227,6 +228,7 @@ Every 1.0-track gap is closed; what remains is scheduled or parked:
 | Gap | Closed in | Note |
 |---|---|---|
 | G1 | `1d691ba` | `settings space get` / `space-set`; whitelist mirrors the daemon, quorum bound enforced CLI-side |
+| Custom Git remote | `ebb075e`..`53ad861` (2026-10-22/23) | Own-server wave across every surface: host-bound credentials, in-memory SSH keys with attempt caps, daemon-observed hostkey trust (attempt-id stash, `[host]:port` entries, conflict/hashed refusal), setup/clone/probe routes, CLI verbs, a CI-hermetic HTTPS git server e2e plus a live-sshd trust journey; forge automation (repo creation, seat grants) is manual for custom hosts by design |
 | G14 | `1d691ba` | `trash list` / `restore` / `purge --days`, daemon + `--direct` |
 | G17 | `d27eceb` | inline rename on the passkey card; the route was missing from the desktop host allowlist, now admitted |
 | G20 | `c0bc684` | generator history section over the existing UniFFI bindings |
