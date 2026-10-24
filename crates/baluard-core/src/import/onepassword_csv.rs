@@ -13,8 +13,20 @@ pub fn parse(data: &str) -> ImportResult {
         .flexible(true)
         .from_reader(data.as_bytes());
 
-    let headers = match reader.headers() {
-        Ok(h) => h.clone(),
+    let headers: Vec<String> = match reader.headers() {
+        Ok(h) => h
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                // Windows exports carry a UTF-8 BOM that would break
+                // header matching.
+                if i == 0 {
+                    f.strip_prefix('\u{feff}').unwrap_or(f).to_string()
+                } else {
+                    f.to_string()
+                }
+            })
+            .collect(),
         Err(e) => {
             result.skip(format!("Invalid CSV headers: {e}"));
             return result;
@@ -31,6 +43,11 @@ pub fn parse(data: &str) -> ImportResult {
         .position(|h| h.eq_ignore_ascii_case("password"));
     let col_notes = headers.iter().position(|h| h.eq_ignore_ascii_case("notes"));
     let col_type = headers.iter().position(|h| h.eq_ignore_ascii_case("type"));
+    if !headers.iter().any(|h| h.eq_ignore_ascii_case("url")) {
+        result.skip("Not a 1Password CSV: no 'url' column".into());
+        return result;
+    }
+
 
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
         idx.and_then(|i| record.get(i).map(|s| s.to_string()))

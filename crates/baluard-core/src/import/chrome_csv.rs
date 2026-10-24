@@ -13,19 +13,36 @@ pub fn parse(data: &str) -> ImportResult {
         .flexible(true)
         .from_reader(data.as_bytes());
 
-    let headers = match reader.headers() {
-        Ok(h) => h.clone(),
+    let headers: Vec<String> = match reader.headers() {
+        Ok(h) => h
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                // Windows exports carry a UTF-8 BOM that would break
+                // header matching.
+                if i == 0 {
+                    f.strip_prefix('\u{feff}').unwrap_or(f).to_string()
+                } else {
+                    f.to_string()
+                }
+            })
+            .collect(),
         Err(e) => {
             result.skip(format!("Invalid CSV headers: {e}"));
             return result;
         }
     };
 
-    let col_name = headers.iter().position(|h| h == "name");
-    let col_url = headers.iter().position(|h| h == "url");
-    let col_username = headers.iter().position(|h| h == "username");
-    let col_password = headers.iter().position(|h| h == "password");
-    let col_note = headers.iter().position(|h| h == "note");
+    let col_name = headers.iter().position(|h| h.eq_ignore_ascii_case("name"));
+    let col_url = headers.iter().position(|h| h.eq_ignore_ascii_case("url"));
+    let col_username = headers.iter().position(|h| h.eq_ignore_ascii_case("username"));
+    let col_password = headers.iter().position(|h| h.eq_ignore_ascii_case("password"));
+    let col_note = headers.iter().position(|h| h.eq_ignore_ascii_case("note"));
+    if !headers.iter().any(|h| h.eq_ignore_ascii_case("url")) {
+        result.skip(format!("Not a chrome CSV: no 'url' column"));
+        return result;
+    }
+
 
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
         idx.and_then(|i| record.get(i).map(|s| s.to_string()))
@@ -100,6 +117,22 @@ Google,https://google.com,user@gmail.com,pass123,"#;
                 assert_eq!(data.uris[0].uri, "https://github.com");
             }
             _ => panic!("expected Login"),
+        }
+    }
+    #[test]
+    fn bom_prefixed_headers_still_match() {
+        // Windows exports start the header row with a UTF-8 BOM; without
+        // stripping it every name/url column missed and rows imported as
+        // "Untitled" with no URL.
+        let csv = "\u{feff}name,url,username,password\nGitHub,https://github.com,u,p\n";
+        let result = parse(&csv);
+        assert_eq!(result.ciphers.len(), 1);
+        assert_eq!(result.ciphers[0].name, "GitHub");
+        match &result.ciphers[0].kind {
+            CipherKind::Login(d) => {
+                assert_eq!(d.uris[0].uri, "https://github.com");
+            }
+            other => panic!("expected Login, got {other:?}"),
         }
     }
 }

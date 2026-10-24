@@ -46,6 +46,14 @@ struct BwItem {
     card: Option<BwCard>,
     identity: Option<BwIdentity>,
     ssh_key: Option<BwSshKey>,
+    // Baluard BW-export extensions (types 6/7/8): plain Bitwarden has no
+    // bank-account/driver's-license/passport item classes.
+    #[serde(default)]
+    bank_account: Option<crate::types::BankAccountData>,
+    #[serde(default)]
+    drivers_license: Option<crate::types::DriversLicenseData>,
+    #[serde(default)]
+    passport: Option<crate::types::PassportData>,
     fields: Option<Vec<BwField>>,
     password_history: Option<Vec<BwHistoryEntry>>,
     #[serde(default)]
@@ -267,6 +275,7 @@ struct BwField {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BwHistoryEntry {
     password: Option<String>,
     last_used_date: Option<String>,
@@ -364,7 +373,7 @@ pub fn parse(data: &str) -> ImportResult {
                         let last_used_date = h
                             .last_used_date
                             .as_deref()
-                            .and_then(parse_iso8601_to_unix)
+                            .and_then(|d| d.parse::<u64>().ok().or_else(|| parse_iso8601_to_unix(d)))
                             .unwrap_or(0);
                         Some(PasswordHistoryEntry {
                             password,
@@ -403,7 +412,7 @@ pub fn parse(data: &str) -> ImportResult {
                         .unwrap_or(false),
                     password_revision_date: login
                         .and_then(|l| l.password_revision_date.as_ref())
-                        .and_then(|d| d.parse::<u64>().ok()),
+                        .and_then(|d| d.parse::<u64>().ok().or_else(|| parse_iso8601_to_unix(d))),
                     fido2_credentials: login
                         .as_ref()
                         .and_then(|l| l.fido2_credentials.as_ref())
@@ -460,8 +469,29 @@ pub fn parse(data: &str) -> ImportResult {
                     key_fingerprint: ssh.and_then(|s| s.key_fingerprint.clone()),
                 })
             }
+            Some(6) => match item.bank_account.clone() {
+                Some(d) => CipherKind::BankAccount(d),
+                None => {
+                    result.skip(format!("Bank account '{}' has no data object", name));
+                    continue;
+                }
+            },
+            Some(7) => match item.drivers_license.clone() {
+                Some(d) => CipherKind::DriversLicense(d),
+                None => {
+                    result.skip(format!("Driver's license '{}' has no data object", name));
+                    continue;
+                }
+            },
+            Some(8) => match item.passport.clone() {
+                Some(d) => CipherKind::Passport(d),
+                None => {
+                    result.skip(format!("Passport '{}' has no data object", name));
+                    continue;
+                }
+            },
             _ => {
-                // Unknown type, default to SecureNote with notes
+                // Unknown types are skipped (listed in the skip report).
                 result.skip(format!(
                     "Unknown cipher type {:?} for '{}'",
                     item.r#type, name
@@ -497,6 +527,63 @@ pub fn parse(data: &str) -> ImportResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_trip_dates_and_extension_types() {
+        // Baluard's BW export writes ISO or integer dates and extension
+        // types 6/7/8; real Bitwarden exports write ISO dates. Both must
+        // import instead of silently resetting to zero/None.
+        let json = r#"{
+            "encrypted": false,
+            "items": [
+                {
+                    "name": "Bank",
+                    "type": 6,
+                    "bankAccount": {
+                        "bank_name": "First National",
+                        "account_number": "1234567890",
+                        "routing_number": "021000021"
+                    }
+                },
+                {
+                    "name": "Site",
+                    "type": 1,
+                    "login": {
+                        "username": "u",
+                        "password": "p",
+                        "passwordRevisionDate": "2024-06-12T10:00:00Z"
+                    },
+                    "passwordHistory": [
+                        {"password": "old", "lastUsedDate": "1700000000"}
+                    ]
+                }
+            ]
+        }"#;
+
+        let result = parse(json);
+        assert_eq!(result.ciphers.len(), 2, "skips: {:?}", result.errors);
+
+        match &result.ciphers[0].kind {
+            CipherKind::BankAccount(d) => {
+                assert_eq!(d.bank_name.as_deref(), Some("First National"));
+                assert_eq!(d.account_number.as_deref(), Some("1234567890"));
+            }
+            other => panic!("expected BankAccount, got {other:?}"),
+        }
+
+        match &result.ciphers[1].kind {
+            CipherKind::Login(d) => {
+                // ISO revision date must parse, not fall to None.
+                assert!(d.password_revision_date.is_some(), "ISO revision date lost");
+            }
+            other => panic!("expected Login, got {other:?}"),
+        }
+        let history = &result.ciphers[1].password_history;
+        assert_eq!(history.len(), 1);
+        // Integer lastUsedDate must parse, not reset to 0.
+        assert_eq!(history[0].last_used_date, 1700000000);
+    }
+
 
     #[test]
     fn parse_bw_json_with_all_types() {

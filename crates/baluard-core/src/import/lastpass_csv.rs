@@ -13,21 +13,38 @@ pub fn parse(data: &str) -> ImportResult {
         .flexible(true)
         .from_reader(data.as_bytes());
 
-    let headers = match reader.headers() {
-        Ok(h) => h.clone(),
+    let headers: Vec<String> = match reader.headers() {
+        Ok(h) => h
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                // Windows exports carry a UTF-8 BOM that would break
+                // header matching.
+                if i == 0 {
+                    f.strip_prefix('\u{feff}').unwrap_or(f).to_string()
+                } else {
+                    f.to_string()
+                }
+            })
+            .collect(),
         Err(e) => {
             result.skip(format!("Invalid CSV headers: {e}"));
             return result;
         }
     };
 
-    let col_url = headers.iter().position(|h| h == "url");
-    let col_username = headers.iter().position(|h| h == "username");
-    let col_password = headers.iter().position(|h| h == "password");
-    let col_name = headers.iter().position(|h| h == "name");
-    let col_grouping = headers.iter().position(|h| h == "grouping");
-    let col_extra = headers.iter().position(|h| h == "extra");
-    let col_fav = headers.iter().position(|h| h == "fav");
+    let col_url = headers.iter().position(|h| h.eq_ignore_ascii_case("url"));
+    let col_username = headers.iter().position(|h| h.eq_ignore_ascii_case("username"));
+    let col_password = headers.iter().position(|h| h.eq_ignore_ascii_case("password"));
+    let col_name = headers.iter().position(|h| h.eq_ignore_ascii_case("name"));
+    let col_grouping = headers.iter().position(|h| h.eq_ignore_ascii_case("grouping"));
+    let col_extra = headers.iter().position(|h| h.eq_ignore_ascii_case("extra"));
+    let col_fav = headers.iter().position(|h| h.eq_ignore_ascii_case("fav"));
+    if !headers.iter().any(|h| h.eq_ignore_ascii_case("url")) {
+        result.skip(format!("Not a lastpass CSV: no 'url' column"));
+        return result;
+    }
+
 
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
         idx.and_then(|i| record.get(i).map(|s| s.to_string()))
