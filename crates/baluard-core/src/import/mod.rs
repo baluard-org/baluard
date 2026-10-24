@@ -92,8 +92,8 @@ impl ImportFormat {
             "baluard" | "baluard-json" | "baluard-backup" | "baluard.vault" => {
                 Some(Self::BaluardJson)
             }
-            "bw-json" => Some(Self::BwJson),
-            "bw-csv" => Some(Self::BwCsv),
+            "bw-json" | "bitwarden" | "bitwarden-json" => Some(Self::BwJson),
+            "bw-csv" | "bitwarden-csv" => Some(Self::BwCsv),
             "chrome-csv" | "chrome" => Some(Self::ChromeCsv),
             "firefox-csv" | "firefox" => Some(Self::FirefoxCsv),
             "lastpass-csv" | "lastpass" => Some(Self::LastPassCsv),
@@ -118,5 +118,23 @@ impl ImportFormat {
             "1password-csv",
             "keepass-xml",
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bitwarden_full_names_resolve() {
+        assert_eq!(ImportFormat::from_name("bitwarden"), Some(ImportFormat::BwJson));
+        assert_eq!(
+            ImportFormat::from_name("bitwarden-json"),
+            Some(ImportFormat::BwJson)
+        );
+        assert_eq!(
+            ImportFormat::from_name("bitwarden-csv"),
+            Some(ImportFormat::BwCsv)
+        );
     }
 }

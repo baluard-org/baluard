@@ -18,8 +18,33 @@ pub fn parse(data: &str) -> ImportResult {
         }
     };
 
+    // Skip the Recycle Bin: entries under the group whose UUID matches
+    // Meta/RecycleBinUUID are deleted items, not live vault entries.
+    let recycle_bin_uuid = doc
+        .descendants()
+        .find(|n| n.has_tag_name("RecycleBinUUID"))
+        .and_then(|n| n.text().map(|t| t.to_string()));
+    let mut recycled = std::collections::HashSet::new();
+    if let Some(ref uuid) = recycle_bin_uuid {
+        if let Some(bin) = doc
+            .descendants()
+            .find(|n| n.has_tag_name("Group") && n.children().any(|c| c.has_tag_name("UUID") && c.text() == Some(uuid.as_str())))
+        {
+            recycled.extend(bin.descendants().filter(|n| n.has_tag_name("Entry")).map(|n| n.id()));
+        }
+    }
+
     // Find all Entry elements (may be under Root > Group recursively)
     for entry in doc.descendants().filter(|n| n.has_tag_name("Entry")) {
+        if recycled.contains(&entry.id()) {
+            continue;
+        }
+        // Nearest ancestor group name is the folder.
+        let folder = entry
+            .ancestors()
+            .find(|n| n.has_tag_name("Group"))
+            .and_then(|g| g.children().find(|c| c.has_tag_name("Name")))
+            .and_then(|n| n.text().map(|t| t.to_string()));
         let mut title = None;
         let mut username = None;
         let mut password = None;
@@ -100,7 +125,7 @@ pub fn parse(data: &str) -> ImportResult {
             collection_id: None,
             kind,
             favorite: false,
-            notes: if has_credentials { notes } else { None },
+            notes,
             custom_fields: custom,
             created_at: None,
             password_history: vec![],
@@ -110,7 +135,7 @@ pub fn parse(data: &str) -> ImportResult {
             tags: vec![],
         };
 
-        result.add(cipher);
+        result.add_with_folder(cipher, folder);
     }
 
     result
@@ -119,6 +144,82 @@ pub fn parse(data: &str) -> ImportResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secure_notes_keep_notes_get_folders_and_recycle_bin_is_skipped() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<KeePassFile>
+    <Meta>
+        <RecycleBinUUID>b1Q5Mab2eKC6vdKLQ9Lesw==</RecycleBinUUID>
+    </Meta>
+    <Root>
+        <Group>
+            <UUID>b1Q5Mab2eKC6vdKLQ9Lesw==</UUID>
+            <Name>Recycle Bin</Name>
+            <Entry>
+                <String>
+                    <Key>Title</Key>
+                    <Value>Deleted thing</Value>
+                </String>
+            </Entry>
+        </Group>
+        <Group>
+            <Name>Work</Name>
+            <Entry>
+                <String>
+                    <Key>Title</Key>
+                    <Value>Server recovery codes</Value>
+                </String>
+                <String>
+                    <Key>Notes</Key>
+                    <Value>code1 code2</Value>
+                </String>
+            </Entry>
+            <Entry>
+                <String>
+                    <Key>Title</Key>
+                    <Value>GitHub</Value>
+                </String>
+                <String>
+                    <Key>UserName</Key>
+                    <Value>u</Value>
+                </String>
+                <String>
+                    <Key>Password</Key>
+                    <Value>p</Value>
+                </String>
+            </Entry>
+        </Group>
+    </Root>
+</KeePassFile>"#;
+
+        let result = parse(xml);
+        // The recycle-bin entry is gone, not imported as live.
+        assert_eq!(result.ciphers.len(), 2);
+        let note = result
+            .ciphers
+            .iter()
+            .find(|c| c.name == "Server recovery codes")
+            .expect("secure note imported");
+        match &note.kind {
+            CipherKind::SecureNote => {}
+            other => panic!("expected SecureNote, got {other:?}"),
+        }
+        // The note text must survive the SecureNote mapping.
+        assert_eq!(note.notes.as_deref(), Some("code1 code2"));
+        // Parent group name becomes the folder.
+        let work = result
+            .folder_map
+            .get("Work")
+            .expect("Work folder registered");
+        let note_idx = result
+            .ciphers
+            .iter()
+            .position(|c| c.name == "Server recovery codes")
+            .unwrap();
+        assert!(work.contains(&note_idx));
+    }
+
 
     #[test]
     fn parse_keepass_xml() {
