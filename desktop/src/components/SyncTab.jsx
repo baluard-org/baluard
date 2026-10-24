@@ -396,7 +396,13 @@ const [customError, setCustomError] = createSignal(null);
     let h = customUrl().trim();
     h = h.replace(/^[a-zA-Z][\w+.-]*:\/\//, "");
     h = h.replace(/^[^@/]+@/, "");
-    h = h.split("/")[0].split(":")[0];
+    h = h.split("/")[0];
+    // Bracketed IPv6: the port split must not cut the address.
+    if (h.startsWith("[")) {
+      h = h.slice(1, h.indexOf("]"));
+    } else {
+      h = h.split(":")[0];
+    }
     return h.toLowerCase();
   }
 

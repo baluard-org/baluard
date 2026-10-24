@@ -3161,13 +3161,18 @@ fn handle_git_hostkey_trust(req: GatewayRequest) -> GatewayResponse {
 /// Runs a ls-remote against the remote's HEAD and returns a structured
 /// result the UI can map to plain language. Never writes anything.
 #[cfg(feature = "git-sync")]
-fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
+fn handle_git_probe(mut req: GatewayRequest) -> GatewayResponse {
     use base64::Engine as _;
     let v: serde_json::Value = match serde_json::from_str(&req.payload) {
         Ok(v) => v,
-        Err(e) => return err_response(format!("Invalid payload: {e}")),
+        Err(e) => {
+            req.payload.zeroize();
+            req.payload.zeroize();
+        return err_response(format!("Invalid payload: {e}"));
+        }
     };
     let Some(url) = v["url"].as_str().map(str::to_string) else {
+        req.payload.zeroize();
         return err_response("Missing 'url' in payload".to_string());
     };
     // Optional credentials, same shape as the clone payload.
@@ -3192,20 +3197,25 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
                         Ok(b) => match String::from_utf8(b) {
                             Ok(pem) => Some(pem),
                             Err(_) => {
-                                return err_response(
+                                req.payload.zeroize();
+        return err_response(
                                     "SSH key material is not valid UTF-8".to_string(),
                                 );
                             }
                         },
                         Err(_) => {
-                            return err_response("ssh_key_b64 is not valid base64".to_string());
+                            req.payload.zeroize();
+        return err_response("ssh_key_b64 is not valid base64".to_string());
                         }
                     }
                 };
                 let host = baluard_core::sync::credentials::extract_host(&url);
                 let host = match host {
                     Some(h) if !h.is_empty() => h,
-                    _ => return err_response("cannot derive the host from the URL".to_string()),
+                    _ => {
+                        req.payload.zeroize();
+                        return err_response("cannot derive the host from the URL".to_string())
+                    }
                 };
                 Some(
                     baluard_core::sync::credentials::CredentialConfig::in_memory(
@@ -3241,6 +3251,7 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
     static PROBE_WORKERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     const MAX_PROBE_WORKERS: usize = 8;
     if PROBE_WORKERS.load(std::sync::atomic::Ordering::Relaxed) >= MAX_PROBE_WORKERS {
+        req.payload.zeroize();
         return err_response(
             "too many pending connection tests; try again in a moment".to_string(),
         );
@@ -3254,6 +3265,10 @@ fn handle_git_probe(req: GatewayRequest) -> GatewayResponse {
         let _ = tx.send(result);
     });
     let result = rx.recv_timeout(std::time::Duration::from_secs(20));
+
+    // The probe payload can carry tokens, passphrases and base64 keys:
+    // scrub it however the probe ends.
+    req.payload.zeroize();
 
     match result {
         Err(_) => err_response(
@@ -3543,6 +3558,8 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
         "github" => Some(baluard_core::providers::types::Provider::GitHub),
         "gitlab" => Some(baluard_core::providers::types::Provider::GitLab),
         "codeberg" => Some(baluard_core::providers::types::Provider::Codeberg),
+        // A custom remote clones a plain URL with no provider object.
+        "custom" => None,
         other => return err_response(format!("Unknown provider: {other}")),
     };
     let provider_str_owned: Option<String> = if provider_str.is_empty() {
@@ -6298,6 +6315,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     };
 
                     // Add origin remote (idempotent check)
+                    let mut added_origin = false;
                     if let Ok(existing) = engine.get_remote_url(&git_repo, "origin") {
                         if existing != remote_url {
                             return Err(format!(
@@ -6309,6 +6327,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                         engine
                             .add_remote(&git_repo, "origin", &remote_url)
                             .map_err(|e| format!("Failed to add remote: {e}"))?;
+                        added_origin = true;
                     }
 
                     // Stage + commit any pending changes, then push
@@ -6320,9 +6339,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                             .commit_all(&git_repo, "")
                             .map_err(|e| format!("Commit failed: {e}"))?;
                     }
-                    engine
-                        .push(&git_repo, "origin")
-                        .map_err(|e| format!("First push failed: {e}"))?;
+                    if let Err(e) = engine.push(&git_repo, "origin") {
+                        // Without a registry entry the UI offers no
+                        // disconnect, so the stale origin would trap the
+                        // corrected retry behind "already set".
+                        if added_origin {
+                            let _ = engine.remove_remote(&git_repo, "origin");
+                        }
+                        return Err(format!("First push failed: {e}"));
+                    }
 
                     Ok(remote_url)
                 });

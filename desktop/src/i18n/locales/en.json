@@ -411,9 +411,9 @@
     "hwConsentStatusOn": "Confirmation on",
     "hwConsentStatusOff": "Confirmation off",
     "hwConsentOnTitle": "Ask for confirmation on every unlock?",
-    "hwConsentOnBody": "Your device's security chip will ask for your fingerprint or face every time this vault is unlocked. The vault's data stays protected at rest either way. If the chip dies or biometry is reset, the recovery phrase brings this device back in.",
+    "hwConsentOnBody": "Your device's security chip will ask for your fingerprint or face every time this vault is unlocked. Your vault stays encrypted either way. If the chip dies or biometry is reset, the recovery phrase brings this device back in.",
     "hwConsentOffTitle": "Turn off confirmation on unlock?",
-    "hwConsentOffBody": "The vault stays protected by the security chip at rest, but unlocking will no longer ask for your fingerprint or face.",
+    "hwConsentOffBody": "The security chip keeps the vault encrypted when locked, but unlocking will no longer ask for your fingerprint or face.",
     "hwConsentOn": "Ask to confirm",
     "hwConsentOff": "Stop confirming",
     "hwConsentOnToast": "The chip will confirm every unlock.",
@@ -508,11 +508,11 @@
     "customProbe": "Test connection",
     "customUse": "Use this remote",
     "customProbeOk": "Connection OK.",
-    "customTrustTitle": "The server's host key is not trusted yet. Check the fingerprint out-of-band, then trust it:",
+    "customTrustTitle": "This server's identity is not saved yet. Compare the security code with what your server shows, then confirm:",
     "customTrustCta": "Trust this key",
     "customTrustOtherType": "This host already has a key of another type on file.",
     "customChangedTitle": "This server's host key changed",
-    "customChangedBody": "The key differs from the one you confirmed before. If you are sure the server changed and this is not an interception, remove the old line for this host from your SSH known_hosts file, then test the connection again.",
+    "customChangedBody": "This server's identity changed since you last connected, so the app blocked the connection to protect you. Check with the server's administrator before doing anything: if the change was not expected, someone may be pretending to be your server.",
     "customBadUrl": "That does not look like a repository URL."
   },
   "autosync": {
@@ -555,6 +555,7 @@
     "deviceUnpaired": "This device lost its vault connection. Reconnect it from your main device, or use the recovery phrase.",
     "corrupted": "Vault data is corrupted",
     "invalidPassword": "Incorrect master password",
+    "hardwareUnavailable": "This device's security chip could not unlock the vault. Use your recovery phrase to bring this device back in.",
     "alreadyExists": "Vault already exists at this location",
     "unexpected": "An unexpected error occurred",
     "openFailed": "Could not open the link"

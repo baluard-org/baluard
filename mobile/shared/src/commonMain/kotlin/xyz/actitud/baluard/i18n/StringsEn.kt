@@ -400,7 +400,7 @@ internal val EN: Map<String, String> = mapOf(
     "settings.customTrustOtherType" to "This host already has a key of another type on file.",
     "settings.customTrustCta" to "Trust this key",
     "settings.customChangedTitle" to "This server's host key changed",
-    "settings.customChangedBody" to "The key differs from the one you confirmed before. If you are sure the server changed and this is not an interception, remove the old line for this host from your SSH known_hosts file, then test the connection again.",
+    "settings.customChangedBody" to "This server's identity changed since you last connected, so the app blocked the connection to protect you. Check with the server's administrator before doing anything: if the change was not expected, someone may be pretending to be your server.",
     "settings.customDone" to "Custom remote connected.",
 
     "settings.security" to "Security",

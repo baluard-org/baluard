@@ -7,6 +7,9 @@ export const ERROR_PATTERNS = [
   { pattern: /Invalid session token/i, key: "errors.sessionExpired" },
   { pattern: /no longer paired with this vault/i, key: "errors.deviceUnpaired" },
   { pattern: /identity mismatch/i, key: "errors.integrityFailed" },
+  // Hardware-seal failures are NOT wrong passwords; they must match
+  // before the password patterns so the unlock screen can tell them apart.
+  { pattern: /hardware unavailable|hardware seal|security chip|secure enclave|tpm/i, key: "errors.hardwareUnavailable" },
   { pattern: /invalid password|incorrect password|password incorrect/i, key: "errors.invalidPassword" },
   { pattern: /corrupt(ed|ion)?/i, key: "errors.corrupted" },
   { pattern: /already exists/i, key: "errors.alreadyExists" },
@@ -142,4 +145,11 @@ export function detectCardBrand(number) {
   if (/^6(?:011|5)/.test(n)) return "Discover";
   if (/^35(?:2[89]|[3-8])/.test(n)) return "JCB";
   return null;
+}
+
+/// True when the error is a hardware-seal failure rather than a bad
+/// password: the unlock screen must not show "wrong password" for it.
+export function isHardwareError(raw) {
+  const str = typeof raw === "string" ? raw : (raw?.message || String(raw || ""));
+  return /hardware unavailable|hardware seal|security chip|secure enclave|tpm/i.test(str);
 }

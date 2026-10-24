@@ -411,9 +411,9 @@
     "hwConsentStatusOn": "Confirmação ativada",
     "hwConsentStatusOff": "Confirmação desativada",
     "hwConsentOnTitle": "Pedir confirmação a cada desbloqueio?",
-    "hwConsentOnBody": "O chip de segurança do seu dispositivo pedirá sua digital ou seu rosto cada vez que este cofre for desbloqueado. Os dados ficam protegidos em repouso de qualquer forma. Se o chip falhar ou a biometria for redefinida, a frase de recuperação traz este dispositivo de volta.",
+    "hwConsentOnBody": "O chip de segurança do seu dispositivo pedirá sua digital ou seu rosto cada vez que este cofre for desbloqueado. O cofre permanece criptografado de qualquer forma. Se o chip falhar ou a biometria for redefinida, a frase de recuperação traz este dispositivo de volta.",
     "hwConsentOffTitle": "Desativar a confirmação ao desbloquear?",
-    "hwConsentOffBody": "O cofre continua protegido pelo chip de segurança em repouso, mas o desbloqueio não pedirá mais sua digital ou seu rosto.",
+    "hwConsentOffBody": "O chip de segurança mantém o cofre criptografado enquanto bloqueado, mas o desbloqueio não pedirá mais sua digital ou seu rosto.",
     "hwConsentOn": "Pedir confirmação",
     "hwConsentOff": "Parar de confirmar",
     "hwConsentOnToast": "O chip confirmará cada desbloqueio.",
@@ -512,7 +512,7 @@
     "customTrustCta": "Confiar nesta chave",
     "customTrustOtherType": "Este servidor já tem uma chave de outro tipo registrada.",
     "customChangedTitle": "A chave do servidor mudou",
-    "customChangedBody": "A chave é diferente da que você confirmou antes. Se você tem certeza de que o servidor mudou e não é uma interceptação, apague a linha antiga deste servidor no seu arquivo known_hosts e teste a conexão novamente.",
+    "customChangedBody": "A identidade deste servidor mudou desde a última conexão, então o app bloqueou a conexão para te proteger. Fale com o administrador do servidor antes de qualquer coisa: se a mudança não era esperada, alguém pode estar se passando pelo seu servidor.",
     "customBadUrl": "Isso não parece uma URL de repositório."
   },
   "autosync": {
@@ -555,6 +555,7 @@
     "deviceUnpaired": "Este dispositivo perdeu a conexão com o cofre. Reconecte-o pelo dispositivo principal ou use a frase de recuperação.",
     "corrupted": "Os dados do cofre estão corrompidos",
     "invalidPassword": "Senha mestra incorreta",
+    "hardwareUnavailable": "O chip de segurança deste dispositivo não conseguiu desbloquear o cofre. Use sua frase de recuperação para recuperar este dispositivo.",
     "alreadyExists": "Já existe um cofre neste local",
     "unexpected": "Ocorreu um erro inesperado",
     "openFailed": "Não foi possível abrir o link"

@@ -366,7 +366,7 @@ internal val PT: Map<String, String> = mapOf(
     "settings.customTrustOtherType" to "Este servidor já tem uma chave de outro tipo registrada.",
     "settings.customTrustCta" to "Confiar nesta chave",
     "settings.customChangedTitle" to "A chave do servidor mudou",
-    "settings.customChangedBody" to "A chave é diferente da que você confirmou antes. Se você tem certeza de que o servidor mudou e não é uma interceptação, apague a linha antiga deste servidor no seu arquivo known_hosts e teste a conexão novamente.",
+    "settings.customChangedBody" to "A identidade deste servidor mudou desde a última conexão, então o app bloqueou a conexão para te proteger. Fale com o administrador do servidor antes de qualquer coisa: se a mudança não era esperada, alguém pode estar se passando pelo seu servidor.",
     "settings.customDone" to "Remoto próprio conectado.",
 
     "settings.security" to "Segurança",

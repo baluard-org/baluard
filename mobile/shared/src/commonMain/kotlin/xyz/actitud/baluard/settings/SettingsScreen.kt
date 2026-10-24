@@ -355,7 +355,13 @@ fun SettingsScreen(
                     val raw = gitCustomUrl.trim()
                     val afterScheme = raw.substringAfter("://", raw)
                     val afterUser = afterScheme.substringAfter("@", afterScheme)
-                    val hostPart = afterUser.substringBefore('/').substringBefore(':')
+                    val noPath = afterUser.substringBefore('/')
+                    // Bracketed IPv6: the port split must not cut the address.
+                    val hostPart = if (noPath.startsWith("[")) {
+                        noPath.substringAfter('[').substringBefore(']')
+                    } else {
+                        noPath.substringBefore(':')
+                    }
                     return hostPart.lowercase()
                 }
 

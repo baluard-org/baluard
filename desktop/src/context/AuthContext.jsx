@@ -46,6 +46,9 @@ function AuthProvider(props) {
   // this holds the target slug so the unlock screen unlocks THAT vault
   // (not the previously-active one). Cleared on successful unlock.
   const [switchTarget, setSwitchTarget] = createSignal(null);
+  // Raw last unlock failure so the login screen can tell a hardware-seal
+  // failure (never a wrong password) from a credential rejection.
+  const [lastUnlockError, setLastUnlockError] = createSignal(null);
 
   async function refreshActiveVault() {
     try {
@@ -103,6 +106,7 @@ function AuthProvider(props) {
   async function unlock(t) {
     const password = loginPasswordRef?.value;
     if (!password) return false;
+    setLastUnlockError(null);
     const target = switchTarget();
     guardStatus(status(), "unlocking", setStatus);
     try {
@@ -117,11 +121,13 @@ function AuthProvider(props) {
       const infoStr = await daemon("vault.unlock", payload, slugArg);
       if (loginPasswordRef) loginPasswordRef.value = "";
       try { setVaultInfo(JSON.parse(infoStr)); } catch {}
+      setLastUnlockError(null);
       setSwitchTarget(null);
       startVaultPrefetch();
       guardStatus(status(), "unlocked", setStatus);
       return true;
     } catch (e) {
+      setLastUnlockError(e?.message || String(e || ""));
       toastError(sanitizeError(e, t));
       guardStatus(status(), "locked", setStatus);
       return false;
@@ -171,7 +177,7 @@ function AuthProvider(props) {
     createPassword, setCreatePassword,
     switchTarget, setSwitchTarget,
     setLoginPasswordRef: (r) => { loginPasswordRef = r; },
-    unlock, lock, createVault, refreshActiveVault,
+    lastUnlockError, unlock, lock, createVault, refreshActiveVault,
   };
 
   return (
