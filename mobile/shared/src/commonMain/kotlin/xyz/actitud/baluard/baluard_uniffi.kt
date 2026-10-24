@@ -1068,6 +1068,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_baluard_uniffi_fn_method_mobileclonejob_cancel(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_baluard_uniffi_fn_method_mobileclonejob_wait_done(`ptr`: Pointer,
+    ): Long
     fun uniffi_baluard_uniffi_fn_clone_mobiledeviceflow(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_baluard_uniffi_fn_free_mobiledeviceflow(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -1350,8 +1352,6 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_create_vault_with_recovery(`path`: RustBuffer.ByValue,`displayName`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,`family`: Byte,
     ): Long
-    fun uniffi_baluard_uniffi_fn_func_derive_kek(`password`: RustBuffer.ByValue,`salt`: RustBuffer.ByValue,
-    ): Long
     fun uniffi_baluard_uniffi_fn_func_derive_kek_for_vault(`vaultPath`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_enroll_device_with_phrase(`vaultPath`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`recoveryPhrase`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
@@ -1516,8 +1516,6 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_create_vault_with_recovery(
     ): Short
-    fun uniffi_baluard_uniffi_checksum_func_derive_kek(
-    ): Short
     fun uniffi_baluard_uniffi_checksum_func_derive_kek_for_vault(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_enroll_device_with_phrase(
@@ -1559,6 +1557,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_func_web_oauth_status(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobileclonejob_cancel(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobileclonejob_wait_done(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobiledeviceflow_expires_at(
     ): Short
@@ -1857,9 +1857,6 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_func_create_vault_with_recovery() != 21643.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_func_derive_kek() != 45663.toShort()) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
     if (lib.uniffi_baluard_uniffi_checksum_func_derive_kek_for_vault() != 44722.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1921,6 +1918,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobileclonejob_cancel() != 22663.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobileclonejob_wait_done() != 16443.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobiledeviceflow_expires_at() != 12934.toShort()) {
@@ -2193,7 +2193,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_my_contact_card() != 10077.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_my_role() != 43326.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_my_role() != 24739.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_notices_list() != 44938.toShort()) {
@@ -2714,6 +2714,13 @@ public interface MobileCloneJobInterface {
     
     fun `cancel`()
     
+    /**
+     * Await clone completion. The start functions return the job
+     * immediately so cancel() can fire mid-clone; this is where the
+     * clone's error surfaces.
+     */
+    suspend fun `waitDone`()
+    
     companion object
 }
 
@@ -2808,6 +2815,33 @@ open class MobileCloneJob: Disposable, AutoCloseable, MobileCloneJobInterface {
     }
     
     
+
+    
+    /**
+     * Await clone completion. The start functions return the job
+     * immediately so cancel() can fire mid-clone; this is where the
+     * clone's error surfaces.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `waitDone`() {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobileclonejob_wait_done(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+        
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
 
     
 
@@ -3772,8 +3806,6 @@ public interface MobileVaultInterface {
     suspend fun `myContactCard`(): kotlin.String
     
     /**
-     * Whether this device manages the space (holds the Root Key) —
-     * the admin marker that stays true for zero-collection vaults.
      * This device's member role ("owner"|"admin"|"editor"|"viewer").
      * Role-gated UI gates on this, never on is_admin_device: on a
      * flipped Space an admin holds no Root Key by design.
@@ -6311,8 +6343,6 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
-     * Whether this device manages the space (holds the Root Key) —
-     * the admin marker that stays true for zero-collection vaults.
      * This device's member role ("owner"|"admin"|"editor"|"viewer").
      * Role-gated UI gates on this, never on is_admin_device: on a
      * flipped Space an admin holds no Root Key by design.
@@ -7912,16 +7942,6 @@ sealed class BaluardException: kotlin.Exception() {
     
     /**
      * Device is not enrolled in the target vault (requires 24-word recovery phrase entry).
-     */
-    class DeviceNotEnrolled(
-        
-        val `detail`: kotlin.String
-        ) : BaluardException() {
-        override val message
-            get() = "detail=${ `detail` }"
-    }
-    
-    /**
      * Master password verification failed (wrong password).
      */
     class WrongPassword(
@@ -8021,26 +8041,23 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
             2 -> BaluardException.Provider(
                 FfiConverterString.read(buf),
                 )
-            3 -> BaluardException.DeviceNotEnrolled(
+            3 -> BaluardException.WrongPassword()
+            4 -> BaluardException.DeviceUnpaired(
                 FfiConverterString.read(buf),
                 )
-            4 -> BaluardException.WrongPassword()
-            5 -> BaluardException.DeviceUnpaired(
+            5 -> BaluardException.NotFound(
                 FfiConverterString.read(buf),
                 )
-            6 -> BaluardException.NotFound(
+            6 -> BaluardException.Crypto(
                 FfiConverterString.read(buf),
                 )
-            7 -> BaluardException.Crypto(
+            7 -> BaluardException.Vault(
                 FfiConverterString.read(buf),
                 )
-            8 -> BaluardException.Vault(
+            8 -> BaluardException.Creation(
                 FfiConverterString.read(buf),
                 )
-            9 -> BaluardException.Creation(
-                FfiConverterString.read(buf),
-                )
-            10 -> BaluardException.InvalidInput(
+            9 -> BaluardException.InvalidInput(
                 FfiConverterString.read(buf),
                 )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
@@ -8055,11 +8072,6 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
                 + FfiConverterString.allocationSize(value.`detail`)
             )
             is BaluardException.Provider -> (
-                // Add the size for the Int that specifies the variant plus the size needed for all fields
-                4UL
-                + FfiConverterString.allocationSize(value.`detail`)
-            )
-            is BaluardException.DeviceNotEnrolled -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
                 + FfiConverterString.allocationSize(value.`detail`)
@@ -8113,42 +8125,37 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
-            is BaluardException.DeviceNotEnrolled -> {
-                buf.putInt(3)
-                FfiConverterString.write(value.`detail`, buf)
-                Unit
-            }
             is BaluardException.WrongPassword -> {
-                buf.putInt(4)
+                buf.putInt(3)
                 Unit
             }
             is BaluardException.DeviceUnpaired -> {
-                buf.putInt(5)
+                buf.putInt(4)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.NotFound -> {
-                buf.putInt(6)
+                buf.putInt(5)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.Crypto -> {
-                buf.putInt(7)
+                buf.putInt(6)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.Vault -> {
-                buf.putInt(8)
+                buf.putInt(7)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.Creation -> {
-                buf.putInt(9)
+                buf.putInt(8)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.InvalidInput -> {
-                buf.putInt(10)
+                buf.putInt(9)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
@@ -8544,24 +8551,6 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeMobileCreateResult.lift(it) },
-        // Error FFI converter
-        BaluardException.ErrorHandler,
-    )
-    }
-
-        /**
-         * Argon2id. Returns raw bytes for the FFI boundary. Runs off the UI thread via `spawn_blocking`.
-         */
-    @Throws(BaluardException::class)
-    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-     suspend fun `deriveKek`(`password`: kotlin.String, `salt`: kotlin.ByteArray) : kotlin.ByteArray {
-        return uniffiRustCallAsync(
-        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_derive_kek(FfiConverterString.lower(`password`),FfiConverterByteArray.lower(`salt`),),
-        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
-        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
-        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
-        // lift function
-        { FfiConverterByteArray.lift(it) },
         // Error FFI converter
         BaluardException.ErrorHandler,
     )

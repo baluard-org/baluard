@@ -274,6 +274,9 @@ class ProviderFlowViewModel(
         cloneCoroutineJob = vmScope.launch {
             try {
                 cloneJob = repo.cloneVaultStart(provider, r.cloneUrl, localPath)
+                // The starter returns immediately; wait here so cancel()
+                // can fire mid-clone and the clone's error surfaces.
+                cloneJob?.waitDone()
                 stage = Stage.Enroll
                 onCloned()
             } catch (e: Exception) {
