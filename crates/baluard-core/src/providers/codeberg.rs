@@ -104,10 +104,11 @@ impl CodebergProvider {
         let cleaned: String = b64.chars().filter(|c| !c.is_whitespace()).collect();
         let raw = BASE64.decode(&cleaned).ok()?;
         let marker: serde_json::Value = serde_json::from_slice(&raw).ok()?;
-        Some((
-            marker["slug"].as_str().map(str::to_string),
-            marker["vault_id"].as_str().map(str::to_string),
-        ))
+        // Any parseable JSON is not a marker: an unrelated .baluard file
+        // must not surface a slug-less vault in the picker.
+        let slug = marker["slug"].as_str()?.to_string();
+        let vault_id = marker["vault_id"].as_str()?.to_string();
+        Some((Some(slug), Some(vault_id)))
     }
 }
 
@@ -289,7 +290,7 @@ impl ForgeProvider for CodebergProvider {
         per_page: u8,
     ) -> Result<Vec<VaultRepo>, ProviderError> {
         let url = format!(
-            "{api}/repos/list?limit={pp}&page={pg}",
+            "{api}/user/repos?limit={pp}&page={pg}",
             api = self.api_base(),
             pp = per_page,
             pg = page,
@@ -348,12 +349,17 @@ impl ForgeProvider for CodebergProvider {
             // Probe .baluard concurrently for this page's repos.
             let page_repos: Vec<(serde_json::Value, Option<(Option<String>, Option<String>)>)> = {
                 let mut tasks = tokio::task::JoinSet::new();
+                // Bound the fan-out: bursts of marker probes trip rate
+                // limits, and a limited probe looks identical to "no marker".
+                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
                 for r in arr {
                     let this = std::sync::Arc::new(Self::with_config(self.config.clone()));
                     let token_clone = token.clone();
+                    let sem = sem.clone();
                     let full_name = r["full_name"].as_str().map(str::to_string);
                     if let Some(full_name) = full_name {
                         tasks.spawn(async move {
+                            let _permit = sem.acquire_owned().await;
                             (r, this.read_marker(&token_clone, &full_name).await)
                         });
                     }
@@ -390,6 +396,7 @@ impl ForgeProvider for CodebergProvider {
         token: &ProviderToken,
         name: &str,
     ) -> Result<VaultRepo, ProviderError> {
+        super::types::assert_safe_segment(name, "repository")?;
         let resp = self
             .authed(
                 reqwest::Method::POST,
@@ -419,18 +426,26 @@ impl ForgeProvider for CodebergProvider {
 
         // Safety: verify private before returning.
         if r["private"].as_bool() != Some(true) {
+            let mut cleanup = String::new();
             if let Some(full) = r["full_name"].as_str() {
-                let _ = self
+                let removed = self
                     .authed(
                         reqwest::Method::DELETE,
                         &format!("{}/repos/{}", self.api_base(), full),
                         token,
                     )
                     .send()
-                    .await;
+                    .await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                // A failed cleanup must not be reported as gone.
+                if !removed {
+                    cleanup = " It could not be deleted automatically — delete it on the site."
+                        .to_string();
+                }
             }
             return Err(ProviderError::RepoPublic(format!(
-                "repo '{name}' was created non-private (safety abort)"
+                "repo '{name}' was created non-private (safety abort).{cleanup}"
             )));
         }
 
@@ -443,6 +458,8 @@ impl ForgeProvider for CodebergProvider {
         owner: &str,
         name: &str,
     ) -> Result<(), ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(name, "repository")?;
         let url = format!("{}/repos/{owner}/{name}", self.api_base());
         let resp = self
             .authed(reqwest::Method::DELETE, &url, token)
@@ -468,6 +485,9 @@ impl ForgeProvider for CodebergProvider {
         username: &str,
         permission: CollaboratorPermission,
     ) -> Result<CollaboratorStatus, ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        super::types::assert_safe_segment(username, "member")?;
         // Forgejo grants immediately — acceptance is a no-op, so the seat
         // is Active the moment the PUT lands. Scope gaps (a scopeless
         // token is full account access) are surfaced at connect time.
@@ -503,6 +523,9 @@ impl ForgeProvider for CodebergProvider {
         repo: &str,
         username: &str,
     ) -> Result<CollaboratorStatus, ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        super::types::assert_safe_segment(username, "member")?;
         let url = format!(
             "{}/repos/{owner}/{repo}/collaborators/{username}",
             self.api_base()
@@ -529,6 +552,9 @@ impl ForgeProvider for CodebergProvider {
         repo: &str,
         username: &str,
     ) -> Result<(), ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        super::types::assert_safe_segment(username, "member")?;
         let url = format!(
             "{}/repos/{owner}/{repo}/collaborators/{username}",
             self.api_base()
@@ -581,7 +607,15 @@ impl ForgeProvider for CodebergProvider {
 
         if !resp.status().is_success() {
             let s = resp.status();
-            return Err(ProviderError::AuthFailed(format!("refresh HTTP {s}")));
+            let st = resp.status().as_u16();
+            return match st {
+                400 | 401 => Err(ProviderError::AuthFailed(format!(
+                    "refresh HTTP {st}"
+                ))),
+                _ => Err(ProviderError::Transient(format!(
+                    "refresh HTTP {st}"
+                ))),
+            };
         }
         let d: serde_json::Value = resp
             .json()

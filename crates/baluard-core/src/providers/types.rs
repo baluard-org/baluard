@@ -15,10 +15,10 @@ pub enum Provider {
     Codeberg,
 }
 
-/// Embedded GitHub OAuth app client secret for the web application flow.
-/// Populated once the app registration hands one over; `None` keeps web
-/// connect fail-closed with a plain-language error naming the env override
-/// (`BALUARD_GITHUB_CLIENT_SECRET`).
+/// GitHub OAuth app client secret. Deliberately embedded: a desktop app
+/// cannot keep a secret (the same trade as the gh CLI), and the token it
+/// guards is the app identity, not user data. Rotate via the GitHub app
+/// settings; `BALUARD_GITHUB_CLIENT_SECRET` overrides for development.
 const GITHUB_CLIENT_SECRET: Option<&str> = Some("73a95d04c148979e451c672f5e6abba3d2904c0e");
 
 impl fmt::Display for Provider {
@@ -161,13 +161,48 @@ impl ProviderConfig {
     }
 
     /// Effective instance base URL (no trailing slash): override or default.
+    /// An override is sanitized before use: the scheme is forced to https
+    /// (plain http needs the debug escape hatch) and userinfo, query and
+    /// fragment components are dropped, so a mistyped instance can never
+    /// carry the token in cleartext or to a URL-embedded account.
     pub fn effective_instance_url(&self, provider: Provider) -> String {
-        let url = self
-            .instance_url
-            .clone()
-            .unwrap_or_else(|| provider.default_instance_url().to_string());
-        url.trim_end_matches('/').to_string()
+        let default = provider.default_instance_url().to_string();
+        let url = match self.instance_url.as_deref() {
+            None => return default.trim_end_matches('/').to_string(),
+            Some(u) => u.trim().trim_end_matches('/'),
+        };
+        if url.is_empty() {
+            return default.trim_end_matches('/').to_string();
+        }
+        let insecure = std::env::var("BALUARD_ALLOW_INSECURE_INSTANCE").is_ok();
+        // Strip userinfo, query and fragment: keep scheme://host[:port]/path.
+        let after_scheme = url
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or(url);
+        let authority_path = after_scheme.split(['?', '#']).next().unwrap_or("");
+        // The authority ends at the first '/'; the host is what follows
+        // the LAST '@' (userinfo cannot contain '/').
+        let host_part = authority_path.split('/').next().unwrap_or("");
+        let authority = host_part.rsplit('@').next().unwrap_or("");
+        if authority.is_empty() {
+            return default.trim_end_matches('/').to_string();
+        }
+        // Loopback servers (dev mock APIs, local forges) may stay http:
+        // the traffic never leaves the machine. Anything else is forced
+        // to https unless the debug escape hatch is set.
+        let host_lower = authority.to_ascii_lowercase();
+        let loopback = host_lower.starts_with("localhost")
+            || host_lower.starts_with("127.0.0.1")
+            || host_lower.starts_with("[::1]");
+        let scheme = if (insecure || loopback) && !host_lower.starts_with("https://") {
+            "http://"
+        } else {
+            "https://"
+        };
+        format!("{scheme}{authority}")
     }
+
 
     /// Effective client_secret for web-flow token exchange: explicit
     /// override, then the `BALUARD_<PROVIDER>_CLIENT_SECRET` env var, then
@@ -508,6 +543,10 @@ pub enum ProviderError {
 
     #[error("token expired")]
     TokenExpired,
+
+    #[error("temporary provider outage: {0}")]
+    /// Retryable: 429/5xx/network. Must not clear stored credentials.
+    Transient(String),
 
     #[error("token validation failed: {0}")]
     TokenValidation(String),
@@ -1245,5 +1284,33 @@ pub(crate) mod http_mock {
 
     fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         haystack.windows(needle.len()).position(|w| w == needle)
+    }
+}
+
+/// Trait-boundary guard for forge path segments (owner, repo,
+/// username): a peer-influenced value must not change which endpoint a
+/// request hits when interpolated into a URL path.
+/// Like assert_safe_segment but allows '/' separators (GitLab subgroup
+/// owners such as `group/sub`): each segment must pass on its own.
+pub fn assert_safe_path(value: &str, what: &str) -> Result<(), ProviderError> {
+    for part in value.split('/') {
+        assert_safe_segment(part, what)?;
+    }
+    Ok(())
+}
+
+pub fn assert_safe_segment(value: &str, what: &str) -> Result<(), ProviderError> {
+    let ok = !value.is_empty()
+        && value != "."
+        && value != ".."
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(ProviderError::Api(format!(
+            "the {what} name contains characters the forge does not allow"
+        )))
     }
 }

@@ -106,10 +106,15 @@ impl GitHubProvider {
 
     /// Build an octocrab client from a token.
     fn client_from_token(&self, token: &ProviderToken) -> Result<Octocrab, ProviderError> {
-        Octocrab::builder()
-            .personal_token(token.access_token().expose_secret().to_string())
-            .build()
-            .map_err(api_error)
+        let mut builder = Octocrab::builder()
+            .personal_token(token.access_token().expose_secret().to_string());
+        // GHES mounts REST under /api/v3; without this the enterprise PAT
+        // would be sent to api.github.com instead of the instance.
+        let base = self.config.effective_instance_url(Provider::GitHub);
+        if base != Provider::GitHub.default_instance_url() {
+            builder = builder.base_uri(format!("{base}/api/v3")).map_err(api_error)?;
+        }
+        builder.build().map_err(api_error)
     }
 
     /// REST API base for raw reqwest calls (collaborator ops). The public
@@ -200,11 +205,19 @@ impl GitHubProvider {
                 break;
             }
             let this = std::sync::Arc::new(Self::with_config(self.config.clone()));
+            // Bound the fan-out: 100 simultaneous content requests trips
+            // GitHub's secondary rate limits, and a limited probe looks
+            // identical to "no marker".
+            let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
             let mut tasks = tokio::task::JoinSet::new();
             for repo in page_repos {
                 let client = client.clone();
                 let this = this.clone();
-                tasks.spawn(async move { this.probe_marker(&client, &repo).await });
+                let sem = sem.clone();
+                tasks.spawn(async move {
+                    let _permit = sem.acquire_owned().await;
+                    this.probe_marker(&client, &repo).await
+                });
             }
             while let Some(res) = tasks.join_next().await {
                 if let Ok(Some(r)) = res {
@@ -247,9 +260,17 @@ impl GitHubProvider {
             .decode(encoded.replace('\n', ""))
             .ok()?;
         let marker: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+        // Any parseable JSON is not a marker: an unrelated .baluard file
+        // must not surface a slug-less vault in the picker.
+        let (Some(slug), Some(vid)) = (
+            marker["slug"].as_str().map(str::to_string),
+            marker["vault_id"].as_str().map(str::to_string),
+        ) else {
+            return None;
+        };
         let mut r = self.repo_to_vault(repo)?;
-        r.vault_slug = marker["slug"].as_str().map(str::to_string);
-        r.vault_id = marker["vault_id"].as_str().map(str::to_string);
+        r.vault_slug = Some(slug);
+        r.vault_id = Some(vid);
         Some(r)
     }
 
@@ -648,6 +669,7 @@ impl ForgeProvider for GitHubProvider {
         token: &ProviderToken,
         name: &str,
     ) -> Result<VaultRepo, ProviderError> {
+        super::types::assert_safe_segment(name, "repository")?;
         let client = self.client_from_token(token)?;
 
         #[derive(serde::Serialize)]
@@ -671,13 +693,24 @@ impl ForgeProvider for GitHubProvider {
 
         // Safety: verify repo is private after creation
         if !repo.private.unwrap_or(false) {
-            // Delete public repo immediately
+            // Delete public repo immediately. The OAuth scope usually
+            // lacks delete_repo: tell the user when the cleanup could not
+            // run instead of claiming gone. The refusal must fire even
+            // when the owner object is missing.
+            let mut cleanup =
+                " It could not be deleted automatically — delete it on the site.".to_string();
             if let Some(owner) = &repo.owner {
                 let route = format!("/repos/{}/{}", owner.login, repo.name);
-                let _ = client.delete::<(), _, ()>(route, None as Option<&()>).await;
+                if client
+                    .delete::<(), _, ()>(route, None as Option<&()>)
+                    .await
+                    .is_ok()
+                {
+                    cleanup = String::new();
+                }
             }
             return Err(ProviderError::RepoPublic(format!(
-                "repo '{name}' was created public (safety abort)"
+                "repo '{name}' was created public (safety abort).{cleanup}"
             )));
         }
 
@@ -691,6 +724,8 @@ impl ForgeProvider for GitHubProvider {
         owner: &str,
         name: &str,
     ) -> Result<(), ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(name, "repository")?;
         let client = self.client_from_token(token)?;
         let route = format!("/repos/{owner}/{name}");
         client
@@ -707,6 +742,9 @@ impl ForgeProvider for GitHubProvider {
         username: &str,
         permission: CollaboratorPermission,
     ) -> Result<CollaboratorStatus, ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        super::types::assert_safe_segment(username, "member")?;
         // GitHub invitation flow: PUT creates a pending invitation (201)
         // or updates an existing collaborator's permission (204). `pull`
         // = read-only seat, `push` = write seat (P8c staging).
@@ -743,6 +781,9 @@ impl ForgeProvider for GitHubProvider {
         repo: &str,
         username: &str,
     ) -> Result<CollaboratorStatus, ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        super::types::assert_safe_segment(username, "member")?;
         let api = self.api_base();
         // Effective-permission check: the endpoint reports the user's real
         // access INCLUDING org/team-inherited roles. `none` (or 404 for an
@@ -827,6 +868,9 @@ impl ForgeProvider for GitHubProvider {
         repo: &str,
         username: &str,
     ) -> Result<(), ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        super::types::assert_safe_segment(username, "member")?;
         let api = self.api_base();
         // Strike the live seat first; 404 = no direct seat. Boundary:
         // DELETE removes DIRECT seats only — access inherited from a

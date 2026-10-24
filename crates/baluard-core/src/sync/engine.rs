@@ -185,7 +185,7 @@ impl SyncEngine {
         let recovery_signer_path = vault_path.join("meta/recovery-signer.key");
         let signing_key = match Self::load_recovery_signing_key(vault_path, devkey_seal) {
             Ok(Some(key)) => Some(key),
-            Ok(None) => match Self::load_signing_key(vault_path, devkey_seal) {
+            Ok(None) => match Self::load_signing_key(vault_path, devkey_seal, None) {
                 Ok(key) => key,
                 Err(e) => {
                     eprintln!("warning: failed to load signing key: {e}");
@@ -194,7 +194,7 @@ impl SyncEngine {
             },
             Err(e) => {
                 eprintln!("warning: failed to load recovery signing key: {e}");
-                match Self::load_signing_key(vault_path, devkey_seal) {
+                match Self::load_signing_key(vault_path, devkey_seal, None) {
                     Ok(key) => key,
                     Err(e2) => {
                         eprintln!("warning: failed to load signing key: {e2}");
@@ -1272,7 +1272,7 @@ impl SyncEngine {
         tree: &git2::Tree<'_>,
         parents: &[&git2::Commit<'_>],
     ) -> Result<Oid, BaluardError> {
-        if let Some(ref signing_key) = self.effective_signing_key() {
+        if let Some(ref signing_key) = self.effective_signing_key(repo) {
             let buf = repo
                 .commit_create_buffer(sig, sig, message, tree, parents)
                 .map_err(|e| SyncError::Git(format!("commit buffer: {e}")))?;
@@ -1689,7 +1689,7 @@ impl SyncEngine {
     /// later head existed. Never touches HEAD or the worktree.
     fn announce_head(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {
         use super::gossip::{GOSSIP_BRANCH, GOSSIP_DIR, HeadAnnouncement};
-        let Some(signing_key) = self.effective_signing_key() else {
+        let Some(signing_key) = self.effective_signing_key(repo) else {
             return Ok(());
         };
         let branch_ref = format!("refs/heads/{GOSSIP_BRANCH}");
@@ -3714,19 +3714,42 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// Load Ed25519 signing key from OS keyring or meta/device-privkey.json.
-    /// Returns None if no key found. Returns error if key is corrupt.
     /// The signer for the NEXT commit: the kit phrase's key while the
     /// recovery signer file is live, the device key once the first
     /// push cleared it (family-spaces §7). `&self` cannot drop the
     /// stale in-memory kit key, so the cleared-file check re-derives
     /// from the retained seal at every signing site.
-    fn effective_signing_key(&self) -> Option<ed25519_dalek::SigningKey> {
+    fn effective_signing_key(&self, repo: &Repository) -> Option<ed25519_dalek::SigningKey> {
         if self.signing_is_recovery && !self.vault_path.join("meta/recovery-signer.key").exists() {
             let seal = self.devkey_seal.as_ref()?;
-            return Self::load_signing_key(&self.vault_path, Some(seal))
+            return Self::load_signing_key(&self.vault_path, Some(seal), Some(&self.device_id))
                 .ok()
                 .flatten();
+        }
+        if self.signing_is_recovery {
+            // A local bootstrap commit already minted: HEAD's own tree
+            // carries this device's roster entry, so the device key
+            // verifies normally. Staying on the kit key would mint a
+            // second kit-signed commit with zero registry additions — a
+            // shape every peer refuses, permanently.
+            if let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) {
+                let roster = Self::roster_tree_lookup(repo, &head, &mut Default::default())
+                    .ok()
+                    .flatten();
+                if let Some(roster) = roster {
+                    if roster.contains_key(&self.device_id) {
+                        if let Some(seal) = self.devkey_seal.as_ref() {
+                            if let Ok(Some(k)) = Self::load_signing_key(
+                                &self.vault_path,
+                                Some(seal),
+                                Some(&self.device_id),
+                            ) {
+                                return Some(k);
+                            }
+                        }
+                    }
+                }
+            }
         }
         self.signing_key.clone()
     }
@@ -3767,46 +3790,60 @@ impl SyncEngine {
         Ok(Some(key))
     }
 
+    /// Load Ed25519 signing key from OS keyring or meta/device-privkey.json.
+    /// Returns None if no key found. Returns error if key is corrupt.
     fn load_signing_key(
         vault_path: &Path,
         devkey_seal: Option<&[u8; 32]>,
+        device_id: Option<&str>,
     ) -> Result<Option<ed25519_dalek::SigningKey>, BaluardError> {
-        // Try OS keyring: read device IDs from devices.json and try each
-        // (skipped in tests: unsigned binaries trigger keychain prompts; see
-        // `crate::keyring_disabled`).
+        // Try OS keyring for THIS clone's device only (skipped in tests:
+        // unsigned binaries trigger keychain prompts; see
+        // `crate::keyring_disabled`). A per-vault keyring service is
+        // shared by every clone under the OS user, so scanning the roster
+        // could sign with another clone's identity.
         if !crate::keyring_disabled() {
-            let service = Self::keyring_service_for_vault(vault_path);
-            if let Ok(devices_data) = std::fs::read_to_string(vault_path.join("meta/devices.json"))
-            {
-                if let Ok(devices) = serde_json::from_str::<serde_json::Value>(&devices_data) {
-                    if let Some(device_map) = devices["devices"].as_object() {
-                        for (device_id, _) in device_map {
-                            if let Ok(entry) = keyring::Entry::new(&service, device_id) {
-                                if let Ok(json) = entry.get_password() {
-                                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json)
-                                    {
-                                        if let Some(hex_str) = v["ed25519_private"].as_str() {
-                                            if let Ok(bytes_vec) = hex::decode(hex_str) {
-                                                let bytes: [u8; 32] =
-                                                    bytes_vec.try_into().map_err(|_| {
-                                                        SyncError::Git(
-                                                            "privkey wrong length".into(),
-                                                        )
-                                                    })?;
-                                                return Ok(Some(
-                                                    ed25519_dalek::SigningKey::from_bytes(&bytes),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+            if let Some(device_id) = device_id {
+                let service = Self::keyring_service_for_vault(vault_path);
+                let from_keyring =
+                    Self::load_signing_key_from_keyring(vault_path, &service, device_id)?;
+                if from_keyring.is_some() {
+                    return Ok(from_keyring);
+                }
+                // No keyring entry (nothing writes signing keys there
+                // anymore): fall through to the sealed file.
+            }
+        }
+        Self::load_signing_key_from_file(vault_path, devkey_seal)
+    }
+
+    fn load_signing_key_from_keyring(
+        vault_path: &Path,
+        service: &str,
+        device_id: &str,
+    ) -> Result<Option<ed25519_dalek::SigningKey>, BaluardError> {
+        let _ = vault_path;
+        if let Ok(entry) = keyring::Entry::new(service, device_id) {
+            if let Ok(json) = entry.get_password() {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
+                    if let Some(hex_str) = v["ed25519_private"].as_str() {
+                        if let Ok(bytes_vec) = hex::decode(hex_str) {
+                            let bytes: [u8; 32] = bytes_vec
+                                .try_into()
+                                .map_err(|_| SyncError::Git("privkey wrong length".into()))?;
+                            return Ok(Some(ed25519_dalek::SigningKey::from_bytes(&bytes)));
                         }
                     }
                 }
             }
         }
+        Ok(None)
+    }
 
+    fn load_signing_key_from_file(
+        vault_path: &Path,
+        devkey_seal: Option<&[u8; 32]>,
+    ) -> Result<Option<ed25519_dalek::SigningKey>, BaluardError> {
         // Fallback: sealed-or-legacy device-privkey file (C1). Sealed files
         // fail closed without the seal subkey.
         let path = vault_path.join("meta/device-privkey.json");
@@ -3851,7 +3888,10 @@ impl SyncEngine {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        lines.push(format!("{stamp} refused commit {oid12}: {err}"));
+        // The message can carry remote-chosen tree names: strip control
+        // characters so one refused commit cannot forge extra log lines.
+        let clean: String = err.chars().filter(|c| !c.is_control()).collect();
+        lines.push(format!("{stamp} refused commit {oid12}: {clean}"));
         if lines.len() > 200 {
             let drop = lines.len() - 200;
             lines.drain(..drop);
@@ -3914,12 +3954,14 @@ impl SyncEngine {
         // commits after them see the new registry.
         let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
             std::collections::HashMap::new();
+        let mut tree_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
+            std::collections::HashMap::new();
         // S1a-5: seed the sticky tombstone set from local head ancestry —
         // tombstones already in local history must outlive the batch
         // boundary (a stale clone's rogue commit arrives in a LATER pull
         // than the reset commit).
-        let mut sticky_tombstoned: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
+        let mut sticky_tombstoned: std::collections::BTreeMap<String, Vec<git2::Oid>> =
+            std::collections::BTreeMap::new();
         if let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) {
             let mut seed_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
                 std::collections::HashMap::new();
@@ -3935,7 +3977,25 @@ impl SyncEngine {
                 if let Ok(Some(snapshot)) =
                     Self::members_tree_lookup(repo, &ancestor, &mut seed_cache)
                 {
-                    sticky_tombstoned.extend(snapshot.tombstoned.iter().cloned());
+                    let mut inherited = |m: &str| {
+                        (0..ancestor.parent_count()).any(|i| {
+                            ancestor.parent_id(i).ok().and_then(|pid| {
+                                repo.find_commit(pid).ok().and_then(|p| {
+                                    Self::members_tree_lookup(repo, &p, &mut seed_cache)
+                                        .ok()
+                                        .flatten()
+                                })
+                            })
+                            .map(|ps| ps.tombstoned.iter().any(|t| t == m))
+                            .unwrap_or(false)
+                        })
+                    };
+                    Self::extend_tombstone_introducers(
+                        &mut sticky_tombstoned,
+                        &snapshot,
+                        &mut inherited,
+                        ancestor.id(),
+                    );
                 }
                 for i in 0..ancestor.parent_count() {
                     if let Ok(pid) = ancestor.parent_id(i) {
@@ -3955,7 +4015,25 @@ impl SyncEngine {
                     continue;
                 };
                 if let Ok(Some(own)) = Self::members_tree_lookup(repo, &commit, &mut own_cache) {
-                    sticky_tombstoned.extend(own.tombstoned.iter().cloned());
+                    let mut inherited = |m: &str| {
+                        (0..commit.parent_count()).any(|i| {
+                            commit.parent_id(i).ok().and_then(|pid| {
+                                repo.find_commit(pid).ok().and_then(|p| {
+                                    Self::members_tree_lookup(repo, &p, &mut own_cache)
+                                        .ok()
+                                        .flatten()
+                                })
+                            })
+                            .map(|ps| ps.tombstoned.iter().any(|t| t == m))
+                            .unwrap_or(false)
+                        })
+                    };
+                    Self::extend_tombstone_introducers(
+                        &mut sticky_tombstoned,
+                        &own,
+                        &mut inherited,
+                        commit.id(),
+                    );
                 }
             }
         }
@@ -3973,6 +4051,7 @@ impl SyncEngine {
                             &roster,
                             &signer,
                             &mut sticky_tombstoned,
+                            &mut tree_cache,
                             None,
                         )
                         .map(|_| signer)
@@ -4015,6 +4094,7 @@ impl SyncEngine {
                                     &extended,
                                     &signer,
                                     &mut sticky_tombstoned,
+                                    &mut tree_cache,
                                     bootstrap_key,
                                 )
                                 .map(|_| signer)
@@ -4035,65 +4115,6 @@ impl SyncEngine {
         }
 
         Ok(ordered.len())
-    }
-
-    /// devices.json delta for an enrollment bootstrap: every pre-existing
-    /// entry unchanged (own entry may epoch-bump), at most the signer's
-    /// own entry added, and that entry carries exactly the
-    /// proof-authorized signing key. Retained for a future narrowing of
-    /// the wholesale bootstrap admission; currently unused because the
-    /// proof signature alone is the gate.
-    #[allow(dead_code)]
-    fn registry_delta_is_own_enrollment(
-        old: Option<&[u8]>,
-        new: Option<&[u8]>,
-        signer: &str,
-        expected_pk: [u8; 32],
-    ) -> bool {
-        let (Some(old), Some(new)) = (old, new) else {
-            return false;
-        };
-        let (Ok(old_reg), Ok(new_reg)) = (
-            serde_json::from_str::<crate::devices::DeviceRegistry>(
-                std::str::from_utf8(old).unwrap_or(""),
-            ),
-            serde_json::from_str::<crate::devices::DeviceRegistry>(
-                std::str::from_utf8(new).unwrap_or(""),
-            ),
-        ) else {
-            return false;
-        };
-        let Ok(signer_id) = uuid::Uuid::parse_str(signer) else {
-            return false;
-        };
-        if old_reg.version != new_reg.version {
-            return false;
-        }
-        if new_reg.devices.len() > old_reg.devices.len() + 1 {
-            return false;
-        }
-        for (id, old_entry) in &old_reg.devices {
-            if *id == signer_id {
-                continue;
-            }
-            let Some(new_entry) = new_reg.devices.get(id) else {
-                return false;
-            };
-            if old_entry.encryption_public_key != new_entry.encryption_public_key
-                || old_entry.signing_public_key != new_entry.signing_public_key
-                || old_entry.enrolled_by != new_entry.enrolled_by
-                || old_entry.enrolled_at != new_entry.enrolled_at
-                || old_entry.name != new_entry.name
-            {
-                return false;
-            }
-        }
-        let Some(entry) = new_reg.devices.get(&signer_id) else {
-            return false;
-        };
-        hex::decode(&entry.signing_public_key)
-            .map(|pk| pk.as_slice() == expected_pk)
-            .unwrap_or(false)
     }
 
     /// Verify an entire fetched history (clone path). Every commit is
@@ -4143,10 +4164,12 @@ impl SyncEngine {
         let ordered = Self::topo_order_commits(repo, &oids)?;
         let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
             std::collections::HashMap::new();
+        let mut tree_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
+            std::collections::HashMap::new();
         // S1a-5: the full-history walk collects tombstones as it goes —
         // no seeding needed when every ancestor is visited anyway.
-        let mut sticky_tombstoned: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
+        let mut sticky_tombstoned: std::collections::BTreeMap<String, Vec<git2::Oid>> =
+            std::collections::BTreeMap::new();
         // S1a-5: pre-scan the batch's own trees so a tombstone arriving
         // must hold regardless of topo order within the fetched history.
         {
@@ -4157,7 +4180,25 @@ impl SyncEngine {
                     continue;
                 };
                 if let Ok(Some(own)) = Self::members_tree_lookup(repo, &commit, &mut own_cache) {
-                    sticky_tombstoned.extend(own.tombstoned.iter().cloned());
+                    let mut inherited = |m: &str| {
+                        (0..commit.parent_count()).any(|i| {
+                            commit.parent_id(i).ok().and_then(|pid| {
+                                repo.find_commit(pid).ok().and_then(|p| {
+                                    Self::members_tree_lookup(repo, &p, &mut own_cache)
+                                        .ok()
+                                        .flatten()
+                                })
+                            })
+                            .map(|ps| ps.tombstoned.iter().any(|t| t == m))
+                            .unwrap_or(false)
+                        })
+                    };
+                    Self::extend_tombstone_introducers(
+                        &mut sticky_tombstoned,
+                        &own,
+                        &mut inherited,
+                        commit.id(),
+                    );
                 }
             }
         }
@@ -4174,6 +4215,7 @@ impl SyncEngine {
                             &roster,
                             &signer,
                             &mut sticky_tombstoned,
+                            &mut tree_cache,
                             None,
                         )
                         .map(|_| signer)
@@ -4201,6 +4243,7 @@ impl SyncEngine {
                                     &extended,
                                     &signer,
                                     &mut sticky_tombstoned,
+                                    &mut tree_cache,
                                     bootstrap_key,
                                 )
                                 .map(|_| signer)
@@ -4440,6 +4483,17 @@ impl SyncEngine {
             single.insert(entry_id.clone(), entry_vk);
             if Self::verify_commit_against_roster_static(repo, commit.id(), &single).is_err() {
                 continue;
+            }
+            // D78 requires the enrollment commit to extend the registry
+            // by EXACTLY this entry: extra additions would sneak unknown
+            // roster keys past the proof gate.
+            if let Some(own_roster) =
+                Self::roster_tree_lookup(repo, commit, &mut Default::default())?
+            {
+                let additions = own_roster.keys().filter(|id| !parent_roster.contains_key(*id)).count();
+                if additions != 1 {
+                    return Ok(None);
+                }
             }
             let mut extended = parent_roster.clone();
             extended.insert(entry_id.clone(), entry_vk);
@@ -4857,13 +4911,27 @@ impl SyncEngine {
                 break;
             }
 
-            // Diff this commit against its first parent and classify.
-            let parent = commit
+            // Diff this commit against its parents and classify. A merge
+            // commit attributes only its residue (paths that differ from
+            // BOTH parents) to the merger — the first-parent diff alone
+            // would credit the merger with the whole second-parent side.
+            let parent_count = commit.parent_count();
+            let parent_tree = commit
                 .parent(0)
-                .map_err(|e| SyncError::Git(format!("timeline parent: {e}")))?;
-            let parent_tree = parent
+                .map_err(|e| SyncError::Git(format!("timeline parent: {e}")))?
                 .tree()
                 .map_err(|e| SyncError::Git(format!("timeline parent tree: {e}")))?;
+            let other_tree = if parent_count > 1 {
+                Some(
+                    commit
+                        .parent(1)
+                        .map_err(|e| SyncError::Git(format!("timeline parent: {e}")))?
+                        .tree()
+                        .map_err(|e| SyncError::Git(format!("timeline parent tree: {e}")))?,
+                )
+            } else {
+                None
+            };
             let diff = repo
                 .diff_tree_to_tree(Some(&parent_tree), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("timeline diff: {e}")))?;
@@ -4882,6 +4950,29 @@ impl SyncEngine {
                 None,
             )
             .map_err(|e| SyncError::Git(format!("timeline walk diff: {e}")))?;
+            if let Some(other_tree) = other_tree {
+                let other_diff = repo
+                    .diff_tree_to_tree(Some(&other_tree), Some(&tree), None)
+                    .map_err(|e| SyncError::Git(format!("timeline diff: {e}")))?;
+                let mut other_paths: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                other_diff
+                    .foreach(
+                        &mut |delta, _| {
+                            if let Some(p) =
+                                delta.new_file().path().or_else(|| delta.old_file().path())
+                            {
+                                other_paths.insert(p.to_string_lossy().into_owned());
+                            }
+                            true
+                        },
+                        None,
+                        None,
+                        None,
+                    )
+                    .map_err(|e| SyncError::Git(format!("timeline walk diff: {e}")))?;
+                changed.retain(|(p, _, _)| other_paths.contains(p));
+            }
 
             // ── Member rows ──
             let mut member_events: Vec<(TimelineKind, String, Option<Uuid>)> = Vec::new();
@@ -5240,31 +5331,57 @@ impl SyncEngine {
     /// empty; conflicted paths are attributed to the merger outright
     /// (a resolution is authored content). Octopus merges are never
     /// produced by this vault and are refused outright.
+    /// S1a-5 sticky tombstones with their introducers: a tombstone denies
+    /// a commit only when the commit is not an ancestor of the commit that
+    /// FIRST introduced it. Inherited tombstones (already in a parent's
+    /// snapshot) must not register later commits as introducers — that
+    /// would let any descendant of a rogue commit exempt it.
+    fn extend_tombstone_introducers(
+        map: &mut std::collections::BTreeMap<String, Vec<git2::Oid>>,
+        snapshot: &MemberSnapshot,
+        inherited: &mut dyn FnMut(&str) -> bool,
+        introducer: git2::Oid,
+    ) {
+        for m in &snapshot.tombstoned {
+            if inherited(m) {
+                continue;
+            }
+            map.entry(m.clone()).or_default().push(introducer);
+        }
+    }
+
     fn check_commit_paths(
         repo: &Repository,
         commit: &git2::Commit<'_>,
         roster: &DeviceRoster,
         signer: &str,
-        sticky_tombstoned: &mut std::collections::BTreeSet<String>,
+        sticky_tombstoned: &mut std::collections::BTreeMap<String, Vec<git2::Oid>>,
+        tree_cache: &mut std::collections::HashMap<git2::Oid, Option<MemberSnapshot>>,
         bootstrap_key: Option<[u8; 32]>,
     ) -> Result<(), BaluardError> {
         // S1a: resolve the signer's role from the member directory
         // snapshot (first-parent rule). Legacy vaults (no meta/members
         // subtree) stay admin-equivalent; strict vaults treat unbound
-        // devices as pending joiners.
-        let members =
-            Self::member_table_for_commit(repo, commit, &mut std::collections::HashMap::new())?;
+        // devices as pending joiners. The cache is threaded from the
+        // walk and keys by member-subtree id, so membership-stable
+        // commits cost no tree walk.
+        let members = Self::member_table_for_commit(repo, commit, tree_cache)?;
         // S1a-5: resets stick forward through the walk. Harvest from the
         // commit's OWN tree, not the first-parent snapshot — the
         // tombstone commit itself resolves its roles from its parent.
         // (Walk loops additionally pre-scan the whole batch, so commit
         // order within a batch cannot matter.)
-        {
-            let mut own_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
-                std::collections::HashMap::new();
-            if let Ok(Some(own)) = Self::members_tree_lookup(repo, commit, &mut own_cache) {
-                sticky_tombstoned.extend(own.tombstoned.iter().cloned());
-            }
+        if let Ok(Some(own)) = Self::members_tree_lookup(repo, commit, tree_cache) {
+            let mut inherited = |m: &str| {
+                commit.parents().any(|p| {
+                    Self::members_tree_lookup(repo, &p, tree_cache)
+                        .ok()
+                        .flatten()
+                        .map(|ps| ps.tombstoned.iter().any(|t| t == m))
+                        .unwrap_or(false)
+                })
+            };
+            Self::extend_tombstone_introducers(sticky_tombstoned, &own, &mut inherited, commit.id());
         }
         let (role, member_id) = match members.as_ref() {
             Some(snapshot) => {
@@ -5281,10 +5398,21 @@ impl SyncEngine {
         // S1a-5: a tombstoned signer is denied OUTRIGHT — a role
         // downgrade alone would not cover merge commits, whose empty-
         // residue path skips per-path checks entirely.
-        let member_tombstoned = member_id
-            .map(|m| sticky_tombstoned.contains(m))
+        // Exemption: the member's own commits that PRECEDE a removal are
+        // honest history (offline work arriving in the same pull as the
+        // removal, or a fresh clone). Deny only when no introducer is a
+        // descendant of this commit; a graph error denies (fail closed).
+        let tombstoned_deny = member_id
+            .and_then(|m| sticky_tombstoned.get(m))
+            .map(|intros| {
+                !intros
+                    .iter()
+                    .any(|intro| {
+                        repo.graph_descendant_of(*intro, commit.id()).unwrap_or(false)
+                    })
+            })
             .unwrap_or(false);
-        if member_tombstoned {
+        if tombstoned_deny {
             return Err(SyncError::PolicyViolation {
                 device: signer.to_string(),
                 path: "meta/members".to_string(),
@@ -5632,13 +5760,6 @@ impl SyncEngine {
     /// salted dir -> id map plus the collections the signer's member
     /// holds write grants on, read from the tree's own
     /// meta/collections/** (an attacker cannot forge a definition:
-    /// those files are Admin-only per the policy table, so a non-admin
-    /// referencing a collection dir must reference one an admin already
-    /// defined in the same tree; a delegated manager's def edit is
-    /// admitted separately via `managed`, whose authority comes from
-    /// `parent_tree` — the grants that existed BEFORE the commit — so a
-    /// member cannot self-grant manage in the same commit). Manage
-    /// implies write: a manager may move ciphers in their collection.
     /// S4-2: group memberships readable from one commit tree —
     /// stem-pinned, format-pinned, malformed rows skipped inert (the
     /// same discipline as the collection walk). Group defs are
@@ -5677,6 +5798,13 @@ impl SyncEngine {
         out
     }
 
+    /// those files are Admin-only per the policy table, so a non-admin
+    /// referencing a collection dir must reference one an admin already
+    /// defined in the same tree; a delegated manager's def edit is
+    /// admitted separately via `managed`, whose authority comes from
+    /// `parent_tree` — the grants that existed BEFORE the commit — so a
+    /// member cannot self-grant manage in the same commit). Manage
+    /// implies write: a manager may move ciphers in their collection.
     fn collection_scope_for_tree(
         repo: &Repository,
         tree: &git2::Tree<'_>,
@@ -6006,6 +6134,10 @@ impl SyncEngine {
                 || old_entry.signing_public_key != new_entry.signing_public_key
                 || old_entry.enrolled_by != new_entry.enrolled_by
                 || old_entry.enrolled_at != new_entry.enrolled_at
+                // A non-admin may not rename someone else's device or
+                // detach the entry from its id.
+                || old_entry.name != new_entry.name
+                || old_entry.device_id != new_entry.device_id
             {
                 return false;
             }
