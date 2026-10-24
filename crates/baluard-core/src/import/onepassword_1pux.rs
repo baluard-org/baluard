@@ -138,7 +138,8 @@ pub fn parse(data: &[u8]) -> ImportResult {
 
                 let kind = match detail.category.as_deref() {
                     Some("LOGIN") => parse_login(&all_fields),
-                    Some("PASSWORD") | Some("SECURE_NOTE") => Some(CipherKind::SecureNote),
+                    Some("PASSWORD") => parse_login(&all_fields),
+                    Some("SECURE_NOTE") => Some(CipherKind::SecureNote),
                     Some("CREDIT_CARD") => parse_card(&all_fields),
                     Some("IDENTITY") => parse_identity(&all_fields),
                     Some("SSH_KEY") => parse_ssh_key(&all_fields),
@@ -156,8 +157,10 @@ pub fn parse(data: &[u8]) -> ImportResult {
                     }
                 };
 
-                // Extract custom fields (non-standard ones)
-                let custom_fields = extract_custom_fields(&all_fields);
+                // SecureNote-bound items consume no core fields, so the
+                // standard ids must survive as custom fields.
+                let note_bound = matches!(&kind, CipherKind::SecureNote);
+                let custom_fields = extract_custom_fields(&all_fields, note_bound);
 
                 // Use first tag as folder hint, preserve all tags on cipher
                 let folder = item.tags.as_ref().and_then(|t| t.first().cloned());
@@ -198,9 +201,18 @@ fn extract_export_data(
     if let Ok(mut file) = archive.by_name("export.data") {
         // H8 fix: cap decompressed size to prevent zip-bomb OOM.
         // 4MB compressed can expand to GB without this guard.
-        let mut limited = std::io::Read::take(&mut file, MAX_DECOMPRESSED_SIZE);
+        // Read one byte past the cap so an oversized stream is detected
+        // by content length: Take@limit==0 short-circuits reads, making a
+        // follow-up probe on the wrapper useless.
+        let mut limited = std::io::Read::take(&mut file, MAX_DECOMPRESSED_SIZE + 1);
         let mut contents = String::new();
         if std::io::Read::read_to_string(&mut limited, &mut contents).is_ok() {
+            if contents.len() as u64 > MAX_DECOMPRESSED_SIZE {
+                result.skip(format!(
+                    "1PUX export.data exceeds the {MAX_DECOMPRESSED_SIZE} byte limit"
+                ));
+                return None;
+            }
             return Some(contents);
         }
     }
@@ -299,7 +311,7 @@ fn parse_ssh_key(fields: &[&OnePuxField]) -> Option<CipherKind> {
     }))
 }
 
-fn extract_custom_fields(fields: &[&OnePuxField]) -> Vec<CustomField> {
+fn extract_custom_fields(fields: &[&OnePuxField], keep_core: bool) -> Vec<CustomField> {
     let known_ids = [
         "username",
         "password",
@@ -335,16 +347,21 @@ fn extract_custom_fields(fields: &[&OnePuxField]) -> Vec<CustomField> {
         "notesPlain",
     ];
 
+    let core_ids = ["username", "password", "url", "website", "totp"];
     fields
         .iter()
         .filter(|f| {
             let id = f.id.as_deref().unwrap_or("");
+            if keep_core && core_ids.contains(&id) {
+                return true;
+            }
             !known_ids.contains(&id) && f.value.is_some() && f.r#type.as_deref() != Some("MENU")
         })
         .filter_map(|f| {
             let value = f.value.as_ref()?;
             let val = match value {
                 serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Null => return None,
                 other => other.to_string(),
             };
             if val.is_empty() {

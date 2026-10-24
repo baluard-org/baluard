@@ -13,8 +13,20 @@ pub fn parse(data: &str) -> ImportResult {
         .flexible(true)
         .from_reader(data.as_bytes());
 
-    let headers = match reader.headers() {
-        Ok(h) => h.clone(),
+    let headers: Vec<String> = match reader.headers() {
+        Ok(h) => h
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                // Windows exports carry a UTF-8 BOM that would break
+                // header matching.
+                if i == 0 {
+                    f.strip_prefix('\u{feff}').unwrap_or(f).to_string()
+                } else {
+                    f.to_string()
+                }
+            })
+            .collect(),
         Err(e) => {
             result.skip(format!("Invalid CSV headers: {e}"));
             return result;
@@ -22,14 +34,19 @@ pub fn parse(data: &str) -> ImportResult {
     };
 
     // Firefox column names
-    let col_url = headers.iter().position(|h| h == "url");
-    let col_username = headers.iter().position(|h| h == "username");
-    let col_password = headers.iter().position(|h| h == "password");
+    let col_url = headers.iter().position(|h| h.eq_ignore_ascii_case("url"));
+    let col_username = headers.iter().position(|h| h.eq_ignore_ascii_case("username"));
+    let col_password = headers.iter().position(|h| h.eq_ignore_ascii_case("password"));
     let col_name = headers
         .iter()
-        .position(|h| h == "name")
-        .or_else(|| headers.iter().position(|h| h == "title")); // Fallback if title column exists
-    let col_http_realm = headers.iter().position(|h| h == "httpRealm");
+        .position(|h| h.eq_ignore_ascii_case("name"))
+        .or_else(|| headers.iter().position(|h| h.eq_ignore_ascii_case("title"))); // Fallback if title column exists
+    let col_http_realm = headers.iter().position(|h| h.eq_ignore_ascii_case("httpRealm"));
+    if !headers.iter().any(|h| h.eq_ignore_ascii_case("url")) {
+        result.skip(format!("Not a firefox CSV: no 'url' column"));
+        return result;
+    }
+
 
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
         idx.and_then(|i| record.get(i).map(|s| s.to_string()))
