@@ -8089,6 +8089,27 @@ impl VaultHandle {
         crate::vault::cipher::decrypt_cipher(self.vault_id, file.id, file, &item_key)
     }
 
+    /// Item key for a cipher wherever it lives (flat or collection)
+    /// without requiring an SGK-holding device. Collection
+    /// residents resolve through their collection key, so members
+    /// without an SGK can encrypt attachments against them.
+    pub fn resolve_cipher_item_key(
+        &self,
+        cipher_id: Uuid,
+        key_epoch: u64,
+    ) -> Result<ItemKey, BaluardError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let path = self
+            .cipher_file_path(cipher_id)
+            .ok_or_else(|| BaluardError::from(VaultError::InvalidOperation(
+                "That entry's file could not be located.".into(),
+            )))?;
+        self.resolve_item_key(unlocked, &path, cipher_id, key_epoch)
+    }
+
     /// Derive item key for a cipher (requires unlocked vault).
     pub fn derive_item_key(
         &self,
