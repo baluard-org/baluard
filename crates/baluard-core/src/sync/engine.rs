@@ -46,9 +46,6 @@ pub struct SyncEngine {
     /// Callers without a device id pass a placeholder; the bump is
     /// best-effort and silently no-ops on a non-UUID string.
     pub device_id: String,
-    /// Last-known remote HEAD OID (for pull verification).
-    /// Stored in meta/sync-head.json outside the repo.
-    pub last_remote_head: Option<String>,
     /// Credential configuration for SSH/HTTPS auth.
     pub credential_config: CredentialConfig,
     /// Transactional state machine (persisted to meta/sync-state.json).
@@ -178,7 +175,6 @@ impl SyncEngine {
     }
 
     pub fn new(vault_path: &Path, device_id: &str, devkey_seal: Option<&[u8; 32]>) -> Self {
-        let last_remote_head = Self::load_last_head(vault_path);
         let credential_config = CredentialConfig::load(vault_path);
         let state_machine = RefCell::new(SyncStateMachine::load_from_file(vault_path));
         // Load signing key — log warning on corrupt file but don't fail.
@@ -217,7 +213,6 @@ impl SyncEngine {
         Self {
             vault_path: vault_path.to_path_buf(),
             device_id: device_id.to_string(),
-            last_remote_head,
             credential_config,
             state_machine,
             signing_key,
@@ -357,6 +352,14 @@ impl SyncEngine {
             // Family-spaces: the kit phrase's signing half is
             // device-local until the first successful push.
             "meta/recovery-signer.key",
+            // The clone's own identity and credentials: a remote must
+            // never see them listed as committable (they stay out of
+            // stage_admitted outright; these lines keep the worktree
+            // clean for listing).
+            "meta/device-privkey.json",
+            "meta/device-id",
+            "meta/git-credentials.json",
+            "meta/kdf-attempts.json",
         ];
         let needs_update = match std::fs::read_to_string(&gitignore) {
             Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),
@@ -561,6 +564,23 @@ impl SyncEngine {
     /// committed content, untracked files removed): a file this device
     /// may not author cannot sit dirty forever (stuck badge, empty-
     /// commit autosync loop), and peers never see it either way.
+    ///
+    /// This clone's own secret material (plus the key-carrying sweep
+    /// markers): never staged, never reverted by the admission loop — a
+    /// remote-supplied .gitignore that drops their ignore lines must not
+    /// turn them into commit candidates a later glitch deletes.
+    const DEVICE_LOCAL_PATHS: &[&str] = &[
+        "meta/device-privkey.json",
+        "meta/device-id",
+        "meta/git-credentials.json",
+        "meta/kdf-attempts.json",
+        "meta/git-ssh-key",
+        "meta/member-unlock.json",
+        "meta/recovery-signer.key",
+        "meta/.sweep-pending.json",
+        "meta/.smk-pending.json",
+    ];
+
     fn stage_admitted(&self, repo: &Repository) -> Result<(), BaluardError> {
         let mut status_opts = git2::StatusOptions::new();
         status_opts
@@ -577,6 +597,13 @@ impl SyncEngine {
             .index()
             .map_err(|e| SyncError::Git(format!("index: {e}")))?;
         let head_commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+        if self.device_id.is_empty() {
+            return Err(SyncError::Git(
+                "this clone has no device identity (meta/device-id missing); refusing to stage and risk reverting local work"
+                    .into(),
+            )
+            .into());
+        }
         let Some(head_commit) = head_commit else {
             // No HEAD: the genesis commit DEFINES the policy state (the
             // founder's initial commit at creation, made before any
@@ -650,6 +677,13 @@ impl SyncEngine {
         for entry in statuses.iter() {
             // A non-UTF-8 path can never be authorized; leave it dirty.
             let Some(path) = entry.path() else { continue };
+            // This clone's own secret material never stages, even when a
+            // remote-supplied .gitignore dropped their ignore lines or a
+            // legacy vault tracks a copy: staging it would push the
+            // device's private key or credentials to the remote.
+            if Self::DEVICE_LOCAL_PATHS.iter().any(|p| path == *p) {
+                continue;
+            }
             let s = entry.status();
             if s.contains(git2::Status::CONFLICTED) {
                 continue;
@@ -690,8 +724,16 @@ impl SyncEngine {
         // empty commit pushed on every autosync tick). Tracked files
         // are restored to their committed content — exactly what the
         // next pull's force-checkout would do — and untracked files are
-        // removed. Peers never see them either way.
+        // removed. Peers never see them either way. Device-local secret
+        // files (device-privkey.json, device-id, git-credentials.json,
+        // kdf-attempts.json) are exempt: they are this clone's own
+        // material, and deleting them on an admission glitch would lock
+        // the device out of its own vault.
         for (path, s) in &skipped {
+            if Self::DEVICE_LOCAL_PATHS.iter().any(|p| path == *p) {
+                eprintln!("staged-path-set: kept device-local file out of the commit: {path}");
+                continue;
+            }
             eprintln!("staged-path-set: reverted (not admitted for this device): {path}");
             if s.contains(git2::Status::WT_NEW) {
                 let _ = std::fs::remove_file(self.vault_path.join(path));
@@ -700,10 +742,9 @@ impl SyncEngine {
             if let Ok(entry) = head_tree.get_path(std::path::Path::new(path)) {
                 if let Ok(blob) = repo.find_blob(entry.id()) {
                     let full = self.vault_path.join(path);
-                    if let Some(p) = full.parent() {
-                        let _ = std::fs::create_dir_all(p);
-                    }
-                    let _ = std::fs::write(&full, blob.content());
+                    // 0600 from the first byte and symlink-safe: these
+                    // paths include secrets (member unlock material).
+                    let _ = crate::vault::write_vault_file(&full, blob.content());
                 }
             }
         }
@@ -1617,14 +1658,12 @@ impl SyncEngine {
             .map_err(|e| classify_remote_err("push", &e))?;
 
         // Track local HEAD OID for rollback detection
-        let pushed_oid = repo
+        let _pushed_oid = repo
             .head()
             .map_err(|e| SyncError::Git(format!("head: {e}")))?
             .peel_to_commit()
             .map_err(|e| SyncError::Git(format!("peel: {e}")))?
             .id();
-        self.save_last_head(&pushed_oid.to_string())?;
-
         // S1b-3: announce the pushed head on the gossip side branch.
         // Best-effort by contract: a missed announcement only delays
         // rollback detection, and the next push re-announces (the announce
@@ -2048,6 +2087,21 @@ impl SyncEngine {
             .find_commit(remote_oid)
             .map_err(|e| SyncError::Git(format!("find remote commit: {e}")))?;
 
+        // Local-ahead (we committed, remote is unchanged) is the common
+        // cycle shape after H2's commit-first step: without this check it
+        // fell into the merge arm and minted a redundant 2-parent merge
+        // commit per unpushed burst. The cycle still pushes below.
+        if repo
+            .graph_descendant_of(local_oid, remote_oid)
+            .map_err(|e| SyncError::Git(format!("descendant check: {e}")))?
+        {
+            // Self-heal any revocations this device has not yet applied, so
+            // the local-ahead fast path still buries bad content locally.
+            let _ = self.apply_revocations(repo, &[])?;
+            self.transition_state(SyncState::Idle)?;
+            return Ok(PullResult::AlreadyUpToDate);
+        }
+
         if repo
             .graph_descendant_of(remote_oid, local_oid)
             .map_err(|e| SyncError::Git(format!("descendant check: {e}")))?
@@ -2078,9 +2132,8 @@ impl SyncEngine {
                 .map_err(|e| SyncError::Git(format!("checkout head: {e}")))?;
 
             // P8b: verify + apply revocations arriving in the pulled batch.
-            let (_, restore_oid) = self.apply_revocations(repo, &new_oids)?;
+            let _ = self.apply_revocations(repo, &new_oids)?;
 
-            self.save_last_head(&restore_oid.unwrap_or(remote_oid).to_string())?;
             self.transition_state(SyncState::Idle)?;
             return Ok(PullResult::FastForward);
         }
@@ -2110,10 +2163,15 @@ impl SyncEngine {
         repo.merge(&[&annotated], Some(&mut merge_opts), None)
             .map_err(|e| SyncError::Git(format!("merge: {e}")))?;
 
-        // Check for conflicts
-        let mut index = repo
-            .index()
-            .map_err(|e| SyncError::Git(format!("index: {e}")))?;
+        // Check for conflicts. Same rule as the tail below: any error
+        // after repo.merge() must leave no merge state behind.
+        let mut index = match repo.index() {
+            Ok(i) => i,
+            Err(e) => {
+                let _ = repo.cleanup_state();
+                return Err(SyncError::Git(format!("index: {e}")).into());
+            }
+        };
 
         // Check for conflicts
         if index.has_conflicts() {
@@ -2138,7 +2196,14 @@ impl SyncEngine {
             // revocation is enforced at the crypto/policy layer, not by this
             // file.
             if conflicts.len() == 1 && conflicts[0] == "meta/devices.json" {
-                if self.union_merge_devices_conflict(repo, &mut index)? {
+                let unioned = match self.union_merge_devices_conflict(repo, &mut index) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        let _ = repo.cleanup_state();
+                        return Err(e);
+                    }
+                };
+                if unioned {
                     // Resolved in the index; fall through to the normal
                     // merge-commit path below.
                 } else {
@@ -2168,50 +2233,71 @@ impl SyncEngine {
             }
         }
 
-        // Create merge commit
-        let tree_id = index
-            .write_tree()
-            .map_err(|e| SyncError::Git(format!("write tree: {e}")))?;
-        let tree = repo
-            .find_tree(tree_id)
-            .map_err(|e| SyncError::Git(format!("find tree: {e}")))?;
+        // Create merge commit. Any failure after repo.merge() must leave
+        // no merge state behind: MERGE_HEAD or a merged index/worktree
+        // would make the next commit_all sign remote content as local
+        // work, so roll back to the pre-merge HEAD on any error.
+        let merge_outcome = (|| -> Result<(git2::Oid, Option<git2::Oid>), BaluardError> {
+            let tree_id = index
+                .write_tree()
+                .map_err(|e| SyncError::Git(format!("write tree: {e}")))?;
+            let tree = repo
+                .find_tree(tree_id)
+                .map_err(|e| SyncError::Git(format!("find tree: {e}")))?;
 
-        let sig = Signature::now("Baluard User", "vault@baluard.local")
-            .map_err(|e| SyncError::Git(format!("signature: {e}")))?;
+            let sig = Signature::now("Baluard User", "vault@baluard.local")
+                .map_err(|e| SyncError::Git(format!("signature: {e}")))?;
 
-        let local_parent = repo
-            .find_commit(local_oid)
-            .map_err(|e| SyncError::Git(format!("find local: {e}")))?;
-        let remote_parent = repo
-            .find_commit(remote_oid)
-            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+            let local_parent = repo
+                .find_commit(local_oid)
+                .map_err(|e| SyncError::Git(format!("find local: {e}")))?;
+            let remote_parent = repo
+                .find_commit(remote_oid)
+                .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
 
-        let merge_oid = self.create_signed_commit(
-            repo,
-            &sig,
-            COMMIT_MESSAGE,
-            &tree,
-            &[&local_parent, &remote_parent],
-        )?;
-        // Point HEAD at the merge commit
-        let branch = Self::resolve_default_branch(repo);
-        repo.reference(&format!("refs/heads/{branch}"), merge_oid, true, "merge")
-            .map_err(|e| SyncError::Git(format!("update ref: {e}")))?;
-        repo.set_head(&format!("refs/heads/{branch}"))
-            .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
+            let merge_oid = self.create_signed_commit(
+                repo,
+                &sig,
+                COMMIT_MESSAGE,
+                &tree,
+                &[&local_parent, &remote_parent],
+            )?;
+            // Point HEAD at the merge commit
+            let branch = Self::resolve_default_branch(repo);
+            repo.reference(&format!("refs/heads/{branch}"), merge_oid, true, "merge")
+                .map_err(|e| SyncError::Git(format!("update ref: {e}")))?;
+            repo.set_head(&format!("refs/heads/{branch}"))
+                .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
 
-        // C1 fix: ensure the working tree matches the merge commit we just
-        // created. Without this the on-disk files can lag HEAD (repo.merge()
-        // updates the index but does not guarantee a worktree checkout).
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
-            .map_err(|e| SyncError::Git(format!("checkout after merge: {e}")))?;
+            // C1 fix: ensure the working tree matches the merge commit we just
+            // created. Without this the on-disk files can lag HEAD (repo.merge()
+            // updates the index but does not guarantee a worktree checkout).
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+                .map_err(|e| SyncError::Git(format!("checkout after merge: {e}")))?;
 
-        // P8b: verify + apply revocations arriving on the remote side of
-        // the merge.
-        let (_, restore_oid) = self.apply_revocations(repo, &remote_new_oids)?;
+            // P8b: verify + apply revocations arriving on the remote side of
+            // the merge.
+            let (_, restore_oid) = self.apply_revocations(repo, &remote_new_oids)?;
+            Ok((merge_oid, restore_oid))
+        })();
+        let (_merge_oid, _restore_oid) = match merge_outcome {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = repo.cleanup_state();
+                let target = repo
+                    .find_commit(local_oid)
+                    .map_err(|e| SyncError::Git(format!("rollback target: {e}")))?;
+                if let Err(re) = repo.reset(target.as_object(), git2::ResetType::Hard, None) {
+                    return Err(SyncError::Git(format!(
+                        "merge rollback after error: {re} (original error: {e})"
+                    ))
+                    .into());
+                }
+                self.transition_state(SyncState::Idle)?;
+                return Err(e);
+            }
+        };
 
-        // Track merge commit OID (not remote HEAD) for rollback detection
-        self.save_last_head(&restore_oid.unwrap_or(merge_oid).to_string())?;
         repo.cleanup_state()
             .map_err(|e| SyncError::Git(format!("cleanup after merge: {e}")))?;
         self.transition_state(SyncState::Idle)?;
@@ -2656,8 +2742,7 @@ impl SyncEngine {
         std::fs::write(&manifest_path, json)
             .map_err(|e| SyncError::Git(format!("manifest write: {e}")))?;
 
-        let oid = self.commit_all(repo, "")?;
-        self.save_last_head(&oid.to_string())?;
+        self.commit_all(repo, "")?;
 
         // Self-heal: the revoking device buries the bad content locally
         // too (the entry was written and signed by this device).
@@ -2831,7 +2916,6 @@ impl SyncEngine {
 
         tracker.applied.extend(newly_applied);
         self.save_revocation_tracker(&tracker)?;
-        self.save_last_head(&restore_oid.to_string())?;
         // Restored cipher files bypassed the VaultHandle index hooks; the
         // keyless invalidation forces one rebuild so stale metadata (same
         // ids, old content) is never served after a restore.
@@ -3024,7 +3108,6 @@ impl SyncEngine {
         repo.set_head(&format!("refs/heads/{branch}"))
             .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
 
-        self.save_last_head(&merge_oid.to_string())?;
         repo.cleanup_state()
             .map_err(|e| SyncError::Git(format!("cleanup after merge: {e}")))?;
         self.transition_state(SyncState::Idle)?;
@@ -3313,6 +3396,10 @@ impl SyncEngine {
     ) -> Result<Repository, BaluardError> {
         validate_git_url(url)?;
         crate::sync::tls::ensure_tls_roots();
+        // Declared before the builder so the callbacks' borrow of the
+        // hinted config outlives every user of it (drop order is reverse
+        // declaration).
+        let hinted;
         let mut builder = RepoBuilder::new();
         // Custom remotes carry request-time credentials (the target vault
         // directory does not exist yet, so the vault-file arm of
@@ -3324,7 +3411,14 @@ impl SyncEngine {
         let prog = progress.clone();
         let cancel = cancel_flag.clone();
         let mut callbacks = match creds.as_ref() {
-            Some(c) => crate::sync::credentials::build_callbacks(c),
+            // The port hint must ride the SAME config the callbacks close
+            // over: strict port-scoped pin matching needs the real port,
+            // or a [h]:2222 pin looks unknown and trust writes a wrong
+            // port-22 line.
+            Some(c) => {
+                hinted = c.clone().with_url_hint(url);
+                crate::sync::credentials::build_callbacks(&hinted)
+            }
             None => {
                 let cred_config = CredentialConfig::load_with_hint(target, provider);
                 let https_token = cred_config.expose_token();
@@ -3587,32 +3681,6 @@ pub fn read_remote_announcement(vault_path: &Path) -> Option<String> {
 }
 
 impl SyncEngine {
-    fn head_path(vault_path: &Path) -> PathBuf {
-        vault_path.join("meta/sync-head.json")
-    }
-
-    fn load_last_head(vault_path: &Path) -> Option<String> {
-        let path = Self::head_path(vault_path);
-        let data = std::fs::read_to_string(&path).ok()?;
-        let v: serde_json::Value = serde_json::from_str(&data).ok()?;
-        v["last_remote_head"].as_str().map(|s| s.to_string())
-    }
-
-    fn save_last_head(&self, oid: &str) -> Result<(), BaluardError> {
-        let path = Self::head_path(&self.vault_path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| SyncError::Git(format!("create meta dir: {e}")))?;
-        }
-        let record = serde_json::json!({ "last_remote_head": oid });
-        std::fs::write(
-            &path,
-            serde_json::to_string_pretty(&record)
-                .map_err(|e| SyncError::Git(format!("save head: {e}")))?,
-        )?;
-        Ok(())
-    }
-
     /// Probe a remote URL with optional credentials: a ls-remote against
     /// HEAD. Used by the custom-remote test-connection pre-flight. Never
     /// writes anything; failures carry the scrubbed message plus the
@@ -3621,10 +3689,14 @@ impl SyncEngine {
         validate_git_url(url)?;
         crate::sync::tls::ensure_tls_roots();
         let empty_cfg;
-        let callbacks = match creds.as_ref() {
-            Some(c) => crate::sync::credentials::build_callbacks(c),
+        let hinted;
+        let callbacks = match creds {
+            Some(c) => {
+                hinted = c.clone().with_url_hint(url);
+                crate::sync::credentials::build_callbacks(&hinted)
+            }
             None => {
-                empty_cfg = CredentialConfig::default();
+                empty_cfg = CredentialConfig::default().with_url_hint(url);
                 crate::sync::credentials::build_callbacks(&empty_cfg)
             }
         };

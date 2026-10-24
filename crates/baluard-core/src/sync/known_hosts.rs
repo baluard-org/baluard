@@ -25,14 +25,20 @@ pub enum HostKeyResult {
     Known,
     /// Host key not found in known_hosts.
     Unknown,
-    /// known_hosts file missing or unreadable (fail closed: reject).
+    /// known_hosts file missing (fail closed: reject, trust-offerable).
     Missing,
+    /// known_hosts exists but cannot be read or parsed (fail closed,
+    /// NOT trust-offerable: first-contact framing here would let one
+    /// unreadable file silently re-arm changed-key prompts).
+    Unreadable,
     /// No entry for THIS key type, but the host is known under a different
     /// type. Still trust-offerable (OpenSSH keeps one line per type), and
     /// the observation carries the hint so the trust card can say so.
     UnknownOtherType,
     /// Host key does NOT match a known_hosts entry (potential MITM).
     Mismatch,
+    /// The presented key is on an @revoked line for this host.
+    Revoked,
 }
 
 /// Look up `host` in known_hosts and verify the presented `key_type`/`key` match.
@@ -45,91 +51,112 @@ pub(crate) static TEST_HOME_LOCK: std::sync::Mutex<Option<std::path::PathBuf>> =
 
 pub fn verify_host_key(host: &str, port: u16, key_type: &str, key: &[u8]) -> HostKeyResult {
     let path = known_hosts_path();
+    // Strict read: a present-but-unparseable file must fail closed
+    // (Unreadable), never look missing or partially known — a lossy
+    // parse could drop the pinned line and re-arm a trust offer for a
+    // changed key.
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => return HostKeyResult::Missing,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return HostKeyResult::Missing,
+        Err(_) => return HostKeyResult::Unreadable,
     };
 
     let mut found_match = false;
     let mut other_type_seen = false;
+    let mut mismatch_seen = false;
+    let mut revoked_presented = false;
 
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        // OpenSSH marker form: `@marker hostpattern keytype key` with the
+        // marker as its OWN field. Older comma-joined forms (`@revoked,host`)
+        // are still accepted for compatibility. Markers are scanned BEFORE
+        // the hashed dispatch because ssh-keygen -H hashes marker lines too.
+        let mut idx = 0usize;
+        let mut marker_revoked = false;
+        let mut marker_ca = false;
+        while idx < parts.len() && parts[idx].starts_with('@') {
+            match parts[idx] {
+                "@revoked" => marker_revoked = true,
+                "@cert-authority" => marker_ca = true,
+                _ => {}
+            }
+            idx += 1;
+        }
+        if marker_ca {
+            // CA chains are not host keys; we verify host keys only.
+            continue;
+        }
         // Hashed entries (|1|salt|hash): Debian/Ubuntu default to
         // HashKnownHosts yes, so skipping them would blind the verifier to
-        // existing trust. Match by HMAC-SHA1 over both candidate forms.
-        if line.starts_with("|1|") {
-            if let Some(verdict) = verify_hashed_entry(line, host, port, key_type, key) {
+        // existing trust. Match by HMAC-SHA1 over the exact host form.
+        if parts[idx].starts_with("|1|") {
+            let rest = parts[idx..].join(" ");
+            if let Some(verdict) = verify_hashed_entry(&rest, host, port, key_type, key) {
                 match verdict {
-                    HashedVerdict::Known => found_match = true,
-                    HashedVerdict::Changed => return HostKeyResult::Mismatch,
-                    HashedVerdict::OtherType => other_type_seen = true,
+                    HashedVerdict::Known => {
+                        if marker_revoked {
+                            revoked_presented = true;
+                        } else {
+                            found_match = true;
+                        }
+                    }
+                    // Keep scanning: a hashed old-key line must not mask a
+                    // later valid line (same rule as the plaintext arm).
+                    HashedVerdict::Changed => mismatch_seen = true,
+                    HashedVerdict::OtherType => {
+                        if !marker_revoked {
+                            other_type_seen = true;
+                        }
+                    }
                     HashedVerdict::OtherHost => {}
                 }
             }
             continue;
         }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 3 {
+        if idx >= parts.len() - 2 {
             continue;
         }
-        // First field: host pattern (may include markers like @cert-authority
-        // and/or comma-separated multiple host patterns).
-        // Examples:
-        //   "github.com"                          -> ["github.com"]
-        //   "github.com,192.30.255.112"           -> ["github.com", "192.30.255.112"]
-        //   "@cert-authority,*.example.com"       -> marker=["@cert-authority"], hosts=["*.example.com"]
-        //   "@revoked"                            -> marker=["@revoked"], hosts=[]
-        let first_field = parts[0];
-        let (has_revoked_marker, host_patterns): (bool, Vec<&str>) = if first_field.starts_with('@')
-        {
-            // Comma-separated markers+hosts; first segment(s) starting with @ are markers.
-            let segments: Vec<&str> = first_field.split(',').collect();
-            let mut revoked = false;
-            let mut hosts = Vec::new();
-            for seg in &segments {
-                if *seg == "@revoked" {
-                    revoked = true;
-                } else if !seg.starts_with('@') {
-                    hosts.push(*seg);
-                }
-                // Other markers (e.g. @cert-authority, @userknown) are noted
-                // but not enforced — we're verifying host keys, not CA chains.
-            }
-            (revoked, hosts)
+        let (has_revoked_marker, host_patterns, entry_key_type, entry_key_b64) = if idx > 0 {
+            (marker_revoked, parts[idx].split(',').collect::<Vec<_>>(), parts[idx + 1], parts[idx + 2])
         } else {
-            // No markers; comma-separated list of host patterns.
-            let hosts: Vec<&str> = first_field.split(',').collect();
-            (false, hosts)
+            let first_field = parts[0];
+            let mut legacy_revoked = false;
+            let hosts: Vec<&str> = first_field
+                .split(',')
+                .filter(|seg| {
+                    if *seg == "@revoked" {
+                        legacy_revoked = true;
+                        false
+                    } else {
+                        !seg.starts_with('@')
+                    }
+                })
+                .collect();
+            (legacy_revoked, hosts, parts[1], parts[2])
         };
-        // Markers like @revoked must hard-fail (OpenSSH: a matched @revoked
-        // entry means the host key has been revoked and must never be trusted).
-        if has_revoked_marker {
-            // @revoked with no host patterns applies to the entry as a whole;
-            // we treat it as a global revoke indicator: if the line had any
-            // matching host, we'd reject. Since we have no host here, skip.
-            // (OpenSSH @revoked lines always include a host pattern.)
-            continue;
-        }
-        // Key type is the second field, base64 key is the third.
-        // Trailing fields (parts[3+]) are comments and ignored.
-        let entry_key_type = parts[1];
-        let entry_key_b64 = parts[2];
 
         // Check if ANY of the comma-separated host patterns match.
-        let any_match = host_patterns.iter().any(|p| host_matches(p, host));
+        let any_match = host_patterns.iter().any(|p| host_matches(p, host, port));
         if !any_match {
             continue;
         }
         // Same host under a different key type is a NEW key, not a changed
         // one (OpenSSH keeps one line per type; libssh2 does not reorder its
         // preference from known_hosts). Only the same type with different
-        // bytes is the MITM signal.
+        // bytes is the MITM signal. A revoked line says nothing about the
+        // type of a key that is not the revoked one.
         if entry_key_type != key_type {
-            other_type_seen = true;
+            if !has_revoked_marker {
+                other_type_seen = true;
+            }
             continue;
         }
         // Base64-decode the key (with and without padding)
@@ -137,14 +164,25 @@ pub fn verify_host_key(host: &str, port: u16, key_type: &str, key: &[u8]) -> Hos
             continue;
         };
         if entry_key == key {
-            found_match = true;
-        } else {
-            return HostKeyResult::Mismatch;
+            if has_revoked_marker {
+                revoked_presented = true;
+            } else {
+                found_match = true;
+            }
+        } else if !has_revoked_marker {
+            // Keep scanning: OpenSSH accepts if ANY line matches, so an
+            // old-key line must not mask a later valid line. A revoked
+            // line for a DIFFERENT key is not evidence of a changed key.
+            mismatch_seen = true;
         }
     }
 
-    if found_match {
+    if revoked_presented {
+        HostKeyResult::Revoked
+    } else if found_match {
         HostKeyResult::Known
+    } else if mismatch_seen {
+        HostKeyResult::Mismatch
     } else if other_type_seen {
         HostKeyResult::UnknownOtherType
     } else {
@@ -245,26 +283,26 @@ fn known_hosts_path() -> PathBuf {
     crate::paths::data_dir().join("known_hosts")
 }
 
-/// Strip leading markers like `@cert-authority,@revoked` from a host field.
-#[allow(dead_code)]
-fn strip_markers(field: &str) -> &str {
-    // Markers are comma-separated and prefixed with @, appearing before the host
-    // pattern. They may be absent. Format: `[markers,]pattern`
-    if let Some(first_comma) = field.find(',') {
-        // The pattern is the last comma-separated segment.
-        if let Some(last_comma) = field.rfind(',') {
-            return &field[last_comma + 1..];
-        }
-        return &field[first_comma + 1..];
-    }
-    field
-}
-
 /// Check if `pattern` (from known_hosts) matches the connection `host`.
 /// Supports exact match, `[host]:port` form, and trailing `*` wildcard.
-fn host_matches(pattern: &str, host: &str) -> bool {
-    let pattern = pattern.trim_start_matches('[');
-    let pattern = pattern.split(']').next().unwrap_or(pattern);
+/// Trusting `[h]:2222` must not trust h:22 (and vice versa), so a bare
+/// pattern only ever matches the default port and bracketed forms only
+/// match their exact port.
+fn host_matches(pattern: &str, host: &str, port: u16) -> bool {
+    if let Some(rest) = pattern.strip_prefix('[') {
+        let Some(close) = rest.find(']') else {
+            return false;
+        };
+        let pattern_host = &rest[..close];
+        let pattern_port: u16 = rest[close + 1..]
+            .trim_start_matches(':')
+            .parse()
+            .unwrap_or(22);
+        return pattern_port == port && pattern_host == host;
+    }
+    if port != 22 {
+        return false;
+    }
 
     if pattern == host {
         return true;
@@ -428,15 +466,6 @@ pub fn take_observation(attempt_id: &str) -> Option<ObservedHostKey> {
 }
 
 /// The most recent live observation, taken (drained). Used by sync wrappers
-/// to upgrade a generic transport failure into `SyncError::HostKeyUntrusted`.
-pub fn take_latest_observation() -> Option<(String, ObservedHostKey)> {
-    let mut pending = pending_observations().lock().expect("pending lock");
-    let now = std::time::Instant::now();
-    pending.retain(|(_, p)| now.duration_since(p.at).as_secs() < OBSERVATION_TTL_SECS);
-    let (id, p) = pending.pop()?;
-    Some((id, p.observed))
-}
-
 /// The most recent live observation, cloned (NOT drained): error surfaces
 /// need the fingerprint + attempt id to decorate failures, but the trust
 /// route consumes the observation by id afterwards.
@@ -517,7 +546,15 @@ pub fn trust_host_key(observed: &ObservedHostKey) -> Result<(), String> {
         }
     }
 
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    // A read failure here is NOT an empty file: overwriting it with a
+    // one-line file would destroy every other pin and @revoked entry.
+    // Strict decode too — a lossy read would write U+FFFD replacements
+    // back over bytes we never verified.
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("cannot read your known_hosts file: {e}")),
+    };
     for line in existing.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -629,26 +666,27 @@ mod tests {
 
     #[test]
     fn exact_match() {
-        assert!(host_matches("github.com", "github.com"));
-        assert!(!host_matches("github.com", "evil.com"));
+        assert!(host_matches("github.com", "github.com", 22));
+        assert!(!host_matches("github.com", "evil.com", 22));
     }
 
     #[test]
     fn wildcard_subdomain() {
-        assert!(host_matches("*.example.com", "foo.example.com"));
-        assert!(!host_matches("*.example.com", "example.com"));
-        assert!(!host_matches("*.example.com", "foo.evil.com"));
+        assert!(host_matches("*.example.com", "foo.example.com", 22));
+        assert!(!host_matches("*.example.com", "example.com", 22));
+        assert!(!host_matches("*.example.com", "foo.evil.com", 22));
     }
 
     #[test]
     fn bracketed_host_port() {
-        assert!(host_matches("[github.com]:2222", "github.com"));
+        assert!(host_matches("[github.com]:2222", "github.com", 2222));
     }
 
     #[test]
-    fn strip_markers_removes_prefix() {
-        assert_eq!(strip_markers("@cert-authority,github.com"), "github.com");
-        assert_eq!(strip_markers("github.com"), "github.com");
+    fn trust_does_not_cross_ports() {
+        assert!(!host_matches("github.com", "github.com", 2222));
+        assert!(!host_matches("[github.com]:2222", "github.com", 22));
+        assert!(!host_matches("[github.com]:2222", "github.com", 2200));
     }
 
     #[test]
@@ -662,6 +700,116 @@ mod tests {
     fn base64_no_padding() {
         let decoded = base64_decode("aGVsbG8").unwrap();
         assert_eq!(decoded, b"hello");
+    }
+
+    #[test]
+    fn unreadable_known_hosts_fails_closed_not_first_contact() {
+        // A file that cannot be read (bad permissions, invalid encoding
+        // bytes) must not look like a missing file: the Missing verdict
+        // re-arms first-contact trust and silently disables changed-key
+        // detection for every pinned host.
+        let dir = tempfile::tempdir().unwrap();
+        let ssh_dir = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        // Invalid UTF-8 byte in what used to be a comment.
+        std::fs::write(ssh_dir.join("known_hosts"), b"\xff\xfe broken\n").unwrap();
+        let _home = HomeGuard::set(dir.path());
+        let result = verify_host_key("github.com", 22, "ssh-ed25519", &[1, 2, 3]);
+        assert_eq!(result, HostKeyResult::Unreadable);
+    }
+
+    #[test]
+    fn revoked_key_refuses_even_when_bytes_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssh_dir = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let key = b"revoked-key-material";
+        let key_b64 = base64_encode(key);
+        // OpenSSH marker form: @revoked is its own field.
+        std::fs::write(
+            ssh_dir.join("known_hosts"),
+            format!("@revoked github.com ssh-ed25519 {key_b64}\n"),
+        )
+        .unwrap();
+        let _home = HomeGuard::set(dir.path());
+        let result = verify_host_key("github.com", 22, "ssh-ed25519", key);
+        assert_eq!(result, HostKeyResult::Revoked);
+    }
+
+    #[test]
+    fn revoked_old_key_does_not_mask_a_valid_new_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssh_dir = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let old = base64_encode(b"the-old-revoked-key");
+        let new = base64_encode(b"the-new-valid-key");
+        std::fs::write(
+            ssh_dir.join("known_hosts"),
+            format!("@revoked github.com ssh-ed25519 {old}\ngithub.com ssh-ed25519 {new}\n"),
+        )
+        .unwrap();
+        let _home = HomeGuard::set(dir.path());
+        assert_eq!(
+            verify_host_key("github.com", 22, "ssh-ed25519", b"the-new-valid-key"),
+            HostKeyResult::Known
+        );
+        assert_eq!(
+            verify_host_key("github.com", 22, "ssh-ed25519", b"the-old-revoked-key"),
+            HostKeyResult::Revoked
+        );
+    }
+
+    #[test]
+    fn revoked_hashed_entry_refuses() {
+        // ssh-keygen -H hashes marker lines too; a revoked hashed entry
+        // must refuse, not silently fall through as unknown.
+        use base64::Engine as _;
+        type HmacSha1 = hmac::Hmac<sha1::Sha1>;
+        use hmac::Mac as _;
+        let dir = tempfile::tempdir().unwrap();
+        let ssh_dir = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let key = b"hashed-revoked-key";
+        let salt = [7u8; 16];
+        let mut mac = HmacSha1::new_from_slice(&salt).unwrap();
+        mac.update(b"github.com");
+        let digest = mac.finalize().into_bytes();
+        let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+        let line = format!(
+            "@revoked |1|{}|{} ssh-ed25519 {}",
+            b64(&salt),
+            b64(&digest),
+            b64(key)
+        );
+        std::fs::write(ssh_dir.join("known_hosts"), format!("{line}\n")).unwrap();
+        let _home = HomeGuard::set(dir.path());
+        let result = verify_host_key("github.com", 22, "ssh-ed25519", key);
+        assert_eq!(result, HostKeyResult::Revoked);
+    }
+
+    #[test]
+    fn port_scoped_plaintext_trust() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssh_dir = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let key = b"port-scoped-key";
+        let key_b64 = base64_encode(key);
+        std::fs::write(
+            ssh_dir.join("known_hosts"),
+            format!("[git.example.com]:2222 ssh-ed25519 {key_b64}\n"),
+        )
+        .unwrap();
+        let _home = HomeGuard::set(dir.path());
+        assert_eq!(
+            verify_host_key("git.example.com", 2222, "ssh-ed25519", key),
+            HostKeyResult::Known
+        );
+        // Plain-port trust must not leak to the bracketed entry's port or
+        // vice versa.
+        assert_eq!(
+            verify_host_key("git.example.com", 22, "ssh-ed25519", key),
+            HostKeyResult::Unknown
+        );
     }
 
     #[test]

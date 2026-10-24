@@ -159,6 +159,15 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
                     merged_login.uris.push(uri.clone());
                 }
             }
+            // Passkeys: keyed by credential id, same discipline as
+            // attachments — a redacted copy must not clobber a live one.
+            merge_passkey_sets(
+                &base_login.fido2_credentials,
+                &local_login.fido2_credentials,
+                &remote_login.fido2_credentials,
+                &mut merged_login.fido2_credentials,
+                &mut conflicts,
+            );
             merged.kind = CipherKind::Login(merged_login);
         }
         // Per-field 3-way merge for every other kind. Previously this arm was
@@ -348,7 +357,63 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
         &mut conflicts,
     );
 
-    // Check semantic groups
+    // Common scalar fields: without these, a remote-only edit to any of
+    // them lost to merged=local (the B-3 review's silent-drop class).
+    merge_3way_value(
+        &base.folder_id,
+        &mut merged.folder_id,
+        &remote.folder_id,
+        "folder_id",
+        &mut conflicts,
+        |v| v.map(|u| u.to_string()).unwrap_or_default(),
+    );
+    merge_3way_value(
+        &base.favorite,
+        &mut merged.favorite,
+        &remote.favorite,
+        "favorite",
+        &mut conflicts,
+        |v| v.to_string(),
+    );
+    merge_3way_value(
+        &base.reprompt,
+        &mut merged.reprompt,
+        &remote.reprompt,
+        "reprompt",
+        &mut conflicts,
+        |v| v.to_string(),
+    );
+    merge_3way_value(
+        &base.archived,
+        &mut merged.archived,
+        &remote.archived,
+        "archived",
+        &mut conflicts,
+        |v| v.to_string(),
+    );
+
+    // Tags: set merge against base — adds from either side land, a delete
+    // on one side is honored when the other kept the base set. Tag values
+    // are their own identity, so delete-vs-keep cannot conflict.
+    merge_tag_set(base, local, remote, &mut merged.tags);
+
+    // Attachments: keyed by id, same discipline as custom fields.
+    merge_attachment_set(
+        base,
+        local,
+        remote,
+        &mut merged.attachments,
+        &mut conflicts,
+    );
+
+    // Check semantic groups — Login only: the username/password/totp
+    // group is meaningless for other kinds whose username field is plain
+    // text (an Identity username conflict must not drag in empty password
+    // conflicts).
+            if matches!(local.kind, CipherKind::Login(_))
+                && matches!(base.kind, CipherKind::Login(_))
+                && matches!(remote.kind, CipherKind::Login(_))
+    {
     for group in SEMANTIC_GROUPS {
         let group_has_conflict = group
             .iter()
@@ -357,7 +422,10 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
             // Flag ALL fields in the group as conflicting (atomic unit)
             for field in *group {
                 if !conflicts.iter().any(|c| c.field_name == *field) {
-                    let local_val = get_field_value(&merged, field).unwrap_or("");
+                    // Read from `local`, not `merged`: merged already holds
+                    // auto-merged values, so the shown "local side" could be
+                    // the remote value the user never had.
+                    let local_val = get_field_value(local, field).unwrap_or("");
                     let remote_val = get_field_value(remote, field).unwrap_or("");
                     conflicts.push(FieldConflict {
                         field_name: field.to_string(),
@@ -366,6 +434,30 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
                     });
                 }
             }
+        }
+    }
+    }
+
+    // Password history: union by timestamp when both sides moved (each
+    // device appends on password change). The 10-entry FIFO cap is
+    // re-applied by the writers; keep the most recent here. A remote-only
+    // move must land too, not lose to the local snapshot.
+    if remote.password_history != base.password_history {
+        if merged.password_history == base.password_history {
+            let mut hist = remote.password_history.clone();
+            hist.sort_by_key(|e| std::cmp::Reverse(e.last_used_date));
+            hist.truncate(10);
+            merged.password_history = hist;
+        } else if merged.password_history != remote.password_history {
+            let mut hist = merged.password_history.clone();
+            for entry in &remote.password_history {
+                if !hist.contains(entry) {
+                    hist.push(entry.clone());
+                }
+            }
+            hist.sort_by_key(|e| std::cmp::Reverse(e.last_used_date));
+            hist.truncate(10);
+            merged.password_history = hist;
         }
     }
 
@@ -377,6 +469,225 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
             merged_base: merged,
         })
     }
+}
+
+/// PasskeyData carries zeroize-on-drop so it derives no PartialEq;
+/// compare the fields that define an unchanged credential.
+fn passkey_equivalent(a: &crate::types::PasskeyData, b: &crate::types::PasskeyData) -> bool {
+    a.credential_id == b.credential_id
+        && a.counter == b.counter
+        && a.key_value == b.key_value
+        && a.private_key == b.private_key
+        && a.prf_key == b.prf_key
+        && a.name == b.name
+}
+
+/// Keyed-by-credential-id merge of passkey lists. A credential present on
+/// one side only lands; a redacted (keyless) copy never clobbers a live
+/// one; a genuinely divergent credential conflicts and keeps local.
+fn merge_passkey_sets(
+    base: &Option<Vec<crate::types::PasskeyData>>,
+    local: &Option<Vec<crate::types::PasskeyData>>,
+    remote: &Option<Vec<crate::types::PasskeyData>>,
+    out: &mut Option<Vec<crate::types::PasskeyData>>,
+    conflicts: &mut Vec<FieldConflict>,
+) {
+    let (Some(local_creds), Some(remote_creds)) = (local, remote) else {
+        if local.is_none() && remote.is_some() {
+            // Local never had (or deleted all) passkeys. Take remote's set
+            // only when base had none either; otherwise the local delete
+            // wins over whatever remote still holds.
+            let base_had = base.as_ref().is_some_and(|b| !b.is_empty());
+            if !base_had {
+                *out = remote.clone();
+            }
+        }
+        return;
+    };
+    let base_creds = base.as_deref().unwrap_or(&[]);
+    let mut result: Vec<crate::types::PasskeyData> = Vec::new();
+    let mut conflicted = false;
+    for cred in local_creds {
+        match remote_creds.iter().find(|r| r.credential_id == cred.credential_id) {
+            Some(r) => {
+                // A keyless copy is a redacted mirror (the daemon strips
+                // key material for IPC); it has no authority to overwrite
+                // the keyed original on the side that still holds it.
+                let keyed_local = cred.private_key.is_some() || cred.prf_key.is_some();
+                let keyed_remote = r.private_key.is_some() || r.prf_key.is_some();
+                if keyed_local != keyed_remote {
+                    if keyed_local {
+                        result.push(cred.clone());
+                    } else {
+                        result.push(r.clone());
+                    }
+                } else if passkey_equivalent(cred, r) {
+                    result.push(cred.clone());
+                } else if base_creds.iter().any(|b| b.credential_id == cred.credential_id && passkey_equivalent(b, r)) {
+                    result.push(cred.clone()); // remote unchanged from base
+                } else if base_creds.iter().any(|b| b.credential_id == cred.credential_id && passkey_equivalent(b, cred)) {
+                    result.push(r.clone()); // local unchanged from base
+                } else {
+                    // Both edited: keep local (private key material lives
+                    // here — a silent remote pick could destroy it) and
+                    // flag for visibility.
+                    conflicted = true;
+                    result.push(cred.clone());
+                }
+            }
+            None => {
+                let in_base = base_creds.iter().any(|b| {
+                    b.credential_id == cred.credential_id && passkey_equivalent(b, cred)
+                });
+                if !in_base {
+                    result.push(cred.clone()); // local-only addition
+                }
+                // A base-identical credential absent remotely was deleted
+                // there while local kept it unchanged: honor the delete.
+            }
+        }
+    }
+    for cred in remote_creds {
+        if local_creds.iter().any(|l| l.credential_id == cred.credential_id) {
+            continue; // already handled from the local side
+        }
+        let unchanged_from_base = base_creds.iter().any(|b| {
+            b.credential_id == cred.credential_id && passkey_equivalent(b, cred)
+        });
+        if unchanged_from_base {
+            continue; // local deleted it while remote kept the base value
+        }
+        result.push(cred.clone()); // remote-only addition
+    }
+    if conflicted {
+        conflicts.push(FieldConflict {
+            field_name: "fido2_credentials".to_string(),
+            local_value: "passkeys edited on this device".to_string(),
+            remote_value: "passkeys edited on the other device".to_string(),
+        });
+    }
+    *out = Some(result);
+}
+
+fn merge_3way_value<T: PartialEq + Clone>(
+    base: &T,
+    local: &mut T,
+    remote: &T,
+    field_name: &str,
+    conflicts: &mut Vec<FieldConflict>,
+    display: impl Fn(&T) -> String,
+) {
+    if local == remote {
+        return;
+    }
+    if local == base && remote != base {
+        *local = remote.clone();
+    } else if remote == base && local != base {
+        // Only local changed: keep it.
+    } else {
+        conflicts.push(FieldConflict {
+            field_name: field_name.to_string(),
+            local_value: display(local),
+            remote_value: display(remote),
+        });
+    }
+}
+
+/// Set merge of tag lists against base: additions from either side land,
+/// one-sided deletes are honored, same-side duplicates collapse.
+fn merge_tag_set(base: &CipherInput, local: &CipherInput, remote: &CipherInput, out: &mut Vec<String>) {
+    let mut result: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for tag in local.tags.iter().chain(remote.tags.iter()).chain(base.tags.iter()) {
+        if !seen.insert(tag.clone()) {
+            continue;
+        }
+        let in_base = base.tags.contains(tag);
+        let in_local = local.tags.contains(tag);
+        let in_remote = remote.tags.contains(tag);
+        if in_base && !in_local && !in_remote {
+            continue; // deleted on both sides
+        }
+        if in_base && in_local != in_remote {
+            // Deleted on one side; the other side still holds the base
+            // value, so honor the delete.
+            continue;
+        }
+        result.push(tag.clone());
+    }
+    *out = result;
+}
+
+/// Keyed-by-id merge of attachment metadata. Additions land, one-sided
+/// deletions are honored, and a value edited on both sides conflicts —
+/// the blob files live outside this merge, so a silent pick could
+/// orphan the loser's blob.
+fn merge_attachment_set(
+    base: &CipherInput,
+    local: &CipherInput,
+    remote: &CipherInput,
+    out: &mut Vec<crate::vault::attachment::AttachmentMeta>,
+    conflicts: &mut Vec<FieldConflict>,
+) {
+    let mut result: Vec<crate::vault::attachment::AttachmentMeta> = Vec::new();
+    for att in &local.attachments {
+        match remote.attachments.iter().find(|r| r.id == att.id) {
+            Some(r) => {
+                if att.filename == r.filename
+                    && att.size == r.size
+                    && att.encrypted_size == r.encrypted_size
+                {
+                    result.push(att.clone());
+                } else {
+                    let base_att = base.attachments.iter().find(|b| b.id == att.id);
+                    let base_matches_remote = base_att
+                        .is_some_and(|b| b.filename == r.filename && b.size == r.size);
+                    let base_matches_local = base_att
+                        .is_some_and(|b| b.filename == att.filename && b.size == att.size);
+                    if base_matches_remote {
+                        result.push(r.clone());
+                    } else if base_matches_local {
+                        result.push(att.clone());
+                    } else {
+                        conflicts.push(FieldConflict {
+                            field_name: "attachments".to_string(),
+                            local_value: att.filename.clone(),
+                            remote_value: r.filename.clone(),
+                        });
+                        result.push(att.clone());
+                    }
+                }
+            }
+            None => {
+                let unchanged_from_base = base.attachments.iter().any(|b| {
+                    b.id == att.id
+                        && b.filename == att.filename
+                        && b.size == att.size
+                        && b.encrypted_size == att.encrypted_size
+                });
+                if unchanged_from_base {
+                    continue; // remote deleted it, local kept the base value
+                }
+                result.push(att.clone()); // local added or edited it
+            }
+        }
+    }
+    for att in &remote.attachments {
+        if local.attachments.iter().any(|l| l.id == att.id) {
+            continue; // already handled from the local side
+        }
+        let unchanged_from_base = base.attachments.iter().any(|b| {
+            b.id == att.id
+                && b.filename == att.filename
+                && b.size == att.size
+                && b.encrypted_size == att.encrypted_size
+        });
+        if unchanged_from_base {
+            continue; // local deleted it while remote kept the base value
+        }
+        result.push(att.clone()); // remote-only addition
+    }
+    *out = result;
 }
 
 fn merge_3way_field(
@@ -614,6 +925,78 @@ mod tests {
             archived: false,
             reprompt: false,
             tags: vec![],
+        }
+    }
+
+    #[test]
+    fn redacted_remote_copy_never_replaces_keyed_passkey() {
+        // A device that only ever saw the redacted IPC copy must not
+        // overwrite the keyed original through a merge.
+        let base = base_input("site");
+        let mut keyed = crate::types::PasskeyData::default();
+        keyed.credential_id = "cred-1".into();
+        keyed.private_key = Some(b"keybytes".to_vec());
+        let mut redacted = crate::types::PasskeyData::default();
+        redacted.credential_id = "cred-1".into();
+        redacted.private_key = None;
+
+        let mut base_c = base.clone();
+        base_c.kind = CipherKind::Login(LoginData {
+            fido2_credentials: Some(vec![keyed.clone()]),
+            ..LoginData::default()
+        });
+        let mut local_c = base_c.clone();
+        let mut remote_c = base.clone();
+        remote_c.kind = CipherKind::Login(LoginData {
+            fido2_credentials: Some(vec![redacted]),
+            ..LoginData::default()
+        });
+
+        match merge_ciphers(&base_c, &local_c, &remote_c) {
+            MergeResult::Merged(m) => {
+                let CipherKind::Login(login) = &m.kind else {
+                    panic!("login kind expected");
+                };
+                let creds = login.fido2_credentials.as_ref().unwrap();
+                assert_eq!(creds.len(), 1);
+                assert_eq!(creds[0].private_key.as_deref(), Some(b"keybytes".as_slice()));
+            }
+            MergeResult::Conflict(_) => panic!("redacted mirror must not conflict"),
+        }
+        let _ = keyed; // moved into base_c
+    }
+
+    #[test]
+    fn remote_only_common_fields_survive_the_merge() {
+        // The silent-drop class: a remote-only edit to a common field
+        // must land, not lose to the local snapshot.
+        let base = base_input("site");
+        let local = base.clone();
+        let mut remote = base.clone();
+        remote.folder_id = Some(uuid::Uuid::new_v4());
+        remote.favorite = true;
+        remote.archived = true;
+        remote.tags.push("urgent".into());
+
+        match merge_ciphers(&base, &local, &remote) {
+            MergeResult::Merged(m) => {
+                assert_eq!(m.folder_id, remote.folder_id);
+                assert!(m.favorite);
+                assert!(m.archived);
+                assert!(m.tags.contains(&"urgent".to_string()));
+            }
+            MergeResult::Conflict(_) => panic!("non-overlapping edits must auto-merge"),
+        }
+
+        // One-sided delete is honored: base had "work", remote removed
+        // it, local kept the base set.
+        let mut base_with_tag = base.clone();
+        base_with_tag.tags.push("work".into());
+        let mut remote2 = base_with_tag.clone();
+        remote2.tags.clear();
+        match merge_ciphers(&base_with_tag, &base_with_tag.clone(), &remote2) {
+            MergeResult::Merged(m) => assert!(m.tags.is_empty()),
+            MergeResult::Conflict(_) => panic!("one-sided delete must be honored"),
         }
     }
 

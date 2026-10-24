@@ -18,20 +18,27 @@ use crate::providers::types::Provider;
 use secrecy::{ExposeSecret, SecretString};
 
 /// Common PAT prefixes to scrub from error messages.
-const PAT_PREFIXES: &[&str] = &["ghp_", "gho_", "github_pat_", "glpat-", "glpt-"];
+const PAT_PREFIXES: &[&str] = &["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-", "glpt-", "glcbt-"];
 
 /// Scrub potential credentials from a git2 error message.
 /// Removes URL userinfo (user:token@host) and common PAT prefixes.
 pub fn scrub_git_error(msg: &str) -> String {
     let mut cleaned = msg.to_string();
 
-    // Scrub URL userinfo: ://anything@ -> ://***@
-    // Simple scan-based approach (no regex dependency)
-    if let Some(start) = cleaned.find("://") {
-        let scheme_end = start + 3;
-        if let Some(at_pos) = cleaned[scheme_end..].find('@') {
-            let at_abs = scheme_end + at_pos;
-            cleaned.replace_range(scheme_end..at_abs, "***");
+    // Scrub URL userinfo in EVERY scheme://...@ occurrence (one error
+    // can carry several URLs, e.g. push + redirected fetch hints).
+    let mut search_from = 0;
+    while let Some(start) = cleaned[search_from..].find("://") {
+        let scheme_end = search_from + start + 3;
+        match cleaned[scheme_end..].find('@') {
+            Some(at_off) if !cleaned[scheme_end..scheme_end + at_off].contains('/') => {
+                let at_abs = scheme_end + at_off;
+                cleaned.replace_range(scheme_end..at_abs, "***");
+                search_from = scheme_end + 3;
+            }
+            _ => {
+                search_from = scheme_end;
+            }
         }
     }
 
@@ -50,22 +57,44 @@ pub fn scrub_git_error(msg: &str) -> String {
 }
 
 /// Extract host name from a URL or git address.
+///
+/// The authority ends at the first `/` — anything after it is path and
+/// must never participate in userinfo splitting, or a crafted URL like
+/// `https://evil.example/x@github.com/y` would resolve to github.com and
+/// release its host-bound token to evil.example.
 pub fn extract_host(url: &str) -> Option<String> {
     let s = url.trim();
     let rest = if let Some(pos) = s.find("://") {
         &s[pos + 3..]
-    } else if let Some(at) = s.rfind('@') {
-        &s[at + 1..]
     } else {
-        s
+        // scp-like form user@host:path (no scheme): the host ends at the
+        // first ':' or '/', and userinfo is the last '@' within that
+        // bound. Taking the first '@' anywhere would let a path like
+        // evil.example/x@github.com/y resolve to github.com and release
+        // its host-bound token to evil.example.
+        let bound = s.find(|c: char| c == ':' || c == '/').unwrap_or(s.len());
+        let authority = &s[..bound];
+        let host = match authority.rfind('@') {
+            Some(at) => &authority[at + 1..],
+            None => authority,
+        };
+        return if host.is_empty() {
+            None
+        } else {
+            Some(host.to_ascii_lowercase())
+        };
     };
-    let host_part = if let Some(at) = rest.rfind('@') {
-        &rest[at + 1..]
+    let authority = match rest.find('/') {
+        Some(slash) => &rest[..slash],
+        None => rest,
+    };
+    let host_part = if let Some(at) = authority.rfind('@') {
+        &authority[at + 1..]
     } else {
-        rest
+        authority
     };
     let end = host_part
-        .find(|c: char| c == '/' || c == ':' || c.is_whitespace())
+        .find(|c: char| c == ':' || c.is_whitespace())
         .unwrap_or(host_part.len());
     let host = &host_part[..end];
     if host.is_empty() {
@@ -78,7 +107,7 @@ pub fn extract_host(url: &str) -> Option<String> {
 /// The custom-remote credential file (meta/git-credentials.json).
 #[derive(Debug, Clone)]
 struct CustomFileCredentials {
-    token: SecretString,
+    token: Option<SecretString>,
     username: Option<String>,
     /// Bound host: the token is only released for URLs on this host.
     host: Option<String>,
@@ -127,7 +156,7 @@ impl CredentialConfig {
         if let Some(ref f) = file {
             if f.host.is_some() {
                 return Self {
-                    https_token: Some(f.token.clone()),
+                    https_token: f.token.clone(),
                     allowed_hosts: None,
                     bound_host: f.host.clone(),
                     username: f.username.clone(),
@@ -155,7 +184,7 @@ impl CredentialConfig {
         } else if let Ok(s) = std::env::var("BALUARD_GIT_TOKEN") {
             https_token = Some(SecretString::new(s.into_boxed_str()));
         } else if let Some(ref f) = file {
-            https_token = Some(f.token.clone());
+            https_token = f.token.clone();
             bound_host = f.host.clone();
             username = f.username.clone();
             ssh_passphrase = f.ssh_passphrase.clone();
@@ -273,15 +302,25 @@ impl CredentialConfig {
         serde_json::from_str::<serde_json::Value>(&data)
             .ok()
             .and_then(|v| {
-                let token = v.get("token").and_then(|t| t.as_str())?;
+                let token = v
+                    .get("token")
+                    .and_then(|t| t.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| SecretString::new(s.to_string().into_boxed_str()));
                 let secret_str = |key: &str| {
                     v.get(key)
                         .and_then(|x| x.as_str())
                         .filter(|s| !s.is_empty())
                         .map(|s| SecretString::new(s.to_string().into_boxed_str()))
                 };
+                if token.is_none()
+                    && secret_str("ssh_passphrase").is_none()
+                    && v.get("username").and_then(|x| x.as_str()).is_none()
+                {
+                    return None;
+                }
                 Some(CustomFileCredentials {
-                    token: SecretString::new(token.to_string().into_boxed_str()),
+                    token,
                     username: v
                         .get("username")
                         .and_then(|x| x.as_str())
@@ -298,13 +337,6 @@ impl CredentialConfig {
     }
 }
 
-thread_local! {
-    /// URL of the connection currently authenticating. The credentials
-    /// callback fires before host-key verification, so the cert-check
-    /// closure reads the port from here without call sites passing it.
-    static LAST_AUTH_URL: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
-}
-
 /// One credentials-callback attempt, extracted from build_callbacks: libgit2
 /// consumes the closure, so the per-type attempt caps and the host-bound
 /// token release are only unit-testable as a plain function.
@@ -318,7 +350,6 @@ fn credentials_attempt(
     userpass_attempts: &std::cell::Cell<u32>,
 ) -> Result<Cred, git2::Error> {
     const MAX_ATTEMPTS: u32 = 3;
-    LAST_AUTH_URL.with(|u| *u.borrow_mut() = url.to_string());
 
     let user = username_from_url
         .or(cfg.username.as_deref())
@@ -424,6 +455,18 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
             &userpass_attempts,
         )
     });
+    // libgit2 only pre-checks fast-forward locally: a server-side
+    // refusal (branch protection, pre-receive) otherwise returns Ok and
+    // sync reports success while nothing landed.
+    callbacks.push_update_reference(|refname, status| {
+        match status {
+            Some(msg) => Err(git2::Error::from_str(&format!(
+                "the remote rejected {}: {}",
+                refname, msg
+            ))),
+            None => Ok(()),
+        }
+    });
 
     // M5 fix: enforce known_hosts for SSH connections, passthrough for HTTPS.
     // - SSH host keys: strict verification against ~/.ssh/known_hosts.
@@ -444,10 +487,11 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                 _ => "",
             };
             let key = hostkey.hostkey().unwrap_or(&[]);
-            let obs_port = port_hint.or_else(|| LAST_AUTH_URL.with(|u| {
-                let p = port_of(&u.borrow());
-                (p != 22).then_some(p)
-            })).unwrap_or(22);
+            // Port hint comes from the URL captured at callback build
+            // time. A thread-local carried the PREVIOUS operation's URL
+            // on this pool thread and could pin the wrong port onto
+            // hashed-entry lookups and written trust records.
+            let obs_port = port_hint.unwrap_or(22);
             let verdict = crate::sync::known_hosts::verify_host_key(host, obs_port, key_type, key);
             match verdict {
                 crate::sync::known_hosts::HostKeyResult::Known => {
@@ -484,6 +528,22 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                 // A changed key is recorded flagged so the surface can warn,
                 // but the trust route refuses changed observations — the key
                 // can never be blessed one-click.
+                // A file we cannot read is not a first contact: fail
+                // closed with no trust offer, or one unreadable file
+                // would re-arm changed-key prompts for every pinned host.
+                crate::sync::known_hosts::HostKeyResult::Unreadable => Err(
+                    git2::Error::from_str(
+                        "your SSH known_hosts file exists but cannot be read; fix its permissions before connecting",
+                    ),
+                ),
+                // The presented key sits on an @revoked line: never
+                // trust-offerable, the user must remove the revocation
+                // deliberately after investigating.
+                crate::sync::known_hosts::HostKeyResult::Revoked => Err(
+                    git2::Error::from_str(
+                        "this host key has been revoked in your SSH known_hosts file; do not connect unless you know why",
+                    ),
+                ),
                 crate::sync::known_hosts::HostKeyResult::Mismatch => {
                     crate::sync::known_hosts::record_observation(
                         crate::sync::known_hosts::ObservedHostKey {
@@ -580,24 +640,6 @@ pub fn format_sync_error_for(err: &BaluardError, url: Option<&str>) -> String {
         .to_string();
     }
     format!("{err}")
-}
-
-/// Upgrade a failed sync/clone/transport error into the structured
-/// `HostKeyUntrusted` error when the failing operation recorded a pending
-/// host-key observation. The observation stays pending for the trust route.
-pub fn upgrade_host_key_error(err: BaluardError) -> BaluardError {
-    // Peek, never drain: the trust route consumes the observation by id
-    // after the surface reports it.
-    if let Some((attempt_id, obs)) = crate::sync::known_hosts::peek_latest_observation() {
-        return BaluardError::Sync(crate::error::SyncError::HostKeyUntrusted {
-            host: obs.host,
-            port: obs.port,
-            key_type: obs.key_type,
-            fingerprint: obs.fingerprint,
-            attempt_id,
-        });
-    }
-    err
 }
 
 /// Clear meta/git-credentials.json when its bound host no longer matches
@@ -771,6 +813,39 @@ pub fn persist_in_memory(vault_path: &Path, cfg: &CredentialConfig) -> Result<()
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn extract_host_ignores_userinfo_spoofed_through_the_path() {
+        // A crafted URL must not resolve to the host named after the @
+        // in its path: the token bound to github.com would be released
+        // to evil.example.
+        assert_eq!(
+            extract_host("https://evil.example/x@github.com/y").as_deref(),
+            Some("evil.example")
+        );
+        // Legitimate userinfo still resolves.
+        assert_eq!(
+            extract_host("https://token123@github.com/owner/repo.git").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(extract_host("git@github.com:owner/repo.git").as_deref(), Some("github.com"));
+        assert_eq!(
+            extract_host("ssh://git@github.com:2222/owner/repo.git").as_deref(),
+            Some("github.com")
+        );
+        // Scheme-less spoofs: git connects to the host before the first
+        // ':' or '/', so the token binding must resolve to that host,
+        // never to a host named after an '@' in the path or after a
+        // colon-scoped segment.
+        assert_eq!(
+            extract_host("evil.com:x@github.com:y").as_deref(),
+            Some("evil.com")
+        );
+        assert_eq!(
+            extract_host("evil.example/x@github.com:y").as_deref(),
+            Some("evil.example")
+        );
+    }
     use super::*;
 
     /// Clear `BALUARD_GIT_TOKEN` AND redirect `BALUARD_DATA_DIR` to an empty

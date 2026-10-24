@@ -84,6 +84,32 @@ pub fn read_device_id(vault_path: &Path) -> Option<Uuid> {
     None
 }
 
+/// This clone's committer identity: `meta/device-id` first (authoritative
+/// per-clone marker), then the registry's first entry as the legacy
+/// fallback for vaults predating the marker. Callers MUST NOT scan the
+/// roster another way: iteration order is a HashMap artifact and on a
+/// multi-device vault it credits the wrong committer, which the staging
+/// admission then uses to revert admin-gated writes.
+pub fn local_device_id(vault_path: &Path) -> String {
+    if let Some(id) = read_device_id(vault_path) {
+        return id.to_string();
+    }
+    let reg_path = vault_path.join("meta/devices.json");
+    if reg_path.exists() {
+        if let Ok(data) = std::fs::read_to_string(&reg_path) {
+            if let Ok(reg) = serde_json::from_str::<
+                crate::devices::DeviceRegistry,
+            >(&data)
+            {
+                if let Some((id, _)) = reg.devices.iter().next() {
+                    return id.to_string();
+                }
+            }
+        }
+    }
+    String::new()
+}
+
 /// How the file on disk presents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrivkeyFileKind {

@@ -3835,28 +3835,7 @@ fn parse_profile(s: &str) -> Result<KdfProfile, Box<dyn std::error::Error>> {
 }
 
 fn first_device_id(vault_path: &str) -> String {
-    // Mirror the daemon: the engine identity is this clone's own device
-    // (meta/device-id); a roster scan is HashMap-ordered and on a
-    // multi-device vault can credit the wrong committer at staging.
-    let path = Path::new(vault_path);
-    if let Some(id) = baluard_core::vault::device_privkey::read_device_id(path) {
-        return id.to_string();
-    }
-    let reg_path = path.join("meta/devices.json");
-    if reg_path.exists() {
-        if let Ok(data) = std::fs::read_to_string(&reg_path) {
-            let reg: std::result::Result<baluard_core::devices::DeviceRegistry, _> =
-                serde_json::from_str(&data);
-            if let Ok(reg) = reg {
-                // C5: identity is the device UUID (names are encrypted in
-                // settings.enc; single-device vaults are the norm here).
-                if let Some((id, _)) = reg.devices.iter().next() {
-                    return id.to_string();
-                }
-            }
-        }
-    }
-    String::new()
+    baluard_core::vault::device_privkey::local_device_id(Path::new(vault_path))
 }
 
 /// Gate for irreversible member operations. --yes skips; a terminal
