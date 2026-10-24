@@ -126,10 +126,11 @@ impl GitLabProvider {
         let b64 = v["content"].as_str()?;
         let raw = BASE64.decode(b64).ok()?;
         let marker: serde_json::Value = serde_json::from_slice(&raw).ok()?;
-        Some((
-            marker["slug"].as_str().map(str::to_string),
-            marker["vault_id"].as_str().map(str::to_string),
-        ))
+        // Any parseable JSON is not a marker: an unrelated .baluard file
+        // must not surface a slug-less vault in the picker.
+        let slug = marker["slug"].as_str()?.to_string();
+        let vault_id = marker["vault_id"].as_str()?.to_string();
+        Some((Some(slug), Some(vault_id)))
     }
 }
 
@@ -140,6 +141,47 @@ impl Default for GitLabProvider {
 }
 
 impl GitLabProvider {
+    /// Like resolve_user_id but None for an unknown username (renamed,
+    /// deleted or blocked account) instead of an error; HTTP failures
+    /// still propagate.
+    async fn resolve_user_id_opt(
+        &self,
+        token: &ProviderToken,
+        username: &str,
+    ) -> Result<Option<u64>, ProviderError> {
+        let url = format!(
+            "{}/users?username={}",
+            self.api_base(),
+            urlencoding_encode(username)
+        );
+        let resp = self
+            .authed(reqwest::Method::GET, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        if !resp.status().is_success() {
+            let st = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::Api(format!("user lookup HTTP {st}: {body}")));
+        }
+        let users: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        let wanted = username.to_lowercase();
+        let found = users.as_array().and_then(|list| {
+            list.iter().find_map(|u| {
+                let login = u["username"].as_str().map(|l| l.to_lowercase());
+                if login.as_deref() == Some(wanted.as_str()) {
+                    u["id"].as_u64()
+                } else {
+                    None
+                }
+            })
+        });
+        Ok(found)
+    }
+
     /// Resolve a GitLab username to its numeric id — the members API takes
     /// user_id only, never the username.
     async fn resolve_user_id(
@@ -474,6 +516,7 @@ impl ForgeProvider for GitLabProvider {
         token: &ProviderToken,
         name: &str,
     ) -> Result<VaultRepo, ProviderError> {
+        super::types::assert_safe_segment(name, "repository")?;
         let resp = self
             .authed(
                 reqwest::Method::POST,
@@ -504,18 +547,26 @@ impl ForgeProvider for GitLabProvider {
         // Safety: verify private before returning. Public vault repo leaks
         // encrypted blobs + padded-bucket metadata.
         if p["visibility"].as_str() != Some("private") {
+            let mut cleanup = String::new();
             if let Some(id) = p["id"].as_i64() {
-                let _ = self
+                let removed = self
                     .authed(
                         reqwest::Method::DELETE,
                         &format!("{}/projects/{}", self.api_base(), id),
                         token,
                     )
                     .send()
-                    .await;
+                    .await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                // A failed cleanup must not be reported as gone.
+                if !removed {
+                    cleanup = " It could not be deleted automatically — delete it on the site."
+                        .to_string();
+                }
             }
             return Err(ProviderError::RepoPublic(format!(
-                "repo '{name}' was created non-private (safety abort)"
+                "repo '{name}' was created non-private (safety abort).{cleanup}"
             )));
         }
 
@@ -528,6 +579,8 @@ impl ForgeProvider for GitLabProvider {
         owner: &str,
         name: &str,
     ) -> Result<(), ProviderError> {
+        super::types::assert_safe_path(owner, "owner")?;
+        super::types::assert_safe_segment(name, "repository")?;
         let path_or_id = format!("{owner}/{name}");
         let url_encoded = urlencoding_encode(&path_or_id);
         let url = format!("{}/projects/{}", self.api_base(), url_encoded);
@@ -555,6 +608,9 @@ impl ForgeProvider for GitLabProvider {
         username: &str,
         permission: CollaboratorPermission,
     ) -> Result<CollaboratorStatus, ProviderError> {
+        super::types::assert_safe_path(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        super::types::assert_safe_segment(username, "member")?;
         // GitLab grants immediately (no pending-acceptance state at CE
         // level). Reporter(20) = read-only seat, Developer(30) = write.
         let access_level = match permission {
@@ -579,8 +635,32 @@ impl ForgeProvider for GitLabProvider {
             .map_err(|e| ProviderError::Api(e.to_string()))?;
         match resp.status().as_u16() {
             201 => Ok(CollaboratorStatus::Active),
-            // 409 Conflict = already a member; the seat exists.
-            409 => Ok(CollaboratorStatus::Active),
+            // 409 Conflict = a seat already exists, possibly at a LOWER
+            // level: re-PUT the wanted level, or an approved editor stays
+            // read-only forever.
+            409 => {
+                let url = format!(
+                    "{}/projects/{}/members/{}",
+                    self.api_base(),
+                    urlencoding_encode(&format!("{owner}/{repo}")),
+                    user_id
+                );
+                let up = self
+                    .authed(reqwest::Method::PUT, &url, token)
+                    .json(&serde_json::json!({ "access_level": access_level }))
+                    .send()
+                    .await
+                    .map_err(|e| ProviderError::Api(e.to_string()))?;
+                match up.status().as_u16() {
+                    200 | 201 => Ok(CollaboratorStatus::Active),
+                    su => {
+                        let body = up.text().await.unwrap_or_default();
+                        Err(ProviderError::Api(format!(
+                            "seat upgrade HTTP {su}: {body}"
+                        )))
+                    }
+                }
+            }
             s => {
                 let body = resp.text().await.unwrap_or_default();
                 Err(ProviderError::Api(format!("add member HTTP {s}: {body}")))
@@ -595,10 +675,16 @@ impl ForgeProvider for GitLabProvider {
         repo: &str,
         username: &str,
     ) -> Result<CollaboratorStatus, ProviderError> {
+        super::types::assert_safe_path(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        super::types::assert_safe_segment(username, "member")?;
         let user_id = self.resolve_user_id(token, username).await?;
         let path = format!("{owner}/{repo}");
+        // /members/all covers access inherited from a shared group; the
+        // direct-members endpoint 404s on it and the preflight would
+        // report "no seat" while access persists.
         let url = format!(
-            "{}/projects/{}/members/{}",
+            "{}/projects/{}/members/all/{}",
             self.api_base(),
             urlencoding_encode(&path),
             user_id
@@ -625,7 +711,14 @@ impl ForgeProvider for GitLabProvider {
         repo: &str,
         username: &str,
     ) -> Result<(), ProviderError> {
-        let user_id = self.resolve_user_id(token, username).await?;
+        super::types::assert_safe_path(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        super::types::assert_safe_segment(username, "member")?;
+        // A renamed, deleted or blocked account has no seat to remove:
+        // the lookup returns None and the removal already succeeded.
+        let Some(user_id) = self.resolve_user_id_opt(token, username).await? else {
+            return Ok(());
+        };
         let path = format!("{owner}/{repo}");
         let url = format!(
             "{}/projects/{}/members/{}",
@@ -692,9 +785,17 @@ impl ForgeProvider for GitLabProvider {
             .map_err(|e| ProviderError::Api(format!("refresh failed: {e}")))?;
 
         if !resp.status().is_success() {
-            let s = resp.status();
-            // Refresh invalidates the prior pair; failure = must re-auth.
-            return Err(ProviderError::AuthFailed(format!("refresh HTTP {s}")));
+            let st = resp.status().as_u16();
+            // Only a rejection of the grant itself kills re-auth; a
+            // transient 429/5xx must not force a full reconnect.
+            return match st {
+                400 | 401 => Err(ProviderError::AuthFailed(format!(
+                    "refresh HTTP {st}"
+                ))),
+                _ => Err(ProviderError::Transient(format!(
+                    "refresh HTTP {st}"
+                ))),
+            };
         }
         let d: serde_json::Value = resp
             .json()
@@ -704,9 +805,12 @@ impl ForgeProvider for GitLabProvider {
             .as_str()
             .ok_or_else(|| ProviderError::Api("refresh missing access_token".into()))?
             .to_string();
+        // A response without refresh_token keeps the old one: GitLab has
+        // already invalidated nothing until it issues a new pair, and
+        // erroring here would discard the fresh access token.
         let new_rt = d["refresh_token"]
             .as_str()
-            .ok_or_else(|| ProviderError::Api("refresh missing refresh_token".into()))?
+            .unwrap_or(rt_plain)
             .to_string();
         let expires_in = d["expires_in"].as_u64().unwrap_or(7200);
         let scopes = d["scope"].as_str().unwrap_or(&token.scopes).to_string();
@@ -765,14 +869,21 @@ mod tests {
         let (_, _, body) = &api.requests()[3];
         assert!(body.contains("\"access_level\":30"), "body: {body}");
 
-        // Already a member (409) counts as Active — the seat exists.
+        // Already a member (409): the seat is upgraded in place — the
+        // PUT must carry the wanted level, or an approved editor stays
+        // read-only forever.
         api.push(200, r#"[{"id": 42, "username": "alice"}]"#);
         api.push(409, "{}");
+        api.push(200, r#"{"access_level": 30}"#);
         let st = gl
             .add_collaborator(&tok, "o", "r", "alice", CollaboratorPermission::Write)
             .await
             .unwrap();
         assert_eq!(st, CollaboratorStatus::Active);
+        let (method, path, body) = &api.requests()[6];
+        assert_eq!(method, "PUT");
+        assert_eq!(path, "/api/v4/projects/o%2Fr/members/42");
+        assert!(body.contains("\"access_level\":30"), "body: {body}");
     }
 
     #[tokio::test]
