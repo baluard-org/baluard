@@ -141,6 +141,13 @@ impl VaultHost {
     /// arc. Used by `vault.open`, `vault.unlock`, and `vault.create`.
     pub async fn insert(&self, slug: String, state: Arc<VaultState>) -> Arc<VaultState> {
         let mut guard = self.inner.write().await;
+        // A replaced entry keeps its autosync loop alive otherwise (same
+        // leak as close).
+        if let Some(old) = guard.vaults.get(&slug) {
+            if !Arc::ptr_eq(old, &state) {
+                old.autosync_deactivate().await;
+            }
+        }
         guard.vaults.insert(slug, state.clone());
         state
     }
@@ -245,6 +252,14 @@ impl VaultHost {
     /// not used as a synchronization primitive.
     pub async fn close(&self, slug: &str) -> bool {
         let mut guard = self.inner.write().await;
+        // Deactivate BEFORE dropping the map entry: the background loop
+        // owns an AutoSyncHandle clone, so without this it would keep
+        // pulling (and holding the devkey seal) against a closed or
+        // deleted vault, and a re-unlock would run a second loop on the
+        // same repo.
+        if let Some(state) = guard.vaults.get(slug) {
+            state.autosync_deactivate().await;
+        }
         let removed = guard.vaults.remove(slug).is_some();
         if removed && guard.active.as_deref() == Some(slug) {
             guard.active = None;

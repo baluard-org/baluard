@@ -100,7 +100,7 @@ impl PinEscrow {
     pub fn verify(&self, pin: &str) -> Result<zeroize::Zeroizing<[u8; 32]>, String> {
         let candidate = hash_pin(pin, &self.pin_salt)?;
         // Constant-time compare.
-        if !constant_time_eq(&candidate, self.pin_hash.as_ref()) {
+        if !crate::crypto::constant_time_eq(&candidate, self.pin_hash.as_ref()) {
             return Err("Incorrect PIN".to_string());
         }
         Ok(zeroize::Zeroizing::new(*self.kek))
@@ -221,12 +221,5 @@ mod tests {
         // Both verify the same PIN, but their internal salts differ.
         assert!(a.verify("000000").is_ok());
         assert_ne!(a.pin_salt, b.pin_salt);
-    }
-
-    #[test]
-    fn constant_time_eq_basic() {
-        assert!(constant_time_eq(&[1, 2, 3], &[1, 2, 3]));
-        assert!(!constant_time_eq(&[1, 2, 3], &[1, 2, 4]));
-        assert!(!constant_time_eq(&[1, 2], &[1, 2, 3]));
     }
 }

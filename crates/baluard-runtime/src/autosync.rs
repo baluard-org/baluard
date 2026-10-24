@@ -23,6 +23,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 /// Debounce window after a mutation before we commit + push.
+const LOOP_SLICE_SECS: u64 = 10;
 const PUSH_DEBOUNCE_SECS: u64 = 5;
 /// Background pull cadence when idle + online. Serverless architecture (git
 /// remote IS the server, no push channel), so this sweeps up other-device
@@ -106,6 +107,12 @@ pub struct AutoSyncStatus {
 
 /// Internal mutable state behind the handle lock.
 struct Inner {
+    /// Bumped on every nudge. A debounce task whose captured generation
+    /// no longer matches is a stale timer: it exits instead of running a
+    /// cycle. This replaces abort() — aborting a task that already passed
+    /// its sleep would kill a cycle mid-flight while the spawn_blocking
+    /// git work keeps running (C3 break).
+    debounce_gen: u64,
     active: bool,
     state: AutoSyncState,
     last_sync: Option<u64>,
@@ -167,6 +174,7 @@ impl AutoSyncHandle {
                 devkey_seal: None,
                 enroll_vk: None,
                 debounce: None,
+                debounce_gen: 0,
                 loop_handle: None,
                 generation: 0,
             })),
@@ -215,23 +223,36 @@ impl AutoSyncHandle {
     /// stay in `NeedsDecision` for the next one.
     pub async fn note_resolved(&self) {
         let mut g = self.inner.lock().await;
+        if !g.active || g.pending_conflicts.is_empty() {
+            // Lock-all during conflict resolution drained the queue (or
+            // closed the vault): nothing to pop.
+            return;
+        }
         g.pending_conflicts.remove(0);
         if g.pending_conflicts.is_empty() {
             // Re-sync: the merge commit + any queued mutations. Going to Dirty
             // arms the debounce; pending (if any nudges landed) is preserved.
             g.state = AutoSyncState::Dirty;
             // Arm a fresh debounce so the push happens promptly.
-            if let Some(h) = g.debounce.take() {
-                h.abort();
-            }
+            // Retire any pending timer by generation (never abort: the
+            // task may already be inside fire_sync holding cycle_lock).
+            g.debounce_gen = g.debounce_gen.wrapping_add(1);
+            g.debounce.take();
             let me = self.clone();
             let gen_id = g.generation;
             // device_id is read from the vault in the route; nudge used it.
             // For the post-resolve push we reuse the stored device id on the
             // handle via a clone — see AutoSyncHandle.device_id (added below).
             let device_id = g.device_id.clone();
+            let debounce_id = g.debounce_gen;
             g.debounce = Some(tokio::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(PUSH_DEBOUNCE_SECS)).await;
+                {
+                    let g = me.inner.lock().await;
+                    if g.debounce_gen != debounce_id {
+                        return;
+                    }
+                }
                 me.fire_sync(device_id, gen_id, SYNC_OP_TIMEOUT).await;
             }));
         }
@@ -434,6 +455,13 @@ impl AutoSyncHandle {
     /// Routing through the cycle lock makes the guard a real mutual-exclusion
     /// guarantee. Returned guard is held across the conflict op's
     /// `spawn_blocking` (mirrors fire_sync / pull_only).
+    /// Owned-guard variant for callers that must move the guard into a
+    /// spawn_blocking closure (a stack-local guard would drop on timeout
+    /// while the git op keeps running).
+    pub async fn cycle_lock_owned(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        Arc::clone(&self.cycle_lock).lock_owned().await
+    }
+
     pub async fn cycle_lock_guard(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.cycle_lock.lock().await
     }
@@ -462,37 +490,44 @@ impl AutoSyncHandle {
             }
             (g.generation, g.devkey_seal, g.enroll_vk)
         };
-        // Don't race a debounce push or another cycle.
-        let lock_guard = match self.cycle_lock.try_lock() {
-            Ok(g) => g,
-            Err(_) => {
-                // Safe to skip: an in-flight push cycle includes a pull
-                // (commit->pull->push), so we are not losing the update.
-                log::debug!("[autosync] pull_only skipped: cycle in flight");
-                return;
-            }
-        };
+        // Don't race a debounce push or another cycle: the owned try-lock
+        // below bails (safe: an in-flight push cycle includes a pull).
         let vault_path = self.vault_path.clone();
-        let outcome = tokio::task::spawn_blocking(move || {
-            run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
-        })
+        // Owned guard (B7-05): a timeout must not free the cycle lock
+        // while the un-cancellable git pull is still running.
+        let lock_guard = match Arc::clone(&self.cycle_lock).try_lock_owned() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let outcome = tokio::time::timeout(
+            SYNC_OP_TIMEOUT,
+            tokio::task::spawn_blocking(move || {
+                let _cycle_guard = lock_guard;
+                run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
+            }),
+        )
         .await;
-        drop(lock_guard);
         let mut g = self.inner.lock().await;
         if !g.active || g.generation != generation {
             return;
         }
         match outcome {
-            Ok(Ok(PullOutcome::Fresh)) => {
+            Ok(Ok(Ok(PullOutcome::Fresh))) => {
                 g.access_denied_streak = 0;
                 g.last_sync = Some(now_secs());
-                // Don't clobber Dirty/Syncing; only settle to Idle from Offline.
+                // Don't clobber Dirty/Syncing; only settle to Idle from
+                // Offline — and never report Idle while mutations sit
+                // unpushed (their push went Offline earlier).
                 if g.state == AutoSyncState::Offline {
-                    g.state = AutoSyncState::Idle;
+                    if g.pending > 0 {
+                        g.state = AutoSyncState::Dirty;
+                    } else {
+                        g.state = AutoSyncState::Idle;
+                    }
                 }
             }
-            Ok(Ok(PullOutcome::Offline)) => g.state = AutoSyncState::Offline,
-            Ok(Ok(PullOutcome::AccessDenied)) => {
+            Ok(Ok(Ok(PullOutcome::Offline))) => g.state = AutoSyncState::Offline,
+            Ok(Ok(Ok(PullOutcome::AccessDenied))) => {
                 // The remote refuses this device's credentials. Keep the
                 // state machine calm (Offline-like cadence) and let the
                 // streak feed the removal-notice surface.
@@ -544,14 +579,21 @@ impl AutoSyncHandle {
         }
         g.pending = g.pending.saturating_add(1);
         g.state = AutoSyncState::Dirty;
-        // Reset any in-flight debounce timer.
-        if let Some(h) = g.debounce.take() {
-            h.abort();
-        }
+        // Retire any pending timer by generation (never abort: the task
+        // may already be inside fire_sync holding cycle_lock).
+        g.debounce_gen = g.debounce_gen.wrapping_add(1);
         let me = self.clone();
         let gen_id = g.generation;
+        let debounce_id = g.debounce_gen;
         g.debounce = Some(tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_secs(PUSH_DEBOUNCE_SECS)).await;
+            // Generation mismatch = a newer nudge replaced this timer.
+            {
+                let g = me.inner.lock().await;
+                if g.debounce_gen != debounce_id {
+                    return;
+                }
+            }
             me.fire_sync(device_id, gen_id, SYNC_OP_TIMEOUT).await;
         }));
     }
@@ -575,16 +617,23 @@ impl AutoSyncHandle {
             (g.devkey_seal, g.enroll_vk)
         };
 
-        // C3 fix: hold the cycle lock across the blocking work so two cycles
-        // never touch the same on-disk repo concurrently. try_lock: if a
-        // background-loop pull is already running, bail (the next mutation's
-        // debounce will retry).
-        let lock_guard = match self.cycle_lock.try_lock() {
+        // C3: the cycle guard lives INSIDE the spawn_blocking closure —
+        // spawn_blocking work cannot be cancelled, so a timeout must not
+        // free the lock while the git op is still running. The guard is
+        // never held across an await here (moved straight into the
+        // closure), keeping the future Send.
+        // OwnedMutexGuard: 'static + Send, so it can live inside the
+        // spawn_blocking closure (a borrowed MutexGuard could not).
+        let lock_guard = match Arc::clone(&self.cycle_lock).try_lock_owned() {
             Ok(g) => g,
             Err(_) => {
+                // Another cycle (unlock pull, focus pull, conflict op)
+                // holds the lock. Go back to Dirty — the background loop
+                // polls for exactly this state and retries, so the edit
+                // must not strand on a lost race.
                 let mut g = self.inner.lock().await;
                 if g.active && g.generation == generation {
-                    g.state = AutoSyncState::Idle;
+                    g.state = AutoSyncState::Dirty;
                 }
                 return;
             }
@@ -594,11 +643,13 @@ impl AutoSyncHandle {
             timeout,
             tokio::task::spawn_blocking({
                 let vault_path = self.vault_path.clone();
-                move || run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
+                move || {
+                    let _cycle_guard = lock_guard;
+                    run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
+                }
             }),
         )
         .await;
-        drop(lock_guard);
 
         let mut g = self.inner.lock().await;
         if !g.active || g.generation != generation {
@@ -612,7 +663,11 @@ impl AutoSyncHandle {
                 g.access_denied_streak = 0;
                 g.conflicts_resolved = g.conflicts_resolved.saturating_add(conflicts);
                 g.last_sync = Some(now_secs());
-                g.state = AutoSyncState::Idle;
+                // A mutation during the cycle re-set Dirty: keep it (the
+                // armed debounce pushes the new edit) instead of Idle.
+                if g.pending == 0 {
+                    g.state = AutoSyncState::Idle;
+                }
                 // P5b: the cycle wrote cipher files through the engine,
                 // bypassing VaultHandle's index-rebuild hooks. Invalidate the
                 // local-only index (keyless) so the next list rebuilds.
@@ -637,7 +692,9 @@ impl AutoSyncHandle {
                 // advance last_sync on error, or the UI would falsely show
                 // "All synced". The timeout case is what stops a hung git2 op
                 // (no libgit2 transport timeout) from leaking the pool thread.
-                g.state = AutoSyncState::Idle;
+                if g.pending == 0 {
+                    g.state = AutoSyncState::Idle;
+                }
             }
         }
     }
@@ -653,17 +710,40 @@ impl AutoSyncHandle {
                 }
             }
 
-            let sleep_secs = {
+            // Sleep in slices so a state change (Offline during a long
+            // idle sleep, or Dirty from a lost debounce race) is noticed
+            // within LOOP_SLICE_SECS, not at the end of the full interval.
+            let mut remaining = {
                 let g = self.inner.lock().await;
                 match g.state {
                     AutoSyncState::Offline => OFFLINE_POLL_SECS,
-                    // Idle/Dirty/Syncing: pull on the interval. If a debounce
-                    // push is pending it will fire first; this pull then runs
-                    // after, harmlessly.
                     _ => PULL_INTERVAL_SECS,
                 }
             };
-            tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
+            loop {
+                if remaining == 0 {
+                    break;
+                }
+                let slice = remaining.min(LOOP_SLICE_SECS);
+                tokio::time::sleep(tokio::time::Duration::from_secs(slice)).await;
+                remaining -= slice;
+                // Dirty with no debounce task pending (a lost lock race, or
+                // a nudge that arrived mid-cycle): retry the push now.
+                {
+                    let g = self.inner.lock().await;
+                    if !g.active || g.generation != generation {
+                        return;
+                    }
+                    // A debounce timer still armed means a fresh edit is
+                    // coalescing; firing here would defeat the debounce.
+                    if g.state == AutoSyncState::Dirty && g.debounce.is_none() {
+                        drop(g);
+                        self.fire_sync(device_id.clone(), generation, SYNC_OP_TIMEOUT).await;
+                        remaining = 0;
+                        break;
+                    }
+                }
+            }
 
             {
                 let g = self.inner.lock().await;
@@ -680,7 +760,9 @@ impl AutoSyncHandle {
 
             // C3 fix: acquire the cycle lock so the background pull can't run
             // concurrently with a debounce-triggered cycle on the same repo.
-            let lock_guard = match self.cycle_lock.try_lock() {
+            // Owned guard (B7-05): a timeout must not free the lock while
+            // the un-cancellable git pull is still running.
+            let lock_guard = match Arc::clone(&self.cycle_lock).try_lock_owned() {
                 Ok(g) => g,
                 Err(_) => continue, // a sync cycle is in flight; try again next tick
             };
@@ -700,11 +782,11 @@ impl AutoSyncHandle {
             let outcome = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
+                    let _cycle_guard = lock_guard;
                     run_pull_only(&vault_path, &dn, devkey_seal.as_ref(), enroll_vk)
                 }),
             )
             .await;
-            drop(lock_guard);
             let mut g = self.inner.lock().await;
             if !g.active || g.generation != generation {
                 return;
@@ -713,7 +795,15 @@ impl AutoSyncHandle {
                 Ok(Ok(Ok(PullOutcome::Fresh))) => {
                     g.access_denied_streak = 0;
                     g.last_sync = Some(now_secs());
-                    g.state = AutoSyncState::Idle;
+                    // A mutation may be sitting unpushed (its push went
+                    // Offline; the local commit already landed). Going
+                    // Idle would report "synced" while ahead — go Dirty
+                    // so the loop's next slice runs a push cycle.
+                    if g.pending > 0 {
+                        g.state = AutoSyncState::Dirty;
+                    } else {
+                        g.state = AutoSyncState::Idle;
+                    }
                 }
                 Ok(Ok(Ok(PullOutcome::Offline))) => {
                     g.state = AutoSyncState::Offline;

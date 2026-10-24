@@ -781,6 +781,13 @@ impl VaultState {
         (Some(vault_id), seats)
     }
 
+    /// Stop the auto-sync loop without locking the vault. Host-level
+    /// close/insert-replace uses this so a closed vault's background
+    /// loop cannot outlive the map entry.
+    pub async fn autosync_deactivate(&self) {
+        self.autosync.deactivate().await;
+    }
+
     /// Lock the vault, zeroizing keys in memory. Clears the session token.
     pub async fn lock(&self) -> Result<(), String> {
         // P1c: bump the lock generation FIRST — any in-flight or forgotten

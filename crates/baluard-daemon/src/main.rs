@@ -41,11 +41,16 @@ fn init_debug_logging() {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).append(true);
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            // The debug log carries slugs, device ids and repo paths:
+            // never world-readable.
+            opts.mode(0o600);
+        }
+        match opts.open(&log_path) {
             Ok(file) => {
                 let file = Box::new(file) as Box<dyn Write + Send>;
                 // Multi-target: write to both stderr and file
@@ -296,8 +301,13 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
         std::fs::create_dir_all(parent)?;
     }
 
-    // Clean stale socket
+    // Clean stale socket — but never steal a live daemon's socket: probe
+    // with a connect first (a connectable path means another daemon owns
+    // it and startup must fail loudly instead of silently taking over).
     if std::path::Path::new(socket_path).exists() {
+        if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+            anyhow::bail!("another daemon is already listening on this socket");
+        }
         std::fs::remove_file(socket_path)?;
     }
 
@@ -358,7 +368,16 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
 
 async fn accept_loop(listener: &UnixListener, host: SharedVaultHost) -> Result<()> {
     loop {
-        let (stream, _addr) = listener.accept().await?;
+        // A transient accept error (EMFILE, ECONNABORTED) must not kill
+        // the daemon and lock out every vault: log, back off, continue.
+        let stream = match listener.accept().await {
+            Ok((stream, _addr)) => stream,
+            Err(e) => {
+                log::warn!("[daemon] accept failed: {e}");
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                continue;
+            }
+        };
         let host = host.clone();
         tokio::spawn(async move {
             if let Err(e) = baluard_daemon::handler::handle_connection(stream, host).await {

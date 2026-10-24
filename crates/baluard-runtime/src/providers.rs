@@ -208,9 +208,11 @@ pub async fn setup_sync_remote(
             Ok(r) => r.clone_url,
             Err(e) => {
                 let msg = e.to_string();
-                let looks_exists = msg.contains("already exists")
-                    || msg.contains("422")
-                    || msg.contains("already");
+                // Only a real name-collision signal reuses; a bare "422"
+                // also covers plan-quota and invalid-name failures that
+                // must surface to the user, not trigger a repo hunt.
+                let looks_exists =
+                    msg.contains("already exists") || msg.contains("name already exists");
                 if !looks_exists {
                     return Err(format!("Failed to create repo: {msg}"));
                 }
@@ -675,6 +677,25 @@ pub fn enroll_device_pre_unlock(
         registry_version: None,
     };
 
+    // Prove the master password BEFORE any enrollment write: a mistyped
+    // password must not mint ghost devices (roster entries, key files,
+    // keystore secrets) that sync to every member. A full unlock cannot
+    // run here — a fresh device has no device private key yet — so the
+    // proof is the KEK canary alone; no key material is retained.
+    {
+        let kek = baluard_core::crypto::kdf::derive_kek(master_password, &_kdf_params)
+            .map_err(|e| VaultError::Corrupt(format!("kdf: {e}")))?;
+        let session_key = baluard_core::crypto::hkdf_derive::derive_session_key(&kek)
+            .map_err(|e| VaultError::Corrupt(format!("kdf: {e}")))?;
+        let canary = std::fs::read(vault_path.join("meta/kek-canary.enc"))
+            .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?;
+        baluard_core::vault::canary::verify_kek_canary(&session_key, &canary)
+            .map_err(|_| VaultError::InvalidOperation("master password incorrect".to_string()))?;
+        let mut proof = (kek, session_key);
+        use zeroize::Zeroize;
+        proof.0.zeroize();
+        proof.1.zeroize();
+    }
     let mut dm = DeviceManager::load_from_vault(vault_path)
         .map_err(|e| VaultError::Metadata(format!("load device manager: {e}")))?;
 
@@ -682,7 +703,7 @@ pub fn enroll_device_pre_unlock(
         .enroll_with_recovery_phrase(&payload, recovery_phrase, x25519_secret, ed25519_signing)
         .map_err(|e| VaultError::Metadata(format!("enroll failed: {e}")))?;
 
-    let privkey_data = serde_json::json!({
+    let mut privkey_data = serde_json::json!({
         "device_id": result.device_id.to_string(),
         "x25519_private": hex::encode(result.x25519_secret.to_bytes()),
         "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
@@ -704,6 +725,12 @@ pub fn enroll_device_pre_unlock(
         .map_err(|e| VaultError::Metadata(format!("rename privkey: {e}")))?;
 
     privkey_json_str.zeroize();
+    // The Value copy and the keystore bytes carry the same hex private
+    // keys; zeroize both (zeroize on String/Vec covers the heap buffer).
+    if let Some(obj) = privkey_data.as_object_mut() {
+        obj.remove("x25519_private");
+        obj.remove("ed25519_private");
+    }
 
     let _ = baluard_core::vault::device_privkey::write_device_id(vault_path, result.device_id);
 
@@ -838,17 +865,27 @@ async fn handle_oauth_callback(
 
     // Read the HTTP request until the header terminator (\r\n\r\n). M3: a
     // single read() is not guaranteed to return all data; loop until the
-    // terminator appears or we hit the buffer cap.
+    // terminator appears or we hit the buffer cap. Each read is bounded:
+    // a stalled browser preconnect must not hold the flow for 300s.
     let mut buf = vec![0u8; 8192];
     let mut total = 0;
     loop {
         if total >= buf.len() {
             break; // header too large; proceed with what we have
         }
-        let n = match sock.read(&mut buf[total..]).await {
-            Ok(0) => break, // EOF
-            Ok(n) => n,
-            Err(_) => break,
+        let n = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            sock.read(&mut buf[total..]),
+        )
+        .await
+        {
+            Ok(Ok(0)) => break, // EOF
+            Ok(Ok(n)) => n,
+            // Read timeout or error: abandon this connection attempt.
+            _ => {
+                set_oauth_result(provider, Err("callback read timed out".into())).await;
+                return;
+            }
         };
         total += n;
         if String::from_utf8_lossy(&buf[..total]).contains("\r\n\r\n") {

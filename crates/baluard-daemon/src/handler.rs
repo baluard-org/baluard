@@ -351,6 +351,17 @@ const HOST_ACTIONS: &[&str] = &[
 
 /// Actions that mutate vault data. Schedule cover commits after these.
 const COVER_MUTATION_ACTIONS: &[&str] = &[
+    // Tracked-file writes outside entries/: attachments live under
+    // entries/<id>/attachments, a password change rewrites the shared
+    // kek canary + keywrap, locale.save and space.set_purpose write
+    // settings-pub.json. Without cover they wait for the 30-min idle
+    // cycle, and a second device would keep the old canary.
+    "vault.attach_upload",
+    "vault.attach_delete",
+    "vault.change_password",
+    "locale.save",
+    "space.set_purpose",
+    "space.migrate",
     "vault.add",
     "vault.update",
     "vault.delete",
@@ -562,11 +573,24 @@ async fn ensure_valid_token(
             )))
         }
         Err(e) => {
-            let _ = baluard_core::providers::token::disconnect(provider);
-            Err(err_response(format!(
-                "{:?} token refresh failed: {e}. Please reconnect.",
-                provider
-            )))
+            // Only a rejected credential justifies a wipe: Transient or
+            // network errors must not force a reconnect (an offline
+            // laptop would lose its tokens on the next poll).
+            if matches!(
+                e,
+                baluard_core::providers::types::ProviderError::AuthFailed(_)
+            ) {
+                let _ = baluard_core::providers::token::disconnect(provider);
+                Err(err_response(format!(
+                    "{:?} token refresh rejected. Please reconnect.",
+                    provider
+                )))
+            } else {
+                Err(err_response(format!(
+                    "{:?} token refresh failed (temporary?): {e}",
+                    provider
+                )))
+            }
         }
     }
 }
@@ -861,6 +885,23 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
             }
             if source_slug == target_slug {
                 return err_response("the source and target vault are the same");
+            }
+            // Token gate: this route reads every item's plaintext from the
+            // source and writes it into the target, so it needs BOTH
+            // capabilities (same in-place gating as vaults.list_full_all).
+            for (label, token_field, slug) in [
+                ("source", "source_token", &source_slug),
+                ("target", "target_token", &target_slug),
+            ] {
+                let Some(tok) = v[token_field].as_str() else {
+                    return err_response(format!("missing {token_field}"));
+                };
+                let Some(st) = host.get(slug).await else {
+                    return err_response(format!("{label} vault is not open"));
+                };
+                if let Err(e) = st.verify_session_token(tok).await {
+                    return err_response(format!("{label} vault: {e}"));
+                }
             }
             let Some(source_state) = host.get(&source_slug).await else {
                 return err_response(format!(
@@ -1350,9 +1391,14 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     }
 
     // ── Browser bridge (bridge.*) — host-level, vault-agnostic (Decision 10) ──
-    if let Some(resp) = handle_bridge_host_route(req.clone(), host).await {
+    // The probe clone carries payloads with master passwords; zeroize it
+    // when the route declines instead of dropping plain Strings.
+    let mut bridge_probe = req.clone();
+    if let Some(resp) = handle_bridge_host_route(&bridge_probe, host).await {
+        bridge_probe.payload.zeroize();
         return resp;
     }
+    bridge_probe.payload.zeroize();
 
     // ── Bridge-token detection (Decision 5). Branch BEFORE the per-vault ──
     // session-token gate: if the request carries a valid bridge token, we
@@ -1430,7 +1476,7 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
 /// Handle the pairing/ceremony host routes. Returns None if `req.action` is
 /// not a bridge.* route (caller continues to the per-vault path).
 async fn handle_bridge_host_route(
-    req: GatewayRequest,
+    req: &GatewayRequest,
     host: &SharedVaultHost,
 ) -> Option<GatewayResponse> {
     use crate::bridge as br;
@@ -1580,8 +1626,11 @@ async fn handle_bridge_host_route(
             {
                 return Some(err_response("desktop session token required"));
             }
+            let expect_id = serde_json::from_str::<serde_json::Value>(&req.payload)
+                .ok()
+                .and_then(|v| v["request_id"].as_str().map(str::to_string));
             let mut reg = host.bridge().write().await;
-            match reg.approve_pending() {
+            match reg.approve_pending(expect_id.as_deref()) {
                 Ok(request_id) => Some(ok_resp(
                     serde_json::json!({
                         "request_id": request_id,
@@ -2403,7 +2452,10 @@ async fn handle_vault_unlock(mut req: GatewayRequest, host: &SharedVaultHost) ->
     // Payload is the master password (plaintext) OR JSON {"slug":"...", "password":"..."}.
     // Support both: try JSON first, fall back to plain-string for backward compat.
     let (slug, password) = match serde_json::from_str::<serde_json::Value>(&req.payload) {
-        Ok(v) if v.get("password").is_some() || v.get("slug").is_some() => {
+        // A payload without a password key is a plaintext password that
+        // happens to parse as JSON (e.g. {"slug":"x"}); treat it as the
+        // password string, not as an empty-password envelope.
+        Ok(v) if v.get("password").is_some() => {
             let s = v.get("slug").and_then(|x| x.as_str()).map(String::from);
             let p = v
                 .get("password")
@@ -2808,7 +2860,7 @@ async fn handle_space_create(mut req: GatewayRequest, host: &SharedVaultHost) ->
     // buffer before the handoff (handle_vault_create zeroizes the new one).
     req.payload.zeroize();
     req.payload = rebuilt;
-    let resp = handle_vault_create(req, host).await;
+    let resp = handle_vault_create(req, host).await; // lock held inside
     if resp.success {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&resp.payload) {
             if let Some(created_slug) = val["slug"].as_str() {
@@ -2827,7 +2879,13 @@ async fn handle_space_create(mut req: GatewayRequest, host: &SharedVaultHost) ->
     resp
 }
 
+/// Serializes vault.create ceremonies: two concurrent creates for one
+/// slug can both pass the on-disk kdf-params guard, and the loser's
+/// cleanup would delete the winner's live vault directory.
+static CREATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn handle_vault_create(mut req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
+    let _create_guard = CREATE_LOCK.lock().await;
     if req.payload.is_empty() {
         return err_response("Missing vault creation JSON in payload");
     }
@@ -3252,8 +3310,7 @@ async fn handle_enroll_with_phrase(
     };
     // The payload still carries the phrase; scrub it now that the owned
     // copy exists (host-level routes bypass route_request's blanket
-    // payload zeroize).
-    req.payload.zeroize();
+    // payload zeroize). The slug is extracted BEFORE the scrub.
     let target_slug = if req.slug.is_empty() {
         match extract_slug(&req.payload) {
             Some(s) => s,
@@ -3268,6 +3325,7 @@ async fn handle_enroll_with_phrase(
     } else {
         req.slug.clone()
     };
+    req.payload.zeroize();
     let Some(state) = host.get(&target_slug).await else {
         phrase.zeroize();
         return err_response(format!("vault '{target_slug}' not found"));
@@ -3947,9 +4005,27 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(s) => s,
                 None => return err_response("missing new_password"),
             };
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            let permit = match baluard_runtime::rate_limit::global().claim_attempt(&vault_key) {
+                baluard_runtime::rate_limit::ClaimResult::Allowed(p) => p,
+                _ => return err_response("Too many failed attempts. Wait before retrying."),
+            };
             match state.change_master_password(old_pw, new_pw).await {
-                Ok(()) => ok_resp("{}", token_str),
-                Err(e) => err_response(e),
+                Ok(()) => {
+                    permit.commit_success();
+                    ok_resp("{}", token_str)
+                }
+                Err(e) => {
+                    // The core returns Corrupt("old master password incorrect");
+                    // only that failure burns the shared budget (permit Drop
+                    // records an uncommitted slot as a failure).
+                    if e.contains("old master password incorrect") {
+                        permit.commit_failure();
+                    } else {
+                        permit.commit_success();
+                    }
+                    err_response(e)
+                }
             }
         }
 
@@ -3967,9 +4043,27 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(s) => s,
                 None => return err_response("missing old_password"),
             };
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            let permit = match baluard_runtime::rate_limit::global().claim_attempt(&vault_key) {
+                baluard_runtime::rate_limit::ClaimResult::Allowed(p) => p,
+                _ => return err_response("Too many failed attempts. Wait before retrying."),
+            };
             match state.rotate_recovery_phrase(old_pw).await {
-                Ok(json) => ok_resp(json, token_str),
-                Err(e) => err_response(e),
+                Ok(json) => {
+                    permit.commit_success();
+                    ok_resp(json, token_str)
+                }
+                Err(e) => {
+                    // The core returns Corrupt("old master password incorrect");
+                    // only that failure burns the shared budget (permit Drop
+                    // records an uncommitted slot as a failure).
+                    if e.contains("old master password incorrect") {
+                        permit.commit_failure();
+                    } else {
+                        permit.commit_success();
+                    }
+                    err_response(e)
+                }
             }
         }
 
@@ -4825,6 +4919,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
         "sync.push" => {
             refresh_connected_tokens_if_needed().await;
+            // C3: hold the autosync cycle lock so this manual cycle cannot
+            // overlap a debounce push, background pull, or paused merge.
+            let cycle_guard = state.autosync.cycle_lock_owned().await;
             // git2 push does real network I/O (SSH/HTTPS) with no transport
             // timeout — must run off the async worker pool, bounded by
             // SYNC_OP_TIMEOUT so a hung push can't leak the thread (see sync.remote).
@@ -4832,7 +4929,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let seal = state.devkey_seal().await;
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
-                tokio::task::spawn_blocking(move || sync_push(&vault_path, seal.as_ref())),
+                tokio::task::spawn_blocking(move || {
+                    let _cycle_guard = cycle_guard;
+                    sync_push(&vault_path, seal.as_ref())
+                }),
             )
             .await;
             match joined {
@@ -4844,6 +4944,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
         "sync.pull" => {
             refresh_connected_tokens_if_needed().await;
+            // C3: hold the autosync cycle lock so this manual cycle cannot
+            // overlap a debounce push, background pull, or paused merge.
+            let cycle_guard = state.autosync.cycle_lock_owned().await;
             // git2 pull does real network I/O — must run off the async worker
             // pool, bounded by SYNC_OP_TIMEOUT (see sync.remote).
             let vault_path = state.vault_path.clone();
@@ -4852,6 +4955,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
+                    let _cycle_guard = cycle_guard;
                     sync_pull(&vault_path, seal.as_ref(), enroll_vk)
                 }),
             )
@@ -4865,6 +4969,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
         "sync.revoke" => {
             refresh_connected_tokens_if_needed().await;
+            // C3: hold the autosync cycle lock so this manual cycle cannot
+            // overlap a debounce push, background pull, or paused merge.
+            let cycle_guard = state.autosync.cycle_lock_owned().await;
             let vault_path = state.vault_path.clone();
             let seal = state.devkey_seal().await;
             let parsed: serde_json::Value = serde_json::from_str(&req.payload).unwrap_or_default();
@@ -4873,6 +4980,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
+                    let _cycle_guard = cycle_guard;
                     sync_revoke(&vault_path, seal.as_ref(), &commit, &reason)
                 }),
             )
