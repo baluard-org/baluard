@@ -26,6 +26,11 @@ export const CIPHER_SCHEMAS = {
         uris: (d.uris || []).map(u => typeof u === "string" ? { uri: u, match_strategy: null } : u),
         totp_uri: d.totp_uri || "",
         favicon: d.favicon || null,
+        // Fields the edit form does not render: carried through so an edit
+        // cannot silently reset them (fido2_credentials and password
+        // history survive edits in the core merge; these do not).
+        password_revision_date: d.password_revision_date ?? null,
+        autofill_on_page_load: d.autofill_on_page_load ?? null,
       };
     },
     toKind(flat) {
@@ -34,6 +39,8 @@ export const CIPHER_SCHEMAS = {
         password: flat.password || null,
         uris: flat.uris?.length ? flat.uris : [],
         totp_uri: flat.totp_uri || null,
+        password_revision_date: flat.password_revision_date ?? null,
+        autofill_on_page_load: flat.autofill_on_page_load ?? null,
       };
       // Persist favicon only when present (opt-in fetch at add/edit time).
       if (flat.favicon) data.favicon = flat.favicon;

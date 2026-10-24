@@ -25,7 +25,9 @@ export function createProviderConnect({ t, onUpdate }) {
 	let deviceTimer = null;
 	let webTimer = null;
 
+	let disposed = false;
 	function dispose() {
+		disposed = true;
 		if (deviceTimer) {
 			clearTimeout(deviceTimer);
 			deviceTimer = null;
@@ -85,6 +87,7 @@ export function createProviderConnect({ t, onUpdate }) {
 			}
 
 			async function poll() {
+				if (disposed) return;
 				deviceTimer = null;
 				try {
 					const raw = await daemon(
@@ -135,6 +138,7 @@ export function createProviderConnect({ t, onUpdate }) {
 			}
 
 			async function poll() {
+				if (disposed) return;
 				webTimer = null;
 				try {
 					const raw = await daemon("provider.oauth_status_web");

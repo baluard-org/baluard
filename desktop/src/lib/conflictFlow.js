@@ -34,7 +34,7 @@ export async function fetchPendingConflict() {
  * queue (not pending, or auto-merged with no user action needed).
  */
 export function toPendingConflict(body) {
-  if (!body || !body.pending || body.auto_merged || body.cross_epoch) return null;
+  if (!body || !body.pending || body.auto_merged) return null;
   return {
     cipherId: body.cipher_id ?? "unknown",
     name: body.name ?? "This item",
@@ -52,6 +52,9 @@ export function toPendingConflict(body) {
     // falls back to i18n "this device" / "the other device" when null.
     localDevice: null,
     remoteDevice: null,
+    // Epochs drifted too far apart to merge: only keep_local and
+    // keep_remote are safe (keep_both is refused daemon-side).
+    crossEpoch: !!body.cross_epoch,
   };
 }
 

@@ -130,3 +130,18 @@ describe("ConflictResolutionContext", () => {
     });
   });
 });
+
+describe("cross-epoch conflicts", () => {
+  it("cross_epoch bodies enqueue with only safe verdicts", async () => {
+    const { toPendingConflict } = await import("../lib/conflictFlow.js");
+    const body = {
+      pending: true, cross_epoch: true, cipher_id: "c1",
+      name: "N", cipher_type: "login", fields: [],
+    };
+    const c = toPendingConflict(body);
+    expect(c).not.toBeNull();
+    expect(c.crossEpoch).toBe(true);
+    // Mergeable conflicts carry no epoch flag.
+    expect(toPendingConflict({ pending: true, cipher_id: "c2" }).crossEpoch).toBe(false);
+  });
+});

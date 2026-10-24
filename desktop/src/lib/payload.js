@@ -42,6 +42,7 @@ export function buildAddPayload(c) {
     name: c.name,
     kind: buildKind(c),
     favorite: c.favorite || false,
+    reprompt: c.reprompt || false,
     notes: c.notes || null,
     folder_id: c.folder_id || null,
     collection_id: c.collection_id || null,

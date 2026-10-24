@@ -57,6 +57,7 @@
     "title": "Create Vault",
     "subtitle": "Set a master password for your new vault",
     "namePlaceholder": "Vault name",
+    "nameRequired": "An entry name is required",
     "slugLabel": "Slug",
     "slugEdit": "Edit",
     "slugDone": "Done",

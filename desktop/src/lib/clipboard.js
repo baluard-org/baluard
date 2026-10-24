@@ -30,16 +30,26 @@ export async function copyToClipboard(value, opts = {}) {
   }
 
   if (autoClearMs > 0) {
-    setTimeout(async () => {
+    const tryClear = async () => {
       try {
         const current = await navigator.clipboard.readText();
         if (current === value) {
           await navigator.clipboard.writeText("");
         }
+        return true;
       } catch {
-        // Clipboard read may be denied by browser permissions.
-        // Best-effort; if we can't read, we won't try to clear.
+        // readText needs document focus; the timer usually fires after the
+        // user switched windows to paste. One-shot retry on focus return.
+        return false;
       }
+    };
+    setTimeout(async () => {
+      if (await tryClear()) return;
+      const onFocus = async () => {
+        window.removeEventListener("focus", onFocus);
+        await tryClear();
+      };
+      window.addEventListener("focus", onFocus);
     }, autoClearMs);
   }
 }
