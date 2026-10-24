@@ -9,7 +9,7 @@
 // target first, then it becomes active. Cancelling leaves the user on the
 // currently-displayed vault with its active pointer untouched.
 
-import { createSignal, Show, onSettled } from "solid-js";
+import { createSignal, Show, createEffect } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -44,24 +44,39 @@ export default function SwitchUnlockModal(props) {
 
   // Query the target vault's Quick Unlock status on open. The target is
   // open-but-locked by the time this modal appears (the switcher opens it).
-  onSettled(() => {
+  let statusGen = 0;
+  createEffect(() => {
     const slug = props.target?.slug;
-    if (!slug) return;
+    if (!slug) {
+      // No target: no stale buttons from the previously opened vault.
+      setQuAvailable(false);
+      setPinAvailable(false);
+      return;
+    }
+    const gen = ++statusGen;
     daemon("vault.biometric_status", "", slug)
       .then((r) => {
+        if (gen !== statusGen) return;
         const s = JSON.parse(r);
         setQuAvailable(s.available && s.enabled);
       })
-      .catch(() => setQuAvailable(false));
+      .catch(() => {
+        if (gen === statusGen) setQuAvailable(false);
+      });
     daemon("vault.pin_status", "", slug)
-      .then((r) => setPinAvailable(!!JSON.parse(r).enabled))
-      .catch(() => setPinAvailable(false));
+      .then((r) => {
+        if (gen === statusGen) setPinAvailable(!!JSON.parse(r).enabled);
+      })
+      .catch(() => {
+        if (gen === statusGen) setPinAvailable(false);
+      });
   });
 
   const name = () => props.target?.display_name || props.target?.slug || "";
 
   function reset() {
     setPassword("");
+    setPinValue("");
     setBusy(false);
     setFailed(false);
   }

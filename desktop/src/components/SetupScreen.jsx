@@ -145,7 +145,7 @@ export default function SetupScreen() {
     <div class="flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 relative overflow-y-auto py-8">
       <ThemeToggleFloating />
       <div class="flex items-center justify-center min-h-full w-full">
-        <FocusTrap containerRef={() => cardRef} />
+        <FocusTrap containerRef={cardRef} />
         <div ref={cardRef} class="w-full max-w-lg p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast">
 
           <div class="text-center mb-6">

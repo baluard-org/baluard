@@ -13,7 +13,9 @@ const AuthContext = createContext(null);
 
 // Valid auth state transitions. Dev-only guard.
 const VALID_AUTH_TRANSITIONS = {
-  locked:    ["unlocking", "init", "welcome"],
+  // "unlocked": biometric/PIN quick unlock flips directly (no unlocking
+  // intermediate — the credential prompt IS the unlocking state).
+  locked:    ["unlocking", "unlocked", "init", "welcome"],
   unlocking: ["unlocked", "locked"],
   unlocked:  ["locked"],
   init:      ["creating", "locked"],
@@ -49,6 +51,20 @@ function AuthProvider(props) {
   // Raw last unlock failure so the login screen can tell a hardware-seal
   // failure (never a wrong password) from a credential rejection.
   const [lastUnlockError, setLastUnlockError] = createSignal(null);
+
+  // Shared tail for biometric/PIN quick unlock: mirror unlock()'s post-
+  // unlock bookkeeping so quick unlock is not a second-class path.
+  function finishQuickUnlock(infoStr) {
+    if (loginPasswordRef) loginPasswordRef.value = "";
+    if (infoStr) {
+      try { setVaultInfo(JSON.parse(infoStr)); } catch {}
+    }
+    setLastUnlockError(null);
+    setSwitchTarget(null);
+    startVaultPrefetch();
+    guardStatus(status(), "unlocked", setStatus);
+  }
+
 
   async function refreshActiveVault() {
     try {
@@ -143,6 +159,7 @@ function AuthProvider(props) {
       // password signal must not survive a lock cycle either.
       setCreatePassword("");
       setKitPhrase("");
+      setRecoveryPhrase("");
       // VaultProvider unmounts via <Show>. All vault signals destroyed.
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -177,7 +194,7 @@ function AuthProvider(props) {
     createPassword, setCreatePassword,
     switchTarget, setSwitchTarget,
     setLoginPasswordRef: (r) => { loginPasswordRef = r; },
-    lastUnlockError, unlock, lock, createVault, refreshActiveVault,
+    lastUnlockError, unlock, lock, finishQuickUnlock, createVault, refreshActiveVault,
   };
 
   return (

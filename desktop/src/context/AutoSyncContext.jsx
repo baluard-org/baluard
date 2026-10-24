@@ -81,6 +81,10 @@ export function AutoSyncProvider(props) {
       // re-introduce A's conflict into B's view.
       const targetSlug = switcher.activeSlug();
       const raw = await daemon("sync.autosync_status");
+      // A switch during the IPC round-trip: this response belongs to the
+      // PREVIOUS vault. Writing it would overwrite B's signals with A's
+      // state and fire a false resolved-conflict banner.
+      if (switcher.activeSlug() !== targetSlug) return;
       const s = JSON.parse(raw);
       setActive(s.active);
       setState(s.state);

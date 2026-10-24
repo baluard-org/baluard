@@ -57,6 +57,7 @@
     "title": "Criar Cofre",
     "subtitle": "Defina uma senha mestra para seu novo cofre",
     "namePlaceholder": "Nome do cofre",
+    "nameRequired": "O nome da entrada é obrigatório",
     "slugLabel": "Slug",
     "slugEdit": "Editar",
     "slugDone": "Concluído",

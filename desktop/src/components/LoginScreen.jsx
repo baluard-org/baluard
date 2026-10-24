@@ -274,9 +274,9 @@ export default function LoginScreen() {
                   // no-slug call would fall through to the daemon-active vault
                   // and unlock the wrong one in a multi-vault setup.
                   await biometryPrompt();
-                  await daemon("vault.open", "", target);
+                  const infoStr = await daemon("vault.open", "", target);
                   await daemon("vault.biometric_unlock", "", target);
-                  auth.setStatus("unlocked");
+                  auth.finishQuickUnlock(infoStr);
                 } catch (e) {
                   if (!/cancelled|canceled|user cancel/i.test(e?.message || "")) {
                     toastError(sanitizeError(e, t));
@@ -330,7 +330,7 @@ export default function LoginScreen() {
                       target,
                     );
                     setPinValue("");
-                    auth.setStatus("unlocked");
+                    auth.finishQuickUnlock();
                   } catch (e) {
                     toastError(sanitizeError(e, t));
                     setPinValue("");

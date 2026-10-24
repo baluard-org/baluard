@@ -24,6 +24,13 @@ const MUTATION_ACTIONS = new Set([
   "groups.create", "groups.rename", "groups.delete", "groups.member_add", "groups.member_remove",
   "policies.set",
   "packages.import",
+  "vault.rotate_recovery", "vault.attach_upload", "vault.attach_delete", "vault.change_password",
+  "members.invite", "members.remove", "members.reset", "members.transfer", "members.claim",
+  "members.set_email", "members.set_minor", "members.set_role", "members.leave",
+  "members.leave_approve", "members.contest_cancel", "members.replace_device",
+  "requests.stage", "requests.approve", "requests.deny",
+  "space.set_purpose", "space.flip", "space.migrate", "locale.save",
+  "templates.create", "templates.delete", "collections.sweep",
 ]);
 
 async function daemon(action, payload = "", slug = null) {

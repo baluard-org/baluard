@@ -26,6 +26,7 @@
     "title": "Crear bóveda",
     "subtitle": "Establece una contraseña maestra para tu nueva bóveda",
     "namePlaceholder": "Nombre de la bóveda",
+    "nameRequired": "El nombre de la entrada es obligatorio",
     "slugLabel": "Slug",
     "slugEdit": "Editar",
     "slugDone": "Listo",

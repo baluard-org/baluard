@@ -88,15 +88,23 @@ function VaultProvider(props) {
     // button on an admin vault) until the refresh lands.
     setCollections([]);
     setIsAdmin(null);
+    // Decrypted entries from the previous vault must not render under the
+    // new vault's header while the next list_full is in flight.
+    setCiphers([]);
+    setFolders([]);
+    setTags([]);
+    setTrashCiphers([]);
+    setArchivedCiphers([]);
   }
 
   async function refreshCiphers(t) {
     try {
       const prefetch = consumeVaultPrefetch();
-      const data = prefetch
-        ? (await prefetch)
-        : JSON.parse(await daemon("vault.list_full"));
-
+      // A failed prefetch resolves null: fall through to a direct fetch
+      // instead of erroring out.
+      const data =
+        (prefetch ? await prefetch : null) ||
+        JSON.parse(await daemon("vault.list_full"));
       if (!data) throw new Error("empty response");
       setCiphers(data.ciphers || []);
       setFolders(Array.isArray(data.folders) ? data.folders : []);
@@ -213,7 +221,7 @@ function VaultProvider(props) {
   // because those are local state in VaultView, not global context.
 
   async function addCipher(cipherData, t) {
-    if (!cipherData.name) { toastWarning(t("entry.namePlaceholder") + " required"); return null; }
+    if (!cipherData.name) { toastWarning(t("entry.nameRequired")); return null; }
     try {
       const id = await daemon("vault.add", JSON.stringify(buildAddPayload(cipherData)));
       await refreshCiphers(t);
@@ -225,7 +233,7 @@ function VaultProvider(props) {
   }
 
   async function updateCipher(id, cipherData, t) {
-    if (!cipherData.name) { toastWarning(t("entry.namePlaceholder") + " required"); return; }
+    if (!cipherData.name) { toastWarning(t("entry.nameRequired")); return; }
     try {
       await daemon("vault.update", JSON.stringify(buildUpdatePayload(id, cipherData)));
       await refreshCiphers(t);

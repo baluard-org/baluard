@@ -17,11 +17,13 @@ export const ERROR_PATTERNS = [
 
 export function sanitizeError(raw, t) {
   const str = typeof raw === "string" ? raw : (raw?.message || String(raw || ""));
+  // Some callers (BridgeTab) have no i18n context: fall back to the key.
+  const tt = typeof t === "function" ? t : (k) => k;
   for (const { pattern, key } of ERROR_PATTERNS) {
-    if (pattern.test(str)) return t(key);
+    if (pattern.test(str)) return tt(key);
   }
   if (import.meta.env.DEV) return `DEBUG: ${str}`;
-  return t("errors.unexpected");
+  return tt("errors.unexpected");
 }
 
 // Normalize URI (string or {uri, match_strategy}) to plain string
