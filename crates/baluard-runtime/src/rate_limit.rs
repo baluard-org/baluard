@@ -70,8 +70,8 @@ pub enum ClaimResult<'a> {
     LockedOut(Duration),
 }
 
-/// A reserved attempt slot. Drop the permit (without calling commit) to
-/// release the slot back; call `commit_failure` to convert it to a failure.
+/// A reserved attempt slot. Dropping without a commit records a failure
+/// (fail closed); call `commit_failure`/`commit_success` explicitly.
 #[derive(Debug)]
 pub struct AttemptPermit<'a> {
     limiter: &'a RateLimiter,
@@ -95,11 +95,13 @@ impl<'a> AttemptPermit<'a> {
 
 impl Drop for AttemptPermit<'_> {
     fn drop(&mut self) {
-        // Nothing to release: the permit API records outcome only via the
-        // explicit commit_* calls. An uncommitted drop (early return) leaves
-        // the counters untouched on purpose — the caller already decided
-        // the attempt did not warrant a success/failure record.
-        let _ = self.committed;
+        // Fail closed: an attempt that neither committed success nor
+        // failure (early return, ?-propagation, panic unwind) still
+        // consumed an Argon2id-grade verification slot and must count —
+        // otherwise a caller bug silently mints free oracle attempts.
+        if !self.committed {
+            self.limiter.record_failure(&self.vault_key);
+        }
     }
 }
 
@@ -124,7 +126,7 @@ impl RateLimiter {
     /// here). Handlers that need strict serialization (e.g. PIN verify+
     /// record) hold their own mutex across the critical section.
     pub fn claim_attempt(&self, vault_key: &str) -> ClaimResult<'_> {
-        let mut state = self.state.lock().expect("rate limiter poisoned");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = state.entry(vault_key.to_string()).or_default();
 
         // Lockout check
@@ -152,7 +154,7 @@ impl RateLimiter {
 
     /// Record a failed attempt (called by AttemptPermit::commit_failure).
     pub fn record_failure(&self, vault_key: &str) {
-        let mut state = self.state.lock().expect("rate limiter poisoned");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = state.entry(vault_key.to_string()).or_default();
         entry.failed_attempts = entry.failed_attempts.saturating_add(1);
         entry.last_attempt = Instant::now();
@@ -163,7 +165,7 @@ impl RateLimiter {
 
     /// Record a successful attempt (called by AttemptPermit::commit_success).
     pub fn record_success(&self, vault_key: &str) {
-        let mut state = self.state.lock().expect("rate limiter poisoned");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(entry) = state.get_mut(vault_key) {
             entry.failed_attempts = 0;
             entry.locked_until = None;
