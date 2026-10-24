@@ -5288,7 +5288,13 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     ok_resp(json, token_str)
                 }
                 Err(e) => {
-                    permit.commit_failure();
+                    // Only a wrong password is an oracle attempt: validate
+                    // failures or a locked vault must not burn the budget.
+                    if e == "Incorrect master password" {
+                        permit.commit_failure();
+                    } else {
+                        permit.commit_success();
+                    }
                     req.payload.zeroize();
                     err_response(e)
                 }
@@ -5348,10 +5354,46 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
-        "vault.biometric_enable" => match state.biometric_enable(&req.payload).await {
-            Ok(json) => ok_resp(json, token_str),
-            Err(e) => err_response(e),
-        },
+        "vault.biometric_enable" => {
+            // The enable path verifies the master password: it rides the
+            // same per-vault Argon2id-oracle budget as unlock/reprompt.
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
+                crate::rate_limit::ClaimResult::Allowed(p) => p,
+                crate::rate_limit::ClaimResult::Backoff(d) => {
+                    req.payload.zeroize();
+                    return err_response(format!(
+                        "Too many failed attempts. Wait {}s before retrying.",
+                        d.as_secs()
+                    ));
+                }
+                crate::rate_limit::ClaimResult::LockedOut(d) => {
+                    req.payload.zeroize();
+                    return err_response(format!(
+                        "Vault locked due to too many failed attempts. Wait {}s.",
+                        d.as_secs()
+                    ));
+                }
+            };
+            match state.biometric_enable(&req.payload).await {
+                Ok(json) => {
+                    permit.commit_success();
+                    req.payload.zeroize();
+                    ok_resp(json, token_str)
+                }
+                Err(e) => {
+                    // Only a wrong password is an oracle attempt: validate
+                    // failures or a locked vault must not burn the budget.
+                    if e == "Incorrect master password" {
+                        permit.commit_failure();
+                    } else {
+                        permit.commit_success();
+                    }
+                    req.payload.zeroize();
+                    err_response(e)
+                }
+            }
+        }
 
         "vault.biometric_disable" => match state.biometric_disable().await {
             Ok(json) => ok_resp(json, token_str),
@@ -5416,10 +5458,45 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
-        "vault.pin_enable" => match state.pin_enable(&req.payload).await {
-            Ok(json) => ok_resp(json, token_str),
-            Err(e) => err_response(e),
-        },
+        "vault.pin_enable" => {
+            // Same master-password oracle budget as biometric_enable.
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
+                crate::rate_limit::ClaimResult::Allowed(p) => p,
+                crate::rate_limit::ClaimResult::Backoff(d) => {
+                    req.payload.zeroize();
+                    return err_response(format!(
+                        "Too many failed attempts. Wait {}s before retrying.",
+                        d.as_secs()
+                    ));
+                }
+                crate::rate_limit::ClaimResult::LockedOut(d) => {
+                    req.payload.zeroize();
+                    return err_response(format!(
+                        "Vault locked due to too many failed attempts. Wait {}s.",
+                        d.as_secs()
+                    ));
+                }
+            };
+            match state.pin_enable(&req.payload).await {
+                Ok(json) => {
+                    permit.commit_success();
+                    req.payload.zeroize();
+                    ok_resp(json, token_str)
+                }
+                Err(e) => {
+                    // Only a wrong password is an oracle attempt: validate
+                    // failures or a locked vault must not burn the budget.
+                    if e == "Incorrect master password" {
+                        permit.commit_failure();
+                    } else {
+                        permit.commit_success();
+                    }
+                    req.payload.zeroize();
+                    err_response(e)
+                }
+            }
+        }
 
         "vault.pin_disable" => match state.pin_disable().await {
             Ok(json) => ok_resp(json, token_str),

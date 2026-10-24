@@ -470,7 +470,10 @@ impl MobileVault {
             });
         }
         arr.copy_from_slice(&kek);
-        Ok(self.state.unlock_with_kek(&arr).await?)
+        // Lean landing: no autosync/sweep tail. This runs in the
+        // memory-capped autofill process; the main app's coordinator
+        // owns the sync work.
+        Ok(self.state.unlock_with_kek_lean(&arr).await?)
     }
 
     /// Whether the vault currently holds an unlocked handle in memory.

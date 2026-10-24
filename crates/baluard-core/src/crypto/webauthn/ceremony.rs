@@ -43,6 +43,11 @@ pub enum CeremonyState {
         user_name: String,
         user_display_name: String,
         user_id: Vec<u8>,
+        // The fresh credential stays Rust-side behind the ceremony id
+        // (SEC-1): the registration response redacts key material and
+        // finish_register takes the passkey from here, never from the
+        // client echo.
+        passkey_data: Box<PasskeyData>,
         created_at: Instant,
     },
     Assertion {
