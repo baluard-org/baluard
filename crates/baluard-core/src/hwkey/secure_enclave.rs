@@ -68,9 +68,15 @@ impl SecureEnclaveStore {
 impl HardwareKeyStore for SecureEnclaveStore {
     fn probe(&self) -> HwCapability {
         // Honest probe: SE availability is only answerable by asking the
-        // chip for a throwaway key. Cheap; the ephemeral path needs
-        // nothing but code-signing, so a failure here is a real "no SE".
-        match self.ecdh_ephemeral("baluard-hw:probe") {
+        // chip. Mint a throwaway NON-permanent key (code-signature only,
+        // no provisioning profile); looking up a fixed tag would always
+        // miss and read as "no Secure Enclave".
+        let probe = SecureEnclaveKey::generate(&SecureEnclaveKeyOptions {
+            tag: b"baluard-hw:probe",
+            access_flags: SecAccessControlFlags::empty(),
+            permanent: false,
+        });
+        match probe {
             Ok(_) => HwCapability::Available {
                 backend: "secure-enclave".into(),
             },

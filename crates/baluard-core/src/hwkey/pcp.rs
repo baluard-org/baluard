@@ -44,7 +44,8 @@ use crate::hwkey::{EphemeralPub, HardwareKeyStore, HwCapability, SharedSecret};
 
 const PROVIDER_NAME: &str = "Microsoft Platform Crypto Provider";
 const PCP_ECDH_P256_ALG: &str = "ECDH_P256";
-const BCRYPT_ECDH_ALG: &str = "ECDH_PUBLIC_P256";
+// BCrypt names the curve, not "ECDH_PUBLIC_P256" (never a valid alg id).
+const BCRYPT_ECDH_ALG: &str = "ECDH_P256";
 const ECC_PUBLIC_BLOB: &str = "ECCPUBLICBLOB";
 const KDF_RAW_SECRET: &str = "TRUNCATE";
 const KEY_NAME_PREFIX: &str = "baluard-hw-";
@@ -121,6 +122,11 @@ fn key_name(binding: &str) -> Result<String, BaluardError> {
 struct NcryptHandle(usize);
 
 impl NcryptHandle {
+    /// Mark the handle as consumed (NCryptDeleteKey frees it itself).
+    fn invalidate(&mut self) {
+        self.0 = 0;
+    }
+
     fn release(&mut self) {
         if self.0 != 0 {
             unsafe {
@@ -360,7 +366,9 @@ impl HardwareKeyStore for PcpStore {
         unsafe {
             nc::NCryptDeleteKey(key.0, 0);
         }
-        key.release();
+        // NCryptDeleteKey already invalidated the handle; freeing it
+        // again would be a use-after-delete.
+        key.invalidate();
         HwCapability::Available {
             backend: "tpm-pcp".into(),
         }
@@ -443,7 +451,7 @@ impl HardwareKeyStore for PcpStore {
         };
         let mut key = key;
         check(unsafe { nc::NCryptDeleteKey(key.0, 0) })?;
-        key.release();
+        key.invalidate();
         Ok(())
     }
 }
