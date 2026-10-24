@@ -396,18 +396,48 @@ impl VaultState {
             let guard = self.inner.read().await;
             if let Some(ref handle) = *guard {
                 if handle.is_unlocked() {
+                    // Raced another unlock, or the 4h expiry dropped the
+                    // token while the vault stayed open: the caller just
+                    // presented the master password, so minting is safe.
+                    if self.get_session_token().await.is_none() {
+                        drop(guard);
+                        return self.finish_unlock_already_open().await;
+                    }
                     return Ok(());
                 }
             }
         }
 
-        // Open a fresh handle and derive KEK outside any lock (expensive Argon2id)
-        // Typed error: DeviceUnpaired must reach the FFI as a variant, not a
-        // string the mobile side cannot classify.
-        let mut new_handle = VaultHandle::open(&self.vault_path)?;
+        // Open a fresh handle and derive the KEK on a blocking thread:
+        // Argon2id pins a worker for ~1s and 64-256MB otherwise.
+        let vault_path = self.vault_path.clone();
+        let password = Zeroizing::new(master_password.to_string());
+        let new_handle =
+            tokio::task::spawn_blocking(
+                move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
+                let mut h = VaultHandle::open(&vault_path)?;
+                h.unlock(&password)?;
+                Ok(h)
+            })
+            .await
+            .map_err(|e| {
+                baluard_core::error::BaluardError::from(
+                    baluard_core::error::VaultError::Metadata(format!("unlock task: {e}")),
+                )
+            })??;
 
-        new_handle.unlock(master_password)?;
+        self.finish_unlock(new_handle).await
+    }
 
+    /// Session-only unlock landing: swap in the handle and mint the
+    /// session token. The Android :autofill process lands here — the
+    /// sync tail would run git writes in the memory-capped process
+    /// concurrently with the main app's coordinator (per-process
+    /// cycle_lock does not protect across processes).
+    async fn finish_unlock_session(
+        &self,
+        new_handle: baluard_core::vault::handle::VaultHandle,
+    ) -> Result<(), baluard_core::error::BaluardError> {
         // Swap in the unlocked handle under write lock
         let mut guard = self.inner.write().await;
         // Double-check: another thread may have unlocked while we waited
@@ -435,6 +465,53 @@ impl VaultState {
         );
         drop(token_guard);
 
+        Ok(())
+    }
+
+    /// Full unlock landing: session swap + token, then the unlock-time
+    /// sync/sweep tail. unlock, unlock_with_kek and pin_unlock (daemon,
+    /// desktop and mobile-main processes) all land here.
+    async fn finish_unlock(
+        self: &Arc<Self>,
+        new_handle: baluard_core::vault::handle::VaultHandle,
+    ) -> Result<(), baluard_core::error::BaluardError> {
+        self.finish_unlock_session(new_handle).await?;
+        self.run_unlock_sync_tail().await;
+        Ok(())
+    }
+
+    /// Mint a fresh session token (caller has proven a credential).
+    async fn mint_session_token(&self) {
+        let mut token_guard = self.session_token.write().await;
+        *token_guard = Some(generate_session_token());
+        self.session_token_generation.store(
+            self.session_generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        self.session_token_created.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
+    }
+
+    /// Full unlock landing for an already-open vault whose token was
+    /// lost (4h idle expiry): mint and run the sync tail.
+    async fn finish_unlock_already_open(
+        self: &Arc<Self>,
+    ) -> Result<(), baluard_core::error::BaluardError> {
+        self.mint_session_token().await;
+        self.run_unlock_sync_tail().await;
+        Ok(())
+    }
+
+    /// Unlock-time work shared by every full unlock: device-name
+    /// migration, merge-cache refresh, autosync activation, expiry
+    /// sweeps. The mobile autofill lean path does not run it.
+    async fn run_unlock_sync_tail(self: &Arc<Self>) {
+        let guard = self.inner.read().await;
         // C5: fold plaintext device names into settings.enc + strip them from
         // the git-tracked devices.json. Runs on every unlock (idempotent;
         // re-folds names reintroduced by a legacy remote's registry). Runs
@@ -585,7 +662,6 @@ impl VaultState {
             }
         }
 
-        Ok(())
     }
 
     /// S3-3 expiry-that-rotates executor: drop expired grants + rotate
@@ -822,29 +898,73 @@ impl VaultState {
         self: &Arc<Self>,
         kek: &[u8; 32],
     ) -> Result<(), baluard_core::error::BaluardError> {
-        // unlock_with_kek runs outside the lock (no KDF, but the HPKE unwrap
-        // + canary check still touch the keywrap). Typed error: same reason
-        // as unlock().
-        let mut new_handle = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)?;
-        new_handle.unlock_with_kek(kek)?;
-        let mut guard = self.inner.write().await;
-        *guard = Some(new_handle);
-        drop(guard);
-        let mut token_guard = self.session_token.write().await;
-        *token_guard = Some(generate_session_token());
-        self.session_token_generation.store(
-            self.session_generation.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
-        self.session_token_created.store(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            Ordering::Relaxed,
-        );
-        Ok(())
+        // Already unlocked with a live token: keep the existing session.
+        // Swapping in a fresh handle + token would strand the caller's.
+        {
+            let guard = self.inner.read().await;
+            if let Some(ref handle) = *guard {
+                if handle.is_unlocked() && self.get_session_token().await.is_some() {
+                    return Ok(());
+                }
+            }
+        }
+        // No KDF, but the HPKE unwrap + canary check still touch the
+        // keywrap: run on a blocking thread like the password path.
+        let vault_path = self.vault_path.clone();
+        let kek = *kek;
+        let mut new_handle =
+            tokio::task::spawn_blocking(
+                move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
+                    let mut h = VaultHandle::open(&vault_path)?;
+                    h.unlock_with_kek(&kek)?;
+                    Ok(h)
+                },
+            )
+            .await
+            .map_err(|e| {
+                baluard_core::error::BaluardError::from(
+                    baluard_core::error::VaultError::Metadata(format!("unlock task: {e}")),
+                )
+            })??;
+
+        self.finish_unlock(new_handle).await
     }
+    /// KEK quick-unlock without the sync/sweep tail. The Android
+    /// :autofill process (and any embedded consumer) uses this: the tail
+    /// would run git writes in the memory-capped process concurrently
+    /// with the main app's autosync coordinator.
+    pub async fn unlock_with_kek_lean(
+        &self,
+        kek: &[u8; 32],
+    ) -> Result<(), baluard_core::error::BaluardError> {
+        // Already unlocked with a live token: keep the existing session.
+        {
+            let guard = self.inner.read().await;
+            if let Some(ref handle) = *guard {
+                if handle.is_unlocked() && self.get_session_token().await.is_some() {
+                    return Ok(());
+                }
+            }
+        }
+        let vault_path = self.vault_path.clone();
+        let kek = *kek;
+        let new_handle =
+            tokio::task::spawn_blocking(
+                move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
+                    let mut h = VaultHandle::open(&vault_path)?;
+                    h.unlock_with_kek(&kek)?;
+                    Ok(h)
+                },
+            )
+            .await
+            .map_err(|e| {
+                baluard_core::error::BaluardError::from(
+                    baluard_core::error::VaultError::Metadata(format!("unlock task: {e}")),
+                )
+            })??;
+        self.finish_unlock_session(new_handle).await
+    }
+
 
     /// List all cipher IDs (works locked or unlocked).
     #[allow(dead_code)]
@@ -1119,6 +1239,16 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
         let package = package.trim().to_ascii_lowercase();
+        // Lands in settings.enc and trust decisions key on it: bound the
+        // size and keep it a plausible package name.
+        if package.is_empty()
+            || package.len() > 256
+            || !package
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+        {
+            return Err("invalid package name".into());
+        }
         if package.is_empty() || package.contains("://") || package.contains('/') {
             return Err("Invalid package name".into());
         }
@@ -1269,6 +1399,11 @@ impl VaultState {
         if let Some(v) = partial.get("avatar_ext") {
             settings.avatar_ext = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid avatar_ext: {e}"))?;
+            if let Some(ext) = &settings.avatar_ext {
+                if !avatar_ext_allowed(ext) {
+                    return Err("Unsupported avatar format".into());
+                }
+            }
         }
         if let Some(v) = partial.get("custom_equivalent_domains") {
             settings.custom_equivalent_domains = serde_json::from_value(v.clone())
@@ -1288,6 +1423,11 @@ impl VaultState {
         }
         if let Some(v) = partial.get("lang") {
             let lang = v.as_str().ok_or("lang must be a string")?;
+            // Lands in git-tracked plaintext settings-pub.json: keep it a
+            // plausible locale tag, not free-form text.
+            if lang.len() > 16 || !lang.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                return Err("lang must be a short locale tag".into());
+            }
             settings.lang = Some(lang.to_string());
             // Also persist to plaintext meta/locale for pre-unlock access
             handle.save_locale(lang).map_err(|e| format!("{e}"))?;
@@ -1336,7 +1476,7 @@ impl VaultState {
             .ok()
             .and_then(|p| p.avatar_ext)
             .unwrap_or_default();
-        if ext.is_empty() {
+        if ext.is_empty() || !avatar_ext_allowed(&ext) {
             return Ok(String::new());
         }
 
@@ -1716,7 +1856,14 @@ impl VaultState {
         let mut ciphers = Vec::new();
         for meta in &metas {
             if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
-                ciphers.push(c.clone());
+                // Only Logins with passkeys matter: cloning everything
+                // copies the whole vault's plaintext into heap.
+                if let baluard_core::types::CipherKind::Login(ref d) = c.kind {
+                    if d.fido2_credentials.as_ref().is_none_or(|v| v.is_empty()) {
+                        continue;
+                    }
+                    ciphers.push(c.clone());
+                }
             }
         }
         let index = baluard_core::crypto::webauthn::PasskeyIndex::from_boxed_ciphers(&ciphers);
@@ -1735,6 +1882,16 @@ impl VaultState {
 
         let ceremony_id = hex::encode(rand::random::<[u8; 32]>());
 
+        // SEC-1: the fresh private key stays in the ceremony cache. The
+        // response carries only public metadata; finish_register reads
+        // the passkey back from the cache, never from the client echo.
+        let mut pk_public = serde_json::to_value(&result.passkey_data)
+            .map_err(|e| format!("Serialize error: {e}"))?;
+        if let Some(obj) = pk_public.as_object_mut() {
+            obj.remove("private_key");
+            obj.remove("prf_key");
+        }
+
         self.ceremony_cache
             .insert(
                 ceremony_id.clone(),
@@ -1744,33 +1901,29 @@ impl VaultState {
                     user_name,
                     user_display_name,
                     user_id,
+                    passkey_data: Box::new(result.passkey_data),
                     created_at: std::time::Instant::now(),
                 },
             )
             .await;
-
-        let pk_data_json = serde_json::to_value(&result.passkey_data)
-            .map_err(|e| format!("Serialize error: {e}"))?;
 
         let response = serde_json::json!({
             "ceremony_id": ceremony_id,
             "credential_id": result.credential_id_b64,
             "attestation_response": serde_json::from_str::<serde_json::Value>(&result.attestation_response)
                 .unwrap_or_default(),
-            "passkey_data": pk_data_json,
+            "passkey_data": pk_public,
         });
 
         Ok(response.to_string())
     }
 
     /// Complete a registration ceremony. Saves passkey to vault.
-    /// Payload: `{ "ceremony_id": "...", "passkey_data": {...} }`
+    /// Payload: `{ "ceremony_id": "...", "credential_id": "..." }`
     ///
-    /// SECURITY NOTE (Phase 1 only): passkey_data is echoed from the
-    /// challenge_register response. This is acceptable within the same-process
-    /// trust boundary (desktop). Phase 2 (browser extension) MUST store
-    /// passkey_data in CeremonyState and retrieve it here, never trusting
-    /// client-supplied data.
+    /// SEC-1: the passkey comes from the ceremony cache, not from the
+    /// client — the challenge_register response redacts key material,
+    /// so no client could supply it anyway.
     pub async fn passkey_finish_register(&self, payload: &str) -> Result<String, String> {
         use baluard_core::crypto::webauthn::CeremonyState;
 
@@ -1778,19 +1931,35 @@ impl VaultState {
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let ceremony_id = v["ceremony_id"].as_str().ok_or("Missing 'ceremony_id'")?;
 
+        // Validate before consuming: a locked vault must not destroy the
+        // pending ceremony (the RP has already registered the credential).
+        let state = self
+            .ceremony_cache
+            .get(ceremony_id)
+            .await
+            .ok_or("Ceremony not found or expired")?;
+        let pk_data = match &state {
+            CeremonyState::Registration { passkey_data, .. } => passkey_data.as_ref().clone(),
+            _ => return Err("Expected registration ceremony".into()),
+        };
+        {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault is locked")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked".into());
+            }
+        }
+        if let Some(echoed) = v["credential_id"].as_str() {
+            if echoed != pk_data.credential_id {
+                return Err("credential_id does not match this ceremony".into());
+            }
+        }
+
         let state = self
             .ceremony_cache
             .remove(ceremony_id)
             .await
-            .ok_or("Ceremony not found or expired")?;
-        match &state {
-            CeremonyState::Registration { .. } => {}
-            _ => return Err("Expected registration ceremony".into()),
-        }
-
-        let pk_data: baluard_core::types::PasskeyData =
-            serde_json::from_value(v["passkey_data"].clone())
-                .map_err(|e| format!("Invalid passkey_data: {e}"))?;
+            .ok_or("Ceremony expired during validation")?;
 
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault is locked")?;
@@ -1805,7 +1974,13 @@ impl VaultState {
             use baluard_core::vault::handle::CipherRead;
             if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
                 if let baluard_core::types::CipherKind::Login(data) = &c.kind {
-                    if data.uris.iter().any(|u| u.uri.contains(&pk_data.rp_id)) {
+                    // Registrable-domain match: a substring hit would file
+                    // the passkey under lookalike hosts (ex.com vs
+                    // annex.com, ex.com.evil.tld).
+                    if data.uris.iter().any(|u| {
+                        baluard_core::types::UriMatchStrategy::Domain
+                            .matches(&u.uri, &pk_data.rp_id)
+                    }) {
                         found_id = Some(meta.id);
                         break;
                     }
@@ -1909,7 +2084,14 @@ impl VaultState {
         let mut ciphers = Vec::new();
         for meta in &metas {
             if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
-                ciphers.push(c.clone());
+                // Only Logins with passkeys matter: cloning everything
+                // copies the whole vault's plaintext into heap.
+                if let baluard_core::types::CipherKind::Login(ref d) = c.kind {
+                    if d.fido2_credentials.as_ref().is_none_or(|v| v.is_empty()) {
+                        continue;
+                    }
+                    ciphers.push(c.clone());
+                }
             }
         }
         let index = baluard_core::crypto::webauthn::PasskeyIndex::from_boxed_ciphers(&ciphers);
@@ -1956,9 +2138,11 @@ impl VaultState {
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let ceremony_id = v["ceremony_id"].as_str().ok_or("Missing 'ceremony_id'")?;
 
+        // Validate before consuming: a locked vault or malformed payload
+        // must not destroy the pending ceremony.
         let state = self
             .ceremony_cache
-            .remove(ceremony_id)
+            .get(ceremony_id)
             .await
             .ok_or("Ceremony not found or expired")?;
         match &state {
@@ -1969,7 +2153,23 @@ impl VaultState {
         let credential_id_b64 = v["credential_id"]
             .as_str()
             .ok_or("Missing 'credential_id'")?;
-        let new_counter = v["new_counter"].as_u64().ok_or("Missing 'new_counter'")? as u32;
+        let new_counter = v["new_counter"]
+            .as_u64()
+            .ok_or("Missing 'new_counter'")?
+            .min(u32::MAX as u64) as u32;
+
+        {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault is locked")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked".into());
+            }
+        }
+
+        self.ceremony_cache
+            .remove(ceremony_id)
+            .await
+            .ok_or("Ceremony expired during validation")?;
 
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault is locked")?;
@@ -2175,7 +2375,14 @@ impl VaultState {
         let mut ciphers = Vec::new();
         for meta in &metas {
             if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
-                ciphers.push(c.clone());
+                // Only Logins with passkeys matter: cloning everything
+                // copies the whole vault's plaintext into heap.
+                if let baluard_core::types::CipherKind::Login(ref d) = c.kind {
+                    if d.fido2_credentials.as_ref().is_none_or(|v| v.is_empty()) {
+                        continue;
+                    }
+                    ciphers.push(c.clone());
+                }
             }
         }
         Ok(baluard_core::crypto::webauthn::PasskeyIndex::from_boxed_ciphers(&ciphers))
@@ -2205,7 +2412,7 @@ impl VaultState {
             Some(s) => base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(s.trim_end_matches('='))
                 .map(Some)
-                .map_err(|_| format!("{s} is not valid base64url").replace("s", "client data")),
+                .map_err(|_| "client data is not valid base64url".to_string()),
             None => Ok(None),
         };
         let client_data_json = decode_b64(client_data_json_b64)?;
@@ -2344,7 +2551,8 @@ impl VaultState {
         };
         {
             let guard = self.inner.read().await;
-            if guard.as_ref().is_none() {
+            let handle = guard.as_ref().ok_or("Vault is locked. Unlock first.".to_string())?;
+            if !handle.is_unlocked() {
                 return Err("Vault is locked. Unlock first.".into());
             }
         }
@@ -2352,6 +2560,11 @@ impl VaultState {
             Some(id_str) => {
                 Some(uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?)
             }
+            None => None,
+        };
+        let new_login_value: Option<serde_json::Value> = match new_login.filter(|s| !s.is_empty())
+        {
+            Some(s) => Some(serde_json::from_str(s).map_err(|e| format!("Invalid new_login: {e}"))?),
             None => None,
         };
 
@@ -2409,10 +2622,7 @@ impl VaultState {
 
         // New login. Rides the state-layer add path so family/org vaults get
         // the member add-routing defaults instead of a flat admin-only write.
-        let login: serde_json::Value = match new_login.filter(|s| !s.is_empty()) {
-            Some(s) => serde_json::from_str(s).map_err(|e| format!("Invalid new_login: {e}"))?,
-            None => serde_json::json!({}),
-        };
+        let login: serde_json::Value = new_login_value.unwrap_or_else(|| serde_json::json!({}));
         let name = login["name"]
             .as_str()
             .map(|s| s.to_string())
@@ -2537,15 +2747,20 @@ impl VaultState {
     /// or full URI). Returns JSON `{data, mime}` or empty string when
     /// disabled or nothing was found.
     pub async fn fetch_favicon(&self, payload: &str) -> Result<String, String> {
-        // Check if favicon fetching is enabled
+        // Check if favicon fetching is enabled. No open (or locked) vault
+        // fails closed: the fetch never runs on a stale opt-in.
         {
             let guard = self.inner.read().await;
-            if let Some(handle) = guard.as_ref() {
-                let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
-                // H7 fix: default-off. Only fetch when explicitly enabled.
-                if !matches!(settings.fetch_favicons, Some(true)) {
-                    return Ok(String::new());
-                }
+            let Some(handle) = guard.as_ref() else {
+                return Ok(String::new());
+            };
+            if !handle.is_unlocked() {
+                return Ok(String::new());
+            }
+            let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+            // H7 fix: default-off. Only fetch when explicitly enabled.
+            if !matches!(settings.fetch_favicons, Some(true)) {
+                return Ok(String::new());
             }
         }
 
@@ -2627,15 +2842,22 @@ impl VaultState {
     /// a huge blob into the cipher envelope.
     async fn try_fetch_icon(client: &reqwest::Client, url: &str) -> Option<String> {
         let resp = client.get(url).send().await.ok()?;
+        // Cap before buffering: content-length lies get the response
+        // dropped instead of read into memory.
+        if let Some(len) = resp.content_length() {
+            if len > 16_384 {
+                return None;
+            }
+        }
         let data = resp.bytes().await.ok()?;
         if data.len() < 4 || data.len() > 16_384 || !Self::looks_like_image(&data) {
             return None;
         }
-        let mime = if data[0] == 0x89 {
+        let mime = if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
             "image/png"
         } else if data[0] == 0xFF {
             "image/jpeg"
-        } else if data[0] == 0x52 {
+        } else if data.starts_with(b"RIFF") && data.len() >= 12 && &data[8..12] == b"WEBP" {
             "image/webp"
         } else {
             "image/x-icon"
@@ -7164,9 +7386,17 @@ impl VaultState {
             Ok(c) => c,
             Err(e) => {
                 drop(guard);
+                // Only a genuine epoch mismatch is cross_epoch; damaged
+                // bytes should not masquerade as one in the UI.
+                let cross = matches!(
+                    e,
+                    baluard_core::error::BaluardError::Vault(
+                        baluard_core::error::VaultError::CrossEpoch { .. }
+                    )
+                );
                 return Ok(serde_json::json!({
                     "pending": true,
-                    "cross_epoch": true,
+                    "cross_epoch": cross,
                     "unreachable_side": "remote",
                     "detail": format!("{e}"),
                     "error": "keep_both needs to decrypt the remote side, which is at an unreachable epoch",
@@ -7176,7 +7406,12 @@ impl VaultState {
         };
         let new_id = uuid::Uuid::new_v4();
         let epoch = handle.current_epoch().ok_or("vault locked mid-keep-both")?;
-        let remote_input = CipherInput::from_cipher(&remote_cipher);
+        let mut remote_input = CipherInput::from_cipher(&remote_cipher);
+        // The clone is a fresh cipher id: attachment files stay bound to
+        // the original (their AAD names the old cipher), so copying the
+        // metadata alone would list undecryptable entries. The user
+        // re-attaches on the clone.
+        remote_input.attachments = Vec::new();
         let new_file = encrypt_cipher(
             handle.vault_id,
             new_id,
@@ -7364,10 +7599,16 @@ impl VaultState {
         let vault_id = handle.vault_id.to_string();
         drop(guard);
 
-        let mut temp = baluard_core::vault::handle::VaultHandle::open(&vault_path)
-            .map_err(|e| format!("Open failed: {e}"))?;
-        temp.unlock(password)
-            .map_err(|_| "Incorrect master password".to_string())?;
+        let pw = Zeroizing::new(password.to_string());
+        let vp = vault_path.clone();
+        let mut temp = tokio::task::spawn_blocking(move || -> Result<VaultHandle, String> {
+            let mut h = VaultHandle::open(&vp).map_err(|e| format!("Open failed: {e}"))?;
+            h.unlock(&pw)
+                .map_err(|_| "Incorrect master password".to_string())?;
+            Ok(h)
+        })
+        .await
+        .map_err(|e| format!("verify task: {e}"))??;
         temp.lock();
 
         baluard_core::biometric::enable(&vault_id, password)?;
@@ -7484,7 +7725,7 @@ impl VaultState {
                 )
             }
         };
-        let update = baluard_core::sync::credentials::CustomCredentialsUpdate {
+        let mut update = baluard_core::sync::credentials::CustomCredentialsUpdate {
             token: p.token,
             username: p.username,
             ssh_passphrase: p.ssh_passphrase,
@@ -7495,6 +7736,11 @@ impl VaultState {
             &p.host,
             &update,
         )?;
+        // The update struct holds plaintext secrets with no zeroize on
+        // drop; wipe them before it goes out of scope.
+        update.token.zeroize();
+        update.ssh_passphrase.zeroize();
+        update.ssh_key_pem.zeroize();
         Ok(r#"{"stored": true}"#.to_string())
     }
 
@@ -7618,14 +7864,25 @@ impl VaultState {
         // Verify the master password by opening a temp handle and unlocking.
         // The KEK we derive here is the same value the daemon's VaultState
         // would use internally; we need it to seed the escrow.
-        let mut temp = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)
-            .map_err(|e| format!("Open failed: {e}"))?;
-        // Confirm the password is correct (raises clear error + advances
-        // nothing persistent — temp handle is discarded).
-        temp.unlock(password)
-            .map_err(|_| "Incorrect master password".to_string())?;
-        let kek = baluard_core::crypto::kdf::derive_kek(password, &temp.kdf_params)
-            .map_err(|e| format!("derive kek: {e}"))?;
+        // Open, verify, and derive the escrow KEK on a blocking thread:
+        // two Argon2id runs would otherwise pin the worker ~2s.
+        let vault_path = self.vault_path.clone();
+        let password = Zeroizing::new(password.to_string());
+        let (mut temp, kek) = tokio::task::spawn_blocking(
+            move || -> Result<(VaultHandle, [u8; 32]), String> {
+                let mut temp = VaultHandle::open(&vault_path)
+                    .map_err(|e| format!("Open failed: {e}"))?;
+                // Confirm the password is correct (raises clear error +
+                // advances nothing persistent — temp handle is discarded).
+                temp.unlock(&password)
+                    .map_err(|_| "Incorrect master password".to_string())?;
+                let kek = baluard_core::crypto::kdf::derive_kek(&password, &temp.kdf_params)
+                    .map_err(|e| format!("derive kek: {e}"))?;
+                Ok((temp, kek))
+            },
+        )
+        .await
+        .map_err(|e| format!("verify task: {e}"))??;
 
         let escrow = crate::pin::PinEscrow::new(kek, pin)?;
         *self.pin.lock().await = Some(escrow);
@@ -7655,7 +7912,7 @@ impl VaultState {
     /// `unlock_with_kek` runs AFTER the lock is released, which is safe
     /// because a correct PIN returns the KEK out (the escrow stays put) and
     /// a wrong PIN never reaches it.
-    pub async fn pin_unlock(&self, payload: &str) -> Result<String, String> {
+    pub async fn pin_unlock(self: &Arc<Self>, payload: &str) -> Result<String, String> {
         let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
         let pin = req["pin"].as_str().ok_or("missing pin")?;
 
@@ -7691,26 +7948,14 @@ impl VaultState {
             .map_err(|e| format!("Failed to open vault for unlock: {e}"))?;
         match new_handle.unlock_with_kek(&kek) {
             Ok(()) => {
-                // Success: clear the PIN failure counter, swap in the handle,
-                // mint a session token — same contract as `unlock()`.
+                // Success: clear the PIN failure counter, then land on the
+                // shared tail (token mint + migration + autosync + sweeps) —
+                // same contract as `unlock()`.
                 self.pin_failures
                     .store(0, std::sync::atomic::Ordering::Relaxed);
-                let mut guard = self.inner.write().await;
-                *guard = Some(new_handle);
-                drop(guard);
-                let mut token_guard = self.session_token.write().await;
-                *token_guard = Some(generate_session_token());
-                self.session_token_generation.store(
-                    self.session_generation.load(Ordering::Relaxed),
-                    Ordering::Relaxed,
-                );
-                self.session_token_created.store(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                    Ordering::Relaxed,
-                );
+                self.finish_unlock(new_handle)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(serde_json::json!({ "success": true }).to_string())
             }
             Err(e) => {
@@ -7765,7 +8010,11 @@ impl VaultState {
         };
 
         // Derive item key
-        let item_key = handle.derive_item_key(cipher_id, cipher.key_epoch);
+        // Domain-aware: a collection-resident entry keys from the
+        // collection key; derive_item_key would panic without an SGK.
+        let item_key = handle
+            .resolve_cipher_item_key(cipher_id, cipher.key_epoch)
+            .map_err(|e| e.to_string())?;
 
         // Generate attachment ID
         let attach_id = uuid::Uuid::new_v4().to_string();
@@ -7883,7 +8132,11 @@ impl VaultState {
             .find(|a| a.id == attach_id)
             .ok_or("Attachment not found")?;
 
-        let item_key = handle.derive_item_key(cipher_id, cipher.key_epoch);
+        // Domain-aware: a collection-resident entry keys from the
+        // collection key; derive_item_key would panic without an SGK.
+        let item_key = handle
+            .resolve_cipher_item_key(cipher_id, cipher.key_epoch)
+            .map_err(|e| e.to_string())?;
 
         let attach_path = handle
             .path
@@ -7892,6 +8145,19 @@ impl VaultState {
             .join("attachments")
             .join(format!("{}.enc", attach_id));
 
+        // Vault contents arrive over git: refuse non-regular files
+        // (symlinks) and bound the read, mirroring the backup container
+        // guards. A git-supplied symlink at this path would otherwise
+        // read /dev/zero or a huge file into memory.
+        let attach_stat = std::fs::symlink_metadata(&attach_path)
+            .map_err(|e| format!("read: {e}"))?;
+        if !attach_stat.is_file() {
+            return Err("Attachment is not a regular file".into());
+        }
+        const MAX_ATTACHMENT_READ: u64 = 4 * 1024 * 1024;
+        if attach_stat.len() > MAX_ATTACHMENT_READ {
+            return Err("Attachment exceeds the size limit".into());
+        }
         let encrypted = std::fs::read(&attach_path).map_err(|e| format!("read: {e}"))?;
         let attach_uuid: uuid::Uuid = attach_id
             .parse()
@@ -7931,6 +8197,13 @@ impl VaultState {
         let attach_id = req["attachment_id"]
             .as_str()
             .ok_or("missing attachment_id")?;
+        // Parse before any path use: the attachments metadata is
+        // member-writable synced data, so a crafted id must never reach a
+        // path join (same gate as attach_download).
+        let attach_uuid: uuid::Uuid = attach_id
+            .parse()
+            .map_err(|_| "invalid attachment_id".to_string())?;
+        let attach_id = attach_uuid.to_string();
 
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened")?;
@@ -7952,16 +8225,15 @@ impl VaultState {
             .ok_or("Attachment not found")?;
         attachments.remove(idx);
 
-        // Delete encrypted file
+        // Update cipher FIRST, then delete the file: a failed update must
+        // not leave metadata pointing at a missing file. An orphaned file
+        // (delete failed after a successful update) rides the trash purge.
         let attach_path = handle
             .path
             .join("entries")
             .join(cipher_id.to_string())
             .join("attachments")
             .join(format!("{}.enc", attach_id));
-        if attach_path.exists() {
-            std::fs::remove_file(&attach_path).map_err(|e| format!("delete: {e}"))?;
-        }
 
         // Update cipher
         let input = baluard_core::types::CipherInput {
@@ -7982,6 +8254,15 @@ impl VaultState {
         handle
             .update_cipher(cipher_id, &input)
             .map_err(|e| format!("{e}"))?;
+
+        if attach_path.exists() {
+            // Metadata already removed: a failed delete must not turn the
+            // operation into a reported error (a retry would find no
+            // attachment). The orphan rides cleanup.
+            if let Err(e) = std::fs::remove_file(&attach_path) {
+                log::warn!("[state] attachment file left behind: {e}");
+            }
+        }
 
         Ok(serde_json::json!({"deleted": true}).to_string())
     }
@@ -8151,8 +8432,12 @@ impl VaultState {
                     continue;
                 }
                 if let Err(e) = handle.revoke_device_and_rekey(device_id) {
-                    revoke_error = Some(format!("{device_id}: {e}"));
-                    break;
+                    // Keep revoking the rest: stopping at the first
+                    // failure would leave later stolen devices live.
+                    revoke_error = Some(match revoke_error.take() {
+                        Some(prev) => format!("{prev}; {device_id}: {e}"),
+                        None => format!("{device_id}: {e}"),
+                    });
                 }
             }
         }
@@ -8170,6 +8455,12 @@ impl VaultState {
                     if let Err(e) = handle.collection_rotate_key(*cid, Some(member_id)) {
                         rotation_failed.push(format!("{cid}: {e}"));
                     }
+                }
+            } else {
+                // Locked handle: nothing rotated. Reporting these as done
+                // would hide keys the thief may still hold.
+                for (cid, _access) in &grants_to_restore {
+                    rotation_failed.push(format!("{cid}: vault locked, rotation skipped"));
                 }
             }
         }
@@ -8238,14 +8529,20 @@ impl VaultState {
     /// Verify master password for reprompt. Opens a temporary handle and attempts unlock.
     /// Returns a short-lived grant. Does NOT change the main vault state.
     pub async fn reprompt_verify(&self, master_password: &str) -> Result<String, String> {
-        // Open a temporary handle
+        // Argon2id pins a worker for ~1s: run the open+verify on a
+        // blocking thread.
+        let vault_path = self.vault_path.clone();
+        let password = Zeroizing::new(master_password.to_string());
         let mut temp_handle =
-            VaultHandle::open(&self.vault_path).map_err(|e| format!("Open failed: {e}"))?;
-
-        // Try to unlock with the provided password
-        temp_handle
-            .unlock(master_password)
-            .map_err(|_| "Incorrect master password".to_string())?;
+            tokio::task::spawn_blocking(move || -> Result<VaultHandle, String> {
+                let mut h =
+                    VaultHandle::open(&vault_path).map_err(|e| format!("Open failed: {e}"))?;
+                h.unlock(&password)
+                    .map_err(|_| "Incorrect master password".to_string())?;
+                Ok(h)
+            })
+            .await
+            .map_err(|e| format!("verify task: {e}"))??;
 
         // Password verified. The grant is time-window only: `expires_at` is
         // all the client needs. No grant_token is minted — a returned token
@@ -8568,6 +8865,20 @@ impl VaultState {
             Some(ref stored)
                 if crate::crypto::constant_time_eq(provided.as_bytes(), stored.as_bytes()) =>
             {
+                // Sliding renewal on AUTHENTICATED activity: the token
+                // lives 4h of inactivity (matching the activity-based
+                // auto-lock). Renewing before the compare would let any
+                // request — even a wrong token — hold the session open.
+                let created = self.session_token_created.load(Ordering::Relaxed);
+                if created > 0 {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    if now.saturating_sub(created) > SESSION_TOKEN_TTL_SECONDS / 2 {
+                        self.session_token_created.store(now, Ordering::Relaxed);
+                    }
+                }
                 Ok(())
             }
             Some(_) => Err("Invalid session token. Re-unlock the vault.".into()),
@@ -8608,6 +8919,14 @@ pub type SharedVaultState = Arc<VaultState>;
 /// The nested kind mirrors the encrypted envelope shape, so it carries
 /// the passkey key material the flat fields above deliberately omit;
 /// strip it before the value crosses IPC.
+/// Extensions the avatar file may carry. Enforced on every path that
+/// turns `avatar_ext` into a filename: the value rides in profile.enc
+/// (Space-admin writable) and an unvalidated join would give a crafted
+/// extension a `..` path on platforms that normalize lexically.
+fn avatar_ext_allowed(ext: &str) -> bool {
+    matches!(ext, "png" | "jpg" | "jpeg" | "gif" | "webp")
+}
+
 fn redact_kind_secrets(mut kind: serde_json::Value) -> serde_json::Value {
     if let Some(creds) = kind
         .get_mut("data")
@@ -8765,15 +9084,9 @@ fn generate_session_token() -> String {
 /// C5: identity is the device UUID — display names are stripped from the
 /// git-tracked devices.json and live encrypted in settings.enc.
 fn registry_device_id(vault_path: &std::path::Path) -> String {
-    let reg_path = vault_path.join("meta/devices.json");
-    if let Ok(data) = std::fs::read_to_string(&reg_path) {
-        if let Ok(reg) = serde_json::from_str::<baluard_core::devices::DeviceRegistry>(&data) {
-            if let Some((id, _)) = reg.devices.iter().next() {
-                return id.to_string();
-            }
-        }
-    }
-    String::new()
+    // Per-clone identity (meta/device-id first): a HashMap-order roster
+    // scan can pick another device and mis-sign conflict commits.
+    baluard_core::vault::device_privkey::local_device_id(vault_path)
 }
 
 /// App-to-web matching context for a fill target (path B). Some(_) only
@@ -9036,6 +9349,18 @@ mod totp_meta_tests {
 
         state.archive_cipher(&id).await.unwrap();
         assert!(state.list_totp_meta().await.unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod avatar_ext_tests {
+    #[test]
+    fn avatar_ext_whitelist_rejects_traversal() {
+        assert!(super::avatar_ext_allowed("png"));
+        assert!(super::avatar_ext_allowed("webp"));
+        for bad in ["x/../../../target", "..", "", "PNG", "a/b"] {
+            assert!(!super::avatar_ext_allowed(bad), "{bad}");
+        }
     }
 }
 
