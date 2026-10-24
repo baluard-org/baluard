@@ -100,25 +100,25 @@ pub fn handle_init(
     let password = match std::env::var("BALUARD_PASSWORD") {
         Ok(pw) => {
             if pw.len() < 8 {
-                eprintln!("error: password must be at least 8 characters");
-                std::process::exit(1);
+
+                return Err("password must be at least 8 characters".into());
             }
             zeroize::Zeroizing::new(pw)
         }
         Err(_) if !is_tty() => {
-            eprintln!("error: no password available. Set BALUARD_PASSWORD or run interactively.");
-            std::process::exit(1);
+
+            return Err("no password available. Set BALUARD_PASSWORD or run interactively.".into());
         }
         Err(_) => {
             let pw = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
             let confirm = zeroize::Zeroizing::new(prompt_password("Confirm password: ")?);
             if *pw != *confirm {
-                eprintln!("error: passwords do not match");
-                std::process::exit(1);
+
+                return Err("passwords do not match".into());
             }
             if pw.len() < 8 {
-                eprintln!("error: password must be at least 8 characters");
-                std::process::exit(1);
+
+                return Err("password must be at least 8 characters".into());
             }
             pw
         }
@@ -140,8 +140,7 @@ pub fn handle_init(
             // Enforced prefix: "personal" becomes "baluard-personal".
             let normalized = baluard_core::vault::slug::normalize_slug(&s);
             if let Err(e) = baluard_core::vault::slug::validate_slug(&normalized) {
-                eprintln!("error: invalid slug '{s}': {e}");
-                std::process::exit(1);
+                return Err(format!("invalid slug '{s}': {e}").into());
             }
             if normalized != s {
                 eprintln!("Slug normalized to: {normalized}");
@@ -160,8 +159,8 @@ pub fn handle_init(
                     match baluard_core::vault::slug::validate_slug(&cleaned) {
                         Ok(()) => Some(cleaned),
                         Err(e) => {
-                            eprintln!("error: invalid slug: {e}");
-                            std::process::exit(1);
+
+                            return Err(format!("invalid slug: {e}").into());
                         }
                     }
                 }
@@ -221,8 +220,8 @@ pub fn handle_init(
     let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
     if let Some(ref s) = slug {
         if reg.exists(s) {
-            eprintln!("error: vault '{s}' already exists in registry");
-            std::process::exit(1);
+
+            return Err("vault '{s}' already exists in registry".into());
         }
     }
 
@@ -231,8 +230,8 @@ pub fn handle_init(
         if let Some(ref s) = slug {
             let p = baluard_core::paths::vaults_dir().join(s);
             if p.exists() {
-                eprintln!("error: vault directory already exists: {}", p.display());
-                std::process::exit(1);
+
+                return Err(format!("error: vault directory already exists: {}", p.display()).into());
             }
             if !json {
                 println!("Vault path: {}", p.display());
@@ -676,13 +675,13 @@ pub fn handle_add(
             if !resp.success {
                 return Err(resp.error_message.into());
             }
-            println!("Cipher added: {}", resp.payload);
+            println!("Entry added: {}", resp.payload);
             Ok(())
         }
         ConnectMode::Direct => {
             let mut handle = unlock_vault_direct(vault_path)?;
             let cipher_id = handle.add_cipher(&input)?;
-            println!("Cipher added: {cipher_id}");
+            println!("Entry added: {cipher_id}");
             Ok(())
         }
     }
@@ -701,8 +700,8 @@ pub fn handle_get(
     let cipher_id = match uuid::Uuid::parse_str(id_or_name) {
         Ok(id) => id,
         Err(_) => {
-            eprintln!("error: searching by name not yet implemented, use cipher UUID");
-            std::process::exit(1);
+
+            return Err("Searching by name is not supported yet; the entry id is required.".into());
         }
     };
 
@@ -796,6 +795,11 @@ pub fn handle_get(
             match handle.get_cipher(cipher_id)? {
                 CipherRead::Decrypted(c) => match output {
                     "json" => {
+                        // Full serialization: parity with the daemon's
+                        // vault.get — hand-picked projections silently
+                        // dropped fields (SshKey, Card code, IBAN, ...).
+                        // Daemon parity: flat top-level fields AND the
+                        // nested kind (scripts and the desktop read both).
                         let mut json_obj = serde_json::json!({
                             "id": c.id.to_string(),
                             "name": c.name,
@@ -804,37 +808,14 @@ pub fn handle_get(
                             "tier": format!("{:?}", c.tier),
                             "epoch": c.key_epoch,
                             "seq": c.update_seq,
+                            "kind": serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null),
                         });
-                        match &c.kind {
-                            baluard_core::types::CipherKind::Login(data) => {
-                                json_obj["username"] = serde_json::json!(data.username);
-                                json_obj["password"] = serde_json::json!(data.password);
-                                json_obj["uris"] = serde_json::json!(data.uris);
-                                json_obj["totp"] = serde_json::json!(data.totp_uri);
-                            }
-                            baluard_core::types::CipherKind::Card(data) => {
-                                json_obj["cardholder_name"] =
-                                    serde_json::json!(data.cardholder_name);
-                                json_obj["brand"] = serde_json::json!(data.brand);
-                                json_obj["number"] = serde_json::json!(data.number);
-                            }
-                            baluard_core::types::CipherKind::Identity(data) => {
-                                json_obj["first_name"] = serde_json::json!(data.first_name);
-                                json_obj["last_name"] = serde_json::json!(data.last_name);
-                                json_obj["email"] = serde_json::json!(data.email);
-                            }
-                            baluard_core::types::CipherKind::BankAccount(data) => {
-                                json_obj["bank_name"] = serde_json::json!(data.bank_name);
-                                json_obj["account_number"] = serde_json::json!(data.account_number);
-                            }
-                            baluard_core::types::CipherKind::DriversLicense(data) => {
-                                json_obj["license_number"] = serde_json::json!(data.license_number);
-                            }
-                            baluard_core::types::CipherKind::Passport(data) => {
-                                json_obj["passport_number"] =
-                                    serde_json::json!(data.passport_number);
-                            }
-                            _ => {}
+                        let flat = json_obj["kind"]
+                            .as_object()
+                            .map(|m| m.clone())
+                            .unwrap_or_default();
+                        for (k, v) in flat {
+                            json_obj[k] = v;
                         }
                         println!("{json_obj}");
                     }
@@ -994,7 +975,7 @@ pub fn handle_list(
             let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
             let ciphers = data["ciphers"].as_array();
             if ciphers.as_ref().is_none_or(|a| a.is_empty()) {
-                println!("No ciphers found.");
+                println!("No entries found.");
             } else if let Some(ciphers) = ciphers {
                 // Fetch folders for name resolution
                 let folder_map: std::collections::HashMap<String, String> = if let Ok(fresp) =
@@ -1040,7 +1021,7 @@ pub fn handle_list(
                     }
                 }
                 println!();
-                println!("{} cipher(s)", ciphers.len());
+                println!("{} entr{}", ciphers.len(), if ciphers.len() == 1 { "y" } else { "ies" });
             }
             Ok(())
         }
@@ -1069,7 +1050,7 @@ fn list_direct(vault_path: &str, archived: bool) -> Result<(), Box<dyn std::erro
             handle.list_cipher_meta()?
         };
         if metas.is_empty() {
-            println!("No ciphers found.");
+            println!("No entries found.");
             return Ok(());
         }
         for m in &metas {
@@ -1084,7 +1065,7 @@ fn list_direct(vault_path: &str, archived: bool) -> Result<(), Box<dyn std::erro
         // Locked: fall back to IDs only
         let ids = handle.list_cipher_ids()?;
         if ids.is_empty() {
-            println!("No ciphers found.");
+            println!("No entries found.");
             return Ok(());
         }
         for id in &ids {
@@ -2401,12 +2382,14 @@ pub fn handle_credentials(
             let mut obj = serde_json::Map::new();
             obj.insert("host".into(), serde_json::Value::String(host));
             if let Some(v) = token {
+                warn_argv_secret("--token");
                 obj.insert("token".into(), serde_json::Value::String(v));
             }
             if let Some(v) = username {
                 obj.insert("username".into(), serde_json::Value::String(v));
             }
             if let Some(v) = ssh_passphrase {
+                warn_argv_secret("--ssh-passphrase");
                 obj.insert("ssh_passphrase".into(), serde_json::Value::String(v));
             }
             if let Some(path) = key_file {
@@ -2487,12 +2470,14 @@ pub fn handle_git_probe(
     if token.is_some() || username.is_some() || ssh_passphrase.is_some() || key_file.is_some() {
         let mut c = serde_json::Map::new();
         if let Some(v) = token {
+            warn_argv_secret("--token");
             c.insert("token".into(), serde_json::Value::String(v));
         }
         if let Some(v) = username {
             c.insert("username".into(), serde_json::Value::String(v));
         }
         if let Some(v) = ssh_passphrase {
+            warn_argv_secret("--ssh-passphrase");
             c.insert("ssh_passphrase".into(), serde_json::Value::String(v));
         }
         if let Some(path) = key_file {
@@ -2536,11 +2521,12 @@ pub fn handle_git_probe(
                 println!("Note: this host already has a key of another type in known_hosts.");
             }
             println!("Trust it with: baluard git-trust {aid}");
+            // Exit code 2 is a scripting contract: probe ran, host untrusted.
             std::process::exit(2);
         }
         _ => {
-            println!("Connection failed ({kind}): {detail}");
-            std::process::exit(1);
+
+            return Err(format!("Connection failed ({kind}): {detail}").into());
         }
     }
 }
@@ -2772,7 +2758,7 @@ pub fn handle_delete(
             if !resp.success {
                 return Err(resp.error_message.into());
             }
-            println!("Cipher deleted: {cipher_id}");
+            println!("Entry deleted.");
             Ok(())
         }
         ConnectMode::Direct => {
@@ -2780,7 +2766,7 @@ pub fn handle_delete(
             // chain `add` → `delete` without an explicit `unlock` step.
             let handle = unlock_vault_direct(vault_path)?;
             handle.delete_cipher(cipher_id)?;
-            println!("Cipher deleted: {cipher_id}");
+            println!("Entry deleted.");
             Ok(())
         }
     }
@@ -3054,7 +3040,9 @@ pub fn handle_device_revoke(
         ),
         ConnectMode::Direct => {
             let path = Path::new(vault_path);
-            let mut handle = VaultHandle::open(path)?;
+            // Revocation re-encrypts under a fresh root key: the handle
+            // must be UNLOCKED (an open-only handle fails with Locked).
+            let mut handle = unlock_vault_direct(vault_path)?;
 
             if device_id == handle.device_id {
                 return Err(
@@ -3116,10 +3104,9 @@ pub fn handle_enroll_with_phrase(
                 p
             }
             Err(_) => {
-                eprintln!("Recovery phrase required. Enter 24 words separated by spaces:");
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input)?;
-                input.trim().to_string()
+                // Masked prompt: the phrase is a root secret; echoing it
+                // would leave it in terminal scrollback.
+                prompt_password("Recovery phrase (24 words): ")?.trim().to_string()
             }
         },
     };
@@ -3325,7 +3312,6 @@ pub fn handle_sync_pull(
 }
 
 /// P8b: append a signed revocation entry for a bad commit and push it.
-#[cfg(feature = "git-sync")]
 pub fn handle_sync_revoke(
     mode: ConnectMode,
     vault_path: &str,
@@ -3772,6 +3758,10 @@ fn sync_status_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> {
     Err("git-sync feature not enabled".into())
 }
 #[cfg(not(feature = "git-sync"))]
+fn sync_revoke_direct(_: &str, _c: &str, _r: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("git-sync feature not enabled".into())
+}
+#[cfg(not(feature = "git-sync"))]
 fn sync_log_direct(_: &str, _n: usize) -> Result<(), Box<dyn std::error::Error>> {
     Err("git-sync feature not enabled".into())
 }
@@ -4016,8 +4006,8 @@ pub fn handle_settings_get(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Settings requires daemon mode. Use --socket or start the daemon.");
-            std::process::exit(1);
+
+            return Err("Settings requires daemon mode. Use --socket or start the daemon.".into());
         }
     }
 }
@@ -4061,8 +4051,8 @@ pub fn handle_settings_set(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Settings requires daemon mode. Use --socket or start the daemon.");
-            std::process::exit(1);
+
+            return Err("Settings requires daemon mode. Use --socket or start the daemon.".into());
         }
     }
 }
@@ -4084,8 +4074,8 @@ pub fn handle_space_settings_get(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Space settings requires daemon mode. Use --socket or start the daemon.");
-            std::process::exit(1);
+
+            return Err("Space settings requires daemon mode. Use --socket or start the daemon.".into());
         }
     }
 }
@@ -4188,8 +4178,8 @@ pub fn handle_space_settings_set(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Space settings requires daemon mode. Use --socket or start the daemon.");
-            std::process::exit(1);
+
+            return Err("Space settings requires daemon mode. Use --socket or start the daemon.".into());
         }
     }
 }
@@ -5449,12 +5439,11 @@ fn vaults_switch(slug: &str, cli: &Cli) -> Result<(), Box<dyn std::error::Error>
     // First: ensure the slug is registered. The daemon errors if it isn't.
     let reg = baluard_core::vault::registry::VaultRegistry::load_locked()?;
     if !reg.exists(slug) {
-        eprintln!("error: vault '{slug}' not found in registry");
-        eprintln!("Registered vaults:");
+        let mut msg = format!("vault '{slug}' not found in registry. Registered vaults:");
         for s in reg.list_slugs() {
-            eprintln!("  {s}");
+            msg.push_str(&format!("\n  {s}"));
         }
-        std::process::exit(1);
+        return Err(msg.into());
     }
 
     // Try the daemon switch. If the slug isn't open in the map yet, the
@@ -5632,7 +5621,7 @@ fn vaults_detach(
         println!("Detached '{slug}' from Baluard and deleted its directory from disk.");
     } else {
         println!(
-            "Detached '{slug}' from Baluard. Directory left on disk (re-attach with `baluard open <path>`)."
+            "Detached '{slug}' from Baluard. Directory left on disk (re-attach with `baluard vaults add <path>`)."
         );
     }
     Ok(())

@@ -739,7 +739,6 @@ impl AutoSyncHandle {
                     if g.state == AutoSyncState::Dirty && g.debounce.is_none() {
                         drop(g);
                         self.fire_sync(device_id.clone(), generation, SYNC_OP_TIMEOUT).await;
-                        remaining = 0;
                         break;
                     }
                 }

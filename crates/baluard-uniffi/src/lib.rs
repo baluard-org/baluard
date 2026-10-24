@@ -15,18 +15,6 @@
 
 uniffi::setup_scaffolding!();
 
-static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
-
-pub fn rt() -> &'static tokio::runtime::Runtime {
-    RT.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("tokio runtime")
-    })
-}
-
 /// Typed error for the mobile FFI surface.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum BaluardError {
@@ -39,8 +27,6 @@ pub enum BaluardError {
     Provider { detail: String },
 
     /// Device is not enrolled in the target vault (requires 24-word recovery phrase entry).
-    #[error("device not enrolled: {detail}")]
-    DeviceNotEnrolled { detail: String },
 
     /// Master password verification failed (wrong password).
     #[error("wrong master password")]
@@ -185,7 +171,7 @@ pub fn generate_recovery_phrase() -> Result<MobileRecoveryPhrase, BaluardError> 
 /// the recoverer, and the device binds to a fresh member row (Owner when
 /// no live admin row exists, else Admin). Path-only by design - no vault
 /// needs to be open. Returns the recovered device id.
-#[uniffi::export]
+#[uniffi::export(async_runtime = "tokio")]
 pub async fn recover_kit_for_path(
     vault_path: String,
     phrase: String,
@@ -202,8 +188,13 @@ pub async fn recover_kit_for_path(
             detail: "device name must not be empty".into(),
         });
     }
+    if device_name.contains(['\n', '\r']) {
+        return Err(BaluardError::InvalidInput {
+            detail: "device name must not contain newlines".into(),
+        });
+    }
     let path = std::path::PathBuf::from(vault_path);
-    rt().spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         baluard_core::vault::handle::VaultHandle::recover_device_with_kit(
             &path,
             &phrase,
@@ -306,33 +297,6 @@ pub async fn open_shared_guest(
     .await
     .map_err(|e| BaluardError::Vault {
         detail: format!("shared-file task failed: {e}"),
-    })?
-}
-
-/// Argon2id. Returns raw bytes for the FFI boundary. Runs off the UI thread via `spawn_blocking`.
-#[uniffi::export(async_runtime = "tokio")]
-pub async fn derive_kek(password: String, salt: Vec<u8>) -> Result<Vec<u8>, BaluardError> {
-    tokio::task::spawn_blocking(move || {
-        use baluard_core::crypto::kdf::derive_kek as core_derive;
-        use baluard_core::types::{KdfParams, KdfProfile};
-
-        let mut salt_32 = vec![0u8; 32];
-        let len = salt.len().min(32);
-        salt_32[..len].copy_from_slice(&salt[..len]);
-
-        let params = KdfParams {
-            profile: KdfProfile::MobileLow,
-            memory_kib: KdfProfile::MobileLow.memory_kib(),
-            time_cost: KdfProfile::MobileLow.time_cost(),
-            parallelism: KdfProfile::MobileLow.parallelism(),
-            salt: salt_32,
-        };
-        let key = core_derive(&password, &params)?;
-        Ok(key.to_vec())
-    })
-    .await
-    .map_err(|e| BaluardError::Crypto {
-        detail: e.to_string(),
     })?
 }
 
@@ -444,7 +408,17 @@ impl MobileVault {
     /// verifies the keywrap + canaries, and activates the auto-sync coordinator
     /// (if the vault has a remote). Heavy: runs the KDF on the shared runtime.
     pub async fn unlock(&self, master_password: String) -> Result<(), BaluardError> {
-        Ok(self.state.unlock(&master_password).await?)
+        self.state.unlock(&master_password).await.map_err(|e| {
+            // The canary failure rides VaultError::Corrupt; surface the
+            // wrong-password case as WrongPassword so the UI prompts to
+            // retype instead of reporting a corrupt vault.
+            match &e {
+                baluard_core::error::BaluardError::Vault(
+                    baluard_core::error::VaultError::Corrupt(m),
+                ) if m.contains("master password incorrect") => BaluardError::WrongPassword,
+                _ => e.into(),
+            }
+        })
     }
 
     /// Lock the vault: zeroizes in-memory keys, clears the session token,
@@ -463,7 +437,9 @@ impl MobileVault {
     /// SECURITY: the [kek] is the Argon2id output over the master password
     /// (NOT the password itself). Treat as sensitive at the FFI boundary.
     pub async fn unlock_with_kek(&self, kek: Vec<u8>) -> Result<(), BaluardError> {
-        let mut arr = [0u8; 32];
+        // Zeroize both copies: the FFI buffer and the fixed-size array.
+        let kek = zeroize::Zeroizing::new(kek);
+        let mut arr = zeroize::Zeroizing::new([0u8; 32]);
         if kek.len() != 32 {
             return Err(BaluardError::InvalidInput {
                 detail: "KEK must be exactly 32 bytes".to_string(),
@@ -1379,8 +1355,6 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
-    /// Whether this device manages the space (holds the Root Key) —
-    /// the admin marker that stays true for zero-collection vaults.
     /// This device's member role ("owner"|"admin"|"editor"|"viewer").
     /// Role-gated UI gates on this, never on is_admin_device: on a
     /// flipped Space an admin holds no Root Key by design.
@@ -1917,6 +1891,11 @@ pub async fn create_vault(
     master_password: String,
     device_name: String,
 ) -> Result<std::sync::Arc<MobileVault>, BaluardError> {
+    if device_name.contains(['\n', '\r']) {
+        return Err(BaluardError::InvalidInput {
+            detail: "device name must not contain newlines".into(),
+        });
+    }
     let vault_path = std::path::PathBuf::from(&path);
     baluard_core::vault::creation::VaultCreator::new(&vault_path, &master_password, &device_name)
         .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
@@ -1926,6 +1905,9 @@ pub async fn create_vault(
         })?;
     let state = std::sync::Arc::new(baluard_runtime::VaultState::new(vault_path));
     state.open().await?;
+    // Unlock before returning, matching create_vault_with_recovery: the
+    // UI treats the returned handle as the live session.
+    state.unlock(&master_password).await?;
     Ok(std::sync::Arc::new(MobileVault { state }))
 }
 
@@ -1962,6 +1944,11 @@ pub async fn create_vault_with_recovery(
     let vault_path = std::path::PathBuf::from(&path);
     // Blank name falls back per purpose: the family vault must never be
     // silently named "Personal" (switcher identity comes from the marker slug).
+    if device_name.contains(['\n', '\r']) {
+        return Err(BaluardError::InvalidInput {
+            detail: "device name must not contain newlines".into(),
+        });
+    }
     let display_name = match display_name.as_deref().map(str::trim) {
         Some(name) if !name.is_empty() => name.to_string(),
         _ if family => "Family".to_string(),
@@ -2279,14 +2266,60 @@ pub async fn list_vault_repos(provider: MobileProvider) -> Result<Vec<MobileRepo
 #[derive(uniffi::Object)]
 pub struct MobileCloneJob {
     cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    done: std::sync::Arc<tokio::sync::Notify>,
+    result: std::sync::Arc<tokio::sync::Mutex<Option<Result<(), BaluardError>>>>,
+    completed: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
-#[uniffi::export]
+#[uniffi::export(async_runtime = "tokio")]
 impl MobileCloneJob {
     pub fn cancel(&self) {
         self.cancel_flag
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
+
+    /// Await clone completion. The start functions return the job
+    /// immediately so cancel() can fire mid-clone; this is where the
+    /// clone's error surfaces.
+    pub async fn wait_done(&self) -> Result<(), BaluardError> {
+        loop {
+            let mut g = self.result.lock().await;
+            if let Some(r) = g.take() {
+                self.completed.store(true, std::sync::atomic::Ordering::Relaxed);
+                return r;
+            }
+            if self.completed.load(std::sync::atomic::Ordering::Relaxed) {
+                // The first waiter already consumed (and surfaced) the
+                // outcome; a late second caller just needs completion.
+                return Ok(());
+            }
+            drop(g);
+            self.done.notified().await;
+        }
+    }
+}
+
+/// Shared spawn for the clone starters: detached so the job (and its
+/// cancel flag) reach the caller before the clone finishes.
+fn spawn_clone(
+    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    fut: impl std::future::Future<Output = Result<(), BaluardError>> + Send + 'static,
+) -> std::sync::Arc<MobileCloneJob> {
+    let done = std::sync::Arc::new(tokio::sync::Notify::new());
+    let result = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+    let done_c = done.clone();
+    let result_c = result.clone();
+    tokio::spawn(async move {
+        let r = fut.await;
+        *result_c.lock().await = Some(r);
+        done_c.notify_one();
+    });
+    std::sync::Arc::new(MobileCloneJob {
+        cancel_flag,
+        done,
+        result,
+        completed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    })
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -2300,20 +2333,23 @@ pub async fn clone_vault_start(
     let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let flag_clone = cancel_flag.clone();
 
-    tokio::task::spawn_blocking(move || {
-        baluard_runtime::providers::clone_and_register(
-            Some(p_enum),
-            &clone_url,
-            &path,
-            Some(flag_clone),
-        )
-    })
-    .await
-    .map_err(|e| BaluardError::Vault {
-        detail: e.to_string(),
-    })??;
-
-    Ok(std::sync::Arc::new(MobileCloneJob { cancel_flag }))
+    Ok(spawn_clone(cancel_flag, async move {
+        let inner: Result<(), baluard_core::BaluardError> =
+            tokio::task::spawn_blocking(move || {
+                baluard_runtime::providers::clone_and_register(
+                    Some(p_enum),
+                    &clone_url,
+                    &path,
+                    Some(flag_clone),
+                )
+            })
+            .await
+            .map_err(|e| BaluardError::Vault {
+                detail: e.to_string(),
+            })?;
+        let r: Result<(), BaluardError> = inner.map_err(BaluardError::from);
+        r
+    }))
 }
 
 /// Custom-remote clone: no provider, request-time credentials. The
@@ -2392,21 +2428,24 @@ pub async fn clone_vault_start_custom(
     let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let flag_clone = cancel_flag.clone();
 
-    tokio::task::spawn_blocking(move || {
-        baluard_runtime::providers::clone_and_register_with_credentials(
-            None,
-            &clone_url,
-            &path,
-            Some(flag_clone),
-            creds,
-        )
-    })
-    .await
-    .map_err(|e| BaluardError::Vault {
-        detail: e.to_string(),
-    })??;
-
-    Ok(std::sync::Arc::new(MobileCloneJob { cancel_flag }))
+    Ok(spawn_clone(cancel_flag, async move {
+        let inner: Result<(), baluard_core::BaluardError> =
+            tokio::task::spawn_blocking(move || {
+                baluard_runtime::providers::clone_and_register_with_credentials(
+                    None,
+                    &clone_url,
+                    &path,
+                    Some(flag_clone),
+                    creds,
+                )
+            })
+            .await
+            .map_err(|e| BaluardError::Vault {
+                detail: e.to_string(),
+            })?;
+        let r: Result<(), BaluardError> = inner.map_err(BaluardError::from);
+        r
+    }))
 }
 
 /// Custom-remote test connection: an ls-remote pre-flight. Returns
@@ -2648,9 +2687,10 @@ mod tests {
             "BIP-39 must be 24 words"
         );
 
-        let key = derive_kek("password123".to_string(), b"salt123".to_vec())
-            .await
-            .unwrap();
+        let mut params =
+            baluard_core::types::KdfParams::from_profile(baluard_core::types::KdfProfile::MobileLow);
+        params.salt = vec![0u8; 32];
+        let key = baluard_core::crypto::kdf::derive_kek("password123", &params).unwrap();
         assert_eq!(key.len(), 32, "KEK must be 32 bytes (AES-256)");
     }
 
@@ -2719,8 +2759,8 @@ mod tests {
             .await
             .expect("create_vault should succeed on a fresh dir");
         assert!(
-            !vault.is_unlocked().await,
-            "create_vault returns OPEN but NOT-yet-unlocked"
+            vault.is_unlocked().await,
+            "create_vault returns the live UNLOCKED session"
         );
 
         // Unlock with the master password (Argon2id + keywrap verify).

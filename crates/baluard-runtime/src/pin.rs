@@ -165,18 +165,6 @@ fn hash_pin(pin: &str, salt: &[u8]) -> Result<[u8; PIN_HASH_LEN], String> {
     Ok(out)
 }
 
-/// Constant-time equality. Lengths are equal here (both PIN_HASH_LEN).
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

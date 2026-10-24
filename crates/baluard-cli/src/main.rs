@@ -2142,7 +2142,7 @@ fn main() {
                 }
                 Err(e) => {
                     eprintln!("Cannot reach daemon: {e}");
-                    eprintln!("Start it with: cargo run -p baluard-daemon");
+                    eprintln!("Start the Baluard background service, then try again.");
                     std::process::exit(1);
                 }
             }

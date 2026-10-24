@@ -185,6 +185,9 @@ fn run() -> anyhow::Result<()> {
             }
         });
         if let Ok(mut w) = workers.lock() {
+            // Drop completed handles so a long browser session doesn't
+            // accumulate one Vec entry (and its output slot) per message.
+            w.retain(|h| !h.is_finished());
             w.push(handle);
         }
     }
@@ -412,29 +415,38 @@ fn resolve_token() -> Result<String, ResolveError> {
         }
     }
 
-    // Read our pairing secret from the file (read-only — daemon is sole writer).
+    // Read the pairing secrets from the file (read-only — daemon is the
+    // sole writer). One NMH binary serves every paired browser, so try
+    // each secret until one reauths instead of assuming pairings[0].
     let pf = PairingFile::load().map_err(|_| ResolveError::NotPaired)?;
-    let entry = pf.pairings.first().ok_or(ResolveError::NotPaired)?;
-    let secret = entry.secret.clone();
-
-    // bridge.reauth: present the secret, get back a token.
-    let resp = forward(
-        "bridge.reauth",
-        &serde_json::json!({ "secret": secret }).to_string(),
-        "",
-    )
-    .map_err(|_| ResolveError::NoDaemon)?;
-    if !resp.success {
+    if pf.pairings.is_empty() {
         return Err(ResolveError::NotPaired);
     }
-    let payload: serde_json::Value =
-        serde_json::from_str(&resp.payload).map_err(|_| ResolveError::Locked)?;
-    let token = payload["token"]
-        .as_str()
-        .ok_or(ResolveError::Locked)?
-        .to_string();
-    *TOKEN_CACHE.lock().unwrap() = Some(token.clone());
-    Ok(token)
+    for entry in &pf.pairings {
+        let secret = &entry.secret;
+        let resp = match forward(
+            "bridge.reauth",
+            &serde_json::json!({ "secret": secret }).to_string(),
+            "",
+        ) {
+            Ok(r) => r,
+            // Daemon unreachable: no secret choice can fix that.
+            Err(_) => return Err(ResolveError::NoDaemon),
+        };
+        if !resp.success {
+            // Wrong secret (revoked or another browser's row): try the next.
+            continue;
+        }
+        let payload: serde_json::Value =
+            serde_json::from_str(&resp.payload).map_err(|_| ResolveError::Locked)?;
+        let token = payload["token"]
+            .as_str()
+            .ok_or(ResolveError::Locked)?
+            .to_string();
+        *TOKEN_CACHE.lock().unwrap() = Some(token.clone());
+        return Ok(token);
+    }
+    Err(ResolveError::NotPaired)
 }
 
 /// Drop the cached bridge token and re-resolve one (reauth via the pairing
