@@ -380,9 +380,9 @@
     "hwConsentStatusOn": "Confirmación activada",
     "hwConsentStatusOff": "Confirmación desactivada",
     "hwConsentOnTitle": "¿Pedir confirmación en cada desbloqueo?",
-    "hwConsentOnBody": "El chip de seguridad de tu dispositivo pedirá tu huella o tu cara cada vez que se desbloquee esta bóveda. Los datos quedan protegidos en reposo de cualquier forma. Si el chip se avería o se restablecen los datos biométricos, la frase de recuperación vuelve a conectar este dispositivo.",
+    "hwConsentOnBody": "El chip de seguridad de tu dispositivo pedirá tu huella o tu cara cada vez que se desbloquee esta bóveda. La bóveda sigue cifrada de cualquier forma. Si el chip se avería o se restablecen los datos biométricos, la frase de recuperación vuelve a conectar este dispositivo.",
     "hwConsentOffTitle": "¿Desactivar la confirmación al desbloquear?",
-    "hwConsentOffBody": "La bóveda sigue protegida por el chip de seguridad en reposo, pero el desbloqueo ya no pedirá tu huella o tu cara.",
+    "hwConsentOffBody": "El chip de seguridad mantiene la bóveda cifrada mientras está bloqueada, pero el desbloqueo ya no pedirá tu huella o tu cara.",
     "hwConsentOn": "Pedir confirmación",
     "hwConsentOff": "Dejar de confirmar",
     "hwConsentOnToast": "El chip confirmará cada desbloqueo.",
@@ -481,7 +481,7 @@
     "customTrustCta": "Confiar en esta clave",
     "customTrustOtherType": "Este servidor ya tiene una clave de otro tipo registrada.",
     "customChangedTitle": "La clave del servidor ha cambiado",
-    "customChangedBody": "La clave es distinta de la que confirmaste antes. Si tienes la certeza de que el servidor cambió y no es una interceptación, borra la línea antigua de este servidor en tu archivo known_hosts y vuelve a probar la conexión.",
+    "customChangedBody": "La identidad de este servidor cambió desde tu última conexión, así que la app bloqueó la conexión para protegerte. Consulta con el administrador del servidor antes de hacer nada: si el cambio no era esperado, alguien podría estar suplantando a tu servidor.",
     "customBadUrl": "Eso no parece una URL de repositorio."
   },
   "autosync": {
@@ -524,6 +524,7 @@
     "deviceUnpaired": "Este dispositivo perdió la conexión con la bóveda. Reconéctalo desde tu dispositivo principal o usa la frase de recuperación.",
     "corrupted": "Los datos de la bóveda están dañados",
     "invalidPassword": "Contraseña maestra incorrecta",
+    "hardwareUnavailable": "El chip de seguridad de este dispositivo no pudo desbloquear la caja fuerte. Usa tu frase de recuperación para recuperar este dispositivo.",
     "alreadyExists": "Ya existe una bóveda en esta ubicación",
     "unexpected": "Ocurrió un error inesperado",
     "openFailed": "No se pudo abrir el enlace"

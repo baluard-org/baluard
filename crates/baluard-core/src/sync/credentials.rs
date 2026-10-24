@@ -93,6 +93,14 @@ pub fn extract_host(url: &str) -> Option<String> {
     } else {
         authority
     };
+    // Bracketed IPv6: the colons inside the brackets are address bytes,
+    // not a port separator. Return the bare address (no brackets) so it
+    // matches what the UIs store as the bound host.
+    if let Some(rest) = host_part.strip_prefix('[') {
+        if let Some(close) = rest.find(']') {
+            return Some(rest[..close].to_ascii_lowercase());
+        }
+    }
     let end = host_part
         .find(|c: char| c == ':' || c.is_whitespace())
         .unwrap_or(host_part.len());
@@ -364,6 +372,35 @@ fn credentials_attempt(
             return Err(git2::Error::from_str(
                 "SSH authentication failed too many times",
             ));
+        }
+        // Host binding covers SSH keys too: a custom key (and the agent's
+        // identities behind it) must never be offered to a foreign host.
+        let target_host = extract_host(url);
+        if let Some(ref bound) = cfg.bound_host {
+            match target_host.as_deref() {
+                Some(th) if th.eq_ignore_ascii_case(bound) => {}
+                _ => {
+                    return Err(git2::Error::from_str(&format!(
+                        "refusing to send the SSH key to an untrusted host: {bound} expected"
+                    )));
+                }
+            }
+        }
+        if let Some(ref allowed) = cfg.allowed_hosts {
+            match target_host.as_deref() {
+                Some(th) if allowed.iter().any(|h| h.eq_ignore_ascii_case(th)) => {}
+                // Unparseable host: fail closed like bound_host does.
+                Some(th) => {
+                    return Err(git2::Error::from_str(&format!(
+                        "refusing to send SSH credentials to untrusted host: {th}"
+                    )))
+                }
+                None => {
+                    return Err(git2::Error::from_str(
+                        "refusing to send SSH credentials: the target host could not be determined",
+                    ))
+                }
+            }
         }
         ssh_attempts.set(ssh_attempts.get() + 1);
         let pem: Option<zeroize::Zeroizing<String>> = cfg
@@ -665,6 +702,9 @@ pub fn clear_stale_custom_credentials(vault_path: &Path, new_url: &str) -> bool 
         return false;
     }
     let _ = std::fs::remove_file(&config_path);
+    // The SSH key belongs to the old host too; leaving it would offer it
+    // to the new one on the next sync.
+    let _ = std::fs::remove_file(vault_path.join("meta/git-ssh-key"));
     true
 }
 
@@ -815,6 +855,13 @@ pub fn persist_in_memory(vault_path: &Path, cfg: &CredentialConfig) -> Result<()
 mod tests {
 
     #[test]
+fn extract_host_handles_bracketed_ipv6() {
+    assert_eq!(extract_host("ssh://git@[2001:db8::1]:2222/repo.git"), Some("2001:db8::1".to_string()));
+    assert_eq!(extract_host("ssh://[::1]/repo"), Some("::1".to_string()));
+    assert_eq!(extract_host("https://[2001:db8::1]:8443/x"), Some("2001:db8::1".to_string()));
+}
+
+#[test]
     fn extract_host_ignores_userinfo_spoofed_through_the_path() {
         // A crafted URL must not resolve to the host named after the @
         // in its path: the token bound to github.com would be released
@@ -1009,6 +1056,35 @@ mod tests {
 
 #[cfg(test)]
 mod custom_remote_tests {
+    #[test]
+    fn ssh_credentials_refuse_a_foreign_host() {
+        // A custom SSH key is bound to its host exactly like a custom
+        // token: a redirect or hostile host must not get signing offers.
+        let cfg = CredentialConfig::in_memory(
+            None,
+            None,
+            Some("not-a-real-key".to_string()),
+            None,
+            Some("git.example.com".to_string()),
+        );
+        let ssh = std::cell::Cell::new(0u32);
+        let up = std::cell::Cell::new(0u32);
+        let types = git2::CredentialType::SSH_KEY;
+        let Err(e) = credentials_attempt(&cfg, "ssh://git@evil.example/x", None, types, &ssh, &up)
+        else {
+            panic!("foreign host must be refused");
+        };
+        assert!(e.message().contains("untrusted host"), "{e}");
+        // Same host passes the guard (ssh_key_from_memory defers key
+        // parsing to first use, so Ok or a parse error are both fine) —
+        // what matters is the host refusal did not fire.
+        if let Err(e) =
+            credentials_attempt(&cfg, "ssh://git@git.example.com/x", None, types, &ssh, &up)
+        {
+            assert!(!e.message().contains("untrusted host"), "{e}");
+        }
+    }
+
 
     #[test]
     fn custom_credentials_writer_merges_updates_and_clears() {
@@ -1258,7 +1334,6 @@ mod custom_remote_tests {
         );
     }
 
-    #[test]
     #[test]
     fn port_of_extracts_non_default_ports() {
         assert_eq!(port_of("ssh://git@git.example.com:2222/repo.git"), 2222);

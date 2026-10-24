@@ -265,9 +265,11 @@ impl HardwareKeyStore for TpmStore {
         let (key_handle, created_name) = ctx.execute_with_session(
             Some(AuthSession::Password),
             |ctx| -> Result<(KeyHandle, Vec<u8>), BaluardError> {
-                let mut outside = OUTSIDE_INFO_PREFIX.to_vec();
-                outside.extend_from_slice(_vault_id.as_bytes());
-                let outside = Data::try_from(outside)
+                // Domain separation only: the vault id must NOT enter
+                // outsideInfo. CreatePrimary is deterministic in the
+                // template + outside, so a per-vault value mints a new
+                // persistent key per vault until NVRAM slots run out.
+                let outside = Data::try_from(OUTSIDE_INFO_PREFIX.to_vec())
                     .map_err(|e| VaultError::Metadata(format!("hwkey tpm outside: {e}")))?;
                 let created = ctx
                     .create_primary(Hierarchy::Owner, public, None, None, Some(outside), None)
@@ -383,8 +385,9 @@ impl HardwareKeyStore for TpmStore {
         let peer_point = Self::point_from_x962(&peer.0)?;
         let mut ctx = self.ctx.lock().unwrap_or_else(|p| p.into_inner());
         let key = Self::load_key(&mut ctx, handle)?;
-        ctx.execute_with_session(
-            Some(AuthSession::Password),
+        // Sessionless like ecdh_ephemeral: the key carries no auth and
+        // some firmware rejects needless auth sessions.
+        ctx.execute_without_session(
             |ctx| -> Result<SharedSecret, BaluardError> {
                 let z = ctx
                     .ecdh_z_gen(key, peer_point)

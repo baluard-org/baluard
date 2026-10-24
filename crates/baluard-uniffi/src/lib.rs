@@ -2419,7 +2419,8 @@ pub async fn clone_vault_start_custom(
                             Some(passphrase.to_string())
                         },
                         Some(host),
-                    ),
+                    )
+                    .with_url_hint(&clone_url),
                 )
             }
         }
@@ -2514,11 +2515,13 @@ pub async fn git_probe(
                             Some(passphrase.to_string())
                         },
                         Some(host),
-                    ),
+                    )
+                    .with_url_hint(&url),
                 )
             }
         }
     };
+    let url_for_err = url.clone();
     tokio::task::spawn_blocking(move || {
         baluard_core::sync::engine::SyncEngine::probe_remote(&url, creds.as_ref())
     })
@@ -2528,8 +2531,12 @@ pub async fn git_probe(
     })?
     .map(|()| r#"{"ok": true}"#.to_string())
     .or_else(|e| {
-        let msg = baluard_core::sync::credentials::format_sync_error(&e);
-        let kind = if msg.contains("host_key_untrusted") {
+        let msg = baluard_core::sync::credentials::format_sync_error_for(&e, Some(&url_for_err));
+        let kind = if msg.contains("\"changed\":true")
+            || (msg.contains("changed") && msg.contains("known_hosts"))
+        {
+            "host-changed"
+        } else if msg.contains("host_key_untrusted") {
             "host-untrusted"
         } else if msg.contains("empty") {
             "empty"

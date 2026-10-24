@@ -6,7 +6,7 @@ import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { daemon, getRenderState } from "../lib/daemon.js";
 import { biometryPrompt } from "../lib/biometry.js";
 import { toastError } from "../context/toastSignal.js";
-import { sanitizeError } from "../lib/utils.js";
+import { sanitizeError, isHardwareError } from "../lib/utils.js";
 import { IconLock, IconFingerprint, IconSpinner, IconBaluardLogo } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
@@ -169,6 +169,9 @@ export default function LoginScreen() {
     if (bruteLock() || auth.status() === "unlocking") return;
     const success = await auth.unlock(t);
     if (!success) {
+      // A hardware-seal failure is not a wrong password: no red shake,
+      // no lockout timer. The toast from unlock() explains the chip.
+      if (isHardwareError(auth.lastUnlockError())) return;
       setWrongPassword(true);
       setBruteLock(true);
       setTimeout(() => {
