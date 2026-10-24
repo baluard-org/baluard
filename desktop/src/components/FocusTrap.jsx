@@ -34,7 +34,10 @@ export default function FocusTrap(props) {
     }
 
     if (e.key === "Tab") {
-      const container = props.containerRef;
+      // Callers pass either an element ref or a getter (an id lookup
+      // that only exists after render).
+      const container =
+        typeof props.containerRef === "function" ? props.containerRef() : props.containerRef;
       if (!container) return;
 
       const focusable = getFocusable(container);
@@ -59,7 +62,10 @@ export default function FocusTrap(props) {
 
   onSettled(() => {
     previouslyFocused = document.activeElement;
-    const container = props.containerRef;
+    // Callers pass either an element ref or a getter (an id lookup
+    // that only exists after render).
+    const container =
+      typeof props.containerRef === "function" ? props.containerRef() : props.containerRef;
     if (!container) return;
 
     container.addEventListener("keydown", handleKeyDown);

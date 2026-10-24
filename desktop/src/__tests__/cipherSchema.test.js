@@ -89,3 +89,23 @@ describe("cipherToFlat", () => {
     expect(flat.cvv).toBe("123");
   });
 });
+
+describe("login fields the edit form does not render", () => {
+  it("round-trip without a silent reset", async () => {
+    const { getSchema } = await import("../lib/cipherSchema.js");
+    const schema = getSchema("login");
+    const flat = schema.fromKind({
+      type: "login",
+      data: {
+        username: "u", password: "p",
+        password_revision_date: "2026-01-02T03:04:05Z",
+        autofill_on_page_load: true,
+      },
+    });
+    expect(flat.password_revision_date).toBe("2026-01-02T03:04:05Z");
+    expect(flat.autofill_on_page_load).toBe(true);
+    const kind = schema.toKind(flat);
+    expect(kind.data.password_revision_date).toBe("2026-01-02T03:04:05Z");
+    expect(kind.data.autofill_on_page_load).toBe(true);
+  });
+});

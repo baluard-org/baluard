@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_shell::ShellExt;
 use zeroize::Zeroize;
 
@@ -374,12 +374,20 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "sync.pull",
     "sync.push",
     "sync.status_json",
-    // providers
+    // providers (connect flows are desktop UI features: device flow,
+    // web sign-in, Advanced-Options PAT, repo picking on clone)
+    "provider.connect_start",
+    "provider.connect_poll",
+    "provider.connect_pat",
+    "provider.oauth_start_web",
+    "provider.oauth_status_web",
+    "provider.vault_repos",
     "provider.create_repo",
     "provider.disconnect",
     "provider.list",
-    "provider.oauth_status_web",
     "provider.status",
+    "vault.git_credentials_set",
+    "members.replace_device",
 ];
 
 fn desktop_action_allowed(action: &str) -> bool {
@@ -1134,8 +1142,10 @@ fn apply_tray_only(app: &AppHandle, tray_only: bool) -> Result<(), String> {
 
 /// Read desktop prefs (for the Settings UI to reflect current state).
 #[tauri::command]
-fn get_desktop_prefs() -> DesktopPrefs {
-    load_desktop_prefs()
+async fn get_desktop_prefs() -> DesktopPrefs {
+    tauri::async_runtime::spawn_blocking(load_desktop_prefs)
+        .await
+        .unwrap_or_default()
 }
 
 /// Toggle tray-only mode: persist + apply immediately.
@@ -1145,12 +1155,14 @@ fn get_desktop_prefs() -> DesktopPrefs {
 /// in-session apply. The OS-apply failure DOES propagate so the UI doesn't
 /// falsely report success when the Dock/taskbar state didn't actually change.
 #[tauri::command]
-fn set_tray_only(app: AppHandle, enabled: bool) -> Result<(), String> {
+async fn set_tray_only(app: AppHandle, enabled: bool) -> Result<(), String> {
     // Load-mutate-save: the prefs struct carries more than one field now;
     // reconstructing it here would silently wipe the others.
-    let mut prefs = load_desktop_prefs();
+    let mut prefs = tauri::async_runtime::spawn_blocking(load_desktop_prefs)
+        .await
+        .unwrap_or_default();
     prefs.tray_only = enabled;
-    save_desktop_prefs(&prefs);
+    let _ = tauri::async_runtime::spawn_blocking(move || save_desktop_prefs(&prefs)).await;
     apply_tray_only(&app, enabled)
 }
 
@@ -1280,10 +1292,12 @@ fn get_render_state() -> RenderState {
 /// WebKitGTK reads the env var at renderer init, so the change applies on
 /// the NEXT launch; the UI says so. Never an OS call, never fails visibly.
 #[tauri::command]
-fn set_compatible_rendering(value: Option<bool>) {
-    let mut prefs = load_desktop_prefs();
+async fn set_compatible_rendering(value: Option<bool>) {
+    let mut prefs = tauri::async_runtime::spawn_blocking(load_desktop_prefs)
+        .await
+        .unwrap_or_default();
     prefs.compatible_rendering = value;
-    save_desktop_prefs(&prefs);
+    let _ = tauri::async_runtime::spawn_blocking(move || save_desktop_prefs(&prefs)).await;
 }
 
 // ── App entry ──
@@ -1573,10 +1587,28 @@ pub fn run() {
                                     {
                                         return false;
                                     }
-                                    let _ = send_request("vaults.on_app_blur", "");
-                                    log::info!(
-                                        "[desktop] window blur (debounced) → on_app_blur fired"
-                                    );
+                                    match send_request("vaults.on_app_blur", "") {
+                                        Ok(body) => {
+                                            let slugs = serde_json::from_str::<serde_json::Value>(&body)
+                                                .ok()
+                                                .and_then(|v| {
+                                                    serde_json::from_value::<Vec<String>>(
+                                                        v["slugs"].clone(),
+                                                    )
+                                                    .ok()
+                                                })
+                                                .unwrap_or_default();
+                                            log::info!(
+                                                "[desktop] window blur (debounced) → on_app_blur locked {}",
+                                                slugs.len()
+                                            );
+                                            if !slugs.is_empty() {
+                                                let _ = app_for_blocking
+                                                    .emit("baluard://blur-locked", &slugs);
+                                            }
+                                        }
+                                        Err(e) => log::warn!("[desktop] on_app_blur failed: {e}"),
+                                    }
                                     true
                                 },
                             )
@@ -1707,9 +1739,8 @@ mod tests {
         }
         // …and host-level routes the UI never calls are not. `ping` goes
         // through daemon_status, not daemon_request; passkey ceremony
-        // routes have no desktop caller yet; provider connect PAT flows are
-        // CLI/NMH territory.
-        for a in ["ping", "vaults.set_active", "passkey.finish_register", "provider.connect_pat"] {
+        // routes have no desktop caller yet.
+        for a in ["ping", "vaults.set_active", "passkey.finish_register"] {
             assert!(!desktop_action_allowed(a), "{a} should be denied");
         }
     }

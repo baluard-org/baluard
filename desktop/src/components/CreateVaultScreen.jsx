@@ -198,7 +198,11 @@ export default function CreateVaultScreen() {
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4">
           <button
-            onClick={() => auth.setStatus("locked")}
+            onClick={() => {
+              // The typed master password must not survive the screen.
+              auth.setCreatePassword("");
+              auth.setStatus("locked");
+            }}
             class="create-vault-screen__back-btn text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
           >
             {t("create.alreadyHaveVault")}

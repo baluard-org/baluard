@@ -12,6 +12,7 @@
 import { createSignal, Show, For, useContext } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
+import { AuthContext } from "../context/AuthContext.jsx";
 import { VaultContext } from "../context/VaultContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -33,6 +34,8 @@ const STATE_DOT_CLASS = {
 export default function VaultSwitcher(props) {
   const { t } = useI18n();
   const switcher = useVaultSwitcher();
+  // Tolerant of a missing AuthProvider (component tests).
+  const auth = useContext(AuthContext);
   const vault = useContext(VaultContext);
   const [open, setOpen] = createSignal(false);
   const [detachTarget, setDetachTarget] = createSignal(null);
@@ -70,7 +73,10 @@ export default function VaultSwitcher(props) {
     e.stopPropagation();
     try {
       await switcher.close(slug);
-      toastSuccess(t("vault.vaultSwitcher.closed", { name: slug }));
+      const row = switcher.vaults().find((r) => r.slug === slug);
+      toastSuccess(
+        t("vault.vaultSwitcher.closed", { name: row?.display_name || slug })
+      );
     } catch (e2) {
       toastError(sanitizeError(e2, t));
     }
@@ -94,8 +100,17 @@ export default function VaultSwitcher(props) {
   async function confirmDetach() {
     const target = detachTarget();
     if (!target) return;
+    // Capture BEFORE detach: the refresh inside detach() clears the
+    // active pointer when the active vault goes away.
+    const wasActive = target.slug === switcher.activeSlug();
     try {
       await switcher.detach(target.slug);
+      // Detaching the vault being viewed drops the daemon's active
+      // pointer: the shell must leave the (now phantom) unlocked session.
+      if (wasActive && auth.status() === "unlocked") {
+        auth.setStatus("locked");
+        auth.setVaultInfo(null);
+      }
       toastSuccess(
         t("vault.vaultSwitcher.detached", { name: target.display_name })
       );

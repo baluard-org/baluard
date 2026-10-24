@@ -190,15 +190,19 @@ export default function ConflictResolutionPanel(props) {
             onClick={() => decide("keep_remote")}
             disabled={isResolving()}
           />
-          {/* Non-destructive escape hatch — never loses data. */}
-          <DecisionButton
-            icon={<IconCopy class="w-4 h-4" />}
-            title={t("conflict.keepBoth.title")}
-            desc={t("conflict.keepBoth.desc")}
-            onClick={() => decide("keep_both")}
-            highlight
-            disabled={isResolving()}
-          />
+          {/* Non-destructive escape hatch — never loses data. The daemon
+              refuses keep_both when the two sides sit at different key
+              epochs, so the option only renders for mergeable conflicts. */}
+          <Show when={!conflicts.current()?.crossEpoch}>
+            <DecisionButton
+              icon={<IconCopy class="w-4 h-4" />}
+              title={t("conflict.keepBoth.title")}
+              desc={t("conflict.keepBoth.desc")}
+              onClick={() => decide("keep_both")}
+              highlight
+              disabled={isResolving()}
+            />
+          </Show>
         </div>
       </div>
     </ConsolePanel>

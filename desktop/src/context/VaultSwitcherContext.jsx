@@ -11,8 +11,10 @@
 //     (AuthContext re-uses the existing unlock screen)
 //   - clicking a CLOSED vault = same as locked (unlock opens + inserts)
 
-import { createSignal, createContext, useContext, onSettled } from "solid-js";
+import { createSignal, createContext, useContext, onSettled, onMount, onCleanup } from "solid-js";
+import { listen } from "@tauri-apps/api/event";
 import { daemon } from "../lib/daemon.js";
+import { AuthContext } from "./AuthContext.jsx";
 
 const VaultSwitcherContext = createContext(null);
 
@@ -22,6 +24,25 @@ function VaultSwitcherProvider(props) {
   // G24 §4.7 v2: a pending browser unlock request, resolved to a vault row
   // for the banner. Null = no pending ask.
   const [unlockRequest, setUnlockRequest] = createSignal(null);
+
+  // The Rust bridge emits this when a blur lock actually locked vaults.
+  // activeSlug() is the in-memory active pointer (vault.active reads the
+  // on-disk registry, which a switch does not update) — only leave the
+  // shell when the vault being VIEWED locked; a background
+  // Immediately-policy vault locking must not kick the user out.
+  const auth = useContext(AuthContext);
+  onMount(() => {
+    let unlisten;
+    listen("baluard://blur-locked", (e) => {
+      const slugs = Array.isArray(e.payload) ? e.payload : [];
+      const slug = activeSlug();
+      if (slug && slugs.includes(slug) && auth?.status() === "unlocked") {
+        auth.setStatus("locked");
+        auth.setVaultInfo(null);
+      }
+    }).then((fn) => { unlisten = fn; });
+    onCleanup(() => unlisten?.());
+  });
 
   async function refresh() {
     try {

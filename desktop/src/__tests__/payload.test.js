@@ -291,3 +291,13 @@ describe("buildAttachDownloadPayload", () => {
     });
   });
 });
+
+describe("buildAddPayload reprompt", () => {
+  test("the reprompt toggle reaches the daemon", async () => {
+    const { buildAddPayload, buildUpdatePayload } = await import("../lib/payload.js");
+    const c = { name: "X", kind: { type: "login", data: { username: "u", password: "p" } }, reprompt: true };
+    expect(buildAddPayload(c).reprompt).toBe(true);
+    expect(buildUpdatePayload("id", c).reprompt).toBe(true);
+    expect(buildAddPayload({ name: "Y" }).reprompt).toBe(false);
+  });
+});
