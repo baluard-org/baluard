@@ -232,8 +232,16 @@ impl BridgeRegistry {
     /// Mark the pending request Approved. If an extension pair_complete is
     /// waiting, resolves it (the handler then mints the token). Returns the
     /// request_id so the desktop can confirm which request it approved.
-    pub fn approve_pending(&mut self) -> Result<String, &'static str> {
+    pub fn approve_pending(&mut self, expect_id: Option<&str>) -> Result<String, &'static str> {
         let p = self.pending.as_mut().ok_or("no pending pairing")?;
+        if let Some(want) = expect_id {
+            if p.request_id != want {
+                // The displayed request was superseded (a new start_pair
+                // landed); approving the blind id would pair an unseen
+                // request.
+                return Err("pairing request changed; re-open the dialog");
+            }
+        }
         if now_secs().saturating_sub(p.created_at) > PENDING_TTL_SECONDS {
             self.pending = None;
             // Also fail any waiter.
@@ -244,10 +252,15 @@ impl BridgeRegistry {
         // Resolve the extension waiter if one is registered. The handler that
         // owns the receiver performs the actual complete_pair + token mint.
         if let Some(tx) = self.waiter.take() {
-            let _ = tx.send(WaiterPayload {
+            // A timed-out receiver must not swallow the approval: record
+            // it so the extension's retry can complete the pairing.
+            let payload = WaiterPayload {
                 name: p.browser_hint.clone(),
                 browser: p.browser_hint.clone(),
-            });
+            };
+            if tx.send(payload).is_err() {
+                p.approval = Some(PairApproval::Approved);
+            }
         } else {
             // No extension waiting yet: mark approved so a later pair_complete
             // can proceed immediately.
@@ -285,8 +298,10 @@ impl BridgeRegistry {
             created_at: now_secs(),
         };
 
-        // Append to the pairing file (daemon is the SOLE writer).
-        let mut pf = PairingFile::load().unwrap_or_default();
+        // Append to the pairing file (daemon is the SOLE writer). A
+        // corrupt or unreadable file must fail the pairing — a default
+        // here would overwrite every existing pairing on save.
+        let mut pf = PairingFile::load().map_err(|_| "pairing file unreadable")?;
         pf.pairings.push(entry);
         pf.save_atomic().map_err(|_| "pairing file write failed")?;
 
@@ -384,10 +399,14 @@ impl BridgeRegistry {
 
     /// Drop a pairing entirely: in-memory token + pairing-file entry.
     pub fn revoke(&mut self, pairing_id: &PairingId) -> Result<(), &'static str> {
-        self.tokens.remove(pairing_id);
-        let mut pf = PairingFile::load().unwrap_or_default();
+        // Persist the removal FIRST: if the file save fails, the in-memory
+        // token must survive — otherwise reauth would mint a fresh token
+        // for a pairing the file still lists (fail-closed rollback).
+        let mut pf = PairingFile::load().map_err(|_| "pairing file unreadable")?;
         pf.remove(pairing_id);
-        pf.save_atomic().map_err(|_| "pairing file write failed")
+        pf.save_atomic().map_err(|_| "pairing file write failed")?;
+        self.tokens.remove(pairing_id);
+        Ok(())
     }
 
     /// Charge a read (bridge.match / vault.get) against this pairing's
@@ -464,7 +483,7 @@ mod tests {
         let _sb = sandbox();
         let mut reg = BridgeRegistry::default();
         reg.start_pair("chrome-test");
-        reg.approve_pending().unwrap();
+        reg.approve_pending(None).unwrap();
         let (id, token) = reg.complete_pair("test", "chrome").unwrap();
 
         // Reauth with the secret from the file should return the SAME token.
@@ -494,7 +513,7 @@ mod tests {
         let _sb = sandbox();
         let mut reg = BridgeRegistry::default();
         reg.start_pair("chrome-verify");
-        reg.approve_pending().unwrap();
+        reg.approve_pending(None).unwrap();
         let (id, token) = reg.complete_pair("test", "chrome").unwrap();
         let verified = reg.verify_token(&token);
         assert_eq!(verified, Some(id));
@@ -506,7 +525,7 @@ mod tests {
         let _sb = sandbox();
         let mut reg = BridgeRegistry::default();
         reg.start_pair("chrome-cap");
-        reg.approve_pending().unwrap();
+        reg.approve_pending(None).unwrap();
         let (id, _token) = reg.complete_pair("test", "chrome").unwrap();
         // Cap is 30/min; the 31st trips revoke.
         for _ in 0..READ_RATE_LIMIT_PER_MINUTE {
@@ -532,7 +551,7 @@ mod tests {
         let mut reg = BridgeRegistry::default();
         reg.start_pair("chrome-fast");
         // Desktop approves first (no extension waiting yet).
-        let req_id = reg.approve_pending().unwrap();
+        let req_id = reg.approve_pending(None).unwrap();
         assert!(!req_id.is_empty());
         // Pending is now marked Approved.
         assert!(matches!(
@@ -550,7 +569,7 @@ mod tests {
         let _sb = sandbox();
         let mut reg = BridgeRegistry::default();
         reg.start_pair("chrome-rev");
-        reg.approve_pending().unwrap();
+        reg.approve_pending(None).unwrap();
         let (id, token) = reg.complete_pair("test", "chrome").unwrap();
         reg.revoke(&id).unwrap();
         assert!(reg.verify_token(&token).is_none());
@@ -604,7 +623,7 @@ mod tests {
 
         // The legit waiter survived the attack: approving resolves it and
         // completes the pairing.
-        reg.approve_pending().unwrap();
+        reg.approve_pending(None).unwrap();
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), rx_legit).await;
         assert!(matches!(outcome, Ok(Ok(_))), "legit waiter must resolve");
         let (id, _token) = reg.complete_pair("legit", "chrome").unwrap();
