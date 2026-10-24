@@ -6219,30 +6219,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
 #[cfg(feature = "git-sync")]
 fn first_device_id(vault_path: &std::path::Path) -> String {
-    // The engine identity MUST be this clone's own device. A roster scan
-    // iterates a HashMap, so on a multi-device vault it can return ANOTHER
-    // device's id; the P5 admission then credits the wrong committer and
-    // reverts this device's admin-gated meta writes (seen as a family
-    // join's member row shipping reverted). meta/device-id is the
-    // authoritative local identity; the roster walk stays as the legacy
-    // fallback for vaults predating it.
-    if let Some(id) = baluard_core::vault::device_privkey::read_device_id(vault_path) {
-        return id.to_string();
-    }
-    let reg_path = vault_path.join("meta/devices.json");
-    if reg_path.exists() {
-        if let Ok(data) = std::fs::read_to_string(&reg_path) {
-            let reg: Result<baluard_core::devices::DeviceRegistry, _> = serde_json::from_str(&data);
-            if let Ok(reg) = reg {
-                // C5: identity is the device UUID (names are encrypted in
-                // settings.enc; single-device vaults are the norm here).
-                if let Some((id, _)) = reg.devices.iter().next() {
-                    return id.to_string();
-                }
-            }
-        }
-    }
-    String::new()
+    baluard_core::vault::device_privkey::local_device_id(vault_path)
 }
 
 #[cfg(feature = "git-sync")]

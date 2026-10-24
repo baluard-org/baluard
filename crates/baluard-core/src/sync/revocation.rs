@@ -83,9 +83,9 @@ impl RevocationManifest {
     /// is a hard error (tamper, fail closed) — callers turn this into
     /// `SyncError::RevocationInvalid`.
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let manifest: RevocationManifest =
+        let mut manifest: RevocationManifest =
             serde_json::from_slice(bytes).map_err(|e| format!("manifest JSON: {e}"))?;
-        for entry in &manifest.entries {
+        for entry in &mut manifest.entries {
             Self::validate_shape(entry)?;
         }
         Ok(manifest)
@@ -94,13 +94,16 @@ impl RevocationManifest {
     /// Shape checks that do not need the roster: full-length hex
     /// commit, non-empty device id without delimiters, bounded reason,
     /// seq headroom (next_seq must never overflow).
-    fn validate_shape(entry: &RevocationEntry) -> Result<(), String> {
+    fn validate_shape(entry: &mut RevocationEntry) -> Result<(), String> {
         if entry.commit.len() != 40 || !entry.commit.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(format!(
                 "entry seq {}: commit must be 40 hex chars",
                 entry.seq
             ));
         }
+        // Comparisons are against git's lowercase oid strings; an uppercase
+        // entry would pass shape checks yet silently never match a head.
+        entry.commit.make_ascii_lowercase();
         if entry.device_id.is_empty() || entry.device_id.contains(['\n', '\r']) {
             return Err(format!(
                 "entry seq {}: device_id must be non-empty without line breaks",
