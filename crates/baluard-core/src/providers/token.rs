@@ -53,24 +53,17 @@ impl ProvidersState {
         Ok(state)
     }
 
-    /// Save to disk atomically with 0600 permissions.
+    /// Save to disk atomically with 0600 permissions from the first byte.
+    /// The process-wide lock closes the lost-update window between two
+    /// concurrent connects doing load-modify-save.
     pub fn save(&self) -> Result<(), std::io::Error> {
+        let _guard = providers_state_lock().lock().unwrap_or_else(|e| e.into_inner());
         let path = Self::path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, &json)?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-        }
-
-        std::fs::rename(&tmp, &path)?;
-        Ok(())
+        crate::secret_file::write_secret_file(&path, json.as_bytes())
     }
 
     /// Get info for a provider.
@@ -233,10 +226,13 @@ pub fn store_token(
                 .map_err(|e| keyring_error(&e))
         });
 
-    if keyring_result.is_err() {
-        // Keyring present but unusable (headless session, locked collection):
-        // fall back to the app-private token file with 0600 permissions.
-        return store_token_file(&key, secret.expose_secret());
+    if let Err(e) = keyring_result {
+        // Keyring present but unusable (headless session, locked
+        // collection): refuse rather than silently park the secret in a
+        // plaintext file — the error already carries the install hint for
+        // the missing Secret Service (UX rule: print the command, never
+        // degrade). Android and tests took the file path above.
+        return Err(e);
     }
     // Keyring took it; drop any stale fallback copy so the two can't diverge.
     let _ = std::fs::remove_file(token_file_path(&key));
@@ -291,6 +287,13 @@ pub fn delete_token(provider: Provider, username: &str) -> Result<(), super::typ
         let _ = std::fs::remove_file(&path);
     }
     Ok(())
+}
+
+/// Providers.json read-modify-write lock: save() is load-modify-save, so
+/// two concurrent connects (GitHub plus GitLab) must not interleave.
+fn providers_state_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
 /// Full provider disconnect: delete keyring token + remove from providers.json.
