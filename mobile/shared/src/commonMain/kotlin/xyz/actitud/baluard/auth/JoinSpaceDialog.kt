@@ -72,11 +72,17 @@ fun JoinSpaceDialog(
     // manual sync. First poll after 10s — the intro was just written.
     if (phase == "waiting") {
         LaunchedEffect(vaultPath) {
+            // One handle for the whole poll loop, not one per tick.
+            val vault = runCatching { repo.openVault(vaultPath) }.getOrNull()
+            if (vault == null) {
+                errorMsg = t("login.wrongPassword")
+                phase = "form"
+                return@LaunchedEffect
+            }
             var approved = false
             while (!approved) {
                 delay(10_000)
                 approved = runCatching {
-                    val vault = repo.openVault(vaultPath)
                     val resp = repo.joinPoll(vault)
                     // The waiting loop swallows every failure, so log the
                     // raw response — a stuck join is otherwise invisible.
@@ -91,8 +97,10 @@ fun JoinSpaceDialog(
             // the password feeds the standard unlock path, then drops).
             when (authViewModel.openAndUnlock(vaultPath, password)) {
                 is UnlockResult.Success -> onApproved()
-                is UnlockResult.DeviceMismatch -> errorMsg = t("login.deviceMismatch")
-                is UnlockResult.Failure -> errorMsg = t("login.wrongPassword")
+                // Back to the form so the user can correct the password —
+                // the waiting phase has no input field.
+                is UnlockResult.DeviceMismatch -> { errorMsg = t("login.deviceMismatch"); phase = "form" }
+                is UnlockResult.Failure -> { errorMsg = t("login.wrongPassword"); phase = "form" }
             }
         }
     }
@@ -163,7 +171,7 @@ fun JoinSpaceDialog(
                                         vault,
                                         code.trim(),
                                         password,
-                                        deviceName.trim().ifBlank { "My device" },
+                                        deviceName.trim().ifBlank { t("onboarding.defaultDeviceName") },
                                         email.trim().ifBlank { null },
                                     )
                                 }.onSuccess { raw ->

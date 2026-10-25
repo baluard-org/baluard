@@ -156,6 +156,14 @@ fun CipherDetailScreen(
             return@Scaffold
         }
 
+        // One-shot error toast: side effects never run in composition.
+        LaunchedEffect(detailViewModel.error) {
+            detailViewModel.error?.let { err ->
+                Toast.error(err.removePrefix("detail=").ifBlank { t("error.generic") })
+                detailViewModel.ackError()
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -252,7 +260,9 @@ fun CipherDetailScreen(
                 )
                 sharePass?.let { pass ->
                     AlertDialog(
-                        onDismissRequest = { sharePass = null },
+                        // Shown once: outside-tap and back must not
+                        // discard the passphrase before it is copied.
+                        onDismissRequest = {},
                         title = { Text(t("share.exportPassTitle")) },
                         text = {
                             Column {

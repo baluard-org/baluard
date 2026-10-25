@@ -382,6 +382,8 @@ fun SettingsScreen(
                     if (!gitBusy) {
                         gitPat = ""
                         gitRepo = ""
+                        gitCustomToken = ""
+                        gitCustomUsername = ""
                         showGitBackup = false
                     }
                 }
@@ -621,25 +623,6 @@ fun SettingsScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }
-                            OutlinedTextField(
-                                value = gitPat,
-                                onValueChange = { gitPat = it },
-                                label = { Text(t("settings.gitPat")) },
-                                supportingText = { Text(t("settings.gitPatHint")) },
-                                singleLine = true,
-                                enabled = !gitBusy,
-                                visualTransformation = PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            OutlinedTextField(
-                                value = gitRepo,
-                                onValueChange = { gitRepo = it },
-                                label = { Text(t("settings.gitRepo")) },
-                                supportingText = { Text(t("settings.gitRepoHint")) },
-                                singleLine = true,
-                                enabled = !gitBusy,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
                         }
                     },
                     confirmButton = {
@@ -1264,7 +1247,6 @@ fun SettingsScreen(
                     // provider, and disabling ours would remove Baluard from
                     // that registry invisibly.
                     if (xyz.actitud.baluard.platform.credentialProviderSupported) {
-                        val context = androidx.compose.ui.platform.LocalContext.current
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -1279,12 +1261,7 @@ fun SettingsScreen(
                                 )
                             }
                             TextButton(onClick = {
-                                runCatching {
-                                    context.startActivity(
-                                        android.content.Intent("android.settings.CREDENTIAL_PROVIDER_SETTINGS")
-                                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-                                    )
-                                }
+                                xyz.actitud.baluard.platform.openCredentialProviderSettings()
                             }) { Text(t("settings.passkeyProviderOpen")) }
                         }
                     }
@@ -2481,7 +2458,14 @@ fun SettingsScreen(
                                             scope.launch {
                                                 try {
                                                     if (op.kind == "kit.replace") {
-                                                        repo.spaceKitEnable(vault)
+                                                        val json = repo.spaceKitEnable(vault)
+                                                        // The replacement phrase is
+                                                        // shown once; dropping it here
+                                                        // loses the kit forever.
+                                                        val words = (Json.parseToJsonElement(json) as? JsonObject)
+                                                            ?.get("phrase")?.jsonPrimitive?.content
+                                                            ?.trim()?.split(Regex("\\s+")).orEmpty()
+                                                        kitWords = if (words.size == 24) words else null
                                                         kitEnabled = true
                                                     } else {
                                                         repo.spaceKitDisable(vault)
@@ -2798,6 +2782,24 @@ fun SettingsScreen(
                                         )
                                     }
                                 }
+                                // Desktop parity: the encrypted .bldbak export
+                                // rides the master-password reprompt, then the
+                                // backup passphrase dialog.
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            exportDialog = false
+                                            showReprompt = true
+                                        }
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        t("settings.backupExport"),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
                             }
                         },
                         confirmButton = {
@@ -2965,7 +2967,7 @@ fun SettingsScreen(
                                                 saver(
                                                     r.container,
                                                     "application/octet-stream",
-                                                    "baluard-backup-${formatEpochDate(System.currentTimeMillis() / 1000)}.bldbak",
+                                                    "baluard-backup-${formatEpochDate(xyz.actitud.baluard.platform.Clock.currentTimeMillis() / 1000)}.bldbak",
                                                 ) { ok ->
                                                     if (ok) Toast.success(t("settings.backupChecked", entries))
                                                 }
@@ -3164,7 +3166,7 @@ fun SettingsScreen(
                                 myContactCode = (obj?.get("verification_code") as? kotlinx.serialization.json.JsonPrimitive)?.content
                                 if (xyz.actitud.baluard.platform.e2eBuild) {
                                     (obj?.get("card") as? kotlinx.serialization.json.JsonPrimitive)?.content?.let {
-                                        android.util.Log.e("ContactCard", "card=$it")
+                                        xyz.actitud.baluard.platform.platformLogE("ContactCard", "card=$it")
                                     }
                                 }
                             }

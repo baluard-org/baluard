@@ -1,5 +1,7 @@
 package xyz.actitud.baluard.onboarding
 
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -51,8 +53,10 @@ fun EnrollDeviceScreen(
 ) {
     val scope = rememberCoroutineScope()
 
-    var phrase by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    // Plain remember, never rememberSaveable: the phrase and the master
+    // password must not land in the saved-instance Bundle (M6 rule).
+    var phrase by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
     // OS-provided name (Pixel 9 Pro, Esteban's iPhone); localized
     // "My device" only when the OS gives nothing. Still editable.
     var deviceName by rememberSaveable {
@@ -96,6 +100,7 @@ fun EnrollDeviceScreen(
                     leadingIcon = Icons.Default.Key,
                     singleLine = false,
                     minLines = 3,
+                    keyboardOptions = KeyboardOptions(autoCorrect = false, keyboardType = KeyboardType.Password),
                     isError = phrase.isNotBlank() && !phraseValid,
                     supportingText = if (phrase.isNotBlank() && !phraseValid) {
                         t("enroll.phraseHint")

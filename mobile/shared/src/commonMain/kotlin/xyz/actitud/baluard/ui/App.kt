@@ -189,8 +189,27 @@ fun App(
         val editVm = remember { EditCipherViewModel(repo) }
         val totpVm = remember { TotpViewModel(repo) }
         val generatorVm = remember { GeneratorViewModel(repo) }
+        // A locked vault must not keep decrypted entries or the search
+        // haystack in memory — one observer covers every lock path.
+        LaunchedEffect(unlocked) {
+            if (!unlocked) {
+                listVm.clear()
+                detailVm.clear()
+                editVm.clear()
+            }
+        }
         var autoLockToken by remember { mutableStateOf(VaultRepository.DEFAULT_VAULT_TIMEOUT) }
         var nav by remember { mutableStateOf<Nav>(Nav.List) }
+        // Cached auto-lock policy so onResume can lock synchronously, before
+        // a single frame of unlocked content draws.
+        var timeoutMins by remember { mutableStateOf<Long?>(null) }
+        LaunchedEffect(path, unlocked, nav, autoLockToken) {
+            timeoutMins = null
+            if (unlocked) {
+                val v = auth.vault() ?: return@LaunchedEffect
+                timeoutMins = vaultTimeoutMinutes(vaultTimeoutToken(v))
+            }
+        }
         var saveRevision by remember { mutableStateOf(0) }
         val scope = rememberCoroutineScope()
         // Land on the prefilled create editor when a save handoff arrives
@@ -308,15 +327,13 @@ fun App(
             }
         }
         AppBackground.onResume = { backgroundedMs ->
-            if (unlocked) scope.launch {
-                val vault = auth.vault() ?: return@launch
-                val token = runCatching { vaultTimeoutToken(vault) }.getOrNull() ?: return@launch
-                val mins = vaultTimeoutMinutes(token) ?: return@launch
-                if (backgroundedMs >= mins * 60_000L) {
-                    auth.lock()
-                    nav = Nav.List
-                    unlocked = false
-                }
+            val mins = timeoutMins
+            if (mins != null && unlocked && backgroundedMs >= mins * 60_000L) {
+                // Flip first: the lock IPC is async and unlocked content
+                // must not draw for even one frame after the deadline.
+                nav = Nav.List
+                unlocked = false
+                scope.launch { auth.lock() }
             }
         }
 
@@ -661,6 +678,7 @@ fun App(
                                     vault = vault,
                                     repo = repo,
                                     onBack = { nav = Nav.Settings },
+                                    onSyncNudge = { notifyMutation() },
                                 )
                                 Nav.Activity -> ActivityScreen(
                                     vault = vault,

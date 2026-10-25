@@ -11,12 +11,13 @@ class TotpParseTest {
 
     @Test
     fun parsesJsonResponse() {
-        val (code, secs) = parseTotpResponse(
+        val (code, secs, period) = parseTotpResponse(
             """{"code":"123456","period_seconds":30,"expires_at":1000000025}""",
             epochSeconds = 100_000_0000L,
         )!!
         assertEquals("123456", code)
         assertEquals(25, secs)
+        assertEquals(30, period)
     }
 
     @Test
@@ -44,6 +45,16 @@ class TotpParseTest {
     @Test
     fun garbageIsNull() {
         assertNull(parseTotpResponse("not totp", epochSeconds = 7L))
+    }
+
+    @Test
+    fun sixtySecondPeriodScalesTheWindow() {
+        val (_, secs, period) = parseTotpResponse(
+            """{"code":"123456","period_seconds":60,"expires_at":1000000040}""",
+            epochSeconds = 100_000_0000L,
+        )!!
+        assertEquals(40, secs)
+        assertEquals(60, period)
     }
 
     @Test
