@@ -27,7 +27,6 @@ export default function ConflictResolutionPanel(props) {
   // — last-write-wins on a destructive UI whose whole purpose is preventing
   // silent wrong defaults. Buttons are disabled while a resolve is in flight.
   const [isResolving, setIsResolving] = createSignal(false);
-  let panelRef;
 
   // Friendly device names, falling back to plain "this / the other device".
   const localLabel = () =>
@@ -171,7 +170,7 @@ export default function ConflictResolutionPanel(props) {
         {/* Column 2: Decision buttons */}
         <div class="w-full md:w-96 shrink-0 flex flex-col gap-2 justify-start pt-6 md:pt-1 md:pl-8 border-t md:border-t-0 md:border-l border-[var(--color-border)]">
           <p class="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] mb-1 font-mono">
-            // RESOLUTION VERDICT REQUIRED
+            {t("conflict.verdictRequired")}
           </p>
           <DecisionButton
             icon={<IconMonitor class="w-4 h-4" />}

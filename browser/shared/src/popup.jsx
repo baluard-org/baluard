@@ -193,7 +193,13 @@ async function askUnlock(c) {
     next.add(c.slug);
     setUnlockRequested(next);
   } catch (e) {
-    setError(e.message);
+    // Lifecycle errors must move the popup, not vanish into a signal the
+    // ready view never renders.
+    if (e.code === "locked" || e.code === "no-daemon" || e.code === "version-skew") {
+      setStatePersisted(e.code);
+    } else {
+      setError(e.message);
+    }
   }
 }
 
@@ -218,9 +224,13 @@ const DOWNLOAD_URL = "https://baluard.app";
 /// resolve (MV3 service worker can be GC'd mid-request, orphaning the popup's
 /// sendMessage callback — leaving it stuck on "Loading…" forever).
 function timeout(ms, label) {
-  return new Promise((_resolve, reject) =>
-    setTimeout(() => reject(new TimeoutError(label)), ms)
-  );
+  let timerId;
+  const p = new Promise((_resolve, reject) => {
+    timerId = setTimeout(() => reject(new TimeoutError(label)), ms);
+  });
+  // Losing racers must not leave their timers in the event loop.
+  p.finally(() => clearTimeout(timerId)).catch(() => {});
+  return p;
 }
 
 class TimeoutError extends Error {
@@ -436,7 +446,13 @@ async function fill(entry) {
       });
     });
   } catch (e) {
-    setError(e.message);
+    // Lifecycle errors must move the popup, not vanish into a signal the
+    // ready view never renders.
+    if (e.code === "locked" || e.code === "no-daemon" || e.code === "version-skew") {
+      setStatePersisted(e.code);
+    } else {
+      setError(e.message);
+    }
   }
 }
 
@@ -453,7 +469,13 @@ async function copyField(entry, field) {
     setCopied(`${field}-${entry.id}`);
     setTimeout(() => setCopied(""), 2000);
   } catch (e) {
-    setError(e.message);
+    // Lifecycle errors must move the popup, not vanish into a signal the
+    // ready view never renders.
+    if (e.code === "locked" || e.code === "no-daemon" || e.code === "version-skew") {
+      setStatePersisted(e.code);
+    } else {
+      setError(e.message);
+    }
   }
 }
 
@@ -469,7 +491,13 @@ async function copyTotp(entry) {
     setCopied(`totp-${entry.id}`);
     setTimeout(() => setCopied(""), 2000);
   } catch (e) {
-    setError(e.message);
+    // Lifecycle errors must move the popup, not vanish into a signal the
+    // ready view never renders.
+    if (e.code === "locked" || e.code === "no-daemon" || e.code === "version-skew") {
+      setStatePersisted(e.code);
+    } else {
+      setError(e.message);
+    }
   }
 }
 
@@ -762,6 +790,18 @@ function App() {
       <Show when={state() === "version-skew"}>
         <StateBlock title={t("versionSkew")} desc={t("versionSkewDesc")} class="danger" />
         <a href={DOWNLOAD_URL} target="_blank" rel="noopener" class="link-btn btn-primary">{t("updateApp")}</a>
+        <button
+          class="btn-secondary"
+          onClick={async () => {
+            // A ping is the only verb allowed to reconnect a skewed port;
+            // after the desktop app updates, the handshake clears the skew.
+            try { await send("ping", {}); } catch {}
+            setState("loading");
+            await boot();
+          }}
+        >
+          {t("retry")}
+        </button>
       </Show>
 
       <Show when={state() === "ready"}>

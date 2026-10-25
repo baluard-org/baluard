@@ -547,7 +547,8 @@
       "title": "Manter ambas como itens separados",
       "desc": "Nada é perdido. Você terá duas cópias para revisar mais tarde."
     },
-    "resolveFailed": "Não foi possível salvar essa decisão. Tente novamente ou escolha outra opção."
+    "resolveFailed": "Não foi possível salvar essa decisão. Tente novamente ou escolha outra opção.",
+    "verdictRequired": "É necessário um veredito"
   },
   "errors": {
     "daemonNotRunning": "O serviço em segundo plano (daemon) não está em execução",

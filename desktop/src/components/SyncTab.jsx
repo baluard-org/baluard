@@ -133,6 +133,15 @@ const [customError, setCustomError] = createSignal(null);
     setShowAdvancedPanel(false);
     setAuthedThisSession(false);
     setJustConnectedProvider(null);
+    // Custom-remote credentials belong to the vault that entered them.
+    setCustomUrl("");
+    setCustomToken("");
+    setCustomUsername("");
+    setCustomKeyPem("");
+    setCustomPubKey("");
+    setCustomPassphrase("");
+    setCustomAck(false);
+    setShowCustom(false);
     // Refresh from the now-active vault so the tab doesn't show stale remote
     // URL / status / sync badge from the previous vault.
     loadState();
@@ -411,7 +420,11 @@ const [customError, setCustomError] = createSignal(null);
     if (customToken()) payload.token = customToken();
     if (customUsername()) payload.username = customUsername();
     if (customPassphrase()) payload.ssh_passphrase = customPassphrase();
-    if (customKeyPem()) payload.ssh_key_b64 = btoa(customKeyPem());
+    if (customKeyPem()) {
+      // btoa throws on non-Latin1 bytes; keys are ASCII in practice but a
+      // pasted comment need not be.
+      payload.ssh_key_b64 = btoa(String.fromCharCode(...new TextEncoder().encode(customKeyPem())));
+    }
     return payload;
   }
 
@@ -501,6 +514,9 @@ const [customError, setCustomError] = createSignal(null);
       toastSuccess(t("sync.customUse"));
       setCustomToken("");
       setCustomPassphrase("");
+      // The generated private key must not outlive the setup flow.
+      setCustomKeyPem("");
+      setCustomPubKey("");
       await loadState();
     } catch (e) {
       setCustomError(sanitizeError(e, t));

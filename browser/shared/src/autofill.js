@@ -52,7 +52,12 @@ export function fillLoginForm(cred) {
   if (!userField) {
     // Fallback: any visible text-like input preceding the password.
     const all = visibleInputs("text").concat(visibleInputs("email"));
-    userField = all.find((i) => !isTotpField(i)) || null;
+    userField =
+      all.find(
+        (i) =>
+          !isTotpField(i) &&
+          pwField.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING
+      ) || null;
   }
   if (username && userField) {
     setNativeValue(userField, username);

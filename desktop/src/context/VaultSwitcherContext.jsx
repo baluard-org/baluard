@@ -38,6 +38,8 @@ function VaultSwitcherProvider(props) {
       const slug = activeSlug();
       if (slug && slugs.includes(slug) && auth?.status() === "unlocked") {
         auth.setStatus("locked");
+        // A locked vault must not keep a display-once phrase in memory.
+        clearHeldPhrase();
         auth.setVaultInfo(null);
       }
     }).then((fn) => { unlisten = fn; });
