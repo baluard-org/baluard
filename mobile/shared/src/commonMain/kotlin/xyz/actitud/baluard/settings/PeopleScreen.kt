@@ -108,6 +108,10 @@ fun PeopleScreen(
     var replaceErr by remember { mutableStateOf<String?>(null) }
     var replaceResult by remember { mutableStateOf<VaultRepository.MobileReplaceReport?>(null) }
 
+    // Grant revoke (forces collection-key rotation): confirm first.
+    var revokeAsk by remember { mutableStateOf<Pair<String, String>?>(null) } // (collectionId, memberId)
+    var revokeBusy by remember { mutableStateOf(false) }
+
     // G13: user groups (admin-managed).
     var groups by remember { mutableStateOf<List<xyz.actitud.baluard.data.MobileGroupInfo>>(emptyList()) }
     var showGroupCreate by remember { mutableStateOf(false) }
@@ -407,6 +411,7 @@ fun PeopleScreen(
                                             }.onSuccess {
                                                 Toast.success(t("people.askApproved", ask.requesterName))
                                                 refreshAll()
+                                                onSyncNudge()
                                             }.onFailure { Toast.error(it.message ?: t("error.generic")) }
                                         }
                                     }) { Text(t("people.grantRead")) }
@@ -417,6 +422,7 @@ fun PeopleScreen(
                                             }.onSuccess {
                                                 Toast.success(t("people.askApproved", ask.requesterName))
                                                 refreshAll()
+                                                onSyncNudge()
                                             }.onFailure { Toast.error(it.message ?: t("error.generic")) }
                                         }
                                     }) { Text(t("people.grantWrite")) }
@@ -711,14 +717,7 @@ fun PeopleScreen(
                                             modifier = Modifier.weight(1f),
                                         )
                                         TextButton(onClick = {
-                                            scope.launch {
-                                                runCatching {
-                                                    repo.collectionRevoke(vault, "{\"id\":\"${col.info.id}\",\"member_id\":\"${g.memberId}\"}")
-                                                }.onSuccess {
-                                                    Toast.success(t("people.revoked"))
-                                                    refreshAll()
-                                                }.onFailure { Toast.error(it.message?.removePrefix("detail=") ?: t("error.generic")) }
-                                            }
+                                            revokeAsk = col.info.id to g.memberId
                                         }) { Text(t("people.revoke")) }
                                     }
                                 }
@@ -840,6 +839,35 @@ fun PeopleScreen(
             },
             dismissButton = {
                 TextButton(onClick = { inviteCode = null }) { Text(t("common.close")) }
+            },
+        )
+    }
+
+    // Grant revoke: a simple confirm — the action rotates the collection
+    // key, so a mis-tap must not be instant.
+    revokeAsk?.let { (collectionId, memberId) ->
+        AlertDialog(
+            onDismissRequest = { if (!revokeBusy) revokeAsk = null },
+            title = { Text(t("people.revokeConfirmTitle")) },
+            text = { Text(t("people.revokeConfirmBody").replace("{name}", memberName(members, memberId))) },
+            confirmButton = {
+                TextButton(enabled = !revokeBusy, onClick = {
+                    scope.launch {
+                        revokeBusy = true
+                        runCatching {
+                            repo.collectionRevoke(vault, "{\"id\":\"$collectionId\",\"member_id\":\"$memberId\"}")
+                        }.onSuccess {
+                            Toast.success(t("people.revoked"))
+                            refreshAll()
+                            onSyncNudge()
+                        }.onFailure { Toast.error(it.message?.removePrefix("detail=") ?: t("error.generic")) }
+                        revokeBusy = false
+                        revokeAsk = null
+                    }
+                }) { Text(t("people.revoke")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { revokeAsk = null }) { Text(t("common.cancel")) }
             },
         )
     }
@@ -1346,7 +1374,8 @@ private fun extractInviteCode(raw: String): String? = runCatching {
 }.getOrNull()
 
 private fun memberName(members: List<MobileMemberInfo>, id: String): String =
-    members.firstOrNull { it.id == id }?.name ?: id.take(8)
+    members.firstOrNull { it.id == id }?.name
+        ?: xyz.actitud.baluard.i18n.t("shared.unknownMember", id.take(8))
 
 private fun expirySuffix(expiresAt: Long?): String =
     if (expiresAt != null && expiresAt > 0L) " · ${formatEpochDate(expiresAt)}" else ""

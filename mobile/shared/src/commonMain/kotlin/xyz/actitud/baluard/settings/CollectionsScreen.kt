@@ -46,6 +46,7 @@ fun CollectionsScreen(
     vault: xyz.actitud.baluard.MobileVault,
     repo: VaultRepository,
     onBack: () -> Unit = {},
+    onSyncNudge: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var collections by remember { mutableStateOf<List<MobileCollectionFull>>(emptyList()) }
@@ -65,7 +66,7 @@ fun CollectionsScreen(
         scope.launch { collections = repo.listCollectionsFull(vault) }
     }
 
-    fun act(work: suspend () -> Boolean, done: String) {
+    fun act(work: suspend () -> Boolean, done: String, onDone: (Boolean) -> Unit = {}) {
         scope.launch {
             busy = true
             val ok = runCatching { work() }.getOrElse { false }
@@ -73,9 +74,11 @@ fun CollectionsScreen(
             if (ok) {
                 Toast.success(done)
                 reload()
+                onSyncNudge()
             } else {
                 Toast.error(t("error.generic"))
             }
+            onDone(ok)
         }
     }
 
@@ -183,12 +186,12 @@ fun CollectionsScreen(
                     onClick = {
                         val name = createName.trim()
                         if (name.isEmpty()) return@TextButton
-                        showCreate = false
-                        createName = ""
+                        // Dismiss only on success: a failed create must not
+                        // eat the typed name. act() closes via onDone.
                         act(
                             { repo.collectionCreate(vault, name).isNotEmpty() },
                             t("collections.createToast"),
-                        )
+                        ) { ok -> if (ok) { showCreate = false; createName = "" } }
                     },
                     enabled = createName.isNotBlank(),
                 ) { Text(t("collections.createAction")) }
@@ -215,11 +218,10 @@ fun CollectionsScreen(
                     onClick = {
                         val name = renameName.trim()
                         if (name.isEmpty()) return@TextButton
-                        renameTarget = null
                         act(
                             { repo.collectionRename(vault, target.info.id, name).isNotEmpty() },
                             t("collections.renameToast"),
-                        )
+                        ) { ok -> if (ok) renameTarget = null }
                     },
                     enabled = !busy && renameName.isNotBlank(),
                 ) { Text(t("collections.rename")) }
@@ -242,11 +244,10 @@ fun CollectionsScreen(
             },
             confirmButton = {
                 TextButton(enabled = !busy, onClick = {
-                    deleteTarget = null
                     act(
                         { repo.collectionDelete(vault, target.info.id).isNotEmpty() },
                         t("collections.deleteToast"),
-                    )
+                    ) { ok -> if (ok) deleteTarget = null }
                 }) { Text(t("collections.deleteAction")) }
             },
             dismissButton = {
@@ -263,12 +264,11 @@ fun CollectionsScreen(
                 Text(t("collections.catalogClearBody"), style = MaterialTheme.typography.bodyMedium)
             },
             confirmButton = {
-                TextButton(onClick = {
-                    confirmCatalogClear = false
+                TextButton(enabled = !busy, onClick = {
                     act(
                         { repo.collectionCatalogSet(vault, emptyList()).isNotEmpty() },
                         t("collections.catalogPublishedToast"),
-                    )
+                    ) { ok -> if (ok) confirmCatalogClear = false }
                 }) { Text(t("collections.catalogClear")) }
             },
             dismissButton = {

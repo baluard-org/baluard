@@ -1,5 +1,6 @@
 package xyz.actitud.baluard.ui.components
 
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -469,12 +470,14 @@ fun BaluardTextField(
     minLines: Int = 1,
     isError: Boolean = false,
     supportingText: String? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
 ) {
     var passwordVisible by remember { mutableStateOf(!isPassword) }
 
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
+        keyboardOptions = keyboardOptions,
         label = label?.let { { Text(it) } },
         placeholder = placeholder?.let { { Text(it) } },
         singleLine = singleLine,

@@ -715,6 +715,9 @@ internal val PT: Map<String, String> = mapOf(
         "people.addGrant" to "Conceder acesso",
         "people.granted" to "Acesso concedido",
         "people.revoke" to "Revogar",
+            "shared.unknownMember" to "Membro desconhecido (id: {0})",
+"people.revokeConfirmTitle" to "Revogar acesso?",
+        "people.revokeConfirmBody" to "Remover {name} desta pasta compartilhada? A pessoa perde o acesso imediatamente.",
         "people.revoked" to "Acesso revogado",
         "people.actionTransfer" to "Transferir",
         "people.actionClaim" to "Assumir propriedade",
@@ -724,11 +727,11 @@ internal val PT: Map<String, String> = mapOf(
         "people.actionReset" to "Redefinir",
         "people.actionReplace" to "Substituir dispositivo",
         "people.replaceTitle" to "Substituir o dispositivo de {0}",
-        "people.replaceBody" to "Reinicia esta membership com um convite de substituição que mantém as coleções, revoga os dispositivos roubados e rotaciona o que podia abrir. O dispositivo antigo deixa de funcionar.",
+        "people.replaceBody" to "Reinicia esta membership com um convite de substituição que mantém as pastas compartilhadas, revoga os dispositivos roubados e rotaciona o que podia abrir. O dispositivo antigo deixa de funcionar.",
         "people.replaceConfirm" to "Substituir",
         "people.replaceDone" to "Dispositivo substituído.",
         "people.replaceCodeTitle" to "Código de convite de substituição",
-        "people.replaceCodeBody" to "Mostrado uma vez. A pessoa entra novamente com este código e mantém as coleções.",
+        "people.replaceCodeBody" to "Mostrado uma vez. A pessoa entra novamente com este código e mantém as pastas compartilhadas.",
         "people.replaceSuccessor" to "Novo id de membro:",
         "people.replaceWarn" to "Alguns passos falharam - o dispositivo antigo ainda pode ter chaves antigas:",
         "people.actionRole" to "Papel",
@@ -762,7 +765,7 @@ internal val PT: Map<String, String> = mapOf(
         "people.resetCodeBody" to "Entregue este código ao membro. Ele entra novamente com ele e define uma nova senha.",
 
 
-        // §4.8-9 CRUD de coleções.
+        // §4.8-9 CRUD de pastas compartilhadas.
         "collections.title" to "Pastas compartilhadas",
         "collections.entrySubtitle" to "Crie, renomeie ou remova pastas compartilhadas",
         "collections.listTitle" to "Suas pastas compartilhadas",

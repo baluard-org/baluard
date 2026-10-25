@@ -53,8 +53,9 @@ class VaultListViewModel(private val repo: VaultRepository) {
         val q = query.trim()
         if (q.isEmpty()) return emptyList()
         return hits.ciphers.filter { m ->
-            m.name.contains(q, ignoreCase = true) ||
-                (m.username?.contains(q, ignoreCase = true) ?: false)
+            !m.archived &&
+                (m.name.contains(q, ignoreCase = true) ||
+                    (m.username?.contains(q, ignoreCase = true) ?: false))
         }
     }
     private val _ciphers = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
@@ -94,14 +95,34 @@ class VaultListViewModel(private val repo: VaultRepository) {
     /** Bumps when the deep-search index rebuilds; screens collect it to re-run search. */
     val indexVersion: StateFlow<Int> = _indexVersion.asStateFlow()
 
+    /** Wipe every decrypted list and the search haystack (lock/switch). */
+    private val clearGen = java.util.concurrent.atomic.AtomicLong(0)
+
+    suspend fun clear() {
+        clearGen.incrementAndGet()
+        indexMutex.withLock {
+            _ciphers.value = emptyList()
+            _folders.value = emptyList()
+            _archived.value = emptyList()
+            _trash.value = emptyList()
+            _totp.value = emptyList()
+            _collections.value = emptyList()
+            _myAsks.value = emptyList()
+            contentIndex.clear()
+            indexedVault = null
+        }
+    }
+
     fun setQuery(q: String) { _query.value = q }
 
     /** Reload all slices from the runtime. Call after unlock + after mutations. */
     suspend fun refresh(vault: MobileVault) {
         // A throw here used to kill the LaunchedEffect silently, leaving an
         // empty list with no signal (the empty-on-open bug report). Surface it.
+        val gen = clearGen.get()
         runCatching {
             val ciphers = repo.listCiphers(vault)
+            if (gen != clearGen.get()) return // locked away mid-refresh
             platformLogE("VaultList", "refresh: ${ciphers.size} ciphers")
             _ciphers.value = ciphers
             _folders.value = runCatching { repo.listFolders(vault) }.getOrDefault(emptyList())
@@ -273,6 +294,9 @@ class VaultListViewModel(private val repo: VaultRepository) {
 internal val SEARCH_SKIP_KEYS = setOf(
     "password",
     "password_history",
+    "code",
+    "pin",
+    "ssn",
     "password_revision_date",
     "private_key",
     "prf_key",
@@ -338,4 +362,5 @@ private val BOOLEAN_LITERALS = setOf("true", "false")
  * fails the test instead of leaking a seed or key into the search index. */
 internal val NEVER_INDEXABLE = setOf(
     "password", "password_history", "private_key", "prf_key", "totp_uri",
+    "code", "pin", "ssn",
 )

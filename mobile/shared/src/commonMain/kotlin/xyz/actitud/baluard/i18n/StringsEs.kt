@@ -749,6 +749,9 @@ internal val ES: Map<String, String> = mapOf(
         "people.addGrant" to "Conceder acceso",
         "people.granted" to "Acceso concedido",
         "people.revoke" to "Revocar",
+            "shared.unknownMember" to "Miembro desconocido (id: {0})",
+"people.revokeConfirmTitle" to "¿Quitar el acceso?",
+        "people.revokeConfirmBody" to "¿Quitar a {name} de esta carpeta compartida? Pierde el acceso de inmediato.",
         "people.revoked" to "Acceso revocado",
         "people.actionTransfer" to "Transferir",
         "people.actionClaim" to "Tomar propiedad",
@@ -758,11 +761,11 @@ internal val ES: Map<String, String> = mapOf(
         "people.actionReset" to "Restablecer",
         "people.actionReplace" to "Reemplazar dispositivo",
         "people.replaceTitle" to "Reemplazar el dispositivo de {0}",
-        "people.replaceBody" to "Reinicia esta membresía con una invitación de reemplazo que conserva sus colecciones, revoca sus dispositivos robados y rota lo que podía abrir. El dispositivo anterior deja de funcionar.",
+        "people.replaceBody" to "Reinicia esta membresía con una invitación de reemplazo que conserva sus carpetas compartidas, revoca sus dispositivos robados y rota lo que podía abrir. El dispositivo anterior deja de funcionar.",
         "people.replaceConfirm" to "Reemplazar",
         "people.replaceDone" to "Dispositivo reemplazado.",
         "people.replaceCodeTitle" to "Código de invitación de reemplazo",
-        "people.replaceCodeBody" to "Se muestra una vez. La persona vuelve a unirse con este código y conserva sus colecciones.",
+        "people.replaceCodeBody" to "Se muestra una vez. La persona vuelve a unirse con este código y conserva sus carpetas compartidas.",
         "people.replaceSuccessor" to "Nuevo id de miembro:",
         "people.replaceWarn" to "Algunos pasos fallaron: el dispositivo anterior puede seguir teniendo claves antiguas:",
         "people.actionRole" to "Rol",
@@ -796,7 +799,7 @@ internal val ES: Map<String, String> = mapOf(
         "people.resetCodeBody" to "Entrega este código al miembro. Vuelve a unirse con él y define una nueva contraseña.",
 
 
-        // §4.8-9 CRUD de colecciones.
+        // §4.8-9 CRUD de carpetas compartidas.
         "collections.title" to "Carpetas compartidas",
         "collections.entrySubtitle" to "Crea, renombra o elimina carpetas compartidas",
         "collections.listTitle" to "Tus carpetas compartidas",

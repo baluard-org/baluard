@@ -65,8 +65,10 @@ fun CreateVaultScreen(
     val vm = remember { CreateVaultViewModel(repo, authViewModel) }
     val scope = rememberCoroutineScope()
 
-    var password by rememberSaveable { mutableStateOf("") }
-    var confirm by rememberSaveable { mutableStateOf("") }
+    // Plain remember: the master password never rides the saved-instance
+    // Bundle (M6 rule, ProviderConnectScreen parity).
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
     // OS-provided name (Pixel 9 Pro, Esteban's iPhone); localized
     // "My device" only when the OS gives nothing. Still editable.
     var deviceName by rememberSaveable {

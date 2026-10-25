@@ -68,6 +68,7 @@ import xyz.actitud.baluard.detail.FieldSpec
 import xyz.actitud.baluard.detail.fieldsFor
 import xyz.actitud.baluard.detail.typeLabelKey
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.ui.toast.Toast
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
@@ -227,10 +228,14 @@ fun EditCipherScreen(
                                         onToggleOptions = { showGenOptions = !showGenOptions },
                                         onGenerate = {
                                             scope.launch {
-                                                viewModel.setField(
-                                                    spec.wireKey,
-                                                    viewModel.generatePassword(genLen, genUpper, genNums, genSyms),
-                                                )
+                                                // A failed generation must not wipe
+                                                // the current password with "".
+                                                val pw = viewModel.generatePassword(genLen, genUpper, genNums, genSyms)
+                                                if (pw != null) {
+                                                    viewModel.setField(spec.wireKey, pw)
+                                                } else {
+                                                    Toast.error(t("error.generic"))
+                                                }
                                             }
                                         },
                                     )

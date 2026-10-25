@@ -41,11 +41,20 @@ fun ActivityScreen(
     var events by remember(vault) { mutableStateOf<List<MobileActivityRow>>(emptyList()) }
     var refusals by remember(vault) { mutableStateOf<List<String>>(emptyList()) }
     var loaded by remember(vault) { mutableStateOf(false) }
+    var loadError by remember(vault) { mutableStateOf(false) }
 
     LaunchedEffect(vault) {
-        notices = repo.noticesList(vault)
-        events = repo.activityEvents(vault)
-        refusals = repo.activityRefusals(vault)
+        loadError = try {
+            notices = repo.noticesList(vault)
+            events = repo.activityEvents(vault)
+            refusals = repo.activityRefusals(vault)
+            false
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Blank must mean empty, not failed.
+            true
+        }
         loaded = true
     }
 
@@ -61,7 +70,18 @@ fun ActivityScreen(
         ) {
             // Blank while loading: a false "no data" would read as a
             // clean bill of health during the fetch window.
-            if (loaded) {
+            if (loaded && loadError) {
+                item(key = "error") {
+                    SectionCard(title = t("activity.title")) {
+                        Text(
+                            text = t("error.generic"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+            if (loaded && !loadError) {
                 item(key = "notices") {
                     SectionCard(title = t("activity.noticesTitle")) {
                         if (notices.isEmpty()) {

@@ -69,7 +69,12 @@ fun UnlockScreen(
     val biometric = remember { Biometric() }
     var biometricEnrolled by remember(vaultPath) { mutableStateOf(biometric.isEnrolled(vaultPath)) }
 
-    fun finishUnlock() = onUnlocked()
+    fun finishUnlock() {
+        // The unlock is done; the master password must not outlive the
+        // screen state.
+        password = ""
+        onUnlocked()
+    }
 
     // Auto-prompt (Bitwarden-style): as soon as the app opens on a locked
     // vault with biometrics enrolled, raise the platform prompt. Runs once
@@ -270,6 +275,11 @@ fun UnlockScreen(
                                         kek = kek,
                                         title = t("login.biometricTitle"),
                                         onSuccess = {
+                                            // The platform prompt encrypts the KEK
+                                            // in its own callback, so it can only be
+                                            // wiped here — at completion — never in
+                                            // a finally around the async enroll().
+                                            kek.fill(0)
                                             biometricEnrolled = true
                                             phase = UnlockPhase.Input
                                             finishUnlock()
@@ -278,6 +288,7 @@ fun UnlockScreen(
                                             platformLogE("UnlockScreen", "biometric enroll failed: code=$code $err")
                                             // Enrollment failed: quick unlock
                                             // stays off; the vault IS unlocked.
+                                            kek.fill(0)
                                             phase = UnlockPhase.Input
                                             finishUnlock()
                                         },

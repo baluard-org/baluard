@@ -44,6 +44,12 @@ import xyz.actitud.baluard.detail.str
  */
 class EditCipherViewModel(private val repo: VaultRepository) {
     private val _form = MutableStateFlow(EditForm())
+
+    /** Wipe the form (lock / vault switch): passwords, SSH keys and the
+     * TOTP seed must not outlive their screen. */
+    fun clear() {
+        _form.value = EditForm()
+    }
     val form: StateFlow<EditForm> = _form.asStateFlow()
 
     /** Non-null when loading an existing cipher failed (corrupt JSON, FFI error). */
@@ -124,7 +130,9 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         when {
             type == "Linked" -> it.copy(fieldType = "Linked", linkedTarget = it.linkedTarget ?: "LoginUsername", value = "")
             type == "Boolean" -> it.copy(fieldType = "Boolean", value = it.value.ifBlank { "false" })
-            else -> it.copy(fieldType = type)
+            // Leaving Linked must drop the target, or the payload stays
+            // Linked and the Linked-target editor lingers.
+            else -> it.copy(fieldType = type, linkedTarget = null)
         }
     }
     fun setCustomFieldLinkedTarget(index: Int, target: String) = mutateCustomField(index) { it.copy(linkedTarget = target) }
@@ -189,10 +197,10 @@ class EditCipherViewModel(private val repo: VaultRepository) {
 
     /** Inline password generation with desktop's knobs (length 8-64,
      * uppercase / numbers / symbols toggles). */
-    suspend fun generatePassword(length: Int, upper: Boolean, numbers: Boolean, symbols: Boolean): String =
+    suspend fun generatePassword(length: Int, upper: Boolean, numbers: Boolean, symbols: Boolean): String? =
         repo.generatePassword(
             PasswordConfig(length.coerceIn(1, 128).toUInt(), upper, numbers, symbols),
-        ).getOrElse { "" }
+        ).getOrNull()
 
     /** SSH keypair generation (desktop SshKeyGenerator parity). Fills the
      * public_key / private_key / key_fingerprint form fields. Returns false on
@@ -280,11 +288,14 @@ class EditCipherViewModel(private val repo: VaultRepository) {
             ?.let { runCatching { Json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
         val data = obj?.str("data")
         val mime = obj?.str("mime")
-        _form.value = if (data != null && mime != null) {
-            val icon = buildJsonObject { put("data", data); put("mime", mime) }
-            _form.value.copy(faviconOverride = icon)
-        } else {
-            _form.value.copy(faviconOverride = JsonNull)
+        _form.value = when {
+            // A fetch failure (offline, no icon) must leave the stored
+            // icon alone; only a fresh icon replaces it.
+            data != null && mime != null -> {
+                val icon = buildJsonObject { put("data", data); put("mime", mime) }
+                _form.value.copy(faviconOverride = icon)
+            }
+            else -> _form.value
         }
     }
 

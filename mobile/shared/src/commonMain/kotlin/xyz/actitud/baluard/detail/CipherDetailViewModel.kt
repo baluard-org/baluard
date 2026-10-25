@@ -27,8 +27,14 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
     /** True when the loaded cipher is already in trash (delete = purge). */
     var inTrash: Boolean by mutableStateOf(false)
         private set
+    private var loadedId: String? = null
+
     suspend fun load(vault: MobileVault, id: String) {
         error = null
+        // Never show the previous entry while this one loads — but an
+        // in-place revision bump (favorite, attachment) keeps the screen.
+        if (state != null && loadedId != id) state = null
+        loadedId = id
         inTrash = runCatching { repo.listTrash(vault).any { it.id == id } }.getOrDefault(false)
         try {
             val raw = repo.getCipher(vault, id, decrypt = true)
@@ -65,6 +71,18 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
             platformLogE("CipherDetail", "load failed for $id", e)
             error = e.message
         }
+    }
+
+    /** Consume the error after the screen surfaces it (toasts are one-shot). */
+    fun ackError() {
+        error = null
+    }
+
+    /** Wipe decrypted entry state (lock / vault switch). */
+    fun clear() {
+        state = null
+        error = null
+        inTrash = false
     }
 
     /** Delete the loaded cipher (trash semantics — the runtime soft-deletes).
