@@ -743,6 +743,113 @@ impl ForgeProvider for GitLabProvider {
         }
     }
 
+    async fn add_deploy_key(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        title: &str,
+        public_key: &str,
+    ) -> Result<u64, ProviderError> {
+        super::types::assert_safe_path(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        let url_encoded = urlencoding_encode(&format!("{owner}/{repo}"));
+        let url = format!("{}/projects/{url_encoded}/deploy_keys", self.api_base());
+        // GitLab deploy keys are read-only unless `can_push` is set, so
+        // the body simply omits it.
+        let resp = self
+            .authed(reqwest::Method::POST, &url, token)
+            .json(&serde_json::json!({ "title": title, "key": public_key }))
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        let status = resp.status();
+        let body = resp.json::<serde_json::Value>().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(ProviderError::Api(format!(
+                "add deploy key HTTP {status}: {body}"
+            )));
+        }
+        body.get("id")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| ProviderError::Api(format!("add deploy key: no id in {body}")))
+    }
+
+    async fn list_deploy_keys(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<super::types::DeployKey>, ProviderError> {
+        super::types::assert_safe_path(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        let url_encoded = urlencoding_encode(&format!("{owner}/{repo}"));
+        let url = format!("{}/projects/{url_encoded}/deploy_keys", self.api_base());
+        let resp = self
+            .authed(reqwest::Method::GET, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        let status = resp.status();
+        let body = resp.json::<serde_json::Value>().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(ProviderError::Api(format!(
+                "list deploy keys HTTP {status}: {body}"
+            )));
+        }
+        let arr = body
+            .as_array()
+            .ok_or_else(|| ProviderError::Api("list deploy keys: not an array".into()))?;
+        Ok(arr
+            .iter()
+            .map(|k| super::types::DeployKey {
+                id: k.get("id").and_then(|v| v.as_u64()).unwrap_or(0),
+                title: k
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                key: k
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                read_only: !k.get("can_push").and_then(|v| v.as_bool()).unwrap_or(false),
+            })
+            .collect())
+    }
+
+    async fn remove_deploy_key(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        key_id: u64,
+    ) -> Result<(), ProviderError> {
+        super::types::assert_safe_path(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        let url_encoded = urlencoding_encode(&format!("{owner}/{repo}"));
+        let url = format!(
+            "{}/projects/{url_encoded}/deploy_keys/{key_id}",
+            self.api_base()
+        );
+        let resp = self
+            .authed(reqwest::Method::DELETE, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        match resp.status().as_u16() {
+            204 => Ok(()),
+            404 => Ok(()),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(ProviderError::Api(format!(
+                    "remove deploy key HTTP {s}: {body}"
+                )))
+            }
+        }
+    }
+
     async fn revoke_token(&self, token: &ProviderToken) -> Result<(), ProviderError> {
         // Best-effort. OAuth public clients revoke via /oauth/revoke with
         // client_id + token. PATs cannot self-revoke; user deletes in settings.
@@ -838,6 +945,44 @@ mod tests {
             instance_url: Some(base.into()),
             client_secret: None,
         })
+    }
+
+    #[tokio::test]
+    async fn deploy_key_add_list_remove_roundtrip() {
+        let api = MockApi::start();
+        let gl = gl_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "api");
+
+        // Add: URL-encoded project path, no can_push in the body.
+        api.push(201, r#"{"id": 51}"#);
+        let id = gl
+            .add_deploy_key(&tok, "grp/sub", "r", "baluard-legacy-contact", "ssh-ed25519 AAA")
+            .await
+            .unwrap();
+        assert_eq!(id, 51);
+        let (method, path, body) = &api.requests()[0];
+        assert_eq!(method, "POST");
+        assert_eq!(path, "/api/v4/projects/grp%2Fsub%2Fr/deploy_keys");
+        assert!(!body.contains("can_push"), "body: {body}");
+
+        // List: can_push false maps to read_only true.
+        api.push(
+            200,
+            r#"[{"id":51,"title":"baluard-legacy-contact","key":"ssh-ed25519 AAA","can_push":false}]"#,
+        );
+        let keys = gl.list_deploy_keys(&tok, "grp/sub", "r").await.unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].id, 51);
+        assert!(keys[0].read_only);
+
+        // Remove: 204 then 404 idempotent.
+        api.push(204, "");
+        gl.remove_deploy_key(&tok, "grp/sub", "r", 51).await.unwrap();
+        let (method, path, _) = &api.requests()[2];
+        assert_eq!(method, "DELETE");
+        assert_eq!(path, "/api/v4/projects/grp%2Fsub%2Fr/deploy_keys/51");
+        api.push(404, r#"{"message":"404 Not Found"}"#);
+        gl.remove_deploy_key(&tok, "grp/sub", "r", 51).await.unwrap();
     }
 
     #[tokio::test]

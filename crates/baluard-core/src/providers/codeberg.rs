@@ -576,6 +576,112 @@ impl ForgeProvider for CodebergProvider {
         }
     }
 
+    async fn add_deploy_key(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        title: &str,
+        public_key: &str,
+    ) -> Result<u64, ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        let url = format!("{}/repos/{owner}/{repo}/keys", self.api_base());
+        let resp = self
+            .authed(reqwest::Method::POST, &url, token)
+            .json(&serde_json::json!({
+                "title": title,
+                "key": public_key,
+                "read_only": true
+            }))
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        let status = resp.status();
+        let body = resp.json::<serde_json::Value>().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(ProviderError::Api(format!(
+                "add deploy key HTTP {status}: {body}"
+            )));
+        }
+        body.get("id")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| ProviderError::Api(format!("add deploy key: no id in {body}")))
+    }
+
+    async fn list_deploy_keys(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<super::types::DeployKey>, ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        let url = format!("{}/repos/{owner}/{repo}/keys", self.api_base());
+        let resp = self
+            .authed(reqwest::Method::GET, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        let status = resp.status();
+        let body = resp.json::<serde_json::Value>().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(ProviderError::Api(format!(
+                "list deploy keys HTTP {status}: {body}"
+            )));
+        }
+        let arr = body
+            .as_array()
+            .ok_or_else(|| ProviderError::Api("list deploy keys: not an array".into()))?;
+        Ok(arr
+            .iter()
+            .map(|k| super::types::DeployKey {
+                id: k.get("id").and_then(|v| v.as_u64()).unwrap_or(0),
+                title: k
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                key: k
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                read_only: k
+                    .get("read_only")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+            })
+            .collect())
+    }
+
+    async fn remove_deploy_key(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        key_id: u64,
+    ) -> Result<(), ProviderError> {
+        super::types::assert_safe_segment(owner, "owner")?;
+        super::types::assert_safe_segment(repo, "repository")?;
+        let url = format!("{}/repos/{owner}/{repo}/keys/{key_id}", self.api_base());
+        let resp = self
+            .authed(reqwest::Method::DELETE, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        match resp.status().as_u16() {
+            204 => Ok(()),
+            404 => Ok(()),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(ProviderError::Api(format!(
+                    "remove deploy key HTTP {s}: {body}"
+                )))
+            }
+        }
+    }
+
     async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {
         // Forgejo OAuth tokens can be revoked by the user deleting the app
         // authorization in settings. No API self-revoke for OAuth.
@@ -652,6 +758,44 @@ mod tests {
             instance_url: Some(base.into()),
             client_secret: None,
         })
+    }
+
+    #[tokio::test]
+    async fn deploy_key_add_list_remove_roundtrip() {
+        let api = MockApi::start();
+        let cb = cb_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "");
+
+        // Add: Forgejo body pins read_only true.
+        api.push(201, r#"{"id": 9}"#);
+        let id = cb
+            .add_deploy_key(&tok, "o", "r", "baluard-legacy-contact", "ssh-ed25519 AAA")
+            .await
+            .unwrap();
+        assert_eq!(id, 9);
+        let (method, path, body) = &api.requests()[0];
+        assert_eq!(method, "POST");
+        assert_eq!(path, "/api/v1/repos/o/r/keys");
+        assert!(body.contains("\"read_only\":true"), "body: {body}");
+
+        // List.
+        api.push(
+            200,
+            r#"[{"id":9,"title":"baluard-legacy-contact","key":"ssh-ed25519 AAA","read_only":true}]"#,
+        );
+        let keys = cb.list_deploy_keys(&tok, "o", "r").await.unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].id, 9);
+        assert!(keys[0].read_only);
+
+        // Remove: 204 then 404 idempotent.
+        api.push(204, "");
+        cb.remove_deploy_key(&tok, "o", "r", 9).await.unwrap();
+        let (method, path, _) = &api.requests()[2];
+        assert_eq!(method, "DELETE");
+        assert_eq!(path, "/api/v1/repos/o/r/keys/9");
+        api.push(404, r#"{"message":"Not Found"}"#);
+        cb.remove_deploy_key(&tok, "o", "r", 9).await.unwrap();
     }
 
     #[tokio::test]

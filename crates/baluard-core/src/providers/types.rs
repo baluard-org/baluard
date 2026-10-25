@@ -491,6 +491,20 @@ pub struct VaultRepo {
     pub vault_id: Option<String>,
 }
 
+/// A repo deploy key as the forge reports it. Legacy contact kits arm
+/// read-only keys only: the contact can clone, never push.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DeployKey {
+    /// Provider-assigned numeric id.
+    pub id: u64,
+    /// Key title as set at creation.
+    pub title: String,
+    /// OpenSSH public key material.
+    pub key: String,
+    /// Whether the key may push (Baluard always arms read-only keys).
+    pub read_only: bool,
+}
+
 /// Transport seat level for a repo collaborator (P8c least-privilege
 /// staging): pending joiners and viewers ride READ-only access (they must
 /// clone to introduce), editors and above are granted WRITE at approval.
@@ -786,6 +800,37 @@ pub trait ForgeProvider: Send + Sync {
         username: &str,
     ) -> Result<(), ProviderError>;
 
+    /// Arm a read-only deploy key on a repo. Legacy contact kits carry
+    /// the matching private half, so the contact can clone without a
+    /// forge account of their own. Returns the provider-assigned key id.
+    async fn add_deploy_key(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        title: &str,
+        public_key: &str,
+    ) -> Result<u64, ProviderError>;
+
+    /// List a repo's deploy keys. Used to find a stale Baluard key on
+    /// re-arm before minting a replacement.
+    async fn list_deploy_keys(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<DeployKey>, ProviderError>;
+
+    /// Remove a deploy key by provider id. Idempotent: removing an
+    /// absent key succeeds so disarm retries never wedge.
+    async fn remove_deploy_key(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        key_id: u64,
+    ) -> Result<(), ProviderError>;
+
     /// Attempt to revoke a token at the provider. Non-blocking on failure.
     async fn revoke_token(&self, token: &ProviderToken) -> Result<(), ProviderError>;
 
@@ -1000,6 +1045,38 @@ pub mod mock {
             username: &str,
         ) -> Result<(), ProviderError> {
             self.record(format!("remove:{owner}/{repo}:{username}"));
+            Ok(())
+        }
+
+        async fn add_deploy_key(
+            &self,
+            _token: &ProviderToken,
+            owner: &str,
+            repo: &str,
+            _title: &str,
+            _public_key: &str,
+        ) -> Result<u64, ProviderError> {
+            self.record(format!("addkey:{owner}/{repo}"));
+            Ok(4242)
+        }
+
+        async fn list_deploy_keys(
+            &self,
+            _token: &ProviderToken,
+            _owner: &str,
+            _repo: &str,
+        ) -> Result<Vec<DeployKey>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        async fn remove_deploy_key(
+            &self,
+            _token: &ProviderToken,
+            owner: &str,
+            repo: &str,
+            _key_id: u64,
+        ) -> Result<(), ProviderError> {
+            self.record(format!("delkey:{owner}/{repo}"));
             Ok(())
         }
 
