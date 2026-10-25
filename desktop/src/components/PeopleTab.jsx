@@ -473,7 +473,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
       } else if (action.kind === "claim") {
         const selfId = members().find((r) => r.is_self)?.id;
         if (!selfId) {
-          toastError(t("error.generic"));
+          toastError(t("errors.unexpected"));
           setBusy(false);
           return;
         }
