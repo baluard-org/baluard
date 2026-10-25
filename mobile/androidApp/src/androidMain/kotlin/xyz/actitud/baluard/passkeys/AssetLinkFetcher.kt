@@ -13,6 +13,16 @@ interface AssetLinkFetcher {
 /** Hardened DAL fetch: HTTPS only, no redirects, 5s timeout, 64 KiB cap (§7). */
 class HttpAssetLinkFetcher : AssetLinkFetcher {
     override fun fetchAssetLinks(relyingPartyId: String): String {
+        // String checks on the name are not enough (DNS rebinding, integer
+        // IPs): resolve and refuse any non-public address.
+        val addrs = java.net.InetAddress.getAllByName(relyingPartyId)
+        if (addrs.isEmpty() || addrs.any {
+                it.isLoopbackAddress || it.isLinkLocalAddress ||
+                    it.isSiteLocalAddress || it.isAnyLocalAddress || it.isMulticastAddress
+            }
+        ) {
+            throw IOException("assetlinks host is not a public address")
+        }
         val url = URL("https://$relyingPartyId/.well-known/assetlinks.json")
         val conn = url.openConnection() as HttpURLConnection
         return try {

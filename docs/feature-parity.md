@@ -105,7 +105,7 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Access asks / requests | Yes (`members requests` + `approve` / `deny`) | Yes | Yes |
 | Space settings (all knobs) | Yes (`settings space get` / `space-set`) | Yes | Yes |
 | Policies | Yes (`policies list/set`) | Yes | Yes |
-| Approvals / quorum | None | Yes | Yes |
+| Approvals / quorum | Yes (`approvals list`) | Yes | Yes |
 | Activity log | Yes (`activity`) | Yes | Yes |
 | Contact cards + outbox publish | Partial (list, my-card, import, Level-2 verify, remove; no outbox publish) | Yes | Partial (my code + Level-2 verify from the People screen; no card-import UI, no outbox) |
 | Open shared reveal (guest / contact file) | None | Yes | Yes (Settings > Data + a guest-only onboarding entry) |
@@ -160,7 +160,7 @@ Surface: CLI. CLOSED (2026-10-09): `baluard rotate-root` rides the daemon rotati
 Surface: Mobile. CLOSED (2026-10-19/20): Android credential-provider ceremonies shipped (`BaluardCredentialProviderService`, `passkeyProviderRegister`/`passkeyProviderAssert` over UniFFI; commits bb4f12f, c5175ca). iOS waits on the platform effort below. Original assessment: Platform WebAuthn APIs make this the hardest mobile item. Effort: L. Value: real, but display-only may be the right 1.0 scope. Decision: needed - park or schedule after 1.0.
 
 ### G11. CLI sharing surface (phased)
-Surface: CLI. Missing: approvals commands (the only sharing surface still desktop/mobile-only; tracked as post-1.0 debt per principle 1). Landed: members, collections, groups, policies, activity). With the CLI first-class, this is in scope, in two phases:
+Surface: CLI. CLOSED (2026-10-25): `baluard approvals list` shows the pending quorum asks; approval itself rides repeating the same ask through the op commands (members claim/transfer and the other sensitive verbs), matching desktop. Earlier phases: members, collections, groups, policies, activity. The two phases:
 
 - **Phase 1 (M) - the Bitwarden shape:** share an item to a space, collection list/assign, member list, member confirm. LANDED (2026-10-09): `baluard collections list|create|assign|grant|revoke` and `baluard members list|requests|approve-join|deny-join|approve|deny` (two queues: joins via `requests.*`, access asks via `collections.requests_*`).
 - **Phase 2 (L) - full admin.** LANDED (2026-10-19): `members remove|reset|transfer|claim|contest-status|contest-cancel|set-email|set-minor|leave|leaves|approve-leave` (irreversible verbs gated behind a typed confirm or `--yes`), `groups list|create|rename|delete|add-member|remove-member`, `policies list|set`, `space prepare|status|flip|set-purpose|kit-enable|kit-disable|kit-status|migrate`, and `activity`. Every verb rides an existing daemon route; the e2e flow `e2e_cli_org_admin_surface` pins the surface.
@@ -212,7 +212,7 @@ Surface: Desktop + Mobile + CLI. CLOSED (2026-10-18): see the Closed table.
 
 Every 1.0-track gap is closed; what remains is scheduled or parked:
 
-1. **1.0 track:** G11 phase 2 LANDED (2026-10-19); G10 (mobile passkey ceremonies) CLOSED 2026-10-19/20 on Android. The backlog holds one post-1.0 item: CLI approvals commands. 1.0 release-engineering scoping is the remaining conversation. **Post-1.0:** G12 (iOS depth).
+1. **1.0 track:** G11 phase 2 LANDED (2026-10-19); G10 (mobile passkey ceremonies) CLOSED 2026-10-19/20 on Android. The parity backlog is empty. 1.0 release-engineering scoping is the remaining conversation. **Post-1.0:** G12 (iOS depth).
 2. **Scheduled, not landed:** G12 (iOS depth) waits on the platform.
 
 3. **Parked on demand:** G23 (mobile admin ops: repoint/migrate, commit revocation).

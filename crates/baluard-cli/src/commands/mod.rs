@@ -1695,6 +1695,39 @@ pub fn handle_policies(
     }
 }
 
+pub fn handle_approvals(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: &crate::ApprovalAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::ApprovalAction;
+    require_daemon(mode, "approvals")?;
+    ensure_unlocked_daemon(socket)?;
+    match action {
+        ApprovalAction::List => {
+            let data = post(socket, "approvals.list", &serde_json::json!({}))?;
+            let pending = data["pending"].as_array().cloned().unwrap_or_default();
+            if pending.is_empty() {
+                println!("No sensitive-op asks are waiting on this device.");
+                return Ok(());
+            }
+            for op in &pending {
+                let kind = op["kind"].as_str().unwrap_or("unknown");
+                let by = op["initiated_by"].as_str().unwrap_or("unknown");
+                let have = op["approvals"].as_array().map(|a| a.len()).unwrap_or(0);
+                let need = op["required"].as_u64().unwrap_or(0);
+                println!("{kind} (asked by {by}, {have}/{need} approvals)");
+                if let Some(params) = op["params"].as_object() {
+                    let brief = serde_json::to_string(params)?;
+                    println!("  params: {brief}");
+                }
+            }
+            println!("Approve by repeating the same ask (members claim/transfer, role, reset, and the other sensitive ops carry their own approvals).");
+            Ok(())
+        }
+    }
+}
+
 pub fn handle_space(
     mode: ConnectMode,
     socket: Option<&str>,

@@ -5,6 +5,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.passkeys.OriginRules
 
 /** One listed passkey credential (Begin entries and the assert picker). */
 data class ListedPasskey(
@@ -12,6 +13,8 @@ data class ListedPasskey(
     val credentialId: String,
     val userName: String?,
     val rpId: String,
+    /** Item-level master-password re-prompt must gate the ceremony. */
+    val reprompt: Boolean,
 )
 
 /**
@@ -40,6 +43,46 @@ object PasskeyLister {
                 ((c as? kotlinx.serialization.json.JsonObject)?.get("id"))?.jsonPrimitive?.content
             }
     }.getOrDefault(emptyList())
+
+    /**
+     * Plan §9 linkage: the existing login this passkey should attach to,
+     * when the vault holds exactly one candidate (a login uri whose host
+     * sits under the rp id, matching username). Ambiguity creates a new
+     * entry rather than guessing.
+     */
+    suspend fun existingLoginFor(
+        vault: MobileVault,
+        rpId: String,
+        userName: String?,
+    ): String? = runCatching {
+        val candidates = mutableListOf<String>()
+        for (meta in vault.listCiphers()) {
+            if (meta.cipherType != "login") continue
+            // Username is plaintext on the meta; skip the decryption for
+            // items that cannot match before touching the cipher bytes.
+            if (userName != null && meta.username != null &&
+                !meta.username.equals(userName, ignoreCase = true)
+            ) {
+                continue
+            }
+            val wire = runCatching { vault.getCipher(meta.id, false) }.getOrNull() ?: continue
+            val root = runCatching { json.parseToJsonElement(wire).jsonObject }.getOrNull() ?: continue
+            val uris = (root["uris"] as? kotlinx.serialization.json.JsonArray).orEmpty()
+                .mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.get("uri") }
+                .mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+            // WebAuthn containment, not a bare suffix: evil-example.com is
+            // not covered by example.com.
+            val hostMatch = uris.any { u ->
+                val host = runCatching { java.net.URI(u).host?.lowercase() }.getOrNull()
+                host != null && OriginRules.rpIdCoversOriginHost(rpId.lowercase(), host)
+            }
+            if (!hostMatch) continue
+            val uname = (root["username"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (userName != null && uname != null && !uname.equals(userName, ignoreCase = true)) continue
+            candidates += meta.id
+        }
+        candidates.singleOrNull()
+    }.getOrNull()
 
     /** RP's requested user-verification level ("required"/"preferred"/"discouraged"). */
     fun userVerificationOf(requestJson: String): String = runCatching {
@@ -76,6 +119,8 @@ object PasskeyLister {
                     credentialId = credId,
                     userName = str("user_name") ?: meta.username,
                     rpId = rpId,
+                    reprompt = (root["reprompt"] as? kotlinx.serialization.json.JsonPrimitive)
+                        ?.content == "true",
                 )
             }
         }

@@ -279,6 +279,12 @@ enum Commands {
         action: PolicyAction,
     },
 
+    /// Pending sensitive-op approvals (quorum asks) for this vault.
+    Approvals {
+        #[command(subcommand)]
+        action: ApprovalAction,
+    },
+
     /// Space lifecycle: team-shape conversion, purpose, and the
     /// recovery kit.
     Space {
@@ -838,6 +844,12 @@ enum GroupAction {
         /// Member id from `baluard members list`.
         member_id: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ApprovalAction {
+    /// List the sensitive-op asks waiting on this device's approval.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -2004,6 +2016,10 @@ fn main() {
 
         Commands::Policies { action } => {
             commands::handle_policies(mode, cli.socket.as_deref(), &action)
+        }
+
+        Commands::Approvals { action } => {
+            commands::handle_approvals(mode, cli.socket.as_deref(), &action)
         }
 
         Commands::Space { action } => commands::handle_space(mode, cli.socket.as_deref(), &action),
