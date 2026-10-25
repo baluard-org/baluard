@@ -5141,6 +5141,32 @@ impl VaultState {
         }
     }
 
+    // ── Legacy Contact (owner side; core protocol in core::legacy) ──
+
+    pub async fn legacy_status(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        super::legacy::status_json(&self.vault_path, handle)
+    }
+
+    pub async fn legacy_arm(&self, payload: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        super::legacy::arm_json(&self.vault_path, handle, payload).await
+    }
+
+    pub async fn legacy_close(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        super::legacy::close_json(&self.vault_path, handle, payload).await
+    }
+
+    pub async fn legacy_resend(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        super::legacy::resend_json(&self.vault_path, handle)
+    }
+
     pub async fn space_kit_status(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;

@@ -285,6 +285,13 @@ enum Commands {
         action: ApprovalAction,
     },
 
+    /// Legacy Contact: hand a trusted person a recovery kit that
+    /// opens only after you go quiet.
+    Legacy {
+        #[command(subcommand)]
+        action: LegacyAction,
+    },
+
     /// Space lifecycle: team-shape conversion, purpose, and the
     /// recovery kit.
     Space {
@@ -850,6 +857,54 @@ enum GroupAction {
 enum ApprovalAction {
     /// List the sensitive-op asks waiting on this device's approval.
     List,
+}
+
+#[derive(Subcommand)]
+enum LegacyAction {
+    /// Arm Legacy Contact for this vault: hand a contact a recovery
+    /// kit that opens only after you go quiet.
+    Arm {
+        /// Days of silence before your contact can open the vault
+        /// (0-365; 14 is the suggested minimum).
+        #[arg(long, default_value_t = 30)]
+        days: u64,
+        /// The kit passphrase. Asked twice when omitted.
+        #[arg(long)]
+        passphrase: Option<String>,
+        /// A short personal note carried in the clear in the kit.
+        #[arg(long, default_value = "")]
+        letter: String,
+        /// Who the kit is for (stored only in your own settings).
+        #[arg(long, default_value = "")]
+        contact: String,
+    },
+    /// Show whether Legacy Contact is armed and how the silence
+    /// window is running.
+    Status,
+    /// Refuse a request: the contact loses access and the vault
+    /// re-keys immediately.
+    Deny,
+    /// Turn Legacy Contact off. Nothing is deleted and the vault
+    /// does not re-key.
+    Disarm,
+    /// Hand the kit to someone else: the old kit stops working and
+    /// the vault re-keys immediately.
+    Replace {
+        /// Days of silence for the new kit.
+        #[arg(long, default_value_t = 30)]
+        days: u64,
+        /// The new kit passphrase. Asked twice when omitted.
+        #[arg(long)]
+        passphrase: Option<String>,
+        /// A short personal note carried in the clear in the kit.
+        #[arg(long, default_value = "")]
+        letter: String,
+        /// Who the new kit is for.
+        #[arg(long, default_value = "")]
+        contact: String,
+    },
+    /// Show the kit again to send it to your contact.
+    Resend,
 }
 
 #[derive(Subcommand)]
@@ -2020,6 +2075,10 @@ fn main() {
 
         Commands::Approvals { action } => {
             commands::handle_approvals(mode, cli.socket.as_deref(), &action)
+        }
+
+        Commands::Legacy { action } => {
+            commands::handle_legacy(mode, cli.socket.as_deref(), &action)
         }
 
         Commands::Space { action } => commands::handle_space(mode, cli.socket.as_deref(), &action),

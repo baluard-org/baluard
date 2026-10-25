@@ -25,6 +25,7 @@ pub mod autosync;
 pub mod bridge;
 pub mod crypto;
 pub mod founding;
+pub mod legacy;
 pub mod host;
 pub mod pin;
 pub mod providers;

@@ -1728,6 +1728,158 @@ pub fn handle_approvals(
     }
 }
 
+/// Legacy Contact owner verbs. The kit letter is written to the
+/// working directory as `legacy-kit-<id>.bldlegacy` for arm and resend.
+pub fn handle_legacy(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    action: &crate::LegacyAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::LegacyAction;
+    require_daemon(mode, "legacy")?;
+    ensure_unlocked_daemon(socket)?;
+    match action {
+        LegacyAction::Arm {
+            days,
+            passphrase,
+            letter,
+            contact,
+        }
+        | LegacyAction::Replace {
+            days,
+            passphrase,
+            letter,
+            contact,
+        } => {
+            if *days > 365 {
+                return Err("days must be 365 or less".into());
+            }
+            let replacing = matches!(action, LegacyAction::Replace { .. });
+            if replacing {
+                let ok = prompt_yes_no(
+                    "Replace the kit? The old kit stops working and the vault re-keys now. Continue?",
+                )?;
+                if !ok {
+                    return Ok(());
+                }
+            }
+            let pass = match passphrase {
+                Some(p) => {
+                    warn_argv_secret("--passphrase");
+                    p.clone()
+                }
+                None => {
+                    let a = prompt_password("Choose a passphrase for the kit: ")?;
+                    let b = prompt_password("Repeat it: ")?;
+                    if a != b {
+                        return Err("the two passphrases do not match".into());
+                    }
+                    if a.is_empty() {
+                        return Err("the passphrase cannot be empty".into());
+                    }
+                    a
+                }
+            };
+            let data = post(
+                socket,
+                "legacy.arm",
+                &serde_json::json!({
+                    "window_days": days,
+                    "passphrase": pass,
+                    "letter": letter,
+                    "contact_name": contact,
+                }),
+            )?;
+            let kit_id = data["kit_id"].as_str().unwrap_or("kit");
+            let armor = data["kit_armor"].as_str().unwrap_or("");
+            let fp = data["deploy_key_fingerprint"].as_str().unwrap_or("");
+            let url = data["repo_ssh_url"].as_str().unwrap_or("");
+            let path = std::env::current_dir()?.join(format!("legacy-kit-{kit_id}.bldlegacy"));
+            std::fs::write(&path, armor)?;
+            println!("Legacy Contact is armed.");
+            println!("The kit letter is saved at {}", path.display());
+            println!(
+                "Send it to {} out of band, along with the passphrase.",
+                if contact.is_empty() {
+                    "your contact"
+                } else {
+                    contact
+                }
+            );
+            println!(
+                "The kit opens only after {days} day(s) without you unlocking the vault."
+            );
+            println!("A read-only key {fp} was added to {url}.");
+            Ok(())
+        }
+        LegacyAction::Status => {
+            let data = post(socket, "legacy.status", &serde_json::json!({}))?;
+            match data["phase"].as_str().unwrap_or("none") {
+                "none" => println!("Legacy Contact is not set up for this vault."),
+                "closed" => println!("Legacy Contact is off."),
+                phase => {
+                    let days = data["window_days"].as_u64().unwrap_or(0);
+                    let silence = data["silence_days"].as_u64().unwrap_or(0);
+                    let openable = data["openable"].as_bool().unwrap_or(false);
+                    if phase == "open" || openable {
+                        println!("Legacy Contact is armed. The silence window has elapsed.");
+                    } else {
+                        println!(
+                            "Legacy Contact is armed. The kit opens after {days} day(s) of silence; {silence} day(s) have passed."
+                        );
+                    }
+                }
+            }
+            Ok(())
+        }
+        LegacyAction::Deny => {
+            let ok = prompt_yes_no(
+                "Deny the request? Your contact loses access and the vault re-keys now. Continue?",
+            )?;
+            if !ok {
+                return Ok(());
+            }
+            post(socket, "legacy.close", &serde_json::json!({"reason": "denied"}))?;
+            println!("Denied. The vault has been re-keyed and the read-only key removed.");
+            Ok(())
+        }
+        LegacyAction::Disarm => {
+            let ok = prompt_yes_no("Turn Legacy Contact off? Continue?")?;
+            if !ok {
+                return Ok(());
+            }
+            post(
+                socket,
+                "legacy.close",
+                &serde_json::json!({"reason": "disarmed"}),
+            )?;
+            println!("Legacy Contact is off.");
+            Ok(())
+        }
+        LegacyAction::Resend => {
+            let data = post(socket, "legacy.resend", &serde_json::json!({}))?;
+            let kit_id = data["kit_id"].as_str().unwrap_or("kit");
+            let armor = data["kit_armor"].as_str().unwrap_or("");
+            let path = std::env::current_dir()?.join(format!("legacy-kit-{kit_id}.bldlegacy"));
+            std::fs::write(&path, armor)?;
+            println!("The kit letter is saved at {} (identical to the original).", path.display());
+            Ok(())
+        }
+    }
+}
+
+fn prompt_yes_no(prompt: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    if std::env::var_os("BALUARD_NO_PROMPT").is_some() {
+        return Ok(true);
+    }
+    eprint!("{prompt} [y/N] ");
+    use std::io::Write;
+    std::io::stderr().flush()?;
+    let mut buf = String::new();
+    std::io::stdin().read_line(&mut buf)?;
+    Ok(matches!(buf.trim(), "y" | "Y" | "yes" | "Yes"))
+}
+
 pub fn handle_space(
     mode: ConnectMode,
     socket: Option<&str>,
