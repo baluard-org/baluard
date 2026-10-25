@@ -42,7 +42,7 @@ export default function GroupsTab() {
   onSettled(() => void loadAll());
 
   function memberName(id) {
-    return members().find((m) => m.id === id)?.display_name || id.slice(0, 8);
+    return members().find((m) => m.id === id)?.display_name || t("shared.unknownMember");
   }
 
   async function run(fn) {

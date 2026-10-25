@@ -32,6 +32,10 @@ export function handleCardInput(update) {
     const formatted = formatCardNumber(raw);
 
     update("cardNumber", raw);
+    // utils' detector returns the display casing; keep the stored brand
+    // when the shortened number is no longer recognizable.
+    const brand = detectCardBrand(raw);
+    if (brand) update("cardBrand", brand);
     e.target.value = formatted;
 
     // Restore cursor: map old position → digit position → new formatted position

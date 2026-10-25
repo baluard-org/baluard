@@ -23,6 +23,7 @@ export default function AskAccessModal(props) {
   const [access, setAccess] = createSignal("read");
   const [note, setNote] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [pasteMode, setPasteMode] = createSignal(false);
   let dialogRef;
 
   createEffect(
@@ -105,7 +106,7 @@ export default function AskAccessModal(props) {
               {t("shared.collection")}
             </label>
             <Show
-              when={catalog().length > 0}
+              when={catalog().length > 0 && !pasteMode()}
               fallback={
                 <Input
                   id="ask-collection"
@@ -126,6 +127,16 @@ export default function AskAccessModal(props) {
                   {(c) => <option value={c.collection_id}>{c.name}</option>}
                 </For>
               </select>
+            </Show>
+
+            <Show when={catalog().length > 0}>
+              <button
+                type="button"
+                class="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-text)] underline cursor-pointer mb-3"
+                onClick={() => setPasteMode(!pasteMode())}
+              >
+                {pasteMode() ? t("shared.pickFromList") : t("shared.pasteIdToggle")}
+              </button>
             </Show>
 
             <label class="block text-xs font-semibold text-[var(--color-muted)] mb-1" for="ask-access-level">
@@ -169,7 +180,7 @@ export default function AskAccessModal(props) {
                   {(r) => (
                     <div class="flex items-center gap-2 py-1.5 text-xs">
                       <span class="text-[var(--color-text)] truncate">
-                        {catalog().find((c) => c.collection_id === r.collection_id)?.name || r.collection_id.slice(0, 8)}
+                        {catalog().find((c) => c.collection_id === r.collection_id)?.name || t("shared.unknownFolder")}
                       </span>
                       <span class="text-[var(--color-muted)]">
                         {r.access === "write" ? t("shared.writeAccess") : t("shared.readAccess")}

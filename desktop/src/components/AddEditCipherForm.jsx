@@ -337,7 +337,7 @@ export default function AddEditCipherForm(props) {
         <CardBrandDisplay number={newCipher().cardNumber || ""} />
         <div>
           <label class={FIELD_LABEL}>{t("fields.cardholder")}</label>
-          <input placeholder="Full name on card" class={INPUT_CLS} value={newCipher().cardholder_name || ""} onInput={e => update("cardholder_name", e.target.value)} {...SECURE_INPUT} />
+          <input placeholder={t("fields.cardholderPlaceholder")} class={INPUT_CLS} value={newCipher().cardholder_name || ""} onInput={e => update("cardholder_name", e.target.value)} {...SECURE_INPUT} />
         </div>
         <div>
           <label class={FIELD_LABEL}>{t("fields.cardNumber")}</label>

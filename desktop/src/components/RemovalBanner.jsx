@@ -31,7 +31,9 @@ export default function RemovalBanner() {
       // with no-active-vault and strands the UI (review F3). Locking also
       // deactivates the autosync loop before the registry entry goes.
       await auth.lock();
-      await daemon("vaults.detach", { slug });
+      // The switcher's detach refreshes its vault list; a raw daemon call
+      // left the removed vault in the view until restart.
+      await switcher.detach(slug);
       toastSuccess(t("removal.detachedToast"));
     } catch (e) {
       toastError(String(e));
@@ -69,6 +71,7 @@ export default function RemovalBanner() {
           </div>
           <button
             onClick={() => autosync.dismissRemoval()}
+            aria-label={t("common.dismiss")}
             title={t("common.dismiss")}
             class="p-1 rounded-md hover:bg-amber-900/30 text-amber-300 hover:text-amber-100 transition-colors cursor-pointer shrink-0"
           >
