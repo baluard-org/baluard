@@ -12,7 +12,6 @@ use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use hmac::{Hmac, Mac};
 use base64::Engine as _;
 use sha2::Sha256;
-use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
 use crate::crypto::aead::{self, build_random_nonce};
@@ -95,7 +94,7 @@ pub struct AliveRecord {
 
 /// Owner-side secrets for one armed kit, sealed into `meta/legacy.enc`
 /// under the Root Key. Re-exporting a lost kit reuses `kit_letter` and
-/// `kit_body_sealed` so the resend is byte-identical.
+/// `kit_armor` so the resend is byte-identical.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LegacyStore {
     pub kit_id: String,
@@ -105,9 +104,16 @@ pub struct LegacyStore {
     pub ek: String,
     /// The plaintext letter header exactly as exported.
     pub kit_letter: String,
-    /// The sealed body exactly as exported.
-    pub kit_body_sealed: String,
+    /// The full armored kit exactly as exported; resend is byte-identical.
+    pub kit_armor: String,
     pub deploy_key_fingerprint: String,
+    /// Forge coordinates for deploy-key removal on close. Forge-local
+    /// bookkeeping, so they live in the owner store, not the signed record.
+    pub forge_key_id: Option<u64>,
+    pub provider: crate::providers::types::Provider,
+    pub owner: String,
+    pub repo: String,
+    pub origin_url: String,
 }
 
 /// The contact-side kit contents, recovered by `open_kit`.
@@ -129,7 +135,8 @@ pub struct KitBody {
 }
 
 /// The contact-visible lifecycle phase, derived by `derive_phase`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LegacyPhase {
     /// Record Armed but the observed silence is under the window.
     Quiet,
@@ -425,7 +432,15 @@ pub fn seal_kit(letter: &str, body: &KitBody, passphrase: &str) -> Result<String
     let kek = kdf::derive_kek(passphrase, &params)
         .map_err(|e| VaultError::Metadata(format!("kit kdf: {e}")))?;
     let nonce = build_random_nonce();
-    let envelope = aead::encrypt(&kek, &body_json, letter.as_bytes(), &nonce, EnvelopeHeader {
+    // The letter is bound exactly as it appears in the armor: normalized
+    // and newline-terminated. open_kit verifies against the extracted
+    // armor prefix, so sealing over anything else bricks every letter
+    // that does not already end in a newline.
+    let mut aad_letter = normalize_armor(letter);
+    if !aad_letter.ends_with('\n') {
+        aad_letter.push('\n');
+    }
+    let envelope = aead::encrypt(&kek, &body_json, aad_letter.as_bytes(), &nonce, EnvelopeHeader {
         version: 1,
         alg_id: crate::ALG_AES_256_GCM,
         key_epoch: 0,
@@ -457,10 +472,7 @@ pub fn seal_kit(letter: &str, body: &KitBody, passphrase: &str) -> Result<String
         .collect::<Result<_, _>>()
         .map_err(|e| VaultError::Metadata(format!("kit armor utf8: {e}")))?;
 
-    let mut armor = String::from(letter);
-    if !armor.ends_with('\n') {
-        armor.push('\n');
-    }
+    let mut armor = aad_letter;
     armor.push_str(ARMOR_BEGIN);
     armor.push('\n');
     for chunk in wrapped {
@@ -634,6 +646,10 @@ pub fn remove_artifacts(vault_path: &Path, kit_id: &str) -> Result<(), BaluardEr
 
 const STORE_INFO: &[u8] = b"baluard-legacy-store-v1";
 
+/// Refresh the alive heartbeat when the last one is older than this
+/// many days; day-rounded to keep the cadence coarse.
+const HEARTBEAT_REFRESH_DAYS: u64 = 7;
+
 /// Derive the `meta/legacy.enc` store key from the Root Key.
 pub fn derive_store_key(root_key: &[u8; 64]) -> Result<Zeroizing<[u8; 32]>, BaluardError> {
     let hkdf = hkdf::Hkdf::<Sha256>::new(None, root_key);
@@ -800,9 +816,663 @@ pub fn rewrap_after_rotation(
     save_store(vault_path, new_root_key, &store)
 }
 
+/// Persist the owner-signed heartbeat at `meta/legacy/<kit_id>.alive`.
+pub fn save_alive(vault_path: &Path, alive: &AliveRecord) -> Result<(), BaluardError> {
+    let dir = vault_path.join("meta/legacy");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.alive", alive.kit_id));
+    let json = serde_json::to_string_pretty(alive)
+        .map_err(|e| VaultError::Metadata(format!("legacy alive: {e}")))?;
+    crate::secret_file::write_secret_file(&path, json.as_bytes())
+        .map_err(|e| VaultError::Metadata(format!("legacy alive write: {e}")))?;
+    Ok(())
+}
+
+/// Load the heartbeat; None when none was ever written.
+pub fn load_alive(vault_path: &Path, kit_id: &str) -> Result<Option<AliveRecord>, BaluardError> {
+    let path = vault_path.join("meta/legacy").join(format!("{kit_id}.alive"));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = std::fs::read_to_string(&path)
+        .map_err(|e| VaultError::Metadata(format!("reading legacy alive: {e}")))?;
+    serde_json::from_str(&data)
+        .map(Some)
+        .map_err(|e| VaultError::Corrupt(format!("legacy alive parsing: {e}")).into())
+}
+
+/// Coarse owner clock: days since the Unix epoch. Every legacy silence
+/// computation is day-rounded (T14 fingerprint discipline), so nothing
+/// here looks at finer time.
+pub fn today_day() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 86_400
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(data))
+}
+
+/// A freshly minted read-only deploy key. The private half ships only
+/// inside the kit; the public half is what the forge receives.
+pub struct DeployKeyPair {
+    pub public_openssh: String,
+    pub private_pem: String,
+    pub fingerprint: String,
+}
+
+/// Mint an Ed25519 deploy keypair. Baluard arms read-only keys only.
+pub fn generate_deploy_key() -> Result<DeployKeyPair, BaluardError> {
+    use rand::RngCore;
+    let mut seed = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut seed);
+    let kp = ssh_key::private::Ed25519Keypair::from_seed(&seed);
+    let private = ssh_key::private::PrivateKey::new(
+        ssh_key::private::KeypairData::Ed25519(kp),
+        String::new(),
+    )
+    .map_err(|e| VaultError::Metadata(format!("deploy key: {e}")))?;
+    let public_openssh = private
+        .public_key()
+        .to_openssh()
+        .map_err(|e| VaultError::Metadata(format!("deploy key public: {e}")))?;
+    let fingerprint = private
+        .public_key()
+        .fingerprint(ssh_key::HashAlg::Sha256)
+        .to_string();
+    let private_pem = private
+        .to_openssh(ssh_key::LineEnding::LF)
+        .map_err(|e| VaultError::Metadata(format!("deploy key private: {e}")))?
+        .to_string();
+    Ok(DeployKeyPair {
+        public_openssh,
+        private_pem,
+        fingerprint,
+    })
+}
+
+/// The forge identity of the vault's remote, extracted by the caller
+/// from the origin remote and the connected provider session.
+#[derive(Debug, Clone)]
+pub struct RemoteIdentity {
+    pub provider: crate::providers::types::Provider,
+    pub owner: String,
+    pub repo: String,
+    /// HTTPS origin URL as configured (hashed into the owner record).
+    pub origin_url: String,
+    /// SSH clone URL written into the kit body.
+    pub ssh_url: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArmOutcome {
+    pub kit_id: String,
+    /// The full armored kit. Hand off to the contact out-of-band; the
+    /// passphrase travels on a separate channel.
+    pub kit_armor: String,
+    pub deploy_key_fingerprint: String,
+}
+
+/// Arm legacy access: mint the kit keys, seal the layer blob, sign the
+/// Armed record and the first heartbeat, persist the owner store, and
+/// push the read-only deploy key to the forge. A failed forge push rolls
+/// the local artifacts back so nothing is left half-armed.
+#[allow(clippy::too_many_arguments)]
+pub async fn arm(
+    vault_path: &Path,
+    handle: &crate::vault::handle::VaultHandle,
+    remote: &RemoteIdentity,
+    provider: &dyn crate::providers::types::ForgeProvider,
+    token: &crate::providers::types::ProviderToken,
+    window_days: u64,
+    passphrase: &str,
+    letter: &str,
+    owner_name: &str,
+) -> Result<ArmOutcome, BaluardError> {
+    if !handle.is_unlocked() {
+        return Err(VaultError::Locked.into());
+    }
+    if window_days > 365 {
+        return Err(VaultError::InvalidOperation(
+            "legacy window: at most 365 days".into(),
+        )
+        .into());
+    }
+    let root: [u8; 64] = *handle.unlocked().root()?.as_bytes();
+    let epoch = handle.unlocked().current_epoch;
+    let vault_id = handle.vault_id.to_string();
+
+    if let Some(store) = load_store(vault_path, &root)? {
+        if let Some(record) = load_record(vault_path, &store.kit_id)? {
+            if record.state == LegacyState::Armed {
+                return Err(VaultError::InvalidOperation(
+                    "legacy contact is already armed; close the kit first".into(),
+                )
+                .into());
+            }
+        }
+    }
+
+    let kit_id = uuid::Uuid::new_v4().to_string();
+    let lk_seed = rand::random::<[u8; 32]>();
+    let lk = SigningKey::from_bytes(&lk_seed);
+    let lk_public = hex::encode(lk.verifying_key().as_bytes());
+    let mut ek = [0u8; 32];
+    rand::Rng::fill(&mut rand::thread_rng(), &mut ek);
+    let dk = generate_deploy_key()?;
+
+    let packed = seal_layer(&ek, &root, &vault_id, &kit_id, epoch)?;
+    let today = today_day();
+    let mut record = LegacyRecord {
+        version: 1,
+        vault_id: vault_id.clone(),
+        kit_id: kit_id.clone(),
+        state: LegacyState::Armed,
+        reason: None,
+        seq: 1,
+        epoch,
+        window_days,
+        lk_public_hash: sha256_hex(lk.verifying_key().as_bytes()),
+        ek_check: ek_check(&ek, &kit_id)?,
+        layer_hash: sha256_hex(packed.as_bytes()),
+        deploy_key_fingerprint: dk.fingerprint.clone(),
+        repo_url_hash: sha256_hex(remote.origin_url.as_bytes()),
+        signer_device_id: handle.device_id.to_string(),
+        created_day: today,
+        owner_signature: None,
+    };
+    sign_record(&mut record, &lk)?;
+    let mut alive = AliveRecord {
+        version: 1,
+        vault_id: vault_id.clone(),
+        kit_id: kit_id.clone(),
+        seq: 1,
+        day: today,
+        owner_signature: None,
+    };
+    sign_alive(&mut alive, &lk)?;
+
+    let body = KitBody {
+        format: 1,
+        vault_id,
+        kit_id: kit_id.clone(),
+        repo_ssh_url: remote.ssh_url.clone(),
+        deploy_private_key: dk.private_pem.clone(),
+        ek: hex::encode(ek),
+        lk_public,
+        owner_name: owner_name.to_string(),
+        created_at: now_secs(),
+        window_days,
+    };
+    let armor = seal_kit(letter, &body, passphrase)?;
+
+    save_layer(vault_path, &kit_id, &packed)?;
+    save_record(vault_path, &record)?;
+    save_alive(vault_path, &alive)?;
+    let store = LegacyStore {
+        kit_id: kit_id.clone(),
+        lk_seed: hex::encode(lk_seed),
+        ek: hex::encode(ek),
+        kit_letter: letter.to_string(),
+        kit_armor: armor.clone(),
+        deploy_key_fingerprint: dk.fingerprint.clone(),
+        forge_key_id: None,
+        provider: remote.provider,
+        owner: remote.owner.clone(),
+        repo: remote.repo.clone(),
+        origin_url: remote.origin_url.clone(),
+    };
+    save_store(vault_path, &root, &store)?;
+
+    let title = format!("Baluard legacy contact ({})", &kit_id[..8]);
+    match provider
+        .add_deploy_key(token, &remote.owner, &remote.repo, &title, &dk.public_openssh)
+        .await
+    {
+        Ok(forge_key_id) => {
+            let mut store = store;
+            store.forge_key_id = Some(forge_key_id);
+            save_store(vault_path, &root, &store)?;
+        }
+        Err(e) => {
+            // Roll the local kit back: a kit whose key never reached the
+            // forge would arm a contact into a locked-out clone attempt.
+            // Unlike a closed kit, nothing may survive — the record too.
+            remove_artifacts(vault_path, &kit_id)?;
+            let record_path = vault_path
+                .join("meta/legacy")
+                .join(format!("{kit_id}.json"));
+            match std::fs::remove_file(&record_path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(VaultError::Metadata(format!("legacy rollback: {e}")).into())
+                }
+            }
+            let _ = std::fs::remove_file(vault_path.join("meta/legacy.enc"));
+            return Err(VaultError::Metadata(format!(
+                "arming failed: the remote refused the read-only key: {e}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(ArmOutcome {
+        kit_id,
+        kit_armor: armor,
+        deploy_key_fingerprint: dk.fingerprint,
+    })
+}
+
+/// Refresh the owner heartbeat on unlock. No-op unless a kit is Armed
+/// and the last heartbeat is more than 7 days old; day-rounded writes
+/// keep the cadence coarse.
+pub fn heartbeat(
+    vault_path: &Path,
+    handle: &crate::vault::handle::VaultHandle,
+) -> Result<bool, BaluardError> {
+    if !handle.is_unlocked() {
+        return Ok(false);
+    }
+    let root: [u8; 64] = *handle.unlocked().root()?.as_bytes();
+    let Some(store) = load_store(vault_path, &root)? else {
+        return Ok(false);
+    };
+    let Some(record) = load_record(vault_path, &store.kit_id)? else {
+        return Ok(false);
+    };
+    if record.state != LegacyState::Armed {
+        return Ok(false);
+    }
+    let lk = SigningKey::from_bytes(
+        &hex::decode(&store.lk_seed)
+            .map_err(|e| VaultError::Corrupt(format!("legacy store seed: {e}")))?
+            .as_slice()
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("legacy store seed length".into()))?,
+    );
+    let today = today_day();
+    let last_seq = load_alive(vault_path, &store.kit_id)?.map(|a| a.seq).unwrap_or(0);
+    if let Some(existing) = load_alive(vault_path, &store.kit_id)? {
+        if today.saturating_sub(existing.day) <= HEARTBEAT_REFRESH_DAYS {
+            return Ok(false);
+        }
+    }
+    let mut alive = AliveRecord {
+        version: 1,
+        vault_id: record.vault_id,
+        kit_id: store.kit_id,
+        seq: record.seq.max(last_seq) + 1,
+        day: today,
+        owner_signature: None,
+    };
+    sign_alive(&mut alive, &lk)?;
+    save_alive(vault_path, &alive)?;
+    Ok(true)
+}
+
+/// Owner-visible summary for the settings surface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LegacyStatus {
+    pub kit_id: String,
+    pub state: LegacyState,
+    pub reason: Option<CloseReason>,
+    pub phase: LegacyPhase,
+    pub window_days: u64,
+    pub silence_days: u64,
+    pub created_day: u64,
+    pub deploy_key_fingerprint: String,
+}
+
+/// Read the kit's current phase. Returns None when legacy access was
+/// never armed on this vault.
+pub fn status(
+    vault_path: &Path,
+    handle: &crate::vault::handle::VaultHandle,
+) -> Result<Option<LegacyStatus>, BaluardError> {
+    if !handle.is_unlocked() {
+        return Err(VaultError::Locked.into());
+    }
+    let root: [u8; 64] = *handle.unlocked().root()?.as_bytes();
+    let Some(store) = load_store(vault_path, &root)? else {
+        return Ok(None);
+    };
+    let Some(record) = load_record(vault_path, &store.kit_id)? else {
+        return Ok(None);
+    };
+    let alive_day = load_alive(vault_path, &store.kit_id)?.map(|a| a.day);
+    let last_activity = alive_day.or(Some(record.created_day));
+    let now_day = today_day();
+    let phase = derive_phase(&record, last_activity, now_day);
+    let silence_days = now_day.saturating_sub(last_activity.unwrap_or(now_day));
+    Ok(Some(LegacyStatus {
+        kit_id: record.kit_id,
+        state: record.state,
+        reason: record.reason,
+        phase,
+        window_days: record.window_days,
+        silence_days,
+        created_day: record.created_day,
+        deploy_key_fingerprint: record.deploy_key_fingerprint,
+    }))
+}
+
+/// Close a kit: sign the terminal Closed record, remove the layer blob
+/// and heartbeat, and drop the forge's deploy key. Denied and Replaced
+/// also rotate the Root Key in the same change, so a contact holding a
+/// downloaded blob is left with ciphertext for a dead epoch. Replaced
+/// callers then arm a fresh kit (new kit id).
+pub async fn close(
+    vault_path: &Path,
+    handle: &mut crate::vault::handle::VaultHandle,
+    provider: &dyn crate::providers::types::ForgeProvider,
+    token: &crate::providers::types::ProviderToken,
+    reason: CloseReason,
+) -> Result<(), BaluardError> {
+    if !handle.is_unlocked() {
+        return Err(VaultError::Locked.into());
+    }
+    let root: [u8; 64] = *handle.unlocked().root()?.as_bytes();
+    let Some(store) = load_store(vault_path, &root)? else {
+        return Err(VaultError::InvalidOperation("legacy contact is not armed".into()).into());
+    };
+    let Some(mut record) = load_record(vault_path, &store.kit_id)? else {
+        return Err(VaultError::Corrupt("legacy record missing for armed store".into()).into());
+    };
+    if record.state != LegacyState::Armed {
+        return Ok(());
+    }
+    let lk = SigningKey::from_bytes(
+        &hex::decode(&store.lk_seed)
+            .map_err(|e| VaultError::Corrupt(format!("legacy store seed: {e}")))?
+            .as_slice()
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("legacy store seed length".into()))?,
+    );
+    let alive_seq = load_alive(vault_path, &store.kit_id)?
+        .map(|a| a.seq)
+        .unwrap_or(0);
+    record.state = LegacyState::Closed;
+    record.reason = Some(reason);
+    record.seq = record.seq.max(alive_seq) + 1;
+    record.signer_device_id = handle.device_id.to_string();
+    sign_record(&mut record, &lk)?;
+    save_record(vault_path, &record)?;
+    remove_artifacts(vault_path, &store.kit_id)?;
+
+    if let Some(key_id) = store.forge_key_id {
+        if let Err(e) = provider
+            .remove_deploy_key(token, &store.owner, &store.repo, key_id)
+            .await
+        {
+            // Best-effort: the Closed record and (for denied/replaced)
+            // the rotation below already disarm the kit cryptographically.
+            // A forge outage must not wedge the terminal state.
+            eprintln!("[legacy] deploy key removal deferred: {e}");
+        }
+    }
+
+    if matches!(reason, CloseReason::Denied | CloseReason::Replaced) {
+        handle.rotate_root_key()?;
+    }
+    Ok(())
+}
+
+/// Re-export the kit byte-identically. Only an Armed kit re-sends; a
+/// closed kit refuses with the reason.
+pub fn resend(
+    vault_path: &Path,
+    handle: &crate::vault::handle::VaultHandle,
+) -> Result<(String, String), BaluardError> {
+    if !handle.is_unlocked() {
+        return Err(VaultError::Locked.into());
+    }
+    let root: [u8; 64] = *handle.unlocked().root()?.as_bytes();
+    let Some(store) = load_store(vault_path, &root)? else {
+        return Err(VaultError::InvalidOperation("legacy contact is not armed".into()).into());
+    };
+    let Some(record) = load_record(vault_path, &store.kit_id)? else {
+        return Err(VaultError::Corrupt("legacy record missing".into()).into());
+    };
+    if record.state != LegacyState::Armed {
+        return Err(VaultError::InvalidOperation(
+            "this kit was closed; make a new one".into(),
+        )
+        .into());
+    }
+    Ok((store.kit_armor, store.kit_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::types::mock::MockProvider;
+    use crate::providers::types::ProviderToken;
+
+    /// Open a fresh vault for the owner-op tests: create, drop the
+    /// ceremony handle, re-open, unlock.
+    fn open_vault(dir: &tempfile::TempDir) -> crate::vault::handle::VaultHandle {
+        let password = "test-password-123";
+        let (handle, _secrets) = crate::vault::creation::VaultCreator::new(
+            dir.path(),
+            password,
+            "test-device",
+        )
+        .kdf_profile(crate::types::KdfProfile::MobileLow)
+        .initialize_git(false)
+        .execute()
+        .unwrap();
+        drop(handle);
+        let mut handle = crate::vault::handle::VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(password).unwrap();
+        handle
+    }
+
+    fn test_remote() -> RemoteIdentity {
+        RemoteIdentity {
+            provider: crate::providers::types::Provider::GitHub,
+            owner: "owner".into(),
+            repo: "baluard-personal".into(),
+            origin_url: "https://github.com/owner/baluard-personal.git".into(),
+            ssh_url: "git@github.com:owner/baluard-personal.git".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn arm_refuses_a_locked_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut handle = open_vault(&dir);
+        handle.lock();
+        let mock = MockProvider::github();
+        let tok = ProviderToken::new("tok", "repo");
+        let err = arm(
+            dir.path(),
+            &handle,
+            &test_remote(),
+            &mock,
+            &tok,
+            30,
+            "words",
+            "letter",
+            "Esteban",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("locked"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn arm_status_heartbeat_close_denied_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut handle = open_vault(&dir);
+        let mock = MockProvider::github();
+        let tok = ProviderToken::new("tok", "repo");
+        let remote = test_remote();
+
+        let outcome = arm(
+            dir.path(),
+            &handle,
+            &remote,
+            &mock,
+            &tok,
+            30,
+            "four quiet words",
+            "Dear Ana, the spare key is yours if I cannot speak.",
+            "Esteban",
+        )
+        .await
+        .unwrap();
+        assert!(
+            mock.seat_log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l == "addkey:owner/baluard-personal"),
+            "deploy key push missing from {:?}",
+            mock.seat_log
+        );
+
+        // The kit opens with the passphrase and carries a real deploy key.
+        let body = open_kit(&outcome.kit_armor, "four quiet words").unwrap();
+        assert_eq!(body.vault_id, handle.vault_id.to_string());
+        assert_eq!(body.repo_ssh_url, remote.ssh_url);
+        assert!(
+            body.deploy_private_key
+                .starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"),
+            "deploy key pem shape"
+        );
+        // Wrong passphrase and corruption are indistinguishable.
+        assert!(open_kit(&outcome.kit_armor, "wrong words").is_err());
+
+        // Record armed, first heartbeat written, phase Quiet.
+        let record = load_record(dir.path(), &outcome.kit_id).unwrap().unwrap();
+        assert_eq!(record.state, LegacyState::Armed);
+        assert_eq!(record.window_days, 30);
+        assert!(load_alive(dir.path(), &outcome.kit_id).unwrap().is_some());
+        let st = status(dir.path(), &handle).unwrap().unwrap();
+        assert_eq!(st.phase, LegacyPhase::Quiet);
+        assert_eq!(st.silence_days, 0);
+
+        // A fresh heartbeat is a no-op.
+        assert!(!heartbeat(dir.path(), &handle).unwrap());
+
+        // Denied: forge key removed, blob deleted, Root Key rotated, and
+        // the store re-sealed under the NEW root by the rotation hook.
+        let old_epoch = handle.unlocked().current_epoch;
+        close(
+            dir.path(),
+            &mut handle,
+            &mock,
+            &tok,
+            CloseReason::Denied,
+        )
+        .await
+        .unwrap();
+        assert!(
+            mock.seat_log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l == "delkey:owner/baluard-personal")
+        );
+        let record = load_record(dir.path(), &outcome.kit_id).unwrap().unwrap();
+        assert_eq!(record.state, LegacyState::Closed);
+        assert_eq!(record.reason, Some(CloseReason::Denied));
+        assert!(load_layer(dir.path(), &outcome.kit_id).unwrap().is_none());
+        assert_eq!(handle.unlocked().current_epoch, old_epoch + 1);
+        let root: [u8; 64] = *handle.unlocked().root().unwrap().as_bytes();
+        assert!(load_store(dir.path(), &root).unwrap().is_some());
+        let st = status(dir.path(), &handle).unwrap().unwrap();
+        assert_eq!(st.phase, LegacyPhase::Closed);
+
+        // Terminal: re-close is idempotent; re-arm mints a fresh kit id.
+        close(dir.path(), &mut handle, &mock, &tok, CloseReason::Denied)
+            .await
+            .unwrap();
+        let second = arm(
+            dir.path(),
+            &handle,
+            &remote,
+            &mock,
+            &tok,
+            14,
+            "other words",
+            "again",
+            "Esteban",
+        )
+        .await
+        .unwrap();
+        assert_ne!(second.kit_id, outcome.kit_id);
+    }
+
+    #[tokio::test]
+    async fn arm_rolls_back_when_the_forge_refuses_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut handle = open_vault(&dir);
+        let mut mock = MockProvider::github();
+        mock.fail_deploy_key = true;
+        let tok = ProviderToken::new("tok", "repo");
+
+        let err = arm(
+            dir.path(),
+            &handle,
+            &test_remote(),
+            &mock,
+            &tok,
+            30,
+            "words",
+            "letter",
+            "Esteban",
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("refused the read-only key"),
+            "got: {err}"
+        );
+
+        // Nothing half-armed survives: no store, no legacy artifacts.
+        let root: [u8; 64] = *handle.unlocked().root().unwrap().as_bytes();
+        assert!(load_store(dir.path(), &root).unwrap().is_none());
+        if dir.path().join("meta/legacy").exists() {
+            assert!(
+                std::fs::read_dir(dir.path().join("meta/legacy"))
+                    .unwrap()
+                    .next()
+                    .is_none(),
+                "legacy artifacts leaked"
+            );
+        }
+
+        // A retry with a working forge arms normally.
+        mock.fail_deploy_key = false;
+        let outcome = arm(
+            dir.path(),
+            &handle,
+            &test_remote(),
+            &mock,
+            &tok,
+            30,
+            "words",
+            "letter",
+            "Esteban",
+        )
+        .await
+        .unwrap();
+        assert!(!outcome.kit_armor.is_empty());
+    }
+
 
     fn test_record() -> LegacyRecord {
         LegacyRecord {
