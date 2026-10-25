@@ -5,6 +5,7 @@
   "common": {
     "back": "Voltar",
     "dismiss": "Dispensar",
+    "bytes": "bytes",
     "cancel": "Cancelar",
     "loading": "Carregando...",
     "processing": "Processando...",
@@ -221,6 +222,8 @@
     "confirmPassword": "Confirmar senha mestra",
     "selectPrompt": "Selecione uma entrada",
     "editTitle": "Editar Item",
+    "edit": "Editar",
+    "attachments": "Anexos",
     "untitled": "Sem título",
     "enterMasterPasswordToContinue": "Digite sua senha mestra para continuar",
     "deletePromptQuestion": "Tem certeza?",
@@ -641,7 +644,9 @@
     "privateKey": "Chave Privada",
     "fullName": "Nome Completo",
     "address": "Endereço",
-    "cityStatePostal": "Cidade / Estado / CEP"
+    "cityStatePostal": "Cidade / Estado / CEP",
+    "verificationCode": "Código de verificação",
+    "cardholderPlaceholder": "Nome completo no cartão"
   },
   "devices": {
     "statusUnknown": "Desconhecido",
@@ -751,7 +756,7 @@
     "inviteButton": "Criar convite",
     "inviteCreated": "Convite criado",
     "inviteHint": "Compartilhe este código de uso único com a pessoa que você quer convidar. Ele serve para um único acesso.",
-    "usernamePlaceholder": "Nome de usuário git da pessoa (para que ela possa baixar o cofre) — opcional",
+    "usernamePlaceholder": "O nome de usuário dele (para que possa baixar o cofre) — opcional",
     "editEmail": "Editar e-mail",
     "editEmailHint": "Aparece sob o nome de {name} nas listas. Apenas informativo: a aprovação é onde você confere.",
     "emailUpdated": "E-mail atualizado.",
@@ -781,13 +786,13 @@
     "claimDone": "Você agora é o proprietário.",
     "replaceBtn": "Substituir dispositivo",
     "replaceTitle": "Substituir o dispositivo roubado",
-    "replaceBody": "Reinicia a membership de {name} com um convite de substituição que mantém as coleções, revoga os dispositivos e rotaciona o que podia abrir. O dispositivo antigo deixa de funcionar.",
+    "replaceBody": "Redefine a participação de {name} com um convite de substituição que mantém as pastas compartilhadas dele, revoga os dispositivos dele e rotaciona o que ele podia abrir. O dispositivo antigo dele para de funcionar.",
     "replaceConfirm": "Substituir dispositivo",
     "replaceDone": "Dispositivo substituído.",
     "replaceResultTitle": "Código de convite de substituição",
-    "replaceResultBody": "Mostrado uma vez. A pessoa entra novamente com este código e mantém as coleções.",
+    "replaceResultBody": "Mostrado uma vez. O memro entra com este código e mantém as pastas compartilhadas dele.",
     "replaceSuccessor": "Novo id de membro",
-    "replaceRotated": "Coleções rotadas",
+    "replaceRotated": "Pastas compartilhadas rotacionadas",
     "replaceWarn": "Alguns passos falharam — o dispositivo antigo ainda pode ter chaves antigas:",
     "resetCodeTitle": "Código de redefinição pronto",
     "resetCodeBody": "Envie este código de uso único ao membro. A pessoa entra novamente com ele e define uma nova senha.",
@@ -938,7 +943,11 @@
     "deny": "Negar",
     "approvedToast": "Pedido de {name} aprovado",
     "deniedToast": "Pedido de {name} negado",
-    "clearCollectionFilter": "Limpar filtro de pasta compartilhada"
+    "clearCollectionFilter": "Limpar filtro de pasta compartilhada",
+    "unknownMember": "Membro desconhecido",
+    "unknownFolder": "Pasta compartilhada desconhecida",
+    "pasteIdToggle": "Inserir o id da pasta compartilhada",
+    "pickFromList": "Escolher da lista"
   },
   "collections": {
     "createTitle": "Nova pasta compartilhada",

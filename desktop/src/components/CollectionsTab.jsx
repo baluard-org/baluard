@@ -6,6 +6,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess, toastError } from "../context/toastSignal.js";
 import { Button, Input } from "./Primitives.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
+import FocusTrap from "./FocusTrap.jsx";
 
 // S3-7c / 4.8: the admin Collections surface — create shared
 // collections, manage who has access, publish the name catalog members
@@ -28,6 +29,9 @@ export default function CollectionsTab() {
   const [grantMember, setGrantMember] = createSignal("");
   const [grantAccess, setGrantAccess] = createSignal("read");
   const [grantDays, setGrantDays] = createSignal("");
+  let renameDialogRef;
+  const [renameTarget, setRenameTarget] = createSignal(null);
+  const [renameName, setRenameName] = createSignal("");
   const [deleteTarget, setDeleteTarget] = createSignal(null);
   const [clearAsk, setClearAsk] = createSignal(false);
   const [members, setMembers] = createSignal([]);
@@ -62,9 +66,9 @@ export default function CollectionsTab() {
   // Display name for a grant row: kind-aware member/group resolution.
   function grantTargetName(g) {
     if (g.kind === "group") {
-      return groups().find((x) => x.id === g.id)?.name || g.id.slice(0, 8);
+      return groups().find((x) => x.id === g.id)?.name || t("shared.unknownFolder");
     }
-    return members().find((m) => m.id === g.id)?.display_name || g.id.slice(0, 8);
+    return members().find((m) => m.id === g.id)?.display_name || t("shared.unknownMember");
   }
 
   async function createCollection() {
@@ -83,14 +87,21 @@ export default function CollectionsTab() {
     }
   }
 
-  async function renameCollection(col) {
-    const name = prompt(t("collections.renamePrompt"), col.name);
-    if (!name || name.trim() === col.name) return;
+  // window.prompt is unavailable in the Tauri webview, so rename runs
+  // through a small inline dialog instead.
+  async function renameCollection() {
+    const col = renameTarget();
+    const name = (renameName() || "").trim();
+    if (!col || !name || name === col.name) return;
+    setBusy(true);
     try {
-      await daemon("collections.rename", { id: col.id, name: name.trim() });
+      await daemon("collections.rename", { id: col.id, name });
       await vault.refreshCollections();
+      setRenameTarget(null);
     } catch (e) {
       toastError(sanitizeError(e, t));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -222,7 +233,7 @@ export default function CollectionsTab() {
                       {t("collections.manageAccess")}
                     </button>
                     <button
-                      onClick={() => void renameCollection(col)}
+                      onClick={() => { setRenameTarget(col); setRenameName(col.name); }}
                       class="text-[10px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-muted)] hover:border-[var(--color-text)] hover:text-[var(--color-text)] cursor-pointer"
                     >
                       {t("collections.rename")}
@@ -381,7 +392,34 @@ export default function CollectionsTab() {
           onConfirm={() => void deleteCollection()}
           onClose={() => setDeleteTarget(null)}
         />
-      </Show>
+              <Show when={renameTarget()}>
+          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setRenameTarget(null)}>
+            <FocusTrap containerRef={() => renameDialogRef} onEscape={() => setRenameTarget(null)} />
+            <div
+              ref={(el) => (renameDialogRef = el)}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rename-collection-title"
+              class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-5 w-[min(24rem,90vw)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 id="rename-collection-title" class="text-sm font-bold text-[var(--color-text)] mb-3">
+                {t("collections.renamePrompt")}
+              </h3>
+              <Input
+                value={renameName()}
+                onInput={(e) => setRenameName(e.currentTarget.value)}
+              />
+              <div class="flex justify-end gap-2 mt-4">
+                <Button onClick={() => setRenameTarget(null)}>{t("common.cancel")}</Button>
+                <Button variant="primary" disabled={busy()} onClick={() => void renameCollection()}>
+                  {t("entry.save")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Show>
+</Show>
     </div>
   );
 }

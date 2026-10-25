@@ -78,8 +78,9 @@ export default function CipherDetail(props) {
   // mobile detail gate. The grant resets when the open cipher changes.
   const [repromptOk, setRepromptOk] = createSignal(0);
   const repromptLocked = () => cipher()?.reprompt === true && Date.now() >= repromptOk();
-  const openReprompt = () =>
+  const openReprompt = (onGrant) =>
     window.__baluardReprompt?.show(() => {
+      const runGrant = onGrant;
       const until = Date.now() + 30000;
       setRepromptOk(until);
       // Date.now() is not reactive: without this timer the gate would
@@ -88,6 +89,7 @@ export default function CipherDetail(props) {
         setRepromptOk((v) => (v === until ? 0 : v));
         setRevealPass(false);
       }, 30000);
+      if (typeof runGrant === "function") runGrant();
     });
 
   // §4.8-5: move the open entry between collections. Admins can move
@@ -209,7 +211,10 @@ export default function CipherDetail(props) {
   createEffect(
     () => {
       const c = cipher();
-      return (c?.totp_uri && c?.id) ? { id: c.id, totp_uri: c.totp_uri } : null;
+      // The daemon flattens the seed to top-level `totp`; the nested
+      // kind.data.totp_uri shape only exists inside the edit form.
+      const uri = c?.totp ?? c?.totp_uri;
+      return (uri && c?.id) ? { id: c.id, totp_uri: uri } : null;
     },
     (target) => {
       if (!target) {
@@ -250,7 +255,7 @@ export default function CipherDetail(props) {
     // G18: a protected entry's edit flow goes through the same gate —
     // editing reveals everything anyway.
     if (repromptLocked()) {
-      openReprompt();
+      openReprompt(() => props.onEdit(cipherToFlat(c)));
       return;
     }
     props.onEdit(cipherToFlat(c));
@@ -364,7 +369,7 @@ export default function CipherDetail(props) {
             {/* TOTP code widget */}
             <Show when={totpCode()}>
               <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
-                <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block mb-2">Verification Code</label>
+                <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block mb-2">{t("fields.verificationCode")}</label>
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-2">
                     <span class="text-2xl font-mono font-bold tracking-[0.3em] text-[var(--color-text)] select-all">{totpCode()?.code?.match(/.{1,3}/g)?.join(" ") || totpCode()?.code}</span>
@@ -493,8 +498,7 @@ export default function CipherDetail(props) {
         {/* Passkey delete confirmation modal */}
         <Show when={showPasskeyDelete()}>
           <div
-            ref={(el) => { let dialogRef = el; }}
-            role="dialog"
+                        role="dialog"
             aria-modal="true"
             aria-labelledby="passkey-delete-title"
             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
@@ -805,14 +809,14 @@ export default function CipherDetail(props) {
         {/* Attachments */}
         <Show when={cipher()?.attachments?.length > 0}>
           <div class="space-y-3 pt-2">
-            <h4 class={SECTION_LABEL}>Attachments</h4>
+            <h4 class={SECTION_LABEL}>{t("entry.attachments")}</h4>
             <For each={cipher()?.attachments || []}>
               {(attach) => {
                 const sizeStr = () => {
                   const s = attach.size;
                   if (s > 1024*1024) return (s/(1024*1024)).toFixed(1) + " MB";
                   if (s > 1024) return (s/1024).toFixed(1) + " KB";
-                  return s + " bytes";
+                  return s + ` ${t("common.bytes")}`;
                 };
                 async function handleDownload() {
                   try {
@@ -904,7 +908,7 @@ export default function CipherDetail(props) {
                 class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
               >
                 <IconPencil class="w-4 h-4" />
-                Edit
+                {t("entry.edit")}
               </button>
               <button
                 onClick={() => props.onArchive?.()}

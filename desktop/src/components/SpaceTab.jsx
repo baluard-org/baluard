@@ -298,7 +298,7 @@ export default function SpaceTab() {
     setTeamBusy(true);
     try {
       await daemon("space.rotate_root", {});
-      setRotatePrompt(false);
+      setRotateDismissed(true);
       toastSuccess(t("space.rotateDone"));
       await loadTeam();
     } catch (e) {
@@ -387,7 +387,7 @@ export default function SpaceTab() {
               {t("space.rotateNow")}
             </button>
             <button disabled={teamBusy()} class={chip(false)} onClick={() => setRotateDismissed(true)}>
-              {t("settings.disabled")}
+              {t("common.dismiss")}
             </button>
           </div>
         </div>
@@ -579,8 +579,10 @@ export default function SpaceTab() {
                             });
                           }
                           await loadPending();
-                        } catch {
-                          /* the row stays pending on failure */
+                        } catch (e) {
+                          // The daemon refuses unauthorized approvals; the
+                          // approver must see that, not a silent row.
+                          toastError(sanitizeError(e, t));
                         }
                       }}
                       class="px-2 py-0.5 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"

@@ -1,11 +1,9 @@
 import { Show } from "solid-js";
-import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import CipherAvatar from "./CipherAvatar.jsx";
 import { uriStr } from "../lib/utils.js";
 
 export default function CipherRow(props) {
-  const vault = useVault();
   const { t } = useI18n();
   const firstUri = () => {
     const uris = props.cipher.uris || props.cipher._meta?.uris;

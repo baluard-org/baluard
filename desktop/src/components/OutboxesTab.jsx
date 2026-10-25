@@ -360,7 +360,7 @@ export default function OutboxesTab() {
       {/* Opened entry (view-only) */}
       <Show when={opened()}>
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setOpened(null)}>
-          <FocusTrap containerRef={entryDialogRef} onEscape={() => setOpened(null)} />
+          <FocusTrap containerRef={() => entryDialogRef} onEscape={() => setOpened(null)} />
           <div
             ref={entryDialogRef}
             role="dialog"

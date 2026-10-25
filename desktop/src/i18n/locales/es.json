@@ -178,6 +178,8 @@
     "save": "Guardar",
     "cancel": "Cancelar",
     "editTitle": "Editar entrada",
+    "edit": "Editar",
+    "attachments": "Adjuntos",
     "close": "Cerrar",
     "deleteTitle": "Eliminar entrada",
     "deletePermanentlyConfirm": "¿Eliminar permanentemente esta entrada? Esta acción no se puede deshacer.",
@@ -610,7 +612,9 @@
     "privateKey": "Clave privada",
     "fullName": "Nombre completo",
     "address": "Dirección",
-    "cityStatePostal": "Ciudad/Estado/C.P."
+    "cityStatePostal": "Ciudad/Estado/C.P.",
+    "verificationCode": "Código de verificación",
+    "cardholderPlaceholder": "Nombre completo en la tarjeta"
   },
   "devices": {
     "statusUnknown": "Desconocido",
@@ -706,6 +710,7 @@
   "common": {
     "back": "Atrás",
     "dismiss": "Cerrar",
+    "bytes": "bytes",
     "cancel": "Cancelar",
     "loading": "Cargando...",
     "processing": "Procesando...",
@@ -751,7 +756,7 @@
     "inviteButton": "Crear invitación",
     "inviteCreated": "Invitación creada",
     "inviteHint": "Comparte este código de un solo uso con la persona que quieres invitar. Sirve para un único ingreso.",
-    "usernamePlaceholder": "Su nombre de usuario de git (para que pueda descargar la bóveda) — opcional",
+    "usernamePlaceholder": "Su nombre de usuario (para que pueda descargar la bóveda) — opcional",
     "editEmail": "Editar correo",
     "editEmailHint": "Aparece bajo el nombre de {name} en las listas. Solo informativo: la aprobación es donde lo verificas.",
     "emailUpdated": "Correo actualizado.",
@@ -781,13 +786,13 @@
     "claimDone": "Ya eres el propietario.",
     "replaceBtn": "Reemplazar dispositivo",
     "replaceTitle": "Reemplazar el dispositivo robado",
-    "replaceBody": "Reinicia la membresía de {name} con una invitación de reemplazo que conserva sus colecciones, revoca sus dispositivos y rota lo que podía abrir. Su dispositivo anterior deja de funcionar.",
+    "replaceBody": "Restablece la membresía de {name} con una invitación de reemplazo que conserva sus carpetas compartidas, revoca sus dispositivos y rota lo que podía abrir. Su dispositivo anterior deja de funcionar.",
     "replaceConfirm": "Reemplazar dispositivo",
     "replaceDone": "Dispositivo reemplazado.",
     "replaceResultTitle": "Código de invitación de reemplazo",
-    "replaceResultBody": "Se muestra una vez. La persona vuelve a unirse con este código y conserva sus colecciones.",
+    "replaceResultBody": "Se muestra una vez. El miembro se une con este código y conserva sus carpetas compartidas.",
     "replaceSuccessor": "Nuevo id de miembro",
-    "replaceRotated": "Colecciones rotadas",
+    "replaceRotated": "Carpetas compartidas rotadas",
     "replaceWarn": "Algunos pasos fallaron: el dispositivo anterior puede seguir teniendo claves antiguas:",
     "resetCodeTitle": "Código de restablecimiento listo",
     "resetCodeBody": "Envía este código de un solo uso al miembro. Se vuelve a unir con él y establece una nueva contraseña.",
@@ -938,7 +943,11 @@
     "deny": "Denegar",
     "approvedToast": "Solicitud de {name} aprobada",
     "deniedToast": "Solicitud de {name} denegada",
-    "clearCollectionFilter": "Quitar filtro de carpeta compartida"
+    "clearCollectionFilter": "Quitar filtro de carpeta compartida",
+    "unknownMember": "Miembro desconocido",
+    "unknownFolder": "Carpeta compartida desconocida",
+    "pasteIdToggle": "Introducir el id de la carpeta compartida",
+    "pickFromList": "Elegir de la lista"
   },
   "collections": {
     "createTitle": "Nueva carpeta compartida",

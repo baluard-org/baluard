@@ -9,7 +9,6 @@ let repromptCallback = null;
 
 export default function RepromptModal(props) {
   const { t } = useI18n();
-  let dialogRef;
   const [show, setShow] = createSignal(false);
   const [password, setPassword] = createSignal("");
   const [failed, setFailed] = createSignal(false);
@@ -38,10 +37,12 @@ export default function RepromptModal(props) {
       await daemon("vault.reprompt_verify", pw);
       // Verified. The password is passed to the callback so flows that
       // need it as a parameter (e.g. recovery-phrase rotation) can use it.
-      if (repromptCallback) repromptCallback(pw);
+      const cb = repromptCallback;
+      repromptCallback = null;
       setShow(false);
       setPassword("");
       setFailed(false);
+      if (cb) cb(pw);
     } catch {
       setFailed(true);
     }
@@ -55,7 +56,7 @@ export default function RepromptModal(props) {
         minHeightClass="min-h-[20rem]"
         role="dialog"
         ariaLabelledby="reprompt-title"
-        onEscape={() => { setShow(false); setPassword(""); setFailed(false); }}
+        onEscape={() => { repromptCallback = null; setShow(false); setPassword(""); setFailed(false); }}
       >
         <div class="w-full max-w-md mx-auto flex flex-col">
           <h3 id="reprompt-title" class="text-sm font-bold uppercase tracking-wider text-[var(--color-text)] mb-1 font-mono flex items-center gap-2">
@@ -66,7 +67,7 @@ export default function RepromptModal(props) {
           
           <Show when={failed()}>
             <div class="mb-4 p-2.5 rounded bg-red-950/30 border border-red-900/40 text-red-300 text-xs font-mono">
-              ERROR: {t("errors.invalidPassword")}
+              {t("errors.invalidPassword")}
             </div>
           </Show>
           
@@ -84,7 +85,7 @@ export default function RepromptModal(props) {
           
           <div class="flex gap-3">
             <Button
-              onClick={() => { setShow(false); setPassword(""); setFailed(false); }}
+              onClick={() => { repromptCallback = null; setShow(false); setPassword(""); setFailed(false); }}
               class="flex-1 py-2.5 font-mono text-xs uppercase"
             >{t("entry.cancel")}</Button>
             <Button

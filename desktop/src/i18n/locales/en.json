@@ -5,6 +5,7 @@
   "common": {
     "back": "Back",
     "dismiss": "Dismiss",
+    "bytes": "bytes",
     "cancel": "Cancel",
     "loading": "Loading...",
     "processing": "Processing...",
@@ -209,6 +210,8 @@
     "save": "Save",
     "cancel": "Cancel",
     "editTitle": "Edit Entry",
+    "edit": "Edit",
+    "attachments": "Attachments",
     "close": "Close",
     "deleteTitle": "Delete Entry",
     "deletePermanentlyConfirm": "Permanently delete this entry? This cannot be undone.",
@@ -641,7 +644,9 @@
     "privateKey": "Private Key",
     "fullName": "Full Name",
     "address": "Address",
-    "cityStatePostal": "City/State/Postal"
+    "cityStatePostal": "City/State/Postal",
+    "verificationCode": "Verification code",
+    "cardholderPlaceholder": "Full name on card"
   },
   "devices": {
     "statusUnknown": "Unknown",
@@ -751,7 +756,7 @@
     "inviteButton": "Create invite",
     "inviteCreated": "Invite created",
     "inviteHint": "Share this one-time code with the person you want to invite. It works for a single join.",
-    "usernamePlaceholder": "Their git username (so they can download the vault) — optional",
+    "usernamePlaceholder": "Their account username (so they can download the vault) — optional",
     "editEmail": "Edit email",
     "editEmailHint": "Shown under {name}'s name in member lists. Advisory only — the approval is where you check it.",
     "emailUpdated": "Email updated.",
@@ -781,13 +786,13 @@
     "claimDone": "You are now the owner.",
     "replaceBtn": "Replace device",
     "replaceTitle": "Replace stolen device",
-    "replaceBody": "Reset {name}'s membership with a replacement invite that carries their collections, revoke their devices, and rotate what they could open. Their old device stops working.",
+    "replaceBody": "Reset {name}'s membership with a replacement invite that carries their shared folders, revoke their devices, and rotate what they could open. Their old device stops working.",
     "replaceConfirm": "Replace device",
     "replaceDone": "Device replaced.",
     "replaceResultTitle": "Replacement invite code",
-    "replaceResultBody": "Shown once. The member rejoins with this code and keeps their collections.",
+    "replaceResultBody": "Shown once. The member rejoins with this code and keeps their shared folders.",
     "replaceSuccessor": "New member id",
-    "replaceRotated": "Collections rotated",
+    "replaceRotated": "Shared folders rotated",
     "replaceWarn": "Some steps failed — the old device may still hold old keys:",
     "resetCodeTitle": "Reset code ready",
     "resetCodeBody": "Send this one-time code to the member. They re-join with it and set a new password.",
@@ -938,7 +943,11 @@
     "deny": "Deny",
     "approvedToast": "Approved {name}'s request",
     "deniedToast": "Denied {name}'s request",
-    "clearCollectionFilter": "Clear shared folder filter"
+    "clearCollectionFilter": "Clear shared folder filter",
+    "unknownMember": "Unknown member",
+    "unknownFolder": "Unknown shared folder",
+    "pasteIdToggle": "Enter a shared folder id instead",
+    "pickFromList": "Pick from the list"
   },
   "collections": {
     "createTitle": "New shared folder",
