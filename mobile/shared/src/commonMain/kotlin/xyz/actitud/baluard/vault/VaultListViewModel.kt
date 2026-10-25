@@ -357,10 +357,3 @@ internal fun buildSearchHaystack(raw: String): String {
 }
 
 private val BOOLEAN_LITERALS = setOf("true", "false")
-
-/** Tripwire: a refactor that drops one of these from [SEARCH_SKIP_KEYS]
- * fails the test instead of leaking a seed or key into the search index. */
-internal val NEVER_INDEXABLE = setOf(
-    "password", "password_history", "private_key", "prf_key", "totp_uri",
-    "code", "pin", "ssn",
-)
