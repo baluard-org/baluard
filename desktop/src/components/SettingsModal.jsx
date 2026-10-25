@@ -110,6 +110,12 @@ export default function SettingsModal() {
       if (isOpen) wasSettingsOpen = true;
       if (wasSettingsOpen && !isOpen) {
         wasSettingsOpen = false;
+        // A close that is not the Cancel button must still scrub the
+        // credential prompts.
+        setBiometricPassword("");
+        setPinPassword("");
+        setPinValue("");
+        setPinConfirm("");
         vault.refreshProfile();
       }
     },
@@ -317,13 +323,17 @@ export default function SettingsModal() {
   }
 
   async function saveAutoLock(token) {
+    const prev = timeoutToken();
     const next = normalizeVaultTimeout(token);
     setTimeoutToken(next);
     try {
       await daemon("settings.set", JSON.stringify({ vault_timeout: next }));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
-    } catch (e) {}
+    } catch (e) {
+      setTimeoutToken(prev);
+      toastError(sanitizeError(e, t));
+    }
   }
 
   async function changeTheme(t) {

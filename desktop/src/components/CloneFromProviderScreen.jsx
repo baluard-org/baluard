@@ -139,6 +139,8 @@ export default function CloneFromProviderScreen(props) {
 		const slug = chosenRepo()?.vault_slug || chosenRepo()?.name;
 		try {
 			await daemon("vault.open", "", slug);
+			// Do not leave the master password live in the DOM after unlock.
+			if (passwordRef) passwordRef.value = "";
 			const infoStr = await daemon(
 				"vault.unlock",
 				JSON.stringify({ slug, password }),

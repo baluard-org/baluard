@@ -58,7 +58,7 @@ export default function BridgeTab() {
       const data = JSON.parse(await daemon("bridge.list"));
       setPairings(data.pairings || []);
     } catch (e) {
-      setError(sanitizeError(e));
+      setError(sanitizeError(e, t));
     } finally {
       setLoading(false);
     }
@@ -79,7 +79,7 @@ export default function BridgeTab() {
       // may attach. We refresh pending state every 2s until TTL or approval.
       startPoll();
     } catch (e) {
-      setError(sanitizeError(e));
+      setError(sanitizeError(e, t));
       toastError(t("bridge.pairStartFailed"));
     } finally {
       setPairBusy(false);
@@ -131,7 +131,7 @@ export default function BridgeTab() {
       toastSuccess(t("bridge.approved"));
       cancelPending();
     } catch (e) {
-      setError(sanitizeError(e));
+      setError(sanitizeError(e, t));
       toastError(t("bridge.approveFailed"));
     } finally {
       setPairBusy(false);
@@ -144,7 +144,7 @@ export default function BridgeTab() {
       toastSuccess(t("bridge.revoked"));
       loadPairings();
     } catch (e) {
-      toastError(sanitizeError(e));
+      toastError(sanitizeError(e, t));
     }
   }
 

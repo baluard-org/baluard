@@ -1,8 +1,11 @@
 import { IconMonitor } from "./Icon.jsx";
-import { onSettled, Show, For } from "solid-js";
+import { createSignal, onSettled, Show, For } from "solid-js";
 import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
+import ConfirmModal from "./ConfirmModal.jsx";
 import { daemon } from "../lib/daemon.js";
+import { toastError } from "../context/toastSignal.js";
+import { sanitizeError } from "../lib/utils.js";
 
 export default function DeviceFleetPanel() {
   const vault = useVault();
@@ -24,15 +27,20 @@ export default function DeviceFleetPanel() {
     return { label: t("devices.statusDormant"), color: "bg-red-600", textColor: "text-red-200" };
   }
 
-  async function revokeDevice(deviceId, deviceName) {
-    if (!confirm(t("devices.revokeConfirm", { name: deviceName }))) return;
+  const [revokeAsk, setRevokeAsk] = createSignal(null);
+
+  async function revokeDevice() {
+    const ask = revokeAsk();
+    if (!ask) return;
+    const { deviceId, deviceName } = ask;
+    setRevokeAsk(null);
     try {
       await daemon("device.revoke", deviceId);
       vault.setRevokeWarning({ name: deviceName });
       // Refresh fleet to reflect revocation
       vault.refreshDeviceFleet();
     } catch (e) {
-      alert(t("devices.revocationFailed", { error: e, id: deviceId }));
+      toastError(sanitizeError(e, t));
     }
   }
 
@@ -89,19 +97,12 @@ export default function DeviceFleetPanel() {
                     <p class="text-[var(--color-muted)]">{t("devices.lastSync")}</p>
                     <p class="text-[var(--color-text)] font-medium">{device.last_push ? new Date(device.last_push).toLocaleDateString() : t("devices.never")}</p>
                   </div>
-                  <div>
-                    <p class="text-[var(--color-muted)]">{t("devices.epoch")}</p>
-                    <p class="text-[var(--color-text)] font-medium">{device.epoch ?? "-"}</p>
-                  </div>
-                  <div>
-                    <p class="text-[var(--color-muted)]">{t("devices.lastCommit")}</p>
-                    <p class="text-[var(--color-text)] font-mono">{device.last_commit?.substring(0, 7) || "-"}</p>
-                  </div>
+
                 </div>
                 <div class="flex justify-end pt-1">
                   <Show when={vault.selfDeviceId() && device.id !== vault.selfDeviceId()}>
                     <button
-                      onClick={() => revokeDevice(device.id, device.name)}
+                      onClick={() => setRevokeAsk({ deviceId: device.id, deviceName: device.name })}
                       class="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 transition-all cursor-pointer"
                     >
                       {t("devices.revoke")}
@@ -113,6 +114,17 @@ export default function DeviceFleetPanel() {
           }}
         </For>
       </div>
-    </div>
+    
+      <ConfirmModal
+        show={!!revokeAsk()}
+        idPrefix="device-revoke"
+        title={t("devices.revoke")}
+        body={t("devices.revokeConfirm", { name: revokeAsk()?.deviceName ?? "" })}
+        confirmLabel={t("devices.revoke")}
+        confirmClass="bg-red-600 text-white hover:opacity-90"
+        onConfirm={() => void revokeDevice()}
+        onClose={() => setRevokeAsk(null)}
+      />
+</div>
   );
 }
