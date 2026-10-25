@@ -34,6 +34,7 @@ import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.passkeys.ListedPasskey
 import xyz.actitud.baluard.passkeys.PasskeyLister
 import xyz.actitud.baluard.passkeys.PasskeyUiRequest
+import xyz.actitud.baluard.ui.BackPressHandler
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
@@ -43,8 +44,9 @@ import xyz.actitud.baluard.i18n.t
 /**
  * Fulfillment for a provider passkey ASSERT (plan §9): credential picker
  * when several match, origin already validated at the trampoline gate,
- * ceremony + consume, result JSON back to the framework. UV rides the
- * master-password check when the RP demands it (§5).
+ * ceremony + consume, result JSON back to the framework. The master-
+ * password check gates the ceremony when the RP demands UV or the entry
+ * carries the re-prompt flag (§5, §11).
  */
 @Composable
 fun PasskeyAssertScreen(
@@ -61,6 +63,10 @@ fun PasskeyAssertScreen(
     var showPassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var passwordError by remember { mutableStateOf<String?>(null) }
+
+    // System back must cancel the ceremony with the typed result, not
+    // finish the activity untyped (§4).
+    BackPressHandler { onCancel() }
 
     val needsUv = PasskeyLister.userVerificationOf(request.requestJson) == "required"
 
@@ -85,10 +91,10 @@ fun PasskeyAssertScreen(
             try {
                 val assert = vault.passkeyProviderAssert(
                     request.requestJson,
-                    // Ceremony origin is the rp.id web form; the
-                    // platform-layer origin (apk-key-hash for native
-                    // callers) is not a parseable URL for passkey-rs.
-                    "https://" + request.rpId,
+                    // The platform-validated origin: the web page for
+                    // browser callers, android:apk-key-hash for native
+                    // ones (the core ceremony handles both schemes).
+                    request.origin,
                     credentialId,
                     null,
                     request.clientDataHash,
@@ -118,10 +124,7 @@ fun PasskeyAssertScreen(
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(request.rpId, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    // Ceremony origin is the rp.id web form; the
-                    // platform-layer origin (apk-key-hash for native
-                    // callers) is not a parseable URL for passkey-rs.
-                    "https://" + request.rpId,
+                    request.origin,
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                 )
@@ -174,7 +177,7 @@ fun PasskeyAssertScreen(
                 text = if (busy) t("common.loading") else t("common.continue"),
                 onClick = {
                     val pick = selected ?: return@BaluardPrimaryButton
-                    if (needsUv) {
+                    if (needsUv || pick.reprompt) {
                         passwordError = null
                         showPassword = true
                     } else {

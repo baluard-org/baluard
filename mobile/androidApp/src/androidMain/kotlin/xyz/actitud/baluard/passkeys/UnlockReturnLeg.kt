@@ -1,5 +1,6 @@
 package xyz.actitud.baluard.passkeys
 
+import xyz.actitud.baluard.i18n.t
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -43,7 +44,7 @@ object UnlockReturnLeg {
                 entries += matches.map { pk ->
                     PublicKeyCredentialEntry.Builder(
                         context = context,
-                        username = pk.userName ?: "No username",
+                        username = pk.userName ?: t("passkey.noUsername"),
                         pendingIntent = entryPendingIntent(context, pk.credentialId),
                         beginGetPublicKeyCredentialOption = option,
                     )
