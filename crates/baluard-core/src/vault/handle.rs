@@ -13139,8 +13139,13 @@ mod tests {
             lk_seed: hex::encode(legacy_lk.to_bytes()),
             ek: hex::encode(legacy_ek),
             kit_letter: String::new(),
-            kit_body_sealed: String::new(),
+            kit_armor: String::new(),
             deploy_key_fingerprint: "SHA256:test".into(),
+            forge_key_id: None,
+            provider: crate::providers::types::Provider::GitHub,
+            owner: String::new(),
+            repo: String::new(),
+            origin_url: String::new(),
         };
         legacy::save_store(
             dir.path(),
