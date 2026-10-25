@@ -17,7 +17,7 @@ class BaluardApplication : Application() {
         // Main process only: :autofill never writes token files, and
         // BackgroundFetchWorker cold-starts in the main process — without
         // this the worker's vault never has its token-sealing key.
-        if (Application.getProcessName() != ":autofill") {
+        if (!Application.getProcessName().endsWith(":autofill")) {
             TokenEncryption.install(this)
         }
     }

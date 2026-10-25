@@ -735,9 +735,10 @@ pub fn enroll_device_pre_unlock(
     let _ = baluard_core::vault::device_privkey::write_device_id(vault_path, result.device_id);
 
     if let Some(keystore) = baluard_core::vault::creation::get_global_keystore() {
-        let privkey_bytes = serde_json::to_vec(&privkey_data).unwrap_or_default();
+        let mut privkey_bytes = serde_json::to_vec(&privkey_data).unwrap_or_default();
         let _ = keystore.store_secret(&result.device_id.to_string(), &privkey_bytes);
         let _ = keystore.store_secret(&format!("device:{}", result.device_id), &privkey_bytes);
+        zeroize::Zeroize::zeroize(&mut privkey_bytes);
     }
 
     let mut handle = VaultHandle::open(vault_path)?;

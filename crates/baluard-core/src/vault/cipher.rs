@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::crypto::aead;
+use zeroize::Zeroizing;
 use crate::error::{BaluardError, VaultError};
 use crate::keys::hierarchy::ItemKey;
 use crate::types::{
@@ -46,8 +47,8 @@ pub fn encrypt_cipher(
 ) -> Result<CipherFile, BaluardError> {
     // Serialize cipher data
     let cipher_data = CipherEnvelopeData::from_input(input);
-    let json = serde_json::to_vec(&cipher_data)
-        .map_err(|e| VaultError::Metadata(format!("cipher serialization: {e}")))?;
+    let json: Zeroizing<Vec<u8>> = Zeroizing::new(serde_json::to_vec(&cipher_data)
+        .map_err(|e| VaultError::Metadata(format!("cipher serialization: {e}")))?);
 
     // Tier selection
     let tier = Tier::fit(json.len()).ok_or_else(|| {
@@ -58,7 +59,7 @@ pub fn encrypt_cipher(
     })?;
 
     // Pad
-    let padded = padding::pad(&json, tier)?;
+    let padded: Zeroizing<Vec<u8>> = Zeroizing::new(padding::pad(&json, tier)?);
 
     // Build AAD
     let aad = aead::build_aad(

@@ -27,7 +27,7 @@ use crate::recovery::RecoveryPhrase;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// HPKE context binding every kit wrap to this mechanism. Changing it
 /// invalidates every existing kit.
@@ -386,11 +386,13 @@ pub fn recover_root_from_kit(
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&tag_bytes);
 
-    let decrypted = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &secret, KIT_CONTEXT)?;
-    let root_bytes: [u8; 64] = decrypted
+    let mut decrypted = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &secret, KIT_CONTEXT)?;
+    let root_bytes: Zeroizing<[u8; 64]> = Zeroizing::new(decrypted
+        .as_slice()
         .try_into()
-        .map_err(|_| VaultError::Corrupt("recovered root key is invalid length".into()))?;
-    let root = RootKey::from_bytes(root_bytes);
+        .map_err(|_| VaultError::Corrupt("recovered root key is invalid length".into()))?);
+    zeroize::Zeroize::zeroize(&mut decrypted);
+    let root = RootKey::from_bytes(*root_bytes);
     // The unwrapped key must open the kit's seal: a git-swapped kit
     // (recipient or verifier fields rewritten) refuses here instead of
     // arming an attacker-chosen key for the next rotation.

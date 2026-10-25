@@ -225,6 +225,7 @@ class BaluardAutofillService : AutofillService() {
     private fun parseForm(structure: AssistStructure): Form? {
         var usernameId: AutofillId? = null
         var passwordId: AutofillId? = null
+        val packageName = structure.activityComponent?.packageName
         val browser = xyz.actitud.baluard.platform.A11yUri.isBrowserPackage(packageName)
         var webDomain: String? = null
         var urlBarText: String? = null
@@ -232,8 +233,6 @@ class BaluardAutofillService : AutofillService() {
         // field: the preceding-field username promotion candidate.
         var editableBeforePasswordId: AutofillId? = null
         val ignored = mutableListOf<AutofillId>()
-
-        val packageName = structure.activityComponent?.packageName
 
         for (i in 0 until structure.windowNodeCount) {
             val window = structure.getWindowNodeAt(i)

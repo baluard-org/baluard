@@ -503,7 +503,13 @@ impl AutoSyncHandle {
             SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || {
                 let _cycle_guard = lock_guard;
-                run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
+                let out = run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk);
+                // The closure owns a Copy of the seal subkey; wipe it with the closure.
+                if let Some(mut k) = devkey_seal {
+                    use zeroize::Zeroize;
+                    k.zeroize();
+                }
+                out
             }),
         )
         .await;
@@ -645,7 +651,13 @@ impl AutoSyncHandle {
                 let vault_path = self.vault_path.clone();
                 move || {
                     let _cycle_guard = lock_guard;
-                    run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
+                    let out =
+                        run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk);
+                    if let Some(mut k) = devkey_seal {
+                        use zeroize::Zeroize;
+                        k.zeroize();
+                    }
+                    out
                 }
             }),
         )
@@ -782,7 +794,12 @@ impl AutoSyncHandle {
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
                     let _cycle_guard = lock_guard;
-                    run_pull_only(&vault_path, &dn, devkey_seal.as_ref(), enroll_vk)
+                    let out = run_pull_only(&vault_path, &dn, devkey_seal.as_ref(), enroll_vk);
+                    if let Some(mut k) = devkey_seal {
+                        use zeroize::Zeroize;
+                        k.zeroize();
+                    }
+                    out
                 }),
             )
             .await;
