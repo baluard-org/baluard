@@ -54,12 +54,18 @@ class OriginValidator(
                 val origin = callingAppInfo.getOrigin(json)
                 if (origin.isNullOrEmpty()) {
                     OriginDecision.Refused("allowlisted package has no matching signature")
-                } else if (asset.verifiedSource) {
-                    // Verified browser list: the populated origin trivially
-                    // matches the rp id after allowlist membership.
-                    OriginDecision.Web("https://$relyingPartyId")
                 } else {
-                    OriginDecision.Web(origin)
+                    // Every allowlisted browser relays the page origin;
+                    // allowlist membership alone must not mint rp-id-shaped
+                    // origins, so rp.id containment is re-checked here.
+                    val originHost = runCatching { java.net.URI(origin).host }.getOrNull()
+                    if (originHost == null ||
+                        !OriginRules.rpIdCoversOriginHost(relyingPartyId, originHost)
+                    ) {
+                        OriginDecision.Refused("rp id is not covered by the browser origin")
+                    } else {
+                        OriginDecision.Web(origin)
+                    }
                 }
             }.getOrElse {
                 OriginDecision.Refused("allowlist signature mismatch: ${it.javaClass.simpleName}")
@@ -101,6 +107,9 @@ class OriginValidator(
             val body = fetcher.fetchAssetLinks(relyingPartyId)
             assetLinksGrant(body, callingAppInfo.packageName, fingerprint)
         }.getOrDefault(false)
+        // Bound the cache: hostile callers minting distinct rp ids must
+        // not grow the map without limit (entries are TTL-warm anyway).
+        if (dalCache.size >= MAX_DAL_CACHE) dalCache.clear()
         dalCache[cacheKey] = CacheEntry(nowMs(), granted)
         return if (granted) OriginDecision.Android(origin)
         else OriginDecision.Refused("no DAL statement for ${callingAppInfo.packageName}")
@@ -113,6 +122,8 @@ class OriginValidator(
     private data class CacheEntry(val at: Long, val granted: Boolean)
 
     private companion object {
+        const val MAX_DAL_CACHE = 256
+
         /** Chromium-derived lists (Bitwarden-bundled copies; refresh at release). */
         data class Allowlist(val file: String, val verifiedSource: Boolean)
 

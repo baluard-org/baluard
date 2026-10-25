@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.passkeys.PasskeyLister
 import xyz.actitud.baluard.passkeys.PasskeyUiRequest
+import xyz.actitud.baluard.ui.BackPressHandler
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
@@ -38,9 +39,10 @@ import xyz.actitud.baluard.i18n.t
 
 /**
  * Fulfillment for a provider passkey CREATE (plan §9): shows the relying
- * party, the validated origin, and the username; runs the ceremony into a
- * new Login in the active vault. UV rides the master-password check when
- * the RP demands it — a plain tap is never verification (§5).
+ * party, the validated origin, and the username; runs the ceremony into
+ * the matching existing Login when one unambiguously matches, else a new
+ * one in the active vault. UV rides the master-password check when the RP
+ * demands it — a plain tap is never verification (§5).
  */
 @Composable
 fun PasskeyCreateScreen(
@@ -56,6 +58,10 @@ fun PasskeyCreateScreen(
     var showPassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var passwordError by remember { mutableStateOf<String?>(null) }
+
+    // System back must cancel the ceremony with the typed result, not
+    // finish the activity untyped (§4).
+    BackPressHandler { onCancel() }
 
     val needsUv = PasskeyLister.userVerificationOf(request.requestJson) == "required"
     val rpLabel = request.rpName ?: request.rpId
@@ -73,21 +79,26 @@ fun PasskeyCreateScreen(
             try {
                 val register = vault.passkeyProviderRegister(
                     request.requestJson,
-                    // Ceremony origin is the rp.id web form; the
-                    // platform-layer origin (apk-key-hash for native
-                    // callers) is not a parseable URL for passkey-rs.
-                    "https://" + request.rpId,
+                    // The platform-validated origin: the web page for
+                    // browser callers, android:apk-key-hash for native
+                    // ones (the core ceremony handles both schemes).
+                    request.origin,
                     null,
                     request.clientDataHash,
                     needsUv, // verified by the password check just performed
                 )
                 val obj = org.json.JSONObject(register)
                 val ceremonyId = obj.getString("ceremony_id")
-                val newLogin = org.json.JSONObject().apply {
-                    put("name", rpLabel)
-                    put("username", userName)
-                }.toString()
-                vault.passkeyStoreRegistered(ceremonyId, null, newLogin)
+                val linkTo = PasskeyLister.existingLoginFor(vault, request.rpId, userName)
+                if (linkTo != null) {
+                    vault.passkeyStoreRegistered(ceremonyId, linkTo, null)
+                } else {
+                    val newLogin = org.json.JSONObject().apply {
+                        put("name", rpLabel)
+                        put("username", userName)
+                    }.toString()
+                    vault.passkeyStoreRegistered(ceremonyId, null, newLogin)
+                }
                 onResult(obj.getJSONObject("attestation_response").toString())
             } catch (e: Throwable) {
                 fail(e)
