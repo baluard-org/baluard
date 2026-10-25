@@ -58,7 +58,6 @@
     "title": "Criar Cofre",
     "subtitle": "Defina uma senha mestra para seu novo cofre",
     "namePlaceholder": "Nome do cofre",
-    "nameRequired": "O nome da entrada é obrigatório",
     "slugLabel": "Slug",
     "slugEdit": "Editar",
     "slugDone": "Concluído",
@@ -166,6 +165,7 @@
     }
   },
   "entry": {
+    "nameRequired": "O nome da entrada é obrigatório",
     "addTitle": "Novo Item",
     "namePlaceholder": "Nome do item",
     "usernamePlaceholder": "Usuário ou e-mail",
@@ -647,7 +647,21 @@
     "address": "Endereço",
     "cityStatePostal": "Cidade / Estado / CEP",
     "verificationCode": "Código de verificação",
-    "cardholderPlaceholder": "Nome completo no cartão"
+    "cardholderPlaceholder": "Nome completo no cartão",
+    "options": {
+      "honorific": {
+        "Mr": "Sr.",
+        "Mrs": "Sra.",
+        "Ms": "Srta.",
+        "Dr": "Dr."
+      },
+      "account": {
+        "checking": "Corrente",
+        "savings": "Poupança",
+        "investment": "Investimento",
+        "other": "Outro"
+      }
+    }
   },
   "devices": {
     "statusUnknown": "Desconhecido",
@@ -670,8 +684,6 @@
     "thisDevice": "Este dispositivo",
     "lastSync": "Última sincronização",
     "never": "Nunca",
-    "epoch": "Época",
-    "lastCommit": "Último commit",
     "revoke": "Revogar"
   },
   "generator": {
@@ -1174,9 +1186,9 @@
     "removeNote": "Remover alguém regenera a chave do grupo: o que a pessoa já abriu continua aberto para ela, mas o acesso futuro ao grupo termina."
   },
   "removal": {
-    "bodyConfirmed": "Você foi removido deste Space. Ele não sincroniza mais neste dispositivo.",
+    "bodyConfirmed": "Você foi removido deste cofre. Ele não sincroniza mais neste dispositivo.",
     "bodyReset": "O dono restabeleceu o acesso deste dispositivo. Ele não sincroniza mais neste dispositivo.",
-    "bodyProbable": "Este Space pode ter removido este dispositivo: a sincronização falha com um erro de acesso.",
+    "bodyProbable": "Este cofre pode ter removido este dispositivo: a sincronização falha com um erro de acesso.",
     "cliHint": "Para apagar também os arquivos: baluard vaults detach {slug} --delete-from-disk",
     "detachAction": "Remover deste app (manter os arquivos)",
     "detachedToast": "Removido deste app. Os arquivos permanecem no disco."

@@ -958,7 +958,7 @@ fun SettingsScreen(
                                 OutlinedTextField(
                                     value = rotatePw,
                                     onValueChange = { rotatePw = it },
-                                    label = { Text(t("login.password")) },
+                                    label = { Text(t("login.passwordPlaceholder")) },
                                     singleLine = true,
                                     visualTransformation = PasswordVisualTransformation(),
                                     isError = rotateErr != null,
