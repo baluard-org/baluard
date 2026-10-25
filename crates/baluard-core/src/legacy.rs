@@ -915,7 +915,7 @@ pub struct RemoteIdentity {
     pub ssh_url: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ArmOutcome {
     pub kit_id: String,
     /// The full armored kit. Hand off to the contact out-of-band; the
