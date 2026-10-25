@@ -77,6 +77,7 @@ actual object VaultRegistry {
         // scanned list): a directory that vanished can never come back,
         // so forget it instead of launching into a missing vault.
         if (!File(path).hasMarker()) {
+            CrossProcessPrefs.remove(KEY)
             prefs().edit().remove(KEY).apply()
             return null
         }

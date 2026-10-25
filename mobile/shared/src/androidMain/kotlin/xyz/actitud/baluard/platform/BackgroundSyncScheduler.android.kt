@@ -55,7 +55,7 @@ class BackgroundFetchWorker(
             // (vaults/) and cloned vaults must background-fetch too.
             val paths = VaultRegistry.listVaults().map { it.path }
                 .ifEmpty { listOf(AppPaths.defaultVaultPath()) }
-            paths.forEach { backgroundFetch(it) }
+            paths.forEach { runCatching { backgroundFetch(it) } }
             Result.success() // retry() not used: next foreground pull recovers
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
