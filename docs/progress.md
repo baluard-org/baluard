@@ -484,7 +484,7 @@ Features parked for the far future. Do not start without explicit confirmation.
 ### TOTP
 
 - RFC 6238/4226. SHA1/256/512, 6/8 digits, 30/60s periods
-- Seed NEVER crosses IPC. Only derived numeric code sent to frontend
+- Seed rides full cipher reads (`vault.get`/`vault.list_full`) for the editor round-trip; the dedicated `cipher.totp` route returns only derived codes
 - `TotpParams.secret` zeroized on drop
 
 ### Password Generator
