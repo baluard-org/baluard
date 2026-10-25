@@ -19,7 +19,7 @@ export function FolderTree(props) {
   }
 
   return <For each={tree()}>
-    {(node) => <FolderNode node={node} depth={0} selectedFolder={props.selectedFolder} setSelectedFolder={props.setSelectedFolder} />}
+    {(node) => <FolderNode node={node} depth={0} />}
   </For>;
 }
 
@@ -29,6 +29,7 @@ export function FolderNode(props) {
   const [expanded, setExpanded] = createSignal(true);
   const [hovered, setHovered] = createSignal(false);
   const [renaming, setRenaming] = createSignal(false);
+  let renameCancelled = false;
   const [addingChild, setAddingChild] = createSignal(false);
   const [confirmingDelete, setConfirmingDelete] = createSignal(false);
 
@@ -41,6 +42,9 @@ export function FolderNode(props) {
   }
 
   async function handleRename(e) {
+    // Unmounting the input on Escape fires blur; a cancelled rename must
+    // not fall through and commit.
+    if (renameCancelled) { renameCancelled = false; return; }
     const name = e.target.value.trim();
     if (name && name !== props.node.name) {
       try { await daemon("folder.rename", JSON.stringify({ id: props.node.id, name })); } catch {}
@@ -100,7 +104,7 @@ export function FolderNode(props) {
             value={props.node.name}
             onKeyDown={async (e) => {
               if (e.key === "Enter") { e.target.blur(); }
-              if (e.key === "Escape") { setRenaming(false); }
+              if (e.key === "Escape") { renameCancelled = true; setRenaming(false); }
             }}
             onBlur={(e) => handleRename(e)}
             onClick={e => e.stopPropagation()}
@@ -118,7 +122,7 @@ export function FolderNode(props) {
             </button>
             <button title={t("entry.rename")}
               class="p-0.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
-              onClick={e => { e.stopPropagation(); setRenaming(true); }}>
+              onClick={e => { e.stopPropagation(); renameCancelled = false; setRenaming(true); }}>
               <IconPencil class="w-3 h-3" />
             </button>
             <Show when={confirmingDelete()} fallback={
@@ -161,7 +165,7 @@ export function FolderNode(props) {
 
       <Show when={hasChildren() && expanded()}>
         <For each={props.node.children || []}>
-          {(child) => <FolderNode node={child} depth={props.depth + 1} selectedFolder={props.selectedFolder} setSelectedFolder={props.setSelectedFolder} />}
+          {(child) => <FolderNode node={child} depth={props.depth + 1} />}
         </For>
       </Show>
     </div>

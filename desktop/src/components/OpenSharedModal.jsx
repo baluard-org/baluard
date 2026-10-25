@@ -137,7 +137,9 @@ export default function OpenSharedModal(props) {
     );
   }
 
-  const v = opened();
+  // Read the signal inside the JSX so the view tracks the decrypted
+  // record instead of the null captured at setup.
+  const v = () => opened();
   return (
     <Transition name="fade">
       <Show when={true}>
@@ -149,7 +151,7 @@ export default function OpenSharedModal(props) {
           class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
           onClick={() => props.onClose()}
         >
-          <FocusTrap containerRef={dialogRef} onEscape={() => props.onClose()} />
+          <FocusTrap containerRef={() => dialogRef} onEscape={() => props.onClose()} />
           <div
             class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-md w-full shadow-2xl max-h-[85vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
@@ -181,6 +183,7 @@ export default function OpenSharedModal(props) {
                       </label>
                       <Input
                         id="share-pass"
+                        type="password"
                         value={passphrase()}
                         onInput={(e) => setPassphrase(e.currentTarget.value)}
                         placeholder={t("share.passphraseField")}
@@ -196,15 +199,15 @@ export default function OpenSharedModal(props) {
                 </>
               }
             >
-              <p class="text-sm font-bold text-[var(--color-text)] mb-3">{v.item_name}</p>
-              {fieldType({ label: t("share.fromLabel"), value: v.sender_name })}
-              {fieldType({ label: t("share.urlLabel"), value: v.url })}
-              {fieldType({ label: t("share.usernameLabel"), value: v.username })}
-              {fieldType({ label: t("share.passwordLabel"), value: v.password, mono: true })}
-              {fieldType({ label: t("share.totpLabel"), value: v.totp_code, mono: true })}
-              <Show when={v.expires_at}>
+              <p class="text-sm font-bold text-[var(--color-text)] mb-3">{v()?.item_name}</p>
+              {fieldType({ label: t("share.fromLabel"), value: v()?.sender_name })}
+              {fieldType({ label: t("share.urlLabel"), value: v()?.url })}
+              {fieldType({ label: t("share.usernameLabel"), value: v()?.username })}
+              {fieldType({ label: t("share.passwordLabel"), value: v()?.password, mono: true })}
+              {fieldType({ label: t("share.totpLabel"), value: v()?.totp_code, mono: true })}
+              <Show when={v()?.expires_at}>
                 <p class="text-[11px] text-[var(--color-muted)] mb-3">
-                  {t("share.expiresLabel")} {new Date(v.expires_at * 1000).toLocaleString()}
+                  {t("share.expiresLabel")} {new Date(v()?.expires_at * 1000).toLocaleString()}
                 </p>
               </Show>
               <div class="flex justify-end gap-2">

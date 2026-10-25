@@ -6,6 +6,7 @@ import { toastSuccess, toastError } from "../context/toastSignal.js";
 import CopyButton from "./CopyButton.jsx";
 import TypedConfirmModal from "./TypedConfirmModal.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
+import FocusTrap from "./FocusTrap.jsx";
 
 // §4.8-1: the People surface — members, invites, join queue, activity.
 // Plain language only: roles are words, the join queue is "requests",
@@ -76,6 +77,8 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
   // Member-email wave: the admin corrects a member's self-declared email
   // (the field is delta-frozen, so this route is the only writer).
   const [emailEdit, setEmailEdit] = createSignal(null); // member row | null
+  let verifyDialogRef;
+  let emailDialogRef;
   const [emailDraft, setEmailDraft] = createSignal("");
   const [seatError, setSeatError] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
@@ -345,7 +348,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
 
   const memberName = (id) => {
     const m = members().find((m) => m.id === id);
-    return m?.display_name || id.slice(0, 8);
+    return m?.display_name || t("shared.unknownMember");
   };
 
   async function doCancelClaim() {
@@ -1196,7 +1199,13 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
       {/* Level 2 contact check: compare codes out-of-band, then confirm. */}
       <Show when={verifyT()}>
         <div class="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4">
-          <div class="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+          <FocusTrap containerRef={() => verifyDialogRef} onEscape={() => setVerifyT(null)} />
+          <div
+            ref={(el) => (verifyDialogRef = el)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="verify-code-title"
+            class="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
             <h3 class="text-sm font-bold mb-2">
               {t("people.verifyTitle").replace("{name}", verifyT().display_name)}
             </h3>
@@ -1234,7 +1243,9 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
           dialog — no typed confirm needed for advisory data. */}
       <Show when={emailEdit()}>
         <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
+          <FocusTrap containerRef={() => emailDialogRef} onEscape={() => setEmailEdit(null)} />
           <div
+            ref={(el) => (emailDialogRef = el)}
             role="dialog"
             aria-modal="true"
             aria-labelledby="email-edit-title"

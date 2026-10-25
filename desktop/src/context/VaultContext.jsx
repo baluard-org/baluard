@@ -239,7 +239,10 @@ function VaultProvider(props) {
       await refreshCiphers(t);
       // list_full already carries the fresh cipher (K3): skip the extra
       // vault.get round-trip and serve the updated item from the list.
-      return ciphers().find((c) => c.id === id) || null;
+      // Archived edits update from the archive list, not the active one.
+      return ciphers().find((c) => c.id === id)
+        || archivedCiphers().find((c) => c.id === id)
+        || null;
     } catch (e) {
       toastError(sanitizeError(e, t));
       return null;

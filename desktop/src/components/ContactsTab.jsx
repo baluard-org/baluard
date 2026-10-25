@@ -74,7 +74,7 @@ export default function ContactsTab() {
     setBusy(true);
     try {
       await daemon("contacts.remove", { identity_signing_pubkey: target.pubkey });
-      toastSuccess(t("contacts.removedToast"));
+      toastSuccess(t("people.removedToast"));
       await loadContacts();
     } catch (e) {
       toastError(sanitizeError(e, t));

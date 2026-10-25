@@ -277,7 +277,7 @@ export default function VaultView() {
                 {(cat) => (
                   <button
                     data-testid={"category-" + cat.id}
-                    onClick={() => { vault.setSelectedCategory(cat.name); vault.setSelectedFolder(null); vault.setSelectedTag(null); }}
+                    onClick={() => { vault.setSelectedCategory(cat.name); vault.setSelectedFolder(null); vault.setSelectedTag(null); vault.setSelectedCollection(null); }}
                     class={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between text-left cursor-pointer ${
                       vault.selectedCategory() === cat.name
                         ? "bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] shadow-sm"
