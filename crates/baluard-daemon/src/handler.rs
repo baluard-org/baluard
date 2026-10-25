@@ -4471,6 +4471,23 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
         // ── S4-7: Space Recovery Kit (admin; the core gate is the same
         // one policies uses) ──
+        // ── Legacy Contact (owner side; token-gated by default) ──
+        "legacy.status" => match state.legacy_status().await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
+        "legacy.arm" => match state.legacy_arm(&req.payload).await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
+        "legacy.close" => match state.legacy_close(&req.payload).await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
+        "legacy.resend" => match state.legacy_resend().await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
         "space.kit_enable" => match state.space_kit_enable().await {
             Ok(v) => ok_resp(v, token_str),
             Err(e) => err_response(e),
