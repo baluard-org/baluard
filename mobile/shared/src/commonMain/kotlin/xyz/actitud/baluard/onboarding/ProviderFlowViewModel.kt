@@ -66,7 +66,7 @@ class ProviderFlowViewModel(
      *  leaves half-written state.
      */
     fun canGoBack(): Boolean = !busy && when (stage) {
-        is Stage.DeviceCode, is Stage.Repos, is Stage.Enroll -> true
+        is Stage.DeviceCode, is Stage.WebAuth, is Stage.Repos, is Stage.Enroll -> true
         else -> false
     }
 
@@ -105,8 +105,9 @@ class ProviderFlowViewModel(
             stage = Stage.DeviceCode(repo.startDeviceFlow(provider))
         } catch (e: Exception) {
             fail("startDeviceFlow", e, t("provider.errorConnection"))
+        } finally {
+            busy = false
         }
-        busy = false
     }
 
     /**
@@ -129,8 +130,9 @@ class ProviderFlowViewModel(
         } catch (e: Exception) {
             stage = Stage.PickProvider
             fail("startWebOAuth", e, t("provider.errorConnection"))
+        } finally {
+            busy = false
         }
-        busy = false
     }
 
     /**
@@ -207,8 +209,9 @@ class ProviderFlowViewModel(
             loadRepos()
         } catch (e: Exception) {
             fail("connectPat", e, t("provider.errorConnection"))
+        } finally {
+            busy = false
         }
-        busy = false
     }
 
     fun backToPickProvider() {
@@ -308,10 +311,10 @@ class ProviderFlowViewModel(
         busy = true
         error = null
         try {
-            // Zeroize the outgoing vault's keys before adopting the newly
-            // enrolled one — never rely on GC timing to drop the old handle.
-            if (auth.vault() != null) runCatching { auth.lock() }
             val vault: MobileVault = repo.enrollDeviceWithPhrase(vaultPath, masterPassword, recoveryPhrase, deviceName)
+            // Lock only AFTER the enroll succeeded: a wrong phrase or password
+            // must not lock the user's current vault.
+            if (auth.vault() != null) runCatching { auth.lock() }
             auth.adopt(vaultPath, vault)
             return true
         } catch (e: Exception) {

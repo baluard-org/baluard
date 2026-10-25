@@ -159,7 +159,7 @@ fun TotpWidget(
                     Spacer(Modifier.height(8.dp))
 
                     LinearProgressIndicator(
-                        progress = { s.secondsRemaining / 30f },
+                        progress = { (s.secondsRemaining.toFloat() / s.periodSeconds.toFloat()).coerceIn(0f, 1f) },
                         color = if (s.secondsRemaining <= 5) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                         trackColor = MaterialTheme.colorScheme.outlineVariant,
                         modifier = Modifier

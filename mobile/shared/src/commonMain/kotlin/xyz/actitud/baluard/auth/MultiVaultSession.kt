@@ -1,5 +1,7 @@
 package xyz.actitud.baluard.auth
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import xyz.actitud.baluard.MobileVault
 
 /**
@@ -51,7 +53,12 @@ class SessionEntry internal constructor(
 class MultiVaultSession(
     private val max: Int = MAX_UNLOCKED,
 ) : SessionStore {
-    private val sessions = LinkedHashMap<String, SessionEntry>(max, 0.75f, true)
+    // Insertion-order, NOT access-order: a get() on an access-order map
+    // rewires its linked list, and the credential-provider service reads
+    // this map from a Binder thread. LRU order is maintained by re-inserting
+    // on the mutation paths instead.
+    private val sessions = LinkedHashMap<String, SessionEntry>()
+    private val mapLock = Mutex()
 
     /** The active vault's handle, or null when nothing is unlocked. */
     override fun active(): SessionVault? = sessions.values.lastOrNull()?.vault
@@ -67,9 +74,14 @@ class MultiVaultSession(
      * handle would keep its keys resident until process end.
      */
     override suspend fun adopt(path: String, vault: SessionVault, kek: ByteArray?) {
-        sessions.remove(path)?.let { old -> runCatching { old.vault.lock() } }
-        sessions[path] = SessionEntry(vault, kek)
-        evictBeyondBound(path)
+        mapLock.withLock {
+            sessions.remove(path)?.let { old ->
+                runCatching { old.vault.lock() }
+                old.wipeKek()
+            }
+            sessions[path] = SessionEntry(vault, kek)
+            evictBeyondBound(path)
+        }
     }
 
     /**
@@ -78,12 +90,18 @@ class MultiVaultSession(
      * vault that auto-locked returns false (the caller re-unlocks normally).
      */
     override suspend fun switchTo(path: String): Boolean {
-        val entry = sessions[path] ?: return false
+        val entry = mapLock.withLock { touch(path) } ?: return false
         if (!entry.vault.isUnlocked()) {
             // Auto-locked while cached: drop the dead entry (wipe its KEK
             // like every other removal site); the caller runs the normal
-            // unlock.
-            sessions.remove(path)?.wipeKek()
+            // unlock. Identity check + lock: an adopt landing during the
+            // suspend must not have its fresh entry destroyed here.
+            mapLock.withLock {
+                if (sessions[path] === entry) {
+                    sessions.remove(path)
+                    entry.wipeKek()
+                }
+            }
             return false
         }
         return true
@@ -94,14 +112,28 @@ class MultiVaultSession(
         sessions[path]?.let { it.vault.isUnlocked() } == true
 
     /** G24 §4.9: paths of all still-unlocked sessions (merged search fan-out). */
-    suspend fun unlockedPaths(): List<String> =
-        sessions.mapNotNull { (path, e) -> if (e.vault.isUnlocked()) path else null }
+    suspend fun unlockedPaths(): List<String> {
+        // Snapshot before suspending: a concurrent adopt/lockOne would
+        // otherwise mutate the map under a live fail-fast iterator.
+        val paths = sessions.keys.toList()
+        return paths.mapNotNull { path ->
+            val e = sessions[path] ?: return@mapNotNull null
+            if (e.vault.isUnlocked()) path else null
+        }
+    }
 
     /** The live FFI handle for [path], when its session is still unlocked. */
     suspend fun vaultFor(path: String): MobileVault? {
         val e = sessions[path] ?: return null
         if (!e.vault.isUnlocked()) return null
         return e.vault.mobile
+    }
+
+    /** Re-insert to the back = most recently used. Callers hold [mapLock]. */
+    private fun touch(path: String): SessionEntry? {
+        val entry = sessions.remove(path) ?: return null
+        sessions[path] = entry
+        return entry
     }
 
     override suspend fun lockActive(): Boolean {
@@ -119,9 +151,11 @@ class MultiVaultSession(
 
     /** Drop one vault's session: lock, wipe its KEK, forget the slot. */
     override suspend fun forget(path: String) {
-        sessions.remove(path)?.let { entry ->
-            runCatching { entry.vault.lock() }
-            entry.wipeKek()
+        mapLock.withLock {
+            sessions.remove(path)?.let { entry ->
+                runCatching { entry.vault.lock() }
+                entry.wipeKek()
+            }
         }
     }
 
@@ -151,25 +185,29 @@ class MultiVaultSession(
     }
 
     private suspend fun lockOne(path: String): Boolean {
-        val entry = sessions[path] ?: return false
-        return try {
-            // Lock BEFORE removing: the vault being locked stays the active
-            // vault until the lock completes, so a mid-lock recomposition
-            // never surfaces a different vault under this one's path.
-            entry.vault.lock()
-            sessions.remove(path)
-            true
-        } catch (_: Exception) {
-            false
-        } finally {
-            entry.wipeKek()
+        mapLock.withLock {
+            val entry = sessions[path] ?: return false
+            return try {
+                // Lock BEFORE removing: the vault being locked stays the active
+                // vault until the lock completes, so a mid-lock recomposition
+                // never surfaces a different vault under this one's path.
+                entry.vault.lock()
+                sessions.remove(path)
+                true
+            } catch (_: Exception) {
+                false
+            } finally {
+                entry.wipeKek()
+            }
         }
     }
 
+    /** Caller holds [mapLock]. */
     private suspend fun evictBeyondBound(keep: String) {
         while (sessions.size > max) {
-            // Access-order map: the first key is the least recently used.
-            // Never evict the just-touched active path. Lock the evicted
+            // Insertion order plus touch() re-insertion: the first key is
+            // the least recently used. Never evict the just-touched active
+            // path. Lock the evicted
             // vault: no background walker exists on mobile, so a dropped
             // handle would otherwise hold its keys until process end.
             val eldest = sessions.keys.firstOrNull { it != keep } ?: break
