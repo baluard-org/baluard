@@ -70,7 +70,6 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
 
         val mode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_DATASETS
         val target = intent?.getStringExtra(EXTRA_TARGET)
-        android.util.Log.i("BaluardA11yDbg", "activity onCreate mode=$mode target=$target")
         if (target == null) {
             finish()
             return
@@ -118,7 +117,9 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         status.text = t("autofill.unlockHint")
         unlockThen(path) {
             AutofillSession.scope.launch {
-                android.util.Log.i("BaluardA11yDbg", "session unlocked, building response")
+                // The :autofill process may have died during the prompt:
+                // reopen so merge eligibility and the vault map are live.
+                AutofillSession.ensureOpen()
                 val response = AutofillResponseBuilder.filledResponse(
                     applicationContext,
                     fields,
@@ -128,7 +129,6 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                     InlineStyle(AutofillInlineCache.specs, AutofillInlineCache.maxCount)
                         .takeIf { AutofillInlineCache.specs.isNotEmpty() },
                 ) ?: AutofillResponseBuilder.saveOnlyResponse(applicationContext, fields, target)
-                android.util.Log.i("BaluardA11yDbg", "response built, delivering")
                 runOnUiThread { deliverDatasetResponse(response) }
             }
         }
@@ -158,14 +158,24 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                         failOnUiThread(t("autofill.unlockFailed"))
                         return@launch
                     }
-                    android.util.Log.i("BaluardA11yDbg", "session unlocked")
                     runOnUiThread { onUnlocked() }
                 }
             },
-            onError = { _, message ->
+            onError = { code, _ ->
                 // User cancel (codes 5/10) and real failures both land here;
-                // the message is only echoed to our own status view.
-                failOnUiThread(message.ifBlank { t("autofill.unlockFailed") })
+                // messages are localized by code — the platform actuals'
+                // internal strings never reach users.
+                failOnUiThread(
+                    when (code) {
+                        androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED,
+                        androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON,
+                        -> t("autofill.unlockCancelled")
+                        androidx.biometric.BiometricPrompt.ERROR_LOCKOUT,
+                        androidx.biometric.BiometricPrompt.ERROR_LOCKOUT_PERMANENT,
+                        -> t("autofill.unlockLockedOut")
+                        else -> t("autofill.unlockFailed")
+                    },
+                )
             },
         )
     }
@@ -174,6 +184,7 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
 
     private fun startPickerFlow(target: String, all: Boolean) {
         AutofillSession.scope.launch {
+            AutofillSession.lockIfExpired()
             if (AutofillSession.ensureOpen()) {
                 // Session still inside its auto-lock window: no prompt.
                 runOnUiThread { showList(target, all) }
@@ -364,8 +375,11 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
             setPadding(48, 32, 48, 32)
             isClickable = true
             isFocusable = true
-            // System touch highlight for free a11y feedback.
-            setBackgroundResource(android.R.attr.selectableItemBackground)
+            // System touch highlight for free a11y feedback (resolved:
+            // setBackgroundResource expects a drawable id, not an attr id).
+            val tv = android.util.TypedValue()
+            theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
+            setBackgroundResource(tv.resourceId)
             setOnClickListener { onClick() }
             contentDescription = "$title, ${subtitle ?: t("autofill.noUsername")}"
         }
@@ -392,7 +406,6 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
     // ── Dataset-mode result delivery ──
 
     private fun deliverDatasetResponse(response: android.service.autofill.FillResponse) {
-        android.util.Log.i("BaluardA11yDbg", "delivering dataset response via setResult")
         val result = Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, response)
         setResult(RESULT_OK, result)
         finish()

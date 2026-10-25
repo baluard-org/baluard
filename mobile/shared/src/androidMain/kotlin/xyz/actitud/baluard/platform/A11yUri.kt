@@ -20,6 +20,24 @@ object A11yUri {
         "location_bar_edit_text",
     )
 
+    /**
+     * Browser packages whose URL-bar text we trust. A hostile app can name a
+     * view id `url_bar` or set webDomain, so the id/name allowlists below are
+     * only honored for these packages; everything else fills as
+     * androidapp:// and rides the app-trust prompt.
+     */
+    private val BROWSER_PACKAGES = setOf(
+        "com.android.chrome", "com.chrome.beta", "com.chrome.canary", "com.chrome.dev",
+        "com.android.browser", "org.mozilla.firefox", "org.mozilla.firefox_beta",
+        "org.mozilla.fenix", "org.mozilla.focus", "com.microsoft.emmx",
+        "com.opera.browser", "com.opera.mini.android", "com.brave.browser",
+        "com.duckduckgo.mobile.android", "com.sec.android.app.sbrowser",
+        "com.vivaldi.browser", "com.kiwibrowser.browser", "org.torproject.torbrowser",
+        "com.heytap.browser", "com.lenovo.browser", "mark.via.gp", "com.flash.locator",
+    )
+
+    fun isBrowserPackage(pkg: String?): Boolean = pkg != null && pkg in BROWSER_PACKAGES
+
     /** Whether [viewIdResourceName] belongs to a known browser address bar.
      *  Handles both bare idEntry names (autofill) and full view IDs (a11y). */
     fun isUrlBar(viewIdResourceName: String?): Boolean {

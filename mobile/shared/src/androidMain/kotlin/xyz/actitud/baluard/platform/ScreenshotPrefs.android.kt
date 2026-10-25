@@ -8,10 +8,17 @@ actual class ScreenshotPrefs actual constructor() {
         AppContextHolder.require()
             .getSharedPreferences("baluard_local_prefs", Context.MODE_PRIVATE)
 
-    actual fun allowScreenshots(): Boolean = prefs().getBoolean(KEY, DEFAULT)
+    actual fun allowScreenshots(): Boolean {
+        val stored = CrossProcessPrefs.read(KEY) ?: run {
+            val legacy = prefs().getBoolean(KEY, DEFAULT)
+            CrossProcessPrefs.write(KEY, if (legacy) "1" else "0")
+            return legacy
+        }
+        return stored == "1"
+    }
 
     actual fun setAllowScreenshots(allow: Boolean) {
-        prefs().edit().putBoolean(KEY, allow).apply()
+        CrossProcessPrefs.write(KEY, if (allow) "1" else "0")
     }
 
     private companion object {

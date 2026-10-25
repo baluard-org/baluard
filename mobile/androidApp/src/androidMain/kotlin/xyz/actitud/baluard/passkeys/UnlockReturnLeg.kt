@@ -27,7 +27,10 @@ object UnlockReturnLeg {
         val options = request.beginGetCredentialOptions
             .filterIsInstance<androidx.credentials.provider.BeginGetPublicKeyCredentialOption>()
         val entries = mutableListOf<PublicKeyCredentialEntry>()
+        // Same fallback the credential service uses: no active pointer
+        // must not answer an empty sheet when exactly one vault exists.
         val activePath = VaultRegistry.loadActiveVault()
+            ?: VaultRegistry.listVaults().firstOrNull()?.path
         val vault = activePath?.let { SharedVaultSession.multi.vaultFor(it) }
             ?.takeIf { runCatching { it.isUnlocked() }.getOrDefault(false) }
         if (vault != null) {

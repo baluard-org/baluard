@@ -1,5 +1,7 @@
 package xyz.actitud.baluard.autofill
 
+import android.os.SystemClock
+
 /**
  * In-process handshake for the accessibility fill flow (plan D10/D12).
  * Lives in the `:autofill` process alongside the service, tile, and
@@ -16,11 +18,15 @@ object AutofillA11yBridge {
         val targetPackage: String?,
         /** Owning vault of the picked entry (merged picker; null = active). */
         val vaultPath: String? = null,
+        val createdAt: Long = SystemClock.elapsedRealtime(),
     )
 
     /** Armed by the quick-settings tile; consumed by the next window change. */
     @Volatile
     var parseArmed: Boolean = false
+
+    @Volatile
+    var parseArmedAt: Long = 0L
 
     /** Set by the picker on selection; consumed by the service on return. */
     @Volatile
@@ -31,6 +37,17 @@ object AutofillA11yBridge {
     var pendingFillAttempts: Int = 0
 
     private const val MAX_ATTEMPTS = 3
+
+    /**
+     * A pending fill (and a tile arm) dies after this long: the user picked
+     * an entry for the screen in front of them, and credentials must never
+     * type into a page navigated to later.
+     */
+    const val PENDING_TTL_MS = 15_000L
+
+    /** True when [at] is still inside the TTL window. */
+    fun fresh(at: Long): Boolean =
+        at != 0L && SystemClock.elapsedRealtime() - at <= PENDING_TTL_MS
 
     /** Set + reset the retry budget (peer-review finding #6). */
     fun startPendingFill(fill: PendingFill) {
@@ -51,10 +68,12 @@ object AutofillA11yBridge {
 
     fun armParse() {
         parseArmed = true
+        parseArmedAt = SystemClock.elapsedRealtime()
     }
 
     fun clear() {
         parseArmed = false
+        parseArmedAt = 0L
         pendingFill = null
         pendingFillAttempts = 0
     }

@@ -179,11 +179,12 @@ class MainActivity : FragmentActivity() {
             }
         } else if (intent?.getStringExtra(
                 xyz.actitud.baluard.passkeys.BaluardCredentialProviderService.EXTRA_REQUEST_ID,
-            ) != null && passkeyRequest == null
+            ) != null && passkeyRequest == null && extractPasskeyRequest(intent) == null
         ) {
             // Recreation after process death: the in-memory manager died with
             // it, so the staged request is unrecoverable — close the sheet
-            // cleanly instead of hanging it (agy BLOCKER-followup).
+            // cleanly instead of hanging it (agy BLOCKER-followup). The extract above rules out
+            // config-change recreation, where the manager still holds the request.
             val result = Intent()
             if (intent.action == xyz.actitud.baluard.passkeys.BaluardCredentialProviderService.ACTION_CREATE_PASSKEY) {
                 PendingIntentHandler.setCreateCredentialException(
@@ -224,7 +225,7 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        autofillSavePrefill = extractAutofillSave(intent)
+        extractAutofillSave(intent)?.let { autofillSavePrefill = it }
         extractPasskeyRequest(intent)?.let { passkeyRequest = it }
     }
 
@@ -237,12 +238,9 @@ class MainActivity : FragmentActivity() {
         // and passes it in the intent. Other apps can neither read the
         // sandbox file nor guess the UUID; the token is consumed on use.
         val token = intent?.getStringExtra(EXTRA_SAVE_TOKEN) ?: return null
-        if (!AutofillSaveToken.consume(token)) return null
-        val username = intent.getStringExtra(EXTRA_SAVE_USERNAME)
-        val password = intent.getStringExtra(EXTRA_SAVE_PASSWORD)
-        val uri = intent.getStringExtra(EXTRA_SAVE_URI)
-        if (username == null && password == null && uri == null) return null
-        return AutofillSavePrefill(username, password, uri)
+        // Credentials travel in the consumed sandbox token file; the
+        // intent extras carry the random token alone.
+        return AutofillSaveToken.consume(token)
     }
 
     companion object {
