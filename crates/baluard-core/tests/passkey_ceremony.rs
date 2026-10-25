@@ -250,6 +250,7 @@ async fn ceremony_cache_valid_entry_survives_eviction() {
                 user_name: "user".into(),
                 user_display_name: "User".into(),
                 user_id: vec![1],
+                passkey_data: Box::default(),
                 created_at: std::time::Instant::now(),
             },
         )

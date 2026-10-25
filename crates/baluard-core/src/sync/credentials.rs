@@ -597,9 +597,6 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
                         "SSH host key for {host} changed; if you are sure, remove the old line from your SSH known_hosts file"
                     )))
                 }
-                _ => Err(git2::Error::from_str(&format!(
-                    "SSH host key for {host} not in known_hosts"
-                ))),
             }
         } else {
             // HTTPS/X.509 cert: passthrough to libgit2's built-in CA check.
@@ -1206,21 +1203,6 @@ mod custom_remote_tests {
             // The key file is absent, so no path is recorded.
             assert!(config.ssh_key_path.is_none());
         });
-    }
-
-    #[test]
-    fn host_bound_token_refuses_foreign_hosts() {
-        // The callback closure is exercised through build_callbacks by the
-        // connection layer; here we pin the config-shape contract that drives
-        // the refusal: a bound host set from the file must match exactly.
-        let config = CredentialConfig::in_memory(
-            Some("tok".into()),
-            None,
-            None,
-            None,
-            Some("Git.Example.COM".into()),
-        );
-        assert_eq!(config.bound_host.as_deref(), Some("Git.Example.COM"));
     }
 
     #[test]

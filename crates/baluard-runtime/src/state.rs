@@ -9329,12 +9329,13 @@ mod totp_meta_tests {
     /// Archived TOTP logins must vanish from the Authenticator card and its
     /// list search: archive hides from lists and search, not just the main
     /// list. Regression for the list_cipher_meta_full -> list_cipher_meta fix.
-    /// IGNORED: VaultState creation probes the OS keyring over D-Bus, which
-    /// blocks forever on headless machines without a Secret Service. Run on
-    /// a desktop session: cargo test -p baluard-runtime -- --ignored
     #[tokio::test]
-    #[ignore = "needs an OS keyring (D-Bus Secret Service); hangs headless"]
     async fn list_totp_meta_excludes_archived() {
+        // VaultState creation probes the OS keyring; the env guard keeps
+        // headless runs hermetic (same pattern as the sibling tests).
+        if baluard_core::keyring_disabled() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let state = VaultState::new(dir.path().to_path_buf());
         state
@@ -9377,22 +9378,6 @@ mod session_token_tests {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
-    async fn mint(state: &VaultState, token: &str) {
-        // Mirror the unlock-path mint (same fields, same ordering contract).
-        *state.session_token.write().await = Some(token.to_string());
-        state.session_token_generation.store(
-            state.session_generation.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
-        state.session_token_created.store(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            Ordering::Relaxed,
-        );
-    }
-
     /// P1c: a fresh state has no token; verify fails closed with the
     /// locked-vault message.
     #[tokio::test]
@@ -9412,7 +9397,7 @@ mod session_token_tests {
         let state = VaultState::new(dir.path().to_path_buf());
         let gen0 = state.session_generation.load(Ordering::Relaxed);
 
-        mint(&state, "token-g0").await;
+        state.test_mint_session_token("token-g0").await;
         state.verify_session_token("token-g0").await.unwrap();
 
         state.lock().await.unwrap();
@@ -9443,11 +9428,11 @@ mod session_token_tests {
         let dir = tempfile::tempdir().unwrap();
         let state = VaultState::new(dir.path().to_path_buf());
 
-        mint(&state, "tok-a").await;
+        state.test_mint_session_token("tok-a").await;
         state.verify_session_token("tok-a").await.unwrap();
 
         state.lock().await.unwrap();
-        mint(&state, "tok-b").await;
+        state.test_mint_session_token("tok-b").await;
         state.verify_session_token("tok-b").await.unwrap();
         assert!(state.verify_session_token("tok-a").await.is_err());
 

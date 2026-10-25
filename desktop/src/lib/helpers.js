@@ -1,4 +1,4 @@
-import { formatCardNumber } from "./utils.js";
+import { detectCardBrand, formatCardNumber } from "./utils.js";
 
 // ── CSS class constants ──
 

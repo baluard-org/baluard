@@ -42,7 +42,7 @@ The client never holds a vault key. It holds a token that *permits the daemon* t
 
 **Invariants**
 
-1. A same-UID process that did not take part in the unlock exchange holds no capability and is refused (T2, R7-2). **Known exception (pre-fix):** when the CLI is the unlocking client, its session token is persisted to `baluard.tok` on disk, readable by any same-UID process (audit finding C2). The invariant holds fully once the CLI moves the token to the OS keyring.
+1. A same-UID process that did not take part in the unlock exchange holds no capability and is refused (T2, R7-2). The CLI stores its session token in the OS keyring (audit C2 closed); a plaintext `baluard.tok` file exists only as a fallback when no keyring service is available.
 2. Authority is **per-vault scoped**: a token minted for vault A is rejected for a vault B operation (multi-vault, Phase 6).
 3. Capabilities are **revocable and short-lived**: tokens die on lock, on close, and on daemon shutdown.
 4. The transport is **authenticated**: `0600` socket, peer-credential UID check (SO_PEERCRED on Linux, getpeereid on macOS). Windows has no transport yet (see T2).
@@ -79,13 +79,13 @@ The session token is a capability in the object-capability sense: it is the only
 
 ### T6: Key Material Paged to Swap
 - **Threat**: OOM kill, `kill -9`, or process crash bypasses Rust `Drop` destructors. Key material (RootKey, ItemKey, TOTP secrets) may persist in RAM pages or be paged to swap/hibernation files, where it can be recovered by anyone with disk access.
-- **Control**: All key material buffers (RootKey 64 bytes, ItemKey 32 bytes) are `mlock`'d immediately on creation. `munlock` + zeroize on drop. Best-effort: failures are logged but not fatal (RLIMIT_MEMLOCK may be low on some systems). TOTP `TotpParams.secret` is zeroized on drop.
+- **Control**: All key material buffers (RootKey 64 bytes, ItemKey 32 bytes) are `mlock`'d immediately on creation. `munlock` + zeroize on drop. Best-effort and silent per key (individual mlock failures are not logged); the daemon logs the resident key budget and RLIMIT_MEMLOCK at unlock. Not fatal (RLIMIT_MEMLOCK may be low on some systems). TOTP `TotpParams.secret` is zeroized on drop.
 
 ---
 
 ### T7: Attachment Plaintext Leakage
 - **Threat**: During upload or download, unencrypted attachment data exists in process memory or as a temp file on disk.
-- **Control**: Attachments are encrypted with the cipher's item key (AES-256-GCM, random nonce) in memory. No temp files are written. Plaintext is zeroized in both daemon and CLI after use. Max attachment size: 2MB, enforced before encryption to prevent resource exhaustion.
+- **Control**: Attachments are encrypted with the cipher's item key (AES-256-GCM, random nonce) in memory. No temp files are written. Plaintext is zeroized in both daemon and CLI after use. Max attachment size: 1.9 MB (`MAX_ATTACHMENT_SIZE`), enforced before encryption to prevent resource exhaustion.
 
 ### T8: Import Parser Exploitation
 - **Threat**: A crafted import file (CSV, JSON, XML, 1PUX) exploits a parser bug to cause memory corruption or code execution.
@@ -93,7 +93,7 @@ The session token is a capability in the object-capability sense: it is the only
 
 ### T9: TOTP Secret Exposure
 - **Threat**: TOTP secret is extracted from daemon memory or intercepted over IPC.
-- **Control**: TOTP secrets are stored encrypted in the vault (part of Login cipher data). The daemon generates time-based codes internally and returns only the derived numeric code over IPC. The seed never crosses the socket boundary. `TotpParams.secret` is zeroized on drop. TOTP codes are short-lived (30/60s), limiting replay window.
+- **Control**: TOTP secrets are stored encrypted in the vault (part of Login cipher data). The dedicated code route (`cipher.totp`) returns only the derived numeric code; the stored `otpauth://` URI also rides inside full cipher reads (`vault.get`, `vault.list_full`) because the editor round-trips it. Treat the seed as session-scope material behind the session token, not socket-absent. `TotpParams.secret` is zeroized on drop. TOTP codes are short-lived (30/60s), limiting replay window.
 
 ### T10: Biometric Unlock / OS Keychain Compromise
 - **Threat**: An attacker with access to the OS keychain extracts the stored master password, gaining full vault access without user interaction.
@@ -102,8 +102,7 @@ The session token is a capability in the object-capability sense: it is the only
 
 ### T11: Reprompt Grant Window Abuse
 - **Threat**: A same-UID process exploits the 30-second reprompt grant window to access a protected cipher after the user authenticates.
-- **Control (as implemented)**: Reprompt opens a temporary vault handle, verifies the master password, and issues a short-lived grant (30s). The grant token is returned to the requesting client and enforced by the client UI; the daemon does not track per-cipher grant state internally, and a holder of the vault session token plus the grant token can target any reprompt-protected cipher. Against the same-UID adversary this control is therefore a UX deterrent, not a security boundary. Session token (R7-2) is still required on top of the grant.
-- **Hardening (scheduled)**: daemon-side grant tracking scoped to a single cipher, plus rate limiting of the reprompt verification route (audit C12, C23).
+- **Control (as implemented)**: Reprompt opens a temporary vault handle, verifies the master password, and holds the result for 30 seconds. No grant token is minted — a returned token would be a bearer capability the client could replay; the daemon keeps the window internal, and the verification route is rate-limited on the shared per-vault budget (audit C23). Against the same-UID adversary this is a UX deterrent, not a security boundary; the session token (R7-2) is still required.
 
 ### T12: Online Brute Force (Master Password)
 - **Threat**: An attacker with local or daemon access attempts rapid password guesses.
@@ -117,7 +116,7 @@ The session token is a capability in the object-capability sense: it is the only
 ### T14: Cover Commit Correlation
 - **Threat**: A git remote adversary (compromised host, MITM, or rogue admin) observes commit timestamps, push timing, frequency patterns, and tree diffs to infer active usage hours, edit frequency, file count changes, or silence gaps.
 - **Control**: Cover commits use CSPRNG-backed timing jitter on push/pull intervals. Commit content is padded to uniform bucket sizes, so diff sizes are indistinguishable from real commits.
-- **Defense Mechanism**: Cover commits are no-op commits (same tree as HEAD) combined with static commit messages (`COMMIT_MESSAGE` in engine.rs), a generic git author (`"Baluard User" <vault@baluard.local>`), encrypted metadata, timestamp normalization on vault lock, and jitter delay before network operations (`apply_push_jitter`).
+- **Defense Mechanism**: Cover commits are no-op commits (same tree as HEAD) combined with static commit messages (`COMMIT_MESSAGE` in engine.rs), a generic git author (`"Baluard User" <vault@baluard.local>`), encrypted metadata, and timestamp normalization on vault lock. Timing jitter helpers exist (`push_with_jitter`/`pull_with_jitter` in engine.rs) but are NOT wired into the sync cycle — push/pull timing jitter is planned, not active.
 - **Scheduling Policy**:
   * **Triggered Cover Commits**: After every real vault operation that triggers a `commit_all()`, a cover commit is scheduled at a uniform random delay (Min: 30 minutes, Max: 4 hours).
   * **Periodic Cover Commits**: A background timer fires cover commits independently of user activity at random intervals of 2–6 hours (jittered ±30 minutes) if the vault is unlocked.
@@ -158,8 +157,8 @@ The session token is a capability in the object-capability sense: it is the only
 |                                                             |
 |  +----------------------+  +-----------------------------+  |
 |  | Root Key / SGK /     |  | Device Private Key          |  |
-|  | Item Keys            |  | (HPKE-wrapped in keywrap/)  |  |
-|  | (zeroize + mlock)    |  | (zeroize + mlock)           |  |
+|  | Item Keys            |  | (sealed file on disk,       |  |
+|  | (zeroize + mlock)    |  |  zeroize on load)           |  |
 |  +----------------------+  +-----------------------------+  |
 +------------------------------+------------------------------+
                                |

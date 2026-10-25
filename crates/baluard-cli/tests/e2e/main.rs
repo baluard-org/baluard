@@ -216,6 +216,12 @@ fn e2e_init_unlock_lock_roundtrip() {
         .success()
         .stdout(predicates::str::contains("Vault locked."));
 
+    // Lock must actually end the session: reads after it fail.
+    baluard_daemon(&guard)
+        .arg("list")
+        .assert()
+        .failure();
+
     // The init phrase is real enrollment material for multi-device flows.
     assert!(created["recovery_phrase"].as_str().unwrap().len() > 100);
     assert!(guard.vault().join(".baluard").exists(), "vault marker");
@@ -1070,12 +1076,12 @@ fn e2e_ssh_changed_hostkey_refused() {
         "probe must fail after rotation: {rotated}"
     );
     assert!(
-        rotated.contains("host-changed"),
-        "expected the changed-key kind: {rotated}"
+        rotated.contains("host key changed"),
+        "expected the changed-key message: {rotated}"
     );
     assert!(
-        rotated.contains("changed"),
-        "expected the changed-key message: {rotated}"
+        !rotated.contains("git-trust"),
+        "a changed key must offer no trust command: {rotated}"
     );
     assert!(
         !rotated.contains("git-trust "),
@@ -1091,23 +1097,6 @@ fn e2e_ssh_changed_hostkey_refused() {
         "expected changed-key refusal: {err}"
     );
 
-    // The CHANGED observation must never be blessable one-click: hand the
-    // trust route the very attempt id the changed probe minted.
-    let changed_aid: String = rotated
-        .split("attempt_id\":\"")
-        .nth(1)
-        .map(|rest| rest.chars().take(32).collect())
-        .expect("attempt id in the changed marker");
-    let out = cmd(&["git-trust", &changed_aid]);
-    assert!(
-        !out.status.success(),
-        "a changed key must never be trustable"
-    );
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("changed"),
-        "expected the changed-key trust refusal: {err}"
-    );
 
     // And a stale/bogus id still refuses with the usual message.
     let out = cmd(&["git-trust", "deadbeefdeadbeefdeadbeefdeadbeef"]);

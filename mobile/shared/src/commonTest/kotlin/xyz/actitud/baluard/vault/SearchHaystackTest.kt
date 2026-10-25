@@ -1,12 +1,20 @@
 package xyz.actitud.baluard.vault
 
 import kotlin.test.Test
+import kotlin.test.assertTrue
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /** Deep-search haystack: every content field indexed, password never. */
 class SearchHaystackTest {
+    // Tripwire: a refactor that drops one of these from SEARCH_SKIP_KEYS
+    // fails this test instead of leaking a seed or key into the search index.
+    private val neverIndexable = setOf(
+        "password", "password_history", "private_key", "prf_key", "totp_uri",
+        "code", "pin", "ssn",
+    )
+
 
     @Test
     fun indexesAllContentFieldsExceptPassword() {
@@ -141,7 +149,7 @@ class SearchHaystackTest {
 
     @Test
     fun secretKeysAreTripwired() {
-        NEVER_INDEXABLE.forEach { key ->
+        neverIndexable.forEach { key ->
             assertTrue(key in SEARCH_SKIP_KEYS, "$key must never enter the index")
         }
     }

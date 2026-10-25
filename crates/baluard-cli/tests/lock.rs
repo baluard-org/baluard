@@ -23,7 +23,6 @@ use common::baluard;
 /// If a future refactor weakens this guard (e.g. silently no-op), this test
 /// catches it.
 #[test]
-#[ignore = "daemon-mode tests deferred to a follow-up PR (needs daemon-spawn fixture)"]
 fn lock_direct_mode_errors_clearly() {
     let tmp = tempfile::tempdir().expect("tempdir");
     baluard(tmp.path())

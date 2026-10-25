@@ -2524,8 +2524,16 @@ pub fn handle_git_probe(
             // Exit code 2 is a scripting contract: probe ran, host untrusted.
             std::process::exit(2);
         }
+        "host-changed" => {
+            println!("The server's host key changed since you last connected.");
+            println!("This can mean a new server, or someone intercepting the connection.");
+            println!("Baluard refused the connection. If you are sure the new key is");
+            println!("correct, remove the old line from your SSH known_hosts file and");
+            println!("connect again.");
+            // Exit code 2 is a scripting contract: probe ran, host changed.
+            std::process::exit(2);
+        }
         _ => {
-
             return Err(format!("Connection failed ({kind}): {detail}").into());
         }
     }
