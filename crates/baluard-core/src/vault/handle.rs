@@ -10009,38 +10009,17 @@ impl VaultHandle {
             &old_events,
         )?;
 
-        // P4: re-wrap the emergency escrow to the NEW root key. The old
-        // escrow hands emergency recovery a stale key whose canary check
-        // fails — silently breaking emergency access after any rotation.
-        // Skipped when emergency access is not configured or is revoked.
-        // This runs BEFORE the rotation state is cleared: any failure here
-        // propagates with the .rotation-pending marker still on disk, so the
-        // next open warns that the rotation did not complete cleanly.
-        if let Some(mut config) = crate::emergency::load_emergency_config(&self.path)? {
-            if !matches!(config.status, crate::emergency::EmergencyStatus::Revoked) {
-                let contact_bytes: [u8; 32] = config
-                    .trusted_contact_pubkey
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| {
-                    VaultError::Corrupt("invalid emergency contact pubkey length".into())
-                })?;
-                let contact = x25519_dalek::PublicKey::from(contact_bytes);
-                config.wrapped_root_key = crate::orgs::wrap_to_bundle(
-                    new_root_key.as_bytes(),
-                    &contact,
-                    "emergency-escrow",
-                )?;
-                let seal = self.devkey_seal();
-                let privkeys = load_device_privkeys(&self.path, self.device_id, seal.as_ref())?;
-                crate::emergency::sign_status(
-                    &mut config,
-                    &privkeys.ed25519,
-                    &self.vault_id.to_string(),
-                )?;
-                crate::emergency::save_emergency_config(&self.path, &config)?;
-            }
-        }
+        // Legacy contact coverage: re-seal the owner store and the armed
+        // kit's layer blob under the NEW root (no-op when not armed).
+        // Runs BEFORE the rotation state is cleared: any failure here
+        // propagates with the .rotation-pending marker still on disk.
+        crate::legacy::rewrap_after_rotation(
+            &self.path,
+            outgoing_root.as_bytes(),
+            new_root_key.as_bytes(),
+            new_epoch,
+            &self.device_id.to_string(),
+        )?;
 
         // H4 fix: re-wrap recovery key with new Root Key (propagate error)
         Self::rewrap_recovery_key(&self.path, &new_root_key)?;
@@ -10640,37 +10619,17 @@ impl VaultHandle {
             &old_events,
         )?;
 
-        // P4: re-wrap the emergency escrow to the NEW root key. The old
-        // escrow hands emergency recovery a stale key whose canary check
-        // fails — silently breaking emergency access after any rotation.
-        // Skipped when emergency access is not configured or is revoked.
+        // Legacy contact coverage: re-seal the owner store and the armed
+        // kit's layer blob under the NEW root (no-op when not armed).
         // Runs BEFORE the rotation state is cleared: any failure here
         // propagates with the .rotation-pending marker still on disk.
-        if let Some(mut config) = crate::emergency::load_emergency_config(&self.path)? {
-            if !matches!(config.status, crate::emergency::EmergencyStatus::Revoked) {
-                let contact_bytes: [u8; 32] = config
-                    .trusted_contact_pubkey
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| {
-                    VaultError::Corrupt("invalid emergency contact pubkey length".into())
-                })?;
-                let contact = x25519_dalek::PublicKey::from(contact_bytes);
-                config.wrapped_root_key = crate::orgs::wrap_to_bundle(
-                    new_root_key.as_bytes(),
-                    &contact,
-                    "emergency-escrow",
-                )?;
-                let seal = self.devkey_seal();
-                let privkeys = load_device_privkeys(&self.path, self.device_id, seal.as_ref())?;
-                crate::emergency::sign_status(
-                    &mut config,
-                    &privkeys.ed25519,
-                    &self.vault_id.to_string(),
-                )?;
-                crate::emergency::save_emergency_config(&self.path, &config)?;
-            }
-        }
+        crate::legacy::rewrap_after_rotation(
+            &self.path,
+            outgoing_root.as_bytes(),
+            new_root_key.as_bytes(),
+            new_epoch,
+            &self.device_id.to_string(),
+        )?;
 
         // H4 fix: re-wrap recovery key with new Root Key (propagate error)
         Self::rewrap_recovery_key(&self.path, &new_root_key)?;
@@ -12269,10 +12228,10 @@ mod tests {
     }
 
     /// P4: rotate_root_key must re-encrypt EVERY root-key-derived artifact —
-    /// settings, generator history, attachments, and the emergency escrow
-    /// joined the pre-existing folders/tags/profile/activity coverage. After
-    /// rotation, all of them must be readable at the new epoch, and the
-    /// emergency escrow must unwrap to the NEW root key.
+    /// settings, generator history, attachments, and the legacy contact
+    /// store joined the pre-existing folders/tags/profile/activity coverage.
+    /// After rotation, all of them must be readable at the new epoch, and
+    /// the legacy layer blob must unwrap to the NEW root key.
     /// S3-9 (§6.5): Space settings roundtrip through the encrypted store
     /// and the guest_enabled gate on new guest reveals. The flip is a
     /// policy door, not a revocation: a reveal created before the flip
@@ -13043,9 +13002,7 @@ mod tests {
 
     #[test]
     fn rotation_covers_all_artifacts() {
-        use crate::emergency;
         use crate::types::{GeneratorHistoryEntry, GeneratorKind, GeneratorParams};
-        use x25519_dalek::PublicKey;
 
         let (dir, password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
@@ -13137,30 +13094,58 @@ mod tests {
         .unwrap();
         std::fs::write(attach_dir.join(format!("{attach_uuid}.enc")), attach_blob).unwrap();
 
-        // Emergency access armed with a contact key we hold the private half of.
-        let mut contact_secret_bytes = [0u8; 32];
-        rand::Rng::fill(&mut rand::thread_rng(), &mut contact_secret_bytes);
-        let contact_secret = x25519_dalek::StaticSecret::from(contact_secret_bytes);
-        let contact_pub = PublicKey::from(&contact_secret);
-        emergency::setup_emergency_access(
-            dir.path(),
-            "trust@example.com",
-            contact_pub.as_bytes(),
-            0,
+        // Legacy contact armed: store plus a layer blob sealed under the
+        // OLD root, with the record signing key inside the store.
+        use crate::legacy;
+        let mut legacy_ek = [0u8; 32];
+        rand::Rng::fill(&mut rand::thread_rng(), &mut legacy_ek);
+        let legacy_seed = rand::random::<[u8; 32]>();
+        let legacy_lk = ed25519_dalek::SigningKey::from_bytes(&legacy_seed);
+        let kit_id = "33333333-3333-3333-3333-333333333333";
+        let layer_packed = legacy::seal_layer(
+            &legacy_ek,
             &old_root.clone().try_into().unwrap(),
             &vault_id_str,
-            &load_device_privkeys(dir.path(), device_id, seal.as_ref())
-                .unwrap()
-                .ed25519,
+            kit_id,
+            old_epoch,
         )
         .unwrap();
-        // Recovery requires owner-approved status (verify against pinned key).
-        emergency::approve_emergency_request(
+        legacy::save_layer(dir.path(), kit_id, &layer_packed).unwrap();
+        let mut legacy_record = legacy::LegacyRecord {
+            version: 1,
+            vault_id: vault_id_str.clone(),
+            kit_id: kit_id.to_string(),
+            state: legacy::LegacyState::Armed,
+            reason: None,
+            seq: 1,
+            epoch: old_epoch,
+            window_days: 30,
+            created_day: old_epoch,
+            lk_public_hash: String::new(),
+            ek_check: legacy::ek_check(&legacy_ek, kit_id).unwrap(),
+            layer_hash: {
+                use sha2::Digest;
+                hex::encode(sha2::Sha256::digest(layer_packed.as_bytes()))
+            },
+            deploy_key_fingerprint: "SHA256:test".into(),
+            repo_url_hash: String::new(),
+            signer_device_id: device_id.to_string(),
+            owner_signature: None,
+        };
+        legacy::sign_record(&mut legacy_record, &legacy_lk).unwrap();
+        legacy::save_record(dir.path(), &legacy_record).unwrap();
+        let store = legacy::LegacyStore {
+            kit_id: kit_id.to_string(),
+            lk_seed: hex::encode(legacy_lk.to_bytes()),
+            ek: hex::encode(legacy_ek),
+            kit_letter: String::new(),
+            kit_body_sealed: String::new(),
+            deploy_key_fingerprint: "SHA256:test".into(),
+        };
+        legacy::save_store(
             dir.path(),
-            &load_device_privkeys(dir.path(), device_id, seal.as_ref())
-                .unwrap()
-                .ed25519,
-            &vault_id_str,
+            &old_root.clone().try_into().unwrap(),
+            &store,
         )
         .unwrap();
 
@@ -13210,14 +13195,19 @@ mod tests {
         .unwrap();
         assert_eq!(plaintext.as_slice(), b"filedata");
 
-        // Emergency escrow unwraps to the NEW root key.
-        let owner_vk = load_device_privkeys(dir.path(), device_id, seal.as_ref())
+        // The legacy layer opens under the NEW root at the new epoch, the
+        // record was re-signed with a bumped seq, and the store re-sealed.
+        let legacy_record = legacy::load_record(dir.path(), kit_id).unwrap().unwrap();
+        assert_eq!(legacy_record.epoch, new_epoch);
+        assert!(legacy_record.seq > 1);
+        let new_packed = legacy::load_layer(dir.path(), kit_id).unwrap().unwrap();
+        let opened = legacy::open_layer(&legacy_ek, &new_packed, &vault_id_str, kit_id, new_epoch)
+            .unwrap();
+        assert_eq!(opened.as_slice(), new_root.as_slice());
+        let reopened = legacy::load_store(dir.path(), &new_root.clone().try_into().unwrap())
             .unwrap()
-            .ed25519
-            .verifying_key();
-        let recovered =
-            emergency::recover_emergency_root_key(dir.path(), &contact_secret, &owner_vk).unwrap();
-        assert_eq!(recovered.as_slice(), new_root.as_slice());
+            .unwrap();
+        assert_eq!(reopened.kit_id, kit_id);
     }
 
     /// P1a: the identity is generated at creation, sealed in
