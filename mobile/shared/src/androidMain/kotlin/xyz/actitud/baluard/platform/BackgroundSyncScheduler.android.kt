@@ -51,7 +51,11 @@ class BackgroundFetchWorker(
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
-            backgroundFetch(AppPaths.defaultVaultPath())
+            // Every discovered vault, not just the default dir: created
+            // (vaults/) and cloned vaults must background-fetch too.
+            val paths = VaultRegistry.listVaults().map { it.path }
+                .ifEmpty { listOf(AppPaths.defaultVaultPath()) }
+            paths.forEach { backgroundFetch(it) }
             Result.success() // retry() not used: next foreground pull recovers
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e

@@ -1,19 +1,26 @@
 package xyz.actitud.baluard.platform
 
+import platform.Foundation.NSUserDefaults
+
 /**
- * iOS `actual` for [ClipboardPrefs]. In-memory stub until the iOS host
- * build (plan §1.1), matching the SyncConfigStore stub.
+ * iOS `actual`: NSUserDefaults-backed (non-secret preference), so the
+ * Settings choice survives restarts and is visible to every instance —
+ * the old in-memory stub ignored the user's pick entirely.
  */
 actual class ClipboardPrefs actual constructor() {
-    private var seconds: Int = DEFAULT
+    private val d = NSUserDefaults.standardUserDefaults
 
-    actual fun loadSeconds(): Int = seconds
+    actual fun loadSeconds(): Int {
+        val v = d.objectForKey(KEY) as? Long ?: return DEFAULT
+        return v.toInt().coerceIn(0, MAX)
+    }
 
     actual fun saveSeconds(seconds: Int) {
-        this.seconds = seconds.coerceIn(0, MAX)
+        d.setObject(seconds.coerceIn(0, MAX).toLong(), forKey = KEY)
     }
 
     private companion object {
+        const val KEY = "clipboardClearSeconds"
         const val DEFAULT = 30
         const val MAX = 600
     }

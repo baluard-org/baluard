@@ -50,7 +50,22 @@ private fun readFromUri(uri: Uri): PickedFile? {
         val ctx = AppContextHolder.require()
         val stream = ctx.contentResolver.openInputStream(uri)
         val bytes = if (stream != null) {
-            stream.use { input -> input.readBytes() }
+            stream.use { input ->
+                // 300 MB cap, matching the desktop container limit: a huge
+                // SAF document must OOM-refuse, not OOM the app.
+                val cap = 300L * 1024 * 1024
+                val out = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > cap) return null
+                    out.write(buf, 0, n)
+                }
+                out.toByteArray()
+            }
         } else {
             return null
         }

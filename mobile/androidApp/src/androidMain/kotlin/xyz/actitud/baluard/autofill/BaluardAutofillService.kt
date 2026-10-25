@@ -48,6 +48,11 @@ class BaluardAutofillService : AutofillService() {
 
     private val executor = Executors.newSingleThreadExecutor()
 
+    override fun onDestroy() {
+        executor.shutdown()
+        super.onDestroy()
+    }
+
     companion object {
         private const val TAG = "BaluardAutofill"
         private const val MAX_CONTAINER_DEPTH = 10
@@ -75,8 +80,9 @@ class BaluardAutofillService : AutofillService() {
             try {
                 val form = parseForm(structure)
                 if (form == null) {
-                    Log.i(TAG, "no autofillable fields; ignoring")
-                    callback.onFailure(ERR_NO_FIELDS)
+                    // Normal case (no login form on the page): an empty
+                    // response tells the system to offer its own save/fill.
+                    callback.onSuccess(null)
                     return@execute
                 }
 
@@ -134,13 +140,13 @@ class BaluardAutofillService : AutofillService() {
                 if (captured != null) {
                     val launch = Intent(this, MainActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        // One-time sandbox token: the receiving activity only
-                        // honors this handoff when the token matches (spoof
-                        // guard, review finding #1).
-                        putExtra(MainActivity.EXTRA_SAVE_TOKEN, AutofillSaveToken.mint())
-                        putExtra(MainActivity.EXTRA_SAVE_USERNAME, captured.username)
-                        putExtra(MainActivity.EXTRA_SAVE_PASSWORD, captured.password)
-                        putExtra(MainActivity.EXTRA_SAVE_URI, captured.uri)
+                        // The captured secret travels in the one-time sandbox
+                        // token file, never in intent extras (extras live in
+                        // system_server and the task base intent).
+                        putExtra(
+                            MainActivity.EXTRA_SAVE_TOKEN,
+                            AutofillSaveToken.mint(captured.username, captured.password, captured.uri),
+                        )
                     }
                     startActivity(launch)
                 }
@@ -219,6 +225,7 @@ class BaluardAutofillService : AutofillService() {
     private fun parseForm(structure: AssistStructure): Form? {
         var usernameId: AutofillId? = null
         var passwordId: AutofillId? = null
+        val browser = xyz.actitud.baluard.platform.A11yUri.isBrowserPackage(packageName)
         var webDomain: String? = null
         var urlBarText: String? = null
         // Last editable input-like field seen BEFORE the first password
@@ -243,14 +250,16 @@ class BaluardAutofillService : AutofillService() {
                 val id = field.autofillId as? AutofillId
                 when (kind) {
                     FieldKind.Password -> {
-                        if (passwordId == null) {
+                        if (passwordId == null && isEditableInput(effective ?: node)) {
                             passwordId = id
                             // Prefer the password field's own web origin.
-                            node.webDomain?.let { webDomain = it }
+                            if (browser) node.webDomain?.let { webDomain = it }
                         }
                     }
                     FieldKind.Username -> {
-                        if (usernameId == null) usernameId = id
+                        if (usernameId == null && isEditableInput(effective ?: node)) {
+                            usernameId = id
+                        }
                     }
                     FieldKind.Other -> {
                         if (id != null && isEditableInput(effective ?: node)) {
@@ -261,7 +270,8 @@ class BaluardAutofillService : AutofillService() {
                 }
                 // Browser address bar fallback (plan A1/D7 starter table):
                 // scrape when the page origin is missing.
-                if (urlBarText == null && xyz.actitud.baluard.platform.A11yUri.isUrlBar(node.idEntry)) {
+                if (urlBarText == null && browser &&
+                    xyz.actitud.baluard.platform.A11yUri.isUrlBar(node.idEntry)) {
                     node.text?.toString()?.takeIf { it.isNotBlank() }?.let { urlBarText = it }
                 }
                 // WebView containers report the origin without being fields.

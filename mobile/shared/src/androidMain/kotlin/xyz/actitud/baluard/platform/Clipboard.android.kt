@@ -35,10 +35,12 @@ private fun scheduleAutoClear(cm: android.content.ClipboardManager, ctx: Context
     Handler(Looper.getMainLooper()).postDelayed({
         runCatching {
             val clip = cm.primaryClip
-            if (clip != null && clip.itemCount > 0) {
-                val current = clip.getItemAt(0)?.coerceToText(ctx)?.toString()
-                if (current == text) cm.clearPrimaryClip()
-            }
+            val current = clip?.takeIf { it.itemCount > 0 }
+                ?.getItemAt(0)?.coerceToText(ctx)?.toString()
+            // Android 10+ denies background primaryClip reads (null): treat
+            // unreadable as ours — a secret leak is worse than a cleared
+            // user copy the user already pasted.
+            if (current == null || current == text) cm.clearPrimaryClip()
         }.onFailure { platformLogE("Clipboard", "auto-clear failed", it) }
     }, seconds * 1000L)
 }

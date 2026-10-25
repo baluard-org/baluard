@@ -66,7 +66,13 @@ actual object VaultRegistry {
     }
 
     actual fun loadActiveVault(): String? {
-        val path = prefs().getString(KEY, null) ?: return null
+        // Cross-process read: :autofill must see a switch made in the app
+        // without a process restart (prefs cache per process).
+        val path = CrossProcessPrefs.read(KEY) ?: run {
+            val legacy = prefs().getString(KEY, null)
+            if (legacy != null) CrossProcessPrefs.write(KEY, legacy)
+            legacy
+        } ?: return null
         // Stale-pointer self-heal (the prune equivalent on a filesystem-
         // scanned list): a directory that vanished can never come back,
         // so forget it instead of launching into a missing vault.
@@ -78,7 +84,7 @@ actual object VaultRegistry {
     }
 
     actual fun saveActiveVault(path: String) {
-        prefs().edit().putString(KEY, path).apply()
+        CrossProcessPrefs.write(KEY, path)
     }
 
     actual fun detach(path: String): Boolean {
@@ -94,7 +100,8 @@ actual object VaultRegistry {
             n += 1
         }
         if (!src.renameTo(target)) return false
-        if (prefs().getString(KEY, null) == path) {
+        if (CrossProcessPrefs.read(KEY) == path) {
+            CrossProcessPrefs.remove(KEY)
             prefs().edit().remove(KEY).apply()
         }
         return true

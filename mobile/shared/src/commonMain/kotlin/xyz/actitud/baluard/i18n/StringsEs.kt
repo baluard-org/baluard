@@ -602,6 +602,9 @@ internal val ES: Map<String, String> = mapOf(
     "autofill.noUsername" to "(sin usuario)",
     "autofill.openAppToSetup" to "Abre Baluard primero para activar el desbloqueo rápido",
     "autofill.unlockFailed" to "No se pudo desbloquear. Abre Baluard e inténtalo de nuevo.",
+    "autofill.unlockCancelled" to "Desbloqueo cancelado.",
+    "autofill.unlockLockedOut" to "Demasiados intentos. Espera un momento e inténtalo de nuevo.",
+    "a11y.entryNeedsApp" to "Esta entrada requiere abrir Baluard primero.",
 
     // Settings > Autofill (Phase 6, diseño como Bitwarden).
     "settings.autofillSection" to "Autofill",
@@ -611,6 +614,7 @@ internal val ES: Map<String, String> = mapOf(
     "settings.autofillServicesHint" to "Permite que Baluard use tus credenciales guardadas para iniciar sesión en otras apps del dispositivo.",
     "passkey.failed" to "La operación de clave de acceso falló.",
     "passkey.noUsername" to "Sin usuario",
+    "passkey.saveNotice" to "La clave de acceso se guardará en tu bóveda.",
     "passkey.noMatch" to "No hay una clave de acceso coincidente en esta bóveda.",
     "passkey.pickCredential" to "Elige una clave de acceso",
     "passkey.password" to "Contraseña maestra",

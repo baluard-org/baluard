@@ -597,6 +597,9 @@ internal val EN: Map<String, String> = mapOf(
     "autofill.noUsername" to "(no username)",
     "autofill.openAppToSetup" to "Open Baluard first to set up quick unlock",
     "autofill.unlockFailed" to "Could not unlock. Open Baluard and try again.",
+    "autofill.unlockCancelled" to "Unlock cancelled.",
+    "autofill.unlockLockedOut" to "Too many attempts. Try again in a moment.",
+    "a11y.entryNeedsApp" to "This entry needs Baluard opened first.",
 
     // Settings > Autofill (Phase 6, Bitwarden-parity layout).
     "settings.autofillSection" to "Autofill",
@@ -606,6 +609,7 @@ internal val EN: Map<String, String> = mapOf(
     "settings.autofillServicesHint" to "Allow Baluard to use your saved login information to sign in to other apps on your device.",
     "passkey.failed" to "The passkey operation failed.",
     "passkey.noUsername" to "No username",
+    "passkey.saveNotice" to "The passkey will be saved to your vault.",
     "passkey.noMatch" to "No matching passkey in this vault.",
     "passkey.pickCredential" to "Choose a passkey",
     "passkey.password" to "Master password",

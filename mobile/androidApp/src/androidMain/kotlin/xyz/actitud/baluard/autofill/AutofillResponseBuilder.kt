@@ -65,9 +65,14 @@ object AutofillResponseBuilder {
             fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
             fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
         }
+        // PendingIntent identity is (filterEquals, requestCode): a shared
+        // code lets a later fill request's FLAG_UPDATE_CURRENT rewrite the
+        // extras of a still-visible dropdown's intent. Scope the code to
+        // this request (32-bit collisions merely alias two live requests).
         val pending = PendingIntent.getActivity(
             context,
-            0,
+            listOf(target, fields.usernameId?.toString(), fields.passwordId?.toString())
+                .joinToString("\u0000").hashCode(),
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -194,12 +199,13 @@ object AutofillResponseBuilder {
             fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
             fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
         }
-        // Distinct request code per vault: PendingIntents with the same
-        // code and filterEquals collapse, and FLAG_UPDATE_CURRENT would
-        // point every locked-vault dataset at the LAST vault iterated.
+        // Distinct request code per (vault, request): PendingIntents with
+        // the same code and filterEquals collapse, and FLAG_UPDATE_CURRENT
+        // would point every locked-vault dataset at the LAST request.
         val pending = PendingIntent.getActivity(
             context,
-            vaultPath.hashCode(),
+            listOf(vaultPath, target, fields.usernameId?.toString(), fields.passwordId?.toString())
+                .joinToString("\u0000").hashCode(),
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -334,7 +340,8 @@ object AutofillResponseBuilder {
         }
         val pending = PendingIntent.getActivity(
             context,
-            1002,
+            ("pick\u0000" + target + "\u0000" + fields.usernameId?.toString() + "\u0000" +
+                fields.passwordId?.toString()).hashCode(),
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )

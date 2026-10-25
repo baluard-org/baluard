@@ -88,7 +88,10 @@ actual class Biometric actual constructor() {
 
         try {
             val alias = aliasFor(vaultKey)
-            // Fresh wrapping key on every enroll (rotation).
+            // Fresh wrapping key on every enroll (rotation). This kills the
+            // old keystore key before the prompt, so a cancel must also
+            // drop the now-undecryptable blob (done in onError) — the user
+            // re-enrolls instead of hitting a failing quick unlock.
             clearEnrollment(alias)
             val key = createKey(alias)
             // The key is auth-per-use: the ENCRYPT cipher goes into a
@@ -111,20 +114,20 @@ actual class Biometric actual constructor() {
                         try {
                             val iv = okCipher.iv
                             val ct = okCipher.doFinal(kek)
-                            val blob = iv + ct
-                            AppContextHolder.require()
-                                .getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-                                .edit()
-                                .putString(alias, Base64.encodeToString(blob, Base64.NO_WRAP))
-                                .apply()
+                            storeBlob(alias, Base64.encodeToString(iv + ct, Base64.NO_WRAP))
                             onSuccess()
                         } catch (e: Exception) {
                             platformLogE(TAG, "enroll encryption/storage failed", e)
+                            clearEnrollment(alias)
                             onError(ERROR_UNKNOWN, e.message ?: "enroll encrypt failed")
                         }
                     }
 
                     override fun onAuthenticationError(code: Int, message: CharSequence) {
+            // Cancel/fail mid-enroll: the keystore key was already replaced,
+            // so any stored blob can no longer decrypt — drop it (the user
+            // re-enrolls; the UI must not keep a broken quick unlock).
+            CrossProcessPrefs.remove(blobKey(alias))
                         platformLogE(TAG, "enroll auth error: code=$code message=$message")
                         onError(code, message.toString())
                     }
@@ -232,12 +235,24 @@ actual class Biometric actual constructor() {
         return ALIAS_PREFIX + Base64.encodeToString(digest, Base64.NO_WRAP)
     }
 
-    private fun blobFor(alias: String): String? =
-        AppContextHolder.get()
+    private fun blobKey(alias: String): String = "biometric_blob_$alias"
+
+    private fun blobFor(alias: String): String? {
+        CrossProcessPrefs.read(blobKey(alias))?.let { return it.ifBlank { null } }
+        // One-time migration from the per-process prefs store.
+        val legacy = AppContextHolder.get()
             ?.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-            ?.getString(alias, null)
+            ?.getString(alias, null) ?: return null
+        CrossProcessPrefs.write(blobKey(alias), legacy)
+        return legacy
+    }
+
+    private fun storeBlob(alias: String, blob: String) {
+        CrossProcessPrefs.write(blobKey(alias), blob)
+    }
 
     private fun clearEnrollment(alias: String) {
+        CrossProcessPrefs.remove(blobKey(alias))
         AppContextHolder.get()
             ?.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
             ?.edit()?.remove(alias)?.apply()

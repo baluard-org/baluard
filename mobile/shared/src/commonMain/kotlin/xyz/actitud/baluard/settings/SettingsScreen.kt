@@ -95,6 +95,7 @@ import xyz.actitud.baluard.platform.decodeImageBitmap
 import xyz.actitud.baluard.platform.rememberImportFilePicker
 import xyz.actitud.baluard.platform.rememberRecoverySheetSaver
 import xyz.actitud.baluard.platform.ScreenshotPrefs
+import xyz.actitud.baluard.platform.screenshotShieldSupported
 import xyz.actitud.baluard.PassphraseConfig
 import xyz.actitud.baluard.detail.formatEpochDate
 import xyz.actitud.baluard.platform.copyToClipboard
@@ -889,25 +890,27 @@ fun SettingsScreen(
 
                 BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-                // Allow screenshots (default off, fail secure). Toggling
-                // applies the window flag live; the pref is re-read on the
-                // next app start.
-                val screenshotPrefs = remember { ScreenshotPrefs() }
-                var allowScreenshots by remember { mutableStateOf(screenshotPrefs.allowScreenshots()) }
-                ToggleRow(
-                    t("settings.allowScreenshots"),
-                    allowScreenshots,
-                ) { allow ->
-                    allowScreenshots = allow
-                    screenshotPrefs.setAllowScreenshots(allow)
-                    setSecureFlag(!allow)
+                // Allow screenshots (default off, fail secure). Only
+                // offered where the shield is actually implemented — an OS
+                // without one must not show a toggle that does nothing.
+                if (screenshotShieldSupported()) {
+                    val screenshotPrefs = remember { ScreenshotPrefs() }
+                    var allowScreenshots by remember { mutableStateOf(screenshotPrefs.allowScreenshots()) }
+                    ToggleRow(
+                        t("settings.allowScreenshots"),
+                        allowScreenshots,
+                    ) { allow ->
+                        allowScreenshots = allow
+                        screenshotPrefs.setAllowScreenshots(allow)
+                        setSecureFlag(!allow)
+                    }
+                    Text(
+                        t("settings.allowScreenshotsHint"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
-                Text(
-                    t("settings.allowScreenshotsHint"),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
 
                 BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
 

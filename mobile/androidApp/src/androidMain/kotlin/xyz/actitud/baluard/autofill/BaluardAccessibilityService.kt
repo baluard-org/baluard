@@ -47,10 +47,23 @@ class BaluardAccessibilityService : AccessibilityService() {
 
         val fill = AutofillA11yBridge.pendingFill
         if (fill != null) {
+            // TTL: a pick made for the screen in front of the user must
+            // never type into a page navigated to later.
+            if (!AutofillA11yBridge.fresh(fill.createdAt)) {
+                AutofillA11yBridge.clear()
+                return
+            }
             if (pkg == fill.targetPackage) performFill(fill)
             return
         }
-        if (AutofillA11yBridge.parseArmed) parseAndPick(pkg)
+        if (AutofillA11yBridge.parseArmed) {
+            if (!AutofillA11yBridge.fresh(AutofillA11yBridge.parseArmedAt)) {
+                AutofillA11yBridge.parseArmed = false
+                AutofillA11yBridge.parseArmedAt = 0L
+                return
+            }
+            parseAndPick(pkg)
+        }
     }
 
     override fun onInterrupt() = Unit
@@ -66,7 +79,9 @@ class BaluardAccessibilityService : AccessibilityService() {
     private fun isExempt(pkg: String): Boolean {
         if (pkg == packageName) return true
         if (pkg == "com.android.systemui") return true
-        if (pkg.contains("launcher")) return true
+        if (pkg.startsWith("com.google.android.launcher") ||
+            pkg.startsWith("com.android.launcher")
+        ) return true
         return false
     }
 
@@ -84,7 +99,10 @@ class BaluardAccessibilityService : AccessibilityService() {
             android.widget.Toast.makeText(applicationContext, t("a11y.toastNoFields"), android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        val target = scrapeUri(root) ?: A11yUri.forPackage(pkg)
+        // URL-bar text is trusted only for known browsers (a hostile app
+        // can name a view id url_bar); everything else fills as its package.
+        val target = if (A11yUri.isBrowserPackage(pkg)) scrapeUri(root) else null
+            ?: A11yUri.forPackage(pkg)
         val intent = Intent(this, AutofillActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(AutofillActivity.EXTRA_MODE, AutofillActivity.MODE_A11Y_PICKER)
@@ -122,6 +140,12 @@ class BaluardAccessibilityService : AccessibilityService() {
     private fun performFill(fill: AutofillA11yBridge.PendingFill) {
         val root = rootInActiveWindow ?: return
         if (root.packageName != fill.targetPackage) return
+        // Origin re-check: the fill was armed for a scraped target; the
+        // current screen must still scrape to the same one, so credentials
+        // can never land on a page navigated to after the pick.
+        if (fill.target.startsWith("https://") && A11yUri.isBrowserPackage(fill.targetPackage)) {
+            if (scrapeUri(root) != fill.target) return
+        }
         // Only attempt on screens that actually show login fields (review
         // finding #6): never inject credentials into arbitrary inputs.
         if (!hasFillableFields(root)) return
@@ -133,7 +157,16 @@ class BaluardAccessibilityService : AccessibilityService() {
         // decrypt + clipboard must never block it (peer-review finding #1).
         AutofillSession.scope.launch {
             val (username, password) = AutofillSession.credential(fill.vaultPath, fill.cipherId)
-                ?: run { AutofillA11yBridge.pendingFill = null; return@launch }
+            ?: run {
+                // Reprompt-protected (or vanished): the master-password gate
+                // only exists in the app.
+                android.widget.Toast.makeText(
+                    applicationContext, t("a11y.entryNeedsApp"),
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+                AutofillA11yBridge.pendingFill = null
+                return@launch
+            }
 
             val filled = fillFields(root, username, password)
             if (filled) {

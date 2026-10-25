@@ -32,6 +32,8 @@ import xyz.actitud.baluard.platform.VaultRegistry
  */
 object AutofillSession {
 
+    private const val TAG = "BaluardAutofill"
+
     data class Match(
         val id: String,
         val name: String,
@@ -73,7 +75,7 @@ object AutofillSession {
     val scope = CoroutineScope(
         SupervisorJob() + Dispatchers.Default +
             kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
-                android.util.Log.e("BaluardA11yDbg", "uncaught coroutine failure", e)
+                android.util.Log.e(TAG, "uncaught coroutine failure", e)
             },
     )
 
@@ -263,17 +265,15 @@ object AutofillSession {
      */
     suspend fun trustApp(packageName: String, domain: String, vaultPath: String? = null) {
         val target = vaultPath ?: activePath ?: return
-        handles[target]?.takeIf { it.isUnlocked() }?.let {
-            runCatching { it.autofillAppTrust(packageName, domain) }
-        }
+        val v = mutationMutex.withLock { handles[target] } ?: return
+        if (v.isUnlocked()) runCatching { v.autofillAppTrust(packageName, domain) }
     }
 
     /** Record a user REJECTION: the picker never suggests the pairing again. */
     suspend fun rejectApp(packageName: String, domain: String, vaultPath: String? = null) {
         val target = vaultPath ?: activePath ?: return
-        handles[target]?.takeIf { it.isUnlocked() }?.let {
-            runCatching { it.autofillAppReject(packageName, domain) }
-        }
+        val v = mutationMutex.withLock { handles[target] } ?: return
+        if (v.isUnlocked()) runCatching { v.autofillAppReject(packageName, domain) }
     }
 
     /**

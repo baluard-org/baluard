@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import xyz.actitud.baluard.auth.SharedVaultSession
 import xyz.actitud.baluard.platform.VaultRegistry
 import java.time.Instant
+import xyz.actitud.baluard.i18n.t
 
 /**
  * Baluard as an Android credential provider — passkeys only (plan §4). Thin
@@ -58,6 +59,7 @@ class BaluardCredentialProviderService : CredentialProviderService() {
             runCatching { handleCreateQuery(request) }
                 .onSuccess { callback.onResult(it) }
                 .onFailure {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
                     android.util.Log.w(TAG, "begin create failed", it)
                     callback.onError(
                         androidx.credentials.exceptions.CreateCredentialUnknownException("listing failed"),
@@ -94,7 +96,7 @@ class BaluardCredentialProviderService : CredentialProviderService() {
                 requestCode = ("create|$rp").hashCode(),
             ),
         )
-            .setDescription("The passkey will be saved to your vault.")
+            .setDescription(t("passkey.saveNotice"))
             .setLastUsedTime(Instant.now())
             .setAutoSelectAllowed(true)
             .build()
@@ -112,6 +114,7 @@ class BaluardCredentialProviderService : CredentialProviderService() {
             runCatching { handleGetQuery(request) }
                 .onSuccess { callback.onResult(it) }
                 .onFailure {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
                     android.util.Log.w(TAG, "begin get failed", it)
                     callback.onError(
                         androidx.credentials.exceptions.GetCredentialUnknownException("listing failed"),
@@ -138,7 +141,7 @@ class BaluardCredentialProviderService : CredentialProviderService() {
             return BeginGetCredentialResponse(
                 authenticationActions = listOf(
                     AuthenticationAction(
-                        title = "Unlock",
+                        title = t("login.biometricTitle"),
                         pendingIntent = trampolineIntent(
                             context = this,
                             action = ACTION_UNLOCK_PASSKEY,
@@ -160,7 +163,7 @@ class BaluardCredentialProviderService : CredentialProviderService() {
             entries += matches.map { pk ->
                 PublicKeyCredentialEntry.Builder(
                     context = this,
-                    username = pk.userName ?: "No username",
+                    username = pk.userName ?: t("passkey.noUsername"),
                     pendingIntent = trampolineIntent(
                         context = this,
                         action = ACTION_GET_PASSKEY,

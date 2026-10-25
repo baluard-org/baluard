@@ -8,11 +8,17 @@ actual class ClipboardPrefs actual constructor() {
         AppContextHolder.require()
             .getSharedPreferences("baluard_local_prefs", Context.MODE_PRIVATE)
 
-    actual fun loadSeconds(): Int =
-        prefs().getInt(KEY, DEFAULT).coerceIn(0, MAX)
+    actual fun loadSeconds(): Int {
+        val stored = CrossProcessPrefs.read(KEY) ?: run {
+            val legacy = prefs().getInt(KEY, DEFAULT)
+            CrossProcessPrefs.write(KEY, legacy.toString())
+            legacy.toString()
+        }
+        return runCatching { stored.trim().toInt().coerceIn(0, MAX) }.getOrDefault(DEFAULT)
+    }
 
     actual fun saveSeconds(seconds: Int) {
-        prefs().edit().putInt(KEY, seconds.coerceIn(0, MAX)).apply()
+        CrossProcessPrefs.write(KEY, seconds.coerceIn(0, MAX).toString())
     }
 
     private companion object {
