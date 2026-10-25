@@ -8,6 +8,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { handleOffscreenMessage } from "../src/offscreen.js";
 
+// The extension's own sender shape (background service worker: no tab).
+const SENDER = { id: "test-extension-id" };
+
 describe("offscreen message router", () => {
   let writeText;
   beforeEach(() => {
@@ -15,9 +18,32 @@ describe("offscreen message router", () => {
     globalThis.navigator.clipboard.writeText = writeText;
   });
 
+
+  it("rejects senders from another extension id", () => {
+    const sendResponse = vi.fn();
+    const result = handleOffscreenMessage(
+      { target: "offscreen", action: "offscreen-copy", text: "x" },
+      { id: "other-extension" },
+      sendResponse
+    );
+    expect(result).toBeUndefined();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("rejects tab senders (content scripts)", () => {
+    const sendResponse = vi.fn();
+    const result = handleOffscreenMessage(
+      { target: "offscreen", action: "offscreen-copy", text: "x" },
+      { id: "test-extension-id", tab: { id: 1 } },
+      sendResponse
+    );
+    expect(result).toBeUndefined();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it("ignores messages without target=offscreen", () => {
     const sendResponse = vi.fn();
-    const result = handleOffscreenMessage({ action: "offscreen-copy", text: "x" }, {}, sendResponse);
+    const result = handleOffscreenMessage({ action: "offscreen-copy", text: "x" }, SENDER, sendResponse);
     expect(result).toBeUndefined();
     expect(sendResponse).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
@@ -27,7 +53,7 @@ describe("offscreen message router", () => {
     const sendResponse = vi.fn();
     const result = handleOffscreenMessage(
       { target: "offscreen", action: "offscreen-copy", text: "secret" },
-      {},
+      SENDER,
       sendResponse
     );
     expect(result).toBe(true); // signals async response
@@ -41,7 +67,7 @@ describe("offscreen message router", () => {
     const sendResponse = vi.fn();
     handleOffscreenMessage(
       { target: "offscreen", action: "offscreen-copy" },
-      {},
+      SENDER,
       sendResponse
     );
     await new Promise((r) => setTimeout(r, 0));
@@ -53,7 +79,7 @@ describe("offscreen message router", () => {
     const sendResponse = vi.fn();
     handleOffscreenMessage(
       { target: "offscreen", action: "offscreen-copy", text: "x" },
-      {},
+      SENDER,
       sendResponse
     );
     await new Promise((r) => setTimeout(r, 0));
@@ -62,7 +88,7 @@ describe("offscreen message router", () => {
 
   it("offscreen-clear overwrites with a single space (not empty)", async () => {
     const sendResponse = vi.fn();
-    handleOffscreenMessage({ target: "offscreen", action: "offscreen-clear" }, {}, sendResponse);
+    handleOffscreenMessage({ target: "offscreen", action: "offscreen-clear" }, SENDER, sendResponse);
     await new Promise((r) => setTimeout(r, 0));
     expect(writeText).toHaveBeenCalledWith(" ");
     expect(sendResponse).toHaveBeenCalledWith({ ok: true });
@@ -72,7 +98,7 @@ describe("offscreen message router", () => {
     const sendResponse = vi.fn();
     const result = handleOffscreenMessage(
       { target: "offscreen", action: "offscreen-frobnicate" },
-      {},
+      SENDER,
       sendResponse
     );
     expect(result).toBeUndefined();

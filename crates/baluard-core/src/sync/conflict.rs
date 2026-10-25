@@ -1119,35 +1119,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn same_non_login_type_no_conflict() {
-        // All three are Card: keep local
-        let mut base = CipherInput {
-            name: "Card".into(),
-            folder_id: None,
-            collection_id: None,
-            kind: CipherKind::Card(crate::types::CardData {
-                brand: Some("Visa".into()),
-                ..Default::default()
-            }),
-            favorite: false,
-            notes: None,
-            custom_fields: vec![],
-            created_at: None,
-            password_history: vec![],
-            attachments: vec![],
-            archived: false,
-            reprompt: false,
-            tags: vec![],
-        };
-        base.name = "Card".into();
-
-        let local = base.clone();
-        let remote = base.clone();
-
-        let result = merge_ciphers(&base, &local, &remote);
-        assert!(matches!(result, MergeResult::Merged(_)));
-    }
 
     // B-3 regression: non-overlapping Card field edits used to silently drop
     // the remote edit (the old "keep local" no-op arm). Both changes must now

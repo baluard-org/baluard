@@ -442,11 +442,15 @@ fn is_space_conservative(vault_path: &Path) -> bool {
     if !flag_path.exists() {
         return false;
     }
-    std::fs::read_to_string(&flag_path)
-        .ok()
-        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
-        .and_then(|v| v.get("space").and_then(|s| s.as_bool()))
-        .unwrap_or(true)
+    // A VALID file with no "space" key is the normal personal-vault state;
+    // an unreadable or unparseable file fails closed to Space.
+    let Ok(data) = std::fs::read_to_string(&flag_path) else {
+        return true;
+    };
+    match serde_json::from_str::<serde_json::Value>(&data) {
+        Ok(v) => v.get("space").and_then(|s| s.as_bool()).unwrap_or(false),
+        Err(_) => true,
+    }
 }
 
 #[cfg(test)]
@@ -487,6 +491,25 @@ mod tests {
 
         // A personal vault is always eligible, cache or not.
         assert!(reg.merge_eligible("baluard-personal"));
+        // A settings-pub.json WITHOUT a space key is the normal personal
+        // state, not a damaged flag (regression: the conservative read used
+        // to classify every fresh vault as a Space and dead the search
+        // fan-out).
+        let fresh = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(fresh.path().join("meta")).unwrap();
+        std::fs::write(
+            fresh.path().join("meta/settings-pub.json"),
+            r#"{"theme":"system","lang":"en"}"#,
+        )
+        .unwrap();
+        reg.add(entry_for("baluard-fresh", fresh.path())).unwrap();
+        assert!(reg.merge_eligible("baluard-fresh"));
+        // A damaged (unparseable) flag file fails closed to Space.
+        let damaged = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(damaged.path().join("meta")).unwrap();
+        std::fs::write(damaged.path().join("meta/settings-pub.json"), "{not json").unwrap();
+        reg.add(entry_for("baluard-dmg", damaged.path())).unwrap();
+        assert!(!reg.merge_eligible("baluard-dmg"));
         // A Space never unlocked on this device has no cache: it fails
         // closed and never nags.
         assert!(!reg.merge_eligible("baluard-family"));

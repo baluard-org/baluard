@@ -14058,6 +14058,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn update_cipher_changes_name() {
         let (dir, password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();

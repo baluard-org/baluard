@@ -7,6 +7,9 @@ const noop = () => {};
 
 const chromeMock = {
   runtime: {
+    // Real id so offscreen's sender gate (sender.id !== chrome.runtime.id)
+    // is exercised instead of passing on undefined !== undefined.
+    id: "test-extension-id",
     sendMessage: (_msg, cb) => {
       // In tests we don't auto-fire listeners — call sites that need a
       // response stub it explicitly via mockChromeSendMessage below.
