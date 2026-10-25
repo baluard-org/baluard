@@ -29,7 +29,7 @@ function BridgeUnlockBanner(props) {
         class="mx-4 mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
       >
         <p class="text-xs text-[var(--color-text)] truncate">
-          {t("bridgeUnlock.unlockRequested", req().display_name)}
+          {t("bridgeUnlock.unlockRequested", { name: req().display_name })}
         </p>
         <div class="flex items-center gap-2 shrink-0">
           <button

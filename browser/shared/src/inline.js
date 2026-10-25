@@ -186,9 +186,11 @@ export function statusKeyFor(code) {
   function positionMenu() {
     const ir = icon.getBoundingClientRect();
     const below = { top: ir.bottom + 6, left: ir.right - 280 };
-    // Flip above the icon when the menu would overflow the viewport bottom.
-    if (below.top + 200 > window.innerHeight) {
-      below.top = Math.max(4, ir.top - 266);
+    // Flip above the icon when the menu would overflow the viewport bottom,
+    // using the menu's real height (short lists must hug the icon).
+    const h = menu.offsetHeight || 260;
+    if (below.top + h > window.innerHeight) {
+      below.top = Math.max(4, ir.top - h - 6);
     }
     menu.style.top = `${Math.round(below.top)}px`;
     menu.style.left = `${Math.round(Math.max(4, below.left))}px`;
@@ -282,6 +284,8 @@ export function statusKeyFor(code) {
       });
       menu.appendChild(item);
     }
+    // The real height is known only after the entries render.
+    if (menuOpen) positionMenu();
   }
 
   // Ask the SW for the credential and the fill push. mode tells the SW to
@@ -320,7 +324,9 @@ export function statusKeyFor(code) {
   }
 
   // ── Fill push from the SW ──
-  chrome.runtime.onMessage.addListener((msg) => {
+  chrome.runtime.onMessage.addListener((msg, sender) => {
+    // Only our own extension may drive a fill.
+    if (sender && sender.id && sender.id !== chrome.runtime.id) return;
     if (!msg || msg.type !== "baluard-inline-fill") return;
     // B1: origin compare (scheme+host+port). A hostname-only check would
     // still fill after an https -> http downgrade navigation. Fail closed.
@@ -437,9 +443,14 @@ export function statusKeyFor(code) {
     true
   );
 
-  // Keep the icon glued to its field while the page scrolls/resizes.
-  addEventListener("scroll", positionIcon, { capture: true, passive: true });
-  addEventListener("resize", positionIcon, { passive: true });
+  // Keep the icon glued to its field while the page scrolls/resizes,
+  // and the open menu glued to the icon.
+  const reposition = () => {
+    positionIcon();
+    if (menuOpen) positionMenu();
+  };
+  addEventListener("scroll", reposition, { capture: true, passive: true });
+  addEventListener("resize", reposition, { passive: true });
 
   // mousedown (not click) + preventDefault so clicking the icon does not
   // steal focus from the login field (keeps some pages' focus-styles intact).

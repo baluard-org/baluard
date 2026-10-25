@@ -1,4 +1,4 @@
-import { Show, createSignal, createEffect, onSettled } from "solid-js";
+import { Show, createSignal, createEffect, onSettled, onCleanup } from "solid-js";
 import { Transition } from "../lib/transition";
 import { useAutoSync } from "../context/AutoSyncContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
@@ -97,10 +97,11 @@ export default function AutoSyncIndicator() {
 
   onSettled(() => {
     window.addEventListener("baluard:local-mutation", onMutation);
-    return () => {
-      window.removeEventListener("baluard:local-mutation", onMutation);
-      clearHide();
-    };
+  });
+  // onSettled's return value is not a cleanup hook; register one.
+  onCleanup(() => {
+    window.removeEventListener("baluard:local-mutation", onMutation);
+    clearHide();
   });
 
   const phase = () => localPhase();

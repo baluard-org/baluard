@@ -178,6 +178,8 @@ export function createProviderConnect({ t, onUpdate }) {
 
 	// ── Public: connect a provider. Skips auth if already connected. ──
 	async function connect(provider, { pat, advanced } = {}) {
+		// A previously cancelled attempt must not poison this one.
+		disposed = false;
 		// Already connected? provider.status validates the stored token.
 		try {
 			const statusRaw = await daemon(

@@ -14,9 +14,13 @@ import { fillLoginForm } from "./autofill.js";
   if (window.__baluardFillInjected) return;
   window.__baluardFillInjected = true;
 
-  const listener = (msg) => {
+  const listener = (msg, sender) => {
+    // Only our own extension may drive a fill.
+    if (sender && sender.id && sender.id !== chrome.runtime.id) return;
     if (!msg || msg.type !== "baluard-fill") return;
-    chrome.runtime.onMessage.removeListener(listener);
+    // The listener stays registered: SPA logins fill more than once per
+    // document, and the double-injection guard would block a re-injected
+    // script from adding a second one.
 
     // Fill-time ORIGIN re-check (B1: scheme+host+port, not hostname-only).
     // The popup matched the tab's URL, but the tab may have navigated during

@@ -515,7 +515,8 @@
       "title": "Conservar ambas como elementos separados",
       "desc": "No se pierde nada. Tendrás dos copias para revisar luego."
     },
-    "resolveFailed": "No pudimos guardar esa decisión. Inténtalo de nuevo o elige otra opción."
+    "resolveFailed": "No pudimos guardar esa decisión. Inténtalo de nuevo o elige otra opción.",
+    "verdictRequired": "Se requiere un veredicto"
   },
   "errors": {
     "daemonNotRunning": "El demonio no se está ejecutando",

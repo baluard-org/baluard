@@ -1,4 +1,5 @@
 import { createSignal, createContext, useContext, onSettled } from "solid-js";
+import { clearHeldPhrase } from "../lib/heldPhrase.js";
 // Note: per-vault Quick Unlock status is reactive. The login/switcher UIs
 // call refreshBiometric(slug) when the selected vault changes so the button
 // reflects THAT vault's keychain entry, not a stale global value.
@@ -160,6 +161,8 @@ function AuthProvider(props) {
       setCreatePassword("");
       setKitPhrase("");
       setRecoveryPhrase("");
+  // A locked vault must not leave a display-once phrase in module memory.
+  clearHeldPhrase();
       // VaultProvider unmounts via <Show>. All vault signals destroyed.
     } catch (e) {
       toastError(sanitizeError(e, t));

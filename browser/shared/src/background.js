@@ -16,11 +16,10 @@ const MIN_NMH_VERSION = "0.1.0";
 let port = null;
 let pending = new Map(); // id -> {resolve, reject}
 let nextId = 1;
-let versionInfo = null;
 // B7: fail closed until the connect-time ping handshake proves the NMH is
 // current. Cleared ONLY in the ping-success branch; a missing, slow, or
 // stale host leaves it true and every non-ping send refuses.
-let versionSkew = true;
+let versionSkew = false;
 // Settles once per connection when the handshake ping resolves, fails, or
 // times out. Non-ping sends queue on it (see send()).
 let handshake = null;
@@ -31,7 +30,6 @@ const HANDSHAKE_TIMEOUT_MS = 5000;
 // Chromium sets lastError on disconnect with the real cause, e.g.
 // "Specified native messaging host not found" or
 // "Access to the specified native messaging host is forbidden".
-let lastDisconnectReason = null;
 
 function connect() {
   try {
@@ -44,7 +42,6 @@ function connect() {
   port.onDisconnect.addListener(() => {
     // Chrome populates lastError with the *reason* the host failed to start.
     const reason = chrome.runtime.lastError?.message || "disconnected";
-    lastDisconnectReason = reason;
     console.error("[baluard] NMH disconnected:", reason);
     port = null;
     // Reject all in-flight; the popup will see failures + reconnect on next action.
@@ -65,7 +62,6 @@ function connect() {
   // or times out, queued actions reject with the cannot-reach error.
   handshake = withTimeout(
     send("ping", {}).then((r) => {
-      versionInfo = r;
       // ping's payload is a JSON string like {"nmh_version":"0.1.0",...}.
       let nmh = "0.0.0";
       try {
@@ -75,6 +71,10 @@ function connect() {
       } catch (_) {}
       if (compareVersions(nmh, MIN_NMH_VERSION) < 0) {
         versionSkew = true;
+        // Keep the stale port open and every send rejects with version-skew
+        // even after the user updates the desktop app.
+        try { port?.disconnect(); } catch {}
+        port = null;
         console.error(
           `[baluard] NMH version ${nmh} < required ${MIN_NMH_VERSION}. Extension disabled until the Baluard desktop app is updated.`
         );
@@ -109,6 +109,14 @@ export { buildError, send };
 function send(action, payload) {
   return new Promise((resolve, reject) => {
     if (!port) {
+      // A version-skewed port is dropped on purpose; only a ping (the
+      // popup's retry) may reconnect and re-handshake against a new binary.
+      if (versionSkew && action !== "ping") {
+        reject(
+          err("Baluard desktop app is out of date. Update it to use the extension.", "version-skew")
+        );
+        return;
+      }
       // Try (re)connect once.
       connect();
     }
@@ -193,13 +201,7 @@ export function senderUrl(sender) {
   return url;
 }
 
-function hostnameOf(url) {
-  try {
-    return new URL(url).hostname.toLowerCase();
-  } catch {
-    return "";
-  }
-}
+
 
 // B1: fill-time origin is scheme+host+port (originOf, shared in url.js).
 // A credential saved on https://example.com must NOT fill on
