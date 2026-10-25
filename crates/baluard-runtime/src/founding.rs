@@ -49,9 +49,11 @@ pub async fn copy_items_between_states(
     for (input, id) in inputs.iter().zip(cipher_ids.iter()) {
         // The state-layer add applies the target vault's filing
         // defaults (family vaults route unfiled logins to Shared).
-        let payload =
+        let mut payload =
             serde_json::to_string(input).map_err(|e| format!("input serialization: {e}"))?;
-        match target.add_cipher(&payload).await {
+        let res = target.add_cipher(&payload).await;
+        zeroize::Zeroize::zeroize(&mut payload);
+        match res {
             Ok(_) => copied += 1,
             Err(e) => failed.push(serde_json::json!({
                 "cipher_id": id.to_string(),

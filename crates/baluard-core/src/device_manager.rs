@@ -1378,7 +1378,7 @@ impl DeviceManager {
                 .map_err(|_| DeviceError::Keystore("recovery key too short".into()))?,
         );
         // Zeroize full 64-byte recovery key (only first 32 bytes were consumed)
-        use zeroize::Zeroize;
+        use zeroize::{Zeroize, Zeroizing};
         recovery_key.zeroize();
 
         // Step 3: Load recovery.json from vault
@@ -1419,11 +1419,11 @@ impl DeviceManager {
             &recovery_x25519_secret,
             "recovery-keywrap",
         )?;
-        let rk_arr: [u8; 64] = root_key_bytes
+        let rk_arr: Zeroizing<[u8; 64]> = Zeroizing::new(root_key_bytes
             .as_slice()
             .try_into()
-            .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
-        let root_key = RootKey::from_bytes(rk_arr);
+            .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?);
+        let root_key = RootKey::from_bytes(*rk_arr);
         zeroize::Zeroize::zeroize(&mut root_key_bytes);
 
         // Step 5: Determine current epoch from vault data (H7 fix)
@@ -1567,7 +1567,7 @@ impl DeviceManager {
             <[u8; 32]>::try_from(&recovery_key[..32])
                 .map_err(|_| DeviceError::Keystore("recovery key too short".into()))?,
         );
-        use zeroize::Zeroize;
+        use zeroize::{Zeroize, Zeroizing};
         recovery_key.zeroize();
 
         // Step 3: Load recovery.json from vault
@@ -1608,11 +1608,11 @@ impl DeviceManager {
             &recovery_x25519_secret,
             "recovery-keywrap",
         )?;
-        let rk_arr: [u8; 64] = root_key_bytes
+        let rk_arr: Zeroizing<[u8; 64]> = Zeroizing::new(root_key_bytes
             .as_slice()
             .try_into()
-            .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
-        let root_key = RootKey::from_bytes(rk_arr);
+            .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?);
+        let root_key = RootKey::from_bytes(*rk_arr);
         zeroize::Zeroize::zeroize(&mut root_key_bytes);
 
         // Step 4b: Read the REAL enrollment policy, decrypted with the

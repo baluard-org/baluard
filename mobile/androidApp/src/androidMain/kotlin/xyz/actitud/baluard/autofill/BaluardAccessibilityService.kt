@@ -101,8 +101,8 @@ class BaluardAccessibilityService : AccessibilityService() {
         }
         // URL-bar text is trusted only for known browsers (a hostile app
         // can name a view id url_bar); everything else fills as its package.
-        val target = if (A11yUri.isBrowserPackage(pkg)) scrapeUri(root) else null
-            ?: A11yUri.forPackage(pkg)
+        val target = (if (A11yUri.isBrowserPackage(pkg)) scrapeUri(root) else null)
+        ?: A11yUri.forPackage(pkg)
         val intent = Intent(this, AutofillActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(AutofillActivity.EXTRA_MODE, AutofillActivity.MODE_A11Y_PICKER)
@@ -144,7 +144,10 @@ class BaluardAccessibilityService : AccessibilityService() {
         // current screen must still scrape to the same one, so credentials
         // can never land on a page navigated to after the pick.
         if (fill.target.startsWith("https://") && A11yUri.isBrowserPackage(fill.targetPackage)) {
-            if (scrapeUri(root) != fill.target) return
+            if (scrapeUri(root) != fill.target) {
+                AutofillA11yBridge.clear()
+                return
+            }
         }
         // Only attempt on screens that actually show login fields (review
         // finding #6): never inject credentials into arbitrary inputs.
