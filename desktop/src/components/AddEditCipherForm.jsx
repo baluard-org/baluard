@@ -2,7 +2,7 @@ import { createSignal, Show, For, onSettled } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, formatCardNumber } from "../lib/utils.js";
 import { FIELD_LABEL, handleCardInput } from "../lib/helpers.js";
-import { getSchema } from "../lib/cipherSchema.js";
+import { getSchema, optionLabel } from "../lib/cipherSchema.js";
 import { daemon } from "../lib/daemon.js";
 import { IconX, IconStar, IconEye, IconEyeOff, IconPlus } from "./Icon.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
@@ -209,7 +209,7 @@ export default function AddEditCipherForm(props) {
           <label class={FIELD_LABEL}>{label}</label>
           <select class={cls} value={val()} onChange={e => update(f.key, e.target.value)}>
             <option value="">--</option>
-            <For each={f.options}>{o => <option value={o}>{o}</option>}</For>
+            <For each={f.options}>{o => <option value={o}>{optionLabel(f.key, o, t)}</option>}</For>
           </select>
         </div>
       );

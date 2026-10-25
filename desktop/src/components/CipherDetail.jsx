@@ -1,6 +1,6 @@
 import { createSignal, createEffect, createMemo, Show, For } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { cipherToFlat } from "../lib/cipherSchema.js";
+import { cipherToFlat, optionLabel } from "../lib/cipherSchema.js";
 import { cipherCollectionId } from "../lib/filters.js";
 import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
@@ -624,7 +624,7 @@ export default function CipherDetail(props) {
             <h4 class={SECTION_LABEL}>{t("types.bankAccount")}</h4>
             <CopyableField label={t("fields.bankName")} value={cipher()?.bank_name} />
             <CopyableField label={t("fields.nameOnAccount")} value={cipher()?.name_on_account} />
-            <CopyableField label={t("fields.accountType")} value={cipher()?.account_type} />
+            <CopyableField label={t("fields.accountType")} value={optionLabel("accountType", cipher()?.account_type, t)} />
             <GatedField
               locked={repromptLocked()}
               onUnlock={openReprompt}

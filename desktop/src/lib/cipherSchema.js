@@ -86,7 +86,7 @@ export const CIPHER_SCHEMAS = {
   identity: {
     typeKey: "identity",
     fields: [
-      { key: "idTitle", label: "fields.title", type: "select", options: ["Mr","Mrs","Ms","Dr"] },
+      { key: "idTitle", label: "fields.title", type: "select", options: ["Mr","Mrs","Ms","Dr"], optionGroup: "honorific" },
       { key: "firstName", label: "fields.firstName", placeholder: "John" },
       { key: "middleName", label: "fields.middleName", placeholder: "A" },
       { key: "lastName", label: "fields.lastName", placeholder: "Doe" },
@@ -204,7 +204,7 @@ export const CIPHER_SCHEMAS = {
     fields: [
       { key: "bankName", label: "fields.bankName", placeholder: "Chase" },
       { key: "nameOnAccount", label: "fields.nameOnAccount", placeholder: "John Doe" },
-      { key: "accountType", label: "fields.accountType", type: "select", options: ["checking","savings","investment","other"] },
+      { key: "accountType", label: "fields.accountType", type: "select", options: ["checking","savings","investment","other"], optionGroup: "account" },
       { key: "accountNumber", label: "fields.accountNumber", placeholder: "123456789", mono: true },
       { key: "routingNumber", label: "fields.routingNumber", placeholder: "987654321", mono: true },
       { key: "branchNumber", label: "fields.branchNumber", placeholder: "001", mono: true },
@@ -380,6 +380,16 @@ export const CIPHER_SCHEMAS = {
 /**
  * Get the schema for a cipher type. Falls back to login.
  */
+// Select options are stored as stable English values (the daemon sees
+// them verbatim); display text comes from fields.options.<group>.<value>.
+const OPTION_GROUPS = { idTitle: "honorific", accountType: "account" };
+
+export function optionLabel(fieldKey, value, t) {
+  const group = OPTION_GROUPS[fieldKey];
+  if (!group || !value) return value;
+  return t(`fields.options.${group}.${value}`);
+}
+
 export function getSchema(cipherType) {
   return CIPHER_SCHEMAS[cipherType] || CIPHER_SCHEMAS.login;
 }

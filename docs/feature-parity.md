@@ -1,6 +1,6 @@
 # Feature parity: CLI / Desktop / Mobile
 
-Snapshot: 2026-10-18, main @ `57598df`; third audit pass - every cell re-swept from source (daemon route dispatcher, CLI enum, desktop `daemon()` calls, mobile UniFFI/`VaultRepository`, extension actions) after the October 6-18 waves. Owner: Esteban.
+Snapshot: 2026-10-25, main @ `b03217b`; fourth audit pass - parity cells re-spot-checked against source during the wave-17 review program (D4). Owner: Esteban.
 
 ## Purpose
 
@@ -38,7 +38,7 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Session PIN unlock | n/a | Yes (Linux, Windows) | None |
 | Auto-lock timer | Yes (`settings set`) | Yes | Yes |
 | Phrase rotation ceremony | None (`rotate-root` turns the root key, not the phrase) | Yes | Yes (Settings > Security, D74) |
-| Space Recovery Kit | Partial (recover with an existing kit phrase; no kit management) | Yes | Yes (kit status/replace/disable + onboarding phrase-only recovery) |
+| Space Recovery Kit | Yes (`space kit-enable/disable/status` + `vaults recover-kit`) | Yes | Yes (kit status/replace/disable + onboarding phrase-only recovery) |
 | Emergency escrow (S4) | None | Yes | None |
 | Enroll this device | Yes (phrase enrollment) | Yes | Yes (phrase enrollment) |
 | Device fleet (list / revoke / rotate) | Yes (list, revoke, rotation status + abort) | Yes | Yes (Devices card with this-device marker, revoke) |
@@ -60,7 +60,7 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | TOTP code | Yes (`baluard totp <id-or-name>`) | Yes | Yes |
 | Passkeys: view | Yes (list) | Yes | Yes |
 | Passkeys: delete / rename | Yes | Yes | None |
-| Passkey ceremonies (register / assert) | None | Partial (routes live, UI arrives with extension Phase 2) | None |
+| Passkey ceremonies (register / assert) | None | Partial (routes live, UI arrives with extension Phase 2) | Yes (Android credential provider; iOS pending platform) |
 | SSH key entry (store) | Yes | Yes | Yes |
 | SSH key generation | Yes (`baluard ssh-keygen`, optional `--store`) | Yes | Yes |
 | Custom fields | Partial (raw JSON on `add` only, no flags) | Yes (all 4 types) | Yes (all 4 types) |
@@ -82,9 +82,9 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Manual sync cycle | Yes | Yes | Yes |
 | Auto-sync | Partial (daemon mode rides the daemon's autosync; `--direct` is manual) | Yes (debounced push, event pull) | Yes (debounced push, event pull, activates when a remote attaches) |
 | Conflict resolution | None (conflicts error out) | Yes | Yes |
-| Provider OAuth device flow | None | Yes | Yes |
-| PAT connect | None | Yes | Yes |
-| Provider repo picker | None | Yes | Yes |
+| Provider OAuth device flow | Yes (`provider connect`) | Yes | Yes |
+| PAT connect | Yes (`provider connect --pat`) | Yes | Yes |
+| Provider repo picker | Yes (`provider repos`, `vault-repos`) | Yes | Yes |
 | Repo creation on provider | Yes (`provider create-repo`) | Yes | Yes (git-backup wizard, create-or-reuse) |
 | Clone from provider | Yes (by provider + repo, or URL) | Yes | Yes |
 | Remote repoint / migrate | Yes (`vaults repoint`) | Yes (`space.migrate`) | None |
@@ -104,14 +104,14 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | File an entry into a collection | Yes (`collections assign <cipher>`) | Yes (detail-view move, `cipher.set_collection`) | Yes (edit/create picker, `setCollection`) |
 | Access asks / requests | Yes (`members requests` + `approve` / `deny`) | Yes | Yes |
 | Space settings (all knobs) | Yes (`settings space get` / `space-set`) | Yes | Yes |
-| Policies | None | Yes | Yes |
+| Policies | Yes (`policies list/set`) | Yes | Yes |
 | Approvals / quorum | None | Yes | Yes |
-| Activity log | None | Yes | Yes |
+| Activity log | Yes (`activity`) | Yes | Yes |
 | Contact cards + outbox publish | Partial (list, my-card, import, Level-2 verify, remove; no outbox publish) | Yes | Partial (my code + Level-2 verify from the People screen; no card-import UI, no outbox) |
 | Open shared reveal (guest / contact file) | None | Yes | Yes (Settings > Data + a guest-only onboarding entry) |
 | Guest reveal create | None | Yes | Yes (Share as file on a Login; 7-day expiry) |
 | Member role changes (set_role) | Yes (`members set-role`, owner-row and trust-dial guards) | Yes (People tab role select, typed demote confirm) | Yes (People role dialog, my_role-gated surfaces) |
-| Ownership claim + contest window (D61) | None | Yes (claim-notice card, owner-gated cancel) | None |
+| Ownership claim + contest window (D61) | Yes (`members claim/contest-status/contest-cancel`) | Yes (claim-notice card, owner-gated cancel) | Yes (Settings/People claim action) |
 | Family vault creation + kit display | Yes (`init --family` + wizard) | Yes (purpose cards, kit words-once with TXT/PDF) | Yes (purpose selector, kit screen) |
 | Stolen-device replacement (`members.replace_device`) | Yes (`members replace-device`, `--no-revoke`) | Yes (People tab, typed confirm, one-time code card) | Yes (People screen, confirm dialog, one-time code dialog) |
 | Encrypted backup (.bldbak, cross-vault) | Yes (`export --encrypted`, env/`--generate`) | Yes (passphrase dialog, Rust-side save/open) | Yes (passphrase dialog, SAF) |
@@ -157,10 +157,10 @@ Surface: CLI. CLOSED (2026-10-09): `baluard provider connect <name>` runs the de
 Surface: CLI. CLOSED (2026-10-09): `baluard rotate-root` rides the daemon rotation route (quorum-gated in core, so a family vault with quorum 2 still needs its co-approver); the autosync enrollment verifier refreshes daemon-side per D78. See the Closed table.
 
 ### G10. Mobile passkey ceremonies
-Surface: Mobile. Missing: register / assert. Platform WebAuthn APIs make this the hardest mobile item. Effort: L. Value: real, but display-only may be the right 1.0 scope. Decision: needed - park or schedule after 1.0.
+Surface: Mobile. CLOSED (2026-10-19/20): Android credential-provider ceremonies shipped (`BaluardCredentialProviderService`, `passkeyProviderRegister`/`passkeyProviderAssert` over UniFFI; commits bb4f12f, c5175ca). iOS waits on the platform effort below. Original assessment: Platform WebAuthn APIs make this the hardest mobile item. Effort: L. Value: real, but display-only may be the right 1.0 scope. Decision: needed - park or schedule after 1.0.
 
 ### G11. CLI sharing surface (phased)
-Surface: CLI. Missing: every sharing command (members, approvals, collections, groups, policies, activity). With the CLI first-class, this is in scope, in two phases:
+Surface: CLI. Missing: approvals commands (the only sharing surface still desktop/mobile-only; tracked as post-1.0 debt per principle 1). Landed: members, collections, groups, policies, activity). With the CLI first-class, this is in scope, in two phases:
 
 - **Phase 1 (M) - the Bitwarden shape:** share an item to a space, collection list/assign, member list, member confirm. LANDED (2026-10-09): `baluard collections list|create|assign|grant|revoke` and `baluard members list|requests|approve-join|deny-join|approve|deny` (two queues: joins via `requests.*`, access asks via `collections.requests_*`).
 - **Phase 2 (L) - full admin.** LANDED (2026-10-19): `members remove|reset|transfer|claim|contest-status|contest-cancel|set-email|set-minor|leave|leaves|approve-leave` (irreversible verbs gated behind a typed confirm or `--yes`), `groups list|create|rename|delete|add-member|remove-member`, `policies list|set`, `space prepare|status|flip|set-purpose|kit-enable|kit-disable|kit-status|migrate`, and `activity`. Every verb rides an existing daemon route; the e2e flow `e2e_cli_org_admin_surface` pins the surface.
@@ -212,7 +212,9 @@ Surface: Desktop + Mobile + CLI. CLOSED (2026-10-18): see the Closed table.
 
 Every 1.0-track gap is closed; what remains is scheduled or parked:
 
-1. **1.0 track:** G11 phase 2 LANDED (2026-10-19). The gap backlog is empty; 1.0 release-engineering scoping is the remaining conversation. **Post-1.0:** G10 (mobile passkey ceremonies), G12 (iOS depth).
+1. **1.0 track:** G11 phase 2 LANDED (2026-10-19); G10 (mobile passkey ceremonies) CLOSED 2026-10-19/20 on Android. The backlog holds one post-1.0 item: CLI approvals commands. 1.0 release-engineering scoping is the remaining conversation. **Post-1.0:** G12 (iOS depth).
+2. **Scheduled, not landed:** G12 (iOS depth) waits on the platform.
+
 3. **Parked on demand:** G23 (mobile admin ops: repoint/migrate, commit revocation).
 
 ## Out of parity scope by design
@@ -250,7 +252,11 @@ Every 1.0-track gap is closed; what remains is scheduled or parked:
 | G6 | this wave (kit) | kit status/replace/disable in Settings > Space with the fixed-threshold asks approved in the pending list, plus phrase-only kit recovery from onboarding that adopts the vault and hands off to unlock; the emergency escrow stays desktop-shaped |
 | G23 | parked | commit revocation stays CLI-first; repoint/migrate covered by CLI and desktop, kit recovery covers the phone-side loss story - rows return on demand |
 | G11 phase 1 | this wave | collections list/create/assign/grant/revoke plus members list and both pending queues: `approve-join`/`deny-join` over `requests.*` and `approve`/`deny` over `collections.requests_*`; the review caught that join confirmation and access asks are separate route families and the first draft wired only one |
+| G10 | bb4f12f + c5175ca | Android credential-provider passkey ceremonies shipped (`BaluardCredentialProviderService`, `passkeyProviderRegister`/`passkeyProviderAssert` over UniFFI); iOS waits on platform effort (G12) |
 | G11 phase 2 | this wave | full CLI org admin: member remove/reset/transfer/claim/contest/set-email/set-minor plus the leave journey, `groups` CRUD, `policies`, `space` lifecycle + kit + migrate, `activity`; typed-confirm gate on irreversible verbs |
+| G24 | 2026-10-09 wave | merged search and autofill across surfaces: daemon fan-out behind the personal_merge/merge_opt_in ceiling, extension chips + slug-scoped reads + unlock asks, Android autofill/hub merge, `baluard search` |
+| G26 | 2026-10-18 wave | `members replace-device` CLI verb, desktop People-tab typed-confirm action with the one-time-code card, mobile People-screen confirm + code dialogs over the new UniFFI wrapper; the e2e pins the happy path, the tombstone and own-row refusals, and the revoke-stop warning |
+| G25 | 2026-10-16 wave | Shared-folder picker on the edit/create form (keep/none/assign three-state) over UniFFI `set_collection`; create-time routing rides the state layer's defaults |
 
 ## Keeping this document current
 
@@ -258,6 +264,3 @@ Every 1.0-track gap is closed; what remains is scheduled or parked:
 2. Update the snapshot line at the top.
 3. Move closed gaps into a "Closed" list at the bottom with the commit that closed them.
 4. Any row change needs a source reference in the commit message.
-| G24 | 2026-10-09 wave | merged search and autofill across surfaces: daemon fan-out behind the personal_merge/merge_opt_in ceiling, extension chips + slug-scoped reads + unlock asks, Android autofill/hub merge, `baluard search` |
-| G26 | 2026-10-18 wave | `members replace-device` CLI verb, desktop People-tab typed-confirm action with the one-time-code card, mobile People-screen confirm + code dialogs over the new UniFFI wrapper; the e2e pins the happy path, the tombstone and own-row refusals, and the revoke-stop warning |
-| G25 | 2026-10-16 wave | Shared-folder picker on the edit/create form (keep/none/assign three-state) over UniFFI `set_collection`; create-time routing rides the state layer's defaults |

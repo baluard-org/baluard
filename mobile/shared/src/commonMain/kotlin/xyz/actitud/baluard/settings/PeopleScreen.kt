@@ -849,7 +849,7 @@ fun PeopleScreen(
         AlertDialog(
             onDismissRequest = { if (!revokeBusy) revokeAsk = null },
             title = { Text(t("people.revokeConfirmTitle")) },
-            text = { Text(t("people.revokeConfirmBody").replace("{name}", memberName(members, memberId))) },
+            text = { Text(t("people.revokeConfirmBody", memberName(members, memberId))) },
             confirmButton = {
                 TextButton(enabled = !revokeBusy, onClick = {
                     scope.launch {
@@ -878,10 +878,10 @@ fun PeopleScreen(
     val pm = pendingMember
     if (pendingKind != null && pm != null) {
         val body = when (pendingKind) {
-            "remove" -> t("people.removeBody").replace("{name}", pm.name)
-            "reset" -> t("people.resetBody").replace("{name}", pm.name)
-            "claim" -> t("people.claimBody").replace("{name}", pm.name)
-            else -> t("people.transferBody").replace("{name}", pm.name)
+            "remove" -> t("people.removeBody", pm.name)
+            "reset" -> t("people.resetBody", pm.name)
+            "claim" -> t("people.claimBody", pm.name)
+            else -> t("people.transferBody", pm.name)
         }
         AlertDialog(
             onDismissRequest = { if (!offboardBusy) closeOffboard() },

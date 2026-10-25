@@ -26,7 +26,6 @@
     "title": "Crear bóveda",
     "subtitle": "Establece una contraseña maestra para tu nueva bóveda",
     "namePlaceholder": "Nombre de la bóveda",
-    "nameRequired": "El nombre de la entrada es obligatorio",
     "slugLabel": "Slug",
     "slugEdit": "Editar",
     "slugDone": "Listo",
@@ -134,6 +133,7 @@
     "headerName": "Nombre"
   },
   "entry": {
+    "nameRequired": "El nombre de la entrada es obligatorio",
     "addTitle": "Agregar entrada",
     "namePlaceholder": "Nombre",
     "usernamePlaceholder": "Usuario",
@@ -615,7 +615,21 @@
     "address": "Dirección",
     "cityStatePostal": "Ciudad/Estado/C.P.",
     "verificationCode": "Código de verificación",
-    "cardholderPlaceholder": "Nombre completo en la tarjeta"
+    "cardholderPlaceholder": "Nombre completo en la tarjeta",
+    "options": {
+      "honorific": {
+        "Mr": "Sr.",
+        "Mrs": "Sra.",
+        "Ms": "Srta.",
+        "Dr": "Dr."
+      },
+      "account": {
+        "checking": "Corriente",
+        "savings": "Ahorros",
+        "investment": "Inversión",
+        "other": "Otro"
+      }
+    }
   },
   "devices": {
     "statusUnknown": "Desconocido",
@@ -638,8 +652,6 @@
     "thisDevice": "Este dispositivo",
     "lastSync": "Última sincronización",
     "never": "Nunca",
-    "epoch": "Época",
-    "lastCommit": "Último commit",
     "revoke": "Revocar"
   },
   "generator": {
@@ -1174,9 +1186,9 @@
     "removeNote": "Quitar a alguien regenera la clave del grupo: lo que ya abrió sigue abierto para esa persona, pero el acceso futuro al grupo termina."
   },
   "removal": {
-    "bodyConfirmed": "Te quitaron de este Space. Ya no sincroniza en este dispositivo.",
+    "bodyConfirmed": "Te quitaron de esta bóveda. Ya no sincroniza en este dispositivo.",
     "bodyReset": "El propietario restableció el acceso de este dispositivo. Ya no sincroniza en este dispositivo.",
-    "bodyProbable": "Este Space parece haber quitado este dispositivo: la sincronización falla con un error de acceso.",
+    "bodyProbable": "Esta bóveda parece haber quitado este dispositivo: la sincronización falla con un error de acceso.",
     "cliHint": "Para borrar también los archivos: baluard vaults detach {slug} --delete-from-disk",
     "detachAction": "Quitar de esta app (conservar los archivos)",
     "detachedToast": "Quitado de esta app. Los archivos permanecen en el disco."
