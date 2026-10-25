@@ -539,6 +539,12 @@ impl VaultState {
                 }
                 Err(e) => log::warn!("[state] merge cache refresh skipped: {e}"),
             }
+            // Legacy contact heartbeat: refresh the signed alive record
+            // when the last one is over a week old. Best-effort; the next
+            // unlock retries.
+            if let Err(e) = baluard_core::legacy::heartbeat(&self.vault_path, handle) {
+                log::warn!("[state] legacy heartbeat deferred: {e}");
+            }
         }
 
         // M2 fix: activate the auto-sync coordinator immediately on unlock if

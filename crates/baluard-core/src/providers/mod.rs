@@ -128,6 +128,7 @@ mod tests {
                 deleted_calls: Arc::new(AtomicUsize::new(0)),
                 seat_log: Arc::new(Mutex::new(Vec::new())),
                 seat_status: CollaboratorStatus::Active,
+                fail_deploy_key: false,
             }) as Box<dyn ForgeProvider>)
         };
 
@@ -198,6 +199,7 @@ mod tests {
                 deleted_calls: Arc::new(AtomicUsize::new(0)),
                 seat_log: Arc::new(Mutex::new(Vec::new())),
                 seat_status: CollaboratorStatus::Active,
+                fail_deploy_key: false,
             }) as Box<dyn ForgeProvider>)
         };
 

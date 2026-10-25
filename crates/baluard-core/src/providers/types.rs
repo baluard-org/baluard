@@ -884,6 +884,8 @@ pub mod mock {
         pub deleted_calls: Arc<AtomicUsize>,
         pub seat_log: Arc<Mutex<Vec<String>>>,
         pub seat_status: CollaboratorStatus,
+        /// When true, add_deploy_key fails like a PAT lacking the scope.
+        pub fail_deploy_key: bool,
     }
 
     impl MockProvider {
@@ -894,6 +896,7 @@ pub mod mock {
                 deleted_calls: Arc::new(AtomicUsize::new(0)),
                 seat_log: Arc::new(Mutex::new(Vec::new())),
                 seat_status: CollaboratorStatus::Active,
+                fail_deploy_key: false,
             }
         }
 
@@ -1056,6 +1059,11 @@ pub mod mock {
             _title: &str,
             _public_key: &str,
         ) -> Result<u64, ProviderError> {
+            if self.fail_deploy_key {
+                return Err(ProviderError::Api(
+                    "403: the token lacks the deploy key scope".into(),
+                ));
+            }
             self.record(format!("addkey:{owner}/{repo}"));
             Ok(4242)
         }
