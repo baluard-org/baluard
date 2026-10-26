@@ -1239,6 +1239,8 @@
     "noteTitle": "A carta",
     "openNotAKit": "Esse arquivo não é uma carta kit do Baluard.",
     "opening": "Abrindo…",
-    "openGo": "Abrir o cofre"
+    "openGo": "Abrir o cofre",
+    "replaceBtn": "Entregar o kit a outra pessoa",
+    "replaceNote": "Isso cria um kit totalmente novo para outra pessoa (ou com outra frase). O kit atual para de funcionar imediatamente e o cofre troca de chaves: a carta antiga fica inutilizável."
   }
 }
