@@ -5150,8 +5150,8 @@ impl VaultState {
     }
 
     pub async fn legacy_arm(&self, payload: &str) -> Result<String, String> {
-        let guard = self.inner.read().await;
-        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         super::legacy::arm_json(&self.vault_path, handle, payload).await
     }
 

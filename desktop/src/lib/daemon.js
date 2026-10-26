@@ -31,6 +31,7 @@ const MUTATION_ACTIONS = new Set([
   "requests.stage", "requests.approve", "requests.deny",
   "space.set_purpose", "space.flip", "space.migrate", "locale.save",
   "templates.create", "templates.delete", "collections.sweep",
+  "legacy.arm", "legacy.close",
 ]);
 
 async function daemon(action, payload = "", slug = null) {
