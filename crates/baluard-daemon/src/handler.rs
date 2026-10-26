@@ -363,6 +363,8 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "vault.attach_upload",
     "vault.attach_delete",
     "vault.change_password",
+    "legacy.arm",
+    "legacy.close",
     "locale.save",
     "space.set_purpose",
     "space.migrate",
@@ -3407,6 +3409,10 @@ const CONTACT_VIEW_ALLOWED: &[&str] = &[
     "vault.get",
     "cipher.totp_code",
     "vault.get_settings",
+    // Read-only extras the plan promises the contact: taking an
+    // encrypted/plain export home and opening entry attachments.
+    "vault.export",
+    "vault.attach_download",
     "vault.lock",
     "vaults.lock_all",
 ];
@@ -3455,6 +3461,9 @@ async fn handle_legacy_contact_view(
     ));
     state.contact_attach(opened.handle).await;
     host.insert(slug.clone(), state.clone()).await;
+    // Every unlock path flips the daemon's active pointer to the new
+    // vault; the contact view is the only vault a contact machine has.
+    let _ = host.switch(&slug).await;
     let token = state.get_session_token().await.unwrap_or_default();
 
     // The token rides the response header too, so the desktop's session

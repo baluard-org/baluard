@@ -1239,6 +1239,8 @@
     "noteTitle": "The letter",
     "openNotAKit": "That file is not a Baluard kit letter.",
     "opening": "Opening…",
-    "openGo": "Open the vault"
+    "openGo": "Open the vault",
+    "replaceBtn": "Hand the kit to someone new",
+    "replaceNote": "This makes a brand-new kit for a new person (or new passphrase). The current kit stops working immediately and the vault re-keys — the old letter becomes useless."
   }
 }

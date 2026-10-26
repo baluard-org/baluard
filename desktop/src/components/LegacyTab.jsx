@@ -30,6 +30,7 @@ export default function LegacyTab() {
   const [savedIt, setSavedIt] = createSignal(false);
   const [kit, setKit] = createSignal(null); // {kit_id, kit_armor} shown once
   const [confirmKind, setConfirmKind] = createSignal(null); // deny|disarm
+  const [replacing, setReplacing] = createSignal(false); // arm form open while armed
 
   onMount(() => void load());
 
@@ -233,6 +234,9 @@ export default function LegacyTab() {
             <Button onClick={() => setConfirmKind("disarm")} disabled={busy()} data-testid="legacy-disarm">
               {t("legacy.disarm")}
             </Button>
+            <Button onClick={() => setReplacing(true)} disabled={busy()} data-testid="legacy-replace">
+              {t("legacy.replaceBtn")}
+            </Button>
             <Show when={phase() === "open"}>
               <Button variant="danger" onClick={() => setConfirmKind("deny")} disabled={busy()} data-testid="legacy-deny">
                 {t("legacy.deny")}
@@ -240,6 +244,36 @@ export default function LegacyTab() {
             </Show>
           </div>
         </div>
+        <Show when={replacing()}>
+          <div class="rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]/40 p-4 space-y-3" data-testid="legacy-replace-form">
+            <p class="text-xs text-[var(--color-text)]">{t("legacy.replaceNote")}</p>
+            <div class="flex gap-2">
+              <Show when={passphrase()} fallback={
+                <Button onClick={newPassphrase} data-testid="legacy-replace-passphrase-gen">
+                  {t("legacy.newPassphrase")}
+                </Button>
+              }>
+                <code class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-sm text-[var(--color-text)] select-all">
+                  {passphrase()}
+                </code>
+              </Show>
+            </div>
+            <label class="flex items-center gap-2 text-xs text-[var(--color-text)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={savedIt()}
+                onChange={(e) => setSavedIt(e.currentTarget.checked)}
+              />
+              {t("legacy.savedIt")}
+            </label>
+            <div class="flex gap-2">
+              <Button onClick={() => setReplacing(false)} disabled={busy()}>{t("entry.cancel")}</Button>
+              <Button variant="primary" onClick={arm} disabled={busy() || !passphrase() || !savedIt()} data-testid="legacy-replace-go">
+                {t("legacy.replaceBtn")}
+              </Button>
+            </div>
+          </div>
+        </Show>
       </Show>
 
       {/* The kit letter, shown once per arm/resend. */}

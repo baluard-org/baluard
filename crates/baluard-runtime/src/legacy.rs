@@ -83,9 +83,9 @@ async fn resolve_remote(vault_path: &std::path::Path) -> Result<ResolvedRemote, 
         };
         let config = info.config();
         let base = config.effective_instance_url(provider);
-        let base_host = split_git_url(&base)
-            .map(|(h, _, _)| h)
-            .unwrap_or_default();
+        // The base is a bare instance URL (no owner/repo), so the
+        // remote-URL parser cannot read it; take the host directly.
+        let base_host = url_host(&base);
         if host == base_host || (info.instance_url.is_none() && host == default_host(provider)) {
             let (info, token) = ensure_valid_token(provider).await?;
             let ssh_url = format!("git@{host}:{owner}/{repo}.git");
@@ -212,13 +212,70 @@ pub fn resend_json(
     handle: &VaultHandle,
 ) -> Result<String, String> {
     require_unlocked(handle)?;
-    let (kit_id, armor) = core_legacy::resend(vault_path, handle).map_err(|e| e.to_string())?;
+    let (armor, kit_id) = core_legacy::resend(vault_path, handle).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "kit_id": kit_id, "kit_armor": armor }).to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::split_git_url;
+
+    /// Regression for the re-review tuple swap: the JSON layer must
+    /// return the armored letter under kit_armor and only the UUID
+    /// under kit_id — the pre-fix order handed contacts a letter file
+    /// containing a UUID.
+    #[tokio::test]
+    async fn resend_json_returns_the_armored_letter_and_kit_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_dir = dir.path().join("v");
+        let (handle, _secrets) =
+            baluard_core::vault::creation::VaultCreator::new(&vault_dir, "test password 123", "t")
+                .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
+                .initialize_git(false)
+                .execute()
+                .unwrap();
+        let store = baluard_core::legacy::LegacyStore {
+            kit_id: "01234567-aaaa-bbbb-cccc-dddddddddddd".into(),
+            lk_seed: "aa".repeat(32),
+            ek: "bb".repeat(32),
+            kit_letter: "THE LETTER".into(),
+            kit_armor: "THE ARMORED LETTER".into(),
+            deploy_key_fingerprint: "SHA256:abc".into(),
+            forge_key_id: None,
+            provider: baluard_core::providers::types::Provider::GitHub,
+            owner: "me".into(),
+            repo: "repo".into(),
+            origin_url: "https://github.com/me/repo".into(),
+        };
+        let root: [u8; 64] = *handle.unlocked().root().unwrap().as_bytes();
+        baluard_core::legacy::save_store(&vault_dir, &root, &store).unwrap();
+        baluard_core::legacy::save_record(
+            &vault_dir,
+            &baluard_core::legacy::LegacyRecord {
+                version: 1,
+                vault_id: "v".into(),
+                kit_id: store.kit_id.clone(),
+                state: baluard_core::legacy::LegacyState::Armed,
+                reason: None,
+                seq: 1,
+                epoch: 0,
+                window_days: 30,
+                lk_public_hash: "hh".into(),
+                ek_check: "cc".into(),
+                layer_hash: "ll".into(),
+                deploy_key_fingerprint: "SHA256:abc".into(),
+                created_day: 0,
+                repo_url_hash: "rr".into(),
+                signer_device_id: "dddddddd-dddd-dddd-dddd-dddddddddddd".into(),
+                owner_signature: None,
+            },
+        )
+        .unwrap();
+        let out = super::resend_json(&vault_dir, &handle).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["kit_id"], "01234567-aaaa-bbbb-cccc-dddddddddddd");
+        assert_eq!(v["kit_armor"], "THE ARMORED LETTER");
+    }
 
     #[test]
     fn splits_https_scp_and_ssh_forms() {
@@ -338,20 +395,36 @@ pub async fn open_contact_view(
             }
         }
 
+        // The record chain is only as good as its signatures: both the
+        // state record and the heartbeat must verify against the LK
+        // public key sealed in the contact's own kit. A repo-side
+        // forger cannot mint either.
+        let lk_public: [u8; 32] = hex::decode(&body.lk_public)
+            .map_err(|e| VaultError::Corrupt(format!("kit lk key: {e}")))?
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("kit lk key length".into()))?;
+        core_legacy::verify_record(&record, &lk_public)?;
+        let alive_path = target.join("meta/legacy").join(format!("{}.alive", body.kit_id));
+        let last_alive_day = match std::fs::read_to_string(&alive_path) {
+            Ok(raw) => Some(core_legacy::verify_alive(&raw, &record, &lk_public)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(VaultError::Metadata(format!("alive record: {e}")).into()),
+        };
+
         // Silence window: the contact's own clock reads the owner's
         // signed days. Honest-scope per the plan: a modified client can
         // rewind this; the wait guards mistakes, not determination.
         let today = core_legacy::today_day();
-        let phase = core_legacy::derive_phase(&record, record_last_alive_day(&target, &body.kit_id), today);
+        let phase = core_legacy::derive_phase(&record, last_alive_day, today);
+        let silence = today.saturating_sub(last_alive_day.unwrap_or(record.created_day).max(record.created_day));
         if phase != core_legacy::LegacyPhase::Open {
-            let silence = today.saturating_sub(record.created_day);
             let wait = record.window_days.saturating_sub(silence);
             return Err(VaultError::InvalidOperation(format!(
                 "The waiting period is not over yet. About {wait} more day(s)."
             ))
             .into());
         }
-        let silence_days = today.saturating_sub(record.created_day);
+        let silence_days = silence;
 
         // The kit's escrow key must match the record's fingerprint, then
         // the layer opens to the vault's Root Key.
@@ -402,6 +475,23 @@ fn letter_text(letter: String) -> String {
 }
 
 /// The stored heartbeat's day, read best-effort from the fresh clone.
+/// Host of a bare instance URL (scheme plus optional userinfo and
+/// port stripped; IPv6 brackets kept out). split_git_url cannot read
+/// bare URLs because it demands owner/repo segments.
+fn url_host(url: &str) -> String {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let auth = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let auth = auth.rsplit('@').next().unwrap_or(auth);
+    let host = auth.trim_start_matches('[');
+    match host.split_once(']') {
+        Some((h, _)) => h.to_ascii_lowercase(),
+        None => match auth.split_once(':') {
+            Some((h, _)) => h.to_ascii_lowercase(),
+            None => auth.to_ascii_lowercase(),
+        },
+    }
+}
+
 fn record_last_alive_day(target: &std::path::Path, kit_id: &str) -> Option<u64> {
     core_legacy::load_alive(target, kit_id)
         .ok()

@@ -1239,6 +1239,8 @@
     "noteTitle": "La carta",
     "openNotAKit": "Ese archivo no es una carta kit de Baluard.",
     "opening": "Abriendo…",
-    "openGo": "Abrir la caja fuerte"
+    "openGo": "Abrir la caja fuerte",
+    "replaceBtn": "Entregar el kit a otra persona",
+    "replaceNote": "Esto crea un kit completamente nuevo para otra persona (o con otra frase). El kit actual deja de funcionar de inmediato y la caja fuerte cambia de llaves: la carta antigua se vuelve inservible."
   }
 }

@@ -521,6 +521,10 @@ impl VaultState {
     /// migration, merge-cache refresh, autosync activation, expiry
     /// sweeps. The mobile autofill lean path does not run it.
     async fn run_unlock_sync_tail(self: &Arc<Self>) {
+        // Whether the legacy heartbeat wrote a fresh record this unlock;
+        // consumed by the autosync block below (a fresh alive record
+        // only protects the owner once it reaches the remote).
+        let mut heartbeat_wrote = false;
         let guard = self.inner.read().await;
         // C5: fold plaintext device names into settings.enc + strip them from
         // the git-tracked devices.json. Runs on every unlock (idempotent;
@@ -552,8 +556,9 @@ impl VaultState {
             // Legacy contact heartbeat: refresh the signed alive record
             // when the last one is over a week old. Best-effort; the next
             // unlock retries.
-            if let Err(e) = baluard_core::legacy::heartbeat(&self.vault_path, handle) {
-                log::warn!("[state] legacy heartbeat deferred: {e}");
+            match baluard_core::legacy::heartbeat(&self.vault_path, handle) {
+                Ok(wrote) => heartbeat_wrote = wrote,
+                Err(e) => log::warn!("[state] legacy heartbeat deferred: {e}"),
             }
         }
 
@@ -593,6 +598,12 @@ impl VaultState {
                     self.autosync
                         .activate(device_id.clone(), devkey_seal, enroll_vk)
                         .await;
+                    if heartbeat_wrote {
+                        // The contact's clone measures silence on the
+                        // remote, so a fresh alive record must ride the
+                        // normal commit-and-push cycle immediately.
+                        self.autosync.nudge(device_id.clone()).await;
+                    }
                     // Pull remote changes the moment the vault opens so the UI
                     // reflects other-device edits immediately (event-driven,
                     // not waiting on the 30-min idle cadence). Spawned off the
