@@ -1231,6 +1231,14 @@
     "denyTitle": "Refuse the request?",
     "denyBody": "Your contact loses access to the vault copy. This cannot be undone.",
     "disarmTitle": "Turn off Legacy Contact?",
-    "disarmBody": "The kit stops working and the vault keeps its current key. You can set it up again later."
+    "disarmBody": "The kit stops working and the vault keeps its current key. You can set it up again later.",
+    "openKit": "Open with a kit letter",
+    "openTitle": "Open a vault with a kit",
+    "openDesc": "Pick the kit letter you were given and type its passphrase. You will see the vault read-only: nothing you do here can change it.",
+    "pickKit": "Choose the kit letter",
+    "noteTitle": "A note from the owner",
+    "openNotAKit": "That file is not a Baluard kit letter.",
+    "opening": "Opening…",
+    "openGo": "Open the vault"
   }
 }

@@ -269,6 +269,10 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     "join.introduce",
     "join.poll",
     "vault.recover_kit",
+    // Legacy Contact view: pre-unlock by design — the contact holds no
+    // password. The passphrase-gated kit is the credential; the session
+    // it mints is read-only via CONTACT_VIEW_ALLOWED below.
+    "legacy.contact_view",
     "reveals.open_guest",
     // Phrase enrollment is a pre-unlock surface: a fresh clone has no
     // device key and can never unlock, so the session-token gate is a
@@ -1335,6 +1339,13 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     // crypto; the canary check gates the vault.
     if req.action.as_str() == "vault.recover_kit" {
         return handle_recover_kit(req);
+    }
+    // Legacy Contact view: the kit passphrase is the only credential. The
+    // route opens the kit, clones the vault copy with the kit's read-only
+    // key, verifies the signed silence window, and attaches a read-only
+    // session (allowlist-gated) to the host map.
+    if req.action.as_str() == "legacy.contact_view" {
+        return handle_legacy_contact_view(req, host).await;
     }
     // Phrase enrollment (host-level, pre-unlock): a fresh clone has no
     // device key and can never unlock, so a per-vault session-token gate
@@ -3387,6 +3398,81 @@ async fn handle_enroll_with_phrase(
 /// vault, and the fresh device binds to the live Owner member row.
 /// Returns the new device id; the caller then unlocks with the master
 /// password through the normal path.
+/// What a contact's kit-view session may do: browse and read. Writes,
+/// sharing, settings, and sync never pass.
+const CONTACT_VIEW_ALLOWED: &[&str] = &[
+    "vault.info",
+    "vault.list",
+    "vault.list_full",
+    "vault.get",
+    "cipher.totp_code",
+    "vault.get_settings",
+    "vault.lock",
+    "vaults.lock_all",
+];
+
+async fn handle_legacy_contact_view(
+    mut req: GatewayRequest,
+    host: &SharedVaultHost,
+) -> GatewayResponse {
+    let v: serde_json::Value = match serde_json::from_str(&req.payload) {
+        Ok(v) => v,
+        Err(e) => {
+            req.payload.zeroize();
+            return err_response(format!("Invalid payload: {e}"));
+        }
+    };
+    let letter = v["letter"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_default();
+    let passphrase = v["passphrase"]
+        .as_str()
+        .map(|p| zeroize::Zeroizing::new(p.to_string()));
+    req.payload.zeroize();
+    let Some(passphrase) = passphrase else {
+        return err_response("Missing 'passphrase' in payload".to_string());
+    };
+    if letter.is_empty() {
+        return err_response("Missing 'letter' in payload".to_string());
+    }
+
+    let opened = match baluard_runtime::legacy::open_contact_view(&letter, &passphrase).await {
+        Ok(o) => o,
+        Err(e) => return err_response(e.to_string()),
+    };
+
+    let slug = baluard_core::vault::slug::normalize_slug(&format!("legacy-view-{}", &opened.kit_id[..8]));
+    let target = opened.handle.path.clone();
+    let vault_name = opened.vault_name.clone();
+    let owner_note = opened.owner_note.clone();
+    let silence_days = opened.silence_days;
+    let window_days = opened.window_days;
+
+    let state = std::sync::Arc::new(baluard_runtime::VaultState::with_contact_view(
+        target,
+        true,
+    ));
+    state.contact_attach(opened.handle).await;
+    host.insert(slug.clone(), state.clone()).await;
+    let token = state.get_session_token().await.unwrap_or_default();
+
+    // The token rides the response header too, so the desktop's session
+    // store files it under the slug the same way vault.unlock does.
+    ok_resp(
+        serde_json::json!({
+            "slug": slug,
+            "token": token,
+            "vault_name": vault_name,
+            "owner_note": owner_note,
+            "silence_days": silence_days,
+            "window_days": window_days,
+        })
+        .to_string(),
+        Some(&token),
+    )
+}
+
 fn handle_recover_kit(mut req: GatewayRequest) -> GatewayResponse {
     let v: serde_json::Value = match serde_json::from_str(&req.payload) {
         Ok(v) => v,
@@ -3994,6 +4080,13 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         if let Err(e) = state.verify_session_token(&req.session_token).await {
             return err_response(e);
         }
+    }
+
+    // A contact's kit view is read-only by allowlist: browsing, reading
+    // entries, and locking. Everything else — writes included — is
+    // refused before the route dispatch runs.
+    if state.is_contact_view() && !CONTACT_VIEW_ALLOWED.contains(&req.action.as_str()) {
+        return err_response("This is a read-only view of the vault.");
     }
 
     let token = state.get_session_token().await;

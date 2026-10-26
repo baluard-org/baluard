@@ -244,3 +244,167 @@ mod tests {
         assert_eq!(split_git_url("https://github.com"), None);
     }
 }
+
+/// The opened contact view: an unlocked, disposable clone of the
+/// owner's vault plus the silence-window facts the UI shows first.
+pub struct ContactViewOpened {
+    pub handle: baluard_core::vault::handle::VaultHandle,
+    pub kit_id: String,
+    pub owner_note: String,
+    pub silence_days: u64,
+    pub window_days: u64,
+    pub vault_name: String,
+}
+
+/// legacy.contact_view: open the kit, clone the vault copy with the
+/// kit's deploy key, verify the owner-signed record chain and the
+/// silence window, unwrap the layer, and return an unlocked session.
+/// Everything secret stays in this function's scope; the caller gets
+/// the opened handle and the display facts only.
+pub async fn open_contact_view(
+    letter: &str,
+    passphrase: &str,
+) -> Result<ContactViewOpened, BaluardError> {
+    let letter = letter.to_string();
+    let passphrase = passphrase.to_string();
+    tokio::task::spawn_blocking(move || {
+        let body = core_legacy::open_kit(&letter, &passphrase)?;
+        let ek: [u8; 32] = hex::decode(&body.ek)
+            .map_err(|_| VaultError::Corrupt("kit escrow key is not valid hex".into()))?
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("kit escrow key is not 32 bytes".into()))?;
+
+        // Fresh disposable clone each open: the view holds no local
+        // writes by design, so re-downloading is both simplest and the
+        // only way the contact ever sees current data.
+        let view_root = baluard_core::paths::data_dir().join("legacy-view");
+        std::fs::create_dir_all(&view_root)
+            .map_err(|e| VaultError::Metadata(format!("creating view dir: {e}")))?;
+        let target = view_root.join(&body.kit_id);
+        if target.join("meta/kdf-params.json").exists() {
+            std::fs::remove_dir_all(&target)
+                .map_err(|e| VaultError::Metadata(format!("clearing old view: {e}")))?;
+        }
+        let host = baluard_core::sync::credentials::extract_host(&body.repo_ssh_url)
+            .filter(|h| !h.is_empty())
+            .ok_or_else(|| {
+                VaultError::InvalidOperation(format!(
+                    "cannot read the host out of the kit's vault address: {}",
+                    body.repo_ssh_url
+                ))
+            })?;
+        let mut creds = baluard_core::sync::credentials::CredentialConfig::in_memory(
+            None,
+            Some("git".into()),
+            Some(body.deploy_private_key.clone()),
+            None,
+            Some(host),
+        )
+        .with_url_hint(&body.repo_ssh_url);
+        creds.port_hint = baluard_core::sync::credentials::port_of(&body.repo_ssh_url).into();
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(
+            baluard_core::sync::engine::CloneProgress::default(),
+        ));
+        baluard_core::sync::engine::SyncEngine::clone_remote_cancelable(
+            &body.repo_ssh_url,
+            &target,
+            None,
+            progress,
+            None,
+            Some(creds),
+        )?;
+
+        // The record chain must say Armed; a closed kit fails with the
+        // owner's actual decision.
+        let record = core_legacy::load_record(&target, &body.kit_id)?.ok_or_else(|| {
+            VaultError::NotFound("the vault copy has no record for this kit".to_string())
+        })?;
+        match record.state {
+            core_legacy::LegacyState::Armed => {}
+            core_legacy::LegacyState::Closed => {
+                let why = match record.reason {
+                    Some(core_legacy::CloseReason::Denied) => {
+                        "the owner refused this request"
+                    }
+                    Some(core_legacy::CloseReason::Replaced) => {
+                        "the owner handed the kit to someone else"
+                    }
+                    _ => "the owner turned this kit off",
+                };
+                return Err(VaultError::InvalidOperation(format!(
+                    "This kit no longer works: {why}."
+                ))
+                .into());
+            }
+        }
+
+        // Silence window: the contact's own clock reads the owner's
+        // signed days. Honest-scope per the plan: a modified client can
+        // rewind this; the wait guards mistakes, not determination.
+        let today = core_legacy::today_day();
+        let phase = core_legacy::derive_phase(&record, record_last_alive_day(&target, &body.kit_id), today);
+        if phase != core_legacy::LegacyPhase::Open {
+            let silence = today.saturating_sub(record.created_day);
+            let wait = record.window_days.saturating_sub(silence);
+            return Err(VaultError::InvalidOperation(format!(
+                "The waiting period is not over yet. About {wait} more day(s)."
+            ))
+            .into());
+        }
+        let silence_days = today.saturating_sub(record.created_day);
+
+        // The kit's escrow key must match the record's fingerprint, then
+        // the layer opens to the vault's Root Key.
+        let check = core_legacy::ek_check(&ek, &body.kit_id)?;
+        if check != record.ek_check {
+            return Err(VaultError::Corrupt("this kit does not match the vault copy".into()).into());
+        }
+        let layer = core_legacy::load_layer(&target, &body.kit_id)?.ok_or_else(|| {
+            VaultError::NotFound("the vault copy is missing its layer blob".to_string())
+        })?;
+        let root =
+            core_legacy::open_layer(&ek, &layer, &body.vault_id, &body.kit_id, record.epoch)?;
+
+        // Cross-vault replay guard: the clone must be the kit's vault.
+        let cloned_vault_id = baluard_core::vault::handle::VaultHandle::vault_id_for_path(&target)?;
+        if cloned_vault_id.to_string() != body.vault_id {
+            return Err(VaultError::Corrupt("this kit belongs to a different vault".into()).into());
+        }
+
+                let root_key = baluard_core::keys::hierarchy::RootKey::from_bytes(*root);
+        let handle = baluard_core::vault::handle::VaultHandle::open_with_root_key(&target, &root_key)?;
+        let vault_name = handle
+            .get_settings()
+            .ok()
+            .and_then(|s| s.display_name)
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "the vault".into());
+
+        Ok(ContactViewOpened {
+            handle,
+            kit_id: body.kit_id,
+            owner_note: letter_text(letter),
+            silence_days,
+            window_days: record.window_days,
+            vault_name,
+        })
+    })
+    .await
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("view task: {e}"))))?
+}
+
+/// The plaintext note above the armor's BEGIN marker.
+fn letter_text(letter: String) -> String {
+    match letter.find(core_legacy::ARMOR_BEGIN) {
+        Some(idx) => letter[..idx].trim_end().to_string(),
+        None => String::new(),
+    }
+}
+
+/// The stored heartbeat's day, read best-effort from the fresh clone.
+fn record_last_alive_day(target: &std::path::Path, kit_id: &str) -> Option<u64> {
+    core_legacy::load_alive(target, kit_id)
+        .ok()
+        .flatten()
+        .map(|a| a.day)
+}

@@ -1619,6 +1619,93 @@ mod tests {
         assert!(open_layer(&other, &packed, "vault-1", "kit-1", 3).is_err());
     }
 
+    /// A contact-side rehearsal: copy the vault the way a fresh clone
+    /// would look (device-local secrets are gitignored upstream), then
+    /// open it from the kit alone. Reads work; the owner's unlock
+    /// material was never needed.
+    #[tokio::test]
+    async fn contact_view_opens_the_cloned_copy_from_the_kit_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut handle = open_vault(&dir);
+        let mock = MockProvider::github();
+        let tok = ProviderToken::new("tok", "repo");
+        let outcome = arm(
+            dir.path(),
+            &handle,
+            &test_remote(),
+            &mock,
+            &tok,
+            30,
+            "four quiet words",
+            "Dear Ana, the spare key is yours if I cannot speak.",
+            "Esteban",
+        )
+        .await
+        .unwrap();
+
+        // The clone carries everything except the gitignored
+        // device-local files and git metadata.
+        let clone = tempfile::tempdir().unwrap();
+        copy_tree_skipping_device_local(dir.path(), clone.path());
+        assert!(!clone.path().join("meta/device-privkey.json").exists());
+
+        let body = open_kit(&outcome.kit_armor, "four quiet words").unwrap();
+        let ek: [u8; 32] = hex::decode(&body.ek)
+            .unwrap()
+            .try_into()
+            .unwrap();
+
+        let record = load_record(clone.path(), &body.kit_id).unwrap().unwrap();
+        assert_eq!(record.state, LegacyState::Armed);
+
+        // Fresh heartbeat: the phase is still Quiet, with the window
+        // fully ahead.
+        let alive = load_alive(clone.path(), &body.kit_id).unwrap().unwrap();
+        let phase = derive_phase(&record, Some(alive.day), alive.day);
+        assert_eq!(phase, LegacyPhase::Quiet);
+
+        // The layer opens to the vault's Root Key, and that key is the
+        // clone's key (canary-verified inside).
+        let layer = load_layer(clone.path(), &body.kit_id).unwrap().unwrap();
+        let root = open_layer(&ek, &layer, &body.vault_id, &body.kit_id, record.epoch).unwrap();
+        let root_key = crate::keys::hierarchy::RootKey::from_bytes(*root);
+        let mut view =
+            crate::vault::handle::VaultHandle::open_with_root_key(clone.path(), &root_key)
+                .unwrap();
+        assert!(view.is_unlocked());
+        let list = view.list_cipher_meta().unwrap();
+        assert!(list.is_empty());
+        let _ = &mut view;
+    }
+
+    fn copy_tree_skipping_device_local(src: &Path, dst: &Path) {
+        std::fs::create_dir_all(dst).unwrap();
+        for entry in std::fs::read_dir(src).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let to = dst.join(&name);
+            if entry.file_type().unwrap().is_dir() {
+                if name == ".git" {
+                    continue;
+                }
+                copy_tree_skipping_device_local(&entry.path(), &to);
+            } else if !DEVICE_LOCAL.contains(&name.as_str()) {
+                std::fs::copy(entry.path(), to).unwrap();
+            }
+        }
+    }
+
+    /// Files a fresh clone never carries: the gitignored device-local
+    /// set (meta/ prefix applies inside meta/).
+    const DEVICE_LOCAL: &[&str] = &[
+        "device-privkey.json",
+        "device-id",
+        "member-unlock.json",
+        "git-ssh-key",
+        "kdf-attempts.json",
+        "recovery-signer.key",
+        "git-credentials.json",
+    ];
+
     #[test]
     fn phase_counts_silence_from_the_window() {
         let mut record = test_record();

@@ -1231,6 +1231,14 @@
     "denyTitle": "¿Rechazar la solicitud?",
     "denyBody": "Tu contacto pierde el acceso a la copia de la caja fuerte. Esto no se puede deshacer.",
     "disarmTitle": "¿Desactivar el contacto de confianza?",
-    "disarmBody": "El kit deja de funcionar y la caja fuerte conserva su clave actual. Puedes configurarlo de nuevo más tarde."
+    "disarmBody": "El kit deja de funcionar y la caja fuerte conserva su clave actual. Puedes configurarlo de nuevo más tarde.",
+    "openKit": "Abrir con una carta kit",
+    "openTitle": "Abrir una caja fuerte con un kit",
+    "openDesc": "Elige la carta kit que te entregaron y escribe su frase. Verás la caja fuerte en solo lectura: nada de lo que hagas aquí puede cambiarla.",
+    "pickKit": "Elegir la carta kit",
+    "noteTitle": "Una nota de quien la envió",
+    "openNotAKit": "Ese archivo no es una carta kit de Baluard.",
+    "opening": "Abriendo…",
+    "openGo": "Abrir la caja fuerte"
   }
 }

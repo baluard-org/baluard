@@ -12,6 +12,7 @@ import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
 import CopyButton from "./CopyButton.jsx";
 import OpenSharedModal from "./OpenSharedModal.jsx";
+import LegacyContactOpen from "./LegacyContactOpen.jsx";
 
 export default function LoginScreen() {
   const auth = useAuth();
@@ -73,6 +74,7 @@ export default function LoginScreen() {
   // another vault if the user switches the active vault mid-wait.
   const [joinSlug, setJoinSlug] = createSignal("");
   const [showOpenShared, setShowOpenShared] = createSignal(false);
+  const [showLegacyOpen, setShowLegacyOpen] = createSignal(false);
   let joinTimer;
   let pollInFlight = false;
 
@@ -463,9 +465,19 @@ export default function LoginScreen() {
           >
             {t("share.guestLink")}
           </button>
+          <button
+            onClick={() => setShowLegacyOpen(true)}
+            class="login-screen__create-btn text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+            data-testid="login-legacy-open"
+          >
+            {t("legacy.openKit")}
+          </button>
         </div>
         <Show when={showOpenShared()}>
           <OpenSharedModal guest onClose={() => setShowOpenShared(false)} />
+        </Show>
+        <Show when={showLegacyOpen()}>
+          <LegacyContactOpen onClose={() => setShowLegacyOpen(false)} />
         </Show>
       </div>
     </div>

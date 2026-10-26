@@ -5393,6 +5393,52 @@ impl VaultHandle {
         self.unlock_tail(kek, None)
     }
 
+    /// Legacy Contact view (docs/plan-legacy-contact.md): unlock a
+    /// cloned vault directly with the Root Key recovered from the kit's
+    /// layer blob. The contact holds no password and no device keys —
+    /// the passphrase already opened the kit — so nothing here touches
+    /// keywraps or member unlocks. The canary proves the layer's Root
+    /// Key is THIS vault's key before any derived key exists.
+    pub fn open_with_root_key(path: &Path, root: &crate::keys::hierarchy::RootKey) -> Result<Self, BaluardError> {
+        let mut handle = VaultHandle::open(path)?;
+        let canary_data = std::fs::read(path.join("meta/rk-canary.enc")).map_err(|e| {
+            match e.kind() {
+                std::io::ErrorKind::NotFound => VaultError::Corrupt(
+                    "this vault copy has no root canary; the kit cannot verify it".into(),
+                ),
+                _ => VaultError::Metadata(format!("reading root canary: {e}")),
+            }
+        })?;
+        crate::vault::canary::verify_rk_canary(root, &canary_data)?;
+
+        let current_epoch = handle.determine_current_epoch();
+        let flipped = crate::vault::space_meta::shape_flipped(&handle.path);
+        let smk = if flipped {
+            Some(crate::vault::space_meta::open_store(&handle.path, root)?)
+        } else {
+            None
+        };
+        let (session_key, sync_key, devkey_seal) =
+            crate::crypto::hkdf_derive::derive_contact_view_keys(root.as_bytes())?;
+
+        handle.state = VaultState::Unlocked(UnlockedState {
+            root_key: Some(root.clone()),
+            space_group_key: Some(crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                root,
+                current_epoch,
+            )),
+            smk,
+            session_key,
+            sync_key,
+            devkey_seal,
+            item_keys: HashMap::new(),
+            current_epoch,
+            identity: None,
+            identity_wrap_key: None,
+        });
+        Ok(handle)
+    }
+
     /// S1a-2: member unlock tail — the KEK-canary check runs against the
     /// member's own canary (device-local member-unlock.json) instead of
     /// the founding device's vault-level canary.
