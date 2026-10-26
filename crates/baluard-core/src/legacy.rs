@@ -1051,6 +1051,10 @@ pub async fn arm(
         repo: remote.repo.clone(),
         origin_url: remote.origin_url.clone(),
     };
+    // Rollback keeps whatever store existed before this arm (replace
+    // re-arms after a close; deleting it would erase the previous
+    // kit's letter and LK seed for no reason).
+    let prior_store = std::fs::read(vault_path.join("meta/legacy.enc")).ok();
     save_store(vault_path, &root, &store)?;
 
     let title = format!("Baluard legacy contact ({})", &kit_id[..8]);
@@ -1078,7 +1082,22 @@ pub async fn arm(
                     return Err(VaultError::Metadata(format!("legacy rollback: {e}")).into())
                 }
             }
-            let _ = std::fs::remove_file(vault_path.join("meta/legacy.enc"));
+            match &prior_store {
+                Some(bytes) => {
+                    if let Err(e) = crate::secret_file::write_secret_file(
+                        &vault_path.join("meta/legacy.enc"),
+                        bytes,
+                    ) {
+                        return Err(VaultError::Metadata(format!(
+                            "legacy rollback: {e}"
+                        ))
+                        .into());
+                    }
+                }
+                None => {
+                    let _ = std::fs::remove_file(vault_path.join("meta/legacy.enc"));
+                }
+            }
             return Err(VaultError::Metadata(format!(
                 "arming failed: the remote refused the read-only key: {e}"
             ))

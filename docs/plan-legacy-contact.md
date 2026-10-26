@@ -2,6 +2,23 @@
 
 Status: SHIPPED for 1.0 (2026-10-26). This document is the settled design record; it supersedes the deleted `emergency.rs` time-gate design and the "spare key sheet only" fallback. Build lineage: (1) core module + emergency.rs deletion 4ef4011, (2) deploy keys e44e954, (3) owner ops 7da6e6ed, (4) daemon routes + CLI 3155f34, (5) owner UI 74d2979, (6) contact read-only view 88d3725, (7) letter template + manual 66328ac, plus the owner-dies E2E e9e29d2. Deferred to post-1.0 per the plan: mobile owner setup and contact flow, the last-used banner (GitLab reports the date; GitHub and Codeberg do not), and the forge-issue contact-request channel (cut: the contact needs no forge account). The two honest degradations above ship as documented.
 
+## Peer review of the shipped build (2026-10-26)
+
+A full-feature adversarial pass over 4ef4011..58eb5b4 returned ten findings, all confirmed against the code and all amended the same day:
+
+- 1 (S1) The contact path trusted the cloned record chain without verifying signatures; `verify_record`/`verify_alive` existed but were test-only. `open_contact_view` now verifies both against the LK public key sealed in the kit, and the silence math reads the verified heartbeat day instead of the arm day (also fixing the countdown showing "0 more days" while Quiet).
+- 2 (S1) `resend_json` swapped the resend tuple, exporting the kit id as the letter. Fixed; regression test pins the mapping.
+- 3 (S1) Heartbeats were written locally but never pushed, so a read-only owner stayed "silent" on the remote forever. A fresh heartbeat now nudges autosync right after activation.
+- 4 (S2) `legacy.arm`/`legacy.close` joined `COVER_MUTATION_ACTIONS` so kit artifacts commit and push immediately.
+- 5 (S2) Self-hosted instances never matched the connected provider (bare base URLs cannot parse as remote URLs); a host-only extractor replaces the parser call.
+- 6 (S2) The contact route now flips the daemon active pointer to the view, matching every unlock path (desktop requests already carried the slug, so this is consistency hardening).
+- 7 (S2) `vault.export` and `vault.attach_download` joined the contact allowlist — the plan promises exports and attachment reading, both read-only.
+- 8 covered in 1 (countdown math).
+- 9 (S2) `arm`'s forge-failure rollback no longer deletes a pre-existing `meta/legacy.enc`; it restores the prior store bytes (the replace flow re-arms after a close).
+- 10 (S4) The desktop armed card gained a Replace action that opens the re-arm form (arm auto-closes the current kit, one operation).
+
+Clean: HKDF view-key domain separation, `open_with_root_key` canary verification, `rewrap_after_rotation` ordering, kit armor AAD binding.
+
 ## Problem
 
 A vault owner dies or is incapacitated. Their partner, child, or sibling is locked out of everything: passwords, account seeds, notes, recovery codes for other services. The existing recovery paths (master password, recovery phrase) require the owner to pre-arrange a secret hand-off, and the phrase alone grants nothing because the vault's git remote is private. The real-world nominations are "my sister should be able to get in if something happens to me," where the sister may live on another continent, may have no technical skill, and may not even know she was nominated.
