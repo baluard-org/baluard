@@ -25,6 +25,23 @@ use std::path::Path;
 pub const RECORD_TAG: &[u8] = b"baluard/legacy/v1";
 pub const ALIVE_TAG: &[u8] = b"baluard/legacy-alive/v1";
 pub const LAYER_AAD_PREFIX: &[u8] = b"baluard/legacy-layer/v1";
+/// Instructions carried at the top of every kit letter, above the
+/// owner's own note. Sealed into the kit's AAD, so the wording the
+/// contact reads is the wording this build wrote.
+pub const KIT_LETTER_TEMPLATE: &str = "\
+If you are reading this, someone you trust uses Baluard to keep their passwords safe and has chosen you as the person who can open them if they no longer can.\n\n\
+What is in this file: a sealed key. It does nothing on its own.\n\n\
+How to open it:\n\
+1. Install Baluard on a computer (baluard.org).\n\
+2. On the lock screen, choose 'Open with a kit letter', pick this file,\n\
+   and type the passphrase you were told out loud or in another message.\n\
+3. Baluard fetches a private copy of the vault and shows it read-only.\n   You can look at everything, copy anything, but change nothing.\n\n\
+The passphrase is NOT in this file, and this file alone is useless —\n\
+keep both, but never in the same place.\n\n\
+The vault's owner (or their device) checks in regularly. If they stop \n\
+checking in, the waiting period below begins; opening earlier is refused.\n\n\
+";
+
 pub const ARMOR_BEGIN: &str = "-----BEGIN BALUARD LEGACY KEY-----";
 pub const ARMOR_END: &str = "-----END BALUARD LEGACY KEY-----";
 pub const LAYER_FORMAT: u8 = 1;
@@ -1015,7 +1032,8 @@ pub async fn arm(
         created_at: now_secs(),
         window_days,
     };
-    let armor = seal_kit(letter, &body, passphrase)?;
+    let full_letter = format!("{KIT_LETTER_TEMPLATE}\n----\n\n{letter}");
+    let armor = seal_kit(&full_letter, &body, passphrase)?;
 
     save_layer(vault_path, &kit_id, &packed)?;
     save_record(vault_path, &record)?;
@@ -1024,7 +1042,7 @@ pub async fn arm(
         kit_id: kit_id.clone(),
         lk_seed: hex::encode(lk_seed),
         ek: hex::encode(ek),
-        kit_letter: letter.to_string(),
+        kit_letter: full_letter,
         kit_armor: armor.clone(),
         deploy_key_fingerprint: dk.fingerprint.clone(),
         forge_key_id: None,

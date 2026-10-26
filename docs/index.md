@@ -17,6 +17,7 @@
 | [2FA Analysis](2fa-analysis.md) | TOTP implementation, RFC 6238/4226 compliance, second-factor roadmap |
 | [Forward Secrecy Model](forward-secrecy-model.md) | Tradeoff documentation for post-revocation ciphertext (audit finding L8) |
 | [Post-Quantum Readiness](post-quantum-readiness.md) | Cryptographic assessment and transition roadmap for quantum safety |
+| [Legacy Contact](legacy-contact.md) | The trusted-contact recovery feature: arming, silence windows, the contact's read-only view, and its honest limits (shipped 2026-10-26) |
 
 ## Development
 
