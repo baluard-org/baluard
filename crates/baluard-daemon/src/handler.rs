@@ -7357,6 +7357,49 @@ mod tests {
     /// "vault is locked" token error — the tripwire precedes the token gate.
     /// Also pins default-deny on the tokenless sentinel: a gated action with
     /// no token is rejected, never silently executed.
+    /// The contact view's write gate: a valid session token on a
+    /// contact-view state still cannot write; reads pass. This is the
+    /// "confirm writes are refused" leg of the owner-dies E2E.
+    #[tokio::test]
+    async fn contact_view_refuses_writes_and_allows_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_dir = dir.path().join("v");
+        let (handle, _secrets) =
+            baluard_core::vault::creation::VaultCreator::new(&vault_dir, "test password 123", "t")
+                .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
+                .initialize_git(false)
+                .execute()
+                .unwrap();
+        let state = std::sync::Arc::new(VaultState::with_contact_view(
+            handle.path.clone(),
+            true,
+        ));
+        state.contact_attach(handle).await;
+        let token = state.get_session_token().await.unwrap();
+
+        // Write with a valid token: refused before the route dispatch.
+        let req = GatewayRequest {
+            action: "vault.add".to_string(),
+            payload: "{}".to_string(),
+            session_token: token,
+            ..Default::default()
+        };
+        let resp = route_request(req, &state).await;
+        assert!(
+            !resp.success && resp.error_message.contains("read-only"),
+            "write must be refused as read-only, got: {:?}",
+            resp.error_message
+        );
+
+        // Read: allowed.
+        let req = GatewayRequest {
+            action: "vault.info".to_string(),
+            ..Default::default()
+        };
+        let resp = route_request(req, &state).await;
+        assert!(resp.success, "vault.info must pass on a contact view");
+    }
+
     #[tokio::test]
     async fn host_only_action_trips_before_token_gate() {
         let sentinel = std::sync::Arc::new(VaultState::new(std::path::PathBuf::new()));
