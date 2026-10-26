@@ -1637,6 +1637,93 @@ mod tests {
         assert!(open_layer(&other, &packed, "vault-1", "kit-1", 3).is_err());
     }
 
+    /// The owner-dies rehearsal from the plan's test bar: two devices
+    /// check in, the clock runs past the last check-in plus the window,
+    /// and a contact holding only the kit letter opens the copy and
+    /// reads the owner's entry. The write gate is the daemon's
+    /// CONTACT_VIEW_ALLOWED allowlist; this layer proves recovery.
+    #[tokio::test]
+    async fn owner_dies_contact_recovers_after_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut handle = open_vault(&dir);
+
+        // Something to recover: one entry only the Root Key can open.
+        let input = crate::types::CipherInput {
+            name: "Safe deposit".into(),
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("esteban".into()),
+                password: Some("opensesame".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cipher_id = handle.add_cipher(&input).unwrap();
+
+        let mock = MockProvider::github();
+        let tok = ProviderToken::new("tok", "repo");
+        let outcome = arm(
+            dir.path(),
+            &handle,
+            &test_remote(),
+            &mock,
+            &tok,
+            30,
+            "four quiet words",
+            "Dear Ana.",
+            "Esteban",
+        )
+        .await
+        .unwrap();
+
+        // Device 2 checked in three days after arming (its unlock wrote
+        // a fresh heartbeat), then both devices went silent forever.
+        let record = load_record(dir.path(), &outcome.kit_id).unwrap().unwrap();
+        let arm_day = record.created_day;
+        let last_alive_day = arm_day + 3;
+
+        // The contact's world: a fresh copy with no device-local files
+        // and no forge account of their own.
+        let clone = tempfile::tempdir().unwrap();
+        copy_tree_skipping_device_local(dir.path(), clone.path());
+
+        let body = open_kit(&outcome.kit_armor, "four quiet words").unwrap();
+        let record = load_record(clone.path(), &body.kit_id).unwrap().unwrap();
+        assert_eq!(record.state, LegacyState::Armed);
+
+        // Mocked clock: window elapsed since the LAST check-in.
+        let now = last_alive_day + record.window_days + 1;
+        assert_eq!(
+            derive_phase(&record, Some(last_alive_day), now),
+            LegacyPhase::Open
+        );
+
+        let ek: [u8; 32] = hex::decode(&body.ek).unwrap().try_into().unwrap();
+        let layer = load_layer(clone.path(), &body.kit_id).unwrap().unwrap();
+        let root = open_layer(&ek, &layer, &body.vault_id, &body.kit_id, record.epoch).unwrap();
+        let view = crate::vault::handle::VaultHandle::open_with_root_key(
+            clone.path(),
+            &crate::keys::hierarchy::RootKey::from_bytes(*root),
+        )
+        .unwrap();
+
+        // Read the item.
+        let meta = view.list_cipher_meta().unwrap();
+        assert_eq!(meta.len(), 1);
+        assert_eq!(meta[0].name, "Safe deposit");
+        match view.get_cipher(cipher_id).unwrap() {
+            crate::vault::handle::CipherRead::Decrypted(c) => {
+                if let crate::types::CipherKind::Login(l) = &c.kind {
+                    assert_eq!(l.password.as_deref(), Some("opensesame"));
+                } else {
+                    panic!("expected a login cipher");
+                }
+            }
+            crate::vault::handle::CipherRead::Locked(_) => {
+                panic!("the recovered view must read decrypted entries")
+            }
+        }
+    }
+
     /// A contact-side rehearsal: copy the vault the way a fresh clone
     /// would look (device-local secrets are gitignored upstream), then
     /// open it from the kit alone. Reads work; the owner's unlock
