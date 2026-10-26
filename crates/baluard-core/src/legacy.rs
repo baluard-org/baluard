@@ -946,6 +946,36 @@ pub struct ArmOutcome {
 /// push the read-only deploy key to the forge. A failed forge push rolls
 /// the local artifacts back so nothing is left half-armed.
 #[allow(clippy::too_many_arguments)]
+/// Undo a failed arm: remove the kit artifacts and the terminal record,
+/// then restore the store that existed before this attempt (replace
+/// re-arms after a close; deleting it would erase the previous kit's
+/// letter and LK seed). `prior` None removes a fresh store.
+fn rollback_arm(
+    vault_path: &Path,
+    kit_id: &str,
+    prior: Option<&[u8]>,
+) -> Result<(), BaluardError> {
+    remove_artifacts(vault_path, kit_id)?;
+    let record_path = vault_path
+        .join("meta/legacy")
+        .join(format!("{kit_id}.json"));
+    match std::fs::remove_file(&record_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(VaultError::Metadata(format!("legacy rollback: {e}")).into()),
+    }
+    match prior {
+        Some(bytes) => {
+            crate::secret_file::write_secret_file(&vault_path.join("meta/legacy.enc"), bytes)
+                .map_err(|e| VaultError::Metadata(format!("legacy rollback: {e}")))?;
+        }
+        None => {
+            let _ = std::fs::remove_file(vault_path.join("meta/legacy.enc"));
+        }
+    }
+    Ok(())
+}
+
 pub async fn arm(
     vault_path: &Path,
     handle: &crate::vault::handle::VaultHandle,
@@ -1065,39 +1095,22 @@ pub async fn arm(
         Ok(forge_key_id) => {
             let mut store = store;
             store.forge_key_id = Some(forge_key_id);
-            save_store(vault_path, &root, &store)?;
+            if let Err(e) = save_store(vault_path, &root, &store) {
+                // The key IS on the forge here; take it back down and
+                // roll the local kit back, or a store without its
+                // forge_key_id would survive with a live key.
+                let _ = provider
+                    .remove_deploy_key(token, &remote.owner, &remote.repo, forge_key_id)
+                    .await;
+                rollback_arm(vault_path, &kit_id, prior_store.as_deref())?;
+                return Err(VaultError::Metadata(format!(
+                    "arming failed while storing the kit: {e}"
+                ))
+                .into());
+            }
         }
         Err(e) => {
-            // Roll the local kit back: a kit whose key never reached the
-            // forge would arm a contact into a locked-out clone attempt.
-            // Unlike a closed kit, nothing may survive — the record too.
-            remove_artifacts(vault_path, &kit_id)?;
-            let record_path = vault_path
-                .join("meta/legacy")
-                .join(format!("{kit_id}.json"));
-            match std::fs::remove_file(&record_path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    return Err(VaultError::Metadata(format!("legacy rollback: {e}")).into())
-                }
-            }
-            match &prior_store {
-                Some(bytes) => {
-                    if let Err(e) = crate::secret_file::write_secret_file(
-                        &vault_path.join("meta/legacy.enc"),
-                        bytes,
-                    ) {
-                        return Err(VaultError::Metadata(format!(
-                            "legacy rollback: {e}"
-                        ))
-                        .into());
-                    }
-                }
-                None => {
-                    let _ = std::fs::remove_file(vault_path.join("meta/legacy.enc"));
-                }
-            }
+            rollback_arm(vault_path, &kit_id, prior_store.as_deref())?;
             return Err(VaultError::Metadata(format!(
                 "arming failed: the remote refused the read-only key: {e}"
             ))

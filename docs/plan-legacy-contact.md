@@ -19,6 +19,14 @@ A full-feature adversarial pass over 4ef4011..58eb5b4 returned ten findings, all
 
 Clean: HKDF view-key domain separation, `open_with_root_key` canary verification, `rewrap_after_rotation` ordering, kit armor AAD binding.
 
+The fix-diff re-review (round two, same day) returned no S1s and three S2s, all confirmed and amended:
+
+- The heartbeat nudge fired before the unlock pull whose force-checkout reverts uncommitted files — the fresh alive record could be undone by the very sync meant to carry it. The nudge now runs in the spawned task right after `pull_only`, matching the expiry-sweep ordering.
+- `url_host` strips the port while `split_git_url` keeps it, so self-hosted instances on custom ports never matched and the scp-form SSH URL would have embedded the port. Hosts now normalize port-less for the provider match, and custom ports build an `ssh://` URL.
+- The desktop replace form never closed after a successful replace and posted stale window/contact/letter signals. It now closes on success and carries its own inputs for all three.
+
+Smaller items also amended: the dead `record_last_alive_day` helper deleted; a failed second store save (deploy key already on the forge) now rolls back through the same restore path and removes the key; the contact route refuses `out_path` on export so a non-webview token holder gets no file-write primitive; and signature verification now precedes the Closed-state interpretation so a forged record cannot choose the refusal message. Accepted as-is: the Closed refusal before verification is defensible either way but reordering was free; `vault.export`'s in-process path is the only export a contact token can reach.
+
 ## Problem
 
 A vault owner dies or is incapacitated. Their partner, child, or sibling is locked out of everything: passwords, account seeds, notes, recovery codes for other services. The existing recovery paths (master password, recovery phrase) require the owner to pre-arrange a secret hand-off, and the phrase alone grants nothing because the vault's git remote is private. The real-world nominations are "my sister should be able to get in if something happens to me," where the sister may live on another continent, may have no technical skill, and may not even know she was nominated.

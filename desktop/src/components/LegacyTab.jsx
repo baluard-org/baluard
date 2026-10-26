@@ -62,6 +62,7 @@ export default function LegacyTab() {
       );
       setPassphrase("");
       setSavedIt(false);
+      setReplacing(false);
       setKit(res || {});
       await load();
     } catch (e) {
@@ -247,6 +248,39 @@ export default function LegacyTab() {
         <Show when={replacing()}>
           <div class="rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]/40 p-4 space-y-3" data-testid="legacy-replace-form">
             <p class="text-xs text-[var(--color-text)]">{t("legacy.replaceNote")}</p>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="space-y-1.5">
+                <label class="text-xs font-bold text-[var(--color-text)]">{t("legacy.windowLabel")}</label>
+                <select
+                  class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)]"
+                  value={windowDays()}
+                  onChange={(e) => setWindowDays(Number(e.currentTarget.value))}
+                >
+                  {[14, 30, 90, 365].map((d) => (
+                    <option value={d}>{t("legacy.windowDays", { days: d })}</option>
+                  ))}
+                </select>
+              </div>
+              <div class="space-y-1.5">
+                <label class="text-xs font-bold text-[var(--color-text)]">{t("legacy.contact")}</label>
+                <Input
+                  class="w-full"
+                  value={contactName()}
+                  onInput={(e) => setContactName(e.currentTarget.value)}
+                  placeholder={t("legacy.contact")}
+                />
+              </div>
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-[var(--color-text)]">{t("legacy.letter")}</label>
+              <textarea
+                class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)]"
+                rows="3"
+                value={letter()}
+                onInput={(e) => setLetter(e.currentTarget.value)}
+                placeholder={t("legacy.letter")}
+              />
+            </div>
             <div class="flex gap-2">
               <Show when={passphrase()} fallback={
                 <Button onClick={newPassphrase} data-testid="legacy-replace-passphrase-gen">
