@@ -1231,6 +1231,14 @@
     "denyTitle": "Recusar o pedido?",
     "denyBody": "Seu contato perde o acesso à cópia do cofre. Isso não pode ser desfeito.",
     "disarmTitle": "Desligar o contato de confiança?",
-    "disarmBody": "O kit para de funcionar e o cofre mantém a chave atual. Você pode configurar de novo mais tarde."
+    "disarmBody": "O kit para de funcionar e o cofre mantém a chave atual. Você pode configurar de novo mais tarde.",
+    "openKit": "Abrir com uma carta kit",
+    "openTitle": "Abrir um cofre com um kit",
+    "openDesc": "Escolha a carta kit que você recebeu e digite a frase. Você verá o cofre somente leitura: nada do que fizer aqui pode mudá-lo.",
+    "pickKit": "Escolher a carta kit",
+    "noteTitle": "Uma nota de quem enviou",
+    "openNotAKit": "Esse arquivo não é uma carta kit do Baluard.",
+    "opening": "Abrindo…",
+    "openGo": "Abrir o cofre"
   }
 }

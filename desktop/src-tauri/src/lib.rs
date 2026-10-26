@@ -998,6 +998,33 @@ async fn backup_save_encrypted(
     .map_err(|e| format!("Backup task failed: {e}"))?
 }
 
+/// Legacy Contact: pick the kit letter and hand its text to the
+/// webview. The letter is the plaintext part of the file plus a sealed
+/// body — nothing here is secret until the passphrase opens it, so the
+/// text may cross the bridge (the D2 file gate stays: the dialog and
+/// the read both live in Rust).
+#[tauri::command]
+async fn legacy_read_letter(app: AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let picked = app
+            .dialog()
+            .file()
+            .add_filter("Baluard legacy kit", &["bldlegacy"])
+            .blocking_pick_file();
+        let path = match picked {
+            None => return Ok(None),
+            Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
+            Some(_) => return Err("Unsupported file location".to_string()),
+        };
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Could not read the kit: {e}"))?;
+        Ok(Some(text))
+    })
+    .await
+    .map_err(|e| format!("Kit task failed: {e}"))?
+}
+
 /// Encrypted-backup import: Rust-side open dialog, daemon reads the file
 /// from the path. Returns None when the user cancels the dialog; otherwise
 /// the daemon import summary JSON. Errors carry the daemon message — the
@@ -1646,6 +1673,7 @@ pub fn run() {
             update_tray_icon,
             save_recovery_phrase,
             backup_save_encrypted,
+            legacy_read_letter,
             backup_import_encrypted,
             export_save_plain,
             clipboard_mark_concealed,
