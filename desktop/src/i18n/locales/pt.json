@@ -421,7 +421,8 @@
     "hwConsentOn": "Pedir confirmação",
     "hwConsentOff": "Parar de confirmar",
     "hwConsentOnToast": "O chip confirmará cada desbloqueio.",
-    "hwConsentOffToast": "Desbloqueio silencioso restaurado."
+    "hwConsentOffToast": "Desbloqueio silencioso restaurado.",
+    "tabLegacy": "Contato de confiança"
   },
   "sync": {
     "title": "Sincronização do Cofre",
@@ -1197,5 +1198,39 @@
     "unlockRequested": "\"{name}\" quer preencher pelo navegador",
     "unlockNow": "Desbloquear",
     "dismiss": "Agora não"
+  },
+  "legacy": {
+    "title": "Contato de confiança",
+    "desc": "Entregue a alguém de confiança um kit de recuperação que só abre se você parar de abrir seu cofre.",
+    "notArmed": "O contato de confiança não está configurado neste cofre.",
+    "wasClosed": "O contato de confiança está desligado. Você pode configurar de novo.",
+    "windowLabel": "Quanto tempo deve passar em silêncio antes de o kit abrir?",
+    "windowDays": "{days} dias",
+    "windowHint": "Sugerimos pelo menos 14 dias, para que uma viagem longa ou perder conexão nunca abra o kit antes da hora.",
+    "contactLabel": "Para quem é o kit?",
+    "contactPlaceholder": "O nome da pessoa",
+    "letterLabel": "Uma nota para essa pessoa (opcional)",
+    "letterPlaceholder": "Querida Ana, se você está lendo isto…",
+    "passphraseLabel": "Frase do kit",
+    "newPassphrase": "Criar frase",
+    "passphraseHint": "O kit só abre com esta frase. Envie-a separada do kit.",
+    "savedIt": "Guardei a frase em um lugar seguro",
+    "arm": "Criar o kit",
+    "armedQuiet": "O contato de confiança está ativo. O kit abre após {days} dias de silêncio.",
+    "windowElapsed": "O tempo de silêncio terminou. Seu contato já pode pedir acesso à cópia do cofre.",
+    "silenceSoFar": "Passaram {days} dias desde a última vez que você abriu o cofre.",
+    "bannerOpen": "Seu contato de confiança já pode pedir acesso à cópia do cofre.",
+    "resend": "Ver o kit de novo",
+    "disarm": "Desligar",
+    "deny": "Recusar pedido",
+    "closedToast": "Contato de confiança atualizado.",
+    "kitTitle": "A carta do kit",
+    "kitDesc": "Guarde este arquivo e envie à sua pessoa de confiança por outro meio, junto com a frase.",
+    "kitDownload": "Baixar",
+    "kitCopy": "Copiar texto",
+    "denyTitle": "Recusar o pedido?",
+    "denyBody": "Seu contato perde o acesso à cópia do cofre. Isso não pode ser desfeito.",
+    "disarmTitle": "Desligar o contato de confiança?",
+    "disarmBody": "O kit para de funcionar e o cofre mantém a chave atual. Você pode configurar de novo mais tarde."
   }
 }

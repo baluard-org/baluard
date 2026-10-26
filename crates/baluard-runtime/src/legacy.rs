@@ -130,10 +130,32 @@ pub fn status_json(
 /// legacy.arm: mint the kit, seal the layer, push the deploy key.
 pub async fn arm_json(
     vault_path: &std::path::Path,
-    handle: &VaultHandle,
+    handle: &mut VaultHandle,
     payload: &str,
 ) -> Result<String, String> {
     require_unlocked(handle)?;
+    // Replace semantics: arming over a live kit retires it first. The
+    // old deploy key is removed and the Root Key rotates, so a kit
+    // already in the wild stops working even if the new arm fails.
+    if let Ok(Some(st)) = core_legacy::status(vault_path, handle) {
+        if matches!(
+            st.phase,
+            core_legacy::LegacyPhase::Quiet | core_legacy::LegacyPhase::Open
+        ) {
+            let remote = resolve_remote(vault_path).await.map_err(|e| e.to_string())?;
+            let forge = baluard_core::providers::provider_for(remote.provider, remote.config)
+                .map_err(|e| e.to_string())?;
+            core_legacy::close(
+                vault_path,
+                handle,
+                forge.as_ref(),
+                &remote.token,
+                core_legacy::CloseReason::Replaced,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+    }
     let p: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
     let window_days = p["window_days"].as_u64().unwrap_or(30).min(365);
     let passphrase = p["passphrase"]
