@@ -1,6 +1,6 @@
 # Plan: Legacy Contact (emergency access)
 
-Status: approved for 1.0, build in progress. This document is the settled design record; it supersedes the deleted `emergency.rs` time-gate design and the "spare key sheet only" fallback.
+Status: SHIPPED for 1.0 (2026-10-26). This document is the settled design record; it supersedes the deleted `emergency.rs` time-gate design and the "spare key sheet only" fallback. Build lineage: (1) core module + emergency.rs deletion 4ef4011, (2) deploy keys e44e954, (3) owner ops 7da6e6ed, (4) daemon routes + CLI 3155f34, (5) owner UI 74d2979, (6) contact read-only view 88d3725, (7) letter template + manual 66328ac, plus the owner-dies E2E e9e29d2. Deferred to post-1.0 per the plan: mobile owner setup and contact flow, the last-used banner (GitLab reports the date; GitHub and Codeberg do not), and the forge-issue contact-request channel (cut: the contact needs no forge account). The two honest degradations above ship as documented.
 
 ## Problem
 
