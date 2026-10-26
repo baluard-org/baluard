@@ -1236,7 +1236,7 @@
     "openTitle": "Abrir una caja fuerte con un kit",
     "openDesc": "Elige la carta kit que te entregaron y escribe su frase. Verás la caja fuerte en solo lectura: nada de lo que hagas aquí puede cambiarla.",
     "pickKit": "Elegir la carta kit",
-    "noteTitle": "Una nota de quien la envió",
+    "noteTitle": "La carta",
     "openNotAKit": "Ese archivo no es una carta kit de Baluard.",
     "opening": "Abriendo…",
     "openGo": "Abrir la caja fuerte"
