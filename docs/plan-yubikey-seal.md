@@ -1,232 +1,213 @@
-# Plan: YubiKey hardware key seal (PIV backend)
+# Plan: security key seal (FIDO2 hmac-secret backend)
 
-> Status: DRAFT round one peer-reviewed (2026-10-26): two S1s (slot capacity, delete semantics)
-> and five S2s found and folded in — the design now uses dedicated retired slots 82/83, a no-op
-> delete, a multi-backend registry slice, a 5.3 minimum firmware, and runtime-loaded PCSC.
-> Builds on `docs/plan-hardware-backed-keys.md` (the seal's parent plan). Scope: a YubiKey (PIV
-> applet) as a `HardwareKeyStore` backend. YubiKey-as-server-2FA (Bitwarden-style OTP) is out of
-> scope; see Non-goals.
+> Status: DRAFT v3 (2026-10-26), round-two peer-reviewed. v1 designed a PIV backend; the target
+> hardware turned out to be a Security Key C NFC (FIDO-only, 5.7.4, genuine per Yubico's
+> verification service), so the design retargeted at the FIDO2 hmac-secret extension. Round two
+> removed the PIN design entirely (hmac-secret works PIN-less), answered the silent-mode question
+> (no knob exists; the tap is the model), and tightened the consent contract, binding format, and
+> attestation policy. Builds on `docs/plan-hardware-backed-keys.md`.
 
-## Why this, and what we steal from Bitwarden
+## Why this, and what we steal
 
-Bitwarden uses the YubiKey as a server-validated OTP: the key protects the login to their backend,
-the vault itself stays master-password-only, and offline the YubiKey is a plastic sticker.
+Bitwarden uses the YubiKey as a server-validated OTP: the key protects the login to their
+backend, the vault stays master-password-only, and offline the key is a plastic sticker.
 KeePassXC uses the OTP slot's HMAC-SHA1 challenge-response: real offline enforcement, but it
-requires programming the OTP slot (clobbering its day job), the secret is a symmetric key the host
-already saw during personalization, and the card is a dumb answerer.
+requires programming the OTP slot (clobbering its day job), the secret is a symmetric key the
+host saw during personalization, and the card is a dumb answerer.
 
-Baluard takes the stronger half of each. From Bitwarden we take the polish: a guided,
-plain-language enroll flow, honest status copy, and a recovery story that assumes the key WILL be
-lost. From KeePassXC we take the offline property. And then we improve on both by using the PIV
-applet's on-device ECDH: the vault is sealed to a key that was generated on the YubiKey, never
-existed on the host, and cannot be exported. Possession of the physical device is
-cryptographically load-bearing, not a checkbox a server ticks. No slot clobbering, no server, no
-shared symmetric secret ever touching the host.
+Baluard takes KeePassXC's offline answerer model and modernizes it: the FIDO2 `hmac-secret`
+extension gives the same challenge-response shape with the secret generated ON the token, never
+exportable, PIN-less, on a standard applet, with no slot programming and no server. From
+Bitwarden we take the polish: guided plain-language enroll, honest status copy, a recovery story
+that assumes the key WILL be lost. The feature family covers cheap FIDO2 keys (this design) and
+full PIV-capable YubiKey 5 series (future sibling backend behind the same trait).
 
 Positioning line for the docs page: "Your vault can require the key in your pocket."
 
+## The device, verified — and the market that made it
+
+The reference device is Esteban's Security Key C NFC: FIDO U2F + FIDO2 applets only, firmware
+5.7.4, AAGUID b7d3f68e-88a6-471e-9ecf-2df26d041ede (pinned as the test fixture; AAGUID-to-model
+resolution at runtime comes from bundled metadata, never a hardcoded list). It was purchased
+gray-market (AliExpress, shipped to Chile) for $56.86 all-in, versus $90 for an authorized-channel
+YubiKey 5C NFC from Amazon with Yubico as seller — Yubico does not ship to Chile, and customs
+makes the authorized channel cost multiples. That purchase story is the norm in whole regions,
+which promotes attestation verification from nice-to-have to core: Baluard verifies the FIDO
+attestation chain at enroll so every user gets Yubico's genuine-check assurance locally, without
+trusting a marketplace listing. The key passed Yubico's own check (yubico.com/genuine,
+2026-10-26). One honest caveat, sharper than v2's wording: attestation certificates are public
+in every genuine device; copying one proves nothing. A forgery requires the BATCH private key —
+extractable only by a counterfeiter with factory-side access, and then every unit of that batch
+is forgeable. Chain verification detects the documented clone classes; it is a strong signal,
+not mathematical certainty. Yubico's own genuine check carries the same property.
+
 ## Threat model
 
-Protects: an attacker with the vault files (stolen laptop, synced-repo leak via a compromised git
-remote, pulled disk) who lacks the YubiKey; a password thief who can read `settings.enc`,
-`identity.enc`, and the device key but cannot make the card answer; silent-mode users against
-exfiltrated-seal-file attackers, per-use users additionally against on-device malware that unlocks
-while the key sits in the port (touch demanded).
+Protects: an attacker with the vault files (stolen laptop, synced-repo leak via a compromised
+git remote, pulled disk) who lacks the key; a password thief who can read every seal file but
+cannot make the token answer. The hmac secret is generated inside the token, never leaves it,
+and never existed on any host — possession is cryptographically load-bearing.
 
-Does not protect: an attacker who has BOTH the machine and the key in the port (silent mode) —
-that is what per-use touch is for; an evil-maid OS-level compromise that waits for a legitimate
-unlock and steals the running daemon's secrets; a $60 wrench.
+Does not protect: an evil-maid OS compromise that waits for a legitimate unlock; a $60 wrench.
+Every assertion demands its own physical tap, so no same-user process can silently answer —
+the residual human risk is TAP PHISHING: a malicious process triggers an assertion and the user
+taps thinking it was Baluard. The touch prompt names the vault and the action in plain language,
+and the attacker still needs the seal file plus the master password for any of it to matter.
 
-Honest extra exposures this design accepts, documented in the user manual: with the factory
-management key unchanged, a few seconds of physical access to the card lets anyone delete or
-regenerate the Baluard keys — a denial of service against every seal bound to the card, never a
-vault disclosure. A silent-mode card is a bearer factor: any process running as the same user with
-PCSC access can use it as an ECDH oracle, but that oracle is useless without the seal file and the
-master password. And the card's PIN and management key protect the PIV applet's own
-administration, not the vault.
+Factory reset (the power-cycle ritual; the timing window varies by source — never hardcode a
+number in copy) destroys all FIDO credentials on the token, including the user's passkeys for
+other services and ours. That is a denial of service against the seal, never a disclosure, and
+the app never auto-resets; recovery copy leads with the phrase path and re-enroll, and any reset
+mention warns that the key's other logins die with it.
 
-## Design: a fourth backend, plus the registry it requires
+## Design: the answerer backend
 
 The seal math is unchanged: `baluard-devkey-seal-v2-hw` combines the password-derived KEK subkey
-and a chip-contributed ECDH secret via `combine_seal_inputs`. But the platform registry is NOT
-unchanged, and the round-one review caught the plan pretending otherwise: `HW_STORE` holds a
-single `Option<Arc<dyn HardwareKeyStore>>` and `platform_store()` returns one backend per OS. To
-let a user choose between the Secure Enclave, the TPM, and a YubiKey, three things must land
-first, as slice 0:
+and a chip-contributed secret via `combine_seal_inputs`. Slice 0 carries everything every backend
+needs, and the round-two review expanded it from v1's list:
 
-1. A multi-backend registry: `hwkey` holds all installed backends keyed by a backend id.
-2. A backend id recorded in the seal file, inside the AAD next to the consent flag, so an open
-   knows which backend must answer. Pre-1.0 format change, permitted and free.
-3. `hw_status`, `hw_enable`, `hw_disable`, and `hw_set_consent` take the backend id; status
-   reports every installed backend's probe result.
+- Multi-backend `hwkey` registry keyed by backend id.
+- Backend id recorded in the seal file's AAD next to the consent flag.
+- Typed hardware error enum: no key, wrong key, touch timeout, touch cancelled, device busy,
+  driver down.
+- The handshake reshape: `EphemeralPub([u8; 65])` becomes an opaque variable-length blob with a
+  documented maximum; the seal file gains length framing for it, and reads bound-check the length
+  so a hostile file cannot drive allocation. All four backends move in one pre-1.0 change.
+- Consent contract honesty: `HwConsent::Silent` means "must never prompt", and a FIDO2 token
+  always prompts — `up=false` assertions are refused by firmware (CTAP2_ERR_UNSUPPORTED_OPTION;
+  the historical bypass was fixed as a security bug). The trait gains an interaction capability
+  (`Never | PerUse`) so each backend declares what it can do; the FIDO backend reports PerUse,
+  the seal layer forces the AAD consent flag to PerUse for it, and Silent-calling code fails
+  fast instead of silently prompting. The SE/TPM/PCP mock models Silent; an interactive mock is
+  added so tests exercise the FIDO contract.
 
-Without slice 0, installing the YubiKey store would replace the TPM or Secure Enclave store and
-existing TPM-sealed files would fail closed. With it, the user picks a backend at enroll (the
-plan's answer to open question 1: user-pick, defaulting to the platform chip, because a YubiKey
-travels and a TPM does not).
+The FIDO2 backend itself, trait call by call:
 
-### The YubiKey backend, trait call by call
+- `probe` → enumerate HID FIDO devices, issue CTAP2 getInfo, report `Available` when hmac-secret
+  is supported; reasons `no-hid`, `no-token`, `token-without-hmac-secret`, `uv-forced`,
+  `disabled`. Probes are cached and rate-limited.
+- `create_binding(vault_id, consent)` → create a NON-DISCOVERABLE credential whose
+  makeCredential carries the `hmac-secret` extension (PIN-less: no pinUvAuth, so the secret is
+  the `CredRandomWithoutUV` path). makeCredential returns no hmac output — nothing secret exists
+  at create time; the salt is chosen at seal-write time. The binding is the string
+  `fido:<vault_id>:<base64 credential id>` carrying the credential id, and the binding record
+  holds the RP id, the UV mode (always `without-uv` unless the token forces otherwise), and the
+  attestation verdict. The `binding_vault_id` parser learns the `fido:` prefix in slice 0.
+- `derive_ephemeral(binding)` → fresh random 32-byte salt, getAssertion over our credential id
+  with the hmac-secret extension, return `(secret = HMAC(sk, salt), handshake = salt)`. The
+  output is already 32 bytes.
+- `derive(binding, handshake)` → getAssertion over the STORED salt; deterministic, reproducing
+  the same secret from stored bytes. The UV mode is pinned: if the host ever asserts with a
+  different UV state than at enroll, the token derives a DIFFERENT secret — so the binding's UV
+  mode is checked before every assertion and mismatch fails closed (vault stays locked; phrase
+  recovery remains). PIN-less is the default; only a token forcing UV (`alwaysUv` or equivalent
+  in getInfo) takes a PIN path, and then the PIN is the user's own, prompted plainly and framed
+  as the key's PIN, never stored silently.
+- Interaction: getAssertion demands a physical tap. The daemon blocks in spawn_blocking with a
+  bounded wait; the desktop shows "touch your security key" naming the vault, with cancel
+  (mapped to `fido_dev_cancel`, a typed `Cancelled` outcome) and a countdown (typed
+  `TouchTimeout`). A touch timeout never charges the unlock rate-limit budget — it is not a
+  password attempt. HID is exclusive: a browser WebAuthn call mid-assertion surfaces as the
+  typed `device busy` error, never a hang. Multiple tokens: operations key on the credential id
+  and try each plugged token in turn.
 
-- `probe` → PCSC reader scan + PIV SELECT AID (`A0 00 00 03 08`). Available when a PIV-answering
-  card is present and PCSC is reachable; `Unavailable` with machine-readable reasons `no-pcsc`,
-  `no-card`, `card-without-piv`, `firmware-too-old`, `disabled`. Probes are cached and
-  rate-limited inside the backend (card state is dynamic; the seal layer's callers treat
-  `available()` as a capability check, and pre-unlock routes poll it).
-- `create_binding(vault_id, consent)` → check the card reports firmware >= 5.3; pick the slot for
-  the consent kind from the free retired-key slots (default 82 silent, 83 per-use; next free on
-  collision, detected via GET METADATA on 5.3+); refuse to overwrite any occupied slot; generate a
-  fresh P-256 key ON the card with the policy matrix below; export the public point at generation
-  time; return the binding string. The binding stores: slot, public point, a fingerprint over the
-  generation (so a later open detects a replaced or regenerated key and fails closed), the card
-  serial, and the firmware version. The serial is matched on every open; a different card in the
-  reader is a wrong-key refusal, not a mystery AEAD error.
-- `ecdh_ephemeral(binding, consent)` → generate a fresh software P-256 keypair (private side
-  zeroized on drop), validate the stored card public point, send our public point to the card's
-  slot via PIV General Authenticate (ECDH), return the card's raw X coordinate (hashed before use
-  as key material) as the `SharedSecret` and our public point as `EphemeralPub` (65-byte X9.62
-  uncompressed, the trait's existing wire shape).
-- `ecdh(binding, peer, consent)` → validate `peer`, send it to the card, return the same shape of
-  secret. Mechanism note the plan must be precise about: both calls are the card computing
-  `card_sk x peer`; the second call equals what `ecdh_ephemeral` produced because the stored peer
-  was the ephemeral public point. PIV returns the raw X coordinate with no hashing; the backend
-  hashes (SHA-256) before handing the 32 bytes to `combine_seal_inputs`. Test vectors against a
-  software P-256 reference are part of the test bar.
-- `supports_consent` → true, enforced by the card: the per-use slot's key is generated with TOUCH
-  ALWAYS, so the card refuses to answer until a finger is on the sensor. The daemon surfaces a
-  "touch your security key" state with a visible cancel and a bounded wait.
-- `delete_binding` → deliberate NO-OP, same contract as the TPM backend. A card key is shared
-  infrastructure across vaults on the device; deleting it because one vault disabled its seal
-  would brick every other vault sealed to that card. Card keys are only ever deleted by an
-  explicit "forget this security key" action that first verifies no seal on this device still
-  references the binding — and on firmware below 5.7 there is no key-delete APDU at all (overwrite
-  by regeneration is the only mechanism), which is one more reason the no-op is the honest
-  default.
+### Tap lifecycle (the honest friction table)
 
-### Slot and policy matrix
+| Operation | Taps |
+|---|---|
+| Unlock (including quick unlock) | 1 |
+| Password change / rotation (open old seal, write new) | ~2 |
+| Enroll (create credential, seal write) | 2+ |
+| Disable | 1 |
 
-PIV slots hold exactly one key each, and PIN/touch policies are fixed at generation. The
-silent and per-use consent kinds are therefore separate slots, matching the trait's
-separate-binding discipline. Default slots are the retired-key range (82, 83), never 9a/9c/9d,
-so the card's standard PIV identity surface stays untouched for any future day job.
+Quick unlock (biometric/session PIN) does NOT bypass the seal: when a hardware seal is active,
+every unlock path that would unseal the device key demands the chip, and the slice-0 design
+settle makes the enforcement point explicit so no unlock path skips it. Unlock friction for a
+sealed vault is exactly one tap; the docs page says so plainly.
 
-| Binding | Slot | PIN policy | Touch policy | Daily UX |
-|---|---|---|---|---|
-| Silent `baluard-hw:` | 82 | NEVER | NEVER | unlock exactly as today; the card must merely be present |
-| Per-use `baluard-hwc:` | 83 | NEVER | ALWAYS | every unlock waits for a tap; a password change opens the old seal and re-seals, so it costs TWO taps with staged UI copy ("touch to confirm, then touch again to save") |
+### Attestation at enroll
 
-The two-taps honesty is deliberate: TOUCH CACHED would collapse them into one within a 15-second
-window but weakens the "tap IS consent" property; v1 keeps ALWAYS and honest copy.
+makeCredential returns an attestation certificate. Baluard verifies the signature chain against
+Yubico's published attestation roots bundled with the release (updated with the app; no online
+metadata service — the no-server rule holds). Policy: invalid signature chain → hard refuse with
+honest copy; valid chain but unknown vendor (Nitrokey, SoloKeys, Titan) → allow with plain copy
+saying "not verified as Yubico-made", because a non-genuine token that answered with a fixed
+secret would reduce the seal to password-only — the pre-feature status quo, not a new harm. The
+attestation verdict is recorded in the binding record and shown at enroll.
 
-The PIN stays at its factory default and is never prompted: possession (silent) or touch
-(per-use) is the factor, and the house rule stands — the app collects exactly one typed
-credential, the master password. A "PIN + touch" hardened mode is a later, opt-in design round.
-The PIV management key is used only at enroll (generate) and explicit-forget time; it is never
-stored, and a management key the user has changed (or a PIN-protected management key) fails enroll
-with instructions to run `ykman` themselves. No management-key field in the UI: a second typed
-secret is phishing-shaped by our own rule. The factory management key stays: rotating it would
-create a second secret the user must keep, and the DoS-only exposure it leaves open is documented
-in the threat model.
+### Enroll, open, lose
 
-### Enroll, open, disable, lose
+Enroll (Settings, "Require my security key"): probe, attestation verify, create the per-vault
+credential, write the seal as v2-hw with the binding and backend id. If the token already holds
+a user-set FIDO PIN or other passkeys, nothing about them changes — PIN-less assertions never
+touch the PIN, and slice 5 verifies that explicitly. The recovery phrase path, any second
+enrolled device, and the Legacy Contact kit never consult the token — a test proving recovery
+succeeds with the token unplugged is part of the test bar. Disable requires the key (it opens
+the old seal) and downgrades to v1 without deleting anything on the token. Lost or damaged key:
+phrase recovery re-enrolls a device, then the user enrolls a new key. Hardware is an upgrade,
+never a single point of failure.
 
-Enroll (Settings, "Require my security key"): daemon probes (min firmware 5.3 enforced, recorded
-with the serial), generates the slot keys per the chosen consent mode, exports the public points
-at generation time, writes the seal as v2-hw with the YubiKey binding and backend id, and leaves
-the recovery paths untouched. Per-use is the recommended default. Note for older cards: below
-firmware 5.3 there is no metadata APDU and no reliable later policy read, so the plan gates on
-5.3+ rather than pretending regeneration detection works everywhere; on any card, a regenerated
-key still fails closed through the AEAD, just with less precise copy.
+## Facts this design relies on
 
-Open (silent): unlock derives the KEK subkey as today, asks the card for the ECDH over the stored
-peer point (serial matched first), combines, unwraps. Card absent, wrong card, PCSC down, and
-touch timeout are DISTINCT typed errors so the status copy can be honest — the round-one review
-flagged that today's seal layer maps every backend error to one "unavailable" shape, so the typed
-hardware error enum is part of slice 0.
+Security Key C NFC, firmware 5.7.4: FIDO U2F + FIDO2, hmac-secret supported, no PIV/OTP/OpenPGP
+applets. hmac-secret via getAssertion on non-discoverable credentials works on YubiKey-family
+firmware 5.2+; non-discoverable credentials are not stored on the token, so no resident-key slot
+limit applies. PIN-less hmac-secret (CredRandomWithoutUV) is spec behavior, shipped by
+systemd-cryptenroll's `--fido2-with-client-pin=no`. `up=false` assertions are refused by YubiKey
+firmware, closing silent mode permanently. Firmware 5.8 (July 2026, YubiKey 5 series) adds CTAP
+2.3 features this design does not need. The `hmac-secret-mc` makeCredential-time secret is CTAP
+2.2+ and deliberately unused — the salt-at-seal-write shape keeps creation secret-free.
 
-Open (per-use): same, plus the desktop shows "touch your security key" with cancel and countdown;
-the daemon waits on the card with a bounded timeout; refusal or timeout fails closed into the
-same status copy. Hot-plug is a first-class state: card removal and insertion refresh the status
-event live, and the unlock offer re-enables without a reload.
+## Implementation
 
-Disable: the seal downgrades to v1; `delete_binding` stays a no-op (above), so other vaults and
-the card keys are untouched. Disable requires the key present (it opens the old seal by design) —
-a lost key cannot use the Disable toggle, which is exactly why the recovery paths below matter.
+Crates: libfido2 (Yubico's own C library, systemd-proven, packaged in Fedora and Ubuntu) behind
+the existing `hw-seal` feature via sys bindings, with a vendor review gate; the pure-Rust CTAP2
+stack is the fallback if bindings quality disappoints. USB transport is HID — the pcscd /
+libpcsclite dependency from the v1 plan disappears entirely. Desktop needs the Yubico udev rules
+for non-root HID access (`uaccess` grants the local session, the same boundary as the existing
+same-UID model): `just sysdeps` gains the line and Linux packages declare it; the app prints
+per-distro install commands, never runs them. Desktop NFC readers are out (none on target
+machines); phone NFC is post-1.0 mobile work behind the same trait.
 
-Lost or damaged key: the recovery phrase path re-enrolls a device without consulting the card, as
-do any second enrolled device and the Legacy Contact kit — a test proving recovery succeeds with
-no card in any reader is part of the test bar (the round-one review correctly demanded this be
-proven, not asserted). After recovery the user re-enrolls a new key. Hardware is an upgrade,
-never a single point of failure for the vault.
-
-## YubiKey facts this plan relies on
-
-PIV ECDH (General Authenticate, P-256) is supported by ECC-capable YubiKeys (firmware 4.3+,
-YubiKey 4/5 families). This plan gates on 5.3+ for GET METADATA (public key, policy, origin) and
-stays P-256 to share the existing `EphemeralPub` shape across all four backends (5.4+ Ed25519 in
-PIV is not used). Key deletion exists only from firmware 5.7; the management key is 3DES below
-5.7 and AES from 5.7 (same usage flow). The Security Key series is FIDO-only and has no PIV
-applet — it is not supported, and the probe's `card-without-piv` reason covers it.
-
-Dependency honesty: the `yubikey` crate is community-maintained (iqlusion), not Yubico's, and is
-unaudited. Before slice 1 commits to it: a vendor review of its source for the APDUs we use
-(SELECT, General Authenticate, metadata, generate) with hand-rolled APDUs over `pcsc` as the
-fallback if coverage or quality disappoints. PCSC itself is loaded at runtime (dlopen) so a
-machine without libpcsclite gets `no-pcsc` instead of a daemon that fails to start; `just
-sysdeps` gains the pcsc-lite lines and the Linux packaging deps list them, and the install-copy
-prints per-distro commands (`pcsc-lite` + `pcsc-lite-ccid` + `pcscd.socket` on Fedora, `pcscd` on
-Ubuntu) — the app prints commands, never runs them.
-
-Multi-card and contention: the binding pins the card serial; reader order is irrelevant. Other
-processes holding the card exclusively (gpg-agent/scdaemon, browsers doing WebAuthn over CCID)
-make card ops hang or fail — the backend uses bounded timeouts, and the hardware-in-loop checklist
-includes running alongside gpg-agent.
-
-## Implementation slices (commit-sized)
-
-0. Registry and seal-format groundwork: multi-backend `hwkey` registry, backend id in the seal
-   AAD, typed hardware error enum (no card / wrong card / touch timeout / pcsc down), status and
-   enable routes take a backend argument. No YubiKey code.
-1. `hwkey/yubikey.rs`: the trait impl behind `hw-seal` + the runtime-loaded PCSC link, with a
-   compile-gated mock for tests. Unit tests for binding fingerprints, slot selection, the policy
-   matrix, and ECDH test vectors against a software P-256 reference. No hardware.
-2. Daemon plumbing: status copy per typed reason, plain-language unavailable messages with distro
-   install commands, rate-limited probe caching.
-3. Desktop flow: the Settings hardware toggle gains "security key" as a backend choice; enroll
-   wizard (probe, mode choice, touch test); per-use touch-wait state with cancel and countdown;
-   hot-plug status events; i18n keys in en/es/pt with parity tests; UI copy says "security key",
-   never the brand.
-4. Recovery/rotation audit: prove phrase recovery and Legacy kit paths never touch the card (test
-   with no card present); confirm rotation re-seals through the same seam; settle the heartbeat
-   question by verification (the seal opens once at unlock and the heartbeat runs after, so no
-   extra tap is expected — verified, not assumed).
-5. Hardware-in-loop checklist (this dev machine + the user's finger): enroll silent and per-use,
-   unlock, lock, wrong-card rejection, card pulled mid-touch-wait, second card inserted, pcscd
-   stopped, disable + re-enroll, rotation re-seal, phrase recovery with no card, gpg-agent running
-   alongside.
+Slices: (0) registry, seal-AAD backend id, typed errors including touch outcomes, handshake
+reshape with length framing, consent-interaction capability, binding format + `binding_vault_id`
+extension, quick-unlock enforcement point settled — no FIDO2 code. (1) vendor review +
+`hwkey/fido.rs` with a compile-gated mock (interactive); unit tests for binding round-trips,
+salt determinism, UV-mode mismatch fail-closed, attestation verification against pinned good and
+bad roots, and busy/timeout/cancel outcomes. (2) daemon plumbing, status copy per typed reason,
+udev/sysdeps/packaging. (3) desktop flow: enroll wizard (probe, attestation verdict, touch
+test), touch-wait with cancel and countdown naming the vault, hot-plug status events, i18n
+en/es/pt with parity tests; copy says "security key" and "touch" — never FIDO, PIN, or hmac
+outside an advanced view. (4) recovery/rotation audit: phrase and Legacy paths prove
+token-unplugged recovery, rotation re-seals through the same seam, the heartbeat never taps,
+quick-unlock enforcement holds. (5) hardware-in-loop on the reference device: enroll, unlock
+with tap, wrong-key rejection, pull-mid-touch, cancel mid-touch, disable, re-enroll, rotation
+re-seal, phrase recovery unplugged, gpg-agent/browser WebAuthn running alongside, a second token
+inserted, and — importantly — a token that already carries a user PIN and other services'
+passkeys, confirming Baluard disturbs nothing.
 
 ## Test bar
 
-Unit (no hardware): mock keystore exercises the full trait contract including fingerprint and
-serial mismatch fail-closed; slot selection never touches occupied slots; policy matrix maps
-consent kinds to the right generation parameters; ECDH vectors match a software P-256 reference;
-typed error mapping; seal round-trips identical to the SE/TPM shape; registry holds and routes
-all backends. Hardware-in-loop: the checklist above, run by hand — CI has no card, so the
-automated suite stays hermetic (`BALUARD_DISABLE_HWKEY` already covers this).
+Unit (no hardware): mock keystore exercises the full trait contract including binding-swap
+fail-closed (the credential id is wrapped by the token's master secret, so a swapped token fails
+the assertion natively — no AAGUID check needed for that); UV-mode mismatch fail-closed; salt
+determinism vectors; attestation chain verification against pinned good and bad roots; typed
+outcomes for busy, timeout, and cancel; seal round-trips identical to the SE/TPM shape;
+registry routes all backends; hostile seal files with oversized handshake lengths rejected.
+Hardware-in-loop: the slice-5 checklist, run by hand — CI has no token, so the automated suite
+stays hermetic (`BALUARD_DISABLE_HWKEY`).
 
 ## Open questions
 
-1. Backend default for a roaming user (YubiKey vs platform chip): user-pick at enroll is locked
-   in; the default highlight is a copy decision.
-2. Heartbeat under per-use: expected to need no extra tap (verify in slice 4). If verification
-   surprises us, the answer is a UX look, never silently skipping the heartbeat.
-3. Management-key rotation at enroll: rejected (round one). The factory key stays; the DoS-only
-   exposure is documented.
-4. Occupied retired slots: next free slot, refusal to overwrite, `ykman` instructions in the
-   failure copy. 9a/9c/9d are never touched.
+1. Unknown-vendor attestation: allow-with-plain-copy is the round-two recommendation and the
+   plan's default; a strict Yubico-only mode could ship later as a setting.
+2. UV-forced tokens (rare): prompt the user's own PIN plainly, never store it. Acceptable?
+3. When a 5-series PIV key owner appears: the v1 PIV design gets dusted off as a sibling
+   backend; the registry already carries the shape.
 
 ## Non-goals
 
-Server-OTP 2FA (Bitwarden's model — we have no server). OpenPGP and FIDO2/CTAP applets. PIN-based
-card modes (later opt-in design round). Mobile (NFC could come later; the daemon owns hardware ops
-and mobile has no daemon). The Security Key series (no PIV). Claiming YubiKey protects against
-OS-level compromise; the docs page says exactly what it does and does not.
+Server OTP 2FA (we have no server). The OTP, OpenPGP, and PIV applets on this device class.
+Silent no-tap unlock (physically refused by the firmware; settled). Mobile NFC (post-1.0).
+Claiming the key protects against OS-level compromise; the manual says exactly what it does and
+does not.
