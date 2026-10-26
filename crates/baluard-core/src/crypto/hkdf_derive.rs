@@ -41,6 +41,28 @@ pub fn derive_session_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
 ///
 /// Sync Key allows R/W encrypted blobs but CANNOT decrypt ciphers or access Root Key.
 /// Retained through lock for desktop system tray background sync.
+/// Derive the Legacy Contact view keys from the Root Key directly.
+///
+/// The contact never holds a KEK (no password, by design: the kit
+/// passphrase is the only secret collected), so the view session keys
+/// derive from the Root Key with view-specific labels. They share no
+/// derivation path with the KEK subkeys a normal unlock produces.
+pub fn derive_contact_view_keys(
+    root: &[u8; 64],
+) -> Result<([u8; 32], [u8; 32], [u8; 32]), CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root);
+    let expand = |info: &[u8]| -> Result<[u8; 32], CryptoError> {
+        let mut key = [0u8; 32];
+        hkdf.expand(info, &mut key)
+            .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+        Ok(key)
+    };
+    let session = expand(b"baluard-legacy-view-session-v1")?;
+    let sync = expand(b"baluard-legacy-view-sync-v1")?;
+    let devkey_seal = expand(b"baluard-legacy-view-devkey-v1")?;
+    Ok((session, sync, devkey_seal))
+}
+
 pub fn derive_sync_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
     derive_key(kek, SYNC_INFO)
 }

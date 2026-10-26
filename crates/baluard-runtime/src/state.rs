@@ -89,6 +89,9 @@ pub struct VaultState {
     /// Whether a post-mutation cover commit is already pending.
     /// Prevents spawning multiple cover tasks from rapid sequential edits.
     cover_pending: std::sync::atomic::AtomicBool,
+    /// Legacy Contact view session: unlocked from a kit, read-only by
+    /// daemon allowlist. Never true for owner sessions.
+    contact_view: std::sync::atomic::AtomicBool,
     /// Session counter incremented on every lock. Orphaned cover tasks
     /// check this and bail if the session has changed.
     cover_session: AtomicU64,
@@ -109,6 +112,12 @@ pub struct VaultState {
 impl VaultState {
     /// Create a new empty state pointing at a vault directory.
     pub fn new(vault_path: PathBuf) -> Self {
+        Self::with_contact_view(vault_path, false)
+    }
+
+    /// Legacy Contact view constructor: the session is read-only by
+    /// daemon allowlist from birth.
+    pub fn with_contact_view(vault_path: PathBuf, contact_view: bool) -> Self {
         let autosync = crate::autosync::AutoSyncHandle::new(&vault_path);
         Self {
             vault_path,
@@ -120,6 +129,7 @@ impl VaultState {
             last_activity: AtomicU64::new(0),
             cover_timer: RwLock::new(None),
             cover_pending: std::sync::atomic::AtomicBool::new(false),
+            contact_view: std::sync::atomic::AtomicBool::new(contact_view),
             cover_session: AtomicU64::new(0),
             ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache::new(),
             pin: tokio::sync::Mutex::new(None),
@@ -5142,6 +5152,23 @@ impl VaultState {
     }
 
     // ── Legacy Contact (owner side; core protocol in core::legacy) ──
+
+    /// True while this state is a contact's read-only kit view.
+    pub fn is_contact_view(&self) -> bool {
+        self.contact_view.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Attach an already-unlocked contact view handle and mint its
+    /// session token. The daemon route owns the allowlist that keeps
+    /// the session read-only.
+    pub async fn contact_attach(
+        &self,
+        handle: baluard_core::vault::handle::VaultHandle,
+    ) {
+        let _ = self.finish_unlock_session(handle).await;
+        self.mint_session_token().await;
+    }
+
 
     pub async fn legacy_status(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
