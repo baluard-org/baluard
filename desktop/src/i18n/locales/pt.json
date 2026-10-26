@@ -1236,7 +1236,7 @@
     "openTitle": "Abrir um cofre com um kit",
     "openDesc": "Escolha a carta kit que você recebeu e digite a frase. Você verá o cofre somente leitura: nada do que fizer aqui pode mudá-lo.",
     "pickKit": "Escolher a carta kit",
-    "noteTitle": "Uma nota de quem enviou",
+    "noteTitle": "A carta",
     "openNotAKit": "Esse arquivo não é uma carta kit do Baluard.",
     "opening": "Abrindo…",
     "openGo": "Abrir o cofre"

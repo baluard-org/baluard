@@ -1236,7 +1236,7 @@
     "openTitle": "Open a vault with a kit",
     "openDesc": "Pick the kit letter you were given and type its passphrase. You will see the vault read-only: nothing you do here can change it.",
     "pickKit": "Choose the kit letter",
-    "noteTitle": "A note from the owner",
+    "noteTitle": "The letter",
     "openNotAKit": "That file is not a Baluard kit letter.",
     "opening": "Opening…",
     "openGo": "Open the vault"
