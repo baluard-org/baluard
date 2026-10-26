@@ -598,12 +598,6 @@ impl VaultState {
                     self.autosync
                         .activate(device_id.clone(), devkey_seal, enroll_vk)
                         .await;
-                    if heartbeat_wrote {
-                        // The contact's clone measures silence on the
-                        // remote, so a fresh alive record must ride the
-                        // normal commit-and-push cycle immediately.
-                        self.autosync.nudge(device_id.clone()).await;
-                    }
                     // Pull remote changes the moment the vault opens so the UI
                     // reflects other-device edits immediately (event-driven,
                     // not waiting on the 30-min idle cadence). Spawned off the
@@ -621,6 +615,14 @@ impl VaultState {
                     let state = self.clone();
                     tokio::spawn(async move {
                         handle.pull_only(device_id.clone()).await;
+                        if heartbeat_wrote {
+                            // The contact's clone measures silence on the
+                            // remote, so the fresh alive record must ride
+                            // the commit-and-push cycle — nudged only AFTER
+                            // the pull, whose force-checkout would revert
+                            // the still-uncommitted record.
+                            handle.nudge(device_id.clone()).await;
+                        }
                         let removed = state.sweep_grants_if_admin_inner().await;
                         let (vault_id, seats) = state.sweep_join_approvals_if_admin_inner().await;
                         if removed > 0 || !seats.is_empty() {

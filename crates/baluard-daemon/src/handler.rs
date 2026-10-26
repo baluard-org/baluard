@@ -4094,7 +4094,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
     // A contact's kit view is read-only by allowlist: browsing, reading
     // entries, and locking. Everything else — writes included — is
     // refused before the route dispatch runs.
-    if state.is_contact_view() && !CONTACT_VIEW_ALLOWED.contains(&req.action.as_str()) {
+    if state.is_contact_view()
+        && (!CONTACT_VIEW_ALLOWED.contains(&req.action.as_str())
+            // Export is allowed, but only in-process (the desktop
+            // Rust-side dialog commands); out_path would hand a token
+            // holder a file-write primitive.
+            || (req.action == "vault.export"
+                && String::from_utf8_lossy(req.payload.as_ref()).contains("out_path")))
+    {
         return err_response("This is a read-only view of the vault.");
     }
 

@@ -86,9 +86,27 @@ async fn resolve_remote(vault_path: &std::path::Path) -> Result<ResolvedRemote, 
         // The base is a bare instance URL (no owner/repo), so the
         // remote-URL parser cannot read it; take the host directly.
         let base_host = url_host(&base);
-        if host == base_host || (info.instance_url.is_none() && host == default_host(provider)) {
+        // split_git_url keeps the port in the host; the provider match
+        // and the SSH URL both need it split off (scp form cannot carry
+        // a port, so custom ports switch to ssh:// form).
+        let (match_host, port) = match host.rsplit_once(':') {
+            Some((h, p))
+                if !p.is_empty()
+                    && p.chars().all(|c| c.is_ascii_digit())
+                    && (h.starts_with('[') || !h.contains(':')) =>
+            {
+                (h.to_string(), Some(p))
+            }
+            _ => (host.clone(), None),
+        };
+        if match_host == base_host
+            || (info.instance_url.is_none() && match_host == default_host(provider))
+        {
             let (info, token) = ensure_valid_token(provider).await?;
-            let ssh_url = format!("git@{host}:{owner}/{repo}.git");
+            let ssh_url = match port {
+                Some(p) => format!("ssh://git@{match_host}:{p}/{owner}/{repo}.git"),
+                None => format!("git@{match_host}:{owner}/{repo}.git"),
+            };
             return Ok(ResolvedRemote {
                 identity: core_legacy::RemoteIdentity {
                     provider,
@@ -371,11 +389,29 @@ pub async fn open_contact_view(
             Some(creds),
         )?;
 
-        // The record chain must say Armed; a closed kit fails with the
-        // owner's actual decision.
         let record = core_legacy::load_record(&target, &body.kit_id)?.ok_or_else(|| {
             VaultError::NotFound("the vault copy has no record for this kit".to_string())
         })?;
+
+        // The record chain is only as good as its signatures: both the
+        // state record and the heartbeat must verify against the LK
+        // public key sealed in the contact's own kit — before anything
+        // in the record (state, window, days) steers control flow. A
+        // repo-side forger cannot mint either signature.
+        let lk_public: [u8; 32] = hex::decode(&body.lk_public)
+            .map_err(|e| VaultError::Corrupt(format!("kit lk key: {e}")))?
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("kit lk key length".into()))?;
+        core_legacy::verify_record(&record, &lk_public)?;
+        let alive_path = target.join("meta/legacy").join(format!("{}.alive", body.kit_id));
+        let last_alive_day = match std::fs::read_to_string(&alive_path) {
+            Ok(raw) => Some(core_legacy::verify_alive(&raw, &record, &lk_public)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(VaultError::Metadata(format!("alive record: {e}")).into()),
+        };
+
+        // The record chain must say Armed; a closed kit fails with the
+        // owner's actual decision.
         match record.state {
             core_legacy::LegacyState::Armed => {}
             core_legacy::LegacyState::Closed => {
@@ -394,22 +430,6 @@ pub async fn open_contact_view(
                 .into());
             }
         }
-
-        // The record chain is only as good as its signatures: both the
-        // state record and the heartbeat must verify against the LK
-        // public key sealed in the contact's own kit. A repo-side
-        // forger cannot mint either.
-        let lk_public: [u8; 32] = hex::decode(&body.lk_public)
-            .map_err(|e| VaultError::Corrupt(format!("kit lk key: {e}")))?
-            .try_into()
-            .map_err(|_| VaultError::Corrupt("kit lk key length".into()))?;
-        core_legacy::verify_record(&record, &lk_public)?;
-        let alive_path = target.join("meta/legacy").join(format!("{}.alive", body.kit_id));
-        let last_alive_day = match std::fs::read_to_string(&alive_path) {
-            Ok(raw) => Some(core_legacy::verify_alive(&raw, &record, &lk_public)?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(VaultError::Metadata(format!("alive record: {e}")).into()),
-        };
 
         // Silence window: the contact's own clock reads the owner's
         // signed days. Honest-scope per the plan: a modified client can
@@ -474,7 +494,6 @@ fn letter_text(letter: String) -> String {
     }
 }
 
-/// The stored heartbeat's day, read best-effort from the fresh clone.
 /// Host of a bare instance URL (scheme plus optional userinfo and
 /// port stripped; IPv6 brackets kept out). split_git_url cannot read
 /// bare URLs because it demands owner/repo segments.
@@ -492,9 +511,3 @@ fn url_host(url: &str) -> String {
     }
 }
 
-fn record_last_alive_day(target: &std::path::Path, kit_id: &str) -> Option<u64> {
-    core_legacy::load_alive(target, kit_id)
-        .ok()
-        .flatten()
-        .map(|a| a.day)
-}
