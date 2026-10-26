@@ -25,6 +25,7 @@ import ContactsTab from "./ContactsTab.jsx";
 import OutboxesTab from "./OutboxesTab.jsx";
 import BridgeTab from "./BridgeTab.jsx";
 import RecoveryPhraseCard from "./RecoveryPhraseCard.jsx";
+import LegacyTab from "./LegacyTab.jsx";
 
 function TabButton(props) {
   return (
@@ -663,6 +664,7 @@ export default function SettingsModal() {
               <TabButton id="outboxes" label={t("settings.tabOutboxes")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="devices" label={t("settings.tabDevices")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="bridge" label={t("settings.tabBridge")} active={activeTab()} setActiveTab={setActiveTab} />
+              <TabButton id="legacy" label={t("settings.tabLegacy")} active={activeTab()} setActiveTab={setActiveTab} />
             </div>
 
             {/* Content */}
@@ -1164,6 +1166,9 @@ export default function SettingsModal() {
 
               <Show when={activeTab() === "devices"}>
                 <DeviceFleetPanel />
+              </Show>
+              <Show when={activeTab() === "legacy"}>
+                <LegacyTab />
               </Show>
               <Show when={activeTab() === "bridge"}>
                 <BridgeTab />

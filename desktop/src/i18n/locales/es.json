@@ -389,7 +389,8 @@
     "hwConsentOn": "Pedir confirmación",
     "hwConsentOff": "Dejar de confirmar",
     "hwConsentOnToast": "El chip confirmará cada desbloqueo.",
-    "hwConsentOffToast": "Desbloqueo silencioso restaurado."
+    "hwConsentOffToast": "Desbloqueo silencioso restaurado.",
+    "tabLegacy": "Contacto de confianza"
   },
   "sync": {
     "title": "Sincronización de bóveda",
@@ -1197,5 +1198,39 @@
     "unlockRequested": "«{name}» quiere rellenar desde el navegador",
     "unlockNow": "Desbloquear",
     "dismiss": "Ahora no"
+  },
+  "legacy": {
+    "title": "Contacto de confianza",
+    "desc": "Entrega a alguien de confianza un kit de recuperación que solo se abre si dejas de abrir tu caja fuerte.",
+    "notArmed": "El contacto de confianza no está configurado en esta caja fuerte.",
+    "wasClosed": "El contacto de confianza está desactivado. Puedes configurarlo de nuevo.",
+    "windowLabel": "¿Cuánto tiempo debe pasar tu silencio antes de que se abra el kit?",
+    "windowDays": "{days} días",
+    "windowHint": "Sugerimos al menos 14 días, para que un viaje largo o perder conexión nunca abra el kit antes de tiempo.",
+    "contactLabel": "¿Para quién es el kit?",
+    "contactPlaceholder": "Su nombre",
+    "letterLabel": "Una nota para esa persona (opcional)",
+    "letterPlaceholder": "Querida Ana, si estás leyendo esto…",
+    "passphraseLabel": "Frase del kit",
+    "newPassphrase": "Crear frase",
+    "passphraseHint": "El kit solo se abre con esta frase. Envíala aparte del kit.",
+    "savedIt": "Guardé la frase en un lugar seguro",
+    "arm": "Crear el kit",
+    "armedQuiet": "El contacto de confianza está activo. El kit se abre tras {days} días de silencio.",
+    "windowElapsed": "El tiempo de silencio terminó. Tu contacto ya puede pedir acceso a la copia de la caja fuerte.",
+    "silenceSoFar": "Han pasado {days} días desde la última vez que abriste la caja fuerte.",
+    "bannerOpen": "Tu contacto de confianza ya puede pedir acceso a la copia de la caja fuerte.",
+    "resend": "Ver el kit otra vez",
+    "disarm": "Desactivar",
+    "deny": "Rechazar solicitud",
+    "closedToast": "Contacto de confianza actualizado.",
+    "kitTitle": "La carta del kit",
+    "kitDesc": "Guarda este archivo y envíaselo a tu contacto por otro medio, junto con la frase.",
+    "kitDownload": "Descargar",
+    "kitCopy": "Copiar texto",
+    "denyTitle": "¿Rechazar la solicitud?",
+    "denyBody": "Tu contacto pierde el acceso a la copia de la caja fuerte. Esto no se puede deshacer.",
+    "disarmTitle": "¿Desactivar el contacto de confianza?",
+    "disarmBody": "El kit deja de funcionar y la caja fuerte conserva su clave actual. Puedes configurarlo de nuevo más tarde."
   }
 }

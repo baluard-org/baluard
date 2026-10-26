@@ -421,7 +421,8 @@
     "hwConsentOn": "Ask to confirm",
     "hwConsentOff": "Stop confirming",
     "hwConsentOnToast": "The chip will confirm every unlock.",
-    "hwConsentOffToast": "Silent unlock restored."
+    "hwConsentOffToast": "Silent unlock restored.",
+    "tabLegacy": "Legacy Contact"
   },
   "sync": {
     "title": "Vault Sync",
@@ -1197,5 +1198,39 @@
     "unlockRequested": "\"{name}\" wants to fill from the browser",
     "unlockNow": "Unlock now",
     "dismiss": "Not now"
+  },
+  "legacy": {
+    "title": "Legacy Contact",
+    "desc": "Give someone you trust a recovery kit that opens only after you stop unlocking your vault.",
+    "notArmed": "Legacy Contact is not set up for this vault.",
+    "wasClosed": "Legacy Contact is off. You can set it up again.",
+    "windowLabel": "How long should your silence last before the kit opens?",
+    "windowDays": "{days} days",
+    "windowHint": "We suggest at least 14 days, so a long trip or a lost connection never opens the kit early.",
+    "contactLabel": "Who is the kit for?",
+    "contactPlaceholder": "Their name",
+    "letterLabel": "A note to them (optional)",
+    "letterPlaceholder": "Dear Ana, if you are reading this…",
+    "passphraseLabel": "Kit passphrase",
+    "newPassphrase": "Create passphrase",
+    "passphraseHint": "The kit opens only with this passphrase. Send it separately from the kit.",
+    "savedIt": "I saved the passphrase somewhere safe",
+    "arm": "Create the kit",
+    "armedQuiet": "Legacy Contact is armed. The kit opens after {days} days of silence.",
+    "windowElapsed": "The silence window has elapsed. Your contact can now ask to reach the vault copy.",
+    "silenceSoFar": "{days} days have passed since your last unlock.",
+    "bannerOpen": "Your trusted contact can now ask to reach the vault copy.",
+    "resend": "Show the kit again",
+    "disarm": "Turn off",
+    "deny": "Refuse request",
+    "closedToast": "Legacy Contact updated.",
+    "kitTitle": "The kit letter",
+    "kitDesc": "Save this file and send it to your contact out of band, along with the passphrase.",
+    "kitDownload": "Download",
+    "kitCopy": "Copy text",
+    "denyTitle": "Refuse the request?",
+    "denyBody": "Your contact loses access to the vault copy. This cannot be undone.",
+    "disarmTitle": "Turn off Legacy Contact?",
+    "disarmBody": "The kit stops working and the vault keeps its current key. You can set it up again later."
   }
 }
