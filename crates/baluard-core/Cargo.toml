@@ -11,7 +11,7 @@ argon2.workspace = true
 aes-gcm.workspace = true
 hkdf.workspace = true
 unicode-normalization.workspace = true
-sha2.workspace = true
+sha2 = { workspace = true, features = ["oid"] }
 sha1.workspace = true
 hmac.workspace = true
 x25519-dalek.workspace = true
@@ -27,6 +27,16 @@ rand_core.workspace = true
 ctap-hid-fido2 = { version = "3.6", optional = true, default-features = false, features = [
     "ring",
 ] }
+# RSA verification for the FIDO attestation chain: the Yubico
+# attestation hierarchy (root, intermediates, per-device certificates)
+# is all-RSA (sha256/sha512 PKCS#1 v1.5), while the hmac-secret seal
+# math stays P-256. Verification only; no keygen in production paths.
+rsa = "0.9"
+# EC verification for the same verifier (ES256 attStmt/links) and the
+# assertion-signature oracle in the passkey provider tests (§8 of
+# plan-mobile-passkeys). The earlier dev-only placement predates the
+# attestation verifier (hwkey/attest.rs), which verifies in production.
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdsa", "std"] }
 bip39.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -71,9 +81,6 @@ core-foundation-sys = "0.8"
 
 [dev-dependencies]
 proptest.workspace = true
-# Assertion-signature oracle for the passkey provider tests (§8 of
-# plan-mobile-passkeys); production code never touches p256 directly.
-p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdsa", "std"] }
 tokio.workspace = true
 tempfile = "3"
 serial_test = "3"
