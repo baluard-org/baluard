@@ -7,7 +7,9 @@
 //! one install nothing and every surface stays exactly as it is today
 //! (seal v1). The chip never holds vault keys - it contributes an ECDH
 //! secret to the seal's content key, so both the password AND the chip are
-//! required to open the sealed file, while unlock friction stays zero.
+//! required to open the sealed file. Silent chips add zero unlock
+//! friction; interactive backends (the FIDO2 security-key seal) demand
+//! exactly one physical tap per use.
 //!
 //! Platform backends live behind the `hw-seal` cargo feature. The daemon
 //! owns all hardware operations; CLI, desktop frontend, NMH, and mobile
@@ -25,13 +27,25 @@ use crate::error::{BaluardError, VaultError};
 /// `just test` and CI stay hermetic on machines that happen to have a chip.
 pub const DISABLE_ENV: &str = "BALUARD_DISABLE_HWKEY";
 
-/// Fresh per-write public input to the chip's ECDH, in the backend's own
-/// wire format (X9.62 uncompressed for SE backends; opaque bytes for the
-/// mock). The seal layer never interprets it - it only stores the bytes
-/// and hands them back on open, so the backend can re-run the same
-/// agreement deterministically.
-#[derive(Clone, Copy)]
-pub struct EphemeralPub(pub [u8; 65]);
+/// Fresh per-write public input to the chip's key agreement, in the
+/// backend's own wire format (X9.62 uncompressed P-256 points for chip
+/// backends; a 32-byte salt for the FIDO2 answerer). Opaque to the seal
+/// layer: it stores the bytes and hands them back on open, so the
+/// backend can reproduce the same secret deterministically. Length-bound
+/// so a hostile seal file cannot drive allocation.
+pub const MAX_HANDSHAKE_BYTES: usize = 65;
+
+#[derive(Clone)]
+pub struct Handshake(pub Vec<u8>);
+
+impl Handshake {
+    pub fn new(bytes: Vec<u8>) -> Result<Self, BaluardError> {
+        if bytes.len() > MAX_HANDSHAKE_BYTES {
+            return Err(VaultError::Corrupt("hardware handshake oversized".into()).into());
+        }
+        Ok(Handshake(bytes))
+    }
+}
 
 /// The ECDH output. Never leaves the process; zeroized on drop.
 pub type SharedSecret = Zeroizing<[u8; 32]>;
@@ -49,48 +63,69 @@ pub enum HwCapability {
     Unavailable { reason: String },
 }
 
-/// One platform's hardware keystore. Binding ids are opaque platform
-/// references (a keychain-persisted tag, a PCP key name, an ESAPI handle)
-/// that the seal file stores so later opens find the right key. Bindings
-/// are namespaced per vault via [`binding_tag`], the same discipline as
-/// quick-unlock's `quick-unlock:<vault_id>`.
+/// How a backend's key agreement interacts with the human. `Never` chips
+/// (Secure Enclave, TPM, PCP) answer silently; `PerUse` backends (FIDO2
+/// security keys) physically refuse to answer without a tap. The seal
+/// layer refuses to enable a `Silent` consent file on a `PerUse`
+/// backend - the tap is not a prompt the firmware can waive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interaction {
+    Never,
+    PerUse,
+}
+
+/// One platform's hardware keystore. Bindings are opaque platform
+/// references that the seal file stores so later opens find the right
+/// key; [`Self::backend_id`] is the registry key the seal file records
+/// so an open resolves the SAME backend that sealed it.
 pub trait HardwareKeyStore: Send + Sync {
+    /// Registry key and seal-file record ("secure-enclave", "tpm-esapi",
+    /// "fido", "mock"). Must be unique per compiled backend.
+    fn backend_id(&self) -> &'static str;
     fn probe(&self) -> HwCapability;
     /// Whether this backend's chips can demand the platform's own user
-    /// verification on a chip ECDH. Default: no - `PerUse` then refuses
-    /// with `HardwareConsentUnavailable` everywhere.
+    /// verification on a chip agreement. Default: no - `PerUse` then
+    /// refuses with `HardwareConsentUnavailable` everywhere.
     fn supports_consent(&self) -> bool {
         false
+    }
+    /// Whether using this backend's key demands human interaction every
+    /// time. Default `Never` (silent chips); the FIDO2 backend is always
+    /// `PerUse` - firmware refuses assertions without presence.
+    fn interaction(&self) -> Interaction {
+        Interaction::Never
     }
     /// Create (or return the existing) binding for this vault. A `PerUse`
     /// binding names a SEPARATE key whose every use demands user
     /// verification.
     fn create_binding(&self, vault_id: Uuid, consent: HwConsent) -> Result<String, BaluardError>;
     /// Generate a fresh ephemeral input IN THE BACKEND'S PRIMITIVE FAMILY
-    /// (the seal layer cannot know it - SE needs a P-256 point) and return
-    /// it with the ECDH against the binding's non-exportable key. The
-    /// seal layer stores the public half; [`Self::ecdh`] must reproduce
-    /// the same secret from the stored bytes. `PerUse` demands the
-    /// platform's user verification on this call.
-    fn ecdh_ephemeral(
+    /// (the seal layer cannot know it - chip backends need a P-256 point,
+    /// the FIDO2 answerer picks a salt) and return it with the agreement
+    /// against the binding's non-exportable key. The seal layer stores
+    /// the handshake half; [`Self::derive`] must reproduce the same
+    /// secret from the stored bytes. `PerUse` demands the platform's
+    /// user verification on this call.
+    fn derive_ephemeral(
         &self,
         binding: &str,
         consent: HwConsent,
-    ) -> Result<(EphemeralPub, SharedSecret), BaluardError>;
-    /// ECDH between the binding's non-exportable key and a stored
-    /// `peer`. `Silent` must never prompt - the v2-hw seal runs on every
-    /// unlock and password change; `PerUse` demands the platform's user
-    /// verification each call.
-    fn ecdh(
+    ) -> Result<(Handshake, SharedSecret), BaluardError>;
+    /// Agreement between the binding's non-exportable key and a stored
+    /// handshake. `Silent` must never prompt - the v2-hw seal runs on
+    /// every unlock and password change; `PerUse` demands the platform's
+    /// user verification each call.
+    fn derive(
         &self,
         binding: &str,
-        peer: &EphemeralPub,
+        handshake: &Handshake,
         consent: HwConsent,
     ) -> Result<SharedSecret, BaluardError>;
     /// Idempotent. Implementations whose key is shared infrastructure
     /// (the TPM backend: slot-constrained firmwares get one chip key
-    /// for all vaults) treat this as a no-op - disable downsizes the
-    /// seal to v1 and leaves the key in place.
+    /// for all vaults; the FIDO2 credential survives disable) treat
+    /// this as a no-op - disable downsizes the seal to v1 and leaves
+    /// the key in place.
     fn delete_binding(&self, binding: &str) -> Result<(), BaluardError>;
 }
 
@@ -140,6 +175,10 @@ pub fn binding_tag_for(vault_id: Uuid, consent: HwConsent) -> String {
 
 /// Inverse of [`binding_tag`]/[`consent_binding_tag`].
 pub fn binding_vault_id(binding: &str) -> Option<Uuid> {
+    if let Some(rest) = binding.strip_prefix("fido:") {
+        // fido:<vault_id>:<opaque credential id>
+        return rest.split(':').next().and_then(|id| Uuid::parse_str(id).ok());
+    }
     binding
         .strip_prefix("baluard-hwc:")
         .or_else(|| binding.strip_prefix("baluard-hw:"))
@@ -150,49 +189,70 @@ fn hw_disabled() -> bool {
     std::env::var(DISABLE_ENV).is_ok_and(|v| v == "1")
 }
 
-static HW_STORE: std::sync::OnceLock<std::sync::RwLock<Option<Arc<dyn HardwareKeyStore>>>> =
-    std::sync::OnceLock::new();
+static HW_STORE: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::BTreeMap<String, Arc<dyn HardwareKeyStore>>>,
+> = std::sync::OnceLock::new();
 
-fn hw_store() -> &'static std::sync::RwLock<Option<Arc<dyn HardwareKeyStore>>> {
-    HW_STORE.get_or_init(|| std::sync::RwLock::new(None))
+fn hw_store()
+-> &'static std::sync::RwLock<std::collections::BTreeMap<String, Arc<dyn HardwareKeyStore>>> {
+    HW_STORE.get_or_init(|| std::sync::RwLock::new(std::collections::BTreeMap::new()))
 }
 
-/// Install the platform keystore at daemon startup. A second install
-/// replaces the first (matters for tests).
+/// Install a backend at daemon startup, keyed by its `backend_id`. A
+/// re-install of the same id replaces that entry (tests); different ids
+/// coexist so a machine can offer both a chip backend and a security
+/// key.
 pub fn install(store: Arc<dyn HardwareKeyStore>) {
-    *hw_store().write().expect("hw store lock") = Some(store);
+    hw_store()
+        .write()
+        .expect("hw store lock")
+        .insert(store.backend_id().to_string(), store);
 }
 
-/// Remove the installed keystore (tests).
+/// Remove every installed backend (tests).
 pub fn uninstall() {
-    *hw_store().write().expect("hw store lock") = None;
+    hw_store().write().expect("hw store lock").clear();
 }
 
-/// The installed keystore, if any. Callers must still probe before use.
-pub fn installed() -> Option<Arc<dyn HardwareKeyStore>> {
-    hw_store().read().expect("hw store lock").clone()
+/// The backend a seal file was sealed with, if installed and the
+/// kill-switch is off. An open resolves the SAME backend that sealed
+/// the file; absence is the typed unavailable error, never a downgrade.
+pub fn store_for(backend_id: &str) -> Option<Arc<dyn HardwareKeyStore>> {
+    if hw_disabled() {
+        return None;
+    }
+    hw_store().read().expect("hw store lock").get(backend_id).cloned()
 }
 
-/// The keystore to use right now: installed, kill-switch off, and probing
-/// available. `None` means this device has no usable chip - every surface
-/// treats that as "feature not present" (progressive enhancement).
+/// Every installed backend, registry order. Status surfaces list these;
+/// callers still probe before use.
+pub fn installed_all() -> Vec<Arc<dyn HardwareKeyStore>> {
+    hw_store().read().expect("hw store lock").values().cloned().collect()
+}
+
+/// The default keystore: the first installed backend probing available.
+/// Single-chip devices have exactly one; multi-backend flows pass
+/// explicit backend ids instead.
 pub fn available() -> Option<Arc<dyn HardwareKeyStore>> {
     if hw_disabled() {
         return None;
     }
-    let store = installed()?;
-    matches!(store.probe(), HwCapability::Available { .. }).then_some(store)
+    installed_all().into_iter().find(|s| {
+        matches!(s.probe(), HwCapability::Available { .. })
+    })
 }
 
 /// Probe for status surfaces: reports the kill-switch and unavailable
-/// reasons instead of collapsing them to `None`.
+/// reasons instead of collapsing them to `None`. Multi-backend status
+/// listing rides the daemon layer; this reports the first installed
+/// backend.
 pub fn probe_status() -> HwCapability {
     if hw_disabled() {
         return HwCapability::Unavailable {
             reason: "disabled".into(),
         };
     }
-    match installed() {
+    match installed_all().first() {
         None => HwCapability::Unavailable {
             reason: "no-backend".into(),
         },
@@ -273,12 +333,15 @@ pub(crate) static TEST_STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(
 mod tests {
     use super::*;
 
-    /// Software mock: X25519 agreement over the opaque peer bytes. Real
-    /// backends use P-256 inside the chip; the seal layer treats the
-    /// secret as opaque, so the mock exercises the same contract.
+    /// Software mock: SHA-256 agreement over the opaque handshake bytes.
+    /// Real chip backends agree inside the silicon; the seal layer treats
+    /// the secret as opaque, so the mock exercises the same contract.
     struct MockStore;
 
     impl HardwareKeyStore for MockStore {
+        fn backend_id(&self) -> &'static str {
+            "mock"
+        }
         fn probe(&self) -> HwCapability {
             HwCapability::Available {
                 backend: "mock".into(),
@@ -294,32 +357,82 @@ mod tests {
         ) -> Result<String, BaluardError> {
             Ok(binding_tag(vault_id))
         }
-        fn ecdh_ephemeral(
+        fn derive_ephemeral(
             &self,
             binding: &str,
             _consent: HwConsent,
-        ) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+        ) -> Result<(Handshake, SharedSecret), BaluardError> {
             use sha2::{Digest, Sha256};
-            // Random-looking fresh public in the mock's opaque format.
-            let mut peer = [0u8; 65];
-            peer[0] = 0x04;
+            // Random-looking fresh handshake in the mock's opaque format.
+            let mut peer = vec![0x04u8];
+            peer.resize(65, 0);
             rand::Rng::fill(&mut rand::thread_rng(), &mut peer[1..]);
             let mut h = Sha256::new();
             h.update(binding.as_bytes());
-            h.update(peer);
-            Ok((EphemeralPub(peer), Zeroizing::new(h.finalize().into())))
+            h.update(&peer);
+            Ok((Handshake(peer), Zeroizing::new(h.finalize().into())))
         }
-        fn ecdh(
+        fn derive(
             &self,
             binding: &str,
-            peer: &EphemeralPub,
+            handshake: &Handshake,
             _consent: HwConsent,
         ) -> Result<SharedSecret, BaluardError> {
-            // binding and peer are both opaque here; derive deterministically.
+            // binding and handshake are both opaque here; derive
+            // deterministically.
             use sha2::{Digest, Sha256};
             let mut h = Sha256::new();
             h.update(binding.as_bytes());
-            h.update(peer.0);
+            h.update(&handshake.0);
+            Ok(Zeroizing::new(h.finalize().into()))
+        }
+        fn delete_binding(&self, _binding: &str) -> Result<(), BaluardError> {
+            Ok(())
+        }
+    }
+
+    /// A second backend under a different id, exercising the registry's
+    /// per-backend resolution.
+    struct MockStoreB;
+
+    impl HardwareKeyStore for MockStoreB {
+        fn backend_id(&self) -> &'static str {
+            "mock-b"
+        }
+        fn probe(&self) -> HwCapability {
+            HwCapability::Available {
+                backend: "mock-b".into(),
+            }
+        }
+        fn create_binding(
+            &self,
+            vault_id: Uuid,
+            _consent: HwConsent,
+        ) -> Result<String, BaluardError> {
+            Ok(binding_tag(vault_id))
+        }
+        fn derive_ephemeral(
+            &self,
+            binding: &str,
+            _consent: HwConsent,
+        ) -> Result<(Handshake, SharedSecret), BaluardError> {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(b"b");
+            h.update(binding.as_bytes());
+            Ok((Handshake(vec![0x04, 0x01]), Zeroizing::new(h.finalize().into())))
+        }
+        fn derive(
+            &self,
+            binding: &str,
+            handshake: &Handshake,
+            _consent: HwConsent,
+        ) -> Result<SharedSecret, BaluardError> {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(b"b");
+            h.update(binding.as_bytes());
+            h.update(&handshake.0);
             Ok(Zeroizing::new(h.finalize().into()))
         }
         fn delete_binding(&self, _binding: &str) -> Result<(), BaluardError> {
@@ -349,11 +462,39 @@ mod tests {
         let s = available().expect("available with mock installed");
         let b = s.create_binding(Uuid::new_v4(), HwConsent::Silent).unwrap();
         let secret = s
-            .ecdh(&b, &EphemeralPub([7u8; 65]), HwConsent::Silent)
-            .expect("mock ecdh");
+            .derive(&b, &Handshake(vec![7u8; 65]), HwConsent::Silent)
+            .expect("mock derive");
         assert_eq!(secret.len(), 32);
         uninstall();
         assert!(available().is_none());
+    }
+
+    #[test]
+    fn registry_resolves_backends_by_id() {
+        let _g = TEST_STORE_LOCK.lock().unwrap();
+        uninstall();
+        install(Arc::new(MockStore));
+        install(Arc::new(MockStoreB));
+        assert!(store_for("mock").is_some());
+        assert!(store_for("mock-b").is_some());
+        assert!(store_for("missing").is_none());
+        // Deterministic default: the first installed backend in registry
+        // order.
+        assert_eq!(available().unwrap().backend_id(), "mock");
+        assert_eq!(installed_all().len(), 2);
+        uninstall();
+    }
+
+    #[test]
+    fn binding_parser_reads_the_fido_prefix() {
+        let id = Uuid::new_v4();
+        let b = format!("fido:{id}:cGVuaw");
+        assert_eq!(binding_vault_id(&b), Some(id));
+        // Legacy chip bindings still parse.
+        assert_eq!(binding_vault_id(&binding_tag(id)), Some(id));
+        assert_eq!(binding_vault_id(&consent_binding_tag(id)), Some(id));
+        assert_eq!(binding_vault_id("fido:not-a-uuid:x"), None);
+        assert_eq!(binding_vault_id("garbage"), None);
     }
 
     #[test]

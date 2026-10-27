@@ -7751,9 +7751,9 @@ impl VaultState {
             PrivkeyFileKind::Damaged => "damaged",
             PrivkeyFileKind::Absent => "absent",
         };
-        let consent_supported = baluard_core::hwkey::installed()
-            .map(|s| s.supports_consent())
-            .unwrap_or(false);
+        let consent_supported = baluard_core::hwkey::installed_all()
+            .iter()
+            .any(|s| s.supports_consent());
         let consent = if seal == "v2-hw" {
             baluard_core::vault::device_privkey::file_consents(&self.vault_path)
         } else {
@@ -7873,6 +7873,7 @@ impl VaultState {
             vault_id,
             device_id,
             consent,
+            None,
         )
         .map_err(|e| format!("{e}"))?;
         Ok(serde_json::json!({"enabled": true, "backend": match baluard_core::hwkey::probe_status() {
@@ -7882,18 +7883,16 @@ impl VaultState {
         .to_string())
     }
 
-    /// Disable the hardware seal: downgrade to v1. Needs the chip once.
+    /// Disable the hardware seal: downgrade to v1. Needs the chip once
+    /// (resolved from the seal file's recorded backend).
     pub async fn hw_disable(&self) -> Result<String, String> {
         let seal = self
             .devkey_seal()
             .await
             .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
-        let hw = baluard_core::hwkey::available()
-            .ok_or_else(|| "This device has no usable security chip.".to_string())?;
         let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
         baluard_core::vault::device_privkey::disable_hw_seal(
             &self.vault_path.join("meta/device-privkey.json"),
-            &*hw,
             &seal,
             device_id,
         )

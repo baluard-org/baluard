@@ -980,7 +980,7 @@ mod tests {
         let rows = list_pending(path);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, "op");
-        consume_matching(path, "op", &params(7));
+        consume_matching(path, "op", &params(7)).unwrap();
         assert!(list_pending(path).is_empty());
     }
 }

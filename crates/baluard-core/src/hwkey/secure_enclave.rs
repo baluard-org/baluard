@@ -30,7 +30,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::error::{BaluardError, VaultError};
-use crate::hwkey::{EphemeralPub, HardwareKeyStore, HwCapability, SharedSecret};
+use crate::hwkey::{Handshake, HardwareKeyStore, HwCapability, SharedSecret};
 
 const TAG_PREFIX: &str = "baluard-hw:";
 
@@ -66,6 +66,10 @@ impl SecureEnclaveStore {
 }
 
 impl HardwareKeyStore for SecureEnclaveStore {
+    fn backend_id(&self) -> &'static str {
+        "secure-enclave"
+    }
+
     fn probe(&self) -> HwCapability {
         // Honest probe: SE availability is only answerable by asking the
         // chip. Mint a throwaway NON-permanent key (code-signature only,
@@ -131,11 +135,11 @@ impl HardwareKeyStore for SecureEnclaveStore {
         Ok(String::from_utf8(tag).map_err(|_| VaultError::Corrupt("hwkey tag utf8".into()))?)
     }
 
-    fn ecdh_ephemeral(
+    fn derive_ephemeral(
         &self,
         binding: &str,
         _consent: crate::hwkey::HwConsent,
-    ) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+    ) -> Result<(Handshake, SharedSecret), BaluardError> {
         let chip = SecureEnclaveKey::get(binding.as_bytes())
             .map_err(|_| crate::hwkey::hw_unavailable_error())?;
         // Throwaway in-memory SE key as the fresh peer input: SE keys can
@@ -154,18 +158,18 @@ impl HardwareKeyStore for SecureEnclaveStore {
         let mut peer = [0u8; 65];
         peer.copy_from_slice(&peer_bytes);
         let secret = derive(binding, &chip, &peer)?;
-        Ok((EphemeralPub(peer), secret))
+        Ok((Handshake(peer.to_vec()), secret))
     }
 
-    fn ecdh(
+    fn derive(
         &self,
         binding: &str,
-        peer: &EphemeralPub,
+        handshake: &Handshake,
         _consent: crate::hwkey::HwConsent,
     ) -> Result<SharedSecret, BaluardError> {
         let chip = SecureEnclaveKey::get(binding.as_bytes())
             .map_err(|_| crate::hwkey::hw_unavailable_error())?;
-        derive(binding, &chip, &peer.0)
+        derive(binding, &chip, &handshake.0)
     }
 
     fn delete_binding(&self, binding: &str) -> Result<(), BaluardError> {
