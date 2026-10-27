@@ -20,6 +20,7 @@
 //! pinned to without-UV and a token that forces UV is unusable,
 //! fail-closed.
 
+use super::attest::{self, PackedAttestation};
 use crate::error::{BaluardError, VaultError};
 use base64::Engine as _;
 use uuid::Uuid;
@@ -60,8 +61,8 @@ pub enum TokenError {
 pub trait Token: Send + Sync {
     fn info(&self) -> Result<TokenInfo, TokenError>;
     /// Create the non-discoverable hmac-secret credential for one
-    /// vault; returns the credential id (opaque token bytes).
-    fn make_credential(&self, vault_id: Uuid) -> Result<Vec<u8>, TokenError>;
+    /// vault, carrying the attestation the enroll path verifies.
+    fn make_credential(&self, vault_id: Uuid) -> Result<PackedAttestation, TokenError>;
     /// Tap the token and derive the hmac-secret output for `salt`.
     fn get_secret(&self, credential_id: &[u8], salt: &[u8; 32]) -> Result<[u8; 32], TokenError>;
 }
@@ -148,10 +149,20 @@ impl super::HardwareKeyStore for FidoStore {
             return Err(VaultError::HardwareConsentUnavailable.into());
         }
         self.preflight()?;
-        let cred = self.token.make_credential(vault_id).map_err(map_token)?;
+        let att = self.token.make_credential(vault_id).map_err(map_token)?;
+        // Plan policy: a cryptographically invalid attestation chain is
+        // a hard refuse; unknown-vendor chains are allowed with copy at
+        // the surface layer.
+        if attest::verify(&att) == attest::AttestationVerdict::Invalid {
+            return Err(VaultError::Metadata(
+                "the security key's attestation is invalid; it cannot hold the seal"
+                    .into(),
+            )
+            .into());
+        }
         Ok(format!(
             "{BINDING_PREFIX}{vault_id}:{}",
-            base64::engine::general_purpose::STANDARD.encode(cred)
+            base64::engine::general_purpose::STANDARD.encode(att.credential_id)
         ))
     }
 
@@ -256,7 +267,14 @@ mod real {
             let att = dev
                 .make_credential_with_args(&args)
                 .map_err(|e| TokenError::Device(format!("{e}")))?;
-            Ok(att.credential_descriptor.id)
+            Ok(PackedAttestation {
+                credential_id: att.credential_descriptor.id,
+                auth_data: att.auth_data,
+                client_data_hash: challenge,
+                alg: att.attstmt_alg as i64,
+                sig: att.attstmt_sig,
+                x5c: att.attstmt_x5c,
+            })
         }
 
         fn get_secret(
@@ -318,6 +336,7 @@ mod tests {
         uv_forced: bool,
         creds: Mutex<HashMap<Vec<u8>, [u8; 32]>>,
         fail: Option<TokenError>,
+        chain: crate::hwkey::attest::test_chain::TestChain,
     }
 
     impl MockToken {
@@ -327,6 +346,7 @@ mod tests {
                 uv_forced: false,
                 creds: Mutex::new(HashMap::new()),
                 fail: None,
+                chain: crate::hwkey::attest::test_chain::TestChain::new(),
             }
         }
         fn hmac_off(mut self) -> Self {
@@ -366,13 +386,14 @@ mod tests {
             })
         }
 
-        fn make_credential(&self, vault_id: Uuid) -> Result<Vec<u8>, TokenError> {
+        fn make_credential(&self, vault_id: Uuid) -> Result<PackedAttestation, TokenError> {
             self.fail_err()?;
             let mut secret = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut secret);
-            let id = vault_id.as_bytes().to_vec();
-            self.creds.lock().unwrap().insert(id.clone(), secret);
-            Ok(id)
+            let mut att = self.chain.attestation();
+            att.credential_id = vault_id.as_bytes().to_vec();
+            self.creds.lock().unwrap().insert(att.credential_id.clone(), secret);
+            Ok(att)
         }
 
         fn get_secret(

@@ -293,6 +293,10 @@ pub mod pcp;
 /// rides the `fido2` feature.
 pub mod fido;
 
+/// FIDO2 packed-attestation verification (the enroll-time
+/// anti-counterfeit check; plan "Attestation at enroll").
+pub mod attest;
+
 /// The platform keystore for THIS device, per the platform matrix (plan
 /// §3.3). Returns None where no backend is compiled - the progressive
 /// default on platforms without a landed backend.
