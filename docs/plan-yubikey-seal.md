@@ -139,7 +139,11 @@ sealed vault is exactly one tap; the docs page says so plainly.
 
 makeCredential returns an attestation certificate. Baluard verifies the signature chain against
 Yubico's published attestation roots bundled with the release (updated with the app; no online
-metadata service — the no-server rule holds). Policy: invalid signature chain → hard refuse with
+metadata service — the no-server rule holds). Landed fact-check (slice 1): the real Yubico
+hierarchy is all-RSA (sha256 inner links, sha512 root self-signature) and its device attestation
+rides RS256, so the verifier dispatches RSA (PKCS#1 v1.5) and EC/ES256 per certificate; the
+pinned root is the self-signed "Yubico Attestation Root 1" from the FIDO MDS entry of the
+reference device (AAGUID b7d3f68e-88a6-471e-9ecf-2df26d041ede). Policy: invalid signature chain → hard refuse with
 honest copy; valid chain but unknown vendor (Nitrokey, SoloKeys, Titan) → allow with plain copy
 saying "not verified as Yubico-made", because a non-genuine token that answered with a fixed
 secret would reduce the seal to password-only — the pre-feature status quo, not a new harm. The
@@ -189,8 +193,11 @@ see Implementation) + `hwkey/fido.rs` LANDED (2026-10-27): the backend behind a 
 seam, hermetic stateful mock, binding round-trip / salt determinism / UV-forced / no-hmac-secret /
 consent-refusal / typed touch outcomes / swapped-credential / missing-key tests (8, default
 features, zero new build deps in CI); the real ctap-hid-fido2 adapter compiles under the
-non-default `fido2` feature. REMAINING in slice 1: attestation verification against pinned good
-and bad roots (see Attestation at enroll). (2) daemon plumbing, status copy per typed reason,
+non-default `fido2` feature. Slice 1 is COMPLETE: the remaining attestation leg landed (2026-10-27) as `hwkey/attest.rs` —
+chain walking with per-cert RSA/EC dispatch, the bundled Yubico pin, the hard-refuse/unknown-
+vendor policy in `FidoStore::create_binding`, and ten hermetic tests including the real root's
+parse-and-self-verify. The `rsa` dependency and a sha2 `oid` feature were added for it; `p256`
+moved from dev-dependencies to dependencies (the verifier needs ES256 in production). (2) daemon plumbing, status copy per typed reason,
 udev/sysdeps/packaging. (3) desktop flow: enroll wizard (probe, attestation verdict, touch
 test), touch-wait with cancel and countdown naming the vault, hot-plug status events, i18n
 en/es/pt with parity tests; copy says "security key" and "touch" — never FIDO, PIN, or hmac
