@@ -40,7 +40,7 @@ use windows_sys::core::PCWSTR;
 use zeroize::Zeroizing;
 
 use crate::error::{BaluardError, VaultError};
-use crate::hwkey::{EphemeralPub, HardwareKeyStore, HwCapability, SharedSecret};
+use crate::hwkey::{Handshake, HardwareKeyStore, HwCapability, SharedSecret};
 
 const PROVIDER_NAME: &str = "Microsoft Platform Crypto Provider";
 const PCP_ECDH_P256_ALG: &str = "ECDH_P256";
@@ -79,7 +79,7 @@ fn malformed(detail: &str) -> BaluardError {
 
 /// X9.62 uncompressed point (65 bytes, `0x04 || X || Y`) to a CNG
 /// `ECCPUBLICBLOB` (magic, cbKey, X, Y).
-fn point_to_blob(peer: &EphemeralPub) -> Result<Vec<u8>, BaluardError> {
+fn point_to_blob(peer: &Handshake) -> Result<Vec<u8>, BaluardError> {
     if peer.0[0] != 0x04 {
         return Err(malformed("peer point is not an uncompressed P-256 point"));
     }
@@ -91,7 +91,7 @@ fn point_to_blob(peer: &EphemeralPub) -> Result<Vec<u8>, BaluardError> {
     Ok(blob)
 }
 
-fn blob_to_point(blob: &[u8]) -> Result<EphemeralPub, BaluardError> {
+fn blob_to_point(blob: &[u8]) -> Result<Handshake, BaluardError> {
     if blob.len() != BLOB_LEN {
         return Err(malformed("public blob is not a P-256 ECCPUBLICBLOB"));
     }
@@ -104,7 +104,7 @@ fn blob_to_point(blob: &[u8]) -> Result<EphemeralPub, BaluardError> {
     point[0] = 0x04;
     point[1..1 + COORD_LEN].copy_from_slice(&blob[8..8 + COORD_LEN]);
     point[1 + COORD_LEN..].copy_from_slice(&blob[8 + COORD_LEN..]);
-    Ok(EphemeralPub(point))
+    Ok(Handshake(point.to_vec()))
 }
 
 fn key_name(binding: &str) -> Result<String, BaluardError> {
@@ -173,7 +173,7 @@ impl Drop for BcryptAlg {
 
 /// Generate a software P-256 ephemeral keypair and return its public half
 /// as X9.62. The private half dies with the handles.
-fn mint_ephemeral_point() -> Result<EphemeralPub, BaluardError> {
+fn mint_ephemeral_point() -> Result<Handshake, BaluardError> {
     let alg_name = wide(BCRYPT_ECDH_ALG);
     let mut alg: *mut core::ffi::c_void = std::ptr::null_mut();
     // BCrypt returns NTSTATUS, also 0 on success.
@@ -262,7 +262,7 @@ impl PcpStore {
     fn agree(
         prov: usize,
         chip_key: usize,
-        peer: &EphemeralPub,
+        peer: &Handshake,
     ) -> Result<SharedSecret, BaluardError> {
         let blob = point_to_blob(peer)?;
         let blob_type = wide(ECC_PUBLIC_BLOB);
@@ -328,6 +328,10 @@ impl PcpStore {
 }
 
 impl HardwareKeyStore for PcpStore {
+    fn backend_id(&self) -> &'static str {
+        "tpm-pcp"
+    }
+
     fn probe(&self) -> HwCapability {
         // A real throwaway keygen exercises the full create path (provider
         // open, TPM-backed key creation, finalize, delete) instead of only
@@ -410,11 +414,11 @@ impl HardwareKeyStore for PcpStore {
         Ok(binding)
     }
 
-    fn ecdh_ephemeral(
+    fn derive_ephemeral(
         &self,
         binding: &str,
         consent: crate::hwkey::HwConsent,
-    ) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+    ) -> Result<(Handshake, SharedSecret), BaluardError> {
         if consent.is_per_use() {
             return Err(VaultError::HardwareConsentUnavailable.into());
         }
@@ -427,10 +431,10 @@ impl HardwareKeyStore for PcpStore {
         Ok((peer, secret))
     }
 
-    fn ecdh(
+    fn derive(
         &self,
         binding: &str,
-        peer: &EphemeralPub,
+        peer: &Handshake,
         consent: crate::hwkey::HwConsent,
     ) -> Result<SharedSecret, BaluardError> {
         if consent.is_per_use() {

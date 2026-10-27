@@ -57,7 +57,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::error::{BaluardError, VaultError};
-use crate::hwkey::{EphemeralPub, HardwareKeyStore, HwCapability, SharedSecret};
+use crate::hwkey::{Handshake, HardwareKeyStore, HwCapability, Interaction, SharedSecret};
 
 /// The scan origin the tool ecosystem uses; scanning from the spec's
 /// upper band instead fails RC_VALUE on this firmware.
@@ -212,6 +212,14 @@ impl TpmStore {
 }
 
 impl HardwareKeyStore for TpmStore {
+    fn backend_id(&self) -> &'static str {
+        "tpm2"
+    }
+
+    fn interaction(&self) -> crate::hwkey::Interaction {
+        Interaction::Never
+    }
+
     fn probe(&self) -> HwCapability {
         // Honest probe: only the chip can answer. A throwaway primary
         // (flushed immediately) proves the resource manager is reachable,
@@ -345,11 +353,11 @@ impl HardwareKeyStore for TpmStore {
         Ok(format!("{BINDING_PREFIX}{slot_raw:08x}"))
     }
 
-    fn ecdh_ephemeral(
+    fn derive_ephemeral(
         &self,
         binding: &str,
         consent: crate::hwkey::HwConsent,
-    ) -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+    ) -> Result<(Handshake, SharedSecret), BaluardError> {
         if consent.is_per_use() {
             return Err(VaultError::HardwareConsentUnavailable.into());
         }
@@ -362,30 +370,30 @@ impl HardwareKeyStore for TpmStore {
         // silence requirement), and this firmware misbehaves with
         // sessions on these commands.
         ctx.execute_without_session(
-            |ctx| -> Result<(EphemeralPub, SharedSecret), BaluardError> {
+            |ctx| -> Result<(Handshake, SharedSecret), BaluardError> {
                 let (z, pub_point) = ctx
                     .ecdh_key_gen(key)
                     .map_err(|_| crate::hwkey::hw_unavailable_error())?;
                 let peer_bytes = Self::point_bytes(&pub_point)?;
-                Ok((EphemeralPub(peer_bytes), Self::secret_from_z(&z)?))
+                Ok((Handshake(peer_bytes), Self::secret_from_z(&z)?))
             },
         )
     }
 
-    fn ecdh(
+    fn derive(
         &self,
         binding: &str,
-        peer: &EphemeralPub,
+        handshake: &Handshake,
         consent: crate::hwkey::HwConsent,
     ) -> Result<SharedSecret, BaluardError> {
         if consent.is_per_use() {
             return Err(VaultError::HardwareConsentUnavailable.into());
         }
         let handle = Self::parse_handle(binding)?;
-        let peer_point = Self::point_from_x962(&peer.0)?;
+        let peer_point = Self::point_from_x962(&handshake.0)?;
         let mut ctx = self.ctx.lock().unwrap_or_else(|p| p.into_inner());
         let key = Self::load_key(&mut ctx, handle)?;
-        // Sessionless like ecdh_ephemeral: the key carries no auth and
+        // Sessionless like derive_ephemeral: the key carries no auth and
         // some firmware rejects needless auth sessions.
         ctx.execute_without_session(
             |ctx| -> Result<SharedSecret, BaluardError> {
@@ -435,16 +443,16 @@ mod real_chip_tests {
         assert!(matches!(store.probe(), HwCapability::Available { .. }));
 
         // Two vaults adopt the same chip key (shared-key semantics).
-        let a = store.create_binding(Uuid::new_v4()).unwrap();
-        let b = store.create_binding(Uuid::new_v4()).unwrap();
+        let a = store.create_binding(Uuid::new_v4(), HwConsent::Silent).unwrap();
+        let b = store.create_binding(Uuid::new_v4(), HwConsent::Silent).unwrap();
         assert_eq!(a, b, "one chip key serves every vault");
         assert!(a.starts_with(BINDING_PREFIX));
 
-        let (peer, secret) = store.ecdh_ephemeral(&a).unwrap();
+        let (peer, secret) = store.derive_ephemeral(&a, HwConsent::Silent).unwrap();
         assert_eq!(peer.0[0], 0x04);
-        let again = store.ecdh(&a, &peer).unwrap();
+        let again = store.derive(&a, &peer, HwConsent::Silent).unwrap();
         assert_eq!(secret.as_ref(), again.as_ref(), "TPM ECDH must reproduce z");
-        let via_b = store.ecdh(&b, &peer).unwrap();
+        let via_b = store.derive(&b, &peer, HwConsent::Silent).unwrap();
         assert_eq!(secret.as_ref(), via_b.as_ref());
 
         // Delete is a no-op on this backend; the key stays usable.
