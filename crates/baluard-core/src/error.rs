@@ -123,6 +123,26 @@ pub enum VaultError {
     )]
     HardwareConsentUnavailable,
 
+    /// Typed hardware outcomes for interactive backends (the FIDO2
+    /// security-key seal). Surfaces map these to plain-language copy;
+    /// none of them is a password failure and none charges the unlock
+    /// rate-limit budget.
+    #[error("no security key is plugged in; plug it in to unlock")]
+    HardwareKeyMissing,
+    /// The plugged key is not the one this vault was sealed to.
+    #[error("this is not the security key this vault was sealed to")]
+    HardwareKeyWrong,
+    #[error("the security key was not tapped in time; try again")]
+    HardwareTouchTimeout,
+    #[error("the security key touch was cancelled")]
+    HardwareTouchCancelled,
+    #[error("the security key is busy in another application; close it and try again")]
+    HardwareBusy,
+    /// Enabling a seal on a backend whose every use demands a physical
+    /// tap cannot honor the silent (no-prompt) mode.
+    #[error("this security key requires a touch on every unlock and cannot provide a silent seal")]
+    HardwareTouchRequired,
+
     /// A per-use chip confirmation was cancelled or failed. Retryable
     /// when it was a decline; a persistent failure after a biometry reset
     /// means the chip key is gone and the phrase path is the rescue.

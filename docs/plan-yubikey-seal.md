@@ -66,6 +66,16 @@ The seal math is unchanged: `baluard-devkey-seal-v2-hw` combines the password-de
 and a chip-contributed secret via `combine_seal_inputs`. Slice 0 carries everything every backend
 needs, and the round-two review expanded it from v1's list:
 
+Slice 0 is LANDED (2026-10-26): registry keyed by `backend_id()`, backend id recorded in the
+seal file and AAD-bound (length-framed), the opaque `Handshake` blob (65-byte cap, bound-checked
+reads), the `Interaction` capability with the silent-on-tapping-backend refusal, typed no-card vs
+wrong-card errors on open, and four new core tests (wrong-backend refusal, missing-backend-record
+corruption, oversized handshake, silent refused). The quick-unlock enforcement point is settled:
+every unlock shape pays the tap — password unlock and PIN quick unlock both end in
+`unlock_tail`, whose admin path opens the device file through the hw-aware read, and the member
+tail (`unlock_tail_member`) now re-opens an hw-sealed device file the same way before touching
+the identity seed (the one path that previously skipped the chip).
+
 - Multi-backend `hwkey` registry keyed by backend id.
 - Backend id recorded in the seal file's AAD next to the consent flag.
 - Typed hardware error enum: no key, wrong key, touch timeout, touch cancelled, device busy,

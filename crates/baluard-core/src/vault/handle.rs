@@ -5126,6 +5126,15 @@ impl VaultHandle {
                 "this device has no sealed identity seed; re-approve this member".into(),
             )
         })?;
+        // Slice 0 (YubiKey plan): an hw-sealed device file must open under
+        // the chip here too, or member unlock (and quick unlock, which
+        // rides the same tail) would skip the tap the admin path pays.
+        let privkey_path = self.path.join("meta/device-privkey.json");
+        if crate::vault::device_privkey::file_kind(&privkey_path)
+            == crate::vault::device_privkey::PrivkeyFileKind::SealedHw
+        {
+            crate::vault::device_privkey::read_privkey_file(&privkey_path, Some(&devkey_seal))?;
+        }
         let sealed = hex::decode(sealed_hex)
             .map_err(|_| VaultError::Corrupt("member identity seed".into()))?;
         let keys = crate::vault::identity::open_identity(&devkey_seal, &sealed).map_err(|e| {
@@ -13056,7 +13065,6 @@ mod tests {
 
         let vault_id_str = handle.vault_id.to_string();
         let device_id = handle.device_id;
-        let seal = handle.devkey_seal();
         let old_epoch = match &handle.state {
             VaultState::Unlocked(u) => u.current_epoch,
             VaultState::Locked => panic!("locked"),
