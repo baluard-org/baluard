@@ -1,0 +1,500 @@
+//! FIDO2 security-key backend (the hmac-secret seal).
+//!
+//! Cross-platform USB HID; backend id "fido2". The token derives a
+//! deterministic 32-byte secret per (credential, salt) via the CTAP2
+//! hmac-secret extension; the seal combines that secret with the KEK
+//! subkey through [`super::combine_seal_inputs`], so possession of the
+//! key (the tap) and the master password are both required.
+//!
+//! Everything the device does sits behind the narrow [`Token`] seam:
+//! the whole contract below (binding format, salt determinism, UV-mode
+//! pinning, typed touch outcomes) is unit-tested hermetically against a
+//! stateful mock, and the real ctap-hid-fido2 token lives behind the
+//! `fido2` cargo feature. The interaction model is always tap-per-use:
+//! YubiKey firmware refuses `up=false` assertions
+//! (CTAP2_ERR_UNSUPPORTED_OPTION), so [`super::Interaction::PerUse`] is
+//! the honest declaration and a silent seal refuses at enable time.
+//! The user PIN is deliberately never used - a host-stored PIN would
+//! preserve the one-credential rule, but the UV mode changes the
+//! derived secret (CredRandomWithoutUV vs WithUV), so the mode is
+//! pinned to without-UV and a token that forces UV is unusable,
+//! fail-closed.
+
+use crate::error::{BaluardError, VaultError};
+use base64::Engine as _;
+use uuid::Uuid;
+use zeroize::Zeroizing;
+
+pub const BINDING_PREFIX: &str = "fido:";
+/// Token-side namespace only: CTAP matches the rp id at assertion time
+/// and nothing here ever touches a network origin, so an offline-only
+/// name is honest.
+pub const RP_ID: &str = "baluard.local";
+
+/// What [`Token::info`] reports about the plugged key.
+#[derive(Clone, Copy, Debug)]
+pub struct TokenInfo {
+    pub aaguid: [u8; 16],
+    pub hmac_secret: bool,
+    pub pin_set: bool,
+    /// CTAP 2.1 `alwaysUv`: the token insists on user verification, so
+    /// the PIN-less CredRandomWithoutUV path this backend requires can
+    /// never run.
+    pub uv_forced: bool,
+}
+
+#[derive(Debug)]
+pub enum TokenError {
+    KeyMissing,
+    Busy,
+    Timeout,
+    Cancelled,
+    UvForced,
+    NoHmacSecret,
+    UnknownCredential,
+    Device(String),
+}
+
+/// The device seam: everything the seal math needs from a FIDO token,
+/// and nothing more.
+pub trait Token: Send + Sync {
+    fn info(&self) -> Result<TokenInfo, TokenError>;
+    /// Create the non-discoverable hmac-secret credential for one
+    /// vault; returns the credential id (opaque token bytes).
+    fn make_credential(&self, vault_id: Uuid) -> Result<Vec<u8>, TokenError>;
+    /// Tap the token and derive the hmac-secret output for `salt`.
+    fn get_secret(&self, credential_id: &[u8], salt: &[u8; 32]) -> Result<[u8; 32], TokenError>;
+}
+
+pub struct FidoStore {
+    token: Box<dyn Token>,
+}
+
+impl FidoStore {
+    pub fn new(token: Box<dyn Token>) -> Self {
+        Self { token }
+    }
+
+    fn preflight(&self) -> Result<(), BaluardError> {
+        let info = self.token.info().map_err(map_token)?;
+        if !info.hmac_secret || info.uv_forced {
+            return Err(VaultError::HardwareUnavailable.into());
+        }
+        Ok(())
+    }
+}
+
+pub fn parse_binding(binding: &str) -> Result<Vec<u8>, BaluardError> {
+    let rest = binding
+        .strip_prefix(BINDING_PREFIX)
+        .ok_or_else(|| VaultError::Corrupt("not a fido binding".into()))?;
+    let (id, b64) = rest
+        .split_once(':')
+        .ok_or_else(|| VaultError::Corrupt("fido binding missing credential id".into()))?;
+    Uuid::parse_str(id).map_err(|_| VaultError::Corrupt("fido binding vault id".into()))?;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| VaultError::Corrupt(format!("fido binding credential id: {e}")).into())
+}
+
+fn map_token(e: TokenError) -> BaluardError {
+    match e {
+        TokenError::KeyMissing => VaultError::HardwareKeyMissing.into(),
+        TokenError::Busy => VaultError::HardwareBusy.into(),
+        TokenError::Timeout => VaultError::HardwareTouchTimeout.into(),
+        TokenError::Cancelled => VaultError::HardwareTouchCancelled.into(),
+        // A token without hmac-secret, or one demanding its PIN, cannot
+        // serve this seal at all; the phrase path is the rescue.
+        TokenError::UvForced | TokenError::NoHmacSecret => VaultError::HardwareUnavailable.into(),
+        TokenError::UnknownCredential => VaultError::HardwareKeyWrong.into(),
+        TokenError::Device(m) => VaultError::Metadata(format!("security key: {m}")).into(),
+    }
+}
+
+impl super::HardwareKeyStore for FidoStore {
+    fn backend_id(&self) -> &'static str {
+        "fido2"
+    }
+
+    fn probe(&self) -> super::HwCapability {
+        let reason = match self.token.info() {
+            Ok(info) if !info.hmac_secret => "token-without-hmac-secret",
+            Ok(info) if info.uv_forced => "uv-forced",
+            Ok(_) => {
+                return super::HwCapability::Available {
+                    backend: "fido2".into(),
+                }
+            }
+            Err(TokenError::KeyMissing) => "no-token",
+            Err(_) => "no-hid",
+        };
+        super::HwCapability::Unavailable {
+            reason: reason.into(),
+        }
+    }
+
+    fn interaction(&self) -> super::Interaction {
+        super::Interaction::PerUse
+    }
+
+    fn create_binding(
+        &self,
+        vault_id: Uuid,
+        consent: super::HwConsent,
+    ) -> Result<String, BaluardError> {
+        if consent.is_per_use() {
+            // The tap is presence, not user verification; this backend
+            // has no biometry to gate a per-use key with.
+            return Err(VaultError::HardwareConsentUnavailable.into());
+        }
+        self.preflight()?;
+        let cred = self.token.make_credential(vault_id).map_err(map_token)?;
+        Ok(format!(
+            "{BINDING_PREFIX}{vault_id}:{}",
+            base64::engine::general_purpose::STANDARD.encode(cred)
+        ))
+    }
+
+    fn derive_ephemeral(
+        &self,
+        binding: &str,
+        consent: super::HwConsent,
+    ) -> Result<(super::Handshake, super::SharedSecret), BaluardError> {
+        if consent.is_per_use() {
+            return Err(VaultError::HardwareConsentUnavailable.into());
+        }
+        let cred = parse_binding(binding)?;
+        self.preflight()?;
+        let mut salt = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut salt);
+        let secret = self.token.get_secret(&cred, &salt).map_err(map_token)?;
+        Ok((super::Handshake(salt.to_vec()), Zeroizing::new(secret)))
+    }
+
+    fn derive(
+        &self,
+        binding: &str,
+        handshake: &super::Handshake,
+        consent: super::HwConsent,
+    ) -> Result<super::SharedSecret, BaluardError> {
+        if consent.is_per_use() {
+            return Err(VaultError::HardwareConsentUnavailable.into());
+        }
+        let cred = parse_binding(binding)?;
+        let salt: [u8; 32] = handshake
+            .0
+            .as_slice()
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("fido handshake is not a 32-byte salt".into()))?;
+        self.preflight()?;
+        let secret = self.token.get_secret(&cred, &salt).map_err(map_token)?;
+        Ok(Zeroizing::new(secret))
+    }
+
+    fn delete_binding(&self, _binding: &str) -> Result<(), BaluardError> {
+        // Deliberate no-op: a non-discoverable credential is invisible
+        // without its id, so the orphan left after a disable is inert.
+        // CTAP 2.1 credential deletion would demand the PIN we refuse.
+        Ok(())
+    }
+}
+
+#[cfg(feature = "fido2")]
+mod real {
+    //! The ctap-hid-fido2 token. Build-gated because the hidapi C
+    //! scaffold needs libusb/libudev headers at build time; runtime
+    //! needs the Yubico udev rules for non-root HID access.
+
+    use super::{Token, TokenError, TokenInfo};
+    use ctap_hid_fido2::fidokey::{
+        AssertionExtension as Gext, CredentialExtension as Mext, GetAssertionArgsBuilder,
+        MakeCredentialArgsBuilder,
+    };
+    use ctap_hid_fido2::public_key_credential_user_entity::PublicKeyCredentialUserEntity;
+    use ctap_hid_fido2::{Cfg, FidoKeyHidFactory};
+    use uuid::Uuid;
+
+    // Consumed from slice 2's daemon registry wiring.
+    #[allow(dead_code)]
+    pub struct CtapToken;
+
+    // Consumed from slice 2's daemon registry wiring.
+    #[allow(dead_code)]
+    fn open() -> Result<ctap_hid_fido2::FidoKeyHid, TokenError> {
+        FidoKeyHidFactory::create(&Cfg::init()).map_err(|e| TokenError::Device(format!("{e}")))
+    }
+
+    impl Token for CtapToken {
+        fn info(&self) -> Result<TokenInfo, TokenError> {
+            let dev = open()?;
+            let info = dev
+                .get_info()
+                .map_err(|e| TokenError::Device(format!("{e}")))?;
+            let mut aaguid = [0u8; 16];
+            if info.aaguid.len() == 16 {
+                aaguid.copy_from_slice(&info.aaguid);
+            }
+            Ok(TokenInfo {
+                aaguid,
+                hmac_secret: info.extensions.iter().any(|e| e == "hmac-secret"),
+                pin_set: info.options.iter().any(|(k, v)| k == "clientPin" && *v),
+                uv_forced: info.options.iter().any(|(k, v)| k == "alwaysUv" && *v),
+            })
+        }
+
+        fn make_credential(&self, vault_id: Uuid) -> Result<Vec<u8>, TokenError> {
+            let dev = open()?;
+            let mut challenge = [0u8; 32];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut challenge);
+            let user =
+                PublicKeyCredentialUserEntity::new(Some(vault_id.as_bytes()), None, None);
+            let args = MakeCredentialArgsBuilder::new(super::RP_ID, &challenge)
+                .without_pin_and_uv()
+                .user_entity(&user)
+                .extensions(&[Mext::HmacSecret(Some(true))])
+                .build();
+            let att = dev
+                .make_credential_with_args(&args)
+                .map_err(|e| TokenError::Device(format!("{e}")))?;
+            Ok(att.credential_descriptor.id)
+        }
+
+        fn get_secret(
+            &self,
+            credential_id: &[u8],
+            salt: &[u8; 32],
+        ) -> Result<[u8; 32], TokenError> {
+            let dev = open()?;
+            let args = GetAssertionArgsBuilder::new(super::RP_ID, salt)
+                .without_pin_and_uv()
+                .credential_id(credential_id)
+                .extensions(&[Gext::HmacSecret(Some(*salt))])
+                .build();
+            let assertions = dev
+                .get_assertion_with_args(&args)
+                .map_err(|e| TokenError::Device(format!("{e}")))?;
+            let a = assertions
+                .first()
+                .ok_or_else(|| TokenError::Device("no assertion returned".into()))?;
+            for e in &a.extensions {
+                if let Gext::HmacSecret(Some(out)) = e {
+                    return Ok(*out);
+                }
+            }
+            Err(TokenError::Device(
+                "assertion carried no hmac-secret output".into(),
+            ))
+        }
+    }
+
+    /// Registry entry point for the real token.
+    #[allow(dead_code)]
+    pub fn store() -> std::sync::Arc<dyn super::super::HardwareKeyStore> {
+        std::sync::Arc::new(super::FidoStore::new(Box::new(CtapToken)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Handshake, HardwareKeyStore, HwCapability, HwConsent, binding_vault_id};
+    use super::*;
+    use crate::error::BaluardError;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    fn vault_err(e: &BaluardError) -> &VaultError {
+        match e {
+            crate::error::BaluardError::Vault(v) => v,
+            other => panic!("not a vault error: {other}"),
+        }
+    }
+
+    /// Stateful mock: holds credentials + their master secrets and
+    /// derives hmac outputs the way a token does
+    /// (SHA-256(master_secret || salt)). Configurable failure modes
+    /// cover every typed outcome.
+    struct MockToken {
+        hmac_secret: bool,
+        uv_forced: bool,
+        creds: Mutex<HashMap<Vec<u8>, [u8; 32]>>,
+        fail: Option<TokenError>,
+    }
+
+    impl MockToken {
+        fn new() -> Self {
+            Self {
+                hmac_secret: true,
+                uv_forced: false,
+                creds: Mutex::new(HashMap::new()),
+                fail: None,
+            }
+        }
+        fn hmac_off(mut self) -> Self {
+            self.hmac_secret = false;
+            self
+        }
+        fn uv_forced(mut self) -> Self {
+            self.uv_forced = true;
+            self
+        }
+        fn failing(mut self, e: TokenError) -> Self {
+            self.fail = Some(e);
+            self
+        }
+        fn fail_err(&self) -> Result<(), TokenError> {
+            match &self.fail {
+                Some(e) => Err(match e {
+                    TokenError::Busy => TokenError::Busy,
+                    TokenError::Timeout => TokenError::Timeout,
+                    TokenError::Cancelled => TokenError::Cancelled,
+                    TokenError::KeyMissing => TokenError::KeyMissing,
+                    other => TokenError::Device(format!("{other:?}")),
+                }),
+                None => Ok(()),
+            }
+        }
+    }
+
+    impl Token for MockToken {
+        fn info(&self) -> Result<TokenInfo, TokenError> {
+            self.fail_err()?;
+            Ok(TokenInfo {
+                aaguid: [7u8; 16],
+                hmac_secret: self.hmac_secret,
+                pin_set: false,
+                uv_forced: self.uv_forced,
+            })
+        }
+
+        fn make_credential(&self, vault_id: Uuid) -> Result<Vec<u8>, TokenError> {
+            self.fail_err()?;
+            let mut secret = [0u8; 32];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut secret);
+            let id = vault_id.as_bytes().to_vec();
+            self.creds.lock().unwrap().insert(id.clone(), secret);
+            Ok(id)
+        }
+
+        fn get_secret(
+            &self,
+            credential_id: &[u8],
+            salt: &[u8; 32],
+        ) -> Result<[u8; 32], TokenError> {
+            self.fail_err()?;
+            let creds = self.creds.lock().unwrap();
+            let secret = creds
+                .get(credential_id)
+                .ok_or(TokenError::UnknownCredential)?;
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(secret);
+            h.update(salt);
+            Ok(h.finalize().into())
+        }
+    }
+
+    fn store(tok: MockToken) -> FidoStore {
+        FidoStore::new(Box::new(tok))
+    }
+
+    #[test]
+    fn binding_format_round_trips() {
+        let vault_id = Uuid::new_v4();
+        let s = store(MockToken::new());
+        let binding = s.create_binding(vault_id, HwConsent::Silent).unwrap();
+        assert!(binding.starts_with(BINDING_PREFIX), "got: {binding}");
+        assert_eq!(binding_vault_id(&binding), Some(vault_id));
+        let cred = parse_binding(&binding).unwrap();
+        assert_eq!(cred, vault_id.as_bytes().to_vec());
+    }
+
+    #[test]
+    fn salt_determinism_reproduces_the_secret() {
+        let vault_id = Uuid::new_v4();
+        let s = store(MockToken::new());
+        let binding = s.create_binding(vault_id, HwConsent::Silent).unwrap();
+        let (handshake, secret) = s.derive_ephemeral(&binding, HwConsent::Silent).unwrap();
+        assert_eq!(handshake.0.len(), 32);
+        let again = s.derive(&binding, &handshake, HwConsent::Silent).unwrap();
+        assert_eq!(secret.as_ref(), again.as_ref(), "same salt must reproduce z");
+        let mut other_salt = handshake.0.clone();
+        other_salt[0] ^= 0xff;
+        let different = s
+            .derive(&binding, &Handshake(other_salt), HwConsent::Silent)
+            .unwrap();
+        assert_ne!(secret.as_ref(), different.as_ref());
+    }
+
+    #[test]
+    fn uv_forced_token_fails_closed() {
+        let vault_id = Uuid::new_v4();
+        let s = store(MockToken::new().uv_forced());
+        match s.probe() {
+            HwCapability::Unavailable { reason } => assert_eq!(reason, "uv-forced"),
+            other => panic!("expected unavailable, got {other:?}"),
+        }
+        let err = s.create_binding(vault_id, HwConsent::Silent).unwrap_err();
+        assert!(matches!(vault_err(&err), VaultError::HardwareUnavailable));
+    }
+
+    #[test]
+    fn token_without_hmac_secret_refuses() {
+        let vault_id = Uuid::new_v4();
+        let s = store(MockToken::new().hmac_off());
+        match s.probe() {
+            HwCapability::Unavailable { reason } => {
+                assert_eq!(reason, "token-without-hmac-secret")
+            }
+            other => panic!("expected unavailable, got {other:?}"),
+        }
+        assert!(s.create_binding(vault_id, HwConsent::Silent).is_err());
+    }
+
+    #[test]
+    fn consent_mode_is_refused_on_fido() {
+        let vault_id = Uuid::new_v4();
+        let s = store(MockToken::new());
+        let err = s.create_binding(vault_id, HwConsent::PerUse).unwrap_err();
+        assert!(matches!(vault_err(&err), VaultError::HardwareConsentUnavailable));
+    }
+
+    #[test]
+    fn typed_touch_outcomes_map_to_typed_errors() {
+        let vault_id = Uuid::new_v4();
+        let clean = store(MockToken::new());
+        let binding = clean.create_binding(vault_id, HwConsent::Silent).unwrap();
+        let salt = Handshake(vec![0u8; 32]);
+        for (tok, expected) in [
+            (TokenError::Busy, VaultError::HardwareBusy),
+            (TokenError::Timeout, VaultError::HardwareTouchTimeout),
+            (TokenError::Cancelled, VaultError::HardwareTouchCancelled),
+        ] {
+            let s = store(MockToken::new().failing(tok));
+            let err = s.derive(&binding, &salt, HwConsent::Silent).unwrap_err();
+            assert!(std::mem::discriminant(vault_err(&err)) == std::mem::discriminant(&expected));
+        }
+    }
+
+    #[test]
+    fn swapped_credential_fails_closed() {
+        // A different token (or a reset one) knows no credential: the
+        // assertion fails natively, surfacing as wrong-key.
+        let vault_id = Uuid::new_v4();
+        let clean = store(MockToken::new());
+        let binding = clean.create_binding(vault_id, HwConsent::Silent).unwrap();
+        let other = store(MockToken::new());
+        let err = other
+            .derive(&binding, &Handshake(vec![0u8; 32]), HwConsent::Silent)
+            .unwrap_err();
+        assert!(matches!(vault_err(&err), VaultError::HardwareKeyWrong));
+    }
+
+    #[test]
+    fn missing_key_maps_to_key_missing() {
+        let s = store(MockToken::new().failing(TokenError::KeyMissing));
+        match s.probe() {
+            HwCapability::Unavailable { reason } => assert_eq!(reason, "no-token"),
+            other => panic!("expected unavailable, got {other:?}"),
+        }
+    }
+}

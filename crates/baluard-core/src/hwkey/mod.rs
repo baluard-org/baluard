@@ -288,6 +288,11 @@ pub mod tpm;
 #[cfg(all(target_os = "windows", feature = "hw-seal"))]
 pub mod pcp;
 
+/// FIDO2 security-key backend (the hmac-secret seal). The contract and
+/// the hermetic mock compile everywhere; the real ctap-hid-fido2 token
+/// rides the `fido2` feature.
+pub mod fido;
+
 /// The platform keystore for THIS device, per the platform matrix (plan
 /// §3.3). Returns None where no backend is compiled - the progressive
 /// default on platforms without a landed backend.
