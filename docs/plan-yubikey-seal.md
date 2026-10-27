@@ -170,21 +170,27 @@ firmware, closing silent mode permanently. Firmware 5.8 (July 2026, YubiKey 5 se
 
 ## Implementation
 
-Crates: libfido2 (Yubico's own C library, systemd-proven, packaged in Fedora and Ubuntu) behind
-the existing `hw-seal` feature via sys bindings, with a vendor review gate; the pure-Rust CTAP2
-stack is the fallback if bindings quality disappoints. USB transport is HID — the pcscd /
+Crates: the vendor-review gate (slice 1, 2026-10-27) chose **ctap-hid-fido2** — pure Rust, MIT,
+maintained (releases through 2026), firmware 5.8 supported, hmac-secret verified at source. The
+libfido2 route failed the gate: its only Rust binding (fido2-rs) is a 2-star single-maintainer
+crate with no macOS support and undocumented extension coverage. ctap-hid-fido2 uses ring (already
+in the tree) behind default features. Cost: the crate's MSRV is 1.89 vs the workspace's declared
+1.85 — acceptable because every minimum-platform target ships rustc ≥ 1.90 (Ubuntu 26.04: 1.93,
+Fedora 43: 1.90, macOS/Windows current toolchains); AGENTS.md's MSRV line reads stale until
+corrected. USB transport is HID — the pcscd /
 libpcsclite dependency from the v1 plan disappears entirely. Desktop needs the Yubico udev rules
 for non-root HID access (`uaccess` grants the local session, the same boundary as the existing
 same-UID model): `just sysdeps` gains the line and Linux packages declare it; the app prints
 per-distro install commands, never runs them. Desktop NFC readers are out (none on target
 machines); phone NFC is post-1.0 mobile work behind the same trait.
 
-Slices: (0) registry, seal-AAD backend id, typed errors including touch outcomes, handshake
-reshape with length framing, consent-interaction capability, binding format + `binding_vault_id`
-extension, quick-unlock enforcement point settled — no FIDO2 code. (1) vendor review +
-`hwkey/fido.rs` with a compile-gated mock (interactive); unit tests for binding round-trips,
-salt determinism, UV-mode mismatch fail-closed, attestation verification against pinned good and
-bad roots, and busy/timeout/cancel outcomes. (2) daemon plumbing, status copy per typed reason,
+Slices: (0) LANDED (2026-10-26, commit 4e9a654). (1) vendor review LANDED (ctap-hid-fido2 chosen;
+see Implementation) + `hwkey/fido.rs` LANDED (2026-10-27): the backend behind a narrow `Token`
+seam, hermetic stateful mock, binding round-trip / salt determinism / UV-forced / no-hmac-secret /
+consent-refusal / typed touch outcomes / swapped-credential / missing-key tests (8, default
+features, zero new build deps in CI); the real ctap-hid-fido2 adapter compiles under the
+non-default `fido2` feature. REMAINING in slice 1: attestation verification against pinned good
+and bad roots (see Attestation at enroll). (2) daemon plumbing, status copy per typed reason,
 udev/sysdeps/packaging. (3) desktop flow: enroll wizard (probe, attestation verdict, touch
 test), touch-wait with cancel and countdown naming the vault, hot-plug status events, i18n
 en/es/pt with parity tests; copy says "security key" and "touch" — never FIDO, PIN, or hmac

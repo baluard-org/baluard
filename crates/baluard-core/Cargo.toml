@@ -20,6 +20,13 @@ hpke.workspace = true
 rand.workspace = true
 ssh-key = { version = "0.7.0-rc.10", features = ["ed25519"] }
 rand_core.workspace = true
+# FIDO2 CTAP2 client (pure Rust, MIT, vendor-reviewed for the hmac-secret
+# seal; docs/plan-yubikey-seal.md Implementation). Optional: builds only
+# under the fido2 feature, where the hidapi scaffold needs libusb/libudev
+# headers and runtime needs the Yubico udev rules.
+ctap-hid-fido2 = { version = "3.6", optional = true, default-features = false, features = [
+    "ring",
+] }
 bip39.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -79,6 +86,11 @@ public-suffix = "0.1"
 
 [features]
 hw-seal = ["dep:secure-enclave-rs", "dep:tss-esapi", "dep:windows-sys"]
+# FIDO2 security-key seal (the hmac-secret design in
+# docs/plan-yubikey-seal.md). Non-default until the daemon wiring and
+# packaging land; MSRV for a build WITH this feature is 1.89 (the crate
+# floor) - still under every minimum-platform target's rustc.
+fido2 = ["dep:ctap-hid-fido2"]
 default = ["full"]
 full = ["git-sync", "passkey-ceremony", "uri-match"]
 passkey-ceremony = ["dep:passkey", "dep:passkey-types", "passkey-types/serialize_bytes_as_base64_string", "dep:url", "dep:public-suffix", "dep:coset", "dep:tokio"]
@@ -120,3 +132,4 @@ windows-sys = { version = "0.59", optional = true, features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
 ] }
+
