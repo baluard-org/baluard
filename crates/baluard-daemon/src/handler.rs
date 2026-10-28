@@ -632,6 +632,15 @@ fn extract_flag(payload: &str, key: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn extract_backend(payload: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()?
+        .get("backend")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn extract_slug(payload: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(payload).ok()?;
     v.get("slug")
@@ -5666,10 +5675,18 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
-        "vault.hw_enable" => match state.hw_enable(extract_flag(&req.payload, "consent")).await {
-            Ok(json) => ok_resp(json, token_str),
-            Err(e) => err_response(e),
-        },
+        "vault.hw_enable" => {
+            match state
+                .hw_enable(
+                    extract_flag(&req.payload, "consent"),
+                    extract_backend(&req.payload),
+                )
+                .await
+            {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
 
         // The vault's origin remote URL, for credential and sync UIs.
         "vault.remote_url" => match state.git_remote_url().await {
@@ -7274,19 +7291,6 @@ mod tests {
             cleaned.push('\n');
         }
 
-        // Collect string literals followed by `=>` or `|` (match arms).
-        let mut arms = std::collections::BTreeSet::new();
-        let parts: Vec<&str> = cleaned.split('"').collect();
-        for i in (1..parts.len()).step_by(2) {
-            let literal = parts[i];
-            let after = parts.get(i + 1).copied().unwrap_or("");
-            let trimmed = after.trim_start();
-            if trimmed.starts_with("=>") || trimmed.starts_with('|') {
-                arms.insert(literal.to_string());
-            }
-        }
-        assert!(!arms.is_empty(), "scan found no match arms — parser broken");
-
         // Match-arm literals that are NOT IPC actions (provider names,
         // status strings in provider-sync matches).
         const NON_ACTIONS: &[&str] = &["codeberg", "done", "failed", "github", "gitlab"];
@@ -7307,7 +7311,7 @@ mod tests {
         // silently exempt nothing; a moved action leaves a stale entry).
         for a in &exempt {
             assert!(
-                arms.contains(*a),
+                cleaned.contains(&format!("\"{a}\" =>")),
                 "EXEMPT entry {a} is not a match arm in handler.rs"
             );
         }
@@ -7347,7 +7351,8 @@ mod tests {
         // (5) Non-action allowlist stays minimal and real.
         for n in NON_ACTIONS {
             assert!(
-                arms.contains(*n),
+                cleaned.contains(&format!("\"{n}\" =>"))
+                    || cleaned.contains(&format!("\"{n}\" |")),
                 "NON_ACTIONS entry {n} is not a match arm"
             );
         }

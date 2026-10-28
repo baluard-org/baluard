@@ -123,6 +123,8 @@ fn main() -> anyhow::Result<()> {
     if let Some(store) = baluard_core::hwkey::platform_store() {
         baluard_core::hwkey::install(store);
     }
+    #[cfg(feature = "fido2")]
+    baluard_core::hwkey::install(baluard_core::hwkey::fido::store());
 
     // Test-fixture kill switch: when the spawning parent goes away
     // (SIGKILLed test runner, OOM kill, crash), no Drop guard can run,

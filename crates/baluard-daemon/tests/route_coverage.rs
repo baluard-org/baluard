@@ -2245,10 +2245,20 @@ async fn vaults_copy_items_founds_a_family_vault() {
     host.insert("copysrc".into(), state_s.clone()).await;
     host.insert("fam-copy".into(), state_f.clone()).await;
 
+    // The route reads source plaintext and writes the target, so it
+    // gates on both vaults' session tokens in the payload.
+    let source_token = state_s.get_session_token().await.expect("source token");
+    let target_token = state_f.get_session_token().await.expect("target token");
     let req = GatewayRequest {
         action: "vaults.copy_items".into(),
-        payload: serde_json::json!({ "source": "copysrc", "target": "fam-copy", "all": true })
-            .to_string(),
+        payload: serde_json::json!({
+            "source": "copysrc",
+            "target": "fam-copy",
+            "all": true,
+            "source_token": source_token,
+            "target_token": target_token,
+        })
+        .to_string(),
         session_token: String::new(),
         slug: String::new(),
     };
@@ -2282,17 +2292,24 @@ async fn vaults_copy_items_founds_a_family_vault() {
     assert!(!resp.success);
     assert!(resp.error_message.contains("the same"));
 
-    // An unknown source slug refuses in plain language.
+    // An unknown source slug refuses in plain language. Tokens ride
+    // along so the payload gate passes and the slug check is what fires.
     let req = GatewayRequest {
         action: "vaults.copy_items".into(),
-        payload: serde_json::json!({ "source": "ghost", "target": "fam-copy", "all": true })
-            .to_string(),
+        payload: serde_json::json!({
+            "source": "ghost",
+            "target": "fam-copy",
+            "all": true,
+            "source_token": source_token,
+            "target_token": target_token,
+        })
+        .to_string(),
         session_token: String::new(),
         slug: String::new(),
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success);
-    assert!(resp.error_message.contains("not open in the daemon"));
+    assert!(resp.error_message.contains("not open"));
 }
 
 #[tokio::test]
@@ -2577,12 +2594,19 @@ async fn family_claim_arming_surfaces_as_success() {
         .unwrap_err();
     assert!(err.contains("more days"), "{err}");
 
-    // Expiry executes: rewind the record, claim again, success.
+    // Expiry executes: age the record, claim again, success. The
+    // record is tamper-evident: window_until must equal the signed ask
+    // time + the contest window, so the rewind moves BOTH timestamps
+    // instead of window_until alone (a window_until-only edit is the
+    // forgery the execution path refuses).
     let mut record: serde_json::Value = serde_json::from_slice(
         &std::fs::read(vault_path.join("meta/contests/ownership-claim.json")).unwrap(),
     )
     .unwrap();
-    record["window_until"] = serde_json::json!(1);
+    let window = baluard_core::vault::members::OWNERSHIP_CONTEST_WINDOW_SECS;
+    record["ask_initiated_at"] = serde_json::json!(1);
+    record["confirmed_at"] = serde_json::json!(1);
+    record["window_until"] = serde_json::json!(1 + window);
     std::fs::write(
         vault_path.join("meta/contests/ownership-claim.json"),
         serde_json::to_vec(&record).unwrap(),
@@ -4751,6 +4775,7 @@ async fn vault_search_fans_out_and_skips_locked_and_ineligible() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn hw_seal_status_and_fail_closed_toggle() {
     // The pin_quick_unlock pattern: drive the VaultState methods directly
     // (the daemon arms are one-line passthroughs; their token classification
@@ -4759,17 +4784,190 @@ async fn hw_seal_status_and_fail_closed_toggle() {
 
     // No platform keystore is installed in tests: capable false, and the
     // status still reports the seal kind honestly.
-    assert!(baluard_core::hwkey::installed().is_none());
+    assert!(baluard_core::hwkey::installed_all().is_empty());
     let v: serde_json::Value = serde_json::from_str(&state.hw_status().await.unwrap()).unwrap();
     assert_eq!(v["capable"], serde_json::Value::Bool(false));
     assert_eq!(v["seal"], "v1");
     assert_eq!(v["enabled"], serde_json::Value::Bool(false));
 
     // The toggle fails closed with no chip: never a silent no-op.
-    let err = state.hw_enable(false).await.unwrap_err();
+    let err = state.hw_enable(false, None).await.unwrap_err();
     assert!(err.contains("security chip"), "refusal: {err}");
     let err = state.hw_disable().await.unwrap_err();
     assert!(err.contains("security chip"), "refusal: {err}");
+}
+
+struct RouteHwMock {
+    backend: &'static str,
+    available: bool,
+    tap: bool,
+}
+
+impl baluard_core::hwkey::HardwareKeyStore for RouteHwMock {
+    fn backend_id(&self) -> &'static str {
+        self.backend
+    }
+
+    fn probe(&self) -> baluard_core::hwkey::HwCapability {
+        if self.available {
+            baluard_core::hwkey::HwCapability::Available {
+                backend: self.backend.into(),
+            }
+        } else {
+            baluard_core::hwkey::HwCapability::Unavailable {
+                reason: "no-token".into(),
+            }
+        }
+    }
+
+    fn interaction(&self) -> baluard_core::hwkey::Interaction {
+        if self.tap {
+            baluard_core::hwkey::Interaction::PerUse
+        } else {
+            baluard_core::hwkey::Interaction::Never
+        }
+    }
+
+    fn create_binding(
+        &self,
+        vault_id: uuid::Uuid,
+        _: baluard_core::hwkey::HwConsent,
+    ) -> Result<baluard_core::hwkey::BindingInfo, baluard_core::error::BaluardError> {
+        Ok(baluard_core::hwkey::BindingInfo {
+            binding: baluard_core::hwkey::binding_tag(vault_id),
+            // The FIDO shape: an attesting backend reports its verdict at
+            // enrollment.
+            attestation: if self.tap {
+                Some(baluard_core::hwkey::HwAttestation::Verified)
+            } else {
+                None
+            },
+        })
+    }
+
+    fn derive_ephemeral(
+        &self,
+        binding: &str,
+        _: baluard_core::hwkey::HwConsent,
+    ) -> Result<
+        (
+            baluard_core::hwkey::Handshake,
+            baluard_core::hwkey::SharedSecret,
+        ),
+        baluard_core::error::BaluardError,
+    > {
+        let mut secret = [0u8; 32];
+        for (index, byte) in binding.bytes().chain([0x04, 0x02]).enumerate() {
+            secret[index % 32] ^= byte;
+        }
+        Ok((
+            baluard_core::hwkey::Handshake(vec![0x04, 0x02]),
+            zeroize::Zeroizing::new(secret),
+        ))
+    }
+
+    fn derive(
+        &self,
+        binding: &str,
+        handshake: &baluard_core::hwkey::Handshake,
+        _: baluard_core::hwkey::HwConsent,
+    ) -> Result<baluard_core::hwkey::SharedSecret, baluard_core::error::BaluardError> {
+        let mut secret = [0u8; 32];
+        for (index, byte) in binding.bytes().chain(handshake.0.iter().copied()).enumerate() {
+            secret[index % 32] ^= byte;
+        }
+        Ok(zeroize::Zeroizing::new(secret))
+    }
+
+    fn delete_binding(&self, _: &str) -> Result<(), baluard_core::error::BaluardError> {
+        Ok(())
+    }
+}
+
+struct HwRegistryGuard {
+    old_disable: Option<String>,
+}
+
+impl HwRegistryGuard {
+    fn new() -> Self {
+        let old_disable = std::env::var(baluard_core::hwkey::DISABLE_ENV).ok();
+        // SAFETY: the hardware route tests are serial and no other test in
+        // this binary reads the kill-switch while this guard is alive.
+        unsafe {
+            std::env::remove_var(baluard_core::hwkey::DISABLE_ENV);
+        }
+        baluard_core::hwkey::uninstall();
+        Self { old_disable }
+    }
+}
+
+impl Drop for HwRegistryGuard {
+    fn drop(&mut self) {
+        baluard_core::hwkey::uninstall();
+        // SAFETY: same serialization invariant as HwRegistryGuard::new.
+        unsafe {
+            match self.old_disable.as_deref() {
+                Some(value) => std::env::set_var(baluard_core::hwkey::DISABLE_ENV, value),
+                None => std::env::remove_var(baluard_core::hwkey::DISABLE_ENV),
+            }
+        }
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn hw_routes_select_a_tap_backend_and_report_every_probe() {
+    let _registry = HwRegistryGuard::new();
+    baluard_core::hwkey::install(Arc::new(RouteHwMock {
+        backend: "broken-mock",
+        available: false,
+        tap: false,
+    }));
+    baluard_core::hwkey::install(Arc::new(RouteHwMock {
+        backend: "tap-mock",
+        available: true,
+        tap: true,
+    }));
+
+    let (_tmp, state) = open_unlocked("hw-fido-route").await;
+    let host: baluard_daemon::host::SharedVaultHost = Arc::new(VaultHost::new());
+    host.insert("hw-fido-route".into(), state.clone()).await;
+    host.switch("hw-fido-route").await.expect("activate vault");
+    let token = state.get_session_token().await.expect("session token");
+    let response = route_host_request(
+        GatewayRequest {
+            action: "vault.hw_enable".into(),
+            payload: serde_json::json!({"consent": false, "backend": "tap-mock"}).to_string(),
+            session_token: token,
+            slug: String::new(),
+        },
+        &host,
+    )
+    .await;
+    assert!(response.success, "enable failed: {}", response.error_message);
+    let enabled: serde_json::Value = serde_json::from_str(&response.payload).unwrap();
+    assert_eq!(enabled["backend"], "tap-mock");
+    assert_eq!(enabled["attestation"], "verified");
+
+    let status: serde_json::Value =
+        serde_json::from_str(&state.hw_status().await.unwrap()).unwrap();
+    assert_eq!(status["capable"], true);
+    assert_eq!(status["backend"], "tap-mock");
+    assert_eq!(status["enabled"], true);
+    assert_eq!(status["consent"], true);
+    assert_eq!(status["consent_supported"], false);
+    assert_eq!(status["attestation"], "verified");
+    let backends = status["backends"].as_array().expect("backend status list");
+    assert_eq!(backends.len(), 2);
+    assert_eq!(backends[0]["backend"], "broken-mock");
+    assert_eq!(backends[0]["capable"], false);
+    assert_eq!(backends[0]["reason"], "no-token");
+    assert_eq!(backends[1]["backend"], "tap-mock");
+    assert_eq!(backends[1]["capable"], true);
+    assert_eq!(backends[1]["interaction"], "per-use");
+
+    state.lock().await.expect("lock sealed vault");
+    state.unlock(MASTER).await.expect("reopen through tap backend");
 }
 
 #[tokio::test]

@@ -106,7 +106,7 @@ impl HardwareKeyStore for SecureEnclaveStore {
         &self,
         vault_id: Uuid,
         consent: crate::hwkey::HwConsent,
-    ) -> Result<String, BaluardError> {
+    ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
         let tag = if consent.is_per_use() {
             crate::hwkey::consent_binding_tag(vault_id).into_bytes()
         } else {
@@ -114,9 +114,11 @@ impl HardwareKeyStore for SecureEnclaveStore {
         };
         // Idempotent per vault: reuse the persisted chip key when present.
         if SecureEnclaveKey::get(&tag).is_ok() {
-            return Ok(
-                String::from_utf8(tag).map_err(|_| VaultError::Corrupt("hwkey tag utf8".into()))?
-            );
+            return Ok(crate::hwkey::BindingInfo {
+                binding: String::from_utf8(tag)
+                    .map_err(|_| VaultError::Corrupt("hwkey tag utf8".into()))?,
+                attestation: None,
+            });
         }
         // Per-use keys carry BIOMETRY_CURRENT_SET: every agreement pops
         // Touch ID, and re-enrolled biometry invalidates the key (the
@@ -132,7 +134,11 @@ impl HardwareKeyStore for SecureEnclaveStore {
             permanent: true,
         })
         .map_err(|e| VaultError::Metadata(format!("hwkey SE generate: {e}")))?;
-        Ok(String::from_utf8(tag).map_err(|_| VaultError::Corrupt("hwkey tag utf8".into()))?)
+        Ok(crate::hwkey::BindingInfo {
+            binding: String::from_utf8(tag)
+                .map_err(|_| VaultError::Corrupt("hwkey tag utf8".into()))?,
+            attestation: None,
+        })
     }
 
     fn derive_ephemeral(

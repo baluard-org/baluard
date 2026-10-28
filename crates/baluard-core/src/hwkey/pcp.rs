@@ -382,14 +382,17 @@ impl HardwareKeyStore for PcpStore {
         &self,
         vault_id: Uuid,
         consent: crate::hwkey::HwConsent,
-    ) -> Result<String, BaluardError> {
+    ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
         if consent.is_per_use() {
             return Err(VaultError::HardwareConsentUnavailable.into());
         }
         let binding = crate::hwkey::binding_tag(vault_id);
         let prov = Self::open_provider()?;
         if Self::open_key(prov.0, &binding)?.is_some() {
-            return Ok(binding);
+            return Ok(crate::hwkey::BindingInfo {
+                binding,
+                attestation: None,
+            });
         }
         let name = wide(&key_name(&binding)?);
         let mut key: usize = 0;
@@ -405,13 +408,19 @@ impl HardwareKeyStore for PcpStore {
         };
         if status == NTE_EXISTS {
             // Another process created it first - same binding.
-            return Ok(binding);
+            return Ok(crate::hwkey::BindingInfo {
+                binding,
+                attestation: None,
+            });
         }
         check(status)?;
         let mut key = NcryptHandle(key);
         check(unsafe { nc::NCryptFinalizeKey(key.0, 0) })?;
         key.release();
-        Ok(binding)
+        Ok(crate::hwkey::BindingInfo {
+            binding,
+            attestation: None,
+        })
     }
 
     fn derive_ephemeral(
@@ -481,19 +490,36 @@ mod real_chip_tests {
             HwCapability::Available { backend } if backend == "tpm-pcp"
         ));
 
-        let a = store.create_binding(Uuid::new_v4()).unwrap();
-        let b = store.create_binding(Uuid::new_v4()).unwrap();
+        let a = store
+            .create_binding(Uuid::new_v4(), crate::hwkey::HwConsent::Silent)
+            .unwrap()
+            .binding;
+        let b = store
+            .create_binding(Uuid::new_v4(), crate::hwkey::HwConsent::Silent)
+            .unwrap()
+            .binding;
         assert_ne!(a, b, "PCP keys are per-vault named objects");
 
-        let (peer, secret) = store.ecdh_ephemeral(&a).unwrap();
+        let (peer, secret) = store
+            .derive_ephemeral(&a, crate::hwkey::HwConsent::Silent)
+            .unwrap();
         assert_eq!(peer.0[0], 0x04);
-        let again = store.ecdh(&a, &peer).unwrap();
+        let again = store
+            .derive(&a, &peer, crate::hwkey::HwConsent::Silent)
+            .unwrap();
         assert_eq!(secret.as_ref(), again.as_ref(), "PCP must reproduce z");
-        let via_b = store.ecdh(&b, &peer).unwrap();
+        let via_b = store
+            .derive(&b, &peer, crate::hwkey::HwConsent::Silent)
+            .unwrap();
         assert_ne!(secret.as_ref(), via_b.as_ref(), "per-vault keys differ");
 
         store.delete_binding(&a).unwrap();
-        assert!(store.ecdh(&a, &peer).is_err(), "deleted key is gone");
+        assert!(
+            store
+                .derive(&a, &peer, crate::hwkey::HwConsent::Silent)
+                .is_err(),
+            "deleted key is gone"
+        );
         store.delete_binding(&a).unwrap();
         store.delete_binding(&b).unwrap();
     }

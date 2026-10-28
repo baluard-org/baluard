@@ -51,6 +51,7 @@ vi.mock("../context/toastSignal.js", () => ({
   toast: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  toastWarning: vi.fn(),
   toasts: { length: 0 },
 }));
 
@@ -59,6 +60,8 @@ vi.mock("../components/DeviceFleetPanel.jsx", () => ({ default: () => <div data-
 vi.mock("../components/SyncTab.jsx", () => ({ default: () => <div data-testid="sync-tab" /> }));
 vi.mock("../components/BridgeTab.jsx", () => ({ default: () => <div data-testid="bridge-tab" /> }));
 vi.mock("../components/FocusTrap.jsx", () => ({ default: () => null }));
+
+import { toastSuccess as toastSuccessMock, toastError as toastErrorMock, toastWarning as toastWarningMock } from "../context/toastSignal.js";
 
 import SettingsModal from "../components/SettingsModal.jsx";
 
@@ -165,5 +168,137 @@ describe("SettingsModal", () => {
     flush();
     // The data tab reveals the import/export headings.
     expect(getByText("settings.importTitle", { exact: false })).toBeTruthy();
+  });
+});
+
+describe("SettingsModal security-key guard flow", () => {
+  beforeEach(() => {
+    daemonMock.mockReset();
+    toastSuccessMock.mockClear();
+    toastErrorMock.mockClear();
+    toastWarningMock.mockClear();
+  });
+
+  // The runtime hw_status shape for a machine whose only usable backend
+  // is a FIDO security key (tap on every use, no consent support).
+  const fidoStatus = (over = {}) =>
+    JSON.stringify({
+      capable: true,
+      backend: "fido2",
+      backends: [
+        { backend: "fido2", capable: true, reason: null, interaction: "per-use" },
+      ],
+      seal: "v1",
+      enabled: false,
+      consent_supported: false,
+      consent: false,
+      attestation: null,
+      ...over,
+    });
+
+  function mockBase(statusPayload, enableResponse) {
+    daemonMock.mockImplementation((action) => {
+      if (action === "settings.get") {
+        return Promise.resolve(
+          JSON.stringify({ vault_timeout: "15m", fetch_favicons: false, display_name: "Alice", avatar_ext: "png" }),
+        );
+      }
+      if (action === "vault.avatar.get") return Promise.resolve("");
+      if (action === "vault.pin_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+      if (action === "vault.biometric_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+      if (action === "vault.hw_status") return Promise.resolve(statusPayload);
+      if (action === "vault.hw_enable") return enableResponse();
+      return Promise.resolve("");
+    });
+  }
+
+  async function openDataTab(rendered) {
+    await waitFor(() => expect(rendered.getByText("settings.tabData", { exact: false })).toBeTruthy());
+    fireEvent.click(rendered.getByText("settings.tabData", { exact: false }));
+    await waitFor(() => expect(rendered.getByTestId("hw-guard-card")).toBeTruthy());
+  }
+
+  it("enabling on a tap key shows the touch panel naming the vault, cancel hides it, and the finish still toasts", async () => {
+    let resolveEnable;
+    mockBase(fidoStatus(), () => new Promise((res) => { resolveEnable = res; }));
+    const rendered = render(() => <SettingsModal />);
+    await openDataTab(rendered);
+
+    fireEvent.click(rendered.getByTestId("hw-toggle"));
+    await waitFor(() => expect(rendered.getByTestId("confirm-accept")).toBeTruthy());
+    fireEvent.click(rendered.getByTestId("confirm-accept"));
+
+    // The request is pending on the physical touch: the panel names the
+    // vault (the i18n mock inlines vars as JSON).
+    await waitFor(() => expect(rendered.getByTestId("hw-touch-wait")).toBeTruthy());
+    expect(rendered.getByText(/hwTouchBodyName/).textContent).toContain("Alice");
+
+    fireEvent.click(rendered.getByTestId("hw-touch-cancel"));
+    flush();
+    expect(rendered.queryByTestId("hw-touch-wait")).toBeNull();
+
+    resolveEnable(JSON.stringify({ enabled: true, backend: "fido2", attestation: "verified" }));
+    await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledWith("settings.hwEnabledToast"));
+  });
+
+  it("an unknown-vendor key still enables but warns instead of celebrating", async () => {
+    mockBase(
+      fidoStatus(),
+      () => Promise.resolve(JSON.stringify({ enabled: true, backend: "fido2", attestation: "unknown-vendor" })),
+    );
+    const rendered = render(() => <SettingsModal />);
+    await openDataTab(rendered);
+    fireEvent.click(rendered.getByTestId("hw-toggle"));
+    await waitFor(() => expect(rendered.getByTestId("confirm-accept")).toBeTruthy());
+    fireEvent.click(rendered.getByTestId("confirm-accept"));
+
+    await waitFor(() => expect(toastWarningMock).toHaveBeenCalledWith("settings.hwAttestUnknownToast"));
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+  });
+
+  it("an enabled tap seal reports the recorded attestation verdict", async () => {
+    mockBase(
+      fidoStatus({ seal: "v2-hw", enabled: true, attestation: "unknown-vendor" }),
+      () => Promise.resolve(""),
+    );
+    const rendered = render(() => <SettingsModal />);
+    await openDataTab(rendered);
+    expect(rendered.getByText("settings.hwAttestUnknownShort")).toBeTruthy();
+  });
+
+  it("re-probes the security key on an interval so a plugged key appears without a reopen", async () => {
+    vi.useFakeTimers();
+    try {
+      let plugged = false;
+      daemonMock.mockImplementation((action) => {
+        if (action === "settings.get") {
+          return Promise.resolve(
+            JSON.stringify({ vault_timeout: "15m", fetch_favicons: false, display_name: "Alice", avatar_ext: "png" }),
+          );
+        }
+        if (action === "vault.avatar.get") return Promise.resolve("");
+        if (action === "vault.pin_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+        if (action === "vault.biometric_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+        if (action === "vault.hw_status") {
+          return Promise.resolve(
+            plugged
+              ? fidoStatus()
+              : JSON.stringify({ capable: false, reason: "no-token", backends: [{ backend: "fido2", capable: false, reason: "no-token", interaction: "per-use" }], seal: "v1", enabled: false, consent_supported: false, consent: false, attestation: null }),
+          );
+        }
+        return Promise.resolve("");
+      });
+      const rendered = render(() => <SettingsModal />);
+      await waitFor(() => expect(rendered.getByText("settings.tabData", { exact: false })).toBeTruthy());
+      fireEvent.click(rendered.getByText("settings.tabData", { exact: false }));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(rendered.queryByTestId("hw-guard-card")).toBeNull();
+
+      plugged = true;
+      await vi.advanceTimersByTimeAsync(4500);
+      expect(rendered.getByTestId("hw-guard-card")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

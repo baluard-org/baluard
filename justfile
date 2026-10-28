@@ -54,7 +54,7 @@ sysdeps scope="all":
 	export PKG_CONFIG_LIBDIR="$pc_libdirs"
 	want_desktop=1
 	[[ "{{scope}}" == "core" ]] && want_desktop=0
-	miss_protoc=0; miss_webkit=0; miss_gtk=0; miss_tray=0
+	miss_protoc=0; miss_webkit=0; miss_gtk=0; miss_tray=0; miss_udev=0; miss_u2f=0
 	if [[ -z "${PROTOC:-}" ]] && ! command -v protoc >/dev/null 2>&1; then
 		miss_protoc=1
 	fi
@@ -63,11 +63,19 @@ sysdeps scope="all":
 			pkg-config --exists webkit2gtk-4.1 2>/dev/null || miss_webkit=1
 			pkg-config --exists gtk+-3.0 2>/dev/null || miss_gtk=1
 			pkg-config --exists ayatana-appindicator3-0.1 2>/dev/null || miss_tray=1
+		pkg-config --exists libudev 2>/dev/null || miss_udev=1
 		else
-			miss_webkit=1; miss_gtk=1; miss_tray=1
+			miss_webkit=1; miss_gtk=1; miss_tray=1; miss_udev=1
+		fi
+		if command -v dpkg-query >/dev/null 2>&1; then
+			dpkg-query -W -f='${db:Status-Abbrev}' libu2f-udev 2>/dev/null | grep -q '^ii ' || miss_u2f=1
+		elif command -v rpm >/dev/null 2>&1; then
+			rpm -q libu2f-udev >/dev/null 2>&1 || miss_u2f=1
+		elif command -v pacman >/dev/null 2>&1; then
+			pacman -Q libfido2 >/dev/null 2>&1 || miss_u2f=1
 		fi
 	fi
-	if (( miss_protoc == 0 && miss_webkit == 0 && miss_gtk == 0 && miss_tray == 0 )); then
+	if (( miss_protoc == 0 && miss_webkit == 0 && miss_gtk == 0 && miss_tray == 0 && miss_udev == 0 && miss_u2f == 0 )); then
 		echo "System dependencies OK."
 		exit 0
 	fi
@@ -76,6 +84,8 @@ sysdeps scope="all":
 	(( miss_webkit )) && missing="${missing:+$missing }webkit2gtk"
 	(( miss_gtk ))    && missing="${missing:+$missing }gtk3"
 	(( miss_tray ))   && missing="${missing:+$missing }ayatana-appindicator"
+	(( miss_udev ))   && missing="${missing:+$missing }libudev"
+	(( miss_u2f ))    && missing="${missing:+$missing }U2F udev rules"
 	os_id="$(sed -n 's/^ID=//p' /etc/os-release 2>/dev/null | head -1 | tr -d '"')"
 	os_like="$(sed -n 's/^ID_LIKE=//p' /etc/os-release 2>/dev/null | head -1 | tr -d '"')"
 	distro="unknown"
@@ -93,14 +103,14 @@ sysdeps scope="all":
 	echo "Baluard does not install system packages for you. Run the command below, then retry:"
 	case "$distro:$want_desktop" in
 		apt:0)    echo "  sudo apt install protobuf-compiler" ;;
-		apt:1)    echo "  sudo apt install protobuf-compiler libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev pkg-config" ;;
+		apt:1)    echo "  sudo apt install protobuf-compiler libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev libudev-dev libu2f-udev pkg-config" ;;
 		dnf:0)    echo "  sudo dnf install protobuf-compiler" ;;
-		dnf:1)    echo "  sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel pkgconf-pkg-config" ;;
+		dnf:1)    echo "  sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel libudev-devel libu2f-udev pkgconf-pkg-config" ;;
 		pacman:0) echo "  sudo pacman -S protobuf" ;;
-		pacman:1) echo "  sudo pacman -S protobuf webkit2gtk-4.1 gtk3 libayatana-appindicator pkgconf" ;;
-		*) echo "  Debian/Ubuntu: sudo apt install protobuf-compiler libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev pkg-config"
-		   echo "  Fedora:        sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel pkgconf-pkg-config"
-		   echo "  Arch:          sudo pacman -S protobuf webkit2gtk-4.1 gtk3 libayatana-appindicator pkgconf" ;;
+		pacman:1) echo "  sudo pacman -S protobuf webkit2gtk-4.1 gtk3 libayatana-appindicator systemd libfido2 pkgconf" ;;
+		*) echo "  Debian/Ubuntu: sudo apt install protobuf-compiler libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev libudev-dev libu2f-udev pkg-config"
+		   echo "  Fedora:        sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel libudev-devel libu2f-udev pkgconf-pkg-config"
+		   echo "  Arch:          sudo pacman -S protobuf webkit2gtk-4.1 gtk3 libayatana-appindicator systemd libfido2 pkgconf" ;;
 	esac
 	(( miss_protoc )) && echo "(alternatively: brew install protobuf, or export PROTOC=/path/to/protoc)"
 	exit 1
@@ -297,7 +307,7 @@ _sidecar-force:
 	set -euo pipefail
 	TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
 	mkdir -p desktop/src-tauri/binaries
-	{{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh
+	{{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh --features baluard-daemon/fido2
 	cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
 	cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 	# Force-refresh sidecar in tauri target/debug
@@ -329,13 +339,13 @@ _sidecar:
 	  if [ -z "$NEWEST_SRC" ]; then
 	    echo "Sidecars up-to-date (no Rust changes detected)"
 	  else
-	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh
+	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh --features baluard-daemon/fido2
 	    cp target/release/baluard-daemon "$SIDECAR"
 	    cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 	    echo "Sidecars rebuilt (stale): $SIDECAR, $NMH_BIN"
 	  fi
 	else
-	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh
+	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh --features baluard-daemon/fido2
 	    cp target/release/baluard-daemon "$SIDECAR"
 	    cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 	    echo "Sidecars rebuilt (missing): $SIDECAR, $NMH_BIN"
