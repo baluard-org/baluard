@@ -7734,40 +7734,97 @@ impl VaultState {
     /// Pre-unlock safe: chip capability + the devkey file's seal kind.
     pub async fn hw_status(&self) -> Result<String, String> {
         use baluard_core::vault::device_privkey::PrivkeyFileKind;
-        let cap = baluard_core::hwkey::probe_status();
-        let (capable, reason) = match &cap {
-            baluard_core::hwkey::HwCapability::Available { .. } => (true, serde_json::Value::Null),
-            baluard_core::hwkey::HwCapability::Unavailable { reason } => {
-                (false, serde_json::Value::String(reason.clone()))
+        let vault_path = self.vault_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let global = baluard_core::hwkey::probe_status();
+            let disabled = matches!(
+                &global,
+                baluard_core::hwkey::HwCapability::Unavailable { reason } if reason == "disabled"
+            );
+            let stores = baluard_core::hwkey::installed_all();
+            let mut backends = Vec::with_capacity(stores.len());
+            let mut first_available = None;
+            for store in &stores {
+                let capability = if disabled {
+                    baluard_core::hwkey::HwCapability::Unavailable {
+                        reason: "disabled".into(),
+                    }
+                } else {
+                    store.probe()
+                };
+                let (capable, reason) = match capability {
+                    baluard_core::hwkey::HwCapability::Available { .. } => {
+                        first_available.get_or_insert_with(|| store.backend_id().to_string());
+                        (true, serde_json::Value::Null)
+                    }
+                    baluard_core::hwkey::HwCapability::Unavailable { reason } => {
+                        (false, serde_json::Value::String(reason))
+                    }
+                };
+                backends.push(serde_json::json!({
+                    "backend": store.backend_id(),
+                    "capable": capable,
+                    "reason": reason,
+                    "interaction": match store.interaction() {
+                        baluard_core::hwkey::Interaction::Never => "never",
+                        baluard_core::hwkey::Interaction::PerUse => "per-use",
+                    },
+                }));
             }
-        };
-        let kind = baluard_core::vault::device_privkey::file_kind(
-            &self.vault_path.join("meta/device-privkey.json"),
-        );
-        let seal = match kind {
-            PrivkeyFileKind::Sealed => "v1",
-            PrivkeyFileKind::SealedHw => "v2-hw",
-            PrivkeyFileKind::LegacyPlaintext => "legacy",
-            PrivkeyFileKind::Damaged => "damaged",
-            PrivkeyFileKind::Absent => "absent",
-        };
-        let consent_supported = baluard_core::hwkey::installed_all()
-            .iter()
-            .any(|s| s.supports_consent());
-        let consent = if seal == "v2-hw" {
-            baluard_core::vault::device_privkey::file_consents(&self.vault_path)
-        } else {
-            false
-        };
-        Ok(serde_json::json!({
-            "capable": capable,
-            "reason": reason,
-            "seal": seal,
-            "enabled": seal == "v2-hw",
-            "consent_supported": consent_supported,
-            "consent": consent,
+
+            let privkey_path = vault_path.join("meta/device-privkey.json");
+            let kind = baluard_core::vault::device_privkey::file_kind(&privkey_path);
+            let seal = match kind {
+                PrivkeyFileKind::Sealed => "v1",
+                PrivkeyFileKind::SealedHw => "v2-hw",
+                PrivkeyFileKind::LegacyPlaintext => "legacy",
+                PrivkeyFileKind::Damaged => "damaged",
+                PrivkeyFileKind::Absent => "absent",
+            };
+            let sealed_backend = if seal == "v2-hw" {
+                std::fs::read(&privkey_path)
+                    .ok()
+                    .and_then(|bytes| {
+                        baluard_core::vault::device_privkey::hw_backend_of(&bytes).ok()
+                    })
+            } else {
+                None
+            };
+            let current_backend = sealed_backend.or_else(|| first_available.clone());
+            let consent_supported = current_backend.as_deref().is_some_and(|backend| {
+                stores
+                    .iter()
+                    .any(|store| store.backend_id() == backend && store.supports_consent())
+            });
+            let consent = seal == "v2-hw"
+                && baluard_core::vault::device_privkey::file_consents(&privkey_path);
+            let attestation = baluard_core::vault::device_privkey::hw_attestation_of(&privkey_path)
+                .map(|att| att.as_str().to_string());
+            let reason = if first_available.is_some() {
+                serde_json::Value::Null
+            } else {
+                match global {
+                    baluard_core::hwkey::HwCapability::Unavailable { reason } => {
+                        serde_json::Value::String(reason)
+                    }
+                    baluard_core::hwkey::HwCapability::Available { .. } => serde_json::Value::Null,
+                }
+            };
+            Ok(serde_json::json!({
+                "capable": first_available.is_some(),
+                "reason": reason,
+                "backend": current_backend,
+                "backends": backends,
+                "seal": seal,
+                "enabled": seal == "v2-hw",
+                "consent_supported": consent_supported,
+                "consent": consent,
+                "attestation": attestation
+            })
+            .to_string())
         })
-        .to_string())
+        .await
+        .map_err(|e| format!("hardware status task: {e}"))?
     }
 
     /// Store or update the custom-remote credentials (device-local files).
@@ -7842,24 +7899,37 @@ impl VaultState {
 
     /// Enable the hardware seal (the settings toggle). Requires an
     /// unlocked session (the seal subkey lives on the handle).
-    pub async fn hw_enable(&self, consent: bool) -> Result<String, String> {
+    pub async fn hw_enable(
+        &self,
+        consent: bool,
+        backend: Option<String>,
+    ) -> Result<String, String> {
         let seal = self
             .devkey_seal()
             .await
             .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
-        if baluard_core::hwkey::available().is_none() {
-            return Err("This device has no usable security chip.".to_string());
+        let selected = match backend.as_deref() {
+            Some(id) => baluard_core::hwkey::store_for(id),
+            None => baluard_core::hwkey::available(),
         }
-        if consent {
-            let supported = baluard_core::hwkey::available()
-                .map(|s| s.supports_consent())
-                .unwrap_or(false);
-            if !supported {
-                return Err(
-                    "This device's security chip cannot require confirmation on each unlock."
-                        .to_string(),
-                );
-            }
+        .ok_or_else(|| "This device has no usable security chip.".to_string())?;
+        if !matches!(
+            selected.probe(),
+            baluard_core::hwkey::HwCapability::Available { .. }
+        ) {
+            return Err(match selected.backend_id() {
+                "fido2" => "Connect a compatible security key.".to_string(),
+                _ => "This device has no usable security chip.".to_string(),
+            });
+        }
+        if consent
+            && selected.interaction() == baluard_core::hwkey::Interaction::Never
+            && !selected.supports_consent()
+        {
+            return Err(
+                "This device's security chip cannot require confirmation on each unlock."
+                    .to_string(),
+            );
         }
         let vault_id =
             baluard_core::vault::registry::BaluardMarker::read_from_vault(&self.vault_path)
@@ -7867,20 +7937,32 @@ impl VaultState {
                 .map(|m| m.vault_id)
                 .ok_or_else(|| "vault marker missing".to_string())?;
         let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
-        baluard_core::vault::device_privkey::enable_hw_seal(
-            &self.vault_path.join("meta/device-privkey.json"),
-            &seal,
-            vault_id,
-            device_id,
-            consent,
-            None,
+        let privkey_path = self.vault_path.join("meta/device-privkey.json");
+        let backend_id = selected.backend_id().to_string();
+        let task_backend = backend_id.clone();
+        let attestation: Option<String> = tokio::task::spawn_blocking(
+            move || -> Result<Option<String>, baluard_core::error::BaluardError> {
+                baluard_core::vault::device_privkey::enable_hw_seal(
+                    &privkey_path,
+                    &seal,
+                    vault_id,
+                    device_id,
+                    consent,
+                    Some(&task_backend),
+                )?;
+                Ok(
+                    baluard_core::vault::device_privkey::hw_attestation_of(&privkey_path)
+                        .map(|att| att.as_str().to_string()),
+                )
+            },
         )
+        .await
+        .map_err(|e| format!("hardware seal task: {e}"))?
         .map_err(|e| format!("{e}"))?;
-        Ok(serde_json::json!({"enabled": true, "backend": match baluard_core::hwkey::probe_status() {
-            baluard_core::hwkey::HwCapability::Available { backend } => backend,
-            _ => "unknown".to_string(),
-        }})
-        .to_string())
+        Ok(
+            serde_json::json!({"enabled": true, "backend": backend_id, "attestation": attestation})
+                .to_string(),
+        )
     }
 
     /// Disable the hardware seal: downgrade to v1. Needs the chip once
@@ -7890,12 +7972,16 @@ impl VaultState {
             .devkey_seal()
             .await
             .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
+        if baluard_core::hwkey::available().is_none() {
+            return Err("This device has no usable security chip.".to_string());
+        }
         let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
-        baluard_core::vault::device_privkey::disable_hw_seal(
-            &self.vault_path.join("meta/device-privkey.json"),
-            &seal,
-            device_id,
-        )
+        let privkey_path = self.vault_path.join("meta/device-privkey.json");
+        tokio::task::spawn_blocking(move || {
+            baluard_core::vault::device_privkey::disable_hw_seal(&privkey_path, &seal, device_id)
+        })
+        .await
+        .map_err(|e| format!("hardware seal task: {e}"))?
         .map_err(|e| format!("{e}"))?;
         Ok(serde_json::json!({"enabled": false}).to_string())
     }
@@ -7911,12 +7997,17 @@ impl VaultState {
             return Err("This device has no usable security chip.".to_string());
         }
         let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
-        let changed = baluard_core::vault::device_privkey::set_hw_seal_consent(
-            &self.vault_path.join("meta/device-privkey.json"),
-            &seal,
-            device_id,
-            consent,
-        )
+        let privkey_path = self.vault_path.join("meta/device-privkey.json");
+        let changed = tokio::task::spawn_blocking(move || {
+            baluard_core::vault::device_privkey::set_hw_seal_consent(
+                &privkey_path,
+                &seal,
+                device_id,
+                consent,
+            )
+        })
+        .await
+        .map_err(|e| format!("hardware seal task: {e}"))?
         .map_err(|e| format!("{e}"))?;
         Ok(serde_json::json!({"consent": consent, "changed": changed}).to_string())
     }

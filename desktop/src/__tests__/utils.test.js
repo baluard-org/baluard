@@ -31,6 +31,30 @@ describe("sanitizeError", () => {
     expect(sanitizeError("incorrect password", t)).toBe("errors.invalidPassword");
   });
 
+  test("matches security-key touch outcomes with specific copy", () => {
+    expect(
+      sanitizeError("the security key was not tapped in time; try again", t),
+    ).toBe("errors.hwTouchTimeout");
+    expect(sanitizeError("the security key touch was cancelled", t)).toBe(
+      "errors.hwTouchTimeout",
+    );
+    expect(
+      sanitizeError(
+        "the security key is busy in another application; close it and try again",
+        t,
+      ),
+    ).toBe("errors.hwBusy");
+    expect(sanitizeError("this is not the security key this vault was sealed to", t)).toBe(
+      "errors.hwKeyWrong",
+    );
+    expect(sanitizeError("no security key is plugged in; plug it in to unlock", t)).toBe(
+      "errors.hwKeyMissing",
+    );
+    expect(
+      sanitizeError("Connect a compatible security key.", t),
+    ).toBe("errors.hwKeyMissing");
+  });
+
   test("extracts message from Error object", () => {
     expect(sanitizeError(new Error("Cannot connect"), t)).toBe("errors.daemonNotRunning");
   });

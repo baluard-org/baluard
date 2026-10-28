@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Show, For } from "solid-js";
+import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
 import { Transition } from "../lib/transition";
 import { useVault } from "../context/VaultContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -9,7 +9,7 @@ import ConfirmModal from "./ConfirmModal.jsx";
 import { sanitizeError, generatePassphrase } from "../lib/utils.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { invoke } from "@tauri-apps/api/core";
-import { toastError, toastSuccess } from "../context/toastSignal.js";
+import { toastError, toastSuccess, toastWarning } from "../context/toastSignal.js";
 import { buildImportPayload } from "../lib/payload.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 import { biometryAvailable } from "../lib/biometry.js";
@@ -144,6 +144,10 @@ export default function SettingsModal() {
   const [hwStatus, setHwStatus] = createSignal(null);
   const [hwBusy, setHwBusy] = createSignal(false);
   const [hwConfirm, setHwConfirm] = createSignal(null); // "enable" | "disable" | null
+  // The touch panel is dismissed with its cancel button while the daemon
+  // request keeps waiting on the physical tap; the completion toast still
+  // fires when the key answers (or times out) later.
+  const [hwTouchHidden, setHwTouchHidden] = createSignal(false);
   const [healthBusy, setHealthBusy] = createSignal(false);
   const [healthOpen, setHealthOpen] = createSignal(false);
   const [healthReport, setHealthReport] = createSignal(null);
@@ -191,34 +195,49 @@ export default function SettingsModal() {
     setHwConfirm(null);
     if (!mode) return;
     setHwBusy(true);
+    setHwTouchHidden(false);
     try {
       if (mode === "enable") {
-        await daemon("vault.hw_enable", { consent: false });
+        const res = JSON.parse(await daemon("vault.hw_enable", { consent: false }));
+        // An unknown-vendor key works but the user must know it was not
+        // proven Yubico-made (the plan's allow-with-copy policy).
+        if (res.attestation === "unknown-vendor") {
+          toastWarning(t("settings.hwAttestUnknownToast"));
+        } else {
+          toastSuccess(t("settings.hwEnabledToast"));
+        }
       } else if (mode === "disable") {
         await daemon("vault.hw_disable");
+        toastSuccess(t("settings.hwDisabledToast"));
       } else {
         // "consent-on" | "consent-off": re-key between the silent and
         // per-use-confirmation chip keys.
         await daemon("vault.hw_set_consent", { consent: mode === "consent-on" });
+        toastSuccess(
+          t(mode === "consent-on" ? "settings.hwConsentOnToast" : "settings.hwConsentOffToast"),
+        );
       }
       await loadHwStatus();
-      toastSuccess(
-        t(
-          mode === "enable"
-            ? "settings.hwEnabledToast"
-            : mode === "disable"
-              ? "settings.hwDisabledToast"
-              : mode === "consent-on"
-                ? "settings.hwConsentOnToast"
-                : "settings.hwConsentOffToast",
-        ),
-      );
     } catch (e) {
       toastError(sanitizeError(e, t));
     } finally {
       setHwBusy(false);
     }
   }
+
+  // A tap key (FIDO security key) makes the pending enable/disable wait
+  // for a physical touch: true when the sealed backend taps, or when
+  // every capable backend taps (the enable will land on one of them).
+  const hwTapExpected = () => {
+    const s = hwStatus();
+    if (!s) return false;
+    if (s.enabled && s.backend) {
+      const sealed = (s.backends || []).find((b) => b.backend === s.backend);
+      if (sealed) return sealed.interaction === "per-use";
+    }
+    const capable = (s.backends || []).filter((b) => b.capable);
+    return capable.length > 0 && capable.every((b) => b.interaction === "per-use");
+  };
 
   function openBackupPass(mode) {
     // Export prefills a generated passphrase; import expects the one the
@@ -261,6 +280,10 @@ export default function SettingsModal() {
         loadSettings();
         setImportSource("");
         loadHwStatus();
+        // Hot-plug: a security key can be inserted while the settings
+        // are open; re-probe so the guard card appears without a reopen.
+        const hwPoll = setInterval(loadHwStatus, 4000);
+        onCleanup(() => clearInterval(hwPoll));
       }
     },
   );
@@ -995,6 +1018,13 @@ export default function SettingsModal() {
                         <span class="text-[10px] text-[var(--color-muted)] mt-0.5">
                           {hwStatus()?.enabled ? t("settings.hwOn") : t("settings.hwOff")}
                         </span>
+                        <Show when={hwStatus()?.enabled && hwStatus()?.attestation}>
+                          <span class="text-[10px] text-[var(--color-muted)] mt-0.5">
+                            {hwStatus()?.attestation === "verified"
+                              ? t("settings.hwAttestVerified")
+                              : t("settings.hwAttestUnknownShort")}
+                          </span>
+                        </Show>
                       </div>
                       <button
                         data-testid="hw-toggle"
@@ -1005,6 +1035,32 @@ export default function SettingsModal() {
                         {hwBusy() ? t("common.pleaseWait") : hwStatus()?.enabled ? t("settings.hwDisable") : t("settings.hwEnable")}
                       </button>
                     </div>
+                    {/* Touch-wait: a tap key (FIDO security key) holds the
+                        request until the user touches it. Cancel hides the
+                        panel; the request itself resolves on the key's own
+                        timeout and the toast still reports the outcome. */}
+                    <Show when={hwBusy() && hwTapExpected() && !hwTouchHidden()}>
+                      <div
+                        data-testid="hw-touch-wait"
+                        class="flex items-center justify-between border-t border-[var(--color-border)] pt-3"
+                      >
+                        <div class="flex flex-col flex-1 pr-4">
+                          <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.hwTouchTitle")}</span>
+                          <span class="text-[10px] text-[var(--color-muted)] mt-0.5">
+                            {displayName()
+                              ? t("settings.hwTouchBodyName", { name: displayName() })
+                              : t("settings.hwTouchBody")}
+                          </span>
+                        </div>
+                        <button
+                          data-testid="hw-touch-cancel"
+                          onClick={() => setHwTouchHidden(true)}
+                          class="px-4 py-2 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-all cursor-pointer shrink-0"
+                        >
+                          {t("common.cancel")}
+                        </button>
+                      </div>
+                    </Show>
                     {/* Per-use confirmation (Phase 5): the chip demands the
                         platform's own verification on every unlock. Only
                         offered when the seal is on and the chip supports it. */}

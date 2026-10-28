@@ -142,28 +142,35 @@ impl super::HardwareKeyStore for FidoStore {
         &self,
         vault_id: Uuid,
         consent: super::HwConsent,
-    ) -> Result<String, BaluardError> {
-        if consent.is_per_use() {
-            // The tap is presence, not user verification; this backend
-            // has no biometry to gate a per-use key with.
-            return Err(VaultError::HardwareConsentUnavailable.into());
+    ) -> Result<super::BindingInfo, BaluardError> {
+        if !consent.is_per_use() {
+            return Err(VaultError::HardwareTouchRequired.into());
         }
         self.preflight()?;
         let att = self.token.make_credential(vault_id).map_err(map_token)?;
         // Plan policy: a cryptographically invalid attestation chain is
         // a hard refuse; unknown-vendor chains are allowed with copy at
         // the surface layer.
-        if attest::verify(&att) == attest::AttestationVerdict::Invalid {
+        let verdict = attest::verify(&att);
+        if verdict == attest::AttestationVerdict::Invalid {
             return Err(VaultError::Metadata(
                 "the security key's attestation is invalid; it cannot hold the seal"
                     .into(),
             )
             .into());
         }
-        Ok(format!(
-            "{BINDING_PREFIX}{vault_id}:{}",
-            base64::engine::general_purpose::STANDARD.encode(att.credential_id)
-        ))
+        let attestation = match verdict {
+            attest::AttestationVerdict::YubicoVerified => super::HwAttestation::Verified,
+            attest::AttestationVerdict::UnknownVendor => super::HwAttestation::UnknownVendor,
+            attest::AttestationVerdict::Invalid => unreachable!("refused above"),
+        };
+        Ok(super::BindingInfo {
+            binding: format!(
+                "{BINDING_PREFIX}{vault_id}:{}",
+                base64::engine::general_purpose::STANDARD.encode(att.credential_id)
+            ),
+            attestation: Some(attestation),
+        })
     }
 
     fn derive_ephemeral(
@@ -171,8 +178,8 @@ impl super::HardwareKeyStore for FidoStore {
         binding: &str,
         consent: super::HwConsent,
     ) -> Result<(super::Handshake, super::SharedSecret), BaluardError> {
-        if consent.is_per_use() {
-            return Err(VaultError::HardwareConsentUnavailable.into());
+        if !consent.is_per_use() {
+            return Err(VaultError::HardwareTouchRequired.into());
         }
         let cred = parse_binding(binding)?;
         self.preflight()?;
@@ -188,8 +195,8 @@ impl super::HardwareKeyStore for FidoStore {
         handshake: &super::Handshake,
         consent: super::HwConsent,
     ) -> Result<super::SharedSecret, BaluardError> {
-        if consent.is_per_use() {
-            return Err(VaultError::HardwareConsentUnavailable.into());
+        if !consent.is_per_use() {
+            return Err(VaultError::HardwareTouchRequired.into());
         }
         let cred = parse_binding(binding)?;
         let salt: [u8; 32] = handshake
@@ -216,7 +223,7 @@ mod real {
     //! scaffold needs libusb/libudev headers at build time; runtime
     //! needs the Yubico udev rules for non-root HID access.
 
-    use super::{Token, TokenError, TokenInfo};
+    use super::{PackedAttestation, Token, TokenError, TokenInfo};
     use ctap_hid_fido2::fidokey::{
         AssertionExtension as Gext, CredentialExtension as Mext, GetAssertionArgsBuilder,
         MakeCredentialArgsBuilder,
@@ -253,7 +260,7 @@ mod real {
             })
         }
 
-        fn make_credential(&self, vault_id: Uuid) -> Result<Vec<u8>, TokenError> {
+        fn make_credential(&self, vault_id: Uuid) -> Result<PackedAttestation, TokenError> {
             let dev = open()?;
             let mut challenge = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut challenge);
@@ -306,15 +313,19 @@ mod real {
     }
 
     /// Registry entry point for the real token.
-    #[allow(dead_code)]
     pub fn store() -> std::sync::Arc<dyn super::super::HardwareKeyStore> {
         std::sync::Arc::new(super::FidoStore::new(Box::new(CtapToken)))
     }
 }
 
+#[cfg(feature = "fido2")]
+pub use real::store;
+
 #[cfg(test)]
 mod tests {
-    use super::super::{Handshake, HardwareKeyStore, HwCapability, HwConsent, binding_vault_id};
+    use super::super::{
+        Handshake, HardwareKeyStore, HwAttestation, HwCapability, HwConsent, binding_vault_id,
+    };
     use super::*;
     use crate::error::BaluardError;
     use std::collections::HashMap;
@@ -422,7 +433,11 @@ mod tests {
     fn binding_format_round_trips() {
         let vault_id = Uuid::new_v4();
         let s = store(MockToken::new());
-        let binding = s.create_binding(vault_id, HwConsent::Silent).unwrap();
+        let info = s.create_binding(vault_id, HwConsent::PerUse).unwrap();
+        // The mock's synthetic chain is self-consistent but not
+        // Yubico-rooted: allowed, flagged unknown-vendor.
+        assert_eq!(info.attestation, Some(HwAttestation::UnknownVendor));
+        let binding = info.binding;
         assert!(binding.starts_with(BINDING_PREFIX), "got: {binding}");
         assert_eq!(binding_vault_id(&binding), Some(vault_id));
         let cred = parse_binding(&binding).unwrap();
@@ -433,15 +448,18 @@ mod tests {
     fn salt_determinism_reproduces_the_secret() {
         let vault_id = Uuid::new_v4();
         let s = store(MockToken::new());
-        let binding = s.create_binding(vault_id, HwConsent::Silent).unwrap();
-        let (handshake, secret) = s.derive_ephemeral(&binding, HwConsent::Silent).unwrap();
+        let binding = s
+            .create_binding(vault_id, HwConsent::PerUse)
+            .unwrap()
+            .binding;
+        let (handshake, secret) = s.derive_ephemeral(&binding, HwConsent::PerUse).unwrap();
         assert_eq!(handshake.0.len(), 32);
-        let again = s.derive(&binding, &handshake, HwConsent::Silent).unwrap();
+        let again = s.derive(&binding, &handshake, HwConsent::PerUse).unwrap();
         assert_eq!(secret.as_ref(), again.as_ref(), "same salt must reproduce z");
         let mut other_salt = handshake.0.clone();
         other_salt[0] ^= 0xff;
         let different = s
-            .derive(&binding, &Handshake(other_salt), HwConsent::Silent)
+            .derive(&binding, &Handshake(other_salt), HwConsent::PerUse)
             .unwrap();
         assert_ne!(secret.as_ref(), different.as_ref());
     }
@@ -454,7 +472,7 @@ mod tests {
             HwCapability::Unavailable { reason } => assert_eq!(reason, "uv-forced"),
             other => panic!("expected unavailable, got {other:?}"),
         }
-        let err = s.create_binding(vault_id, HwConsent::Silent).unwrap_err();
+        let err = s.create_binding(vault_id, HwConsent::PerUse).unwrap_err();
         assert!(matches!(vault_err(&err), VaultError::HardwareUnavailable));
     }
 
@@ -468,22 +486,25 @@ mod tests {
             }
             other => panic!("expected unavailable, got {other:?}"),
         }
-        assert!(s.create_binding(vault_id, HwConsent::Silent).is_err());
+        assert!(s.create_binding(vault_id, HwConsent::PerUse).is_err());
     }
 
     #[test]
-    fn consent_mode_is_refused_on_fido() {
+    fn silent_mode_is_refused_on_fido() {
         let vault_id = Uuid::new_v4();
         let s = store(MockToken::new());
-        let err = s.create_binding(vault_id, HwConsent::PerUse).unwrap_err();
-        assert!(matches!(vault_err(&err), VaultError::HardwareConsentUnavailable));
+        let err = s.create_binding(vault_id, HwConsent::Silent).unwrap_err();
+        assert!(matches!(vault_err(&err), VaultError::HardwareTouchRequired));
     }
 
     #[test]
     fn typed_touch_outcomes_map_to_typed_errors() {
         let vault_id = Uuid::new_v4();
         let clean = store(MockToken::new());
-        let binding = clean.create_binding(vault_id, HwConsent::Silent).unwrap();
+        let binding = clean
+            .create_binding(vault_id, HwConsent::PerUse)
+            .unwrap()
+            .binding;
         let salt = Handshake(vec![0u8; 32]);
         for (tok, expected) in [
             (TokenError::Busy, VaultError::HardwareBusy),
@@ -491,7 +512,7 @@ mod tests {
             (TokenError::Cancelled, VaultError::HardwareTouchCancelled),
         ] {
             let s = store(MockToken::new().failing(tok));
-            let err = s.derive(&binding, &salt, HwConsent::Silent).unwrap_err();
+            let err = s.derive(&binding, &salt, HwConsent::PerUse).unwrap_err();
             assert!(std::mem::discriminant(vault_err(&err)) == std::mem::discriminant(&expected));
         }
     }
@@ -502,10 +523,13 @@ mod tests {
         // assertion fails natively, surfacing as wrong-key.
         let vault_id = Uuid::new_v4();
         let clean = store(MockToken::new());
-        let binding = clean.create_binding(vault_id, HwConsent::Silent).unwrap();
+        let binding = clean
+            .create_binding(vault_id, HwConsent::PerUse)
+            .unwrap()
+            .binding;
         let other = store(MockToken::new());
         let err = other
-            .derive(&binding, &Handshake(vec![0u8; 32]), HwConsent::Silent)
+            .derive(&binding, &Handshake(vec![0u8; 32]), HwConsent::PerUse)
             .unwrap_err();
         assert!(matches!(vault_err(&err), VaultError::HardwareKeyWrong));
     }
