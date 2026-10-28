@@ -1559,4 +1559,340 @@ mod tests {
         hw_env_restore(_old_env);
         std::fs::remove_file(&p).ok();
     }
+
+    // ── Slice-4 audit: recovery/rotation properties under a hardware seal ──
+
+    use crate::vault::VaultHandle;
+
+    /// A tap backend that counts every hardware operation; the heartbeat
+    /// and unlock legs assert exact counts against it.
+    struct CountingTapMock(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl crate::hwkey::HardwareKeyStore for CountingTapMock {
+        fn backend_id(&self) -> &'static str {
+            "counting-tap-mock"
+        }
+        fn probe(&self) -> crate::hwkey::HwCapability {
+            crate::hwkey::HwCapability::Available {
+                backend: "counting-tap-mock".into(),
+            }
+        }
+        fn interaction(&self) -> crate::hwkey::Interaction {
+            crate::hwkey::Interaction::PerUse
+        }
+        fn create_binding(
+            &self,
+            _: Uuid,
+            _: crate::hwkey::HwConsent,
+        ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(crate::hwkey::BindingInfo {
+                binding: crate::hwkey::binding_tag(Uuid::new_v4()),
+                attestation: None,
+            })
+        }
+        fn derive_ephemeral(
+            &self,
+            binding: &str,
+            _: crate::hwkey::HwConsent,
+        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(b"t");
+            h.update(binding.as_bytes());
+            h.update([0x04, 0x02]);
+            Ok((
+                crate::hwkey::Handshake(vec![0x04, 0x02]),
+                Zeroizing::new(h.finalize().into()),
+            ))
+        }
+        fn derive(
+            &self,
+            binding: &str,
+            handshake: &crate::hwkey::Handshake,
+            _: crate::hwkey::HwConsent,
+        ) -> Result<crate::hwkey::SharedSecret, BaluardError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(b"t");
+            h.update(binding.as_bytes());
+            h.update(&handshake.0);
+            Ok(Zeroizing::new(h.finalize().into()))
+        }
+        fn delete_binding(&self, _: &str) -> Result<(), BaluardError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn audit_vault(dir: &std::path::Path) -> (VaultHandle, String, String) {
+        let password = "audit password 123".to_string();
+        let (handle, secrets) = crate::vault::creation::VaultCreator::new(dir, &password, "this-device")
+            .kdf_profile(crate::types::KdfProfile::MobileLow)
+            .execute()
+            .unwrap();
+        (handle, password, secrets.recovery_phrase.phrase())
+    }
+
+    fn seal_to_tap(handle: &mut VaultHandle) {
+        let seal_key = handle.unlocked().devkey_seal;
+        let p = handle.path.join("meta/device-privkey.json");
+        assert!(
+            enable_hw_seal(&p, &seal_key, handle.vault_id, Some(handle.device_id), false, None)
+                .unwrap()
+        );
+        assert_eq!(file_kind(&p), PrivkeyFileKind::SealedHw);
+        handle.lock();
+    }
+
+    fn kek_of(vault_path: &std::path::Path, password: &str) -> [u8; 32] {
+        let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json")).unwrap();
+        let params: crate::types::KdfParams = serde_json::from_str(&kdf_json).unwrap();
+        crate::crypto::kdf::derive_kek(password, &params).unwrap()
+    }
+
+    fn root_from_phrase(vault_path: &std::path::Path, phrase: &str) -> crate::keys::hierarchy::RootKey {
+        let parsed = crate::recovery::RecoveryPhrase::from_phrase(phrase).unwrap();
+        let seed = parsed.derive_key();
+        let secret = x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(&seed[..32]).unwrap());
+        let json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(vault_path.join("meta/recovery.json")).unwrap(),
+        )
+        .unwrap();
+        let eph = hex::decode(json["ephemeral_public"].as_str().unwrap()).unwrap();
+        let ct = hex::decode(json["encrypted_key"].as_str().unwrap()).unwrap();
+        let tag: [u8; 16] = hex::decode(json["tag"].as_str().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let root =
+            crate::crypto::hpke_wrap::unwrap_key(&eph, &ct, &tag, &secret, "recovery-keywrap")
+                .unwrap();
+        crate::keys::hierarchy::RootKey::from_bytes(root.try_into().unwrap())
+    }
+
+    /// The seal binds EVERY unlock tail: with the token gone, both the
+    /// password tail and the KEK quick-unlock tail fail closed with the
+    /// typed unavailable error; with the token back, the quick-unlock tail
+    /// pays the tap and opens. No path bypasses the seal.
+    #[test]
+    fn hw_seal_binds_the_unlock_tail_and_quick_unlock_cannot_bypass() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+
+        crate::hwkey::uninstall();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        let err = h.unlock(&password).unwrap_err();
+        assert!(err.to_string().contains("chip is unavailable"), "err: {err}");
+        let kek = kek_of(dir.path(), &password);
+        let err = h.unlock_with_kek(&kek).unwrap_err();
+        assert!(err.to_string().contains("chip is unavailable"), "err: {err}");
+
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        h.unlock_with_kek(&kek).unwrap();
+        assert!(h.is_unlocked());
+
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+    }
+
+    /// The phrase path is the rescue: with the token LOST and no hardware
+    /// store registered, recovery enrolls a fresh device, the caller seals
+    /// that key at birth, and the vault opens on the password alone. The
+    /// recovered device is NOT hw-sealed: re-arming is a user decision.
+    #[test]
+    fn phrase_recovery_succeeds_with_the_token_gone() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+
+        crate::hwkey::uninstall();
+        use crate::device_manager::{DeviceManager, EnrollmentPayload};
+        let (x_sk, x_pk) = crate::crypto::hpke_wrap::generate_x25519_keypair();
+        let (e_sk, e_vk) = crate::crypto::signature::generate_ed25519_keypair();
+        let payload = EnrollmentPayload {
+            device_id: Uuid::new_v4(),
+            encryption_public_key: hex::encode(x_pk.to_bytes()),
+            signing_public_key: hex::encode(crate::crypto::signature::verifying_key_bytes(&e_vk)),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            nonce: {
+                let mut b = [0u8; 32];
+                use rand_core::RngCore;
+                rand_core::OsRng.fill_bytes(&mut b);
+                hex::encode(b)
+            },
+            name: "audit recovery".into(),
+            vault_id: None,
+            epoch: None,
+            registry_version: None,
+        };
+        let mut dm = DeviceManager::load_from_vault(dir.path()).unwrap();
+        let enrolled = dm
+            .enroll_with_recovery_phrase(&payload, &phrase, x_sk, e_sk)
+            .unwrap();
+
+        let kek = kek_of(dir.path(), &password);
+        let devkey_seal = crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek).unwrap();
+        let inner = serde_json::json!({
+            "device_id": enrolled.device_id.to_string(),
+            "x25519_private": hex::encode(enrolled.x25519_secret.to_bytes()),
+            "ed25519_private": hex::encode(enrolled.ed25519_signing.to_bytes()),
+        });
+        crate::vault::device_privkey::seal_file(
+            &dir.path().join("meta/device-privkey.json"),
+            &inner.to_string(),
+            &devkey_seal,
+            Some(enrolled.device_id),
+        )
+        .unwrap();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        assert_eq!(
+            file_kind(&dir.path().join("meta/device-privkey.json")),
+            PrivkeyFileKind::Sealed
+        );
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+    }
+
+    /// The Legacy Contact view opens the kit copy with the Root Key alone:
+    /// the clone carries no device-privkey file and no hardware store is
+    /// ever consulted.
+    #[test]
+    fn legacy_contact_view_opens_without_the_token() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, _password, phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+
+        let clone = tempfile::tempdir().unwrap();
+        fn rec(src: &std::path::Path, dst: &std::path::Path) {
+            std::fs::create_dir_all(dst).unwrap();
+            for entry in std::fs::read_dir(src).unwrap() {
+                let entry = entry.unwrap();
+                let name = entry.file_name();
+                let s = src.join(&name);
+                let d = dst.join(&name);
+                if s.is_dir() {
+                    rec(&s, &d);
+                } else {
+                    std::fs::copy(&s, &d).unwrap();
+                }
+            }
+        }
+        rec(dir.path(), clone.path());
+        std::fs::remove_file(clone.path().join("meta/device-privkey.json")).ok();
+        std::fs::remove_file(clone.path().join("meta/device-id")).ok();
+        let root = root_from_phrase(dir.path(), &phrase);
+
+        crate::hwkey::uninstall();
+        let contact = VaultHandle::open_with_root_key(clone.path(), &root).unwrap();
+        assert!(contact.is_unlocked());
+
+        hw_env_restore(_old_env);
+    }
+
+    /// The heartbeat side-effect never taps: it reads the in-memory Root
+    /// Key only, so the unlock tap is the single hardware event of an
+    /// unlock-with-heartbeat.
+    #[test]
+    fn heartbeat_performs_no_hardware_operations() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        crate::hwkey::install(std::sync::Arc::new(CountingTapMock(counter.clone())));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        handle.unlock(&password).unwrap();
+        let seal_key = handle.unlocked().devkey_seal;
+        enable_hw_seal(
+            &dir.path().join("meta/device-privkey.json"),
+            &seal_key,
+            handle.vault_id,
+            Some(handle.device_id),
+            false,
+            None,
+        )
+        .unwrap();
+        handle.lock();
+
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        let after_unlock = counter.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(after_unlock > 0, "the unlock itself must pay the tap");
+
+        assert!(!crate::legacy::heartbeat(dir.path(), &h).unwrap());
+        assert_eq!(
+            counter.load(std::sync::atomic::Ordering::SeqCst),
+            after_unlock,
+            "the heartbeat must not touch the chip"
+        );
+
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+    }
+
+    /// Rotation and password change re-seal through the same seam: the
+    /// seal survives a Root Key rotation, a password change re-keys it
+    /// under the chip, and with the token gone the change fails closed
+    /// BEFORE any write (the C1 lockout guard), leaving the old password
+    /// working. The phrase path stays the rescue.
+    #[test]
+    fn rotation_and_password_change_reseal_through_the_same_seam() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        h.rotate_root_key().unwrap();
+        h.lock();
+        let mut h2 = VaultHandle::open(dir.path()).unwrap();
+        h2.unlock(&password).unwrap();
+        assert_eq!(
+            file_kind(&dir.path().join("meta/device-privkey.json")),
+            PrivkeyFileKind::SealedHw
+        );
+
+        // Password change with the chip present re-keys the seal.
+        h2.change_master_password(&password, "new password 456").unwrap();
+        h2.lock();
+        let mut h3 = VaultHandle::open(dir.path()).unwrap();
+        h3.unlock("new password 456").unwrap();
+
+        // Token gone mid-session: the C1 guard refuses BEFORE any write,
+        // so the old password still opens the vault afterwards.
+        crate::hwkey::uninstall();
+        assert!(h3
+            .change_master_password("new password 456", "another pass 789")
+            .is_err());
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        h3.lock();
+        let mut h4 = VaultHandle::open(dir.path()).unwrap();
+        h4.unlock("new password 456").unwrap();
+
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+    }
 }

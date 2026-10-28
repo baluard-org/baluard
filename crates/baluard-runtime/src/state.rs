@@ -8787,7 +8787,11 @@ impl VaultState {
     /// Enroll this device into an existing vault using the recovery phrase.
     /// Non-destructive: existing devices remain in the registry.
     /// Requires the vault's `enrollment_policy` to be `Personal`.
-    pub async fn enroll_with_recovery_phrase(&self, phrase: &str) -> Result<String, String> {
+    pub async fn enroll_with_recovery_phrase(
+        &self,
+        phrase: &str,
+        master_password: &str,
+    ) -> Result<String, String> {
         use baluard_core::device_manager::{DeviceManager, EnrollmentPayload};
         use rand::RngCore;
 
@@ -8808,6 +8812,34 @@ impl VaultState {
         // writes; it drops before the F3 write-lock update below.
         let vault_path = self.vault_path.clone();
         let state_guard = self.inner.read().await;
+
+        // Prove the master password BEFORE any enrollment write (the same
+        // ghost-device guard as the providers join flow): a mistyped
+        // password must not mint roster entries or key files. The verified
+        // KEK also seals the fresh device key at birth below — the creation
+        // flow seals, so enroll must not leave a plaintext window between
+        // enroll and the next unlock.
+        let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))
+            .map_err(|e| format!("reading kdf params: {e}"))?;
+        let kdf_params: baluard_core::types::KdfParams =
+            serde_json::from_str(&kdf_json).map_err(|e| format!("corrupt kdf params: {e}"))?;
+        let kek = zeroize::Zeroizing::new(
+            baluard_core::crypto::kdf::derive_kek(master_password, &kdf_params)
+                .map_err(|e| format!("kdf: {e}"))?,
+        );
+        let session_key = zeroize::Zeroizing::new(
+            baluard_core::crypto::hkdf_derive::derive_session_key(&kek)
+                .map_err(|e| format!("kdf: {e}"))?,
+        );
+        let devkey_seal = zeroize::Zeroizing::new(
+            baluard_core::crypto::hkdf_derive::derive_devkey_seal_key(&kek)
+                .map_err(|e| format!("kdf: {e}"))?,
+        );
+        let canary = std::fs::read(vault_path.join("meta/kek-canary.enc"))
+            .map_err(|e| format!("reading kek canary: {e}"))?;
+        baluard_core::vault::canary::verify_kek_canary(&session_key, &canary)
+            .map_err(|_| "master password incorrect".to_string())?;
+        drop(session_key);
 
         // Build EnrollmentPayload for this device
         let (x25519_secret, x25519_public) =
@@ -8851,26 +8883,23 @@ impl VaultState {
 
         // Persist device-privkey for this device using the keys RETURNED
         // by the method (same keys the registry and keywrap were built
-        // with — guarantees consistency).
+        // with — guarantees consistency). Sealed at birth under the
+        // verified KEK's devkey seal subkey, 0600 atomic via seal_file.
         let privkey_data = serde_json::json!({
             "device_id": result.device_id.to_string(),
             "x25519_private": hex::encode(result.x25519_secret.to_bytes()),
             "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
         });
         let privkey_path = vault_path.join("meta/device-privkey.json");
-        let privkey_tmp = privkey_path.with_extension("json.tmp");
-        std::fs::write(
-            &privkey_tmp,
-            serde_json::to_string_pretty(&privkey_data).map_err(|e| format!("{e}"))?,
+        let privkey_json =
+            serde_json::to_string_pretty(&privkey_data).map_err(|e| format!("{e}"))?;
+        baluard_core::vault::device_privkey::seal_file(
+            &privkey_path,
+            &privkey_json,
+            &devkey_seal,
+            Some(result.device_id),
         )
-        .map_err(|e| format!("write privkey: {e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
-        }
-        std::fs::rename(&privkey_tmp, &privkey_path).map_err(|e| format!("rename privkey: {e}"))?;
-        let _ = baluard_core::vault::device_privkey::write_device_id(&vault_path, result.device_id);
+        .map_err(|e| format!("seal privkey: {e}"))?;
 
         // F3 fix: update self.inner under write lock so in-process state holds the new device_id
         {
@@ -8878,11 +8907,11 @@ impl VaultState {
             if let Some(handle) = guard.as_mut() {
                 handle.device_id = result.device_id;
                 handle.device_manager = dm;
-                if let Ok(data) = std::fs::read_to_string(vault_path.join("meta/devices.json")) {
-                    if let Ok(reg) = serde_json::from_str(&data) {
-                        handle.registry = reg;
-                    }
-                }
+                let reg_json = std::fs::read_to_string(vault_path.join("meta/devices.json"))
+                    .map_err(|e| format!("reading devices.json: {e}"))?;
+                let reg = serde_json::from_str(&reg_json)
+                    .map_err(|e| format!("parse devices.json: {e}"))?;
+                handle.registry = reg;
             }
         }
 
@@ -9656,5 +9685,81 @@ mod session_token_tests {
         let tok2 = state.get_session_token().await.unwrap();
         assert_ne!(tok, tok2, "re-unlock must mint a fresh token");
         state.verify_session_token(&tok2).await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod enroll_phrase_seal_tests {
+    use super::VaultState;
+    use baluard_core::vault::device_privkey::{PrivkeyFileKind, file_kind};
+    use std::sync::Arc;
+
+    const PASSWORD: &str = "correct horse battery";
+
+    async fn vault_with_phrase(dir: &tempfile::TempDir) -> (Arc<VaultState>, String) {
+        let state = VaultState::new(dir.path().to_path_buf());
+        let payload =
+            serde_json::json!({ "password": PASSWORD, "profile": "mobile_low" }).to_string();
+        let created = state.create_vault(&payload).await.unwrap();
+        let created: serde_json::Value = serde_json::from_str(&created).unwrap();
+        let phrase = created["recovery_phrase"].as_str().unwrap().to_string();
+        state.lock().await.unwrap();
+        (Arc::new(state), phrase)
+    }
+
+    /// Phrase enrollment seals the fresh device key at birth: the private
+    /// key never rests as plaintext on disk between enroll and the next
+    /// unlock (the creation flow seals; enroll must not write plaintext).
+    #[tokio::test]
+    async fn enroll_with_phrase_seals_the_device_key_at_birth() {
+        if !baluard_core::keyring_disabled() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (state, phrase) = vault_with_phrase(&dir).await;
+
+        state
+            .enroll_with_recovery_phrase(&phrase, PASSWORD)
+            .await
+            .unwrap();
+
+        let privkey_path = dir.path().join("meta/device-privkey.json");
+        let raw = std::fs::read_to_string(&privkey_path).unwrap();
+        assert!(
+            !raw.contains("x25519_private"),
+            "plaintext key material on disk: {raw}"
+        );
+        assert_eq!(file_kind(&privkey_path), PrivkeyFileKind::Sealed);
+        // The sealed file opens under the password's devkey seal subkey.
+        state.unlock(PASSWORD).await.unwrap();
+    }
+
+    /// The password is proven against the KEK canary BEFORE any enrollment
+    /// write: a mistyped password must not mint a ghost device or disturb
+    /// the vault (same guard as the providers join flow).
+    #[tokio::test]
+    async fn enroll_with_phrase_refuses_a_wrong_password_without_writes() {
+        if !baluard_core::keyring_disabled() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (state, phrase) = vault_with_phrase(&dir).await;
+        let roster_before = std::fs::read_to_string(dir.path().join("meta/devices.json")).unwrap();
+        let privkey_before =
+            std::fs::read_to_string(dir.path().join("meta/device-privkey.json")).unwrap();
+
+        let err = state
+            .enroll_with_recovery_phrase(&phrase, "not the password")
+            .await
+            .unwrap_err();
+        assert!(err.contains("master password incorrect"), "err: {err}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/devices.json")).unwrap(),
+            roster_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/device-privkey.json")).unwrap(),
+            privkey_before
+        );
     }
 }

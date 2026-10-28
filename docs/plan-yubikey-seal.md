@@ -1,6 +1,12 @@
 # Plan: security key seal (FIDO2 hmac-secret backend)
 
-> Status: DRAFT v3 (2026-10-26), round-two peer-reviewed. v1 designed a PIV backend; the target
+> Status: DRAFT v4 (2026-10-28), external-review round applied, scope ruled: Android 1.0 ships NFC + USB-OTG; iOS is a post-1.0 fast-follow; autofill refuses on hw-sealed vaults. v3 was desktop-only; v4 pulls
+> the phone into 1.0 (slices 4A-4D): the mobile app becomes the NFC reader and the same seal,
+> consent, and attestation contracts carry over. The review round corrected the 4A protocol scope
+> (hmac-secret needs the pinUvAuth shared-secret layer, not three bare commands), named the
+> runtime registry change the per-operation session model requires, replaced byte-transcript
+> tests with a software authenticator model plus an RNG seam, fixed the NFC gesture (tap and
+> hold — no second sensor touch), and decided the autofill stance. v1 designed a PIV backend; the target
 > hardware turned out to be a Security Key C NFC (FIDO-only, 5.7.4, genuine per Yubico's
 > verification service), so the design retargeted at the FIDO2 hmac-secret extension. Round two
 > removed the PIN design entirely (hmac-secret works PIN-less), answered the silent-mode question
@@ -53,6 +59,14 @@ Every assertion demands its own physical tap, so no same-user process can silent
 the residual human risk is TAP PHISHING: a malicious process triggers an assertion and the user
 taps thinking it was Baluard. The touch prompt names the vault and the action in plain language,
 and the attacker still needs the seal file plus the master password for any of it to matter.
+On the phone the gesture is proximity, not a deliberate button: NFC presence is implied by
+holding the key to the reader, so the HID tap-phishing framing does not carry over. The residual
+there is a relay or an unattended key next to an unlocked phone; the app never asserts without
+the credential id and salt, which live only in the sandboxed seal file, so another app cannot
+trigger an assertion. Android autofill is an unlock path the app already ships: a hw-sealed
+vault REFUSES autofill datasets with honest copy (1.0 decision) — the unlock gesture is always
+an in-app, foreground decision, and hosting the NFC ceremony inside the autofill flow is future
+work.
 
 Factory reset (the power-cycle ritual; the timing window varies by source — never hardcode a
 number in copy) destroys all FIDO credentials on the token, including the user's passkeys for
@@ -186,7 +200,8 @@ libpcsclite dependency from the v1 plan disappears entirely. Desktop needs the Y
 for non-root HID access (`uaccess` grants the local session, the same boundary as the existing
 same-UID model): `just sysdeps` gains the line and Linux packages declare it; the app prints
 per-distro install commands, never runs them. Desktop NFC readers are out (none on target
-machines); phone NFC is post-1.0 mobile work behind the same trait.
+machines); the PHONE is in 1.0 as the NFC reader (slices 4A-4D) — the trait and the seal math
+carry over, only the transport changes.
 
 Slices: (0) LANDED (2026-10-26, commit 4e9a654). (1) vendor review LANDED (ctap-hid-fido2 chosen;
 see Implementation) + `hwkey/fido.rs` LANDED (2026-10-27): the backend behind a narrow `Token`
@@ -235,13 +250,120 @@ fabricated countdown in the touch panel — the daemon exposes no deadline and t
 governs, so the panel says "waiting for your touch" with a cancel instead of a fake number.
 i18n keys ship in en/es/pt under the existing parity test; desktop vitest covers the touch
 panel, cancel, unknown-vendor warning, verdict line, and the hot-plug poll.
-(4) recovery/rotation audit: phrase and Legacy paths prove
-token-unplugged recovery, rotation re-seals through the same seam, the heartbeat never taps,
-quick-unlock enforcement holds. (5) hardware-in-loop on the reference device: enroll, unlock
-with tap, wrong-key rejection, pull-mid-touch, cancel mid-touch, disable, re-enroll, rotation
-re-seal, phrase recovery unplugged, gpg-agent/browser WebAuthn running alongside, a second token
+(4) LANDED (2026-10-28) recovery/rotation audit + the enroll plaintext-window fix. Audit verdict,
+all hermetic (five new core tests, mock backends): the seal binds EVERY unlock tail — password and
+KEK quick-unlock fail closed with the typed HardwareUnavailable when the token is gone, and the KEK
+tail pays the tap when it is back (no bypass; the dormant SecureKeystore fast path in
+load_device_privkeys is never installed by any surface today, so it cannot leak either); phrase
+recovery works with the token LOST — the phrase path never reads the sealed device file, enrolls a
+fresh device, and the vault opens on the password alone with the guard OFF (re-arming is a user
+decision); the Legacy Contact view opens the kit copy with the Root Key alone and never touches the
+seal; the heartbeat side-effect performs zero hardware operations (in-memory Root Key read only);
+Root Key rotation leaves the seal intact, and a master-password change re-keys it under the chip —
+with the token gone the change fails closed BEFORE any write (the Step-4 privkey load backstops the
+narrower C1 pre-check), so the old password still opens the vault. The review round on this slice
+also closed a real gap in the phrase-enroll path: the daemon route `vault.enroll_with_phrase` and
+the CLI direct mode used to write `meta/device-privkey.json` as PLAINTEXT (an indefinite window
+between enroll and the next unlock — a disk reader there held the vault). The route now REQUIRES
+`master_password`, proves it against the KEK canary BEFORE any enrollment write (the providers
+join flow's ghost-device guard), and seals the fresh device key at birth under the KEK's devkey
+seal subkey (`seal_file`, 0600 atomic); the CLI prompts (or reads BALUARD_PASSWORD, matching the
+e2e-hooks convention) and its direct mode got the same proof-then-seal treatment; a silently
+swallowed devices.json reload now propagates. The runtime enroll tests pin the sealed-at-birth and
+no-ghost-device-on-wrong-password properties. Residual: the mobile providers join flow still has
+a seconds-wide plaintext window (it proves the password, writes plaintext, and immediately
+unlocks, whose tail re-seals) — closed in slice 4D.
+(4A) pure-Rust CTAP2 client behind the existing `Token` seam — the mobile backend. The desktop
+real adapter (ctap-hid-fido2) is hidapi-bound and cannot exist on a phone (no /dev/hidraw in an
+app sandbox; iOS grants no raw USB at all), so the mobile backend is a transport-agnostic CTAP2
+client in baluard-core. Step 0 re-runs the slice-1 vendor-review gate on the alternatives before
+any code: kanidm's webauthn-authenticator-rs (reported CTAP2-over-NFC support, unverified) and a
+named plan B — the Yubico YubiKit SDKs behind a COARSE Token callback (the platform implements
+info/make_credential/get_secret with YubiKit; Rust keeps seal math, AAD, and attestation). Pure
+Rust stays the default: one protocol implementation across desktop and phones, hermetically
+testable in CI. The protocol scope the review corrected: FOUR commands, not three — getInfo,
+makeCredential, getAssertion with hmac-secret, plus authenticatorClientPIN subcommand
+getKeyAgreement, which PIN-less still requires: the salt is encrypted under the pinUvAuth shared
+secret (ECDH P-256 against the token's key-agreement key, HMAC-SHA-256 saltAuth, AES-256-CBC
+decrypt — zero IV in protocol 1, random IV in protocol 2, chosen by the token's advertised
+pinUvAuthProtocols). Deps are near-zero: p256 already in-tree, aes in-tree, the cbc/hkdf/hmac
+pieces are stdlib-class. CBOR: ciborium rides in via coset today (optional); the mobile feature
+declares it directly, and request maps are emitted with keys in ascending order BY HAND — CTAP2
+wants canonical CBOR and ciborium does not canonicalize. Transport framing: ISO 7814-4 for NFC
+(select AID A0000006472F0001 and check the FIDO_2_0 reply; NFCCTAP_MSG 80 10 00 00; 61xx chains
+through GET RESPONSE; after 9100 poll NFCCTAP_GETRESPONSE 80 11 until final; extended-length
+APDUs where the device supports them, command chaining otherwise) and CTAPHID report framing for
+the desktop real-key gate. Typed error map: 0x2E NO_CREDENTIALS -> UnknownCredential, 0x2F
+USER_ACTION_TIMEOUT -> timeout, 0x36 PIN_REQUIRED -> the UV-required outcome (a token with a PIN
+set and makeCredUvNotRqd=false refuses PIN-less enroll — the same exposure the landed desktop
+adapter already carries via without_pin_and_uv), 0x2B UNSUPPORTED_OPTION and the rest get
+explicit entries. getInfo parsing covers versions, extensions, options
+(clientPin/alwaysUv/uv/makeCredUvNotRqd), pinUvAuthProtocols, maxMsgSize, aaguid. Testing:
+byte-for-byte transcript replay is impossible (every exchange draws a fresh ECDH key and an
+OsRng salt), so the hermetic harness is a SOFTWARE CTAP2 AUTHENTICATOR MODEL (clientPIN key
+agreement, hmac-secret, packed self-attestation — a few hundred lines) driven over scripted
+transports, plus an RNG/key seam in the client so test vectors are deterministic; spec and
+ctap-hid-fido2 vectors pin the crypto. EXIT GATE: the new client runs over CTAPHID on the Linux
+desktop against the reference key — real firmware contact BEFORE any phone work, so
+Kotlin/Swift is never where protocol bugs surface. An adapter-parity test asserts both adapters
+parse the same recorded makeCredential response into byte-identical PackedAttestation.
+(4B) platform transports, the runtime store model, and the UniFFI surface. The runtime change
+the review forced into the open: the global registry (a OnceLock map) is consulted INSIDE the
+unlock tail and password-change paths, and MobileVault has no hw surface at all today — "call
+the existing runtime methods with a live transport" is not a thing yet. Chosen model: a
+task-scoped store guard — an RAII guard sets a thread-local hardware-store override at
+spawn_blocking closure start and clears it at the end; store_for consults the thread-local
+before the global map. Tokio blocking closures do not migrate threads and every hw path is
+synchronous inside one closure, so the override is race-free; a regression test fails if any
+store_for call site becomes reachable outside a guard. Fallback if the guard proves leaky:
+thread an explicit Arc<dyn HardwareKeyStore> through unlock_tail, unlock_tail_member,
+enable/disable/set_consent, and the seal re-key paths (the slice-4 audit tests re-run either
+way). Status without a session: hw_status probes must not touch the transport, so the mobile
+store answers probe from platform facts (NFC present/enabled) as a capability-only verdict and
+refuses operations until a session transport is provided. UniFFI gains the hw surface
+(hw_status/enable/disable/set_consent plus unlock/enroll taking a per-operation transport
+handle), and all hw work stays inside spawn_blocking the way the desktop route does. Threading
+contract, stated once: the callback interface is `transact(request) -> response`, called
+synchronously from the Rust blocking thread; iOS implements it by blocking on a semaphore over
+CoreNFC's completion handler, with the NFCTagReaderSession on its OWN serial dispatch queue —
+never the main queue, and nothing on the main thread may wait on the Rust call; Android uses
+IsoDep.connect plus a raised transceive timeout (the default is sub-second and breaks
+cold-token makeCredential); a foreign exception escaping a callback maps to the callback error
+type, never an abort. Session lifecycle is LAZY: the transport object opens the reader session
+on its first transact and closes it at an explicit close() at operation end — the Argon2id KDF
+(seconds, 64-256 MB) runs BEFORE the chip, and an eagerly opened iOS session would hold the
+system sheet open through it against a 60 s cap; one session spans enroll's multiple chip calls
+so the token stays in the field and no re-tap is needed. Host reality: the repo has an
+androidApp target today and NO iOS host app — Android host wiring lands in 4B; the iOS host app
+(iosApp target, entitlement com.apple.developer.nfc.readersession.formats TAG,
+NFCReaderUsageDescription, the FIDO AID in select-identifiers, the Rust XCFramework build) is
+a
+POST-1.0 fast-follow that reuses 4A-4D unchanged (open question 6). The mobile store reports the SAME backend id
+(`fido2`) and the SAME `fido:` binding format as desktop, so the seal AAD is identical and the
+transports are interchangeable on a device that has both (state.rs's match arm and the trait
+doc currently disagree on `fido` vs `fido2` — fixed in this slice). (4C) Compose flows (shared
+UI, platform actuals behind expect/actual): the enroll wizard, the unlock-with-key gesture —
+tap and HOLD: over NFC user presence is implied by the field, no second sensor touch — with
+copy adapted to the gesture ("hold your key to the back of your phone until the check
+finishes"), the touch prompt naming the vault in the system sheet's alert message plus an
+in-app screen behind it (iOS chrome is the system sheet; Android uses reader mode with
+FLAG_READER_SKIP_NDEF_CHECK so the system tag dispatcher cannot steal the tap), tag-lost mapped
+to KeyMissing/Cancelled with retry copy, timeout and cancel handling, quick-unlock copy that
+says "biometric, then hold the key" so the second factor never reads as a bug, and the
+autofill-refusal copy from the threat model. Error sanitizer maps the typed outcomes; i18n in
+StringsEn/Es/Pt under the parity tests. (4D) mobile parity closure: the providers join flow
+adopts the slice-4 proof-then-seal privkey write (closing the recorded plaintext residual), the
+feature-parity matrix gains the hardware row, and the hermetic audit legs re-run through the
+UniFFI surface (dependent on 4B's store model) to pin the mobile path. (5) hardware-in-loop on
+the reference device: enroll, unlock with tap, wrong-key rejection, pull-mid-touch, cancel
+mid-touch, disable, re-enroll, rotation re-seal, phrase recovery unplugged, gpg-agent/browser
+WebAuthn running alongside, a second token
 inserted, and — importantly — a token that already carries a user PIN and other services'
-passkeys, confirming Baluard disturbs nothing.
+passkeys, confirming Baluard disturbs nothing. The same checklist runs on the PHONE over NFC:
+NFC enroll, NFC unlock (foreground), mid-session removal, timeout, wrong key, the same token that
+carries browser passkeys on the phone platform, the autofill refusal copy on a hw-sealed
+vault, and Android USB-OTG unlock (the per-plug permission dialog accepted). iOS legs run with
+the post-1.0 fast-follow.
 
 ## Test bar
 
@@ -261,10 +383,21 @@ stays hermetic (`BALUARD_DISABLE_HWKEY`).
 2. UV-forced tokens (rare): prompt the user's own PIN plainly, never store it. Acceptable?
 3. When a 5-series PIV key owner appears: the v1 PIV design gets dusted off as a sibling
    backend; the registry already carries the shape.
+4. RESOLVED (Esteban, 2026-10-28): Android 1.0 ships BOTH transports — NFC AND USB-OTG
+   (CTAPHID over UsbManager with its per-plug permission dialog). The 4A CTAPHID framing is
+   therefore a shipping transport, not just the desktop real-key gate.
+5. iOS NFC entitlement: the standard Near Field Communication Tag Reading capability is
+   reportedly self-service (no app-review gate); verify in the developer portal before the iOS
+   sub-slice plans around a wait.
+6. RESOLVED (Esteban, 2026-10-28): iOS is a fast-follow AFTER 1.0. Android carries the 1.0
+   mobile scope (NFC + USB-OTG); the iosApp host target, entitlements, and XCFramework build
+   land with the iOS fast-follow, reusing 4A-4D unchanged.
 
 ## Non-goals
 
 Server OTP 2FA (we have no server). The OTP, OpenPGP, and PIV applets on this device class.
-Silent no-tap unlock (physically refused by the firmware; settled). Mobile NFC (post-1.0).
+Silent no-tap unlock (physically refused by the firmware; settled). Background or lockscreen NFC
+tag dispatch on phones (no background unlock; the gesture is always an in-app, foreground
+decision). Desktop NFC readers.
 Claiming the key protects against OS-level compromise; the manual says exactly what it does and
 does not.

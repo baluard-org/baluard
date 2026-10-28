@@ -3348,6 +3348,16 @@ async fn handle_enroll_with_phrase(
         Some(p) => p.to_string(),
         None => return err_response("missing phrase".to_string()),
     };
+    // The seal-at-birth contract: the password seals the fresh device key
+    // during enrollment (and is canary-proven before any write). A caller
+    // that cannot collect it has no sealed-enroll path.
+    let mut master_password = match v["master_password"].as_str() {
+        Some(p) => p.to_string(),
+        None => {
+            phrase.zeroize();
+            return err_response("missing master_password".to_string());
+        }
+    };
     // The payload still carries the phrase; scrub it now that the owned
     // copy exists (host-level routes bypass route_request's blanket
     // payload zeroize). The slug is extracted BEFORE the scrub.
@@ -3358,6 +3368,7 @@ async fn handle_enroll_with_phrase(
                 Some(s) => s,
                 None => {
                     phrase.zeroize();
+                    master_password.zeroize();
                     return err_response("No active vault".to_string());
                 }
             },
@@ -3368,6 +3379,7 @@ async fn handle_enroll_with_phrase(
     req.payload.zeroize();
     let Some(state) = host.get(&target_slug).await else {
         phrase.zeroize();
+        master_password.zeroize();
         return err_response(format!("vault '{target_slug}' not found"));
     };
     let vault_key = state.vault_path.to_string_lossy().into_owned();
@@ -3375,6 +3387,7 @@ async fn handle_enroll_with_phrase(
         crate::rate_limit::ClaimResult::Allowed(p) => p,
         crate::rate_limit::ClaimResult::Backoff(d) => {
             phrase.zeroize();
+            master_password.zeroize();
             return err_response(format!(
                 "Too many failed attempts. Wait {}s before retrying.",
                 d.as_secs()
@@ -3382,22 +3395,27 @@ async fn handle_enroll_with_phrase(
         }
         crate::rate_limit::ClaimResult::LockedOut(d) => {
             phrase.zeroize();
+            master_password.zeroize();
             return err_response(format!(
                 "Vault locked due to too many failed attempts. Wait {}s.",
                 d.as_secs()
             ));
         }
     };
-    let result = state.enroll_with_recovery_phrase(&phrase).await;
+    let result = state
+        .enroll_with_recovery_phrase(&phrase, &master_password)
+        .await;
     match result {
         Ok(json) => {
             permit.commit_success();
             phrase.zeroize();
+            master_password.zeroize();
             ok_resp(json, None)
         }
         Err(e) => {
             permit.commit_failure();
             phrase.zeroize();
+            master_password.zeroize();
             err_response(e)
         }
     }
