@@ -10,6 +10,8 @@ import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { uriStr, formatCardNumber, sanitizeError } from "../lib/utils.js";
 import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
+import { looksLikeMarkdown } from "../lib/markdown.js";
+import MarkdownContent from "./MarkdownContent.jsx";
 import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint, IconEye, IconEyeOff, IconLock } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
 
@@ -152,6 +154,7 @@ export default function CipherDetail(props) {
   const [revealedHistory, setRevealedHistory] = createSignal(null); // row index
   const [copiedHistoryIdx, setCopiedHistoryIdx] = createSignal(null);
   const [showShare, setShowShare] = createSignal(false);
+  const [showNotesModal, setShowNotesModal] = createSignal(false);
 
   async function deletePasskey() {
     const pk = showPasskeyDelete();
@@ -193,6 +196,7 @@ export default function CipherDetail(props) {
   }
 
   const cipher = () => props.cipher;
+  const notesIsMarkdown = createMemo(() => looksLikeMarkdown(cipher()?.notes || ""));
 
   // Reset the reprompt gate whenever the open entry changes.
   createEffect(
@@ -200,6 +204,7 @@ export default function CipherDetail(props) {
     () => {
       setRepromptOk(0);
       setRevealPass(false);
+      setShowNotesModal(false);
     },
   );
   // S2-5: entries from another vault are read-only here — the daemon
@@ -798,11 +803,31 @@ export default function CipherDetail(props) {
           <div class="space-y-4 pt-2">
             <h4 class={`${SECTION_LABEL} flex items-center justify-between`}>
               <span>{t("entry.notes")}</span>
-              <CopyNotesButton value={cipher()?.notes || ""} />
+              <span class="flex items-center gap-1">
+                <button
+                  onClick={() => setShowNotesModal(true)}
+                  class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer"
+                  title={t("entry.viewNotes")}
+                  aria-label={t("entry.viewNotes")}
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
+                </button>
+                <CopyNotesButton value={cipher()?.notes || ""} />
+              </span>
             </h4>
-            <div class="p-4 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] leading-relaxed font-semibold whitespace-pre-wrap select-text">
-              {cipher()?.notes}
-            </div>
+            <Show
+              when={notesIsMarkdown()}
+              fallback={
+                <div class="p-4 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] leading-relaxed font-semibold whitespace-pre-wrap select-text">
+                  {cipher()?.notes}
+                </div>
+              }
+            >
+              <MarkdownContent
+                text={cipher()?.notes || ""}
+                class="notes-md p-4 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] leading-relaxed select-text"
+              />
+            </Show>
           </div>
         </Show>
 
@@ -972,6 +997,47 @@ export default function CipherDetail(props) {
       </div>
       <Show when={showShare()}>
         <ShareDialog cipher={cipher()} onClose={() => setShowShare(false)} />
+      </Show>
+
+      {/* Notes reading modal (expand) */}
+      <Show when={showNotesModal()}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="notes-view-title"
+          class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowNotesModal(false); }}
+        >
+          <FocusTrap containerRef={() => document.getElementById("notes-view-dialog")} onEscape={() => setShowNotesModal(false)} />
+          <div id="notes-view-dialog" class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] shrink-0">
+              <div class="min-w-0">
+                <p class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider">{t("entry.notes")}</p>
+                <h3 id="notes-view-title" class="text-lg font-bold text-[var(--color-text)] truncate">{cipher()?.name}</h3>
+              </div>
+              <button
+                onClick={() => setShowNotesModal(false)}
+                class="p-2 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-card)] rounded-xl transition-colors cursor-pointer shrink-0"
+                title={t("entry.close")}
+                aria-label={t("entry.close")}
+              >
+                <IconX class="w-5 h-5" />
+              </button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 py-4">
+              <Show
+                when={notesIsMarkdown()}
+                fallback={
+                  <div class="whitespace-pre-wrap text-sm text-[var(--color-text)] leading-relaxed font-semibold select-text">
+                    {cipher()?.notes}
+                  </div>
+                }
+              >
+                <MarkdownContent text={cipher()?.notes || ""} class="notes-md text-sm text-[var(--color-text)] leading-relaxed select-text" />
+              </Show>
+            </div>
+          </div>
+        </div>
       </Show>
     </div>
   );

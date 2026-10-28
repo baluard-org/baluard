@@ -224,6 +224,7 @@
     "deleteTagConfirm": "This will remove the tag \"{tag}\" from all entries. The entries themselves will not be deleted.",
     "subfolderPlaceholder": "Subfolder name",
     "copyNotes": "Copy notes",
+    "viewNotes": "View notes",
     "untitled": "Untitled",
     "itemType": "{type} Item",
     "confirmPassword": "Confirm Password",
@@ -422,7 +423,13 @@
     "hwConsentOff": "Stop confirming",
     "hwConsentOnToast": "The chip will confirm every unlock.",
     "hwConsentOffToast": "Silent unlock restored.",
-    "tabLegacy": "Legacy Contact"
+    "tabLegacy": "Legacy Contact",
+    "hwTouchTitle": "Touch your security key",
+    "hwTouchBodyName": "Touch the key when it blinks to guard \"{name}\". Waiting for your touch…",
+    "hwTouchBody": "Touch the key when it blinks. Waiting for your touch…",
+    "hwAttestVerified": "Security key verified as Yubico-made.",
+    "hwAttestUnknownShort": "Key maker could not be verified; the key still works.",
+    "hwAttestUnknownToast": "This key is not verified as Yubico-made. Baluard accepted it: the guard still needs your password and this key."
   },
   "sync": {
     "title": "Vault Sync",
@@ -564,7 +571,11 @@
     "hardwareUnavailable": "This device's security chip could not unlock the vault. Use your recovery phrase to bring this device back in.",
     "alreadyExists": "Vault already exists at this location",
     "unexpected": "An unexpected error occurred",
-    "openFailed": "Could not open the link"
+    "openFailed": "Could not open the link",
+    "hwTouchTimeout": "No touch was detected on the key. Try again.",
+    "hwBusy": "The security key is busy in another application. Close it and try again.",
+    "hwKeyWrong": "This is not the security key this vault was sealed to.",
+    "hwKeyMissing": "Plug in your security key."
   },
   "categories": {
     "allItems": "All items",
