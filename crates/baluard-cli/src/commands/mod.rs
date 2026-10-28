@@ -3326,12 +3326,23 @@ pub fn handle_enroll_with_phrase(
         }
     }
 
+    // The seal-at-birth contract: the password is canary-proven before
+    // any write and seals the fresh device key during enrollment, so no
+    // plaintext key ever touches the disk (daemon route enforces it too).
+    let master_password = match std::env::var("BALUARD_PASSWORD") {
+        Ok(pw) => zeroize::Zeroizing::new(pw),
+        Err(_) => zeroize::Zeroizing::new(prompt_password(
+            "Master password (seals the device key during enrollment): ",
+        )?),
+    };
+
     match mode {
         ConnectMode::Daemon => {
             // Route through daemon
             let resp = client::request_to(
                 "vault.enroll_with_phrase",
-                &serde_json::json!({ "phrase": phrase_str }).to_string(),
+                &serde_json::json!({ "phrase": phrase_str, "master_password": &*master_password })
+                    .to_string(),
                 socket,
             )?;
             if !resp.success {
@@ -3374,7 +3385,22 @@ pub fn handle_enroll_with_phrase(
             // Open DeviceManager and enroll. The policy comes from
             // settings.dec decrypted inside core with the phrase-recovered
             // root key — a locked vault cannot read it, so callers never
-            // guess (locked reads misreport Strict).
+            // guess (locked reads misreport Strict). The password is
+            // canary-proven first: a mistyped password must not mint a
+            // ghost device (same guard as the daemon route).
+            let kdf_json = std::fs::read_to_string(path.join("meta/kdf-params.json"))?;
+            let kdf_params: baluard_core::types::KdfParams = serde_json::from_str(&kdf_json)?;
+            let kek = zeroize::Zeroizing::new(baluard_core::crypto::kdf::derive_kek(
+                &master_password,
+                &kdf_params,
+            )?);
+            let session_key = zeroize::Zeroizing::new(
+                baluard_core::crypto::hkdf_derive::derive_session_key(&kek)?,
+            );
+            let canary = std::fs::read(path.join("meta/kek-canary.enc"))?;
+            baluard_core::vault::canary::verify_kek_canary(&session_key, &canary)
+                .map_err(|_| "master password incorrect")?;
+
             let mut dm = DeviceManager::load_from_vault(path)?;
 
             let result = dm.enroll_with_recovery_phrase(
@@ -3386,26 +3412,23 @@ pub fn handle_enroll_with_phrase(
 
             // Persist device-privkey for this device using the keys returned
             // by the method (same keys the registry and keywrap were built
-            // with — guarantees consistency).
+            // with — guarantees consistency). Sealed at birth under the
+            // verified KEK's devkey seal subkey.
             let privkey_data = serde_json::json!({
                 "device_id": result.device_id.to_string(),
                 "x25519_private": hex::encode(result.x25519_secret.to_bytes()),
                 "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
             });
-            let privkey_path = path.join("meta/device-privkey.json");
-            let privkey_tmp = privkey_path.with_extension("json.tmp");
-            std::fs::write(
-                &privkey_tmp,
-                serde_json::to_string_pretty(&privkey_data).unwrap(),
+            let privkey_json = serde_json::to_string_pretty(&privkey_data)?;
+            let devkey_seal = zeroize::Zeroizing::new(
+                baluard_core::crypto::hkdf_derive::derive_devkey_seal_key(&kek)?,
+            );
+            baluard_core::vault::device_privkey::seal_file(
+                &path.join("meta/device-privkey.json"),
+                &privkey_json,
+                &devkey_seal,
+                Some(result.device_id),
             )?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ =
-                    std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
-            }
-            std::fs::rename(&privkey_tmp, &privkey_path)?;
-            let _ = baluard_core::vault::device_privkey::write_device_id(path, result.device_id);
 
             println!(
                 "Device enrolled: {} ({})",
