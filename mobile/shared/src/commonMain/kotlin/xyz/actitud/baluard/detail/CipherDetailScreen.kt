@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
@@ -36,6 +39,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import xyz.actitud.baluard.ui.components.BaluardDivider
 import xyz.actitud.baluard.ui.components.BaluardTopBar
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
@@ -55,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
@@ -96,6 +102,17 @@ fun CipherDetailScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     // M7: a non-browser URI waiting for the user's confirmation to launch.
     var pendingExternalUri by remember { mutableStateOf<String?>(null) }
+    var showNotesView by remember { mutableStateOf(false) }
+
+    // Notes links ride the same M7 gate as vault URIs: browser schemes
+    // open directly, others ask first, refused schemes do nothing.
+    val handleNoteLink: (String) -> Unit = { uri ->
+        when (classifyUri(uri)) {
+            UriVerdict.OpenInBrowser -> openUrl(uri)
+            is UriVerdict.ConfirmExternal -> pendingExternalUri = uri
+            UriVerdict.Refuse -> Unit
+        }
+    }
 
     // G18: per-cipher master-password re-prompt. The grant is a 30s window
     // (matching the daemon reprompt grant); before it opens, sensitive rows
@@ -531,12 +548,37 @@ fun CipherDetailScreen(
             s.notes?.let { notes ->
                 if (notes.isNotBlank()) {
                     SectionCard(title = t("edit.notes")) {
-                        Text(
-                            text = notes,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(vertical = 4.dp),
-                        )
+                        if (looksLikeMarkdown(notes)) {
+                            MarkdownText(
+                                text = notes,
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                onLinkClick = { uri -> handleNoteLink(uri) },
+                            )
+                        } else {
+                            Text(
+                                text = notes,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(vertical = 4.dp),
+                            )
+                        }
+                        TextButton(
+                            onClick = { showNotesView = true },
+                            modifier = Modifier.align(Alignment.End),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.OpenInFull,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = t("detail.viewNotes"),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
             }
@@ -663,6 +705,71 @@ fun CipherDetailScreen(
                 }
             },
         )
+    }
+
+    // Notes reading view (expand): a roomier surface for long notes.
+    if (showNotesView && state != null) {
+        Dialog(
+            onDismissRequest = { showNotesView = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 32.dp)
+                    .heightIn(max = 720.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = t("edit.notes").uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = state.name,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        IconButton(onClick = { showNotesView = false }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = t("common.close"),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    BaluardDivider()
+                    Column(
+                        modifier = Modifier
+                            .verticalScroll(rememberScrollState())
+                            .padding(20.dp),
+                    ) {
+                        if (looksLikeMarkdown(state.notes ?: "")) {
+                            MarkdownText(text = state.notes ?: "", onLinkClick = { uri -> handleNoteLink(uri) })
+                        } else {
+                            Text(
+                                text = state.notes ?: "",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

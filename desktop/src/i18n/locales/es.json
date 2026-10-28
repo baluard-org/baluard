@@ -192,6 +192,7 @@
     "deleteTagConfirm": "Esto eliminará la etiqueta \"{tag}\" de todas las entradas. Las entradas no se eliminarán.",
     "subfolderPlaceholder": "Nombre de la subcarpeta",
     "copyNotes": "Copiar notas",
+    "viewNotes": "Ver notas",
     "untitled": "Sin título",
     "itemType": "Elemento de {type}",
     "confirmPassword": "Confirmar contraseña",
@@ -390,7 +391,13 @@
     "hwConsentOff": "Dejar de confirmar",
     "hwConsentOnToast": "El chip confirmará cada desbloqueo.",
     "hwConsentOffToast": "Desbloqueo silencioso restaurado.",
-    "tabLegacy": "Contacto de confianza"
+    "tabLegacy": "Contacto de confianza",
+    "hwTouchTitle": "Toca tu llave de seguridad",
+    "hwTouchBodyName": "Toca la llave cuando parpadee para proteger \"{name}\". Esperando tu toque…",
+    "hwTouchBody": "Toca la llave cuando parpadee. Esperando tu toque…",
+    "hwAttestVerified": "Llave de seguridad verificada como fabricada por Yubico.",
+    "hwAttestUnknownShort": "No se pudo verificar el fabricante de la llave; funciona igual.",
+    "hwAttestUnknownToast": "Esta llave no está verificada como fabricada por Yubico. Baluard la aceptó: la protección seguirá necesitando tu contraseña y esta llave."
   },
   "sync": {
     "title": "Sincronización de bóveda",
@@ -532,7 +539,11 @@
     "hardwareUnavailable": "El chip de seguridad de este dispositivo no pudo desbloquear la caja fuerte. Usa tu frase de recuperación para recuperar este dispositivo.",
     "alreadyExists": "Ya existe una bóveda en esta ubicación",
     "unexpected": "Ocurrió un error inesperado",
-    "openFailed": "No se pudo abrir el enlace"
+    "openFailed": "No se pudo abrir el enlace",
+    "hwTouchTimeout": "No se detectó el toque en la llave. Inténtalo de nuevo.",
+    "hwBusy": "La llave de seguridad está ocupada en otra aplicación. Ciérrala e inténtalo de nuevo.",
+    "hwKeyWrong": "Esta no es la llave de seguridad con la que se protegió esta bóveda.",
+    "hwKeyMissing": "Conecta tu llave de seguridad."
   },
   "categories": {
     "allItems": "Todos los elementos",
