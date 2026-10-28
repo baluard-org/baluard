@@ -26,6 +26,8 @@ vi.mock("../context/toastSignal.js", () => ({
   toasts: { length: 0 },
 }));
 
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+
 // Stub heavy children.
 vi.mock("../components/FocusTrap.jsx", () => ({ default: () => null }));
 vi.mock("../components/CopyableField.jsx", () => ({
@@ -252,5 +254,40 @@ describe("CipherDetail (SecureNote)", () => {
       <CipherDetail cipher={NOTE_CIPHER} setViewCipher={vi.fn()} onEdit={vi.fn()} />
     ));
     expect(container.textContent).toContain("router admin");
+  });
+
+  it("keeps plain notes plain (no markdown block)", () => {
+    const { container } = render(() => (
+      <CipherDetail cipher={NOTE_CIPHER} setViewCipher={vi.fn()} onEdit={vi.fn()} />
+    ));
+    expect(container.querySelector(".notes-md")).toBeNull();
+  });
+
+  it("renders markdown notes as HTML when markdown syntax is used", () => {
+    const md = {
+      ...NOTE_CIPHER,
+      notes: "# Wifi\n\n**password** on the sticker\n\n- never share it",
+    };
+    const { container } = render(() => (
+      <CipherDetail cipher={md} setViewCipher={vi.fn()} onEdit={vi.fn()} />
+    ));
+    const mdBlock = container.querySelector(".notes-md");
+    expect(mdBlock).not.toBeNull();
+    expect(mdBlock.querySelector("h1")?.textContent).toBe("Wifi");
+    expect(mdBlock.querySelector("strong")?.textContent).toBe("password");
+    expect(mdBlock.querySelectorAll("li").length).toBe(1);
+  });
+
+  it("expand button opens the notes reading modal with the note content", async () => {
+    const { container } = render(() => (
+      <CipherDetail cipher={NOTE_CIPHER} setViewCipher={vi.fn()} onEdit={vi.fn()} />
+    ));
+    expect(document.getElementById("notes-view-dialog")).toBeNull();
+    const expandBtn = container.querySelector('[title*="viewNotes"]');
+    expect(expandBtn).not.toBeNull();
+    fireEvent.click(expandBtn);
+    await waitFor(() => expect(document.getElementById("notes-view-dialog")).not.toBeNull());
+    const dialog = document.getElementById("notes-view-dialog");
+    expect(dialog.textContent).toContain("router admin");
   });
 });

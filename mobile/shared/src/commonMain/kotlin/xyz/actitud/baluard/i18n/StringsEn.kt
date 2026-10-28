@@ -189,6 +189,7 @@ internal val EN: Map<String, String> = mapOf(
     "detail.copy" to "Copy",
     "detail.reveal" to "Show",
     "detail.hide" to "Hide",
+    "detail.viewNotes" to "View notes",
     "share.openRow" to "Open shared file",
     "share.openDesc" to "Received a shared item from someone? Open the file they sent.",
     "share.passTitle" to "Shared file passphrase",

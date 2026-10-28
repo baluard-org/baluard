@@ -193,6 +193,7 @@ internal val ES: Map<String, String> = mapOf(
     "detail.copy" to "Copiar",
     "detail.reveal" to "Mostrar",
     "detail.hide" to "Ocultar",
+    "detail.viewNotes" to "Ver notas",
     "share.openRow" to "Abrir archivo compartido",
     "share.openDesc" to "¿Recibiste un elemento compartido? Abre el archivo que te enviaron.",
     "share.passTitle" to "Frase del archivo compartido",

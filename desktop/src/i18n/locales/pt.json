@@ -197,6 +197,7 @@
     "unarchive": "Desarquivar",
     "restore": "Restaurar",
     "copyNotes": "Copiar notas",
+    "viewNotes": "Ver notas",
     "copyCode": "Copiar código",
     "user": "Usuário",
     "pass": "Senha",
@@ -422,7 +423,13 @@
     "hwConsentOff": "Parar de confirmar",
     "hwConsentOnToast": "O chip confirmará cada desbloqueio.",
     "hwConsentOffToast": "Desbloqueio silencioso restaurado.",
-    "tabLegacy": "Contato de confiança"
+    "tabLegacy": "Contato de confiança",
+    "hwTouchTitle": "Toque sua chave de segurança",
+    "hwTouchBodyName": "Toque a chave quando ela piscar para proteger \"{name}\". Aguardando seu toque…",
+    "hwTouchBody": "Toque a chave quando ela piscar. Aguardando seu toque…",
+    "hwAttestVerified": "Chave de segurança verificada como fabricada pela Yubico.",
+    "hwAttestUnknownShort": "Não foi possível verificar o fabricante da chave; ela funciona mesmo assim.",
+    "hwAttestUnknownToast": "Esta chave não está verificada como fabricada pela Yubico. O Baluard a aceitou: a proteção continuará precisando da sua senha e desta chave."
   },
   "sync": {
     "title": "Sincronização do Cofre",
@@ -564,7 +571,11 @@
     "hardwareUnavailable": "O chip de segurança deste dispositivo não conseguiu desbloquear o cofre. Use sua frase de recuperação para recuperar este dispositivo.",
     "alreadyExists": "Já existe um cofre neste local",
     "unexpected": "Ocorreu um erro inesperado",
-    "openFailed": "Não foi possível abrir o link"
+    "openFailed": "Não foi possível abrir o link",
+    "hwTouchTimeout": "Nenhum toque foi detectado na chave. Tente novamente.",
+    "hwBusy": "A chave de segurança está ocupada em outro aplicativo. Feche-o e tente novamente.",
+    "hwKeyWrong": "Esta não é a chave de segurança com a qual este cofre foi protegido.",
+    "hwKeyMissing": "Conecte sua chave de segurança."
   },
   "categories": {
     "allItems": "Todos os itens",
