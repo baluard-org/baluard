@@ -197,11 +197,45 @@ non-default `fido2` feature. Slice 1 is COMPLETE: the remaining attestation leg 
 chain walking with per-cert RSA/EC dispatch, the bundled Yubico pin, the hard-refuse/unknown-
 vendor policy in `FidoStore::create_binding`, and ten hermetic tests including the real root's
 parse-and-self-verify. The `rsa` dependency and a sha2 `oid` feature were added for it; `p256`
-moved from dev-dependencies to dependencies (the verifier needs ES256 in production). (2) daemon plumbing, status copy per typed reason,
-udev/sysdeps/packaging. (3) desktop flow: enroll wizard (probe, attestation verdict, touch
-test), touch-wait with cancel and countdown naming the vault, hot-plug status events, i18n
-en/es/pt with parity tests; copy says "security key" and "touch" — never FIDO, PIN, or hmac
-outside an advanced view. (4) recovery/rotation audit: phrase and Legacy paths prove
+moved from dev-dependencies to dependencies (the verifier needs ES256 in production). (2) LANDED
+(2026-10-28) daemon plumbing, status copy per typed reason, udev/sysdeps/packaging: `FidoStore`
+enforces PerUse (tap) on binding creation and both derive paths, with Silent refused as
+`HardwareTouchRequired`; `enable_hw_seal` forces PerUse for tap-interaction backends (the tap
+requirement stays AAD-bound) and the PerUse open path no longer demands biometric-style consent
+support; the daemon registers `hwkey::fido::store()` behind a new non-default `fido2` feature
+(forwarding `baluard-core/fido2`) and `vault.hw_enable` accepts an optional `backend` selector
+resolved explicitly (an unavailable requested backend fails closed); `vault.hw_status` reports
+the selected `backend`, a per-backend `backends` array (capable/reason/interaction), and
+any-backend capability, with consent support read from the sealed or first-available backend;
+hardware sealing/opening runs in `spawn_blocking` so a tap wait never stalls the async executor;
+`just sysdeps desktop` checks libudev plus the U2F udev rules package per distro and prints the
+install command, and the deb/rpm metadata recommends `libu2f-udev`; all desktop daemon-sidecar
+build branches in the justfile compile with `baluard-daemon/fido2`. Two latent bugs fixed along
+the way: `hw_status` read consent from the vault directory instead of `meta/device-privkey.json`
+(always false), and the TPM backend plus its real-chip test lagged the slice-0 `Handshake`/
+`HwConsent` contract (the `hw-seal` feature now compiles again). Test drift repaired in the same
+pass: the route-inventory scanner no longer splits the handler on quote characters (URLs in
+string literals broke parity), `vaults.copy_items` tests carry the now-required per-vault payload
+tokens, and the ownership-claim test rewinds `ask_initiated_at`/`confirmed_at` together with
+`window_until` because the record is tamper-evident by design. (3) LANDED (2026-10-28, two legs).
+First leg (verdict surfacing): `HardwareKeyStore::create_binding` now returns `BindingInfo {
+binding, attestation }` with the new `HwAttestation` enum (`verified` / `unknown-vendor`) — FIDO
+reports its enroll-time verdict, chip backends return `None`; `seal_bytes_hw` records it as
+`hw_attestation` in the seal file (informational only, never an open input), seal-key rotation and
+consent changes carry the recorded verdict over, and `vault.hw_enable` returns `attestation` while
+`vault.hw_status` surfaces it for the enroll UI. Second leg (desktop): the guard card gains a
+touch-wait panel (title + vault-named body + cancel) whenever the pending enable/disable sits on a
+tap backend — cancel hides the panel while the daemon request keeps waiting, and the completion
+toast still reports the outcome; an `unknown-vendor` verdict warns instead of celebrating and the
+enabled card shows the recorded verdict line; settings re-probe `vault.hw_status` every 4 s while
+open so a plugged key appears without a reopen (the daemon has no push channel — a poll is the
+honest hot-plug mechanism), and the error sanitizer maps the typed touch outcomes (timeout,
+busy, wrong key, missing key) to plain-language copy in en/es/pt. Deviation from the draft: no
+fabricated countdown in the touch panel — the daemon exposes no deadline and the key's own timeout
+governs, so the panel says "waiting for your touch" with a cancel instead of a fake number.
+i18n keys ship in en/es/pt under the existing parity test; desktop vitest covers the touch
+panel, cancel, unknown-vendor warning, verdict line, and the hot-plug poll.
+(4) recovery/rotation audit: phrase and Legacy paths prove
 token-unplugged recovery, rotation re-seals through the same seam, the heartbeat never taps,
 quick-unlock enforcement holds. (5) hardware-in-loop on the reference device: enroll, unlock
 with tap, wrong-key rejection, pull-mid-touch, cancel mid-touch, disable, re-enroll, rotation

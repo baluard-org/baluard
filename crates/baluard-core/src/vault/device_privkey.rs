@@ -346,7 +346,12 @@ pub fn rotate_seal_key(
             });
             let mode = crate::hwkey::HwConsent::from_flag(v["consent"].as_bool() == Some(true));
             let inner = open_bytes_hw(&*hw, old_seal_key, file.as_bytes())?;
-            let bytes = seal_bytes_hw(&*hw, &binding, new_seal_key, &inner, id, mode)?;
+            // Rotation re-seals under the SAME binding without re-attesting;
+            // the recorded verdict carries over.
+            let attestation = v["hw_attestation"]
+                .as_str()
+                .and_then(hw_attestation_from_str);
+            let bytes = seal_bytes_hw(&*hw, &binding, new_seal_key, &inner, id, mode, attestation)?;
             super::write_vault_file(path, &bytes).map_err(|e| {
                 BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
             })?;
@@ -389,6 +394,7 @@ pub fn seal_bytes_hw(
     inner_json: &str,
     device_id: Option<Uuid>,
     consent: crate::hwkey::HwConsent,
+    attestation: Option<crate::hwkey::HwAttestation>,
 ) -> Result<Vec<u8>, BaluardError> {
     // The backend mints the ephemeral in its own primitive family and
     // discards the private half - only its chip can reproduce the secret.
@@ -426,6 +432,9 @@ pub fn seal_bytes_hw(
     let id = device_id.or_else(|| outer_device_id(inner_json));
     if let Some(id) = id {
         doc["device_id"] = serde_json::Value::String(id.to_string());
+    }
+    if let Some(att) = attestation {
+        doc["hw_attestation"] = serde_json::Value::String(att.as_str().to_string());
     }
     Ok(doc.to_string().into_bytes())
 }
@@ -502,7 +511,10 @@ pub fn open_bytes_hw(
     // that cannot verify users must fail closed, never downgrade.
     let consent_flag = v["consent"].as_bool() == Some(true);
     let consent = crate::hwkey::HwConsent::from_flag(consent_flag);
-    if consent.is_per_use() && !hw.supports_consent() {
+    if consent.is_per_use()
+        && hw.interaction() != crate::hwkey::Interaction::PerUse
+        && !hw.supports_consent()
+    {
         return Err(VaultError::HardwareConsentUnavailable.into());
     }
 
@@ -539,6 +551,28 @@ pub fn hw_backend_of(file: &[u8]) -> Result<String, BaluardError> {
         .ok_or_else(|| VaultError::Corrupt("hw-sealed devkey missing backend".into()).into())
 }
 
+pub(crate) fn hw_attestation_from_str(s: &str) -> Option<crate::hwkey::HwAttestation> {
+    match s {
+        "verified" => Some(crate::hwkey::HwAttestation::Verified),
+        "unknown-vendor" => Some(crate::hwkey::HwAttestation::UnknownVendor),
+        _ => None,
+    }
+}
+
+/// The recorded enroll-time attestation verdict of an hw-sealed vault,
+/// for status copy. `None` for chip backends (no ceremony) or a non-hw
+/// file. Informational only.
+pub fn hw_attestation_of(path: &Path) -> Option<crate::hwkey::HwAttestation> {
+    if file_kind(path) != PrivkeyFileKind::SealedHw {
+        return None;
+    }
+    let file = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&file).ok()?;
+    v["hw_attestation"]
+        .as_str()
+        .and_then(hw_attestation_from_str)
+}
+
 /// Open an hw-sealed file, resolving the recorded backend from the
 /// registry. A missing backend (chip gone, kill-switch, wrong machine)
 /// is the typed unavailable error - never a silent downgrade.
@@ -563,8 +597,8 @@ pub fn open_sealed_hw(seal_key: &[u8; 32], file: &[u8]) -> Result<String, Baluar
 /// settings toggle): re-key under the AND construction. Idempotent for
 /// v2-hw files. `backend` None picks the default (first available)
 /// store; Some(id) resolves explicitly. Fails closed when the requested
-/// backend is unavailable, and refuses a silent file on a backend whose
-/// every use demands a tap.
+/// backend is unavailable. A backend whose every use demands a tap always
+/// records per-use mode so the requirement is AAD-bound.
 pub fn enable_hw_seal(
     path: &Path,
     seal_key: &[u8; 32],
@@ -579,12 +613,17 @@ pub fn enable_hw_seal(
         None => crate::hwkey::available()
             .ok_or_else(crate::hwkey::hw_unavailable_error)?,
     };
-    let mode = crate::hwkey::HwConsent::from_flag(consent);
-    if mode.is_per_use() && !hw.supports_consent() {
+    let interaction = hw.interaction();
+    let mode = if interaction == crate::hwkey::Interaction::PerUse {
+        crate::hwkey::HwConsent::PerUse
+    } else {
+        crate::hwkey::HwConsent::from_flag(consent)
+    };
+    if mode.is_per_use()
+        && interaction != crate::hwkey::Interaction::PerUse
+        && !hw.supports_consent()
+    {
         return Err(VaultError::HardwareConsentUnavailable.into());
-    }
-    if !mode.is_per_use() && hw.interaction() == crate::hwkey::Interaction::PerUse {
-        return Err(VaultError::HardwareTouchRequired.into());
     }
     match file_kind(path) {
         PrivkeyFileKind::Absent => Ok(false),
@@ -596,8 +635,16 @@ pub fn enable_hw_seal(
         .into()),
         PrivkeyFileKind::LegacyPlaintext | PrivkeyFileKind::Sealed => {
             let inner = read_privkey_file(path, Some(seal_key))?;
-            let binding = hw.create_binding(vault_id, mode)?;
-            let bytes = seal_bytes_hw(&*hw, &binding, seal_key, &inner, device_id, mode)?;
+            let info = hw.create_binding(vault_id, mode)?;
+            let bytes = seal_bytes_hw(
+                &*hw,
+                &info.binding,
+                seal_key,
+                &inner,
+                device_id,
+                mode,
+                info.attestation,
+            )?;
             super::write_vault_file(path, &bytes).map_err(|e| {
                 BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
             })?;
@@ -671,8 +718,23 @@ pub fn set_hw_seal_consent(
         .ok_or_else(|| VaultError::Corrupt("hw-sealed devkey binding is not a vault tag".into()))?;
     let inner = open_bytes_hw(&*hw, seal_key, file.as_bytes())?;
     let mode = crate::hwkey::HwConsent::from_flag(consent);
-    let binding = hw.create_binding(vault_id, mode)?;
-    let bytes = seal_bytes_hw(&*hw, &binding, seal_key, &inner, device_id, mode)?;
+    let info = hw.create_binding(vault_id, mode)?;
+    // The verdict is a property of the chip key, not of the consent mode:
+    // keep the fresh verdict, else carry the recorded one.
+    let attestation = info.attestation.or_else(|| {
+        v["hw_attestation"]
+            .as_str()
+            .and_then(hw_attestation_from_str)
+    });
+    let bytes = seal_bytes_hw(
+        &*hw,
+        &info.binding,
+        seal_key,
+        &inner,
+        device_id,
+        mode,
+        attestation,
+    )?;
     super::write_vault_file(path, &bytes).map_err(|e| {
         BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
     })?;
@@ -774,11 +836,14 @@ mod tests {
             &self,
             vault_id: Uuid,
             consent: crate::hwkey::HwConsent,
-        ) -> Result<String, BaluardError> {
-            Ok(if consent.is_per_use() {
-                crate::hwkey::consent_binding_tag(vault_id)
-            } else {
-                crate::hwkey::binding_tag(vault_id)
+        ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
+            Ok(crate::hwkey::BindingInfo {
+                binding: if consent.is_per_use() {
+                    crate::hwkey::consent_binding_tag(vault_id)
+                } else {
+                    crate::hwkey::binding_tag(vault_id)
+                },
+                attestation: None,
             })
         }
         fn derive_ephemeral(
@@ -1121,8 +1186,11 @@ mod tests {
                 &self,
                 _: Uuid,
                 _: crate::hwkey::HwConsent,
-            ) -> Result<String, BaluardError> {
-                Ok(crate::hwkey::binding_tag(Uuid::new_v4()))
+            ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
+                Ok(crate::hwkey::BindingInfo {
+                    binding: crate::hwkey::binding_tag(Uuid::new_v4()),
+                    attestation: None,
+                })
             }
             fn derive_ephemeral(
                 &self,
@@ -1213,8 +1281,11 @@ mod tests {
             &self,
             _: Uuid,
             _: crate::hwkey::HwConsent,
-        ) -> Result<String, BaluardError> {
-            Ok(crate::hwkey::binding_tag(Uuid::new_v4()))
+        ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
+            Ok(crate::hwkey::BindingInfo {
+                binding: crate::hwkey::binding_tag(Uuid::new_v4()),
+                attestation: None,
+            })
         }
         fn derive_ephemeral(
             &self,
@@ -1267,8 +1338,11 @@ mod tests {
             &self,
             _: Uuid,
             _: crate::hwkey::HwConsent,
-        ) -> Result<String, BaluardError> {
-            Ok(crate::hwkey::binding_tag(Uuid::new_v4()))
+        ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
+            Ok(crate::hwkey::BindingInfo {
+                binding: crate::hwkey::binding_tag(Uuid::new_v4()),
+                attestation: None,
+            })
         }
         fn derive_ephemeral(
             &self,
@@ -1280,6 +1354,7 @@ mod tests {
             let mut h = Sha256::new();
             h.update(b"t");
             h.update(binding.as_bytes());
+            h.update([0x04, 0x02]);
             Ok((
                 crate::hwkey::Handshake(vec![0x04, 0x02]),
                 Zeroizing::new(h.finalize().into()),
@@ -1383,20 +1458,103 @@ mod tests {
     }
 
     #[test]
-    fn hw_seal_refuses_silent_on_tapping_backend() {
+    fn hw_seal_forces_per_use_on_tapping_backend() {
         let _g = HW_LOCK.lock().unwrap();
         let _old_env = hw_env_clear();
         crate::hwkey::uninstall();
         crate::hwkey::install(std::sync::Arc::new(TapMock));
-        let p = tmp_path("hw-tapsilent");
+        let p = tmp_path("hw-tap-per-use");
         let vault_id = Uuid::new_v4();
         seal_file(&p, INNER, &[7u8; 32], None).unwrap();
-        let err = enable_hw_seal(&p, &[7u8; 32], vault_id, None, false, None).unwrap_err();
-        assert!(
-            err.to_string().contains("requires a touch"),
-            "got: {err}"
-        );
-        assert_eq!(file_kind(&p), PrivkeyFileKind::Sealed);
+        assert!(enable_hw_seal(&p, &[7u8; 32], vault_id, None, false, None).unwrap());
+        assert_eq!(file_kind(&p), PrivkeyFileKind::SealedHw);
+        assert!(file_consents(&p), "tap requirement must be AAD-bound");
+        assert_eq!(read_privkey_file(&p, Some(&[7u8; 32])).unwrap(), INNER);
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// A tap backend that reports an attestation verdict at binding
+    /// creation (the FIDO shape).
+    struct AttestedTapMock;
+    impl crate::hwkey::HardwareKeyStore for AttestedTapMock {
+        fn backend_id(&self) -> &'static str {
+            "attested-tap-mock"
+        }
+        fn probe(&self) -> crate::hwkey::HwCapability {
+            crate::hwkey::HwCapability::Available {
+                backend: "attested-tap-mock".into(),
+            }
+        }
+        fn interaction(&self) -> crate::hwkey::Interaction {
+            crate::hwkey::Interaction::PerUse
+        }
+        fn create_binding(
+            &self,
+            _: Uuid,
+            _: crate::hwkey::HwConsent,
+        ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
+            Ok(crate::hwkey::BindingInfo {
+                binding: crate::hwkey::binding_tag(Uuid::new_v4()),
+                attestation: Some(crate::hwkey::HwAttestation::Verified),
+            })
+        }
+        fn derive_ephemeral(
+            &self,
+            binding: &str,
+            _: crate::hwkey::HwConsent,
+        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError> {
+            let handshake = vec![0x04, 0x02];
+            let mut secret = [0u8; 32];
+            for (i, b) in binding.bytes().chain(handshake.iter().copied()).enumerate() {
+                secret[i % 32] ^= b;
+            }
+            Ok((crate::hwkey::Handshake(handshake), Zeroizing::new(secret)))
+        }
+        fn derive(
+            &self,
+            binding: &str,
+            handshake: &crate::hwkey::Handshake,
+            _: crate::hwkey::HwConsent,
+        ) -> Result<crate::hwkey::SharedSecret, BaluardError> {
+            let mut secret = [0u8; 32];
+            for (i, b) in binding
+                .bytes()
+                .chain(handshake.0.iter().copied())
+                .enumerate()
+            {
+                secret[i % 32] ^= b;
+            }
+            Ok(Zeroizing::new(secret))
+        }
+        fn delete_binding(&self, _: &str) -> Result<(), BaluardError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn hw_seal_records_and_preserves_the_attestation_verdict() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        crate::hwkey::install(std::sync::Arc::new(AttestedTapMock));
+        let p = tmp_path("hw-attested");
+        let vault_id = Uuid::new_v4();
+        seal_file(&p, INNER, &[7u8; 32], None).unwrap();
+        assert!(enable_hw_seal(&p, &[7u8; 32], vault_id, None, false, None).unwrap());
+        let raw = std::fs::read_to_string(&p).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["hw_attestation"].as_str(), Some("verified"));
+        // The verdict is informational, never an open input.
+        assert_eq!(read_privkey_file(&p, Some(&[7u8; 32])).unwrap(), INNER);
+        // A seal-key rotation re-seals without re-attesting; the recorded
+        // verdict carries over.
+        assert!(rotate_seal_key(&p, &[7u8; 32], &[9u8; 32], None).unwrap());
+        let raw = std::fs::read_to_string(&p).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["hw_attestation"].as_str(), Some("verified"));
+        assert_eq!(read_privkey_file(&p, Some(&[9u8; 32])).unwrap(), INNER);
         crate::hwkey::uninstall();
         hw_env_restore(_old_env);
         std::fs::remove_file(&p).ok();

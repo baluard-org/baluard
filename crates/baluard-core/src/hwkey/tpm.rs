@@ -186,7 +186,10 @@ impl TpmStore {
         Ok(out)
     }
 
-    fn point_from_x962(peer: &[u8; 65]) -> Result<EccPoint, BaluardError> {
+    fn point_from_x962(peer: &[u8]) -> Result<EccPoint, BaluardError> {
+        if peer.len() != 65 {
+            return Err(VaultError::Corrupt("hwkey peer is not P-256 sized".into()).into());
+        }
         if peer[0] != 0x04 {
             return Err(
                 VaultError::Corrupt("hwkey peer is not an uncompressed point".into()).into(),
@@ -260,7 +263,7 @@ impl HardwareKeyStore for TpmStore {
         &self,
         _vault_id: Uuid,
         consent: crate::hwkey::HwConsent,
-    ) -> Result<String, BaluardError> {
+    ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
         if consent.is_per_use() {
             return Err(VaultError::HardwareConsentUnavailable.into());
         }
@@ -325,7 +328,10 @@ impl HardwareKeyStore for TpmStore {
                 // The created transient is deliberately left unflushed:
                 // flushing a primary here crashed the following
                 // create_primary on this firmware (SIGSEGV in tss2).
-                return Ok(format!("{BINDING_PREFIX}{raw:08x}"));
+                return Ok(crate::hwkey::BindingInfo {
+                    binding: format!("{BINDING_PREFIX}{raw:08x}"),
+                    attestation: None,
+                });
             }
             let mut slot_obj = obj;
             let _ = ctx.tr_close(&mut slot_obj);
@@ -350,7 +356,10 @@ impl HardwareKeyStore for TpmStore {
                 BaluardError::from(VaultError::Metadata(format!("hwkey tpm persist: {e}")))
             })
         })?;
-        Ok(format!("{BINDING_PREFIX}{slot_raw:08x}"))
+        Ok(crate::hwkey::BindingInfo {
+            binding: format!("{BINDING_PREFIX}{slot_raw:08x}"),
+            attestation: None,
+        })
     }
 
     fn derive_ephemeral(
@@ -375,7 +384,7 @@ impl HardwareKeyStore for TpmStore {
                     .ecdh_key_gen(key)
                     .map_err(|_| crate::hwkey::hw_unavailable_error())?;
                 let peer_bytes = Self::point_bytes(&pub_point)?;
-                Ok((Handshake(peer_bytes), Self::secret_from_z(&z)?))
+                Ok((Handshake(peer_bytes.to_vec()), Self::secret_from_z(&z)?))
             },
         )
     }
@@ -420,6 +429,7 @@ impl HardwareKeyStore for TpmStore {
 #[cfg(all(test, target_os = "linux", feature = "hw-seal"))]
 mod real_chip_tests {
     use super::*;
+    use crate::hwkey::HwConsent;
     use std::sync::OnceLock;
 
     fn hw_gate() -> Option<std::sync::MutexGuard<'static, ()>> {
@@ -443,8 +453,14 @@ mod real_chip_tests {
         assert!(matches!(store.probe(), HwCapability::Available { .. }));
 
         // Two vaults adopt the same chip key (shared-key semantics).
-        let a = store.create_binding(Uuid::new_v4(), HwConsent::Silent).unwrap();
-        let b = store.create_binding(Uuid::new_v4(), HwConsent::Silent).unwrap();
+        let a = store
+            .create_binding(Uuid::new_v4(), HwConsent::Silent)
+            .unwrap()
+            .binding;
+        let b = store
+            .create_binding(Uuid::new_v4(), HwConsent::Silent)
+            .unwrap()
+            .binding;
         assert_eq!(a, b, "one chip key serves every vault");
         assert!(a.starts_with(BINDING_PREFIX));
 
@@ -458,7 +474,7 @@ mod real_chip_tests {
         // Delete is a no-op on this backend; the key stays usable.
         store.delete_binding(&a).unwrap();
         store.delete_binding(&a).unwrap();
-        let after = store.ecdh(&a, &peer).unwrap();
+        let after = store.derive(&a, &peer, HwConsent::Silent).unwrap();
         assert_eq!(secret.as_ref(), after.as_ref());
     }
 }

@@ -97,8 +97,13 @@ pub trait HardwareKeyStore: Send + Sync {
     }
     /// Create (or return the existing) binding for this vault. A `PerUse`
     /// binding names a SEPARATE key whose every use demands user
-    /// verification.
-    fn create_binding(&self, vault_id: Uuid, consent: HwConsent) -> Result<String, BaluardError>;
+    /// verification. Backends with an enroll-time attestation ceremony
+    /// (FIDO2) report the verdict; chip backends return `None`.
+    fn create_binding(
+        &self,
+        vault_id: Uuid,
+        consent: HwConsent,
+    ) -> Result<BindingInfo, BaluardError>;
     /// Generate a fresh ephemeral input IN THE BACKEND'S PRIMITIVE FAMILY
     /// (the seal layer cannot know it - chip backends need a P-256 point,
     /// the FIDO2 answerer picks a salt) and return it with the agreement
@@ -151,6 +156,34 @@ impl HwConsent {
     pub fn is_per_use(self) -> bool {
         matches!(self, HwConsent::PerUse)
     }
+}
+
+/// The enroll-time attestation outcome, recorded in the seal file for
+/// status copy. Informational only: it is never an input to the open
+/// path (the chip's answer is the proof, not the certificate).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HwAttestation {
+    /// The chain verified against a bundled vendor root.
+    Verified,
+    /// The chain is self-consistent but the vendor root is unknown.
+    UnknownVendor,
+}
+
+impl HwAttestation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HwAttestation::Verified => "verified",
+            HwAttestation::UnknownVendor => "unknown-vendor",
+        }
+    }
+}
+
+/// What [`HardwareKeyStore::create_binding`] returns: the opaque binding
+/// id plus the attestation verdict where the backend attests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BindingInfo {
+    pub binding: String,
+    pub attestation: Option<HwAttestation>,
 }
 
 /// Deterministic per-vault binding tag (silent keys).
@@ -363,8 +396,11 @@ mod tests {
             &self,
             vault_id: Uuid,
             _consent: HwConsent,
-        ) -> Result<String, BaluardError> {
-            Ok(binding_tag(vault_id))
+        ) -> Result<BindingInfo, BaluardError> {
+            Ok(BindingInfo {
+                binding: binding_tag(vault_id),
+                attestation: None,
+            })
         }
         fn derive_ephemeral(
             &self,
@@ -417,8 +453,11 @@ mod tests {
             &self,
             vault_id: Uuid,
             _consent: HwConsent,
-        ) -> Result<String, BaluardError> {
-            Ok(binding_tag(vault_id))
+        ) -> Result<BindingInfo, BaluardError> {
+            Ok(BindingInfo {
+                binding: binding_tag(vault_id),
+                attestation: None,
+            })
         }
         fn derive_ephemeral(
             &self,
@@ -449,9 +488,34 @@ mod tests {
         }
     }
 
+    struct DisableEnvGuard(Option<String>);
+
+    impl DisableEnvGuard {
+        fn new() -> Self {
+            let old = std::env::var(DISABLE_ENV).ok();
+            // SAFETY: every registry test holds TEST_STORE_LOCK, which also
+            // serializes kill-switch mutation across hardware test modules.
+            unsafe { std::env::remove_var(DISABLE_ENV) };
+            Self(old)
+        }
+    }
+
+    impl Drop for DisableEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: same lock invariant as DisableEnvGuard::new.
+            unsafe {
+                match self.0.as_deref() {
+                    Some(value) => std::env::set_var(DISABLE_ENV, value),
+                    None => std::env::remove_var(DISABLE_ENV),
+                }
+            }
+        }
+    }
+
     #[test]
     fn install_probe_and_available_flow() {
         let _g = TEST_STORE_LOCK.lock().unwrap();
+        let _env = DisableEnvGuard::new();
         uninstall();
         assert_eq!(
             probe_status(),
@@ -469,7 +533,10 @@ mod tests {
             }
         );
         let s = available().expect("available with mock installed");
-        let b = s.create_binding(Uuid::new_v4(), HwConsent::Silent).unwrap();
+        let b = s
+            .create_binding(Uuid::new_v4(), HwConsent::Silent)
+            .unwrap()
+            .binding;
         let secret = s
             .derive(&b, &Handshake(vec![7u8; 65]), HwConsent::Silent)
             .expect("mock derive");
@@ -481,6 +548,7 @@ mod tests {
     #[test]
     fn registry_resolves_backends_by_id() {
         let _g = TEST_STORE_LOCK.lock().unwrap();
+        let _env = DisableEnvGuard::new();
         uninstall();
         install(Arc::new(MockStore));
         install(Arc::new(MockStoreB));
