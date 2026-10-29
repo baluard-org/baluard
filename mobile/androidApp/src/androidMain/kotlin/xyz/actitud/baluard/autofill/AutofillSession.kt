@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
+import xyz.actitud.baluard.BaluardException
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.openVault
 import xyz.actitud.baluard.platform.VaultRegistry
@@ -112,6 +113,21 @@ object AutofillSession {
     }
 
     /**
+     * H12: true when the vault's device key is hardware-sealed. This
+     * process has no security-key transport, so such a vault can never
+     * fill — the biometric KEK prompt would always fail closed.
+     * Pre-unlock safe (hardware_status opens no reader).
+     */
+    suspend fun hardwareSealed(path: String): Boolean = mutationMutex.withLock {
+        val v = handles[path] ?: runCatching { openVault(path) }.getOrNull() ?: return@withLock false
+        runCatching {
+            JSONObject(
+                v.hardwareStatus(xyz.actitud.baluard.platform.securityKeysSupported()),
+            ).optBoolean("enabled", false)
+        }.getOrDefault(false)
+    }
+
+    /**
      * Unlock the ACTIVE vault with the biometric-gated KEK. Returns false on
      * any failure (stale KEK after a password change fails closed in the
      * runtime). The KEK is zeroized before return regardless of outcome
@@ -210,10 +226,10 @@ object AutofillSession {
             if (!mergesIntoAutofill(path)) continue
             val raw = try {
                 v.autofillQuery(target)
+            } catch (e: BaluardException.SecurityKeyRequired) {
+                securityKeyRequired = true
+                continue
             } catch (e: Exception) {
-                if (e.message?.contains("requires its security key") == true) {
-                    securityKeyRequired = true
-                }
                 continue
             }
             val obj = runCatching { JSONObject(raw) }.getOrNull() ?: continue
