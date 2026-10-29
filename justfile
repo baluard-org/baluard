@@ -67,12 +67,16 @@ sysdeps scope="all":
 		else
 			miss_webkit=1; miss_gtk=1; miss_tray=1; miss_udev=1
 		fi
-		if command -v dpkg-query >/dev/null 2>&1; then
-			dpkg-query -W -f='${db:Status-Abbrev}' libu2f-udev 2>/dev/null | grep -q '^ii ' || miss_u2f=1
-		elif command -v rpm >/dev/null 2>&1; then
-			rpm -q libu2f-udev >/dev/null 2>&1 || miss_u2f=1
-		elif command -v pacman >/dev/null 2>&1; then
-			pacman -Q libfido2 >/dev/null 2>&1 || miss_u2f=1
+		# systemd's 60-fido-id.rules already grants uaccess on Fedora and
+		# current Ubuntu; libu2f-udev is only a deb-era fallback.
+		if [[ ! -r /usr/lib/udev/rules.d/60-fido-id.rules && ! -r /usr/lib/udev/rules.d/70-u2f.rules ]]; then
+			if command -v dpkg-query >/dev/null 2>&1; then
+				dpkg-query -W -f='${db:Status-Abbrev}' libu2f-udev 2>/dev/null | grep -q '^ii ' || miss_u2f=1
+			elif command -v pacman >/dev/null 2>&1; then
+				pacman -Q libfido2 >/dev/null 2>&1 || miss_u2f=1
+			else
+				miss_u2f=1
+			fi
 		fi
 	fi
 	if (( miss_protoc == 0 && miss_webkit == 0 && miss_gtk == 0 && miss_tray == 0 && miss_udev == 0 && miss_u2f == 0 )); then
@@ -105,11 +109,11 @@ sysdeps scope="all":
 		apt:0)    echo "  sudo apt install protobuf-compiler" ;;
 		apt:1)    echo "  sudo apt install protobuf-compiler libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev libudev-dev libu2f-udev pkg-config" ;;
 		dnf:0)    echo "  sudo dnf install protobuf-compiler" ;;
-		dnf:1)    echo "  sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel libudev-devel libu2f-udev pkgconf-pkg-config" ;;
+		dnf:1)    echo "  sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel libudev-devel pkgconf-pkg-config" ;;
 		pacman:0) echo "  sudo pacman -S protobuf" ;;
 		pacman:1) echo "  sudo pacman -S protobuf webkit2gtk-4.1 gtk3 libayatana-appindicator systemd libfido2 pkgconf" ;;
 		*) echo "  Debian/Ubuntu: sudo apt install protobuf-compiler libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev libudev-dev libu2f-udev pkg-config"
-		   echo "  Fedora:        sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel libudev-devel libu2f-udev pkgconf-pkg-config"
+		   echo "  Fedora:        sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel libudev-devel pkgconf-pkg-config"
 		   echo "  Arch:          sudo pacman -S protobuf webkit2gtk-4.1 gtk3 libayatana-appindicator systemd libfido2 pkgconf" ;;
 	esac
 	(( miss_protoc )) && echo "(alternatively: brew install protobuf, or export PROTOC=/path/to/protoc)"
