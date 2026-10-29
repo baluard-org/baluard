@@ -449,8 +449,7 @@ mod tests {
             self.fail_err()?;
             let mut secret = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut secret);
-            let mut att = self.chain.attestation();
-            att.credential_id = vault_id.as_bytes().to_vec();
+            let att = self.chain.attestation_for(vault_id.as_bytes());
             self.creds.lock().unwrap().insert(att.credential_id.clone(), secret);
             Ok(att)
         }
