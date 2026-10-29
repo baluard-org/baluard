@@ -194,6 +194,16 @@ export default function SettingsModal() {
     const mode = hwConfirm();
     setHwConfirm(null);
     if (!mode) return;
+    // Downgrading the seal demands the master password: the session token
+    // alone must not let a compromised webview weaken the seal.
+    if (mode === "disable" || mode === "consent-off") {
+      window.__baluardReprompt?.show((pw) => runHwToggle(mode, pw));
+      return;
+    }
+    await runHwToggle(mode);
+  }
+
+  async function runHwToggle(mode, sealPassword) {
     setHwBusy(true);
     setHwTouchHidden(false);
     try {
@@ -207,12 +217,17 @@ export default function SettingsModal() {
           toastSuccess(t("settings.hwEnabledToast"));
         }
       } else if (mode === "disable") {
-        await daemon("vault.hw_disable");
+        await daemon("vault.hw_disable", sealPassword);
         toastSuccess(t("settings.hwDisabledToast"));
       } else {
         // "consent-on" | "consent-off": re-key between the silent and
         // per-use-confirmation chip keys.
-        await daemon("vault.hw_set_consent", { consent: mode === "consent-on" });
+        await daemon(
+          "vault.hw_set_consent",
+          mode === "consent-on"
+            ? { consent: true }
+            : { consent: false, master_password: sealPassword },
+        );
         toastSuccess(
           t(mode === "consent-on" ? "settings.hwConsentOnToast" : "settings.hwConsentOffToast"),
         );

@@ -8070,6 +8070,34 @@ impl VaultState {
         )
     }
 
+    /// Canary-only master-password proof for seal-downgrade gates: the
+    /// honest oracle without a full unlock (no chip tap, no temp handle).
+    /// Wrong passwords are the caller's rate-limit business.
+    pub async fn verify_master_password(&self, master_password: &str) -> Result<(), String> {
+        let vault_path = self.vault_path.clone();
+        let password = master_password.to_string();
+        tokio::task::spawn_blocking(move || {
+            let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))
+                .map_err(|e| format!("reading kdf params: {e}"))?;
+            let kdf_params: baluard_core::types::KdfParams =
+                serde_json::from_str(&kdf_json).map_err(|e| format!("corrupt kdf params: {e}"))?;
+            let kek = zeroize::Zeroizing::new(
+                baluard_core::crypto::kdf::derive_kek(&password, &kdf_params)
+                    .map_err(|e| format!("kdf: {e}"))?,
+            );
+            let session_key = zeroize::Zeroizing::new(
+                baluard_core::crypto::hkdf_derive::derive_session_key(&kek)
+                    .map_err(|e| format!("kdf: {e}"))?,
+            );
+            let canary = std::fs::read(vault_path.join("meta/kek-canary.enc"))
+                .map_err(|e| format!("reading kek canary: {e}"))?;
+            baluard_core::vault::canary::verify_kek_canary(&session_key, &canary)
+                .map_err(|_| "master password incorrect".to_string())
+        })
+        .await
+        .map_err(|e| format!("verify task: {e}"))?
+    }
+
     /// Disable the hardware seal: downgrade to v1. Needs the chip once
     /// (resolved from the seal file's recorded backend).
     pub async fn hw_disable(&self) -> Result<String, String> {

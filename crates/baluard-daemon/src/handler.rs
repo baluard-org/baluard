@@ -649,6 +649,49 @@ fn extract_slug(payload: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// M4: downgrading the hardware seal (disable, or consent off) demands
+/// the master password — the session token alone must not let a
+/// compromised webview weaken the seal. Canary-only proof: no chip tap,
+/// no full unlock. Guesses burn the per-vault unlock budget.
+async fn verify_seal_change_password(
+    state: &SharedVaultState,
+    master_password: &str,
+) -> Result<(), String> {
+    if master_password.is_empty() {
+        return Err("Master password required to change the hardware seal".into());
+    }
+    let vault_key = state.vault_path.to_string_lossy().into_owned();
+    let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
+        crate::rate_limit::ClaimResult::Allowed(p) => p,
+        crate::rate_limit::ClaimResult::Backoff(d) => {
+            return Err(format!(
+                "Too many failed attempts. Wait {}s before retrying.",
+                d.as_secs()
+            ));
+        }
+        crate::rate_limit::ClaimResult::LockedOut(d) => {
+            return Err(format!(
+                "Vault locked due to too many failed attempts. Wait {}s.",
+                d.as_secs()
+            ));
+        }
+    };
+    match state.verify_master_password(master_password).await {
+        Ok(()) => {
+            permit.commit_success();
+            Ok(())
+        }
+        Err(e) => {
+            if e == "master password incorrect" {
+                permit.commit_failure();
+            } else {
+                permit.commit_success();
+            }
+            Err(e)
+        }
+    }
+}
+
 /// Outcome of checking the on-disk `.baluard` marker against the
 /// registry's vault_id during `vaults.detach`. The caller decides whether
 /// a non-`Match` outcome is fatal or just advisory based on the `force`
@@ -5746,19 +5789,45 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
 
         "vault.hw_set_consent" => {
-            match state
-                .hw_set_consent(extract_flag(&req.payload, "consent"))
-                .await
-            {
+            let consent = extract_flag(&req.payload, "consent");
+            // M4: weakening the per-use confirmation is a downgrade;
+            // strengthening is not. The payload carries a secret.
+            let gate = if consent {
+                Ok(())
+            } else {
+                let pw = serde_json::from_str::<serde_json::Value>(&req.payload)
+                    .ok()
+                    .and_then(|v| {
+                        v.get("master_password")
+                            .and_then(|p| p.as_str().map(str::to_string))
+                    })
+                    .unwrap_or_default();
+                verify_seal_change_password(state, &pw).await
+            };
+            let result = match gate {
+                Ok(()) => state.hw_set_consent(consent).await,
+                Err(e) => Err(e),
+            };
+            req.payload.zeroize();
+            match result {
                 Ok(json) => ok_resp(json, token_str),
                 Err(e) => err_response(e),
             }
         }
 
-        "vault.hw_disable" => match state.hw_disable().await {
-            Ok(json) => ok_resp(json, token_str),
-            Err(e) => err_response(e),
-        },
+        "vault.hw_disable" => {
+            // M4: the token alone must not downgrade the seal.
+            let gate = verify_seal_change_password(state, &req.payload).await;
+            let result = match gate {
+                Ok(()) => state.hw_disable().await,
+                Err(e) => Err(e),
+            };
+            req.payload.zeroize();
+            match result {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
 
         "vault.pin_status" => match state.pin_status().await {
             Ok(json) => ok_resp(json, token_str),

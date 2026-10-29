@@ -4916,6 +4916,153 @@ impl Drop for HwRegistryGuard {
 
 #[tokio::test]
 #[serial_test::serial]
+// M4: the session token alone must not downgrade the seal — a
+// compromised webview holds a token, never the master password.
+async fn hw_disable_and_consent_downgrade_demand_the_master_password() {
+    let _registry = HwRegistryGuard::new();
+    baluard_core::hwkey::install(Arc::new(RouteHwMock {
+        backend: "tap-mock",
+        available: true,
+        tap: true,
+    }));
+
+    let (_tmp, state) = open_unlocked("hw-disable-gate").await;
+    let host: baluard_daemon::host::SharedVaultHost = Arc::new(VaultHost::new());
+    host.insert("hw-disable-gate".into(), state.clone()).await;
+    host.switch("hw-disable-gate")
+        .await
+        .expect("activate vault");
+    let token = state.get_session_token().await.expect("session token");
+    let send = |action: &str, payload: String, token: &str| {
+        route_host_request(
+            GatewayRequest {
+                action: action.to_string(),
+                payload,
+                session_token: token.to_string(),
+                slug: String::new(),
+            },
+            &host,
+        )
+    };
+    let status_of = |state: Arc<VaultState>| async move {
+        serde_json::from_str::<serde_json::Value>(&state.hw_status().await.unwrap()).unwrap()
+    };
+
+    // Seal with consent on so the consent-downgrade leg has something to
+    // weaken.
+    let response = send(
+        "vault.hw_enable",
+        serde_json::json!({"consent": true, "backend": "tap-mock"}).to_string(),
+        &token,
+    )
+    .await;
+    assert!(
+        response.success,
+        "enable failed: {}",
+        response.error_message
+    );
+
+    // Disable without a password: refused, seal untouched.
+    let response = send("vault.hw_disable", String::new(), &token).await;
+    assert!(
+        response.error_message.contains("Master password required"),
+        "unexpected error: {}",
+        response.error_message
+    );
+    assert_eq!(status_of(state.clone()).await["enabled"], true);
+
+    // A wrong password is an oracle guess: refused and charged.
+    let response = send("vault.hw_disable", "wrong-password".into(), &token).await;
+    assert!(
+        response.error_message.contains("master password incorrect"),
+        "unexpected error: {}",
+        response.error_message
+    );
+    assert_eq!(status_of(state.clone()).await["enabled"], true);
+
+    // The limiter backs off after the guess; clear it like a fresh
+    // session would be after its window.
+    baluard_daemon::rate_limit::global().record_success(&state.vault_path.to_string_lossy());
+
+    // The correct password downgrades.
+    let response = send("vault.hw_disable", MASTER.to_string(), &token).await;
+    assert!(
+        response.success,
+        "disable failed: {}",
+        response.error_message
+    );
+    assert_eq!(status_of(state.clone()).await["enabled"], false);
+
+    // Consent gating needs a Silent-capable backend: core refuses
+    // consent-downgrade on PerUse backends outright (tap-preserving).
+    baluard_core::hwkey::install(Arc::new(RouteHwMock {
+        backend: "silent-mock",
+        available: true,
+        tap: false,
+    }));
+    let (_tmp2, state2) = open_unlocked("hw-consent-gate").await;
+    let host2: baluard_daemon::host::SharedVaultHost = Arc::new(VaultHost::new());
+    host2.insert("hw-consent-gate".into(), state2.clone()).await;
+    host2
+        .switch("hw-consent-gate")
+        .await
+        .expect("activate vault");
+    let token2 = state2.get_session_token().await.expect("session token");
+    let send2 = |action: &str, payload: String, token: &str| {
+        route_host_request(
+            GatewayRequest {
+                action: action.to_string(),
+                payload,
+                session_token: token.to_string(),
+                slug: String::new(),
+            },
+            &host2,
+        )
+    };
+
+    // Silent chips seal natively consent-off (core pins consent to the
+    // backend's interaction class, so flips are refused either way today;
+    // the route gate is defense-in-depth for the downgrade direction).
+    let response = send2(
+        "vault.hw_enable",
+        serde_json::json!({"consent": false, "backend": "silent-mock"}).to_string(),
+        &token2,
+    )
+    .await;
+    assert!(
+        response.success,
+        "silent enable failed: {}",
+        response.error_message
+    );
+
+    // The downgrade direction demands the password before core sees it.
+    let response = send2(
+        "vault.hw_set_consent",
+        serde_json::json!({"consent": false}).to_string(),
+        &token2,
+    )
+    .await;
+    assert!(
+        response.error_message.contains("Master password required"),
+        "unexpected error: {}",
+        response.error_message
+    );
+
+    // Correct password: core no-ops the same-value rewrite.
+    let response = send2(
+        "vault.hw_set_consent",
+        serde_json::json!({"consent": false, "master_password": MASTER}).to_string(),
+        &token2,
+    )
+    .await;
+    assert!(
+        response.success,
+        "consent change failed: {}",
+        response.error_message
+    );
+    assert_eq!(status_of(state2.clone()).await["consent"], false);
+}
+
 async fn hw_routes_select_a_tap_backend_and_report_every_probe() {
     let _registry = HwRegistryGuard::new();
     baluard_core::hwkey::install(Arc::new(RouteHwMock {
