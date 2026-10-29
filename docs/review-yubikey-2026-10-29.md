@@ -1,0 +1,240 @@
+# Review: security key seal (YubiKey / FIDO2 hmac-secret), 2026-10-29
+
+Scope: adversarial design and code review of the full security-key feature (core seal, attestation, in-house CTAP2 client, sync signing-key cache, runtime, daemon routes, desktop UI, UniFFI bridge, Android transports and UI) against `docs/plan-yubikey-seal.md` v4 and the working tree on top of `1fb9581`. Nothing hardware-dependent was run. Line numbers refer to the working tree on 2026-10-28.
+
+## Verified sound
+
+- Seal math: `combine_seal_inputs` (`crates/baluard-core/src/hwkey/mod.rs:299`) is HKDF-SHA256 over `hw_secret || kek_subkey` with the seal-type string as info; either input alone cannot derive the content key.
+- v2-hw AAD (`crates/baluard-core/src/vault/device_privkey.rs:446`) binds purpose, consent byte, length-framed backend id and handshake; `open_bytes_hw` compares the stored AAD with the caller-derived AAD after AEAD (`device_privkey.rs:533`), so flipping `consent`, swapping `hw_backend`, or editing `handshake` fails closed. Length prefixes are `u8`, safe because the handshake is capped at 65 bytes and backend ids are static.
+- Hostile handshake lengths are refused at parse (`Handshake::new`, `mod.rs:42`); a non-32-byte FIDO handshake is refused before any token call (`fido.rs:212`).
+- `open_bytes_hw` refuses a backend mismatch before calling the chip, and `open_sealed_hw` never falls back to another backend or a v1 open (`device_privkey.rs:487`, `579`).
+- FIDO backend refuses `Silent` on `create_binding`, `derive_ephemeral`, and `derive` (`fido.rs:156`, `191`, `208`); `enable_hw_seal` forces `PerUse` for tap backends so the tap requirement is AAD-bound.
+- Admin unlock tail: the Root Key is reachable only through the HPKE keywrap to the device X25519 key, which lives only inside the hw-sealed file; password unlock, KEK quick unlock, and PIN unlock all end in `unlock_tail` and pay the chip (`handle.rs:5462`). Biometric quick unlock stores the master password, so it also pays the chip.
+- `change_master_password` opens the hw seal before any write and restores the original device file when a later metadata write fails (`handle.rs:5882-5905`).
+- Attestation chain walk: per-link RSA/EC dispatch, signature BIT STRING unused-bits check, pinned-root equality or pinned-signer check (`attest.rs:435`). The verdict is informational and never an open input, which limits the blast radius of verifier bugs to enroll copy.
+- Signing-key cache entries are `Zeroizing<[u8; 32]>`, keyed by `(vault_path, device_id)`, and `VaultHandle::lock` clears the entry (`handle.rs:6007`).
+- Phrase recovery never reads the sealed device file and enrolls a fresh device (slice-4 audit tests).
+- CTAP client crypto: pinUvAuth v1 (SHA-256(Z), zero IV, 16-byte `authenticate`) and v2 (HKDF with 32 zero-byte salt, "CTAP2 HMAC key" / "CTAP2 AES key", random IV prepended, 32-byte HMAC) match the spec, with KATs computed outside the crate. Peer key validated on-curve; fresh ephemeral per assertion; hmac-secret input keys 1-4 with inline COSE (alg -25); output length checked (32/64) and kept in `Zeroizing`; Debug impls redact secrets. The derived secret is independent of PIN protocol and UV is never asserted, matching the desktop `without_pin_and_uv` path, so a seal written over USB opens over NFC.
+- Android/UniFFI: USB permission uses `RECEIVER_NOT_EXPORTED` on API 33+ and a package-pinned `FLAG_MUTABLE` PendingIntent; the 60 s permission wait runs on a blocking-pool thread; `MOBILE_OPERATION_LOCK` is a tokio mutex (no poisoning) and no std mutex is held across a callback; `shutdown` is idempotent and panic-contained; Argon2id runs before any reader opens; no mobile keystore bypasses the seal (no `set_global_keystore`); `:autofill` fails closed on sealed vaults with no unsealed fallback; desktop `settings.hw*` / `errors.hw*` and the new mobile strings are present and translated in en/es/pt.
+- CTAPHID INIT nonce check with bounded drain, sequence 0..127, 7609-byte cap both ways. APDU: CLA 0x80/0x90 chaining, extended Lc/Le, `61xx` (SW2 00 = 256), `91xx` polling via NFCCTAP_GETRESPONSE, FIDO AID select with the U2F_V2 → getInfo proof, bounded loops. CBOR encoder is shortest-form definite-length; indefinite lengths, floats, tags refused.
+
+## CRITICAL
+
+### C1. Member devices: the hw seal is a procedural gate, not a cryptographic one
+
+`crates/baluard-core/src/vault/handle.rs:5130-5143`. `unlock_tail_member` opens the hw-sealed device file only as a check, then discards the result and opens the member identity seed with `open_identity(&devkey_seal, ...)`. `devkey_seal` is `HKDF(KEK)`: password-only. The identity keys unwrap `space.wrap` → SMK → the meta IKM and every collection key wrapped to that member.
+
+Failure scenario: a member device in a family or org vault enables "Require my security key". A thief takes the laptop (has `meta/member-unlock.json`, `meta/identity*`, the repo) and later learns the master password (shoulder-surf, reuse). Running baluard-core directly (or a 10-line patch that skips the `read_privkey_file` call) derives the KEK, opens the identity seed, and reads every shared folder the member can read. The key in the user's pocket protects nothing on this device shape, while the UI says it does.
+
+Same class on the admin path: `load_identity_cache` (`handle.rs:4820`) opens the "passphrase"-mode identity with an Argon2id over the master password only. Whatever that identity unwraps (identity-addressed grants, own `space.wrap`) is chip-free. Not traced to the full set of keys it unlocks; verify.
+
+Fix: when the device file is hw-sealed, every device-local secret that unlocks vault material must be under the hw-combined key. Simplest: move the identity seed (and the passphrase-mode identity wrap key) INSIDE the hw-sealed device-privkey inner JSON, or derive `identity_wrap_key` from `HKDF(hw_secret || devkey_seal)` and re-seal the seed in `enable_hw_seal` / `disable_hw_seal` / `rotate_seal_key`. Add a test that opens the member identity with the password alone after enable and expects failure.
+
+## HIGH
+
+### H1. SyncEngine ignores the signing-key cache: every sync re-opens the sealed file (tap or unsigned commit)
+
+`crates/baluard-core/src/sync/engine.rs:188` and `:197` call `load_signing_key(vault_path, devkey_seal, None)`. The cache lookup at `engine.rs:3800` only runs when `device_id` is `Some`, so `SyncEngine::new` always falls through to `load_signing_key_from_file` → `read_privkey_file` → `open_sealed_hw` → a token assertion. The device id is in scope (`new(vault_path, device_id, ...)`), it is just not passed.
+
+Failure scenario (desktop): autosync fires after a CRUD edit; the key blinks with no UI panel; the user does not tap; after the token timeout `SyncEngine::new` logs a warning and continues with `signing_key = None`; the commit is unsigned and refused on enrolled vaults, so sync wedges while the key is unplugged, contrary to the plan's "Sync never taps". Worse, an unprompted blink trains the user to tap whatever blinks, which is the exact tap-phishing habit the threat model warns about. On mobile the transport scope is not open during sync, so the load fails fast and commits go unsigned.
+
+Fix: pass `Some(device_id)` from `SyncEngine::new` (both call sites), and make the file fallback refuse `SealedHw` outright (return the typed error, never tap from sync). Add a test: seal to a tap mock that panics on `derive`, unlock, uninstall the backend, construct `SyncEngine::new`, assert a signing key is present. The current test (`device_privkey.rs:1700`) only checks the cache map, not its consumer.
+
+### H2. Every hardware failure charges the unlock rate limit (two counters)
+
+`crates/baluard-core/src/vault/handle.rs:4801-4803` records a failed attempt for any `unlock_with_kek` error, and `crates/baluard-daemon/src/handler.rs:2604` calls `permit.commit_failure()` plus a 2 s sleep for any error. `open_bytes_hw` maps every chip outcome to `HardwareUnavailable` (see H3), so "key not plugged", "did not tap in time", and "wrong key" all count as wrong passwords. The doc comment on the typed errors (`crates/baluard-core/src/error.rs:126-129`) promises "none charges the unlock rate-limit budget"; the code does the opposite.
+
+Failure scenario: the user forgets the key at home and retries the correct password five times; the vault enters lockout backoff even after the key is back. A child playing with the unlock screen while the key is unplugged locks the parent out.
+
+Fix: classify errors once. Only a canary failure (`Corrupt("kek canary ...")` / wrong password) records a failure in both the core counter and the daemon permit; any `Hardware*` error commits neither (release the permit). Add a test per counter.
+
+### H3. Typed touch outcomes are collapsed before any surface sees them
+
+`crates/baluard-core/src/vault/device_privkey.rs:523-525`: `hw.derive(...).map_err(|_| hw_unavailable_error())`. Every unlock, quick unlock, disable, consent change, and password change goes through here, so `HardwareKeyMissing`, `HardwareKeyWrong`, `HardwareTouchTimeout`, `HardwareTouchCancelled`, `HardwareBusy` never leave core on the open path. The desktop sanitizer patterns and the mobile copy for those outcomes are dead code on unlock.
+
+Additionally, the desktop real adapter maps every ctap-hid-fido2 failure to `TokenError::Device(format!("{e}"))` (`crates/baluard-core/src/hwkey/fido.rs:252`, `260`, `286`, `310`), so on desktop even `create_binding` / `derive_ephemeral` never produce the typed variants, and `probe()` reports `"security key: <library error text>"` instead of `"no-token"` when nothing is plugged (`fido.rs:135`).
+
+Failure scenario: user plugs the wrong YubiKey; desktop shows "the chip is unavailable, use your recovery phrase" instead of "this is not the key this vault was sealed to". The copy pushes a non-technical user toward the phrase ceremony for a 2-second fix.
+
+Fix: `map_err` only `Corrupt`-class errors; pass `Hardware*` through unchanged. In the ctap-hid-fido2 adapter, map its error enum (no device found → `KeyMissing`, CTAP2 0x2E → `UnknownCredential`, 0x2F/0x27 → `Timeout`, channel busy → `Busy`), or retire it in favor of the in-tree client over hidapi (already compiled under `fido2`) so desktop and Android share one error map.
+
+### H4. Unlock tap amplification: one failed open triggers up to N+2 more taps
+
+`crates/baluard-core/src/vault/handle.rs:5546-5605`. `attempt_unwrap(dev_id)` calls `load_device_privkeys` (one assertion) for every candidate. On any primary failure (timeout, key gone, stale keywrap after another device's rotation), the code calls `adopt_rekey_txn_root` (`handle.rs:7796`, another `load_device_privkeys`, another assertion), then loops over every other device's keywrap and calls `attempt_unwrap(candidate)`, which re-opens THE SAME local device file each time.
+
+Failure scenario A: a 4-device vault, key in the drawer: the unlock spends 6 sequential HID waits (each up to the token's ~30 s timeout on desktop) before failing. Failure scenario B: a survivor after a remote rotation, key present: tap 1 opens the file but the keywrap is stale, `adopt_rekey_txn_root` asks for tap 2. The plan's friction table promises 1.
+
+Fix: load the device private keys once, before the candidate loop, and pass them into `attempt_unwrap` and `adopt_rekey_txn_root`. Short-circuit on any `Hardware*` error (never heal across a hardware failure).
+
+### H5. PIN quick unlock: hardware errors nuke the PIN escrow, and the tap wait blocks an async worker
+
+`crates/baluard-runtime/src/state.rs` `pin_unlock` (around line 8130): `new_handle.unlock_with_kek(&kek)` runs inline in the async fn (no `spawn_blocking`), so on an hw-sealed vault a tokio worker blocks for the full touch wait. On any error the escrow is destroyed as "stale KEK" and the raw core error is appended to the message.
+
+Failure scenario: the user types the correct PIN with the key unplugged (or does not tap in time); the PIN is silently disabled and the copy says "the master password changed", which is false. Two such unlocks across vaults pin two workers of a small runtime.
+
+Fix: run the tail in `spawn_blocking` like `unlock_with_kek`; nuke the escrow only on a canary/keywrap failure, never on `Hardware*`; map the error through the same typed copy as the password path.
+
+### H6. Enabling the seal does not rotate the device key: any pre-enable copy of the device file defeats it
+
+`crates/baluard-core/src/vault/device_privkey.rs:602-652` re-wraps the SAME X25519/Ed25519 device keys. Every v1 copy of `meta/device-privkey.json` taken before enable (Time Machine, Windows File History, a disk image, a synced home directory, a prior laptop theft that was copied and returned) still opens with the password alone and unwraps the current keywrap. The threat model claims protection against "an attacker with the vault files (pulled disk) who lacks the key"; that holds only for file copies made after enable, and only until the next disable/enable cycle.
+
+Fix: at enable, generate a fresh device keypair, re-wrap the Root Key to it (the same keywrap write `change_master_password` already does), publish the new public key in the roster, and seal the new private key under v2-hw. If that is too heavy for 1.0, state the limit in the enroll copy and docs ("protects copies made after you turn this on").
+
+### H7. `change_master_password` holds the vault write lock across a token wait
+
+`crates/baluard-runtime/src/state.rs:852-866`. The `inner.write()` guard is held across `block_in_place`, which frees the executor thread but not the lock. With an hw seal the core op needs three assertions (H8), so every request for this vault (status, list, lock, the auto-lock walker, the desktop heartbeat) stalls up to ~90 s. `block_in_place` also panics on a current-thread runtime; the comment asserts both runtimes are multi-thread, but nothing enforces it.
+
+Fix: do the hardware work (open old seal, derive new ephemeral) in `spawn_blocking` without the lock, then take the write lock only for the file writes and in-memory key swap, re-checking that the device file bytes did not change meanwhile.
+
+### H8. In-house CTAP2 client: CBOR decoder has no recursion limit (process abort)
+
+`crates/baluard-core/src/hwkey/ctap/cbor.rs:163-183`. `Value::decode` recurses on arrays and maps with no depth bound. Reproduced in a scratch crate: 7609 bytes of nested `0x81` (exactly one maximum CTAPHID message) overflows a 2 MiB thread stack; NFC accepts ~32 KiB (`apdu.rs:134`). A stack overflow is an abort, not a panic, so UniFFI's panic catching does not help: a malicious USB device or an NFC-emulating phone kills the Android app (and, if desktop moves to the in-tree client, the daemon). Fix: thread a depth counter, refuse beyond 16 (CTAP structures nest about 5 deep). Add a depth-bomb test.
+
+### H9. In-house CTAPHID reads KEEPALIVE status and ERROR code from the length byte
+
+`crates/baluard-core/src/hwkey/ctap/ctaphid.rs:86`, `:185`, `:188` read `report[7]`, which is BCNTL (with the leading report-id byte, the CID is `[1..5]`, CMD `[5]`, BCNT `[6..8]`, data from `[8]`; the nonce check at `:88` already uses `[8..16]`). Every ERROR frame becomes `Hid(1)` and every keepalive status reads 1, so UP_NEEDED and CHANNEL_BUSY (0x06) are never seen. Then `ctap/token.rs:130` maps every `ClientError::Hid(_)` to `KeyMissing`: on Android USB-OTG, a key busy with another app reports "plug in your key". The unit fixtures write the status at index 7 too (`ctaphid.rs:316`, `:407`, `:426`) and `ModelLink` never emits KEEPALIVE/ERROR, so the bug is mirrored. Fix: read `report[8]` after checking BCNT >= 1; map `Hid(0x06)` to `Busy`; drop the unreachable 0x06 arm under CTAP2 statuses (`token.rs:120`).
+
+### H10. Desktop hot-plug poll never stops (interval leak hammering the token)
+
+`desktop/src/components/SettingsModal.jsx:285-286`. `onCleanup` is registered inside the callback half of Solid 2's `createEffect(source, fn)`, which has no owner, so the cleanup never runs (Solid warns `NO_OWNER_CLEANUP`; a scratch reproduction gave 2 starts, 0 cleanups over 2 open/close cycles). Every settings open adds one more 4 s `vault.hw_status` interval that survives close and lock, and each call does a HID getInfo on the token, including during touch waits (feeds L6 / M16). Fix: return the cleanup from the callback (`return () => clearInterval(hwPoll)`) and skip the tick while `hwBusy()`. Add a vitest that opens and closes twice and asserts zero live intervals.
+
+### H11. Mobile unlock shows raw English internal errors, and hardware failures read as "Wrong password"
+
+`mobile/shared/.../auth/AuthViewModel.kt:75`, `:118` pass raw `e.message`; `UnlockScreen.kt:105`, `:202` string-sniff for "security key". Users see text like `detail=security key: vault error: Hold the security key to the back of the phone` in English regardless of locale; the `llave`/`chave` branches can never match because the messages are always Rust English. `HardwareUnavailable` ("...security chip...") lacks "security key", so the screen says "Wrong password" (always-UV key, or no store in the process); the biometric path says "biometric stale". Fix: map once in the view model to a typed outcome (`securityKeyErrorMessage` already exists), render localized copy, delete the dead `openAndUnlockWithSecurityKey` (line 80).
+
+### H12. Android autofill on a sealed vault is a dead end with misleading copy
+
+The cold path (`BaluardAutofillService.kt:116` → `AutofillActivity.kt:151`) still offers the biometric chip; `:autofill` has no hardware store, so `unlockWithKek` always fails closed after the user spends a biometric prompt. The new "Open Baluard and unlock with your security key" chip promises a path that does not exist: `autofill_query` in `crates/baluard-uniffi/src/lib.rs` refuses sealed vaults unconditionally, so unlocking in the main app never enables fill. `AutofillResponseBuilder.kt:129` returns that chip before looking at `matches`, so one sealed vault in the merged set hides matches from every other vault. Fail-closed is correct; the flow is not. Fix: check `hardwareStatus` (pre-unlock safe) before offering any chip, skip sealed vaults in the merge, use copy "Autofill is not available for vaults that need a security key", and add a typed refusal error instead of English string matching (`AutofillSession.kt:214`).
+
+## MEDIUM
+
+### M13. Signing-key cache outlives `vaults.close`
+
+`VaultHandle` has no `Drop`; `VaultHost::close` (`crates/baluard-runtime/src/host.rs:253`) removes the state without calling `lock()`, so the process-global `DEVICE_SIGNING_KEYS` entry (`handle.rs:11086`) keeps the Ed25519 key after close and after a lost unlock race. Combined with L5, the "cleared on lock" claim is incomplete. Fix: clear in a `Drop for VaultHandle` (covers every exit), keep the explicit clear in `lock()`.
+
+### M14. Desktop treats security-key failures as a wrong password
+
+`desktop/src/lib/utils.js:160-163` `isHardwareError` does not match "no security key is plugged", "not tapped in time", "busy", "not the security key", or "touch was cancelled", so `LoginScreen.jsx:176` plays the wrong-password shake and a 2 s brute lock while the toast says "Plug in your security key". With H3 most of these never arrive anyway; fix both together and add a vitest per error string.
+
+### M15. Android NFC/USB transport lifecycle
+
+- Reader mode starts lazily inside `awaitTag()` after Argon2id (`SecurityKeys.android.kt:94`). A user who taps immediately (the screen already says "hold it to the phone") meets no reader mode; a YubiKey NFC then emits its NDEF OTP URL and Android opens the browser, pausing the activity. Not device-reproduced. Start reader mode at operation start; the plan's lazy rule was for the iOS system sheet, not Android reader mode.
+- After a tag-lost exception `connectedTag` is never cleared (`:95`, `:114-121`), so every later transceive in the same operation fails without a re-tap; enable needs 3 round-trips, so this hits easily. Clear on transceive exception and let `awaitTag` wait again.
+- USB accepts only VID 0x1050 and is checked once at transport creation (`:46`, `:71-72`). Non-Yubico keys (which desktop accepts as unknown-vendor) fall through to NFC and time out with "hold to the back of the phone"; a key plugged after tapping Unlock is never used. Match the FIDO HID usage page 0xF1D0 and re-check USB inside `awaitTag`.
+- Kotlin exceptions that are not `BaluardException` (e.g. `registerReceiver` / `getBroadcast` / `requestPermission` at `:213-227`, the rethrow at `:281`) become Rust panics through UniFFI's unexpected-callback-error path; contained by `spawn_blocking`, but the user sees "unlock task: task panicked". Wrap callback bodies and map every exception.
+
+### M16. Copy and flows describe the wrong thing
+
+- Desktop `settings.hwTitle` / `hwOn` / `hwEnableBody` talk about "this device's security chip" and chip death even when the backend is a USB key, where loss is the real risk.
+- Desktop enable on an always-UV key: `"Connect a compatible security key. (uv-forced)"` sanitizes to "Plug in your security key." while the key is plugged in; unlock maps `HardwareUnavailable` to "security chip... use your recovery phrase". Mobile shows a generic "operation failed".
+- Mobile enable (`SettingsScreen.kt:905`) has no confirm step and no consequence copy (lost key means recovery phrase; autofill stops for this vault).
+- Mobile hold copy never says "touch the key" for USB-OTG, so USB users time out.
+- The 4 s probe during a pending touch likely fails as busy on a fido-only machine, flipping `capable` false and unmounting the card and the touch panel via `<Show when={hwStatus()?.capable}>` (`SettingsModal.jsx:1012`); the same check hides "This vault is guarded" whenever the key is unplugged. Not reproduced. Show the guarded state from `seal == "v2-hw"`, not from `capable`.
+- `SettingsModal.jsx:1057` "Cancel" only hides the panel (no cancel reaches the token, see M12). Label it "Hide" until a real cancel exists.
+
+### M11. CTAP client: authData extension parsing skips no COSE key, and can panic
+
+`crates/baluard-core/src/hwkey/ctap/protocol.rs:686-697`. With AT set, the offset skips AAGUID, length, and credential id but not the COSE public key, so it decodes the COSE map as the extensions map and the makeCredential `"hmac-secret": true` acknowledgement is never checked (the comment at `:131-133` claims otherwise; `authenticator.rs:606` asserts the wrong-reason `None`). `&auth_data[at..]` is unchecked: an assertion with AT|ED and `credIdLen = 0xFFFF` panics, which can poison runtime locks. Fix: reuse `attested_credential_data` to get the post-COSE offset, use `get(at..)`, and refuse enroll unless `hmac-secret` is `true`.
+
+### M12. CTAP client protocol deviations that fail closed on real tokens
+
+- getAssertion response requires credential key 1 (`protocol.rs:717-722`); the spec lets a token omit it when the allowList has one entry, which is always the case here (`token.rs:100`). Fall back to the requested id; when present, check it equals the requested id.
+- Foreign-CID frames abort the read (`ctaphid.rs:179-181`, `:202`) instead of being discarded per spec; any other hidraw client's traffic kills the transaction. Skip with a bound.
+- getInfo sends `04 a0` (`protocol.rs:280`); getInfo takes no parameters and a strict token may answer INVALID_LENGTH. Send `0x04` alone.
+- hmac-secret key 4 (pinUvAuthProtocol) is always sent (`protocol.rs:520-523`); CTAP2.0 tokens predate it. Omit for protocol 1. The model requires key 4 (`authenticator.rs:338-342`), hiding this.
+- Unknown PIN protocols fall back to 1 (`protocol.rs:373-377`), and `n as u8` / `n as u32` truncate (`:317`, `:324`). Use `try_from`, filter to {1, 2}, refuse otherwise.
+- `pin_set` is read but unused and `makeCredUvNotRqd` is not read: on CTAP2.0 firmware with a PIN set, enroll fails with 0x36 after a tap and maps to the generic "unavailable". Check in `FidoStore::preflight` (`fido.rs:79`) and give a plain reason.
+- No cancel and no deadline: `send_cancel` (`ctaphid.rs:127`) has no callers and the keepalive loop (`:184`) is unbounded. The plan's cancel button cannot reach the token.
+- Non-`packed` or x5c-less attestation is refused as malformed (`protocol.rs:612-633`), compounding M7; `filter_map(as_bytes)` at `:628` silently drops bad x5c entries.
+
+### M1. No serialization of device-file read-modify-write operations
+
+`hw_enable`, `hw_disable`, `hw_set_consent` (`state.rs:7907-8030`) capture the seal key, then read and rewrite `meta/device-privkey.json` inside `spawn_blocking` with no vault lock and no compare-and-swap. `change_master_password` rewrites the same file under the write lock. A password change from the CLI that lands between `hw_enable`'s read and write leaves the device file sealed under the OLD KEK subkey while the canary holds the NEW password: the device is bricked and only the phrase recovers it. Double-submitted enable/disable (desktop + CLI, or two clicks) interleave the same way. Fix: a per-vault `devkey_lock` (tokio Mutex) held by all four operations, plus a re-read-and-compare of the file bytes before the atomic write.
+
+### M2. Password change on an hw-sealed vault needs three taps, not ~2
+
+`handle.rs:5853` (`load_device_privkeys`, tap 1), then `rotate_seal_key` opens again (tap 2) and seals with a fresh salt (tap 3, `device_privkey.rs:333-360`). Fix: open once, reuse the inner JSON for both the HPKE re-wrap and the re-seal.
+
+### M3. Password-change crash window bricks the device
+
+`handle.rs:5886-5905`: the device file is rewritten under the new seal key before the keywrap and canary writes. Restoration covers returned errors, not a crash or power loss between the writes: the old password passes the canary but cannot open the device file, the new password fails the canary. Pre-existing for v1 too, but the hw path widens it by the tap time. Fix: write the new device file to a staged path, commit canary + keywrap, then rename; on unlock, prefer the staged file when the canary matches the new KEK (the `RotationGuard` pattern).
+
+### M4. `hw_disable` (and `hw_set_consent`) need only the session token, no reprompt
+
+`state.rs:7986`. A compromised webview (the D2 threat the repo already designs for) can call `vault.hw_disable`; the user sees a touch request while unlocked and taps. The seal silently downgrades to password-only, which gives an attacker persistence for an offline attack later. Fix: require `vault.reprompt_verify` (master password) for disable, the same gate per-cipher re-prompt uses, and toast after any seal mode change.
+
+### M5. Attestation verifier: DER length parser panics on hostile input
+
+`crates/baluard-core/src/hwkey/attest.rs:104`: `&buf[2..2 + n]` with `n` up to 4 but only `buf.len() >= 2` checked. A token (or a malicious USB device posing as one) answering an x5c entry of `30 84` panics the verifier. On desktop the panic kills the `spawn_blocking` task (the enable fails with a join error); on mobile it unwinds across the UniFFI boundary into Kotlin as an internal error. Fix: `if buf.len() < 2 + n { return None; }`, plus a fuzz/property test over `parse_cert`.
+
+### M6. Attestation verifier ignores authData and the attested credential
+
+`attest.rs:480-488` verifies the attStmt signature over `authData || clientDataHash` but never checks: `rpIdHash == SHA-256("baluard.local")`, the UP/AT flags, that the credential id inside authData equals `att.credential_id` used for the binding, that the hmac-secret extension output is `true`, or that the leaf's AAGUID extension (1.3.6.1.4.1.45724.1.1.4) matches authData's AAGUID. It also selects the attStmt digest from the leaf certificate's own signature algorithm instead of `att.alg`, and accepts a non-CA certificate as an intermediate (no basicConstraints check). Since the verdict is informational the impact is limited to a misleading "Verified" line: a genuine Yubico attestation replayed by a counterfeit over a different credential id still verifies. Fix: parse authData (rpIdHash, flags, AAGUID, credential id) and bind all of them; dispatch the digest from `att.alg`; require CA=true on non-leaf certs.
+
+### M7. Self-attestation and `none` tokens are hard-refused as "invalid"
+
+`attest.rs:436`: `x5c.is_empty()` is `Invalid`, and `create_binding` turns `Invalid` into a hard refuse with the copy "the security key's attestation is invalid" (`fido.rs:165-170`). Many non-Yubico FIDO2 keys use self attestation or `fmt: none`. The plan's policy is "unknown vendor → allow with plain copy". Fix: treat a verified self-attestation (signature under the credential public key) and `none` as `UnknownVendor`; reserve `Invalid` for broken signatures.
+
+### M8. No verify-open after enable
+
+`enable_hw_seal` (`device_privkey.rs:638-650`) writes the v2-hw file without proving it opens. If the token, a transport, or a future client change yields a different hmac output on the next assertion (UV state drift on a key whose PIN state changed, a decoding bug, a firmware quirk), the device is bricked on the next lock. Fix: on NFC (key held in field, no extra gesture) and when cheap, run `derive` against the written handshake before replacing the v1 file; otherwise keep the v1 bytes in memory and restore them if the first post-enable open fails before the session ends.
+
+### M9. Packaging: `libu2f-udev` does not exist on Fedora; sysdeps always fails there
+
+`justfile:73` checks `rpm -q libu2f-udev`, and `justfile:108` prints `sudo dnf install ... libu2f-udev`, which fails the whole dnf transaction (no such package in Fedora 43; systemd's `60-fido-id.rules` already tags FIDO hidraw devices with `uaccess`). Ubuntu 26.04 also ships `60-fido-id.rules` via systemd, so `libu2f-udev` is optional there. `tauri.conf.json:58`/`69` "recommends" is harmless on deb, unresolvable on rpm. Fix: on dnf, check for `/usr/lib/udev/rules.d/60-fido-id.rules` instead and drop the package from the install line; keep `libu2f-udev` only as a deb recommends for older releases.
+
+### M10. Desktop: multiple FIDO devices and device selection
+
+`fido.rs:251-253` opens whatever `FidoKeyHidFactory::create(&Cfg::init())` returns. The plan says "operations key on the credential id and try each plugged token in turn"; nothing implements that. With a second FIDO key plugged (a work key, a Windows Hello-style platform HID), behavior depends on the library's choice; the user gets an opaque device error or the wrong key. Unverified on hardware; treat as PLAUSIBLE. Fix: enumerate, getInfo each, and for `get_secret` try each device until one does not return NO_CREDENTIALS.
+
+## LOW
+
+- L1. `combine_seal_inputs` returns a plain `[u8; 32]` content key (`mod.rs:299-313`); `seal_bytes_hw` and `open_bytes_hw` hold it un-zeroized. Return `Zeroizing<[u8; 32]>`. The decrypted device JSON is returned as a plain `String` (`device_privkey.rs:538`); pre-existing, but the hw path is the new hot path, so wrap it in `Zeroizing<String>`.
+- L2. The desktop adapter's `get_secret` returns the hmac output by value from ctap-hid-fido2's `[u8; 32]` (`fido.rs:316`); the library copy is not zeroized. Accept or move desktop to the in-tree client (H3).
+- L3. `set_hw_seal_consent(true)` on a FIDO vault errors with `HardwareConsentUnavailable` (`device_privkey.rs:701`) before the "already per-use" no-op check at `:713`. Move the no-op check first.
+- L4. `hw_disable` / `hw_set_consent` gate on `available()` (any backend, `state.rs:7993`, `8014`), which on desktop runs a getInfo on every backend; when a TPM is present and the FIDO key is not, the gate passes and the user waits for an open that fails generically. Gate on `store_for(hw_backend_of(file))` instead.
+- L5. Signing-key cache survives a failed unlock: `load_device_privkeys` caches before HPKE unwrap and `verify_root_key` (`handle.rs:11078`); if the tail then fails (DeviceUnpaired, epoch errors), the Ed25519 key stays resident with the vault locked. Cache only after the tail succeeds, or clear on every error path. Also F1 heal caches this device's key under the candidate's id.
+- L6. `hw_status` is pre-unlock and token-exempt and, on desktop, runs a HID getInfo per call; the 4 s settings poll therefore talks to the token every 4 s, including while a tap is pending for `hw_enable`. On a token busy with an assertion, the poll may report `busy` and flip the UI to "unavailable" mid-ceremony. Pause the poll while an enable/disable request is in flight (verify on hardware).
+- L8. CTAP error map gaps (`ctap/token.rs:119-130`): 0x27 OPERATION_DENIED falls to `Device` (map to `Cancelled`); NFC keepalive exhaustion (`apdu.rs:167`) becomes `Malformed` → `KeyMissing` instead of `Timeout`; `Unsupported("CTAP2"/"pinUvAuth")` strings reach UI through `Device`, breaking the no-jargon rule; `message.contains("hmac-secret")` matching is fragile, use typed variants.
+- L9. CBOR lengths truncate on 32-bit targets (`ctap/cbor.rs:155`, `:159`: `arg as usize` on armv7, still a supported Android ABI). Use `usize::try_from`.
+- L10. `pinproto.rs:408` `aes_cbc` guards alignment with `debug_assert` then `.expect`: a release-build panic on unaligned input. Return `Result`.
+- L11. Zeroize gaps in the CTAP client: `[u8; 32]` secrets returned by value (`ctap/token.rs:108`, `fido.rs:67`), HKDF PRK and AES key schedule not wiped (`aes` without its `zeroize` feature, `Cargo.toml:57`), `Sha256::digest` temporaries (`pinproto.rs:428`, `:465`).
+- L12. The software authenticator and `SharedSecret::from_shared_z` ship in production builds: `ctap/mod.rs:8` exposes `pub mod authenticator` under `ctap-client`, which UniFFI enables. Gate behind `cfg(test)` or a test-support feature.
+- L13. No credential-id length cap (spec <= 1023) before it enters the binding string.
+- L14. `crates/baluard-uniffi/src/hardware.rs:243`, `:258`: `take_transport_error` can overwrite the real error, so "Turn on NFC and retry" and "This device has no NFC" become "Hold the key to the phone".
+- L15. `SecurityKeys.android.kt:30-32`, `:308` and `SettingsScreen.kt` `println` breadcrumbs ship in release, including a 1200-char stack trace on every shutdown. No secrets seen; gate on `BuildConfig.DEBUG` or remove.
+- L16. `hardware.rs:267`, `:297-298`: password `String`s cross FFI without zeroize (matches the existing `unlock`; the KEK path is zeroized).
+- L17. `ACTIVE_TRANSPORT` is process-global but only `unlock*` / `hardware*` take `MOBILE_OPERATION_LOCK`; any other path that reaches the store fails with "transport is not active" or borrows the active transport. Take the lock in `store_for`'s mobile resolver or document the invariant with a test.
+- L18. `UnlockScreen.kt:219` shows "If this vault uses a security key..." for every vault; condition it on `hardwareStatus().seal == "v2-hw"`.
+- L7. The `fido:` binding is not in the AAD. A swapped `hw_binding` still fails (wrong credential → no assertion), but the error path then depends on the token's answer instead of a local integrity check. Add the binding to `hw_aad` in the next format break.
+
+## NIT
+
+- N1. `mod.rs:82` trait doc lists `"fido"` as a backend id; the code uses `"fido2"`.
+- N2. `mod.rs:1-16` module docs still say "contributes an ECDH secret" and "Silent chips add zero friction" as the general model; the FIDO answerer is neither ECDH nor silent.
+- N3. `device_privkey.rs:10-20` module docs still describe phrase-flow plaintext writes as current behavior; slice 4 closed that for daemon/CLI (mobile join residual remains, 4D).
+- N5. `ctap/cbor.rs:99-101` cites RFC 8949 §4.2.1 ordering; CTAP2 requires RFC 7049 length-first ordering. Equivalent for every map emitted today, divergent for mixed-type keys.
+- N6. `ctaphid.rs:93-103` does not validate INIT reply BCNT >= 17 or reject an allocated CID of 0 / broadcast.
+- N7. `change_master_password_with_security_key` (UniFFI) has no Kotlin caller; `WrongPassword.message` is `""`, so the wrong-password branch in `securityKeyErrorMessage` never matches.
+- N8. es `errors.hardwareUnavailable` says "caja fuerte"; every other string says "bóveda".
+- N4. `fido.rs:245-250` `#[allow(dead_code)]` with "consumed from slice 2" comments on code that is consumed now.
+
+## Test gaps
+
+- No test that `SyncEngine::new` on an hw-sealed vault obtains a signing key without calling the backend (H1). A tap mock that panics on `derive` after unlock would catch it.
+- No test that a `Hardware*` error leaves both unlock counters untouched (H2), or that a PIN escrow survives a hardware failure (H5).
+- No test counts assertions per operation. A counting tap mock would pin: unlock = 1, KEK unlock = 1, password change = 2 (after M2), and failed unlock = 1 on a multi-device vault (H4).
+- No member-shape (flipped vault, team member) hw test at all; C1 would have shown up as "identity opens without the chip".
+- No concurrency test for enable vs password change (M1).
+- Attestation: no negative tests for authData mismatch (wrong rpIdHash, credential id mismatch, AAGUID mismatch), no truncated-DER fuzzing (M5), no self-attestation acceptance (M7).
+- Typed-error mapping tests exist for the mock token only; nothing asserts the open path preserves them (H3).
+- Software-authenticator mirroring (bugs the model cannot catch): KEEPALIVE/ERROR offset in fixtures (H9); makeCredential AT|ED layout misparse asserted as `None` (M11); the model parses the client's key agreement with the client's own `cose_p256_public` (`authenticator.rs:345`) and encrypts with the client's own `SharedSecret`, so v2 `IV||ct` framing and v1 zero-IV encryption are only self-checked; getInfo carries no options map, so `clientPin`/`alwaysUv` parsing never runs through the real client; `ModelLink` ignores CID and sequence (`authenticator.rs:527-555`); the model always returns key 1, never sets AT in assertions, never sends 91xx; its x5c is `[0x30, 0x00]`, so `CtapToken` → `create_binding` → attestation verify never runs end to end.
+- Mobile/desktop: SettingsModal effect cleanup (H10); Kotlin unlock-error → localized copy mapping (H11); autofill with a sealed vault, cold path and merged vaults (H12); a non-`BaluardException` thrown from a transport callback; NFC tag loss then re-tap; signing-key cache cleared on drop/close (M13); `isHardwareError` per error string (M14); `LAST_TRANSPORT_ERROR` override order (L14).
+- Needed: depth-bomb and huge-length fuzzing of `Value::decode`, `parse_assertion`, `parse_make_credential`; byte-exact request vectors captured from libfido2 or a real YubiKey (getInfo, clientPIN getKeyAgreement, getAssertion with hmac-secret); an external KAT for protocol-2 encrypt/decrypt.
+
+## Open questions
+
+1. C1 scope: which keys does the admin passphrase-mode identity unwrap on a flipped vault? If any collection key or the SMK, C1 applies to admin devices too.
+2. Is a device-key rotation at enable (H6) acceptable for 1.0, given it touches the roster and needs a sync to propagate, or should 1.0 ship the honest-copy variant?
+3. Should a hardware failure during unlock ever fall through to the F1 cross-device heal? The review assumes never.
+4. Does ctap-hid-fido2 3.6 refuse to open when two FIDO HID devices are present, or pick one? Needs a hardware check (M10).

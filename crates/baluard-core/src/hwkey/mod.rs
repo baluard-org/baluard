@@ -330,6 +330,10 @@ pub mod fido;
 /// anti-counterfeit check; plan "Attestation at enroll").
 pub mod attest;
 
+/// Transport-agnostic CTAP2 client (the mobile backend; plan slices 4A-4D).
+#[cfg(feature = "ctap-client")]
+pub mod ctap;
+
 /// The platform keystore for THIS device, per the platform matrix (plan
 /// §3.3). Returns None where no backend is compiled - the progressive
 /// default on platforms without a landed backend.

@@ -864,6 +864,78 @@ fun SettingsScreen(
                     BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
                 }
 
+                // Security key (FIDO2 hmac-secret): one operation-scoped
+                // NFC/USB transport, with the same seal format as desktop.
+                if (xyz.actitud.baluard.platform.securityKeysSupported()) {
+                    var hardwareEnabled by remember(vaultPath) { mutableStateOf(false) }
+                    var hardwareBusy by remember { mutableStateOf(false) }
+                    var hardwareAttestation by remember { mutableStateOf<String?>(null) }
+                    LaunchedEffect(vaultPath) {
+                        runCatching {
+                            val status = Json.parseToJsonElement(vault.hardwareStatus(true)).jsonObject
+                            hardwareEnabled = status.str("enabled") == "true"
+                            hardwareAttestation = status.str("attestation")?.takeIf { it.isNotEmpty() && it != "null" }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = t("settings.hardwareKey"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = when {
+                                    hardwareBusy -> t("settings.hardwareKeyHold")
+                                    hardwareAttestation == "verified" -> t("settings.hardwareKeyVerified")
+                                    hardwareAttestation == "unknown-vendor" -> t("settings.hardwareKeyUnknown")
+                                    else -> t("settings.hardwareKeyHint")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = hardwareEnabled,
+                            enabled = !hardwareBusy,
+                            onCheckedChange = { want ->
+                                println("BaluardSecKey toggle want=$want busy=$hardwareBusy")
+                                hardwareBusy = true
+                                scope.launch {
+                                    try {
+                                        val response = xyz.actitud.baluard.platform.withSecurityKeyTransport { transport ->
+                                            if (want) {
+                                                vault.hardwareEnable(transport)
+                                            } else {
+                                                vault.hardwareDisable(transport)
+                                            }
+                                        }
+                                        val json = Json.parseToJsonElement(response).jsonObject
+                                        hardwareEnabled = want
+                                        hardwareAttestation = json.str("attestation")
+                                            ?.takeIf { it.isNotEmpty() && it != "null" }
+                                        Toast.success(t(if (want) "settings.hardwareKeyEnabled" else "settings.hardwareKeyDisabled"))
+                                    } catch (e: Exception) {
+                                        println("BaluardSecKey failed: ${e::class.simpleName}: ${e.message}")
+                                        Toast.error(xyz.actitud.baluard.platform.securityKeyErrorMessage(e))
+                                    } finally {
+                                        hardwareBusy = false
+                                    }
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    }
+                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                }
+
                 // Clipboard auto-clear (device-local, desktop parity).
                 val clipboardPrefs = remember { ClipboardPrefs() }
                 var clipboardSeconds by remember { mutableStateOf(clipboardPrefs.loadSeconds()) }

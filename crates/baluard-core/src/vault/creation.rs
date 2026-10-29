@@ -725,6 +725,7 @@ impl<'a> VaultCreator<'a> {
                         current_epoch: 1,
                         identity: Some(identity_keys),
                         identity_wrap_key: Some(zeroize::Zeroizing::new(identity_wrap_key)),
+                        identity_hw_key: None,
                     }),
                 };
 
@@ -1002,6 +1003,7 @@ impl<'a> VaultCreator<'a> {
                         current_epoch: 1,
                         identity: Some(identity_keys),
                         identity_wrap_key: Some(zeroize::Zeroizing::new(identity_wrap_key)),
+                        identity_hw_key: None,
                     }),
                 };
 

@@ -127,6 +127,11 @@ pub struct UnlockedState {
     /// warned passphrase-derived fallback). Cached at unlock so
     /// `rotate_identity` can re-seal. Zeroized on lock/drop.
     pub identity_wrap_key: Option<zeroize::Zeroizing<[u8; 32]>>,
+    /// C1 review fix: on an hw-sealed device the identity artifacts bind
+    /// to a key derived from the hw content key, so the bare KEK subkey
+    /// cannot open them. `Some` whenever the unlock opened an hw-sealed
+    /// device file; takes precedence over `identity_wrap_key`.
+    pub identity_hw_key: Option<zeroize::Zeroizing<[u8; 32]>>,
 }
 
 impl UnlockedState {
@@ -4755,21 +4760,29 @@ impl VaultHandle {
                     eprintln!("warning: could not clear the failed-attempt counter: {e}");
                 }
                 // S1a-4: member devices can rotate their identity too —
-                // expose the wrap key to rotate_identity.
-                if let VaultState::Unlocked(u) = &mut self.state {
-                    u.identity_wrap_key = Some(devkey_seal_m.clone());
-                }
-                // S1a-3: open the member's own identity (sealed under
-                // their devkey seal) into the unlocked state so
-                // contact-card signing works on member devices too.
-                if let Some(sealed_hex) = member.identity_seed_sealed.as_deref() {
-                    if let Ok(sealed) = hex::decode(sealed_hex) {
-                        match crate::vault::identity::open_identity(&devkey_seal_m, &sealed) {
-                            Ok(keys) => self.unlocked_mut().identity = Some(keys),
-                            // Non-fatal: unlock succeeds; contact-card
-                            // signing is unavailable until the identity
-                            // is restored.
-                            Err(e) => eprintln!("warning: could not restore member identity: {e}"),
+                // expose the wrap key to rotate_identity. On an hw-sealed
+                // device the unlock tail already bound the identity to the
+                // hw content key; do not clobber that with the bare
+                // password subkey (C1 review fix).
+                let hw_bound = matches!(&self.state, VaultState::Unlocked(u) if u.identity_hw_key.is_some());
+                if !hw_bound {
+                    if let VaultState::Unlocked(u) = &mut self.state {
+                        u.identity_wrap_key = Some(devkey_seal_m.clone());
+                    }
+                    // S1a-3: open the member's own identity (sealed under
+                    // their devkey seal) into the unlocked state so
+                    // contact-card signing works on member devices too.
+                    if let Some(sealed_hex) = member.identity_seed_sealed.as_deref() {
+                        if let Ok(sealed) = hex::decode(sealed_hex) {
+                            match crate::vault::identity::open_identity(&devkey_seal_m, &sealed) {
+                                Ok(keys) => self.unlocked_mut().identity = Some(keys),
+                                // Non-fatal: unlock succeeds; contact-card
+                                // signing is unavailable until the identity
+                                // is restored.
+                                Err(e) => {
+                                    eprintln!("warning: could not restore member identity: {e}")
+                                }
+                            }
                         }
                     }
                 }
@@ -4828,65 +4841,99 @@ impl VaultHandle {
         };
         let mode = meta["mode"].as_str().unwrap_or("");
 
-        let wrap_key: Option<zeroize::Zeroizing<[u8; 32]>> = match mode {
-            "keystore" => {
-                let key_name = meta["keystore_key"].as_str().unwrap_or("");
-                let keystore = crate::vault::creation::get_global_keystore();
-                let bytes = keystore.and_then(|ks| ks.get_secret(key_name).ok());
-                bytes
-                    .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
-                    .map(zeroize::Zeroizing::new)
-            }
-            "passphrase" => {
-                let Some(pw) = master_password else {
-                    return; // quick-unlock path: identity stays sealed
-                };
-                let salt = meta["salt_hex"]
-                    .as_str()
-                    .and_then(|s| hex::decode(s).ok())
-                    .unwrap_or_default();
-                let params = crate::types::KdfParams {
-                    profile: crate::types::KdfProfile::MobileLow,
-                    memory_kib: meta["memory_kib"].as_u64().unwrap_or(8192) as u32,
-                    time_cost: meta["time_cost"].as_u64().unwrap_or(3) as u32,
-                    parallelism: 1,
-                    salt,
-                };
-                kdf::derive_kek(pw, &params)
-                    .ok()
-                    .map(zeroize::Zeroizing::new)
-            }
-            _ => None,
-        };
-        let Some(wrap_key) = wrap_key else {
-            return;
-        };
-
         // S1a-4: prefer the member-scoped sealed identity when this device
         // is a bound member — identity rotation writes there; the legacy
         // meta/identity.enc path remains for founder/legacy vaults.
-        let sealed = match crate::vault::members::member_id_for_device(&self.path, self.device_id)
-            .map(|m| {
+        let identity_path =
+            match crate::vault::members::member_id_for_device(&self.path, self.device_id).map(|m| {
                 self.path
                     .join(crate::vault::members::MEMBERS_DIR)
                     .join(m.to_string())
                     .join("identity.enc")
             }) {
-            Some(p) if p.exists() => std::fs::read(&p).ok(),
-            _ => std::fs::read(self.path.join("meta/identity.enc")).ok(),
-        };
-        let Some(sealed) = sealed else {
+                Some(p) if p.exists() => p,
+                _ => self.path.join("meta/identity.enc"),
+            };
+        let Some(sealed) = std::fs::read(&identity_path).ok() else {
             return;
         };
-        match crate::vault::identity::open_identity(&wrap_key, &sealed) {
-            Ok(keys) => {
+        // C1 review fix: on an hw-sealed device the identity binds to the
+        // hw content key; the keystore/passphrase key is only the fallback
+        // and the heal source for artifacts sealed before the fix. The hw
+        // attempt runs FIRST so quick unlocks (no master password) still
+        // load a healed identity.
+        let hw_key = match &self.state {
+            VaultState::Unlocked(u) => u.identity_hw_key.clone(),
+            VaultState::Locked => None,
+        };
+        let mut opened: Option<(
+            crate::vault::identity::IdentityKeys,
+            zeroize::Zeroizing<[u8; 32]>,
+        )> = None;
+        if let Some(ik) = &hw_key {
+            if let Ok(keys) = crate::vault::identity::open_identity(ik, &sealed) {
+                opened = Some((keys, ik.clone()));
+            }
+        }
+        if opened.is_none() {
+            let wrap_key: Option<zeroize::Zeroizing<[u8; 32]>> = match mode {
+                "keystore" => {
+                    let key_name = meta["keystore_key"].as_str().unwrap_or("");
+                    let keystore = crate::vault::creation::get_global_keystore();
+                    let bytes = keystore.and_then(|ks| ks.get_secret(key_name).ok());
+                    bytes
+                        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+                        .map(zeroize::Zeroizing::new)
+                }
+                "passphrase" => {
+                    let Some(pw) = master_password else {
+                        return; // quick-unlock path: identity stays sealed
+                    };
+                    let salt = meta["salt_hex"]
+                        .as_str()
+                        .and_then(|s| hex::decode(s).ok())
+                        .unwrap_or_default();
+                    let params = crate::types::KdfParams {
+                        profile: crate::types::KdfProfile::MobileLow,
+                        memory_kib: meta["memory_kib"].as_u64().unwrap_or(8192) as u32,
+                        time_cost: meta["time_cost"].as_u64().unwrap_or(3) as u32,
+                        parallelism: 1,
+                        salt,
+                    };
+                    kdf::derive_kek(pw, &params)
+                        .ok()
+                        .map(zeroize::Zeroizing::new)
+                }
+                _ => None,
+            };
+            let Some(wrap_key) = wrap_key else {
+                return;
+            };
+            if let Ok(keys) = crate::vault::identity::open_identity(&wrap_key, &sealed) {
+                if let Some(ik) = &hw_key {
+                    match crate::vault::identity::seal_identity(ik, &keys) {
+                        Ok(resealed) => {
+                            if let Err(e) = super::write_vault_file(&identity_path, &resealed) {
+                                eprintln!(
+                                    "warning: could not re-seal the identity under the security-key binding: {e}"
+                                );
+                            }
+                        }
+                        Err(e) => eprintln!("warning: identity re-seal failed: {e}"),
+                    }
+                }
+                opened = Some((keys, hw_key.unwrap_or_else(|| wrap_key.clone())));
+            }
+        }
+        match opened {
+            Some((keys, effective_key)) => {
                 if let VaultState::Unlocked(u) = &mut self.state {
                     u.identity = Some(keys);
-                    u.identity_wrap_key = Some(wrap_key);
+                    u.identity_wrap_key = Some(effective_key);
                 }
             }
-            Err(e) => {
-                eprintln!("warning: failed to open sealed identity: {e}");
+            None => {
+                eprintln!("warning: failed to open sealed identity");
             }
         }
     }
@@ -5130,18 +5177,62 @@ impl VaultHandle {
         // the chip here too, or member unlock (and quick unlock, which
         // rides the same tail) would skip the tap the admin path pays.
         let privkey_path = self.path.join("meta/device-privkey.json");
-        if crate::vault::device_privkey::file_kind(&privkey_path)
-            == crate::vault::device_privkey::PrivkeyFileKind::SealedHw
-        {
-            crate::vault::device_privkey::read_privkey_file(&privkey_path, Some(&devkey_seal))?;
-        }
+        // C1 review fix: the hw open is not a check — its content key
+        // re-keys the identity sealing. A seed under the bare KEK subkey
+        // would leave shared folders readable without the chip.
+        let identity_hw_key: Option<Zeroizing<[u8; 32]>> =
+            if crate::vault::device_privkey::file_kind(&privkey_path)
+                == crate::vault::device_privkey::PrivkeyFileKind::SealedHw
+            {
+                let (json, ck) = crate::vault::device_privkey::read_privkey_file_with_ck(
+                    &privkey_path,
+                    Some(&devkey_seal),
+                )?;
+                let ck = ck.expect("SealedHw open returns the content key");
+                // Member devices sign commits with these keys too —
+                // populate the process cache so post-unlock sync never
+                // pays a second tap.
+                if let Ok(keys) = parse_privkey_json(&json) {
+                    cache_device_signing_key(&self.path, self.device_id, &keys);
+                }
+                Some(crate::crypto::hkdf_derive::derive_identity_hw_key(&ck)?)
+            } else {
+                None
+            };
         let sealed = hex::decode(sealed_hex)
             .map_err(|_| VaultError::Corrupt("member identity seed".into()))?;
-        let keys = crate::vault::identity::open_identity(&devkey_seal, &sealed).map_err(|e| {
-            VaultError::InvalidOperation(format!(
-                "this device's identity seed did not open; re-approve this member ({e})"
-            ))
-        })?;
+        // Prefer the hw-bound key; heal seeds still sealed under the bare
+        // KEK subkey from before the fix by re-sealing in place.
+        let keys = match &identity_hw_key {
+            Some(ik) => {
+                match crate::vault::identity::open_identity(ik, &sealed) {
+                    Ok(keys) => keys,
+                    Err(hw_err) => {
+                        match crate::vault::identity::open_identity(&devkey_seal, &sealed) {
+                            Ok(keys) => {
+                                crate::vault::members::rebind_member_unlock_identity_seed(
+                                    &self.path,
+                                    &devkey_seal,
+                                    ik,
+                                )?;
+                                keys
+                            }
+                            Err(_) => {
+                                return Err(VaultError::InvalidOperation(format!(
+                                    "this device's identity seed did not open; re-approve this member ({hw_err})"
+                                ))
+                                .into())
+                            }
+                        }
+                    }
+                }
+            }
+            None => crate::vault::identity::open_identity(&devkey_seal, &sealed).map_err(|e| {
+                VaultError::InvalidOperation(format!(
+                    "this device's identity seed did not open; re-approve this member ({e})"
+                ))
+            })?,
+        };
         let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
             .ok_or_else(|| {
                 VaultError::InvalidOperation(
@@ -5161,8 +5252,11 @@ impl VaultHandle {
         let current_epoch = self.determine_current_epoch();
         // The devkey seal doubles as the identity sealing wrap key on the
         // member path (the seed is sealed under it), so identity rotation
-        // works after PIN/KEK unlocks too.
-        let identity_wrap_key = Zeroizing::new(devkey_seal);
+        // works after PIN/KEK unlocks too. On an hw-sealed device the
+        // hw-bound key takes over (C1 review fix).
+        let identity_wrap_key = identity_hw_key
+            .clone()
+            .unwrap_or_else(|| Zeroizing::new(devkey_seal));
 
         self.state = VaultState::Unlocked(UnlockedState {
             root_key: None,
@@ -5175,6 +5269,7 @@ impl VaultHandle {
             current_epoch,
             identity: Some(keys),
             identity_wrap_key: Some(identity_wrap_key),
+            identity_hw_key,
         });
         // C1: legacy plaintext re-seal + registry sync, same as the admin
         // tail. The admin-only metadata migration is skipped on member
@@ -5444,6 +5539,7 @@ impl VaultHandle {
             current_epoch,
             identity: None,
             identity_wrap_key: None,
+            identity_hw_key: None,
         });
         Ok(handle)
     }
@@ -5537,8 +5633,12 @@ impl VaultHandle {
         // If unwrap fails on a fast-path resolved device_id, fall back through other
         // enrolled candidates to provide self-healing recovery against corrupted or
         // spoofed meta/device-id entries (F1 self-healing fix).
+        let mut hw_ck: Option<zeroize::Zeroizing<[u8; 32]>> = None;
         let (root_key, _matched_device_id) = {
-            let attempt_unwrap = |dev_id: Uuid| -> Result<RootKey, BaluardError> {
+            let attempt_unwrap = |dev_id: Uuid| -> Result<
+                (RootKey, Option<zeroize::Zeroizing<[u8; 32]>>),
+                BaluardError,
+            > {
                 let kw_path = self.path.join(format!("meta/keywrap/{dev_id}.json"));
                 if !kw_path.exists() {
                     return Err(VaultError::NotFound(format!("keywrap for {dev_id}")).into());
@@ -5546,7 +5646,8 @@ impl VaultHandle {
                 let kw_json = std::fs::read_to_string(&kw_path)
                     .map_err(|e| VaultError::Metadata(format!("reading keywrap: {e}")))?;
                 let parsed_kw = super::keywrap::parse_keywrap_json(&kw_json)?;
-                let privs = load_device_privkeys(&self.path, dev_id, Some(&devkey_seal))?;
+                let (privs, ck) =
+                    load_device_privkeys_with_ck(&self.path, dev_id, Some(&devkey_seal))?;
                 // A keystore that opens but does not match any keywrap is a
                 // stale/reinstalled device, not a wrong password: label it
                 // so surfaces can offer re-pairing instead of retrying the
@@ -5568,11 +5669,14 @@ impl VaultHandle {
                     .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
                 let rk = RootKey::from_bytes(rk_bytes);
                 self.verify_root_key(&rk)?;
-                Ok(rk)
+                Ok((rk, ck))
             };
 
             match attempt_unwrap(self.device_id) {
-                Ok(rk) => (rk, self.device_id),
+                Ok((rk, ck)) => {
+                    hw_ck = ck;
+                    (rk, self.device_id)
+                }
                 Err(primary_err) => {
                     // P3: prefer this device's fresh wrap from the committed
                     // rekey transaction (its own keywrap file is stale or
@@ -5580,7 +5684,7 @@ impl VaultHandle {
                     // F1 cross-device heal: a survivor must not silently
                     // adopt another device's identity while its own wrap is
                     // recoverable.
-                    if let Some(rk) = self.adopt_rekey_txn_root(&devkey_seal) {
+                    if let Some(rk) = self.adopt_rekey_txn_root(&devkey_seal, &mut hw_ck) {
                         (rk, self.device_id)
                     } else {
                         let keywrap_dir = self.path.join("meta/keywrap");
@@ -5592,7 +5696,8 @@ impl VaultHandle {
                                     if let Some(id_str) = name.strip_suffix(".json") {
                                         if let Ok(candidate_id) = Uuid::parse_str(id_str) {
                                             if candidate_id != self.device_id {
-                                                if let Ok(rk) = attempt_unwrap(candidate_id) {
+                                                if let Ok((rk, ck)) = attempt_unwrap(candidate_id) {
+                                                    hw_ck = ck;
                                                     healed = Some((rk, candidate_id));
                                                     break;
                                                 }
@@ -5628,6 +5733,9 @@ impl VaultHandle {
         } else {
             None
         };
+        let identity_hw_key = hw_ck.map(|ck| {
+            crate::crypto::hkdf_derive::derive_identity_hw_key(&ck).expect("identity hw key HKDF")
+        });
 
         self.state = VaultState::Unlocked(UnlockedState {
             root_key: Some(root_key.clone()),
@@ -5643,6 +5751,7 @@ impl VaultHandle {
             current_epoch,
             identity: None,
             identity_wrap_key: None,
+            identity_hw_key,
         });
 
         if flipped {
@@ -5853,7 +5962,6 @@ impl VaultHandle {
         let privkeys = load_device_privkeys(&self.path, self.device_id, Some(&old_devkey_seal))?;
         let x25519_public = x25519_dalek::PublicKey::from(&privkeys.x25519);
 
-        // Step 5: HPKE re-wrap Root Key with new session key
         let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
             root_key.as_bytes(),
             &x25519_public,
@@ -5868,27 +5976,53 @@ impl VaultHandle {
         let keywrap_path = self
             .path
             .join(format!("meta/keywrap/{}.json", self.device_id));
+        let original_keywrap = std::fs::read(&keywrap_path)?;
         let keywrap_json = serde_json::to_string_pretty(&keywrap_data).unwrap();
-        super::write_vault_file(&keywrap_path, keywrap_json.as_bytes())?;
+        let canary_path = self.path.join("meta/kek-canary.enc");
+        let new_canary = if canary_path.exists() {
+            Some(super::canary::create_kek_canary(
+                &new_session_key,
+                self.vault_id,
+            )?)
+        } else {
+            None
+        };
 
-        // Step 6: Re-encrypt KEK canary with new session key
-        if self.path.join("meta/kek-canary.enc").exists() {
-            let canary_bytes = super::canary::create_kek_canary(&new_session_key, self.vault_id)?;
-            let canary_path = self.path.join("meta/kek-canary.enc");
-            super::write_vault_file(&canary_path, &canary_bytes)?;
-        }
-
-        // Step 7: Update in-memory session key and rotate the devkey seal
-        // (C1): the KEK changed, so the seal subkey changed with it. The
-        // upfront pre-check validated the old seal opens the file, so this
-        // write cannot strand the vault.
+        // Hardware taps happen before any write. If a later metadata write
+        // fails, restore the old seal so the old password still opens the vault.
         let new_devkey_seal = hkdf_derive::derive_devkey_seal_key(&new_kek)?;
+        let original_devkey = std::fs::read(&devkey_path)?;
+        // rotate_seal_key also rebinds the identity artifacts (member seed
+        // + identity.enc); snapshot them for the same rollback.
+        let identity_snapshot = identity_artifact_snapshots(&self.path, self.device_id);
         crate::vault::device_privkey::rotate_seal_key(
             &devkey_path,
             &old_devkey_seal,
             &new_devkey_seal,
             Some(self.device_id),
         )?;
+        let restore_devkey = || {
+            let _ = super::write_vault_file(&devkey_path, &original_devkey);
+            for (path, bytes) in &identity_snapshot {
+                let _ = super::write_vault_file(path, bytes);
+            }
+        };
+
+        // Step 5: write the prepared keywrap and canary.
+        if let Err(error) = super::write_vault_file(&keywrap_path, keywrap_json.as_bytes()) {
+            restore_devkey();
+            return Err(error.into());
+        }
+
+        if let Some(canary_bytes) = new_canary {
+            if let Err(error) = super::write_vault_file(&canary_path, &canary_bytes) {
+                let _ = super::write_vault_file(&keywrap_path, &original_keywrap);
+                restore_devkey();
+                return Err(error.into());
+            }
+        }
+
+        // Step 7: commit the new in-memory keys only after all files agree.
         let _ = crate::vault::device_privkey::write_device_id(&self.path, self.device_id);
         if let VaultState::Unlocked(ref mut u) = self.state {
             u.session_key = new_session_key;
@@ -5985,6 +6119,7 @@ impl VaultHandle {
     /// blocking the lock operation on large vaults.
     pub fn lock(&mut self) {
         self.state = VaultState::Locked;
+        clear_cached_device_signing_key(&self.path, self.device_id);
         let path_clone = self.path.clone();
         let creation_ts = self
             .registry
@@ -7751,7 +7886,11 @@ impl VaultHandle {
     /// enrolled device. Adoption is epoch-bound (file name == transaction
     /// epoch == current canary epoch) and fail-closed: any mismatch returns
     /// None and the original unlock error stands.
-    fn adopt_rekey_txn_root(&self, devkey_seal: &[u8; 32]) -> Option<RootKey> {
+    fn adopt_rekey_txn_root(
+        &self,
+        devkey_seal: &[u8; 32],
+        hw_ck_out: &mut Option<zeroize::Zeroizing<[u8; 32]>>,
+    ) -> Option<RootKey> {
         let epoch = self.determine_current_epoch();
         if epoch == 0 {
             return None;
@@ -7773,7 +7912,9 @@ impl VaultHandle {
             .wrapped_root_keys
             .iter()
             .find(|e| e.device_id == self.device_id)?;
-        let privs = load_device_privkeys(&self.path, self.device_id, Some(devkey_seal)).ok()?;
+        let (privs, ck) =
+            load_device_privkeys_with_ck(&self.path, self.device_id, Some(devkey_seal)).ok()?;
+        *hw_ck_out = ck;
         let unwrapped = hpke_wrap::unwrap_key(
             &entry.ephemeral_public,
             &entry.encrypted_key,
@@ -11032,6 +11173,17 @@ fn load_device_privkeys(
     device_id: Uuid,
     seal_key: Option<&[u8; 32]>,
 ) -> Result<DevicePrivKeys, BaluardError> {
+    load_device_privkeys_with_ck(vault_path, device_id, seal_key).map(|(keys, _)| keys)
+}
+
+/// `load_device_privkeys` plus the hw content key when the device file
+/// was v2-hw: identity re-binding derives from the SAME chip assertion
+/// instead of paying a second tap.
+fn load_device_privkeys_with_ck(
+    vault_path: &Path,
+    device_id: Uuid,
+    seal_key: Option<&[u8; 32]>,
+) -> Result<(DevicePrivKeys, Option<zeroize::Zeroizing<[u8; 32]>>), BaluardError> {
     // 0. Consult SecureKeystore (global or injected)
     if let Some(keystore) = crate::vault::creation::get_global_keystore() {
         if let Ok(bytes) = keystore
@@ -11041,7 +11193,8 @@ fn load_device_privkeys(
         {
             if let Ok(json) = String::from_utf8(bytes) {
                 if let Ok(keys) = parse_privkey_json(&json) {
-                    return Ok(keys);
+                    cache_device_signing_key(vault_path, device_id, &keys);
+                    return Ok((keys, None));
                 }
             }
         }
@@ -11053,11 +11206,70 @@ fn load_device_privkeys(
     // here and gets re-sealed lazily on the next successful unlock.
     let privkey_path = vault_path.join("meta/device-privkey.json");
     if privkey_path.exists() {
-        let json = crate::vault::device_privkey::read_privkey_file(&privkey_path, seal_key)?;
-        return parse_privkey_json(&json);
+        let (json, ck) = crate::vault::device_privkey::read_privkey_file_with_ck(&privkey_path, seal_key)?;
+        let keys = parse_privkey_json(&json)?;
+        cache_device_signing_key(vault_path, device_id, &keys);
+        return Ok((keys, ck));
     }
 
     Err(VaultError::NotFound("device private key not found".into()).into())
+}
+
+static DEVICE_SIGNING_KEYS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<(PathBuf, Uuid), zeroize::Zeroizing<[u8; 32]>>>,
+> = std::sync::OnceLock::new();
+
+/// Byte snapshots of every identity artifact rotate_seal_key rebinds, so
+/// change_master_password can roll them back with the device file.
+fn identity_artifact_snapshots(vault_path: &Path, device_id: Uuid) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut paths = vec![
+        vault_path.join("meta/member-unlock.json"),
+        vault_path.join("meta/identity.enc"),
+    ];
+    if let Some(member) = crate::vault::members::member_id_for_device(vault_path, device_id) {
+        paths.push(
+            vault_path
+                .join(crate::vault::members::MEMBERS_DIR)
+                .join(member.to_string())
+                .join("identity.enc"),
+        );
+    }
+    paths
+        .into_iter()
+        .filter(|p| p.exists())
+        .filter_map(|p| std::fs::read(&p).ok().map(|b| (p, b)))
+        .collect()
+}
+
+fn cache_device_signing_key(vault_path: &Path, device_id: Uuid, keys: &DevicePrivKeys) {
+    DEVICE_SIGNING_KEYS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("device signing key cache")
+        .insert(
+            (vault_path.to_path_buf(), device_id),
+            zeroize::Zeroizing::new(keys.ed25519.to_bytes()),
+        );
+}
+
+pub(crate) fn cached_device_signing_key(
+    vault_path: &Path,
+    device_id: Uuid,
+) -> Option<ed25519_dalek::SigningKey> {
+    DEVICE_SIGNING_KEYS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("device signing key cache")
+        .get(&(vault_path.to_path_buf(), device_id))
+        .map(|bytes| ed25519_dalek::SigningKey::from_bytes(bytes))
+}
+
+pub(crate) fn clear_cached_device_signing_key(vault_path: &Path, device_id: Uuid) {
+    DEVICE_SIGNING_KEYS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("device signing key cache")
+        .remove(&(vault_path.to_path_buf(), device_id));
 }
 
 /// Parse device private keys from JSON string.

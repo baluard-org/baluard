@@ -27,6 +27,9 @@ rand_core.workspace = true
 ctap-hid-fido2 = { version = "3.6", optional = true, default-features = false, features = [
     "ring",
 ] }
+# Direct HID link for the in-tree client's real-token interop gate. Not part
+# of ctap-client: phone transports never compile this scaffold.
+hidapi = { version = "2.6", optional = true }
 # RSA verification for the FIDO attestation chain: the Yubico
 # attestation hierarchy (root, intermediates, per-device certificates)
 # is all-RSA (sha256/sha512 PKCS#1 v1.5), while the hmac-secret seal
@@ -36,7 +39,7 @@ rsa = "0.9"
 # assertion-signature oracle in the passkey provider tests (§8 of
 # plan-mobile-passkeys). The earlier dev-only placement predates the
 # attestation verifier (hwkey/attest.rs), which verifies in production.
-p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdsa", "std"] }
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdsa", "ecdh", "std"] }
 bip39.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -48,6 +51,11 @@ bytes.workspace = true
 hex.workspace = true
 base64.workspace = true
 zeroize.workspace = true
+# Pure-Rust CTAP2 client (slices 4A-4D of the security-key plan): the transport-
+# agnostic backend phones use, where hidapi cannot exist. aes+cbc serve the
+# pinUvAuth salt encryption only; both are stdlib-class RustCrypto crates.
+aes = { version = "0.8", optional = true }
+cbc = { version = "0.1", optional = true, features = ["alloc"] }
 octocrab.workspace = true
 secrecy.workspace = true
 async-trait.workspace = true
@@ -97,7 +105,8 @@ hw-seal = ["dep:secure-enclave-rs", "dep:tss-esapi", "dep:windows-sys"]
 # docs/plan-yubikey-seal.md). Non-default until the daemon wiring and
 # packaging land; MSRV for a build WITH this feature is 1.89 (the crate
 # floor) - still under every minimum-platform target's rustc.
-fido2 = ["dep:ctap-hid-fido2"]
+fido2 = ["dep:ctap-hid-fido2", "dep:hidapi", "ctap-client"]
+ctap-client = ["dep:aes", "dep:cbc"]
 default = ["full"]
 full = ["git-sync", "passkey-ceremony", "uri-match"]
 passkey-ceremony = ["dep:passkey", "dep:passkey-types", "passkey-types/serialize_bytes_as_base64_string", "dep:url", "dep:public-suffix", "dep:coset", "dep:tokio"]

@@ -1602,6 +1602,38 @@ pub fn update_member_unlock_identity_seed(
     .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write member unlock: {e}"))))
 }
 
+/// Move the device's member identity seed between sealing keys when the
+/// device key's seal class changes (hw enable/disable/rotate). No-op when
+/// the device holds no member unlock row. Returns whether it re-sealed.
+pub fn rebind_member_unlock_identity_seed(
+    vault_path: &Path,
+    from_key: &[u8; 32],
+    to_key: &[u8; 32],
+) -> Result<bool, BaluardError> {
+    let path = vault_path.join("meta/member-unlock.json");
+    if !path.exists() {
+        return Ok(false);
+    }
+    let data = std::fs::read_to_string(&path)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("read member unlock: {e}"))))?;
+    let mut unlock: MemberUnlock = serde_json::from_str(&data)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("parse member unlock: {e}"))))?;
+    let Some(sealed_hex) = unlock.identity_seed_sealed.as_deref() else {
+        return Ok(false);
+    };
+    let sealed = hex::decode(sealed_hex)
+        .map_err(|_| VaultError::Corrupt("member identity seed".into()))?;
+    let keys = crate::vault::identity::open_identity(from_key, &sealed)?;
+    unlock.identity_seed_sealed =
+        Some(hex::encode(crate::vault::identity::seal_identity(to_key, &keys)?));
+    super::write_vault_file(
+        &path,
+        serde_json::to_string_pretty(&unlock).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write member unlock: {e}"))))?;
+    Ok(true)
+}
+
 /// Validate a self-declared email: trimmed, single-line, no spaces or
 /// control characters, must contain one `@` with text on both sides,
 /// RFC length caps. Advisory data — the shape check keeps it renderable

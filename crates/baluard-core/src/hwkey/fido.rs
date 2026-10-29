@@ -127,6 +127,16 @@ impl super::HardwareKeyStore for FidoStore {
                 }
             }
             Err(TokenError::KeyMissing) => "no-token",
+            Err(TokenError::Timeout) => "touch-timeout",
+            Err(TokenError::Cancelled) => "cancelled",
+            Err(TokenError::Busy) => "busy",
+            // Transport-level failures carry the foreign transport's own detail
+            // (e.g. "USB key read timed out"); keep it instead of a bare "no-hid".
+            Err(TokenError::Device(detail)) => {
+                return super::HwCapability::Unavailable {
+                    reason: format!("security key: {detail}"),
+                };
+            }
             Err(_) => "no-hid",
         };
         super::HwCapability::Unavailable {

@@ -4,6 +4,11 @@ import xyz.actitud.baluard.data.UnlockResult
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.BaluardException
 import xyz.actitud.baluard.MobileVault
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import xyz.actitud.baluard.platform.withSecurityKeyTransport
 /**
  * Drives the unlock flow over the multi-Space session (plan-power-pack S4-9):
  * up to [MultiVaultSession.MAX_UNLOCKED] vaults stay unlocked at once, so
@@ -57,7 +62,11 @@ class AuthViewModel(private val repo: VaultRepository) {
     suspend fun openAndUnlock(path: String, password: String): UnlockResult {
         return try {
             val v = repo.openVault(path)
-            v.unlock(password)
+            if (requiresSecurityKey(v)) {
+                withSecurityKeyTransport { v.unlockWithSecurityKey(password, it) }
+            } else {
+                v.unlock(password)
+            }
             session.adopt(path, MobileSessionVault(v), kek = null)
             UnlockResult.Success
         } catch (e: BaluardException.DeviceUnpaired) {
@@ -67,6 +76,27 @@ class AuthViewModel(private val repo: VaultRepository) {
         }
     }
 
+    /** Password + possession unlock after the normal tail finds an HW seal. */
+    suspend fun openAndUnlockWithSecurityKey(path: String, password: String): UnlockResult {
+        return try {
+            val v = repo.openVault(path)
+            withSecurityKeyTransport { v.unlockWithSecurityKey(password, it) }
+            session.adopt(path, MobileSessionVault(v), kek = null)
+            UnlockResult.Success
+        } catch (e: BaluardException.DeviceUnpaired) {
+            UnlockResult.DeviceMismatch
+        } catch (e: Exception) {
+            UnlockResult.Failure(xyz.actitud.baluard.platform.securityKeyErrorMessage(e))
+        }
+    }
+
+    private suspend fun requiresSecurityKey(vault: MobileVault): Boolean = runCatching {
+        val status = Json.parseToJsonElement(
+            vault.hardwareStatus(xyz.actitud.baluard.platform.securityKeysSupported()),
+        ).jsonObject
+        status["enabled"]?.jsonPrimitive?.booleanOrNull == true
+    }.getOrDefault(false)
+
     /**
      * Biometric quick-unlock (B5, plan §3.7): skip the Argon2id KDF, feed
      * the keychain-retrieved [kek] straight into the shared unlock tail
@@ -75,13 +105,17 @@ class AuthViewModel(private val repo: VaultRepository) {
     suspend fun openAndUnlockWithKek(path: String, kek: ByteArray): UnlockResult {
         return try {
             val v = repo.openVault(path)
-            v.unlockWithKek(kek)
+            if (requiresSecurityKey(v)) {
+                withSecurityKeyTransport { v.unlockWithSecurityKeyAndKek(kek, it) }
+            } else {
+                v.unlockWithKek(kek)
+            }
             session.adopt(path, MobileSessionVault(v), kek = kek)
             UnlockResult.Success
         } catch (e: BaluardException.DeviceUnpaired) {
             UnlockResult.DeviceMismatch
         } catch (e: Exception) {
-            UnlockResult.Failure(e.message ?: "unlock failed")
+            UnlockResult.Failure(e.message ?: "quick unlock failed")
         }
     }
 

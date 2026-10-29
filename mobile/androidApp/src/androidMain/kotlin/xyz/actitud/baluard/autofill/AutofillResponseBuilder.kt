@@ -59,11 +59,20 @@ object AutofillResponseBuilder {
      * the biometric unlock and returns the real filled response. No SaveInfo
      * here: nothing has been submitted yet (device-pass finding).
      */
-    fun authenticationResponse(context: Context, fields: TargetFields, target: String): FillResponse {
-        val intent = Intent(context, AutofillActivity::class.java).apply {
-            putExtra(AutofillActivity.EXTRA_TARGET, target)
-            fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
-            fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
+    fun authenticationResponse(
+        context: Context,
+        fields: TargetFields,
+        target: String,
+        securityKeyRequired: Boolean = false,
+    ): FillResponse {
+        val intent = if (securityKeyRequired) {
+            Intent(context, xyz.actitud.baluard.MainActivity::class.java)
+        } else {
+            Intent(context, AutofillActivity::class.java).apply {
+                putExtra(AutofillActivity.EXTRA_TARGET, target)
+                fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
+                fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
+            }
         }
         // PendingIntent identity is (filterEquals, requestCode): a shared
         // code lets a later fill request's FLAG_UPDATE_CURRENT rewrite the
@@ -76,7 +85,7 @@ object AutofillResponseBuilder {
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val views = unlockPresentation(context)
+        val views = unlockPresentation(context, securityKeyRequired)
 
         val dataset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val presentations = Presentations.Builder()
@@ -116,7 +125,11 @@ object AutofillResponseBuilder {
         inline: InlineStyle? = null,
         ignored: List<AutofillId> = emptyList(),
     ): FillResponse? {
-        val matches = AutofillSession.matches(target)
+        val result = AutofillSession.query(target)
+        if (result.securityKeyRequired) {
+            return authenticationResponse(context, fields, target, securityKeyRequired = true)
+        }
+        val matches = result.matches
         if (matches.isEmpty()) return null
 
         // Every matched entry is decrypted up front so each dataset carries
@@ -419,10 +432,16 @@ object AutofillResponseBuilder {
         return InlinePresentation(content.slice, spec, false)
     }
 
-    private fun unlockPresentation(context: Context): RemoteViews =
+    private fun unlockPresentation(context: Context, securityKeyRequired: Boolean = false): RemoteViews =
         RemoteViews(context.packageName, R.layout.autofill_dataset_item).apply {
-            setTextViewText(R.id.autofill_item_title, t("login.biometricTitle"))
-            setTextViewText(R.id.autofill_item_subtitle, t("autofill.unlockHint"))
+            setTextViewText(
+                R.id.autofill_item_title,
+                t(if (securityKeyRequired) "autofill.securityKeyTitle" else "login.biometricTitle"),
+            )
+            setTextViewText(
+                R.id.autofill_item_subtitle,
+                t(if (securityKeyRequired) "autofill.securityKeyHint" else "autofill.unlockHint"),
+            )
             setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
         }
 

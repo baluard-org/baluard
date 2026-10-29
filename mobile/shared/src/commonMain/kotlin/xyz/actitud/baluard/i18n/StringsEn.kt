@@ -36,6 +36,9 @@ internal val EN: Map<String, String> = mapOf(
     "login.enableBiometric" to "Enable quick unlock",
     "login.notNow" to "Not now",
     "login.unlockFailed" to "Unlock failed. Try again.",
+    "login.securityKeyHold" to "If this vault uses a security key, hold it to the phone or connect it by USB.",
+    "settings.hardwareKeyTimeout" to "Security key timed out. Retry and keep it connected.",
+    "settings.hardwareKeyCancelled" to "Security key operation cancelled",
 
     // onboarding root
     "onboarding.subtitle" to "Your passwords, stored only for you",
@@ -423,6 +426,14 @@ internal val EN: Map<String, String> = mapOf(
     "settings.biometric.disableTitle" to "Turn off biometric unlock?",
     "settings.biometric.disableBody" to "You will use your master password to unlock this vault on this device. You can turn biometric unlock back on later.",
     "settings.biometric.disableConfirm" to "Turn off",
+    "settings.hardwareKey" to "Security key",
+    "settings.hardwareKeyHint" to "Require your YubiKey with the master password.",
+    "settings.hardwareKeyHold" to "Hold the key to the phone, or approve USB access.",
+    "settings.hardwareKeyVerified" to "Security key verified.",
+    "settings.hardwareKeyUnknown" to "The key works, but its maker could not be verified.",
+    "settings.hardwareKeyEnabled" to "Security key enabled",
+    "settings.hardwareKeyDisabled" to "Security key disabled",
+    "settings.hardwareKeyFailed" to "Security key operation failed",
     "settings.clipboardClear" to "Clipboard auto-clear",
     "settings.clipboardClearHint" to "Copied secrets are wiped from the clipboard after this time (unless you copied something else).",
     "settings.clipboardClear.never" to "Never",
@@ -594,6 +605,8 @@ internal val EN: Map<String, String> = mapOf(
     // Android autofill picker + trampoline (Phase 6). The biometric prompt
     // title reuses login.biometricTitle.
     "autofill.unlockHint" to "Tap to unlock and fill",
+    "autofill.securityKeyTitle" to "Security key required",
+    "autofill.securityKeyHint" to "Open Baluard and unlock with your security key",
     "autofill.unlockVault" to "Unlock {0}",
     "autofill.noUsername" to "(no username)",
     "autofill.openAppToSetup" to "Open Baluard first to set up quick unlock",

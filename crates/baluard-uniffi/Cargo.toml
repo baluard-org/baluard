@@ -11,7 +11,7 @@ crate-type = ["cdylib", "lib"]
 name = "baluard_uniffi"
 
 [dependencies]
-baluard-core = { path = "../baluard-core", features = ["git-sync", "uri-match"] }
+baluard-core = { path = "../baluard-core", features = ["git-sync", "uri-match", "ctap-client"] }
 baluard-runtime = { path = "../baluard-runtime" }
 uniffi = { workspace = true, features = ["tokio"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros"] }
@@ -19,6 +19,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 zeroize = { workspace = true }
 base64 = { workspace = true }
+uuid = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Vendored OpenSSL: lets git2/libgit2 cross-compile for Android ABIs
