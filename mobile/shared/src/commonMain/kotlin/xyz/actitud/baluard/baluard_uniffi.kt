@@ -8788,6 +8788,18 @@ sealed class BaluardException: kotlin.Exception() {
     }
 
     /**
+     * The vault's device key is sealed under a hardware security key:
+     * autofill cannot serve it from this process (no key transport), and
+     * unlocking the app does not change that. A 1.0 policy refusal, not
+     * an error to retry.
+     */
+    class SecurityKeyRequired(
+        ) : BaluardException() {
+        override val message
+            get() = ""
+    }
+
+    /**
      * Initializing a new vault on disk failed (device keys, keywrap, manifest).
      */
     class Creation(
@@ -8844,10 +8856,11 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
             7 -> BaluardException.Vault(
                 FfiConverterString.read(buf),
                 )
-            8 -> BaluardException.Creation(
+            8 -> BaluardException.SecurityKeyRequired()
+            9 -> BaluardException.Creation(
                 FfiConverterString.read(buf),
                 )
-            9 -> BaluardException.InvalidInput(
+            10 -> BaluardException.InvalidInput(
                 FfiConverterString.read(buf),
                 )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
@@ -8889,6 +8902,10 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
                 + FfiConverterString.allocationSize(value.`detail`)
+            )
+            is BaluardException.SecurityKeyRequired -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
             )
             is BaluardException.Creation -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
@@ -8939,13 +8956,17 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
-            is BaluardException.Creation -> {
+            is BaluardException.SecurityKeyRequired -> {
                 buf.putInt(8)
+                Unit
+            }
+            is BaluardException.Creation -> {
+                buf.putInt(9)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.InvalidInput -> {
-                buf.putInt(9)
+                buf.putInt(10)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }

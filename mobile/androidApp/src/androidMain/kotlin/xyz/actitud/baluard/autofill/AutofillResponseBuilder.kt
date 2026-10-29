@@ -19,6 +19,7 @@ import android.widget.RemoteViews
 import androidx.autofill.inline.UiVersions
 import androidx.autofill.inline.v1.InlineSuggestionUi
 import xyz.actitud.baluard.R
+import xyz.actitud.baluard.data.securityKeyChipRequired
 import xyz.actitud.baluard.i18n.t
 
 /**
@@ -126,7 +127,7 @@ object AutofillResponseBuilder {
         ignored: List<AutofillId> = emptyList(),
     ): FillResponse? {
         val result = AutofillSession.query(target)
-        if (result.securityKeyRequired) {
+        if (securityKeyChipRequired(result.securityKeyRequired, result.matches.size, result.suggestions.size)) {
             return authenticationResponse(context, fields, target, securityKeyRequired = true)
         }
         val matches = result.matches

@@ -53,6 +53,13 @@ pub enum BaluardError {
     #[error("vault error: {detail}")]
     Vault { detail: String },
 
+    /// The vault's device key is sealed under a hardware security key:
+    /// autofill cannot serve it from this process (no key transport), and
+    /// unlocking the app does not change that. A 1.0 policy refusal, not
+    /// an error to retry.
+    #[error("this vault requires its security key")]
+    SecurityKeyRequired,
+
     /// Initializing a new vault on disk failed (device keys, keywrap, manifest).
     #[error("vault creation failed: {detail}")]
     Creation { detail: String },
@@ -896,10 +903,7 @@ impl MobileVault {
             &self.state.vault_path.join("meta/device-privkey.json"),
         ) == baluard_core::vault::device_privkey::PrivkeyFileKind::SealedHw
         {
-            return Err(BaluardError::Vault {
-                detail: "This vault requires its security key. Open Baluard to fill entries."
-                    .into(),
-            });
+            return Err(BaluardError::SecurityKeyRequired);
         }
         Ok(self.state.autofill_query(&target).await?)
     }
@@ -3451,6 +3455,34 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    // H12: the refusal must be typed across the bridge so Kotlin never
+    // string-matches English prose to classify it.
+    #[tokio::test]
+    async fn autofill_query_refuses_hardware_sealed_vaults_with_a_typed_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pw".to_string(), "dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pw".to_string()).await.unwrap();
+
+        // Shape-only marker: file_kind classifies the device key as
+        // hardware-sealed without any chip involved.
+        std::fs::write(
+            tmp.path().join("meta/device-privkey.json"),
+            "{\"type\":\"baluard-devkey-seal-v2-hw\"}",
+        )
+        .unwrap();
+
+        match vault.autofill_query("https://github.com".to_string()).await {
+            Err(BaluardError::SecurityKeyRequired) => {}
+            Err(other) => panic!(
+                "expected the typed SecurityKeyRequired refusal, got {other:?}"
+            ),
+            Ok(_) => panic!("hardware-sealed vault served autofill matches"),
+        }
     }
 
     #[tokio::test]

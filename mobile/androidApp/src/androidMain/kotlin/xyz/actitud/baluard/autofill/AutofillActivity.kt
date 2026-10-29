@@ -138,6 +138,24 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
 
     private fun unlockThen(path: String, onUnlocked: () -> Unit) {
         val status = findViewById<TextView>(R.id.autofill_status)
+        status.text = t("autofill.unlockHint")
+        AutofillSession.scope.launch {
+            // H12: a hardware-sealed vault can never fill from this
+            // process — skip the biometric prompt the KEK path would
+            // waste and hand the user to the main app with honest copy.
+            if (AutofillSession.hardwareSealed(path)) {
+                runOnUiThread {
+                    status.text = t("autofill.securityKeyHint")
+                    openMainAndFinishDelayed()
+                }
+                return@launch
+            }
+            runOnUiThread { biometricThen(path, onUnlocked) }
+        }
+    }
+
+    private fun biometricThen(path: String, onUnlocked: () -> Unit) {
+        val status = findViewById<TextView>(R.id.autofill_status)
         val biometric = Biometric()
         if (!biometric.isAvailable() || !biometric.isEnrolled(path)) {
             // Quick unlock was never set up (or biometrics changed). Autofill
