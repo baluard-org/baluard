@@ -266,6 +266,66 @@ describe("SettingsModal security-key guard flow", () => {
     expect(rendered.getByText("settings.hwAttestUnknownShort")).toBeTruthy();
   });
 
+  it("disabling demands the master password and sends it with the request", async () => {
+    const repromptShow = vi.fn((cb) => cb("retype-my-pass"));
+    window.__baluardReprompt = { show: repromptShow };
+    try {
+      const calls = [];
+      daemonMock.mockImplementation((action, payload) => {
+        calls.push([action, payload]);
+        if (action === "settings.get") {
+          return Promise.resolve(
+            JSON.stringify({ vault_timeout: "15m", fetch_favicons: false, display_name: "Alice", avatar_ext: "png" }),
+          );
+        }
+        if (action === "vault.avatar.get") return Promise.resolve("");
+        if (action === "vault.pin_status" || action === "vault.biometric_status") {
+          return Promise.resolve(JSON.stringify({ enabled: false }));
+        }
+        if (action === "vault.hw_status") {
+          return Promise.resolve(fidoStatus({ seal: "v2-hw", enabled: true }));
+        }
+        if (action === "vault.hw_disable") return Promise.resolve(JSON.stringify({ enabled: false }));
+        return Promise.resolve("");
+      });
+      const rendered = render(() => <SettingsModal />);
+      await openDataTab(rendered);
+
+      fireEvent.click(rendered.getByTestId("hw-toggle"));
+      await waitFor(() => expect(rendered.getByTestId("confirm-accept")).toBeTruthy());
+      fireEvent.click(rendered.getByTestId("confirm-accept"));
+      flush();
+
+      // The password collector gates the downgrade and its verified
+      // password rides the disable request.
+      expect(repromptShow).toHaveBeenCalled();
+      const disable = calls.find(([a]) => a === "vault.hw_disable");
+      expect(disable).toBeTruthy();
+      expect(disable[1]).toBe("retype-my-pass");
+      await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledWith("settings.hwDisabledToast"));
+    } finally {
+      delete window.__baluardReprompt;
+    }
+  });
+
+  it("enabling never consults the password collector", async () => {
+    const repromptShow = vi.fn();
+    window.__baluardReprompt = { show: repromptShow };
+    try {
+      mockBase(fidoStatus(), () => Promise.resolve(JSON.stringify({ enabled: true, backend: "fido2", attestation: "verified" })));
+      const rendered = render(() => <SettingsModal />);
+      await openDataTab(rendered);
+      fireEvent.click(rendered.getByTestId("hw-toggle"));
+      await waitFor(() => expect(rendered.getByTestId("confirm-accept")).toBeTruthy());
+      fireEvent.click(rendered.getByTestId("confirm-accept"));
+      flush();
+      await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledWith("settings.hwEnabledToast"));
+      expect(repromptShow).not.toHaveBeenCalled();
+    } finally {
+      delete window.__baluardReprompt;
+    }
+  });
+
   it("does not accumulate hw-status polls across open/close cycles", async () => {
     vi.useFakeTimers();
     try {
