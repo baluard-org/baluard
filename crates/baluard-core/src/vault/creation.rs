@@ -688,7 +688,7 @@ impl<'a> VaultCreator<'a> {
                 if self.initialize_git {
                     let engine = crate::sync::engine::SyncEngine::new(
                         &path,
-                        &self.device_name,
+                        &device_id.to_string(),
                         Some(&devkey_seal),
                     );
                     let _ = engine.init_repo()?;
