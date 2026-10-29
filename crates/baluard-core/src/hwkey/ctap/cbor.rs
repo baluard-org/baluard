@@ -360,4 +360,38 @@ mod tests {
         let bomb = vec![0x81u8; 7609];
         assert!(Value::decode(&bomb).is_err());
     }
+
+    #[test]
+    fn depth_bombs_through_maps_are_refused() {
+        // Map values, map keys, and mixed nesting share the depth counter
+        // with the array arm.
+        let mut map_values = vec![0x01u8];
+        for _ in 0..17 {
+            map_values.insert(0, 0x01); // key: unsigned 1
+            map_values.insert(0, 0xa1); // map with one pair
+        }
+        assert!(Value::decode(&map_values).is_err());
+
+        // A container used as a MAP KEY recurses through the same arm.
+        let mut key_bomb = vec![0x01u8];
+        for _ in 0..17 {
+            key_bomb.insert(0, 0x81);
+        }
+        let mut key_bomb_map = key_bomb;
+        key_bomb_map.push(0x01); // value
+        key_bomb_map.insert(0, 0xa1);
+        assert!(Value::decode(&key_bomb_map).is_err());
+
+        // Mixed array/map alternation at the boundary: 16 deep decodes.
+        let mut mixed = vec![0x01u8];
+        for level in 0..16 {
+            if level % 2 == 0 {
+                mixed.insert(0, 0x81);
+            } else {
+                mixed.insert(0, 0x01);
+                mixed.insert(0, 0xa1);
+            }
+        }
+        assert!(Value::decode(&mixed).is_ok());
+    }
 }
