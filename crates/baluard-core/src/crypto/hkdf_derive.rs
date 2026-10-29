@@ -15,6 +15,7 @@ const ENROLL_PROOF_INFO: &[u8] = b"baluard-enroll-proof-v1";
 /// Derives from the KEK so the seal opens exactly when master-password
 /// material is present (creation, unlock, PIN-escrowed KEK).
 const DEVKEY_SEAL_INFO: &[u8] = b"baluard-devkey-v1";
+const IDENTITY_HW_INFO: &[u8] = b"baluard-identity-hw-v1";
 const SEQUENCE_INFO: &[u8] = b"baluard-sequence-v1";
 const INDEX_INFO: &[u8] = b"baluard-index-v1";
 const FOLDERS_INFO: &[u8] = b"baluard-folders-v1";
@@ -74,6 +75,18 @@ pub fn derive_sync_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
 /// this subkey.
 pub fn derive_devkey_seal_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
     derive_key(kek, DEVKEY_SEAL_INFO)
+}
+
+/// Derive the identity sealing key for an hw-sealed device from the hw
+/// content key.
+///
+/// Identity artifacts (member unlock seed, `identity.enc`) bind to this
+/// so the bare KEK subkey alone cannot open them on a device whose
+/// device key lives behind the chip.
+pub fn derive_identity_hw_key(
+    hw_content_key: &[u8; 32],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
+    derive_key(hw_content_key, IDENTITY_HW_INFO).map(zeroize::Zeroizing::new)
 }
 
 /// Derive a 32-byte Sequence Key from Root Key.

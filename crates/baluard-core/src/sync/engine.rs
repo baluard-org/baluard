@@ -3797,6 +3797,13 @@ impl SyncEngine {
         devkey_seal: Option<&[u8; 32]>,
         device_id: Option<&str>,
     ) -> Result<Option<ed25519_dalek::SigningKey>, BaluardError> {
+        if let Some(device_id) = device_id.and_then(|id| uuid::Uuid::parse_str(id).ok()) {
+            if let Some(key) =
+                crate::vault::handle::cached_device_signing_key(vault_path, device_id)
+            {
+                return Ok(Some(key));
+            }
+        }
         // Try OS keyring for THIS clone's device only (skipped in tests:
         // unsigned binaries trigger keychain prompts; see
         // `crate::keyring_disabled`). A per-vault keyring service is

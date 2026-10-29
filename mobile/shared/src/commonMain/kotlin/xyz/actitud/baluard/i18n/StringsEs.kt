@@ -36,6 +36,9 @@ internal val ES: Map<String, String> = mapOf(
     "login.enableBiometric" to "Activar desbloqueo rápido",
     "login.notNow" to "Ahora no",
     "login.unlockFailed" to "No se pudo desbloquear. Inténtalo de nuevo.",
+    "login.securityKeyHold" to "Si esta bóveda usa una llave de seguridad, acércala al teléfono o conéctala por USB.",
+    "settings.hardwareKeyTimeout" to "La llave agotó el tiempo. Inténtalo de nuevo y mantenla conectada.",
+    "settings.hardwareKeyCancelled" to "Operación con la llave cancelada",
 
     // onboarding root
     "onboarding.subtitle" to "Tus contraseñas, guardadas solo para ti",
@@ -440,6 +443,14 @@ internal val ES: Map<String, String> = mapOf(
     "settings.biometric.disableTitle" to "¿Desactivar el desbloqueo biométrico?",
     "settings.biometric.disableBody" to "Usarás tu contraseña maestra para desbloquear esta bóveda en este dispositivo. Podrás reactivarlo más tarde.",
     "settings.biometric.disableConfirm" to "Desactivar",
+    "settings.hardwareKey" to "Llave de seguridad",
+    "settings.hardwareKeyHint" to "Exige tu YubiKey junto con la contraseña maestra.",
+    "settings.hardwareKeyHold" to "Acerca la llave al teléfono o autoriza el acceso USB.",
+    "settings.hardwareKeyVerified" to "Llave de seguridad verificada.",
+    "settings.hardwareKeyUnknown" to "La llave funciona, pero no se pudo verificar su fabricante.",
+    "settings.hardwareKeyEnabled" to "Llave de seguridad activada",
+    "settings.hardwareKeyDisabled" to "Llave de seguridad desactivada",
+    "settings.hardwareKeyFailed" to "La operación con la llave falló",
     "settings.clipboardClear" to "Borrado automático del portapapeles",
     "settings.clipboardClearHint" to "Los secretos copiados se borran del portapapeles tras este tiempo (salvo que hayas copiado otra cosa).",
     "settings.clipboardClear.never" to "Nunca",
@@ -599,6 +610,8 @@ internal val ES: Map<String, String> = mapOf(
     // Android autofill picker + trampoline (Phase 6). El título del prompt
     // biométrico reutiliza login.biometricTitle.
     "autofill.unlockHint" to "Toca para desbloquear y rellenar",
+    "autofill.securityKeyTitle" to "Se requiere la llave de seguridad",
+    "autofill.securityKeyHint" to "Abre Baluard y desbloquea con tu llave de seguridad",
     "autofill.unlockVault" to "Desbloquear {0}",
     "autofill.noUsername" to "(sin usuario)",
     "autofill.openAppToSetup" to "Abre Baluard primero para activar el desbloqueo rápido",

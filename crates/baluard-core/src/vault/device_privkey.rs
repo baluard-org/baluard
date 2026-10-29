@@ -260,6 +260,15 @@ pub fn seal_file(
 /// returned as-is so phrase-flow writes keep working until the next
 /// unlock re-seals them.
 pub fn read_privkey_file(path: &Path, seal_key: Option<&[u8; 32]>) -> Result<String, BaluardError> {
+    read_privkey_file_with_ck(path, seal_key).map(|(inner, _)| inner)
+}
+
+/// Read the privkey JSON plus, for v2-hw files, the hw content key (see
+/// `open_bytes_hw_with_ck`).
+pub fn read_privkey_file_with_ck(
+    path: &Path,
+    seal_key: Option<&[u8; 32]>,
+) -> Result<(String, Option<zeroize::Zeroizing<[u8; 32]>>), BaluardError> {
     match file_kind(path) {
         PrivkeyFileKind::Absent => {
             Err(VaultError::NotFound("device private key not found".into()).into())
@@ -270,15 +279,17 @@ pub fn read_privkey_file(path: &Path, seal_key: Option<&[u8; 32]>) -> Result<Str
             })?;
             let file = std::fs::read_to_string(path)
                 .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
-            open_bytes(key, file.as_bytes())
+            open_bytes(key, file.as_bytes()).map(|inner| (inner, None))
         }
         PrivkeyFileKind::SealedHw => {
             let key = seal_key.ok_or_else(|| BaluardError::from(VaultError::Locked))?;
             let file = std::fs::read_to_string(path)
                 .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
-            open_sealed_hw(key, file.as_bytes())
+            open_sealed_hw_with_ck(key, file.as_bytes())
+                .map(|(inner, ck)| (inner, Some(ck)))
         }
         PrivkeyFileKind::LegacyPlaintext => std::fs::read_to_string(path)
+            .map(|inner| (inner, None))
             .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")).into()),
         PrivkeyFileKind::Damaged => Err(VaultError::Corrupt(
             "device private key file is damaged".into(),
@@ -345,16 +356,21 @@ pub fn rotate_seal_key(
                     .and_then(|s| Uuid::parse_str(s).ok())
             });
             let mode = crate::hwkey::HwConsent::from_flag(v["consent"].as_bool() == Some(true));
-            let inner = open_bytes_hw(&*hw, old_seal_key, file.as_bytes())?;
+            let (inner, old_ck) = open_bytes_hw_with_ck(&*hw, old_seal_key, file.as_bytes())?;
             // Rotation re-seals under the SAME binding without re-attesting;
             // the recorded verdict carries over.
             let attestation = v["hw_attestation"]
                 .as_str()
                 .and_then(hw_attestation_from_str);
-            let bytes = seal_bytes_hw(&*hw, &binding, new_seal_key, &inner, id, mode, attestation)?;
-            super::write_vault_file(path, &bytes).map_err(|e| {
-                BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
+            let out = seal_bytes_hw(&*hw, &binding, new_seal_key, &inner, id, mode, attestation)?;
+            super::write_vault_file(path, &out.bytes).map_err(|e| {
+                BaluardError::from(VaultError::Metadata(format!(
+                    "write hw-sealed devkey: {e}"
+                )))
             })?;
+            if let Some(vault) = path.parent().and_then(Path::parent) {
+                rebind_identity_artifacts(vault, id, &ik_of(&old_ck), &ik_of(&out.content_key))?;
+            }
             Ok(true)
         }
         PrivkeyFileKind::Sealed => {
@@ -380,6 +396,14 @@ pub fn rotate_seal_key(
 // v2-hw: hardware-AND seal
 // ---------------------------------------------------------------------------
 
+/// A sealed v2-hw file plus the content key it was written under, so
+/// the caller can rebind related artifacts (identity seed) to the same
+/// chip without a second assertion.
+pub struct HwSealOutput {
+    pub bytes: Vec<u8>,
+    pub content_key: zeroize::Zeroizing<[u8; 32]>,
+}
+
 /// Seal the inner privkey JSON under the v2-hw AND construction.
 ///
 /// `hw` supplies the chip: a fresh ephemeral keypair is generated per
@@ -395,7 +419,7 @@ pub fn seal_bytes_hw(
     device_id: Option<Uuid>,
     consent: crate::hwkey::HwConsent,
     attestation: Option<crate::hwkey::HwAttestation>,
-) -> Result<Vec<u8>, BaluardError> {
+) -> Result<HwSealOutput, BaluardError> {
     // The backend mints the ephemeral in its own primitive family and
     // discards the private half - only its chip can reproduce the secret.
     let (peer, hw_secret) = hw.derive_ephemeral(binding, consent)?;
@@ -436,7 +460,10 @@ pub fn seal_bytes_hw(
     if let Some(att) = attestation {
         doc["hw_attestation"] = serde_json::Value::String(att.as_str().to_string());
     }
-    Ok(doc.to_string().into_bytes())
+    Ok(HwSealOutput {
+        bytes: doc.to_string().into_bytes(),
+        content_key: zeroize::Zeroizing::new(ck),
+    })
 }
 
 /// v2-hw AAD: purpose string + consent mode byte + length-framed
@@ -472,6 +499,17 @@ pub fn open_bytes_hw(
     seal_key: &[u8; 32],
     file: &[u8],
 ) -> Result<String, BaluardError> {
+    open_bytes_hw_with_ck(hw, seal_key, file).map(|(inner, _)| inner)
+}
+
+/// Open a v2-hw file and also return the content key, so callers can
+/// derive hw-bound keys for related artifacts (identity seed, identity
+/// escrow) from the SAME chip assertion instead of paying a second tap.
+pub fn open_bytes_hw_with_ck(
+    hw: &dyn crate::hwkey::HardwareKeyStore,
+    seal_key: &[u8; 32],
+    file: &[u8],
+) -> Result<(String, zeroize::Zeroizing<[u8; 32]>), BaluardError> {
     let v: serde_json::Value = serde_json::from_slice(file)
         .map_err(|e| VaultError::Corrupt(format!("hw-sealed devkey json: {e}")))?;
     if v["type"].as_str() != Some(SEAL_TYPE_HW) {
@@ -535,9 +573,10 @@ pub fn open_bytes_hw(
         return Err(VaultError::Corrupt("devkey seal key mismatch".into()).into());
     }
     let inner = String::from_utf8(pt.clone())
-        .map_err(|e| VaultError::Corrupt(format!("devkey plaintext utf8: {e}")))?;
+        .map_err(|e| VaultError::Corrupt(format!("devkey plaintext utf8: {e}")));
     pt.zeroize();
-    Ok(inner)
+    let inner = inner?;
+    Ok((inner, zeroize::Zeroizing::new(ck)))
 }
 
 /// The backend id recorded in an hw-sealed file, for callers that need
@@ -577,6 +616,14 @@ pub fn hw_attestation_of(path: &Path) -> Option<crate::hwkey::HwAttestation> {
 /// registry. A missing backend (chip gone, kill-switch, wrong machine)
 /// is the typed unavailable error - never a silent downgrade.
 pub fn open_sealed_hw(seal_key: &[u8; 32], file: &[u8]) -> Result<String, BaluardError> {
+    open_sealed_hw_with_ck(seal_key, file).map(|(inner, _)| inner)
+}
+
+/// `open_sealed_hw` plus the content key (see `open_bytes_hw_with_ck`).
+pub fn open_sealed_hw_with_ck(
+    seal_key: &[u8; 32],
+    file: &[u8],
+) -> Result<(String, zeroize::Zeroizing<[u8; 32]>), BaluardError> {
     let backend = hw_backend_of(file)?;
     let hw = crate::hwkey::store_for(&backend).ok_or_else(|| {
         // Typed distinction: a different chip installed is "wrong card";
@@ -590,7 +637,7 @@ pub fn open_sealed_hw(seal_key: &[u8; 32], file: &[u8]) -> Result<String, Baluar
             .into()
         }
     })?;
-    open_bytes_hw(&*hw, seal_key, file)
+    open_bytes_hw_with_ck(&*hw, seal_key, file)
 }
 
 /// Enable the hardware seal on an existing sealed/legacy file (the
@@ -636,7 +683,7 @@ pub fn enable_hw_seal(
         PrivkeyFileKind::LegacyPlaintext | PrivkeyFileKind::Sealed => {
             let inner = read_privkey_file(path, Some(seal_key))?;
             let info = hw.create_binding(vault_id, mode)?;
-            let bytes = seal_bytes_hw(
+            let out = seal_bytes_hw(
                 &*hw,
                 &info.binding,
                 seal_key,
@@ -645,9 +692,23 @@ pub fn enable_hw_seal(
                 mode,
                 info.attestation,
             )?;
-            super::write_vault_file(path, &bytes).map_err(|e| {
-                BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
+            super::write_vault_file(path, &out.bytes).map_err(|e| {
+                BaluardError::from(VaultError::Metadata(format!(
+                    "write hw-sealed devkey: {e}"
+                )))
             })?;
+            // Eager identity rebind where the old keys are derivable: the
+            // member seed (devkey_seal) and keystore-mode identity.enc.
+            // Passphrase-mode identity.enc keeps its lazy heal at the next
+            // full password unlock - no passphrase key here.
+            let vault = path.parent().and_then(Path::parent);
+            if let Some(vault) = vault {
+                let ik = ik_of(&out.content_key);
+                rebind_identity_artifacts(vault, device_id, seal_key, &ik)?;
+                if let Some(legacy) = identity_keystore_wrap_key(vault) {
+                    rebind_identity_artifacts(vault, device_id, &legacy, &ik)?;
+                }
+            }
             Ok(true)
         }
     }
@@ -669,11 +730,35 @@ pub fn disable_hw_seal(
     let backend = hw_backend_of(file.as_bytes())?;
     let hw = crate::hwkey::store_for(&backend)
         .ok_or_else(crate::hwkey::hw_unavailable_error)?;
-    let inner = open_bytes_hw(&*hw, seal_key, file.as_bytes())?;
+    let (inner, old_ck) = open_bytes_hw_with_ck(&*hw, seal_key, file.as_bytes())?;
     let binding = serde_json::from_str::<serde_json::Value>(&file)
         .ok()
         .and_then(|v| v["hw_binding"].as_str().map(str::to_string));
+    let old_ik = ik_of(&old_ck);
+    let vault = path.parent().and_then(Path::parent);
+    // Rebind identity artifacts BEFORE the unsealed commit: a rebind
+    // failure aborts with the seal still intact. The reverse (seal_file
+    // first) would strand the seed under a deleted chip binding.
+    if let Some(vault) = vault {
+        rebind_identity_artifacts(vault, device_id, &old_ik, seal_key)?;
+        if let Some(legacy) = identity_keystore_wrap_key(vault) {
+            rebind_identity_artifacts(vault, device_id, &old_ik, &legacy)?;
+        }
+    }
     seal_file(path, &inner, seal_key, device_id)?;
+    if let Some(vault) = vault {
+        // Passphrase-mode identity.enc has no derivable legacy key here
+        // (token-gated flow, no master password); the escrow phrase is
+        // its recovery. Warn loudly instead of pretending it healed.
+        let meta_identity = vault.join("meta/identity.enc");
+        if let Ok(sealed) = std::fs::read(&meta_identity) {
+            if crate::vault::identity::open_identity(&old_ik, &sealed).is_ok() {
+                eprintln!(
+                    "warning: this identity is still sealed to the security key; restore it from its recovery phrase when needed"
+                );
+            }
+        }
+    }
     if let Some(b) = binding {
         let _ = hw.delete_binding(&b);
     }
@@ -716,7 +801,7 @@ pub fn set_hw_seal_consent(
     }
     let vault_id = crate::hwkey::binding_vault_id(old_binding)
         .ok_or_else(|| VaultError::Corrupt("hw-sealed devkey binding is not a vault tag".into()))?;
-    let inner = open_bytes_hw(&*hw, seal_key, file.as_bytes())?;
+    let (inner, old_ck) = open_bytes_hw_with_ck(&*hw, seal_key, file.as_bytes())?;
     let mode = crate::hwkey::HwConsent::from_flag(consent);
     let info = hw.create_binding(vault_id, mode)?;
     // The verdict is a property of the chip key, not of the consent mode:
@@ -726,7 +811,7 @@ pub fn set_hw_seal_consent(
             .as_str()
             .and_then(hw_attestation_from_str)
     });
-    let bytes = seal_bytes_hw(
+    let out = seal_bytes_hw(
         &*hw,
         &info.binding,
         seal_key,
@@ -735,11 +820,78 @@ pub fn set_hw_seal_consent(
         mode,
         attestation,
     )?;
-    super::write_vault_file(path, &bytes).map_err(|e| {
+    super::write_vault_file(path, &out.bytes).map_err(|e| {
         BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
     })?;
+    if let Some(vault) = path.parent().and_then(Path::parent) {
+        rebind_identity_artifacts(vault, device_id, &ik_of(&old_ck), &ik_of(&out.content_key))?;
+    }
     let _ = hw.delete_binding(old_binding);
     Ok(true)
+}
+
+/// The identity sealing key for an hw content key. Free fn so the rebind
+/// sites stay short.
+fn ik_of(ck: &[u8; 32]) -> zeroize::Zeroizing<[u8; 32]> {
+    crate::crypto::hkdf_derive::derive_identity_hw_key(ck).expect("identity hw key HKDF")
+}
+
+/// Rebind the identity artifacts (member unlock seed, member and legacy
+/// identity.enc) from `from_key` to `to_key`. Identity files that do not
+/// open under `from_key` are left untouched (not ours to heal here);
+/// open/re-seal/write failures propagate - a half-rebound identity is
+/// worse than a failed operation.
+fn rebind_identity_artifacts(
+    vault: &Path,
+    device_id: Option<Uuid>,
+    from_key: &[u8; 32],
+    to_key: &[u8; 32],
+) -> Result<(), BaluardError> {
+    crate::vault::members::rebind_member_unlock_identity_seed(vault, from_key, to_key)?;
+    let mut paths = vec![vault.join("meta/identity.enc")];
+    if let Some(id) = device_id {
+        if let Some(member) = crate::vault::members::member_id_for_device(vault, id) {
+            paths.push(
+                vault
+                    .join(crate::vault::members::MEMBERS_DIR)
+                    .join(member.to_string())
+                    .join("identity.enc"),
+            );
+        }
+    }
+    for p in paths {
+        if !p.exists() {
+            continue;
+        }
+        let sealed = std::fs::read(&p)
+            .map_err(|e| VaultError::Metadata(format!("read identity file: {e}")))?;
+        let Ok(keys) = crate::vault::identity::open_identity(from_key, &sealed) else {
+            continue;
+        };
+        let resealed = crate::vault::identity::seal_identity(to_key, &keys)?;
+        super::write_vault_file(&p, &resealed).map_err(|e| {
+            BaluardError::from(VaultError::Metadata(format!("re-seal identity file: {e}")))
+        })?;
+    }
+    Ok(())
+}
+
+/// Best-effort legacy wrap key for identity.enc: the keystore key when the
+/// identity seals in keystore mode. Passphrase mode needs the master
+/// password, which token-gated flows do not have, so callers must treat
+/// None as "cannot rebind; lazy-heal at the next full unlock".
+fn identity_keystore_wrap_key(vault: &Path) -> Option<zeroize::Zeroizing<[u8; 32]>> {
+    let meta = std::fs::read_to_string(vault.join("meta/identity-meta.json")).ok()?;
+    let meta: serde_json::Value = serde_json::from_str(&meta).ok()?;
+    if meta["mode"].as_str() != Some("keystore") {
+        return None;
+    }
+    let key_name = meta["keystore_key"].as_str()?;
+    let keystore = crate::vault::creation::get_global_keystore()?;
+    let bytes = keystore.get_secret(key_name).ok()?;
+    <[u8; 32]>::try_from(bytes.as_slice())
+        .ok()
+        .map(zeroize::Zeroizing::new)
 }
 
 #[cfg(test)]
@@ -1697,8 +1849,12 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         h.unlock_with_kek(&kek).unwrap();
         assert!(h.is_unlocked());
+        assert!(crate::vault::handle::cached_device_signing_key(dir.path(), h.device_id).is_some());
 
         crate::hwkey::uninstall();
+        assert!(crate::vault::handle::cached_device_signing_key(dir.path(), h.device_id).is_some());
+        h.lock();
+        assert!(crate::vault::handle::cached_device_signing_key(dir.path(), h.device_id).is_none());
         hw_env_restore(_old_env);
     }
 
@@ -1894,5 +2050,175 @@ mod tests {
 
         crate::hwkey::uninstall();
         hw_env_restore(_old_env);
+    }
+
+    /// C1 review fix: with the device file hw-sealed, the member identity
+    /// seed must no longer open under the bare KEK subkey. Enable rebinds
+    /// it under the hw-content-key-derived identity key; rotate re-keys it
+    /// along; disable rebinds it back.
+    #[test]
+    fn enable_hw_seal_rebinds_the_member_identity_seed() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        let vault_path = handle.path.clone();
+        let device_id = handle.device_id;
+        let privkey_path = vault_path.join("meta/device-privkey.json");
+
+        // Device-local member unlock row in the pre-fix shape: the seed
+        // sealed under the bare KEK subkey.
+        let devkey_seal = handle.unlocked().devkey_seal;
+        let identity = crate::vault::identity::IdentityKeys::generate().unwrap();
+        let seed_sealed =
+            hex::encode(crate::vault::identity::seal_identity(&devkey_seal, &identity).unwrap());
+        let kdf_json =
+            std::fs::read_to_string(vault_path.join("meta/kdf-params.json")).unwrap();
+        let row = serde_json::json!({
+            // A foreign device id: the row must be rebindable but never
+            // match THIS device's admin unlock canary lookup.
+            "device_id": uuid::Uuid::new_v4().to_string(),
+            "kdf_params": serde_json::from_str::<serde_json::Value>(&kdf_json).unwrap(),
+            "kek_canary": hex::encode([0u8; 16]),
+            "identity_seed_sealed": seed_sealed,
+        });
+        crate::vault::write_vault_file(
+            &vault_path.join("meta/member-unlock.json"),
+            serde_json::to_string_pretty(&row).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let seed_hex = || {
+            let row: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(vault_path.join("meta/member-unlock.json")).unwrap(),
+            )
+            .unwrap();
+            row["identity_seed_sealed"].as_str().unwrap().to_string()
+        };
+        let opens_under = |hex_str: &str, key: &[u8; 32]| {
+            crate::vault::identity::open_identity(key, &hex::decode(hex_str).unwrap()).is_ok()
+        };
+
+        assert!(opens_under(&seed_hex(), &devkey_seal));
+        seal_to_tap(&mut handle);
+
+        // The C1 property: the password-derived subkey alone cannot open
+        // the seed; the hw-bound key can.
+        assert!(!opens_under(&seed_hex(), &devkey_seal));
+        let ik = identity_key_of_file(&privkey_path, &devkey_seal);
+        assert!(opens_under(&seed_hex(), &ik));
+
+        // Password change re-keys the seed to the new content key.
+        let mut h = VaultHandle::open(&vault_path).unwrap();
+        h.unlock(&password).unwrap();
+        h.change_master_password(&password, "rotated pass 456").unwrap();
+        h.lock();
+        let new_seal = {
+            let kdf_json =
+                std::fs::read_to_string(vault_path.join("meta/kdf-params.json")).unwrap();
+            let params: crate::types::KdfParams = serde_json::from_str(&kdf_json).unwrap();
+            let kek = crate::crypto::kdf::derive_kek("rotated pass 456", &params).unwrap();
+            crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek).unwrap()
+        };
+        assert!(!opens_under(&seed_hex(), &ik));
+        let ik2 = identity_key_of_file(&privkey_path, &new_seal);
+        assert!(opens_under(&seed_hex(), &ik2));
+        assert_ne!(ik, ik2);
+
+        // The rotation re-keys identity.enc along with the seed (the full
+        // unlock above healed it to ik; the change moves it to ik2).
+        let identity_enc = std::fs::read(vault_path.join("meta/identity.enc")).unwrap();
+        assert!(crate::vault::identity::open_identity(&ik2, &identity_enc).is_ok());
+        assert!(crate::vault::identity::open_identity(&ik, &identity_enc).is_err());
+
+        // Disable rebinds the seed back under the bare KEK subkey.
+        disable_hw_seal(&privkey_path, &new_seal, Some(device_id)).unwrap();
+        assert!(opens_under(&seed_hex(), &new_seal));
+        assert_eq!(file_kind(&privkey_path), PrivkeyFileKind::Sealed);
+
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+    }
+
+    /// C1 review fix (admin side): on an hw-sealed device the
+    /// passphrase-fallback identity re-binds under the hw key at the first
+    /// full unlock, so the master password alone cannot open it anymore.
+    #[test]
+    fn unlock_rebinds_the_passphrase_identity_under_the_hw_key() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        let vault_path = handle.path.clone();
+        let identity_path = vault_path.join("meta/identity.enc");
+
+        // Keystore-less test env: passphrase-mode identity, openable with
+        // the master password alone.
+        let meta: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(vault_path.join("meta/identity-meta.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(meta["mode"].as_str(), Some("passphrase"));
+        let passphrase_key = || {
+            let salt = hex::decode(meta["salt_hex"].as_str().unwrap()).unwrap();
+            let params = crate::types::KdfParams {
+                profile: crate::types::KdfProfile::MobileLow,
+                memory_kib: meta["memory_kib"].as_u64().unwrap() as u32,
+                time_cost: meta["time_cost"].as_u64().unwrap() as u32,
+                parallelism: 1,
+                salt,
+            };
+            crate::crypto::kdf::derive_kek(&password, &params).unwrap()
+        };
+        assert!(crate::vault::identity::open_identity(&passphrase_key(), &std::fs::read(&identity_path).unwrap()).is_ok());
+
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        seal_to_tap(&mut handle);
+        let mut h = VaultHandle::open(&vault_path).unwrap();
+        h.unlock(&password).unwrap();
+        assert!(h.identity().is_some());
+        h.lock();
+
+        // Healed: the password alone no longer opens the identity.
+        let sealed = std::fs::read(&identity_path).unwrap();
+        assert!(crate::vault::identity::open_identity(&passphrase_key(), &sealed).is_err());
+        let devkey_seal = {
+            let kdf_json =
+                std::fs::read_to_string(vault_path.join("meta/kdf-params.json")).unwrap();
+            let params: crate::types::KdfParams = serde_json::from_str(&kdf_json).unwrap();
+            let kek = crate::crypto::kdf::derive_kek(&password, &params).unwrap();
+            crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek).unwrap()
+        };
+        let ik = identity_key_of_file(&vault_path.join("meta/device-privkey.json"), &devkey_seal);
+        assert!(crate::vault::identity::open_identity(&ik, &sealed).is_ok());
+
+        // C3 follow-up: a quick unlock (no master password) still loads
+        // the healed identity, because the hw key is tried first.
+        let kek = {
+            let kdf_json =
+                std::fs::read_to_string(vault_path.join("meta/kdf-params.json")).unwrap();
+            let params: crate::types::KdfParams = serde_json::from_str(&kdf_json).unwrap();
+            crate::crypto::kdf::derive_kek(&password, &params).unwrap()
+        };
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let mut q = VaultHandle::open(&vault_path).unwrap();
+        q.unlock_with_kek(&kek).unwrap();
+        assert!(q.identity().is_some(), "quick unlock must load the healed identity");
+
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+    }
+
+    /// Open the device file (mock chip installed) and derive its identity
+    /// sealing key.
+    fn identity_key_of_file(privkey_path: &std::path::Path, seal_key: &[u8; 32]) -> [u8; 32] {
+        let file = std::fs::read_to_string(privkey_path).unwrap();
+        let backend = hw_backend_of(file.as_bytes()).unwrap();
+        let hw = crate::hwkey::store_for(&backend).unwrap();
+        let (_, ck) = open_bytes_hw_with_ck(&*hw, seal_key, file.as_bytes()).unwrap();
+        *crate::crypto::hkdf_derive::derive_identity_hw_key(&ck).unwrap()
     }
 }

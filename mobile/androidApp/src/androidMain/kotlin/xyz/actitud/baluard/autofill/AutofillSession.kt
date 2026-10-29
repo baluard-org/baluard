@@ -56,6 +56,7 @@ object AutofillSession {
     data class QueryResult(
         val matches: List<Match>,
         val suggestions: List<AppSuggestion>,
+        val securityKeyRequired: Boolean = false,
     )
 
     /** Open (keyless) handles by vault directory path. */
@@ -203,10 +204,18 @@ object AutofillSession {
     suspend fun query(target: String): QueryResult {
         val matches = ArrayList<Match>()
         val suggestions = ArrayList<AppSuggestion>()
+        var securityKeyRequired = false
         for ((path, v) in snapshotHandles()) {
             if (!v.isUnlocked()) continue
             if (!mergesIntoAutofill(path)) continue
-            val raw = runCatching { v.autofillQuery(target) }.getOrNull() ?: continue
+            val raw = try {
+                v.autofillQuery(target)
+            } catch (e: Exception) {
+                if (e.message?.contains("requires its security key") == true) {
+                    securityKeyRequired = true
+                }
+                continue
+            }
             val obj = runCatching { JSONObject(raw) }.getOrNull() ?: continue
             val vaultName = nameFor(path)
             matches.addAll(
@@ -228,7 +237,7 @@ object AutofillSession {
                 )
             }
         }
-        return QueryResult(matches, suggestions)
+        return QueryResult(matches, suggestions, securityKeyRequired)
     }
 
     /**
