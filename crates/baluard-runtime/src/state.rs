@@ -8120,9 +8120,16 @@ impl VaultState {
 
     /// Re-unlock the vault using the PIN. Verifies the PIN against the
     /// in-memory escrow in constant time, then runs `unlock_with_kek`
-    /// (skips Argon2id; still re-verifies keywrap + canaries). On the
-    /// `MAX_PIN_FAILURES`-th wrong PIN the escrow is destroyed: the master
-    /// password becomes mandatory and the user must re-enable the PIN.
+    /// (skips Argon2id; still re-verifies keywrap + canaries) on the
+    /// blocking pool, so an hw-sealed vault's tap wait never pins a tokio
+    /// worker. On the `MAX_PIN_FAILURES`-th wrong PIN the escrow is
+    /// destroyed: the master password becomes mandatory and the user must
+    /// re-enable the PIN. A canary rejection after a CORRECT PIN means the
+    /// escrowed key is stale (password changed elsewhere) — the escrow is
+    /// destroyed there too, since every future attempt would fail the same
+    /// way. Every other failure (hardware outcomes, unpaired keywrap,
+    /// damaged metadata) keeps the escrow: the PIN still holds and the
+    /// error passes through with the same copy the password path uses.
     ///
     /// Concurrency: verify + counter-increment + nuke run under ONE hold of
     /// the escrow mutex, so no concurrent `pin_unlock` can slip a verified
@@ -8168,35 +8175,38 @@ impl VaultState {
         };
 
         // unlock_with_kek runs the shared tail (keywrap HPKE unwrap +
-        // canaries) so a corrupted/stale keywrap still fails closed.
-        let mut new_handle = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)
-            .map_err(|e| {
-                QuickUnlockError::Proven(format!("Failed to open vault for unlock: {e}"))
-            })?;
-        match new_handle.unlock_with_kek(&kek) {
+        // canaries) so a corrupted/stale keywrap still fails closed —
+        // spawn_blocking inside, so the chip tap never pins a worker.
+        match self.unlock_with_kek(&kek).await {
             Ok(()) => {
-                // Success: clear the PIN failure counter, then land on the
-                // shared tail (token mint + migration + autosync + sweeps) —
-                // same contract as `unlock()`.
+                // Success: clear the PIN failure counter; unlock_with_kek
+                // already landed the shared tail (token mint + migration +
+                // autosync + sweeps) — same contract as `unlock()`.
                 self.pin_failures
                     .store(0, std::sync::atomic::Ordering::Relaxed);
-                self.finish_unlock(new_handle)
-                    .await
-                    .map_err(|e| QuickUnlockError::Proven(e.to_string()))?;
                 Ok(serde_json::json!({ "success": true }).to_string())
             }
-            Err(e) => {
-                // Correct PIN but unlock failed: the retained KEK is stale
-                // (e.g. password changed on another device + synced). The
-                // escrow is now useless — every future correct-PIN attempt
-                // would fail the same way. Nuke it immediately so the user
-                // gets a clear “re-enable PIN” signal instead of burning the
-                // 5-strike budget on a PIN they remember correctly.
+            Err(e) if baluard_core::error::is_password_failure(&e) => {
+                // Correct PIN but the canary rejected the escrowed key:
+                // it is stale (e.g. password changed on another device +
+                // synced). The escrow is now useless — every future
+                // correct-PIN attempt would fail the same way. Nuke it
+                // immediately so the user gets a clear “re-enable PIN”
+                // signal instead of burning the 5-strike budget on a PIN
+                // they remember correctly.
                 *self.pin.lock().await = None;
                 Err(QuickUnlockError::Proven(format!(
                     "PIN unlock failed (the saved key is stale, usually because \
                      the master password changed). Re-enable PIN unlock. Underlying error: {e}"
                 )))
+            }
+            Err(e) => {
+                // Hardware outcome (chip gone, tap timeout, tap cancelled),
+                // unpaired keywrap, damaged metadata: not the PIN's fault
+                // and the escrowed key is still valid. Keep the escrow and
+                // pass the typed copy through — surfaces map it exactly
+                // like the password path.
+                Err(QuickUnlockError::Proven(e.to_string()))
             }
         }
     }
@@ -9818,6 +9828,246 @@ mod enroll_phrase_seal_tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("meta/device-privkey.json")).unwrap(),
             privkey_before
+        );
+    }
+}
+
+#[cfg(test)]
+mod pin_hw_escrow_tests {
+    use super::VaultState;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    const MASTER: &str = "pin-hw-master-pass-7";
+    const PIN: &str = "246813";
+
+    static TEST_STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static TAP_OFF_WORKER: AtomicBool = AtomicBool::new(false);
+
+    /// H5 red signal: a chip derive reached from inside `block_on` panics
+    /// on a tokio worker (blocking-region guard) but succeeds on the
+    /// blocking pool. The flag records which thread paid the tap.
+    struct PinHwMock {
+        probe_blocking_thread: bool,
+    }
+
+    impl baluard_core::hwkey::HardwareKeyStore for PinHwMock {
+        fn backend_id(&self) -> &'static str {
+            "mock"
+        }
+
+        fn probe(&self) -> baluard_core::hwkey::HwCapability {
+            baluard_core::hwkey::HwCapability::Available {
+                backend: "mock".into(),
+            }
+        }
+
+        fn interaction(&self) -> baluard_core::hwkey::Interaction {
+            baluard_core::hwkey::Interaction::PerUse
+        }
+
+        fn create_binding(
+            &self,
+            vault_id: uuid::Uuid,
+            _: baluard_core::hwkey::HwConsent,
+        ) -> Result<baluard_core::hwkey::BindingInfo, baluard_core::error::BaluardError> {
+            Ok(baluard_core::hwkey::BindingInfo {
+                binding: baluard_core::hwkey::binding_tag(vault_id),
+                attestation: None,
+            })
+        }
+
+        fn derive_ephemeral(
+            &self,
+            binding: &str,
+            _: baluard_core::hwkey::HwConsent,
+        ) -> Result<
+            (
+                baluard_core::hwkey::Handshake,
+                baluard_core::hwkey::SharedSecret,
+            ),
+            baluard_core::error::BaluardError,
+        > {
+            let mut secret = [0u8; 32];
+            for (index, byte) in binding.bytes().chain([0x04, 0x02]).enumerate() {
+                secret[index % 32] ^= byte;
+            }
+            Ok((
+                baluard_core::hwkey::Handshake(vec![0x04, 0x02]),
+                zeroize::Zeroizing::new(secret),
+            ))
+        }
+
+        fn derive(
+            &self,
+            binding: &str,
+            handshake: &baluard_core::hwkey::Handshake,
+            _: baluard_core::hwkey::HwConsent,
+        ) -> Result<baluard_core::hwkey::SharedSecret, baluard_core::error::BaluardError> {
+            // H5 red signal lives HERE: the reopen tap path. block_on
+            // panics on a tokio worker (blocking-region guard) but works
+            // on the blocking pool, so the flag records which thread paid
+            // the tap.
+            if self.probe_blocking_thread {
+                let on_worker = std::panic::catch_unwind(|| {
+                    tokio::runtime::Handle::current().block_on(async { 1u8 })
+                })
+                .is_err();
+                TAP_OFF_WORKER.store(!on_worker, Ordering::SeqCst);
+            }
+            let mut secret = [0u8; 32];
+            for (index, byte) in binding.bytes().chain(handshake.0.iter().copied()).enumerate() {
+                secret[index % 32] ^= byte;
+            }
+            Ok(zeroize::Zeroizing::new(secret))
+        }
+
+        fn delete_binding(&self, _: &str) -> Result<(), baluard_core::error::BaluardError> {
+            Ok(())
+        }
+    }
+
+    /// Drop-based kill-switch restore: the runtime suite runs under
+    /// BALUARD_DISABLE_HWKEY, but the pin_unlock paths consult the hwkey
+    /// registry and would skip the mock. Restores the env + clears the
+    /// process-global store even when an assertion panics.
+    struct HwEnvGuard {
+        old: Option<String>,
+    }
+
+    impl HwEnvGuard {
+        fn clear() -> Self {
+            let old = std::env::var(baluard_core::hwkey::DISABLE_ENV).ok();
+            // SAFETY: serialized by TEST_STORE_LOCK; no other runtime test
+            // reads the var while a pin hw test holds the lock.
+            unsafe {
+                std::env::remove_var(baluard_core::hwkey::DISABLE_ENV);
+            }
+            baluard_core::hwkey::uninstall();
+            Self { old }
+        }
+    }
+
+    impl Drop for HwEnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.old {
+                    Some(v) => std::env::set_var(baluard_core::hwkey::DISABLE_ENV, v),
+                    None => std::env::remove_var(baluard_core::hwkey::DISABLE_ENV),
+                }
+            }
+            baluard_core::hwkey::uninstall();
+        }
+    }
+
+    /// Unlocked vault with PIN escrow enabled and the device key sealed to
+    /// the mock; returns locked, with the store UNINSTALLED so a plain
+    /// `pin_unlock` hits the chip-gone path.
+    async fn sealed_pin_vault(probe: bool) -> (tempfile::TempDir, Arc<VaultState>) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(VaultState::new(dir.path().to_path_buf()));
+        state
+            .create_vault(
+                &serde_json::json!({"password": MASTER, "profile": "mobile_low"}).to_string(),
+            )
+            .await
+            .unwrap();
+        state.unlock(MASTER).await.unwrap();
+        state
+            .pin_enable(&serde_json::json!({"password": MASTER, "pin": PIN}).to_string())
+            .await
+            .unwrap();
+        let (seal_key, vault_id, device_id, path) = {
+            let guard = state.inner.read().await;
+            let handle = guard.as_ref().expect("unlocked");
+            (
+                handle.unlocked().devkey_seal,
+                handle.vault_id,
+                handle.device_id,
+                handle.path.clone(),
+            )
+        };
+        // enable_hw_seal resolves a backend store; install the mock for
+        // the seal, the caller decides what is plugged in afterwards.
+        baluard_core::hwkey::install(Arc::new(PinHwMock {
+            probe_blocking_thread: probe,
+        }));
+        baluard_core::vault::device_privkey::enable_hw_seal(
+            &path.join("meta/device-privkey.json"),
+            &seal_key,
+            vault_id,
+            Some(device_id),
+            false,
+            None,
+        )
+        .unwrap();
+        state.lock().await.unwrap();
+        // The caller decides what is "plugged in": strip the store so a
+        // plain pin_unlock hits the chip-gone path.
+        baluard_core::hwkey::uninstall();
+        (dir, state)
+    }
+
+    /// H5: a correct PIN with the chip unplugged must NOT destroy the
+    /// escrow — the PIN still holds, only the hardware is absent. The
+    /// user retries with the key plugged in and unlocks without ever
+    /// typing the master password.
+    #[tokio::test]
+    async fn pin_unlock_keeps_the_escrow_on_hardware_errors() {
+        let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _env = HwEnvGuard::clear();
+        let (_dir, state) = sealed_pin_vault(false).await;
+
+        // Chip gone: the unlock fails with the typed chip-unavailable
+        // error (the PIN itself verified).
+        let err = state
+            .pin_unlock(&serde_json::json!({"pin": PIN}).to_string())
+            .await
+            .unwrap_err();
+        let msg = err.message();
+        assert!(
+            msg.contains("chip is unavailable"),
+            "expected the chip-unavailable copy, got: {msg}"
+        );
+
+        // The escrow must survive: PIN is still enabled.
+        let s =
+            serde_json::from_str::<serde_json::Value>(&state.pin_status().await.unwrap()).unwrap();
+        assert_eq!(
+            s["enabled"], true,
+            "hardware error destroyed the PIN escrow"
+        );
+
+        // Chip back: the same PIN unlocks, paying the tap.
+        baluard_core::hwkey::install(Arc::new(PinHwMock {
+            probe_blocking_thread: false,
+        }));
+        state
+            .pin_unlock(&serde_json::json!({"pin": PIN}).to_string())
+            .await
+            .expect("PIN unlock after the key returns");
+        assert!(state.is_unlocked().await);
+    }
+
+    /// H5: the tap wait must run on the blocking pool, not pin a tokio
+    /// worker (spawn_blocking, like the password unlock path).
+    #[tokio::test]
+    async fn pin_unlock_tap_runs_off_the_runtime_worker() {
+        let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _env = HwEnvGuard::clear();
+        let (_dir, state) = sealed_pin_vault(false).await;
+        baluard_core::hwkey::install(Arc::new(PinHwMock {
+            probe_blocking_thread: true,
+        }));
+
+        state
+            .pin_unlock(&serde_json::json!({"pin": PIN}).to_string())
+            .await
+            .expect("PIN unlock with the chip present");
+
+        assert!(
+            TAP_OFF_WORKER.load(Ordering::SeqCst),
+            "the chip derive ran on the async runtime worker"
         );
     }
 }
