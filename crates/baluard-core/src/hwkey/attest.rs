@@ -286,6 +286,9 @@ fn parse_cert(der: &[u8]) -> Option<CertParts> {
 struct AttestedData<'a> {
     aaguid: &'a [u8],
     credential_id: &'a [u8],
+    /// The COSE public key inside attested-credential-data: the key a
+    /// self-attestation signs with.
+    cose_key: &'a [u8],
     /// authData extension map (present when the ED flag is set).
     extensions: Option<&'a [u8]>,
 }
@@ -312,9 +315,9 @@ fn parse_attested_auth_data(auth_data: &[u8]) -> Option<AttestedData<'_>> {
         return None;
     }
     let credential_id = &auth_data[55..cred_end];
+    let cose_end = crate::hwkey::cbor::item_end(&auth_data[cred_end..])? + cred_end;
+    let cose_key = &auth_data[cred_end..cose_end];
     let extensions = if flags & 0x80 != 0 {
-        // Skip the COSE key: one canonical CBOR item, bounds-checked.
-        let cose_end = crate::hwkey::cbor::item_end(&auth_data[cred_end..])? + cred_end;
         Some(&auth_data[cose_end..])
     } else {
         None
@@ -322,8 +325,45 @@ fn parse_attested_auth_data(auth_data: &[u8]) -> Option<AttestedData<'_>> {
     Some(AttestedData {
         aaguid,
         credential_id,
+        cose_key,
         extensions,
     })
+}
+
+/// Self-attestation: the attStmt signature rides under the CREDENTIAL's
+/// own key, not a manufacturer certificate. A valid self-attestation
+/// proves key possession, not provenance, so it is UnknownVendor.
+fn verify_self_attestation(att: &PackedAttestation, attested: &AttestedData<'_>) -> bool {
+    if att.alg != -7 {
+        return false;
+    }
+    let Ok((cose, _)) = crate::hwkey::cbor::Value::decode(attested.cose_key) else {
+        return false;
+    };
+    let bytes = |k: i64| match cose.get(k) {
+        Some(crate::hwkey::cbor::Value::ByteString(b)) => Some(b.as_slice()),
+        _ => None,
+    };
+    let (Some(x), Some(y)) = (bytes(-2), bytes(-3)) else {
+        return false;
+    };
+    if x.len() != 32 || y.len() != 32 {
+        return false;
+    }
+    let mut point = Vec::with_capacity(65);
+    point.push(0x04);
+    point.extend_from_slice(x);
+    point.extend_from_slice(y);
+    let mut msg = Vec::with_capacity(att.auth_data.len() + 32);
+    msg.extend_from_slice(&att.auth_data);
+    msg.extend_from_slice(&att.client_data_hash);
+    // ecdsa-with-SHA256 (1.2.840.10045.4.3.2)
+    verify_link(
+        &PubKey::Ec(point),
+        &msg,
+        &att.sig,
+        &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02],
+    )
 }
 
 /// The hmac-secret extension must be affirmatively present: the enable
@@ -578,12 +618,9 @@ fn bundled_pin() -> Vec<Vec<u8>> {
 /// reference device are pinned alongside the roots. Intact-but-unpinned
 /// chains are UnknownVendor.
 pub fn verify_with_pins(att: &PackedAttestation, pins: &[Vec<u8>]) -> AttestationVerdict {
-    if att.x5c.is_empty() || !es256_rs256_from_alg(att.alg) || !verify_attstmt(att) {
-        return AttestationVerdict::Invalid;
-    }
-    // M6: the signature is only half the proof. The signed authData
-    // must describe the ceremony Baluard ran and the credential the
-    // caller will use, and the leaf must vouch for that same model.
+    // M6: the signature is only half the proof. The authData must
+    // describe the ceremony Baluard ran and the credential the caller
+    // will use, whatever the attestation format.
     let Some(attested) = parse_attested_auth_data(&att.auth_data) else {
         return AttestationVerdict::Invalid;
     };
@@ -591,6 +628,23 @@ pub fn verify_with_pins(att: &PackedAttestation, pins: &[Vec<u8>]) -> Attestatio
         return AttestationVerdict::Invalid;
     }
     if !hmac_secret_extension_present(attested.extensions) {
+        return AttestationVerdict::Invalid;
+    }
+    // M7: no certificate chain is not breakage. fmt:none carries no
+    // signature at all; self-attestation signs under the credential's
+    // own key. Both prove no provenance, so both are UnknownVendor;
+    // only a broken self-attestation signature is Invalid.
+    if att.x5c.is_empty() {
+        if att.sig.is_empty() {
+            return AttestationVerdict::UnknownVendor;
+        }
+        return if verify_self_attestation(att, &attested) {
+            AttestationVerdict::UnknownVendor
+        } else {
+            AttestationVerdict::Invalid
+        };
+    }
+    if !es256_rs256_from_alg(att.alg) || !verify_attstmt(att) {
         return AttestationVerdict::Invalid;
     }
     let Some(leaf_parts) = parse_cert(&att.x5c[0]) else {
@@ -796,6 +850,33 @@ pub(crate) mod test_chain {
             0x06, 0x0B, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xE5, 0x1C, 0x01, 0x01, 0x04,
         ];
         tlv_bytes(0x30, &[oid, tlv_bytes(0x04, aaguid)].concat())
+    }
+
+    /// Spec-shaped authData with a caller-supplied COSE public key.
+    pub fn auth_data_with_cose(credential_id: &[u8], aaguid: &[u8; 16], cose: &[u8]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(&Sha256::digest(crate::hwkey::fido::RP_ID));
+        v.push(0x41 | 0x80);
+        v.extend_from_slice(&[0u8; 4]);
+        v.extend_from_slice(aaguid);
+        v.extend_from_slice(&(credential_id.len() as u16).to_be_bytes());
+        v.extend_from_slice(credential_id);
+        v.extend_from_slice(cose);
+        v.extend_from_slice(&[0xA1, 0x6B]);
+        v.extend_from_slice(b"hmac-secret");
+        v.push(0xF5);
+        v
+    }
+
+    /// Canonical COSE P-256 public key map.
+    pub fn cose_p256(point: &p256::EncodedPoint) -> Vec<u8> {
+        let mut v = vec![0xA5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20];
+        v.extend_from_slice(point.x().expect("uncompressed"));
+        v.push(0x22);
+        v.push(0x58);
+        v.push(0x20);
+        v.extend_from_slice(point.y().expect("uncompressed"));
+        v
     }
 
     /// hmac-secret applied extension (authData extensions map).
@@ -1106,6 +1187,64 @@ mod tests {
             verify_with_pins(&att, &[root_der]),
             AttestationVerdict::Invalid
         );
+    }
+
+    // M7: self-attestation and fmt:none are vendor-unknown, not broken.
+    fn self_attested() -> PackedAttestation {
+        let cred = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let credential_id = vec![4u8; 16];
+        let cose =
+            test_chain::cose_p256(&p256::ecdsa::VerifyingKey::from(&cred).to_encoded_point(false));
+        let auth_data = test_chain::auth_data_with_cose(&credential_id, &[0u8; 16], &cose);
+        let hash = [5u8; 32];
+        let msg = [&auth_data[..], &hash].concat();
+        let sig: p256::ecdsa::Signature = p256::ecdsa::signature::Signer::sign(&cred, &msg);
+        PackedAttestation {
+            credential_id,
+            auth_data,
+            client_data_hash: hash,
+            alg: -7,
+            sig: sig.to_der().as_bytes().to_vec(),
+            x5c: vec![],
+        }
+    }
+
+    #[test]
+    fn self_attestation_verifies_as_unknown_vendor() {
+        let att = self_attested();
+        assert_eq!(
+            verify_with_pins(&att, &[]),
+            AttestationVerdict::UnknownVendor
+        );
+    }
+
+    #[test]
+    fn a_broken_self_attestation_signature_is_invalid() {
+        let mut att = self_attested();
+        let last = att.sig.len() - 1;
+        att.sig[last] ^= 0xFF;
+        assert_eq!(verify_with_pins(&att, &[]), AttestationVerdict::Invalid);
+    }
+
+    #[test]
+    fn none_fmt_is_unknown_vendor() {
+        let mut att = self_attested();
+        // fmt:none carries no attStmt signature and no chain at all.
+        att.sig = vec![];
+        att.alg = 0;
+        assert_eq!(
+            verify_with_pins(&att, &[]),
+            AttestationVerdict::UnknownVendor
+        );
+    }
+
+    #[test]
+    fn none_fmt_still_binds_the_credential() {
+        let mut att = self_attested();
+        att.sig = vec![];
+        att.alg = 0;
+        att.credential_id = vec![0xEE; 16];
+        assert_eq!(verify_with_pins(&att, &[]), AttestationVerdict::Invalid);
     }
 
     #[test]
