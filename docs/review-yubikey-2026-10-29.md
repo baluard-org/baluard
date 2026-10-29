@@ -187,7 +187,7 @@ FIXED for the hw paths (2026-10-29, wave 8): the hw re-seal flows (consent chang
 
 ### M7. Self-attestation and `none` tokens are hard-refused as "invalid"
 
-`attest.rs:436`: `x5c.is_empty()` is `Invalid`, and `create_binding` turns `Invalid` into a hard refuse with the copy "the security key's attestation is invalid" (`fido.rs:165-170`). Many non-Yubico FIDO2 keys use self attestation or `fmt: none`. The plan's policy is "unknown vendor → allow with plain copy". Fix: treat a verified self-attestation (signature under the credential public key) and `none` as `UnknownVendor`; reserve `Invalid` for broken signatures.
+`attest.rs:436`: `x5c.is_empty()` is `Invalid`, and `create_binding` turns `Invalid` into a hard refuse with the copy "the security key's attestation is invalid" (`fido.rs:165-170`). Many non-Yubico FIDO2 keys use self attestation or `fmt: none`. The plan's policy is "unknown vendor → allow with plain copy". FIXED (2026-10-29, wave 17): an empty x5c is no longer automatic Invalid. The M6 binding checks (rpIdHash, flags, credential id, hmac-secret) run first for every format; then fmt:none (no signature, no chain) verdicts UnknownVendor, and self-attestation verifies the attStmt signature under the credential's OWN COSE P-256 key parsed out of authData's attested-credential-data — valid self-attestation is UnknownVendor (key possession, not provenance), a broken self-signature is Invalid. Credential substitution is still refused for both formats. Red-first: self_attestation_verifies_as_unknown_vendor and none_fmt_is_unknown_vendor failed pre-fix; the broken-signature and none-fmt-credential-mismatch negatives pin the boundary. Suites: attest 24/0 (+4), hwkey 100/0, default core lib 971/0 (+4).
 
 ### M8. No verify-open after enable
 
