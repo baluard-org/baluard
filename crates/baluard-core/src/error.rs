@@ -123,6 +123,14 @@ pub enum VaultError {
     )]
     HardwareConsentUnavailable,
 
+    /// The KEK canary rejected the derived key: the entered master
+    /// password (or member password) is wrong. The only unlock error
+    /// class that is a credential guess — the only one that charges
+    /// brute-force rate limits. Display text is load-bearing for test
+    /// and CLI matching.
+    #[error("master password incorrect")]
+    PasswordMismatch,
+
     /// Typed hardware outcomes for interactive backends (the FIDO2
     /// security-key seal). Surfaces map these to plain-language copy;
     /// none of them is a password failure and none charges the unlock
@@ -185,6 +193,37 @@ pub enum VaultError {
         envelope_epoch: u64,
         held_epoch: u64,
     },
+}
+
+/// Hardware-seal outcomes are not password guesses: they must never
+/// charge an unlock rate-limit budget (core attempt counter, daemon
+/// permit) and never owe the failure delay. The canary verifies BEFORE
+/// the chip, so a wrong password fails as PasswordMismatch before any of
+/// these can appear — a Hardware* error implies the password was proven.
+pub fn is_hardware_error(err: &BaluardError) -> bool {
+    matches!(
+        err,
+        BaluardError::Vault(VaultError::HardwareUnavailable)
+            | BaluardError::Vault(VaultError::HardwareConsentUnavailable)
+            | BaluardError::Vault(VaultError::HardwareKeyMissing)
+            | BaluardError::Vault(VaultError::HardwareKeyWrong)
+            | BaluardError::Vault(VaultError::HardwareTouchTimeout)
+            | BaluardError::Vault(VaultError::HardwareTouchCancelled)
+            | BaluardError::Vault(VaultError::HardwareBusy)
+            | BaluardError::Vault(VaultError::HardwareTouchRequired)
+            | BaluardError::Vault(VaultError::HardwareAuthFailed)
+    )
+}
+
+/// The ONLY unlock failure class that is a credential guess: the KEK
+/// canary (admin or member) rejected the derived key. Everything else —
+/// hardware-seal outcomes, stale keywraps, unpaired devices, damaged
+/// metadata — either proves the credential or is not the user's input at
+/// all, so it must not charge a brute-force budget (a remote-rotation
+/// survivor retrying the CORRECT password would otherwise lock itself
+/// out, and the phrase-recovery route shares that limiter).
+pub fn is_password_failure(err: &BaluardError) -> bool {
+    matches!(err, BaluardError::Vault(VaultError::PasswordMismatch))
 }
 
 /// Git sync and conflict errors.

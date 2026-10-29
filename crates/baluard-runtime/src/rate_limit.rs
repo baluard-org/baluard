@@ -91,6 +91,14 @@ impl<'a> AttemptPermit<'a> {
         self.limiter.record_success(&self.vault_key);
         self.committed = true;
     }
+
+    /// Discharge the slot without charging or clearing the budget: the
+    /// attempt was not a password guess (a hardware-seal outcome — the
+    /// canary proved the password before the chip failed), but the slot
+    /// was consumed so neither failure nor success recording applies.
+    pub fn commit_neutral(mut self) {
+        self.committed = true;
+    }
 }
 
 impl Drop for AttemptPermit<'_> {
