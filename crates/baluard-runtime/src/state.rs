@@ -86,6 +86,10 @@ pub struct VaultState {
     last_activity: AtomicU64,
     /// Cover commit scheduler handle. Cancelled on lock.
     cover_timer: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    /// M1: serializes device-file read-modify-write cycles (enable /
+    /// disable / consent / password change). Two racing ops can
+    /// interleave the seal and keywrap halves and strand the vault.
+    devkey_ops: tokio::sync::Mutex<()>,
     /// Whether a post-mutation cover commit is already pending.
     /// Prevents spawning multiple cover tasks from rapid sequential edits.
     cover_pending: std::sync::atomic::AtomicBool,
@@ -157,6 +161,7 @@ impl VaultState {
             cover_session: AtomicU64::new(0),
             ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache::new(),
             pin: tokio::sync::Mutex::new(None),
+            devkey_ops: tokio::sync::Mutex::new(()),
             pin_failures: std::sync::atomic::AtomicU32::new(0),
             autosync,
         }
@@ -873,6 +878,11 @@ impl VaultState {
         old_password: &str,
         new_password: &str,
     ) -> Result<(), String> {
+        // M1: take the devkey op lock BEFORE the inner write lock (the
+        // hierarchy every devkey op follows), so a racing hw_enable /
+        // hw_disable / consent change cannot interleave its device-file
+        // read-modify-write with the re-seal inside the password change.
+        let _ops = self.devkey_ops.lock().await;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened")?;
 
@@ -7942,10 +7952,7 @@ impl VaultState {
         consent: bool,
         backend: Option<String>,
     ) -> Result<String, String> {
-        let seal = self
-            .devkey_seal()
-            .await
-            .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
+        let _ops = self.devkey_ops.lock().await;
         let selected = match backend.as_deref() {
             Some(id) => baluard_core::hwkey::store_for(id),
             None => baluard_core::hwkey::available(),
@@ -7965,8 +7972,22 @@ impl VaultState {
                 .map_err(|e| format!("read vault marker: {e}"))?
                 .map(|m| m.vault_id)
                 .ok_or_else(|| "vault marker missing".to_string())?;
-        let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
+        let vault_path = self.vault_path.clone();
         let privkey_path = self.vault_path.join("meta/device-privkey.json");
+        // The rotation needs the seal subkey and (on managing devices)
+        // the root key; members pass None and keep the existing path.
+        let (seal, root_key, device_id) = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault is locked. Unlock first.")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            (
+                handle.unlocked().devkey_seal,
+                handle.unlocked().root().ok().cloned(),
+                handle.device_id,
+            )
+        };
         let backend_id = selected.backend_id().to_string();
         let task_backend = backend_id.clone();
         let probe_or_attestation = tokio::task::spawn_blocking(
@@ -7982,11 +8003,12 @@ impl VaultState {
                     };
                     return Ok(Err(msg));
                 }
-                baluard_core::vault::device_privkey::enable_hw_seal(
-                    &privkey_path,
-                    &seal,
+                baluard_core::vault::device_privkey::enable_hw_seal_rotating(
+                    &vault_path,
                     vault_id,
                     device_id,
+                    &seal,
+                    root_key.as_ref(),
                     consent,
                     Some(&task_backend),
                 )?;
@@ -8017,6 +8039,7 @@ impl VaultState {
     /// Disable the hardware seal: downgrade to v1. Needs the chip once
     /// (resolved from the seal file's recorded backend).
     pub async fn hw_disable(&self) -> Result<String, String> {
+        let _ops = self.devkey_ops.lock().await;
         let seal = self
             .devkey_seal()
             .await
@@ -8038,6 +8061,7 @@ impl VaultState {
     /// Switch the hw seal between silent and per-use-consent modes. Needs
     /// the unlocked seal subkey (it re-keys the devkey file) and the chip.
     pub async fn hw_set_consent(&self, consent: bool) -> Result<String, String> {
+        let _ops = self.devkey_ops.lock().await;
         let seal = self
             .devkey_seal()
             .await
@@ -9841,7 +9865,7 @@ mod pin_hw_escrow_tests {
     const MASTER: &str = "pin-hw-master-pass-7";
     const PIN: &str = "246813";
 
-    static TEST_STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(super) static TEST_STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static TAP_OFF_WORKER: AtomicBool = AtomicBool::new(false);
 
     /// H5 red signal: a chip derive reached from inside `block_on` panics
@@ -9931,15 +9955,15 @@ mod pin_hw_escrow_tests {
     /// BALUARD_DISABLE_HWKEY, but the pin_unlock paths consult the hwkey
     /// registry and would skip the mock. Restores the env + clears the
     /// process-global store even when an assertion panics.
-    struct HwEnvGuard {
+    pub(super) struct HwEnvGuard {
         old: Option<String>,
     }
 
     impl HwEnvGuard {
-        fn clear() -> Self {
+        pub(super) fn clear() -> Self {
             let old = std::env::var(baluard_core::hwkey::DISABLE_ENV).ok();
-            // SAFETY: serialized by TEST_STORE_LOCK; no other runtime test
-            // reads the var while a pin hw test holds the lock.
+            // SAFETY: serialized by TEST_STORE_LOCK; sibling hw test
+            // modules hold the same lock while touching the var.
             unsafe {
                 std::env::remove_var(baluard_core::hwkey::DISABLE_ENV);
             }
@@ -10069,6 +10093,130 @@ mod pin_hw_escrow_tests {
         assert!(
             TAP_OFF_WORKER.load(Ordering::SeqCst),
             "the chip derive ran on the async runtime worker"
+        );
+    }
+}
+
+/// M1: device-file read-modify-write cycles (enable / disable / consent
+/// / password change) mutate meta/device-privkey.json and the keywrap
+/// as a pair; two racing ops can interleave the halves and strand the
+/// seal against the keywrap, so they serialize per vault.
+#[cfg(test)]
+mod devkey_op_lock_tests {
+    use super::VaultState;
+    use super::pin_hw_escrow_tests::{HwEnvGuard, TEST_STORE_LOCK};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static OPEN_BINDINGS: AtomicUsize = AtomicUsize::new(0);
+    static MAX_OPEN_BINDINGS: AtomicUsize = AtomicUsize::new(0);
+
+    struct RacingMock;
+
+    impl baluard_core::hwkey::HardwareKeyStore for RacingMock {
+        fn backend_id(&self) -> &'static str {
+            "racing"
+        }
+
+        fn probe(&self) -> baluard_core::hwkey::HwCapability {
+            baluard_core::hwkey::HwCapability::Available {
+                backend: "racing".into(),
+            }
+        }
+
+        fn interaction(&self) -> baluard_core::hwkey::Interaction {
+            baluard_core::hwkey::Interaction::PerUse
+        }
+
+        fn create_binding(
+            &self,
+            vault_id: uuid::Uuid,
+            _: baluard_core::hwkey::HwConsent,
+        ) -> Result<baluard_core::hwkey::BindingInfo, baluard_core::error::BaluardError> {
+            let open = OPEN_BINDINGS.fetch_add(1, Ordering::SeqCst) + 1;
+            MAX_OPEN_BINDINGS.fetch_max(open, Ordering::SeqCst);
+            // Widen the window: a second enable reaching create_binding
+            // while the first is still here proves no serialization.
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            OPEN_BINDINGS.fetch_sub(1, Ordering::SeqCst);
+            Ok(baluard_core::hwkey::BindingInfo {
+                binding: baluard_core::hwkey::binding_tag(vault_id),
+                attestation: None,
+            })
+        }
+
+        fn derive_ephemeral(
+            &self,
+            binding: &str,
+            _: baluard_core::hwkey::HwConsent,
+        ) -> Result<
+            (
+                baluard_core::hwkey::Handshake,
+                baluard_core::hwkey::SharedSecret,
+            ),
+            baluard_core::error::BaluardError,
+        > {
+            let mut secret = [0u8; 32];
+            for (index, byte) in binding.bytes().chain([0x04, 0x02]).enumerate() {
+                secret[index % 32] ^= byte;
+            }
+            Ok((
+                baluard_core::hwkey::Handshake(vec![0x04, 0x02]),
+                zeroize::Zeroizing::new(secret),
+            ))
+        }
+
+        fn derive(
+            &self,
+            binding: &str,
+            handshake: &baluard_core::hwkey::Handshake,
+            _: baluard_core::hwkey::HwConsent,
+        ) -> Result<baluard_core::hwkey::SharedSecret, baluard_core::error::BaluardError> {
+            let mut secret = [0u8; 32];
+            for (index, byte) in binding
+                .bytes()
+                .chain(handshake.0.iter().copied())
+                .enumerate()
+            {
+                secret[index % 32] ^= byte;
+            }
+            Ok(zeroize::Zeroizing::new(secret))
+        }
+
+        fn delete_binding(&self, _: &str) -> Result<(), baluard_core::error::BaluardError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn device_key_operations_serialize_per_vault() {
+        let _store = TEST_STORE_LOCK.lock().unwrap();
+        let _env = HwEnvGuard::clear();
+        baluard_core::hwkey::install(Arc::new(RacingMock));
+        MAX_OPEN_BINDINGS.store(0, Ordering::SeqCst);
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(VaultState::new(dir.path().to_path_buf()));
+        state
+            .create_vault(
+                &serde_json::json!({"password": "op-lock-pass-1", "profile": "mobile_low"})
+                    .to_string(),
+            )
+            .await
+            .unwrap();
+        state.unlock("op-lock-pass-1").await.unwrap();
+
+        let (a, b) = tokio::join!(
+            state.hw_enable(false, Some("racing".into())),
+            state.hw_enable(false, Some("racing".into())),
+        );
+        a.unwrap();
+        b.unwrap();
+
+        assert_eq!(
+            MAX_OPEN_BINDINGS.load(Ordering::SeqCst),
+            1,
+            "racing enables overlapped inside create_binding"
         );
     }
 }

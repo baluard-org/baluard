@@ -365,6 +365,11 @@ impl SyncEngine {
             "meta/device-id",
             "meta/git-credentials.json",
             "meta/kdf-attempts.json",
+            // H6: the rotating hw enable's staged new privkey/keywrap
+            // carry raw key material - local-only by construction.
+            "meta/device-privkey.json.new",
+            "meta/device-privkey.json.rotation",
+            "meta/keywrap/*.json.new",
         ];
         let needs_update = match std::fs::read_to_string(&gitignore) {
             Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),

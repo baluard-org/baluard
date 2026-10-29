@@ -363,14 +363,19 @@ pub fn rotate_seal_key(
                 .as_str()
                 .and_then(hw_attestation_from_str);
             let out = seal_bytes_hw(&*hw, &binding, new_seal_key, &inner, id, mode, attestation)?;
-            super::write_vault_file(path, &out.bytes).map_err(|e| {
-                BaluardError::from(VaultError::Metadata(format!(
-                    "write hw-sealed devkey: {e}"
-                )))
-            })?;
-            if let Some(vault) = path.parent().and_then(Path::parent) {
-                rebind_identity_artifacts(vault, id, &ik_of(&old_ck), &ik_of(&out.content_key))?;
-            }
+            staged_reseal(
+                path.parent().and_then(Path::parent).as_deref(),
+                path,
+                &out.bytes,
+                || {
+                    rebind_identity_artifacts(
+                        path.parent().and_then(Path::parent).as_deref().unwrap(),
+                        id,
+                        &ik_of(&old_ck),
+                        &ik_of(&out.content_key),
+                    )
+                },
+            )?;
             Ok(true)
         }
         PrivkeyFileKind::Sealed => {
@@ -820,19 +825,57 @@ pub fn set_hw_seal_consent(
         mode,
         attestation,
     )?;
-    super::write_vault_file(path, &out.bytes).map_err(|e| {
-        BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
-    })?;
-    if let Some(vault) = path.parent().and_then(Path::parent) {
-        rebind_identity_artifacts(vault, device_id, &ik_of(&old_ck), &ik_of(&out.content_key))?;
-    }
+    staged_reseal(
+        path.parent().and_then(Path::parent).as_deref(),
+        path,
+        &out.bytes,
+        || {
+            rebind_identity_artifacts(
+                path.parent().and_then(Path::parent).as_deref().unwrap(),
+                device_id,
+                &ik_of(&old_ck),
+                &ik_of(&out.content_key),
+            )
+        },
+    )?;
     let _ = hw.delete_binding(old_binding);
     Ok(true)
 }
 
+/// M3 staging for the re-seal flows (consent change, seal rotation):
+/// stage the new sealed bytes, rebind the identity artifacts, then
+/// promote. The rebind having landed is the heal's commit signal; the
+/// staged bytes let heal_pending_hw_rotation finish the promotion.
+fn staged_reseal(
+    vault: Option<&Path>,
+    path: &Path,
+    out_bytes: &[u8],
+    rebind: impl FnOnce() -> Result<(), BaluardError>,
+) -> Result<(), BaluardError> {
+    let write = || {
+        crate::vault::write_vault_file(path, out_bytes).map_err(|e| {
+            BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
+        })
+    };
+    let Some(vault) = vault else {
+        return write();
+    };
+    // Next to the real file: identical to the heal's vault-root path in
+    // real vaults, writable next to synthetic flat-path test files.
+    let staged = path.with_file_name("device-privkey.json.new");
+    let _ = vault;
+    std::fs::write(&staged, out_bytes)
+        .map_err(|e| VaultError::Metadata(format!("stage privkey: {e}")))?;
+    rebind()?;
+    write()?;
+    let _ = std::fs::remove_file(&staged);
+    Ok(())
+}
+
 /// The identity sealing key for an hw content key. Free fn so the rebind
-/// sites stay short.
-fn ik_of(ck: &[u8; 32]) -> zeroize::Zeroizing<[u8; 32]> {
+/// sites stay short. pub(crate): the rotating hw enable in handle.rs
+/// rebinds through the same helpers.
+pub(crate) fn ik_of(ck: &[u8; 32]) -> zeroize::Zeroizing<[u8; 32]> {
     crate::crypto::hkdf_derive::derive_identity_hw_key(ck).expect("identity hw key HKDF")
 }
 
@@ -841,7 +884,7 @@ fn ik_of(ck: &[u8; 32]) -> zeroize::Zeroizing<[u8; 32]> {
 /// open under `from_key` are left untouched (not ours to heal here);
 /// open/re-seal/write failures propagate - a half-rebound identity is
 /// worse than a failed operation.
-fn rebind_identity_artifacts(
+pub(crate) fn rebind_identity_artifacts(
     vault: &Path,
     device_id: Option<Uuid>,
     from_key: &[u8; 32],
@@ -880,7 +923,7 @@ fn rebind_identity_artifacts(
 /// identity seals in keystore mode. Passphrase mode needs the master
 /// password, which token-gated flows do not have, so callers must treat
 /// None as "cannot rebind; lazy-heal at the next full unlock".
-fn identity_keystore_wrap_key(vault: &Path) -> Option<zeroize::Zeroizing<[u8; 32]>> {
+pub(crate) fn identity_keystore_wrap_key(vault: &Path) -> Option<zeroize::Zeroizing<[u8; 32]>> {
     let meta = std::fs::read_to_string(vault.join("meta/identity-meta.json")).ok()?;
     let meta: serde_json::Value = serde_json::from_str(&meta).ok()?;
     if meta["mode"].as_str() != Some("keystore") {
@@ -892,6 +935,373 @@ fn identity_keystore_wrap_key(vault: &Path) -> Option<zeroize::Zeroizing<[u8; 32
     <[u8; 32]>::try_from(bytes.as_slice())
         .ok()
         .map(zeroize::Zeroizing::new)
+}
+
+/// HW-enable that ROTATES the device keypair (H6): on a root-holding
+/// vault the key is regenerated as part of the seal, so copies made
+/// before enabling (OS keystore entries, leaked files, backups) die at
+/// the moment the seal turns on. Member devices (root_key None) keep
+/// the seal-existing-key path: they cannot re-wrap the root keywrap and
+/// their secrets are already hw-bound through the identity seed (C1).
+/// Crash ordering (M3): stage the new sealed privkey and keywrap under
+/// the gitignored .hw-rotation/, rebind identity artifacts, commit the
+/// roster with the OLD signing key (the parent roster vouches for it),
+/// then promote. A tear is healed by state inspection in
+/// heal_pending_hw_rotation, never by a phase flag.
+pub fn enable_hw_seal_rotating(
+    vault: &Path,
+    vault_id: Uuid,
+    device_id: Uuid,
+    seal_key: &[u8; 32],
+    root_key: Option<&crate::keys::hierarchy::RootKey>,
+    consent: bool,
+    backend: Option<&str>,
+) -> Result<bool, BaluardError> {
+    heal_pending_hw_rotation(vault, device_id, seal_key)?;
+    let devkey_path = vault.join("meta/device-privkey.json");
+    let kind = file_kind(&devkey_path);
+    let Some(root_key) = root_key else {
+        // Member device (no Root Key): keep the existing path.
+        return enable_hw_seal(
+            &devkey_path,
+            seal_key,
+            vault_id,
+            Some(device_id),
+            consent,
+            backend,
+        );
+    };
+    match kind {
+        PrivkeyFileKind::Absent | PrivkeyFileKind::SealedHw => {
+            // Nothing to protect yet, or already sealed: the existing
+            // behavior (no rotation while a live seal exists; disable
+            // brings the file back to v1 so the NEXT enable rotates).
+            enable_hw_seal(
+                &devkey_path,
+                seal_key,
+                vault_id,
+                Some(device_id),
+                consent,
+                backend,
+            )
+        }
+        PrivkeyFileKind::Damaged => Err(VaultError::Corrupt(
+            "device private key file is damaged; refusing to move it to the hardware seal".into(),
+        )
+        .into()),
+        PrivkeyFileKind::LegacyPlaintext | PrivkeyFileKind::Sealed => rotate_and_seal(
+            vault,
+            vault_id,
+            device_id,
+            &devkey_path,
+            seal_key,
+            root_key,
+            consent,
+            backend,
+        ),
+    }
+}
+
+fn rotate_and_seal(
+    vault: &Path,
+    vault_id: Uuid,
+    device_id: Uuid,
+    devkey_path: &Path,
+    seal_key: &[u8; 32],
+    root_key: &crate::keys::hierarchy::RootKey,
+    consent: bool,
+    backend: Option<&str>,
+) -> Result<bool, BaluardError> {
+    let hw = match backend {
+        Some(id) => crate::hwkey::store_for(id).ok_or_else(crate::hwkey::hw_unavailable_error)?,
+        None => crate::hwkey::available().ok_or_else(crate::hwkey::hw_unavailable_error)?,
+    };
+    let interaction = hw.interaction();
+    let mode = if interaction == crate::hwkey::Interaction::PerUse {
+        crate::hwkey::HwConsent::PerUse
+    } else {
+        crate::hwkey::HwConsent::from_flag(consent)
+    };
+    if mode.is_per_use()
+        && interaction != crate::hwkey::Interaction::PerUse
+        && !hw.supports_consent()
+    {
+        return Err(VaultError::HardwareConsentUnavailable.into());
+    }
+
+    // Fresh device keypair. The FIDO credential derives from vault_id,
+    // so the token needs no re-pairing; only the roster entry and the
+    // keywrap follow the new halves.
+    let mut seed = [0u8; 32];
+    use rand_core::RngCore as _;
+    rand_core::OsRng.fill_bytes(&mut seed);
+    let new_x25519 = x25519_dalek::StaticSecret::from(seed);
+    let new_signing = ed25519_dalek::SigningKey::generate(&mut rand_core::OsRng);
+    let inner = serde_json::json!({
+        "device_id": device_id.to_string(),
+        "x25519_private": hex::encode(new_x25519.to_bytes()),
+        "ed25519_private": hex::encode(new_signing.to_bytes()),
+    })
+    .to_string();
+    let info = hw.create_binding(vault_id, mode)?;
+    let out = seal_bytes_hw(
+        &*hw,
+        &info.binding,
+        seal_key,
+        &inner,
+        Some(device_id),
+        mode,
+        info.attestation,
+    )?;
+    let new_ik = ik_of(&out.content_key);
+
+    // Stage both new artifacts BEFORE any commit so a post-commit crash
+    // always finds the material it needs to promote. The marker
+    // separates rotation tears (roster commit in flight) from
+    // consent/reseal stagings, whose rebind alone is the commit signal.
+    let staged_privkey = sibling_staged_privkey(vault);
+    let staged_keywrap = vault
+        .join("meta/keywrap")
+        .join(format!("{device_id}.json.new"));
+    std::fs::write(sibling_rotation_marker(vault), device_id.to_string())
+        .map_err(|e| VaultError::Metadata(format!("stage marker: {e}")))?;
+    std::fs::write(&staged_privkey, &out.bytes)
+        .map_err(|e| VaultError::Metadata(format!("stage privkey: {e}")))?;
+    let new_x25519_public = x25519_dalek::PublicKey::from(&new_x25519);
+    let wrapped = crate::crypto::hpke_wrap::wrap_key(
+        root_key.as_bytes(),
+        &new_x25519_public,
+        "root-key-keywrap",
+    )?;
+    let keywrap_json = serde_json::json!({
+        "device_id": device_id.to_string(),
+        "ephemeral_public": hex::encode(wrapped.0),
+        "encrypted_key": hex::encode(wrapped.1),
+        "tag": hex::encode(wrapped.2),
+    })
+    .to_string();
+    std::fs::write(&staged_keywrap, &keywrap_json)
+        .map_err(|e| VaultError::Metadata(format!("stage keywrap: {e}")))?;
+
+    // Identity artifacts move to the new hw content key while the old
+    // device file is still authoritative on disk: a crash here heals by
+    // rollback (the staged keys are not yet committed).
+    rebind_identity_artifacts(vault, Some(device_id), seal_key, &new_ik)?;
+    if let Some(legacy) = identity_keystore_wrap_key(vault) {
+        rebind_identity_artifacts(vault, Some(device_id), &legacy, &new_ik)?;
+    }
+
+    // Roster: same device id, new key halves. Committed with the OLD
+    // signing key (the cache still holds it), which the parent roster
+    // vouches for; commits after the swap verify under THIS commit's
+    // roster. Without a git repo the update stays local (an unsynced
+    // vault has no peers to verify it).
+    let roster_path = vault.join("meta/devices.json");
+    let mut registry: crate::devices::DeviceRegistry = serde_json::from_str(
+        &std::fs::read_to_string(&roster_path)
+            .map_err(|e| VaultError::Metadata(format!("read roster: {e}")))?,
+    )
+    .map_err(|e| VaultError::Corrupt(format!("parse roster: {e}")))?;
+    {
+        let entry = registry
+            .devices
+            .get_mut(&device_id)
+            .ok_or_else(|| VaultError::Corrupt("this device is not in the roster".into()))?;
+        entry.encryption_public_key = hex::encode(new_x25519_public.to_bytes());
+        entry.signing_public_key = hex::encode(new_signing.verifying_key().to_bytes());
+    }
+    crate::vault::write_vault_file(
+        &roster_path,
+        registry
+            .to_deterministic_json()
+            .map_err(|e| VaultError::Metadata(format!("serialize roster: {e}")))?
+            .as_bytes(),
+    )
+    .map_err(|e| VaultError::Metadata(format!("write roster: {e}")))?;
+    if vault.join(".git").exists() {
+        #[cfg(feature = "git-sync")]
+        {
+            let engine =
+                crate::sync::engine::SyncEngine::new(vault, &device_id.to_string(), Some(seal_key));
+            let repo = engine.open_repo()?;
+            engine.commit_all(&repo, "rotate device keys")?;
+        }
+    }
+
+    // Promote: the sealed privkey first, then the keywrap. A crash
+    // between the two lands in the torn state that
+    // heal_pending_hw_rotation resolves by finishing the promotion.
+    crate::vault::write_vault_file(devkey_path, &out.bytes)
+        .map_err(|e| VaultError::Metadata(format!("write hw-sealed devkey: {e}")))?;
+    crate::vault::write_vault_file(
+        &vault.join("meta/keywrap").join(format!("{device_id}.json")),
+        keywrap_json.as_bytes(),
+    )
+    .map_err(|e| VaultError::Metadata(format!("write keywrap: {e}")))?;
+    let _ = std::fs::remove_file(&staged_privkey);
+    let _ = std::fs::remove_file(&staged_keywrap);
+    let _ = std::fs::remove_file(sibling_rotation_marker(vault));
+
+    // The signing cache still holds the old Ed25519 key; refresh it so
+    // the next sync signs with the key the roster now names.
+    let new_keys = crate::vault::handle::DevicePrivKeys {
+        x25519: new_x25519,
+        ed25519: new_signing,
+    };
+    crate::vault::handle::cache_device_signing_key(vault, device_id, &new_keys);
+    Ok(true)
+}
+
+/// Staging siblings of the real files (gitignored): a rotating enable
+/// stages `<privkey>.new` + `<keywrap>.new` + the `<privkey>.rotation`
+/// marker; consent changes and seal rotations stage only the privkey.
+/// Per-file siblings keep the synthetic flat-path tests writable and
+/// never ride a commit (ignored via meta/ entries).
+fn sibling_staged_privkey(vault: &Path) -> std::path::PathBuf {
+    vault
+        .join("meta/device-privkey.json")
+        .with_file_name("device-privkey.json.new")
+}
+
+fn sibling_rotation_marker(vault: &Path) -> std::path::PathBuf {
+    vault
+        .join("meta/device-privkey.json")
+        .with_file_name("device-privkey.json.rotation")
+}
+
+/// M3 crash heal for a rotating hw enable. The rotation stages the new
+/// sealed privkey and keywrap under .baluard/hw-rotation/, then commits
+/// the roster with the OLD signing key (the parent roster vouches for
+/// it), then promotes. Which step died is decided by inspecting the
+/// committed roster, not a phase flag: if the roster entry already
+/// carries the staged key the commit landed and the only safe move is
+/// to promote (a repair commit signed with the old key would be refused
+/// under the new roster); if the roster still names the current key the
+/// commit never landed and the old key still signs, so the staging is
+/// rolled back and the identity rebind undone. Neither path needs the
+/// phrase. Idempotent: a clean vault is a no-op.
+pub(crate) fn heal_pending_hw_rotation(
+    vault: &Path,
+    device_id: Uuid,
+    seal_key: &[u8; 32],
+) -> Result<(), BaluardError> {
+    let staged_privkey = sibling_staged_privkey(vault);
+    let staged_keywrap = vault
+        .join("meta/keywrap")
+        .join(format!("{device_id}.json.new"));
+    let rotation_marker = sibling_rotation_marker(vault);
+    let is_rotation = rotation_marker.exists();
+    if !staged_privkey.exists() {
+        // A bare marker (crash between marker write and staging) is
+        // inert: clean it so the next rotation starts fresh.
+        if is_rotation {
+            let _ = std::fs::remove_file(&rotation_marker);
+        }
+        return Ok(());
+    }
+    let roster_path = vault.join("meta/devices.json");
+    let roster = std::fs::read_to_string(&roster_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<crate::devices::DeviceRegistry>(&raw).ok());
+    let staged_new_pub = std::fs::read(&staged_privkey).ok().and_then(|bytes| {
+        // The staged bytes are a v2-hw seal; the binding is the same
+        // vault binding, so any available store of the right backend
+        // opens it. Resolve the backend from the staged bytes.
+        let backend = hw_backend_of(&bytes).ok()?;
+        let hw = crate::hwkey::store_for(&backend)?;
+        let (inner, ck) = open_bytes_hw_with_ck(&*hw, seal_key, &bytes).ok()?;
+        Some((inner, ik_of(&ck)))
+    });
+    let Some((staged_inner, staged_ik)) = staged_new_pub else {
+        // Unreadable staging (chip gone mid-crash): leave it; the next
+        // heal with the chip present finishes the job. Unlock proceeds
+        // only if the on-disk files are consistent, which they are in
+        // the pre-commit case.
+        return Ok(());
+    };
+    let staged_signing_pub = serde_json::from_str::<serde_json::Value>(&staged_inner)
+        .ok()
+        .and_then(|v| v["ed25519_private"].as_str().map(str::to_string))
+        .and_then(|hex_priv| {
+            // creation.rs stores SigningKey::to_bytes(): 64 bytes of
+            // seed || public. The verifying key derives from the seed.
+            let decoded = hex::decode(&hex_priv).ok()?;
+            let seed: [u8; 32] = decoded.get(..32)?.try_into().ok()?;
+            Some(hex::encode(
+                ed25519_dalek::SigningKey::from_bytes(&seed)
+                    .verifying_key()
+                    .to_bytes(),
+            ))
+        });
+    let roster_has_staged = roster.as_ref().is_some_and(|reg| {
+        reg.devices
+            .get(&device_id)
+            .and_then(|e| {
+                staged_signing_pub
+                    .as_deref()
+                    .map(|sp| e.signing_public_key == sp)
+            })
+            .unwrap_or(false)
+    });
+    // A consent-change or seal-rotation tear rebinds the identity
+    // artifacts to the staged key without touching the roster; the
+    // rebind having landed is itself the commit signal.
+    let identity_bound_to_staged = (|| -> Option<bool> {
+        let seed_hex = serde_json::from_str::<serde_json::Value>(
+            &std::fs::read_to_string(vault.join("meta/member-unlock.json")).ok()?,
+        )
+        .ok()?["identity_seed_sealed"]
+            .as_str()?
+            .to_string();
+        let sealed = hex::decode(seed_hex).ok()?;
+        Some(crate::vault::identity::open_identity(&staged_ik, &sealed).is_ok())
+    })()
+    .unwrap_or(false);
+    // A consent-change or seal-rotation tear rebinds the identity
+    // artifacts to the staged key without touching the roster; the
+    // rebind having landed is itself the commit signal - but ONLY for
+    // those flows (marker absent). A torn ROTATION must roll back when
+    // its roster commit never landed: promoting it would strand commits
+    // signed with a key no roster admits.
+    let promote = if is_rotation {
+        roster_has_staged
+    } else {
+        identity_bound_to_staged
+    };
+    if promote {
+        // Post-commit tear: promote. The roster commit already named the
+        // new keys, so no repair commit is possible or needed. The
+        // keywrap stage is optional: a tear between the two stagings
+        // still promotes the privkey (its keywrap is the current one,
+        // which cannot be - the roster commit only lands after BOTH
+        // stagings - but tolerate the shape rather than guess).
+        super::write_vault_file(
+            &vault.join("meta/device-privkey.json"),
+            &std::fs::read(&staged_privkey)
+                .map_err(|e| VaultError::Metadata(format!("read staged privkey: {e}")))?,
+        )?;
+        if staged_keywrap.exists() {
+            super::write_vault_file(
+                &vault.join("meta/keywrap").join(format!("{device_id}.json")),
+                &std::fs::read(&staged_keywrap)
+                    .map_err(|e| VaultError::Metadata(format!("read staged keywrap: {e}")))?,
+            )?;
+        }
+        let _ = std::fs::remove_file(&staged_privkey);
+        let _ = std::fs::remove_file(&staged_keywrap);
+        let _ = std::fs::remove_file(&rotation_marker);
+        return Ok(());
+    }
+    // Pre-commit tear: roll back. The old signing key still signs, so a
+    // later rotation can restart cleanly.
+    if let Some(kk) = identity_keystore_wrap_key(vault) {
+        let _ = rebind_identity_artifacts(vault, Some(device_id), &staged_ik, &kk);
+    }
+    let _ = rebind_identity_artifacts(vault, Some(device_id), &staged_ik, seal_key);
+    let _ = std::fs::remove_file(&staged_privkey);
+    let _ = std::fs::remove_file(&staged_keywrap);
+    let _ = std::fs::remove_file(&rotation_marker);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1829,6 +2239,258 @@ mod tests {
         fn delete_binding(&self, _: &str) -> Result<(), BaluardError> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn hw_rotation_heal_promotes_after_the_roster_commit() {
+        let _lock = HW_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _old_env = hw_env_clear();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, _password, _phrase) = audit_vault(dir.path());
+        let seal = handle.unlocked().devkey_seal;
+        let vault = handle.path.clone();
+        let devkey = vault.join("meta/device-privkey.json");
+
+        // Simulate the post-commit tear: staged artifacts exist, the
+        // roster already names the staged signing key, the real files
+        // are still the old ones.
+        let inner = serde_json::json!({
+            "device_id": handle.device_id.to_string(),
+            "x25519_private": hex::encode([7u8; 32]),
+            "ed25519_private": hex::encode([8u8; 64]),
+        })
+        .to_string();
+        let hw = crate::hwkey::available().unwrap();
+        let info = hw
+            .create_binding(handle.vault_id, crate::hwkey::HwConsent::PerUse)
+            .unwrap();
+        let out = seal_bytes_hw(
+            &*hw,
+            &info.binding,
+            &seal,
+            &inner,
+            Some(handle.device_id),
+            crate::hwkey::HwConsent::PerUse,
+            None,
+        )
+        .unwrap();
+        let staged = sibling_staged_privkey(&vault);
+        std::fs::write(
+            sibling_rotation_marker(&vault),
+            handle.device_id.to_string(),
+        )
+        .unwrap();
+        std::fs::write(&staged, &out.bytes).unwrap();
+        let signing_pub = {
+            let v: serde_json::Value = serde_json::from_str(&inner).unwrap();
+            let decoded = hex::decode(v["ed25519_private"].as_str().unwrap()).unwrap();
+            let seed: [u8; 32] = decoded[..32].try_into().unwrap();
+            hex::encode(
+                ed25519_dalek::SigningKey::from_bytes(&seed)
+                    .verifying_key()
+                    .to_bytes(),
+            )
+        };
+        let roster_path = vault.join("meta/devices.json");
+        let mut reg: crate::devices::DeviceRegistry =
+            serde_json::from_str(&std::fs::read_to_string(&roster_path).unwrap()).unwrap();
+        let entry = reg.devices.get_mut(&handle.device_id).unwrap();
+        entry.signing_public_key = signing_pub;
+        crate::vault::write_vault_file(
+            &roster_path,
+            reg.to_deterministic_json().unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        heal_pending_hw_rotation(&vault, handle.device_id, &seal).unwrap();
+
+        // Promoted: the real files now carry the staged material.
+        assert_eq!(
+            std::fs::read(&devkey).unwrap(),
+            out.bytes,
+            "staged privkey was not promoted"
+        );
+        assert!(!staged.exists(), "staging not cleaned up");
+        hw_env_restore(_old_env);
+    }
+
+    #[test]
+    fn hw_rotation_heal_rolls_back_before_the_roster_commit() {
+        let _lock = HW_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _old_env = hw_env_clear();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, _password, _phrase) = audit_vault(dir.path());
+        let seal = handle.unlocked().devkey_seal;
+        let vault = handle.path.clone();
+        let devkey = vault.join("meta/device-privkey.json");
+        let privkey_before = std::fs::read(&devkey).unwrap();
+
+        // Staged artifacts exist but the roster was never updated (the
+        // commit never landed). The seed fixture is rebound to the staged
+        // identity key, as the interrupted rotation would have left it.
+        let inner = serde_json::json!({
+            "device_id": handle.device_id.to_string(),
+            "x25519_private": hex::encode([9u8; 32]),
+            "ed25519_private": hex::encode([10u8; 64]),
+        })
+        .to_string();
+        let hw = crate::hwkey::available().unwrap();
+        let info = hw
+            .create_binding(handle.vault_id, crate::hwkey::HwConsent::PerUse)
+            .unwrap();
+        let out = seal_bytes_hw(
+            &*hw,
+            &info.binding,
+            &seal,
+            &inner,
+            Some(handle.device_id),
+            crate::hwkey::HwConsent::PerUse,
+            None,
+        )
+        .unwrap();
+        let staged_ik = ik_of(&out.content_key);
+        let staged = sibling_staged_privkey(&vault);
+        std::fs::write(
+            sibling_rotation_marker(&vault),
+            handle.device_id.to_string(),
+        )
+        .unwrap();
+        std::fs::write(&staged, &out.bytes).unwrap();
+        // Seed fixture sealed under the CURRENT key, then moved to the
+        // staged ik exactly as the interrupted rotation would have left it.
+        let member_unlock = vault.join("meta/member-unlock.json");
+        let identity = crate::vault::identity::IdentityKeys::generate().unwrap();
+        let seed_sealed =
+            hex::encode(crate::vault::identity::seal_identity(&seal, &identity).unwrap());
+        let kdf_json = std::fs::read_to_string(vault.join("meta/kdf-params.json")).unwrap();
+        let row = serde_json::json!({
+            // A foreign device id: the row must be rebindable but never
+            // match THIS device's admin unlock canary lookup.
+            "device_id": uuid::Uuid::new_v4().to_string(),
+            "kdf_params": serde_json::from_str::<serde_json::Value>(&kdf_json).unwrap(),
+            "kek_canary": hex::encode([0u8; 16]),
+            "identity_seed_sealed": seed_sealed,
+        });
+        crate::vault::write_vault_file(
+            &member_unlock,
+            serde_json::to_string_pretty(&row).unwrap().as_bytes(),
+        )
+        .unwrap();
+        rebind_identity_artifacts(&vault, Some(handle.device_id), &seal, &staged_ik).unwrap();
+
+        heal_pending_hw_rotation(&vault, handle.device_id, &seal).unwrap();
+
+        // Rolled back: staging gone, real files untouched, the seed
+        // opens under the CURRENT seal key again.
+        assert!(!staged.exists(), "staging not rolled back");
+        assert_eq!(std::fs::read(&devkey).unwrap(), privkey_before);
+        let sealed_now = hex::decode(
+            serde_json::from_str::<serde_json::Value>(
+                &std::fs::read_to_string(&member_unlock).unwrap(),
+            )
+            .unwrap()["identity_seed_sealed"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            crate::vault::identity::open_identity(&seal, &sealed_now).is_ok(),
+            "member seed not rebound back to the current key"
+        );
+        hw_env_restore(_old_env);
+    }
+
+    #[test]
+    fn hw_enable_rotates_the_device_key_on_root_holding_vaults() {
+        let _lock = HW_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _old_env = hw_env_clear();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        let seal = handle.unlocked().devkey_seal;
+        let root_bytes = *handle.unlocked().root().unwrap().as_bytes();
+        let devkey = handle.path.join("meta/device-privkey.json");
+        let old_inner = read_privkey_file(&devkey, Some(&seal)).unwrap();
+        let roster_value = |h: &crate::vault::VaultHandle| {
+            serde_json::from_str::<serde_json::Value>(
+                &std::fs::read_to_string(h.path.join("meta/devices.json")).unwrap(),
+            )
+            .unwrap()
+        };
+        let old_roster = roster_value(&handle);
+        let old_signing = old_roster["devices"][handle.device_id.to_string()]["signing_public_key"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        assert!(
+            enable_hw_seal_rotating(
+                &handle.path,
+                handle.vault_id,
+                handle.device_id,
+                &seal,
+                Some(handle.unlocked().root().unwrap()),
+                false,
+                None,
+            )
+            .unwrap()
+        );
+
+        // The device key changed under the seal.
+        let new_inner = read_privkey_file(&devkey, Some(&seal)).unwrap();
+        let x25519_of = |inner: &str| {
+            let v: serde_json::Value = serde_json::from_str(inner).unwrap();
+            let bytes: [u8; 32] = hex::decode(v["x25519_private"].as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            x25519_dalek::StaticSecret::from(bytes)
+        };
+        assert_ne!(
+            x25519_of(&old_inner).to_bytes(),
+            x25519_of(&new_inner).to_bytes(),
+            "device key was not rotated by hw enable"
+        );
+
+        // The roster names the new halves.
+        let new_roster = roster_value(&handle);
+        let new_signing = new_roster["devices"][handle.device_id.to_string()]["signing_public_key"]
+            .as_str()
+            .unwrap();
+        assert_ne!(old_signing, new_signing);
+        let new_x = x25519_of(&new_inner);
+
+        // The keywrap re-wrapped the root to the new key.
+        let kw: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                handle
+                    .path
+                    .join(format!("meta/keywrap/{}.json", handle.device_id)),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let eph = hex::decode(kw["ephemeral_public"].as_str().unwrap()).unwrap();
+        let ct = hex::decode(kw["encrypted_key"].as_str().unwrap()).unwrap();
+        let tag: [u8; 16] = hex::decode(kw["tag"].as_str().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let unwrapped =
+            crate::crypto::hpke_wrap::unwrap_key(&eph, &ct, &tag, &new_x, "root-key-keywrap")
+                .unwrap();
+        assert_eq!(unwrapped.as_slice(), root_bytes.as_slice());
+
+        // No staging left behind.
+        assert!(!sibling_staged_privkey(&handle.path).exists());
+        assert!(!sibling_rotation_marker(&handle.path).exists());
+
+        // The vault still unlocks through the chip with the password.
+        handle.lock();
+        handle.unlock(&password).unwrap();
+        hw_env_restore(_old_env);
     }
 
     #[test]
