@@ -266,6 +266,47 @@ describe("SettingsModal security-key guard flow", () => {
     expect(rendered.getByText("settings.hwAttestUnknownShort")).toBeTruthy();
   });
 
+  it("does not accumulate hw-status polls across open/close cycles", async () => {
+    vi.useFakeTimers();
+    try {
+      const [settingsOpen, setSettingsOpen] = realCreateSignal(true);
+      vaultMock.showSettingsModal.mockImplementation(() => settingsOpen());
+      let hwStatusCalls = 0;
+      daemonMock.mockImplementation((action) => {
+        if (action === "settings.get") {
+          return Promise.resolve(JSON.stringify({ vault_timeout: "15m", fetch_favicons: false, display_name: "Alice", avatar_ext: "png" }));
+        }
+        if (action === "vault.avatar.get") return Promise.resolve("");
+        if (action === "vault.pin_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+        if (action === "vault.biometric_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+        if (action === "vault.hw_status") {
+          hwStatusCalls += 1;
+          return Promise.resolve(fidoStatus());
+        }
+        return Promise.resolve("");
+      });
+      render(() => <SettingsModal />);
+      // Two full open/close cycles: each open used to start another
+      // 4-second poll, so a leaked interval probes the token on every
+      // tick of every past session.
+      await vi.advanceTimersByTimeAsync(50);
+      setSettingsOpen(false);
+      await vi.advanceTimersByTimeAsync(50);
+      setSettingsOpen(true);
+      await vi.advanceTimersByTimeAsync(50);
+      setSettingsOpen(false);
+      await vi.advanceTimersByTimeAsync(50);
+      setSettingsOpen(true);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const before = hwStatusCalls;
+      await vi.advanceTimersByTimeAsync(8100);
+      expect(hwStatusCalls - before).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("re-probes the security key on an interval so a plugged key appears without a reopen", async () => {
     vi.useFakeTimers();
     try {
