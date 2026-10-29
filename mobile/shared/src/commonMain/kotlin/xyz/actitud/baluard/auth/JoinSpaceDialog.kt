@@ -95,11 +95,18 @@ fun JoinSpaceDialog(
             // The password lives only in this composable's state; unlock
             // immediately on approval (same discipline as the desktop flow:
             // the password feeds the standard unlock path, then drops).
-            when (authViewModel.openAndUnlock(vaultPath, password)) {
+            when (val unlock = authViewModel.openAndUnlock(vaultPath, password)) {
                 is UnlockResult.Success -> onApproved()
                 // Back to the form so the user can correct the password —
                 // the waiting phase has no input field.
                 is UnlockResult.DeviceMismatch -> { errorMsg = t("login.deviceMismatch"); phase = "form" }
+                is UnlockResult.WrongPassword -> { errorMsg = t("login.wrongPassword"); phase = "form" }
+                is UnlockResult.SecurityKey -> {
+                    // A hardware-sealed join unlocks through the key; show
+                    // its localized prompt instead of the password field.
+                    errorMsg = unlock.message
+                    phase = "form"
+                }
                 is UnlockResult.Failure -> { errorMsg = t("login.wrongPassword"); phase = "form" }
             }
         }

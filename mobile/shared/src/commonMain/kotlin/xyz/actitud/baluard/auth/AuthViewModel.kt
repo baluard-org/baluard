@@ -72,21 +72,7 @@ class AuthViewModel(private val repo: VaultRepository) {
         } catch (e: BaluardException.DeviceUnpaired) {
             UnlockResult.DeviceMismatch
         } catch (e: Exception) {
-            UnlockResult.Failure(e.message ?: "unlock failed")
-        }
-    }
-
-    /** Password + possession unlock after the normal tail finds an HW seal. */
-    suspend fun openAndUnlockWithSecurityKey(path: String, password: String): UnlockResult {
-        return try {
-            val v = repo.openVault(path)
-            withSecurityKeyTransport { v.unlockWithSecurityKey(password, it) }
-            session.adopt(path, MobileSessionVault(v), kek = null)
-            UnlockResult.Success
-        } catch (e: BaluardException.DeviceUnpaired) {
-            UnlockResult.DeviceMismatch
-        } catch (e: Exception) {
-            UnlockResult.Failure(xyz.actitud.baluard.platform.securityKeyErrorMessage(e))
+            classifyUnlockError(e)
         }
     }
 
@@ -115,7 +101,7 @@ class AuthViewModel(private val repo: VaultRepository) {
         } catch (e: BaluardException.DeviceUnpaired) {
             UnlockResult.DeviceMismatch
         } catch (e: Exception) {
-            UnlockResult.Failure(e.message ?: "quick unlock failed")
+            classifyUnlockError(e)
         }
     }
 
@@ -178,4 +164,30 @@ class AuthViewModel(private val repo: VaultRepository) {
         session.adopt(path, MobileSessionVault(v), kek = null)
     }
 
+}
+
+/**
+ * One error-to-outcome map for every unlock path. The Rust error strings
+ * are stable English constants; the UI never string-matches them itself.
+ */
+internal fun classifyUnlockError(e: Throwable): UnlockResult {
+    val detail = e.message.orEmpty()
+    return when {
+        detail.contains("wrong password", ignoreCase = true) ||
+            detail.contains("master password incorrect", ignoreCase = true) ->
+            UnlockResult.WrongPassword
+        detail.contains("security key", ignoreCase = true) ||
+            detail.contains("security chip", ignoreCase = true) ||
+            detail.contains("chip is unavailable", ignoreCase = true) ||
+            detail.contains("not tapped", ignoreCase = true) ||
+            detail.contains("timed out", ignoreCase = true) ||
+            detail.contains("cancel", ignoreCase = true) ||
+            detail.contains("busy", ignoreCase = true) ||
+            detail.contains("NFC", ignoreCase = true) ||
+            detail.contains("USB", ignoreCase = true) ->
+            UnlockResult.SecurityKey(
+                xyz.actitud.baluard.platform.securityKeyErrorMessage(e),
+            )
+        else -> UnlockResult.Failure(xyz.actitud.baluard.i18n.t("login.unlockFailed"))
+    }
 }

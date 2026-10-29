@@ -100,13 +100,13 @@ fun UnlockScreen(
                             state = AuthState.Error(t("login.deviceMismatch"))
                         }
                         is UnlockResult.Failure -> {
-                            val failure = result.message
-                            state = AuthState.Error(
-                                if (failure.contains("security key", ignoreCase = true) ||
-                                    failure.contains("llave", ignoreCase = true) ||
-                                    failure.contains("chave", ignoreCase = true)
-                                ) failure else t("login.biometricStale"),
-                            )
+                            state = AuthState.Error(t("login.biometricStale"))
+                        }
+                        is UnlockResult.WrongPassword -> {
+                            state = AuthState.Error(t("login.biometricStale"))
+                        }
+                        is UnlockResult.SecurityKey -> {
+                            state = AuthState.Error(result.message)
                         }
                     }
                 }
@@ -197,13 +197,13 @@ fun UnlockScreen(
                                     state = AuthState.Error(t("login.deviceMismatch"))
                                 }
                                 is UnlockResult.Failure -> {
-                                    val failure = result.message
-                                    state = AuthState.Error(
-                                        if (failure.contains("security key", ignoreCase = true) ||
-                                            failure.contains("llave", ignoreCase = true) ||
-                                            failure.contains("chave", ignoreCase = true)
-                                        ) failure else t("login.wrongPassword"),
-                                    )
+                                    state = AuthState.Error(result.message)
+                                }
+                                is UnlockResult.WrongPassword -> {
+                                    state = AuthState.Error(t("login.wrongPassword"))
+                                }
+                                is UnlockResult.SecurityKey -> {
+                                    state = AuthState.Error(result.message)
                                 }
                             }
                         }
