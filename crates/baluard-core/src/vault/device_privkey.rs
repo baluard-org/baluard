@@ -500,6 +500,25 @@ fn hw_aad(backend: &str, handshake: &[u8], consent: bool) -> Vec<u8> {
     aad
 }
 
+/// M8: prove the freshly minted seal reopens before it can replace a
+/// working device file. This pays one derive at enable; a token whose
+/// next assertion drifts fails here with the old file still intact.
+fn verify_hw_seal_opens(
+    hw: &dyn crate::hwkey::HardwareKeyStore,
+    seal_key: &[u8; 32],
+    sealed: &[u8],
+    inner_json: &str,
+) -> Result<(), BaluardError> {
+    let (verified, _) = open_bytes_hw_with_ck(hw, seal_key, sealed)?;
+    if verified != inner_json {
+        return Err(VaultError::Corrupt(
+            "hardware seal verification returned a different device key".into(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn outer_device_id(inner_json: &str) -> Option<Uuid> {
     serde_json::from_str::<serde_json::Value>(inner_json)
         .ok()
@@ -712,6 +731,7 @@ pub fn enable_hw_seal(
                 mode,
                 info.attestation,
             )?;
+            verify_hw_seal_opens(&*hw, seal_key, &out.bytes, &inner)?;
             super::write_vault_file(path, &out.bytes).map_err(|e| {
                 BaluardError::from(VaultError::Metadata(format!(
                     "write hw-sealed devkey: {e}"
@@ -1068,6 +1088,7 @@ fn rotate_and_seal(
         mode,
         info.attestation,
     )?;
+    verify_hw_seal_opens(&*hw, seal_key, &out.bytes, &inner)?;
     let new_ik = ik_of(&out.content_key);
 
     // Stage both new artifacts BEFORE any commit so a post-commit crash
@@ -2610,6 +2631,88 @@ mod tests {
     /// the file through the chip on every sync, tapping mid-cycle, or
     /// wedge unsigned without it).
     #[cfg(feature = "git-sync")]
+    /// M8: a token whose next assertion yields a different secret must
+    /// not let enable replace a working device file.
+    #[test]
+    fn enable_verifies_the_new_seal_before_replacing_the_old_file() {
+        struct DriftingMock;
+        impl crate::hwkey::HardwareKeyStore for DriftingMock {
+            fn backend_id(&self) -> &'static str {
+                "drifting"
+            }
+            fn probe(&self) -> crate::hwkey::HwCapability {
+                crate::hwkey::HwCapability::Available {
+                    backend: "drifting".into(),
+                }
+            }
+            fn interaction(&self) -> crate::hwkey::Interaction {
+                crate::hwkey::Interaction::PerUse
+            }
+            fn create_binding(
+                &self,
+                _: Uuid,
+                _: crate::hwkey::HwConsent,
+            ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
+                Ok(crate::hwkey::BindingInfo {
+                    binding: crate::hwkey::binding_tag(Uuid::new_v4()),
+                    attestation: None,
+                })
+            }
+            fn derive_ephemeral(
+                &self,
+                binding: &str,
+                _: crate::hwkey::HwConsent,
+            ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError>
+            {
+                use sha2::{Digest, Sha256};
+                let mut h = Sha256::new();
+                h.update(b"t");
+                h.update(binding.as_bytes());
+                h.update([0x04, 0x02]);
+                Ok((
+                    crate::hwkey::Handshake(vec![0x04, 0x02]),
+                    Zeroizing::new(h.finalize().into()),
+                ))
+            }
+            fn derive(
+                &self,
+                binding: &str,
+                handshake: &crate::hwkey::Handshake,
+                _: crate::hwkey::HwConsent,
+            ) -> Result<crate::hwkey::SharedSecret, BaluardError> {
+                // The next assertion drifts: enrollment and reopen no
+                // longer agree, so the new seal must never be committed.
+                use sha2::{Digest, Sha256};
+                let mut h = Sha256::new();
+                h.update(b"t");
+                h.update(binding.as_bytes());
+                h.update(&handshake.0);
+                let mut secret: [u8; 32] = h.finalize().into();
+                secret[0] ^= 0xFF;
+                Ok(Zeroizing::new(secret))
+            }
+            fn delete_binding(&self, _: &str) -> Result<(), BaluardError> {
+                Ok(())
+            }
+        }
+
+        let _lock = HW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = hw_env_clear();
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, _, _) = audit_vault(dir.path());
+        let devkey_seal = handle.unlocked().devkey_seal;
+        handle.lock();
+        crate::hwkey::install(std::sync::Arc::new(DriftingMock));
+        let devkey = dir.path().join("meta/device-privkey.json");
+        let before = std::fs::read(&devkey).unwrap();
+        let err = enable_hw_seal(&devkey, &devkey_seal, handle.vault_id, Some(handle.device_id), false, Some("drifting"))
+            .unwrap_err();
+        assert!(matches!(err, BaluardError::Vault(VaultError::Corrupt(_))), "drifting seal must refuse: {err:?}");
+        assert_eq!(std::fs::read(&devkey).unwrap(), before, "the working device file must survive a failed verify-open");
+        crate::hwkey::uninstall();
+        hw_env_restore(_env);
+    }
+
     #[test]
     fn sync_engine_reads_the_signing_key_cache_without_tapping() {
         use std::sync::atomic::Ordering;
