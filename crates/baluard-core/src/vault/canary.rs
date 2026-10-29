@@ -111,12 +111,9 @@ pub fn create_kek_canary(session_key: &[u8; 32], vault_id: Uuid) -> Result<Vec<u
 pub fn verify_kek_canary(session_key: &[u8; 32], canary_bytes: &[u8]) -> Result<(), BaluardError> {
     let envelope = crate::vault::envelope::deserialize(canary_bytes)?;
     let pt = crate::crypto::aead::decrypt(session_key, &envelope)
-        .map_err(|_| crate::error::VaultError::Corrupt("master password incorrect".into()))?;
+        .map_err(|_| crate::error::VaultError::PasswordMismatch)?;
     if pt != KEK_CANARY_PT {
-        return Err(crate::error::VaultError::Corrupt(
-            "master password incorrect (KEK canary plaintext mismatch)".into(),
-        )
-        .into());
+        return Err(crate::error::VaultError::PasswordMismatch.into());
     }
     Ok(())
 }

@@ -2601,8 +2601,12 @@ async fn handle_vault_unlock(mut req: GatewayRequest, host: &SharedVaultHost) ->
             )
         }
         Err(e) => {
-            permit.commit_failure();
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if baluard_core::error::is_password_failure(&e) {
+                permit.commit_failure();
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            } else {
+                permit.commit_neutral();
+            }
             err_response(e.to_string())
         }
     }
@@ -2766,10 +2770,17 @@ async fn handle_vault_biometric_unlock(
             let token = state.get_session_token().await;
             ok_resp(inject_slug(json, &slug), token.as_deref())
         }
-        Err(e) => {
-            permit.commit_failure();
-            err_response(e)
-        }
+        Err(e) => match e {
+            crate::state::QuickUnlockError::Guess(m) => {
+                permit.commit_failure();
+                err_response(m)
+            }
+            // The credential proved itself; the failure is elsewhere.
+            crate::state::QuickUnlockError::Proven(m) => {
+                permit.commit_neutral();
+                err_response(m)
+            }
+        },
     }
 }
 
@@ -2831,10 +2842,17 @@ async fn handle_vault_pin_unlock(req: GatewayRequest, host: &SharedVaultHost) ->
             let token = state.get_session_token().await;
             ok_resp(inject_slug(json, &slug), token.as_deref())
         }
-        Err(e) => {
-            permit.commit_failure();
-            err_response(e)
-        }
+        Err(e) => match e {
+            crate::state::QuickUnlockError::Guess(m) => {
+                permit.commit_failure();
+                err_response(m)
+            }
+            // The credential proved itself; the failure is elsewhere.
+            crate::state::QuickUnlockError::Proven(m) => {
+                permit.commit_neutral();
+                err_response(m)
+            }
+        },
     }
 }
 

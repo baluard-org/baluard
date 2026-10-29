@@ -117,7 +117,7 @@ mod real_vault {
         for i in 0..(baluard_daemon::pin::MAX_PIN_FAILURES - 1) {
             let err = state.pin_unlock(&wrong).await.unwrap_err();
             assert!(
-                err.contains("Incorrect PIN"),
+                err.message().contains("Incorrect PIN"),
                 "attempt {i}: expected Incorrect PIN, got: {err}"
             );
             // Escrow must still be present (under the cap).
@@ -129,7 +129,7 @@ mod real_vault {
         // Terminal attempt: escrow nuked, master password required.
         let err = state.pin_unlock(&wrong).await.unwrap_err();
         assert!(
-            err.contains("disabled") || err.contains("master password"),
+            err.message().contains("disabled") || err.message().contains("master password"),
             "terminal failure must mention disabled/master password, got: {err}"
         );
         // Escrow is now gone.
@@ -183,7 +183,7 @@ mod real_vault {
         let pin = serde_json::json!({ "pin": "123456" }).to_string();
         let err = state.pin_unlock(&pin).await.unwrap_err();
         assert!(
-            err.contains("not enabled") || err.contains("master password"),
+            err.message().contains("not enabled") || err.message().contains("master password"),
             "expected not-enabled guidance, got: {err}"
         );
     }
@@ -263,7 +263,7 @@ mod real_vault {
             let msg = h.await.unwrap();
             // "not enabled" => the attempt saw a nuked escrow (good).
             // Anything else => the attempt reached a live escrow.
-            if !msg.contains("not enabled") {
+            if !msg.message().contains("not enabled") {
                 live_escrow_hits += 1;
             }
         }

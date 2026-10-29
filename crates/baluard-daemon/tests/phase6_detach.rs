@@ -39,6 +39,26 @@ use uuid::Uuid;
 /// Serialises wire-level tests that mutate the global registry file.
 static GLOBAL_REG: Mutex<()> = Mutex::new(());
 
+/// Per-test registry isolation for the wire-level detach tests: the
+/// detach handler REWRITES the real registry file at BALUARD_DATA_DIR, so
+/// two parallel wire tests racing their reads and handler-time rewrites
+/// see each other's entries vanish. Each test redirects BALUARD_DATA_DIR
+/// to its own tempdir and holds the lock for the whole test body.
+static DATA_DIR_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+async fn sandboxed_data_dir() -> (tempfile::TempDir, tokio::sync::MutexGuard<'static, ()>) {
+    let guard = DATA_DIR_LOCK.lock().await;
+    let dir = tempfile::tempdir().expect("sandbox tempdir");
+    // SAFETY: single-threaded test process env mutation, serialized by
+    // DATA_DIR_LOCK; no other test in this binary reads the var while
+    // the guard is held.
+    unsafe {
+        std::env::set_var("BALUARD_DATA_DIR", dir.path());
+    }
+    (dir, guard)
+}
+
 // ── test helpers ──
 
 fn make_real_vault(label: &str) -> (tempfile::TempDir, PathBuf, Uuid) {
@@ -391,6 +411,7 @@ fn response_payload(resp: &GatewayResponse) -> serde_json::Value {
 
 #[tokio::test]
 async fn route_detach_safe_arm_returns_success_and_drops_registry() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
     let (_dir, path, vault_id) = make_real_vault("wire-safe");
     let entry = make_entry("wire-safe", &path, vault_id);
     // Serialise the global registry mutation so the await below doesn't
@@ -436,6 +457,7 @@ async fn route_detach_safe_arm_returns_success_and_drops_registry() {
 
 #[tokio::test]
 async fn route_detach_unknown_slug_returns_error() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
     {
         let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
         write_global_registry(&[], None);
@@ -458,6 +480,7 @@ async fn route_detach_unknown_slug_returns_error() {
 
 #[tokio::test]
 async fn route_detach_missing_marker_with_force_succeeds() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
     let (_dir, path, vault_id) = make_real_vault("wire-missing-force");
     // Strip the marker to simulate corruption.
     std::fs::remove_file(path.join(".baluard")).expect("strip marker");
@@ -494,6 +517,7 @@ async fn route_detach_missing_marker_with_force_succeeds() {
 
 #[tokio::test]
 async fn route_detach_mismatch_with_force_refuses_unconditionally() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
     let (_dir, path, vault_id) = make_real_vault("wire-mismatch-force");
     // Overwrite marker with a DIFFERENT vault_id.
     let stale = BaluardMarker::new(Uuid::new_v4(), "some-other-slug");

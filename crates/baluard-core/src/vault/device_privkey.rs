@@ -1910,6 +1910,46 @@ mod tests {
         hw_env_restore(_old_env);
     }
 
+    /// Hardware failures are not password guesses: unlocking a sealed
+    /// vault with the chip gone must never advance the on-disk failed-
+    /// attempt counter (a forgotten key at home cannot lock the user
+    /// out), while a real wrong password still does.
+    #[test]
+    fn hardware_failures_do_not_charge_the_unlock_rate_limit() {
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+
+        let attempts = dir.path().join("meta/kdf-attempts.json");
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        crate::hwkey::uninstall();
+        for _ in 0..8 {
+            // The CORRECT password: the canary passes and the chip open
+            // fails (the forgotten-key-at-home scenario). A wrong password
+            // fails at the canary before the chip and charging it is right.
+            let err = h.unlock(&password).unwrap_err();
+            assert!(
+                err.to_string().contains("chip is unavailable"),
+                "err: {err}"
+            );
+        }
+        assert!(!attempts.exists(), "hardware failures charged the counter");
+
+        // The counter still works: with the chip STILL gone, a real wrong
+        // password fails at the canary (before the chip) and records
+        // exactly one failure — a guess charges, hardware does not.
+        let err = h.unlock("definitely-not-the-password").unwrap_err();
+        assert!(!err.to_string().contains("chip is unavailable"));
+        let count: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&attempts).unwrap()).unwrap();
+        assert_eq!(count["failed_count"], 1);
+        hw_env_restore(_old_env);
+    }
+
     /// The phrase path is the rescue: with the token LOST and no hardware
     /// store registered, recovery enrolls a fresh device, the caller seals
     /// that key at birth, and the vault opens on the password alone. The

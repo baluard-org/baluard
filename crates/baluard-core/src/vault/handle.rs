@@ -4788,8 +4788,14 @@ impl VaultHandle {
                 }
                 return Ok(());
             }
-            let _ = self.record_failed_attempt();
-            return Err(result.err().unwrap());
+            // Only a canary rejection is a credential guess; hardware
+            // outcomes prove the password, and stale-keywrap/unpaired
+            // metadata failures are not the user's input.
+            let err = result.err().unwrap();
+            if crate::error::is_password_failure(&err) {
+                let _ = self.record_failed_attempt();
+            }
+            return Err(err);
         }
 
         // Step 1: Derive KEK (expensive Argon2id)
@@ -4812,7 +4818,10 @@ impl VaultHandle {
                 Ok(())
             }
             Err(e) => {
-                let _ = self.record_failed_attempt();
+                // Only a canary rejection is a credential guess.
+                if crate::error::is_password_failure(&e) {
+                    let _ = self.record_failed_attempt();
+                }
                 Err(e)
             }
         }
