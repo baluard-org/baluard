@@ -277,11 +277,14 @@ unlocks, whose tail re-seals) — closed in slice 4D.
 real adapter (ctap-hid-fido2) is hidapi-bound and cannot exist on a phone (no /dev/hidraw in an
 app sandbox; iOS grants no raw USB at all), so the mobile backend is a transport-agnostic CTAP2
 client in baluard-core. Step 0 re-runs the slice-1 vendor-review gate on the alternatives before
-any code: kanidm's webauthn-authenticator-rs (reported CTAP2-over-NFC support, unverified) and a
+any code: kanidm's webauthn-authenticator-rs and a
 named plan B — the Yubico YubiKit SDKs behind a COARSE Token callback (the platform implements
 info/make_credential/get_secret with YubiKit; Rust keeps seal math, AAD, and attestation). Pure
 Rust stays the default: one protocol implementation across desktop and phones, hermetically
-testable in CI. The protocol scope the review corrected: FOUR commands, not three — getInfo,
+testable in CI. GATE RESULT (2026-10-28): webauthn-authenticator-rs 0.5.5 has a ctap2 client and
+an iso7816 transport module, but self-documents as alpha with known lock-out edge cases and
+lists request extensions as unsupported — hmac-secret rides request extensions, so it fails the
+gate for a security seal. Its iso7816 module stays a spec cross-reference, not a dependency. The protocol scope the review corrected: FOUR commands, not three — getInfo,
 makeCredential, getAssertion with hmac-secret, plus authenticatorClientPIN subcommand
 getKeyAgreement, which PIN-less still requires: the salt is encrypted under the pinUvAuth shared
 secret (ECDH P-256 against the token's key-agreement key, HMAC-SHA-256 saltAuth, AES-256-CBC
@@ -307,6 +310,19 @@ ctap-hid-fido2 vectors pin the crypto. EXIT GATE: the new client runs over CTAPH
 desktop against the reference key — real firmware contact BEFORE any phone work, so
 Kotlin/Swift is never where protocol bugs surface. An adapter-parity test asserts both adapters
 parse the same recorded makeCredential response into byte-identical PackedAttestation.
+CODE COMPLETE (2026-10-28; physical-key exit gate still pending): `hwkey/ctap/` now carries the
+canonical CBOR codec, pinUvAuth protocols 1+2, ISO 7814-4/APDU and CTAPHID framing, the four-command
+client, the software authenticator, and `CtapToken` behind the existing `Token` seam. The hermetic
+suite covers end-to-end enroll/derive, salt tampering, wrong credentials, algorithm and capability
+refusals, and byte-identical attestation parsing against ctap-hid-fido2. Cross-checking the reference
+adapter caught and fixed two model/client mismatches before firmware contact: makeCredential key 1
+is clientDataHash, and packed attStmt uses text keys. The ignored real-key test is
+`cargo test -p baluard-core --features fido2 real_key_enroll -- --ignored --nocapture`; it creates
+one non-discoverable credential and requires two taps. NFC is also wired through `NfcToken`, with
+extended or chained APDUs selected from platform capability. Review hardening added independent
+protocol-1/2 saltAuth vectors, U2F_V2 selection followed by a CTAP2 getInfo proof, correct 61xx and
+91xx response handling, secret zeroization/redacted debug output, bounded CTAPHID messages, and
+stale-frame recovery; 56 hermetic tests pass with the physical-key gate still pending.
 (4B) platform transports, the runtime store model, and the UniFFI surface. The runtime change
 the review forced into the open: the global registry (a OnceLock map) is consulted INSIDE the
 unlock tail and password-change paths, and MobileVault has no hw surface at all today — "call
@@ -341,7 +357,58 @@ a
 POST-1.0 fast-follow that reuses 4A-4D unchanged (open question 6). The mobile store reports the SAME backend id
 (`fido2`) and the SAME `fido:` binding format as desktop, so the seal AAD is identical and the
 transports are interchangeable on a device that has both (state.rs's match arm and the trait
-doc currently disagree on `fido` vs `fido2` — fixed in this slice). (4C) Compose flows (shared
+doc currently disagree on `fido` vs `fido2` — fixed in this slice).
+CODE COMPLETE (2026-10-28; Android physical NFC/USB gates pending): the implementation uses one
+serialized process-wide operation lock plus an RAII transport scope rather than thread-locals,
+because runtime hardware work hops into spawn_blocking. The UniFFI callback carries NFC APDUs or
+65-byte CTAPHID reports and is always shut down by scope exit and Kotlin finally. Android reader
+mode is lazy, retains one IsoDep across all APDUs, selects NFC-A/B, and chooses extended or chained
+framing from IsoDep capability. USB filtering requires a Yubico non-boot HID interface with 64-byte
+IN/OUT endpoints, handles permission and cleanup, and converts Android's 64-byte reports at the
+CTAPHID boundary. Settings, password and quick unlock select the key path before the KDF, mobile
+autofill refuses sealed vaults with explicit open-in-app copy, and password changes perform all
+hardware work before metadata writes with old-file restoration on later write failure. Sync never
+taps: an unlock caches the device's Ed25519 signing key in memory (cleared on lock) and
+`SyncEngine` reads that cache before touching the sealed privkey file, so autosync and manual sync
+on a sealed vault run with the key unplugged. Change-master-password holds the executor politely:
+`block_in_place` wraps the core op so a mid-change tap does not stall other tasks.
+(C1 review wave, LANDED 2026-10-29) — the Opus review's critical finding, fixed and
+agy-peer-reviewed. Finding: on member devices of shared vaults the hw seal was a procedural gate,
+not a cryptographic one — unlock_tail_member opened the sealed device file only as a discarded
+check while the member identity seed opened under the bare KEK subkey, so password plus files
+reached the SMK without the chip. Fix: identity artifacts bind to
+HKDF-SHA256(hw content key, "baluard-identity-hw-v1") whenever meta/device-privkey.json is
+v2-hw — the member seed rebinds EAGERLY at all four re-key sites (enable, disable, consent
+change, master-password change) and identity.enc heals LAZILY at the next full unlock
+(keystore-mode identity.enc rebinds eagerly too; passphrase-mode cannot at token-gated flows).
+The admin unlock tail threads the content key out of the single chip assertion
+(load_device_privkeys_with_ck), UnlockedState carries identity_hw_key (zeroized, cleared with
+the state on lock) taking precedence over identity_wrap_key, and the member tail performs a real
+chip open whose content key also feeds the signing-key cache. The agy review round amended the
+first cut: identity.enc (member-scoped and legacy) rebinds old-ik-to-new-ik at rotation and
+consent changes; disable rebinds identity artifacts back BEFORE the unsealed commit (a rebind
+failure aborts with the seal intact) and restores the keystore key where derivable, while a
+passphrase-mode identity.enc after disable is a documented residual recovered by the identity
+escrow phrase (no master password exists in the token-gated flow to re-seal with); enable
+rebinds eagerly where the old keys are derivable (member seed, keystore-mode identity.enc), the
+passphrase window until the first full unlock remains and is healed by the existing lazy path;
+load_identity_cache tries the hw key BEFORE requiring a master password so KEK/PIN quick
+unlocks load a healed identity (new regression test); the post-tail member-identity block in
+unlock no longer clobbers the tail-set hw binding with the bare devkey subkey; the member tail
+now parses and caches the device signing keys it opens (post-unlock sync stays tap-free on
+member devices too); change_master_password snapshots the identity artifacts and restores them
+with the device file on keywrap/canary write failure; derive_identity_hw_key and ik_of return
+Zeroizing; the UniFFI security-key unlock and password-change paths consume the recorded
+transport error detail instead of generic copy, and TransportScope::drop uninstalls MobileToken
+so no dead transport lingers in the core registry. Review items already tracked as their own
+waves (sync engine device id, rate-limit charging, typed touch outcomes, CBOR recursion,
+CTAPHID field offsets, auth_data extensions parsing, mobile error mapping and copy, NFC/USB
+lifecycle, password-change lock scope) were dispositioned to those waves, not absorbed here;
+the "canary before chip is a password oracle" claim was refuted (the canary is disk-readable —
+offline password guessing is inherent to any password KDF; the seal gates the Root Key, not the
+password). Suites at close: core 959 (+2 amend assertions), runtime + uniffi 90, daemon 193,
+all 0 failed under the kill switches, red-check on the rebind regression.
+(4C) Compose flows (shared
 UI, platform actuals behind expect/actual): the enroll wizard, the unlock-with-key gesture —
 tap and HOLD: over NFC user presence is implied by the field, no second sensor touch — with
 copy adapted to the gesture ("hold your key to the back of your phone until the check

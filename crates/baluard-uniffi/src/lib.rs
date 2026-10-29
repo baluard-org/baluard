@@ -15,6 +15,8 @@
 
 uniffi::setup_scaffolding!();
 
+mod hardware;
+
 /// Typed error for the mobile FFI surface.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum BaluardError {
@@ -340,6 +342,17 @@ pub async fn derive_kek_for_vault(
 // tokio Runtime absorbs it. Mirrors the daemon's pattern (no extra
 // spawn_blocking) — see `state.rs::unlock` comment.
 
+pub(crate) fn map_unlock_error(error: baluard_core::error::BaluardError) -> BaluardError {
+    match &error {
+        baluard_core::error::BaluardError::Vault(baluard_core::error::VaultError::Corrupt(m))
+            if m.contains("master password incorrect") =>
+        {
+            BaluardError::WrongPassword
+        }
+        _ => error.into(),
+    }
+}
+
 /// Opaque handle to an open vault session. Created by [`open_vault`] or
 /// [`create_vault`]; held by reference on the Kotlin/Swift side. Cheap to
 /// clone internally (wraps an `Arc`).
@@ -408,17 +421,8 @@ impl MobileVault {
     /// verifies the keywrap + canaries, and activates the auto-sync coordinator
     /// (if the vault has a remote). Heavy: runs the KDF on the shared runtime.
     pub async fn unlock(&self, master_password: String) -> Result<(), BaluardError> {
-        self.state.unlock(&master_password).await.map_err(|e| {
-            // The canary failure rides VaultError::Corrupt; surface the
-            // wrong-password case as WrongPassword so the UI prompts to
-            // retype instead of reporting a corrupt vault.
-            match &e {
-                baluard_core::error::BaluardError::Vault(
-                    baluard_core::error::VaultError::Corrupt(m),
-                ) if m.contains("master password incorrect") => BaluardError::WrongPassword,
-                _ => e.into(),
-            }
-        })
+        let _operation = crate::hardware::MOBILE_OPERATION_LOCK.lock().await;
+        self.state.unlock(&master_password).await.map_err(map_unlock_error)
     }
 
     /// Lock the vault: zeroizes in-memory keys, clears the session token,
@@ -437,6 +441,7 @@ impl MobileVault {
     /// SECURITY: the [kek] is the Argon2id output over the master password
     /// (NOT the password itself). Treat as sensitive at the FFI boundary.
     pub async fn unlock_with_kek(&self, kek: Vec<u8>) -> Result<(), BaluardError> {
+        let _operation = crate::hardware::MOBILE_OPERATION_LOCK.lock().await;
         // Zeroize both copies: the FFI buffer and the fixed-size array.
         let kek = zeroize::Zeroizing::new(kek);
         let mut arr = zeroize::Zeroizing::new([0u8; 32]);
@@ -887,6 +892,15 @@ impl MobileVault {
     /// chosen cipher via `get_cipher`). `app_suggestions` carries the
     /// path-B app-to-web flow (empty unless suggest_app_logins is on).
     pub async fn autofill_query(&self, target: String) -> Result<String, BaluardError> {
+        if baluard_core::vault::device_privkey::file_kind(
+            &self.state.vault_path.join("meta/device-privkey.json"),
+        ) == baluard_core::vault::device_privkey::PrivkeyFileKind::SealedHw
+        {
+            return Err(BaluardError::Vault {
+                detail: "This vault requires its security key. Open Baluard to fill entries."
+                    .into(),
+            });
+        }
         Ok(self.state.autofill_query(&target).await?)
     }
 

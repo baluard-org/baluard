@@ -856,9 +856,15 @@ impl VaultState {
             return Err("Vault is locked".into());
         }
 
-        handle
-            .change_master_password(old_password, new_password)
-            .map_err(|e| format!("{e}"))
+        // The core op re-keys the device-key seal through the chip, so an
+        // hw-sealed vault waits for a user tap here. block_in_place frees
+        // the other executor tasks for that wait (multi-thread runtimes
+        // only: daemon and the UniFFI mobile runtime both are).
+        tokio::task::block_in_place(|| {
+            handle
+                .change_master_password(old_password, new_password)
+                .map_err(|e| format!("{e}"))
+        })
     }
 
     /// Replace the vault's recovery phrase (master-password gated in the
@@ -1138,7 +1144,6 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
-
         let settings = handle.get_settings().ok();
         // User-defined equivalent domain groups (Bitwarden parity): loaded
         // from vault settings, consulted by the Domain strategy in addition
@@ -7913,15 +7918,6 @@ impl VaultState {
             None => baluard_core::hwkey::available(),
         }
         .ok_or_else(|| "This device has no usable security chip.".to_string())?;
-        if !matches!(
-            selected.probe(),
-            baluard_core::hwkey::HwCapability::Available { .. }
-        ) {
-            return Err(match selected.backend_id() {
-                "fido2" => "Connect a compatible security key.".to_string(),
-                _ => "This device has no usable security chip.".to_string(),
-            });
-        }
         if consent
             && selected.interaction() == baluard_core::hwkey::Interaction::Never
             && !selected.supports_consent()
@@ -7940,8 +7936,19 @@ impl VaultState {
         let privkey_path = self.vault_path.join("meta/device-privkey.json");
         let backend_id = selected.backend_id().to_string();
         let task_backend = backend_id.clone();
-        let attestation: Option<String> = tokio::task::spawn_blocking(
-            move || -> Result<Option<String>, baluard_core::error::BaluardError> {
+        let probe_or_attestation = tokio::task::spawn_blocking(
+            move || -> Result<Result<Option<String>, String>, baluard_core::error::BaluardError> {
+                if let baluard_core::hwkey::HwCapability::Unavailable { reason } = selected.probe()
+                {
+                    // Reason rides the message so the caller sees WHY the token
+                    // was refused (uv-forced, no-token, security key: <detail>).
+                    let msg = if task_backend == "fido2" {
+                        format!("Connect a compatible security key. ({reason})")
+                    } else {
+                        format!("This device has no usable security chip. ({reason})")
+                    };
+                    return Ok(Err(msg));
+                }
                 baluard_core::vault::device_privkey::enable_hw_seal(
                     &privkey_path,
                     &seal,
@@ -7950,15 +7957,24 @@ impl VaultState {
                     consent,
                     Some(&task_backend),
                 )?;
-                Ok(
+                let attestation =
                     baluard_core::vault::device_privkey::hw_attestation_of(&privkey_path)
-                        .map(|att| att.as_str().to_string()),
-                )
+                        .map(|att| att.as_str().to_string());
+                Ok(Ok(attestation))
             },
         )
         .await
         .map_err(|e| format!("hardware seal task: {e}"))?
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| match &e {
+            baluard_core::error::BaluardError::Vault(
+                baluard_core::error::VaultError::HardwareUnavailable,
+            ) => match backend_id.as_str() {
+                "fido2" => "Connect a compatible security key.".to_string(),
+                _ => "This device has no usable security chip.".to_string(),
+            },
+            _ => format!("{e}"),
+        })?;
+        let attestation: Option<String> = probe_or_attestation?;
         Ok(
             serde_json::json!({"enabled": true, "backend": backend_id, "attestation": attestation})
                 .to_string(),

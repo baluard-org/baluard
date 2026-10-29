@@ -17,9 +17,12 @@
 //! (Nitrokey, SoloKeys, Titan, a forged-but-self-consistent chain -
 //! the honest caveat is that attestation is a strong signal, not
 //! mathematical certainty, because batch attestation keys are
-//! extractable in principle). The legacy "Yubico U2F Root CA Serial
-//! 457200631" pin can be added as a data-only change when a
-//! pre-2024-chain token shows up.
+//! extractable in principle). The pin set covers "Yubico Attestation
+//! Root 1" (MDS, the reference device entry), the legacy "Yubico U2F
+//! Root CA Serial 457200631", and the 2024 "Yubico FIDO Root CA Serial
+//! 450203556" - Yubico's published FIDO trust bundle - plus the five
+//! FIDO MDS anchor certificates for the reference device, whose 5.7.4
+//! chain runs leaf -> FIDO Attestation CA -> intermediate -> Root 1.
 
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs1v15::{Signature as RsaSignature, VerifyingKey as RsaVerifyingKey};
@@ -30,6 +33,7 @@ use sha2::{Sha256, Sha512};
 /// What [`crate::hwkey::fido::Token::make_credential`] reports, mapped
 /// from the CTAP2 attestation object. All fields the verifier needs,
 /// nothing more.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackedAttestation {
     pub credential_id: Vec<u8>,
     pub auth_data: Vec<u8>,
@@ -252,39 +256,215 @@ pub(crate) const YUBICO_ATTESTATION_ROOT_B64: &str = concat!(
     "HqaUYCA/L8ldRk6H7Xk35D+WVpmq2Sh/xT5HiFuhf4wJb0bK"
 );
 
+/// Yubico U2F Root CA Serial 457200631 (2014): the attestation chain
+/// of every pre-2024-firmware token, including the 5.7 Security Key
+/// reference device. developers.yubico.com/PKI/yubico-fido-ca-1.pem.
+pub(crate) const YUBICO_U2F_ROOT_457200631_B64: &str = concat!(
+    "MIIDHjCCAgagAwIBAgIEG0BT9zANBgkqhkiG9w0BAQsFADAuMSwwKgYDVQQDEyNZdWJpY28g",
+    "VTJGIFJvb3QgQ0EgU2VyaWFsIDQ1NzIwMDYzMTAgFw0xNDA4MDEwMDAwMDBaGA8yMDUwMDkw",
+    "NDAwMDAwMFowLjEsMCoGA1UEAxMjWXViaWNvIFUyRiBSb290IENBIFNlcmlhbCA0NTcyMDA2",
+    "MzEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC/jwYuhBVlqaiYWEMsrWFisgJ+",
+    "PtM91eSrpI4TK7U53mwCIawSDHy8vUmk5N2KAj9abvT9NP5SMS1hQi3usxoYGonXQgfO6ZXy",
+    "UA9a+KAkqdFnBnlyugSeCOep8EdZFfsaRFtMjkwz5Gcz2Py4vIYvCdMHPtwaz0bVuzneueIE",
+    "z6TnQjE63Rdt2zbwnebwTG5ZybeWSwbzy+BJ34ZHcUhPAY89yJQXuE0IzMZFcEBbPNRbWECR",
+    "Kgjq//qT9nmDOFVlSRCt2wiqPSzluwn+v+suQEBsUjTGMEd25tKXXTkNW21wIWbxeSyUoTXw",
+    "LvGS6xlwQSgNpk2qXYwf8iXg7VWZAgMBAAGjQjBAMB0GA1UdDgQWBBQgIvz0bNGJhjgpToks",
+    "yKpP9xv9oDAPBgNVHRMECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjANBgkqhkiG9w0BAQsF",
+    "AAOCAQEAjvjuOMDSa+JXFCLyBKsycXtBVZsJ4Ue3LbaEsPY4MYN/hIQ5ZM5p7EjfcnMG4CtY",
+    "kNsfNHc0AhBLdq45rnT87q/6O3vUEtNMafbhU6kthX7Y+9XFN9NpmYxr+ekVY5xOxi8h9JDI",
+    "goMP4VB1uS0aunL1IGqrNooL9mmFnL2kLVVee6/VR6C5+KSTCMCWppMuJIZII2v9o4dkoZ8Y",
+    "7QRjQlLfYzd3qGtKbw7xaF1UsG/5xUb/Btwb2X2g4InpiB/yt/3CpQXpiWX/K4mBvUKiGn05",
+    "ZsqeY1gx4g0xLBqcU9psmyPzK+Vsgw2jeRQ5JlKDyqE0hebfC1tvFu0CCrJFcw==",
+);
+
+/// Yubico FIDO Root CA Serial 450203556 (2024-05): the second
+/// generation FIDO attestation root. developers.yubico.com/PKI/yubico-fido-ca-2.pem.
+pub(crate) const YUBICO_FIDO_ROOT_450203556_B64: &str = concat!(
+    "MIIDMzCCAhugAwIBAgIUSOEjTf//yqRfPW7Qq8qtIyCrAg8wDQYJKoZIhvcNAQELBQAwLzEt",
+    "MCsGA1UEAwwkWXViaWNvIEZJRE8gUm9vdCBDQSBTZXJpYWwgNDUwMjAzNTU2MCAXDTI0MDUw",
+    "MTAwMDAwMFoYDzIwNjAwNDMwMDAwMDAwWjAvMS0wKwYDVQQDDCRZdWJpY28gRklETyBSb290",
+    "IENBIFNlcmlhbCA0NTAyMDM1NTYwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCd",
+    "vl27w2gu1fPXeEFbIdqx0BalvVDVWrQPJ7HqviuEtZHlxSLxSFtcXpTolvLvof8f4tMerQTk",
+    "VGzcmYzm1EBT4IJuMmoEqfkEEhWpsADMFrjZkqlZY9EqxQzLoVEEonE5oGxSdVCxCcLIackp",
+    "yR/CCXvj1Bt/hTgE9hTlF4pRqxMkx3plF7y8dDZlRHWs7vbnhmBCGeI0ZPEQ6nl2mCg2r74a",
+    "dF2u6K9rrLfhBC3QLE8EPrgqUsI+hkuq2tK4M2SMOp8uUVVkqUeu3h0kr3WVI0W02pkgrOgi",
+    "FKLFNkSrbYhdjMBDj5izmqfc9xJRKoDX612qd8ZGVHpT5AYFX+1hAgMBAAGjRTBDMB0GA1Ud",
+    "DgQWBBTZyU5DiQ/a2UEgE7qBK0zhIsRNRjASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB",
+    "/wQEAwIBBjANBgkqhkiG9w0BAQsFAAOCAQEAXvnB4SLuUJfYMSVGAhssL/SmWli3FSccgxyd",
+    "vKlACcidIIWKQqa3q/QSUEQzC9DgEfMgr7iC1BkTZbILboV6UZ5knNsvjEZWuMeogJ8tgZs1",
+    "hVvKwZizwJ+mEcmsjhIrBYuoL1T6yrOJvKFg1jv+Cy4ZwA9Bpk/V3UOir1VyK8dCtyHu6vfo",
+    "sotAdYx8FAuR243gRTMV6Jx8Jdig2JDIAQMlzVeDpSUHX/K2HXRHxHwfgjbgUjjBu/72r8Of",
+    "ehyhzHXI3K8CFFdflO+8nEOJK3y8F1ivgS5uN/8SmcYw/STQYwhrxPuwz3nP8baMum4BB2nn",
+    "YmpB60sX3bl5k8QUSw==",
+);
+
+/// "Yubico Attestation Intermediate A 1" - FIDO MDS anchor for the
+/// reference device (AAGUID b7d3f68e-88a6-471e-9ecf-2df26d041ede).
+pub(crate) const YUBICO_INTERMEDIATE_A_B64: &str = concat!(
+    "MIIDSDCCAjCgAwIBAgIUUcmMXzRIFOgGTK0Tb3gEuZYZkBIwDQYJKoZIhvcNAQELBQAwJDEi",
+    "MCAGA1UEAwwZWXViaWNvIEF0dGVzdGF0aW9uIFJvb3QgMTAgFw0yNDEyMDEwMDAwMDBaGA85",
+    "OTk5MTIzMTIzNTk1OVowLjEsMCoGA1UEAwwjWXViaWNvIEF0dGVzdGF0aW9uIEludGVybWVk",
+    "aWF0ZSBBIDEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDm555bWY9WW+tOY0rI",
+    "WHldh+aNanoCZCFh7Gk3YZrQmPUw0hkSG6qYHQtP+fZyS33VErvg+BQqnmumgNhfxFrkwEZE",
+    "LeidBcC8C4Ag4nqqiPWpzsvI17NcxYlInLNLFcZY/+gOiN6ZOTihO5/vBZMbj9riaAcqliYm",
+    "NGJPgTcMGaEAyMzEMNy2nm6Ep+pjP5aF6gi21t/UQFsuJ1j2Rj/ynM/SdRt+ecal5OYotxHk",
+    "FbL9vvv2A2Ov5ITZClw4bOS9npypQimOZ5QAYytmYaQpWl/pMYz6zSj8RqkVDNEJGqNfTKA2",
+    "ivLYwX6lSttMPapg0J84l9X0voVN/FpS4VCVAgMBAAGjZjBkMB0GA1UdDgQWBBQgKFAhG6Ra",
+    "W+hTy52dxeT8bC96HzAfBgNVHSMEGDAWgBTS7u9aIo06bVwjlz3yhdUm8SV7kjASBgNVHRMB",
+    "Af8ECDAGAQH/AgECMA4GA1UdDwEB/wQEAwIBhjANBgkqhkiG9w0BAQsFAAOCAQEAYMzgLrJL",
+    "Ir0OovQnAZrRIGuabiHSUKSmbLRWpRkWeAtsChDEHpXcJ/bgDNKYWoHqQ8xRUjB4CyepYevc",
+    "3YlrG8o7zHxpfVcaoL5SeuJkzHxKn4bTaSp9+Mvwamnp64kZMiNbFLknfP9kYKoRHkMWheRJ",
+    "1UsP1z4ScmkCeILfsMs6vqovqjWClFsJpBcsluYHWF7bBJ1n4Rwg+ATEopY4IgGv6Zvwc+A9",
+    "r+AT2hqpoSkYoAl+ANYwgslOf9sJe0V+TA9YY/UlaBmPPTd0//r9wvcePWZkPjKoAC/zUNhf",
+    "Dbh4LV8GHs3lyX2XomL/LNc8JYzyIaDEhGQveoPhh/tr1g==",
+);
+
+/// "Yubico FIDO Attestation A 1" - FIDO MDS anchor for the reference
+/// device; signs its per-device certs.
+pub(crate) const YUBICO_FIDO_ANCHOR_A_B64: &str = concat!(
+    "MIIDSjCCAjKgAwIBAgIUTnbbGIR2NHvzqIKFAeQwG1XBis0wDQYJKoZIhvcNAQELBQAwLjEs",
+    "MCoGA1UEAwwjWXViaWNvIEF0dGVzdGF0aW9uIEludGVybWVkaWF0ZSBBIDEwIBcNMjQxMjAx",
+    "MDAwMDAwWhgPOTk5OTEyMzEyMzU5NTlaMCYxJDAiBgNVBAMMG1l1YmljbyBGSURPIEF0dGVz",
+    "dGF0aW9uIEEgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOsXj3k04Ban4TYd",
+    "tZKqD/OPJxyDyaPmCBUFUiaZIgTteZnj3X25DhgpZZXsC4D0ydIcrlA6wNUInORL/L9zBbTE",
+    "IMAVMGo6g7UKAmb2MF6AHbnhYJd9eikupVNWShHNYNc4GBdO1YN6AfUqvJhHbe3V4SNMPmBR",
+    "EKJPVz7ThwgmggTe8Ws2K0/wsqv2wSE7pbCBsUZhIX51bZM3pqDwJPTmRFEvt0/6tG5eO8F3",
+    "j14OXqfEhmjn1VvxKDYQOLZAxCwwgC0P4CdfWv3y8PSR8I354hO1Y+GzNjvIqX38NKLywuIY",
+    "HFerOxNlxEMBvFhYBuRuYAkkgUaPqN6UBhsILrsCAwEAAaNmMGQwHQYDVR0OBBYEFCCoRHhi",
+    "yNnbnXRWIL6ZBXoBX9YTMB8GA1UdIwQYMBaAFCAoUCEbpFpb6FPLnZ3F5PxsL3ofMBIGA1Ud",
+    "EwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgGGMA0GCSqGSIb3DQEBCwUAA4IBAQCQFafJ",
+    "I1/5Wg9CEEimE1RP54RgQwTNTOOQsLACTe+rItlFQzC9ZDhrV828yX7jzy+AAsp3izK7T1th",
+    "2dl7m+tu0sw2Pa/olc02nt6PyIw348gaHzhI1+0KE45qxvFDeL2lMxbPfCYvyEEaYzjiQELU",
+    "5951pXGWyKMa/4fLtO+ZKOXhMuVeq4rXDPI54W6JHOiAaiKdiw+5e3c2kt/jFIQtM6vMXg9L",
+    "NFzdjETNt20VX9QevRpFZfucMG9wCaQDoFlPzpTMJKhPev/imJmZYhKfr0lLcemtqjIxLAoq",
+    "ZdOYfHBg6+vAcdPI/iauGpUAv7X+UKNmDwjZ2BaH4sLwhB2m",
+);
+
+/// "Yubico FIDO Attestation B 1" - FIDO MDS anchor for the reference
+/// device.
+pub(crate) const YUBICO_FIDO_ANCHOR_B_B64: &str = concat!(
+    "MIIDSjCCAjKgAwIBAgIUR38mq26Sf2szVV2BdG6WEN7kuWUwDQYJKoZIhvcNAQELBQAwLjEs",
+    "MCoGA1UEAwwjWXViaWNvIEF0dGVzdGF0aW9uIEludGVybWVkaWF0ZSBCIDEwIBcNMjQxMjAx",
+    "MDAwMDAwWhgPOTk5OTEyMzEyMzU5NTlaMCYxJDAiBgNVBAMMG1l1YmljbyBGSURPIEF0dGVz",
+    "dGF0aW9uIEIgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBANY0Wb9oPoRoKoQy",
+    "WPaJpz11vrWTg6zTtmNj2VoKRnyvKGRqpzb83w5l6YA96UYkYBDQP0ilO2DPe6wWqVR5zDfR",
+    "zdcH8bh+L7dGGvae6hRTZhkFkCpXDs4HccknrDf8FClJ7He39Jf42/G1Qm2zz9WWmrPXtgiK",
+    "/x05GjsQfGuDG1zf5QTUUie8lwymK3TfdOvNeeJAAPe2pn7ItfRb+rVrNWiDzlRn2vNnZ2wP",
+    "o4wH/WJ6dhXZG+rMWT+a6Bocg1UfIw6kdunG4bTpZzsvacFYyR0mpf+DeOnpSWAmywJWHvTl",
+    "f2YXxFyeXcTACdQlcMNGJ2VhZQ48xtP5/RBP/8kCAwEAAaNmMGQwHQYDVR0OBBYEFChy42ok",
+    "iqcTS1iqa/HRWjkBn4H/MB8GA1UdIwQYMBaAFOq3QpCeDHtkettUfAO6fE6f2KFhMBIGA1Ud",
+    "EwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgGGMA0GCSqGSIb3DQEBCwUAA4IBAQAn+RHI",
+    "PbtMEDNdT1g8H/RitAkUdLgAt1tWGWnlj9knbv4/4GlX7C9p45efPO9/aZL6OV1XRKBi6Kmt",
+    "BW5K7nuYEnMx/5BqBSbLT7rhduC49TBeMb9PHdXsTlSVNYefr1dGidr4j0xVBQLb1rknDAbd",
+    "WDzKfvnayKO8Frwe7Hx843MG/rJ+c0XruUvbfVTCHLiIWhM7oNDhL8xob6xUo9KLKcSL+ItY",
+    "sO3/9Wb8Q9GjsqL4FXsDcG1SaYh7KpfuMmOixqzJZO2nIicPYRg1I2SuiUfYO70tmdHcbl+k",
+    "SQmSYt7rq4viILg2Gx3j9rITuWTjbaUaSSQxgOmMSHuyzMAC",
+);
+
+/// "Yubico FIDO Attestation B2 1" - FIDO MDS anchor for the reference
+/// device.
+pub(crate) const YUBICO_FIDO_ANCHOR_B2_B64: &str = concat!(
+    "MIIDRzCCAjGgAwIBAgIUex9nT9vwZNXS483LdiYGfw2SjSowCwYJKoZIhvcNAQELMC4xLDAq",
+    "BgNVBAMMI1l1YmljbyBBdHRlc3RhdGlvbiBJbnRlcm1lZGlhdGUgQiAxMCAXDTI1MDgwMTAw",
+    "MDAwMFoYDzk5OTkxMjMxMjM1OTU5WjAnMSUwIwYDVQQDDBxZdWJpY28gRklETyBBdHRlc3Rh",
+    "dGlvbiBCMiAxMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1Mevny9dyO9ZUC3",
+    "9SoMhLcR/DXrtF/ciM12tciy2EXAZ6MkrivVtCfEVM9X6ISTEnBP6uSYYov6ppv6O6Jh2NHm",
+    "Ym4w+JnS4VnCPU7mHAMfVI2MGTTMVOew0xUsG7sISIkIDUBmuk8YK9c5zic9+vFQGLIksdXO",
+    "5iVFIgNG53cGXD4ZLZoAPiu0PEozxAqYIaI4gxKhOA3S8/W8mIWsu6ofyj4GvkFG6Z7kyF31",
+    "07P7mwFHLrI3ENaPWMOFcTaGa0dw+/vVRwjRcEZBVsuuT/87ckSs0a5pkt3vZBlaYeT8pzSr",
+    "eV7mowcIM90L2iaATlP0nxmaE6nOyTbojFVl2wIDAQABo2YwZDAdBgNVHQ4EFgQUSXEh3sa3",
+    "btDurm4MM/C7S1lRuuYwHwYDVR0jBBgwFoAU6rdCkJ4Me2R621R8A7p8Tp/YoWEwEgYDVR0T",
+    "AQH/BAgwBgEB/wIBADAOBgNVHQ8BAf8EBAMCAYYwCwYJKoZIhvcNAQELA4IBAQB5Gc3haftp",
+    "7hKsEZso+i/Z5nRuqdmzG2WClUoRUqbaPyglnJDjKR/kfgOl6ibbF/zthm3KmXQ7HcDIP2xM",
+    "dG7U2L2imbJQHqPf/h2Hqojb4rZgue+6W4ktSR5elR9L1rYqE/SGYM4iEKoVQSv7RT1rxIeW",
+    "iKsw/Vxxi/QOnsx3F7x80CCYgB4E3yQx8VTW440hTEwTA1eMHOix32tPtyyHIa8PVVIfVpHQ",
+    "JBaMVvv508UEjwkbU2rnjfzoSTNS9A5jUQ8mBSve95rjB0do98EU+DxdBqX2+H6i5wlICFgz",
+    "hdzcsne9hGKT6lzTX4cIdJsrY2+xleK0FFQy6lGEVLEe",
+);
+
+/// "Yubico Attestation Intermediate B 1" - FIDO MDS anchor for the
+/// reference device.
+pub(crate) const YUBICO_INTERMEDIATE_B_B64: &str = concat!(
+    "MIIDSDCCAjCgAwIBAgIUDqERw+4RnGSggxgUewJFEPDRZ3YwDQYJKoZIhvcNAQELBQAwJDEi",
+    "MCAGA1UEAwwZWXViaWNvIEF0dGVzdGF0aW9uIFJvb3QgMTAgFw0yNDEyMDEwMDAwMDBaGA85",
+    "OTk5MTIzMTIzNTk1OVowLjEsMCoGA1UEAwwjWXViaWNvIEF0dGVzdGF0aW9uIEludGVybWVk",
+    "aWF0ZSBCIDEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDI7XnH+ZvDwMCQU8M8",
+    "ZeV5qscublvVYaaRt3Ybaxn9godLx5swH0lXrdgjh5h7FpVgCgYYX7E4bl1vbzULemrMWT8N",
+    "3WMGUe8QAJbBeioV7W/E+hTZP/0SKJVa3ewKBo6ULeMnfQZDrVORAk8wTLq2v5Llj5vMj7Jt",
+    "OotKa9J7nHS8kLmzXXSaj0SwEPh5OAZUTNV4zs1bvoTAQQWrL4/J9QuKt6WCFE5nUNiRQcEb",
+    "VF8mlqK2bx2z6okVltyDVLCxYbpUTELvY1usR3DTGPUoIClOm4crpwnDRLVHvjYePGBB//pE",
+    "yzxA/gcScxjwaH1ZUw9bnSbHyurKqbTa1KvjAgMBAAGjZjBkMB0GA1UdDgQWBBTqt0KQngx7",
+    "ZHrbVHwDunxOn9ihYTAfBgNVHSMEGDAWgBTS7u9aIo06bVwjlz3yhdUm8SV7kjASBgNVHRMB",
+    "Af8ECDAGAQH/AgECMA4GA1UdDwEB/wQEAwIBhjANBgkqhkiG9w0BAQsFAAOCAQEAqQaCWMxT",
+    "GqVVX7Sk7kkJmUueTSYKuU6+KBBSgwIRnlw9K7He1IpxZ0hdwpPNikKjmcyFgFPzhImwHJgx",
+    "xuT90Pw3vYOdcJJNktDg35PXOfzSn15cFAx1RO0mPTmIb8dXiEWOpzoXvdwXDM41ZaCDYMT7",
+    "w4IQtMyvE7xUBZq2bjtAnq/NDUA7be4H8H3ipC+/+NKlUrcUh+j48K67WI0u1m6FeQueBA7n",
+    "06j825rqDqsaLs9Tb7KAHAw8PmrWaNPG2kjKerxPEfecivlFawp2RWZvxrVtn3TV2SBxyCJC",
+    "kXsND05dCErVHSJIs+BdtTVNY9AwtyPmnyb0v4mSTzvWdw==",
+);
+
 fn bundled_pin() -> Vec<Vec<u8>> {
     use base64::Engine as _;
-    vec![base64::engine::general_purpose::STANDARD
-        .decode(YUBICO_ATTESTATION_ROOT_B64)
-        .unwrap_or_default()]
+    [
+        YUBICO_ATTESTATION_ROOT_B64,
+        YUBICO_U2F_ROOT_457200631_B64,
+        YUBICO_FIDO_ROOT_450203556_B64,
+        YUBICO_INTERMEDIATE_A_B64,
+        YUBICO_FIDO_ANCHOR_A_B64,
+        YUBICO_FIDO_ANCHOR_B_B64,
+        YUBICO_FIDO_ANCHOR_B2_B64,
+        YUBICO_INTERMEDIATE_B_B64,
+    ]
+    .iter()
+    .map(|b| {
+        base64::engine::general_purpose::STANDARD
+            .decode(b)
+            .unwrap_or_default()
+    })
+    .collect()
 }
 
 /// Walk the chain: every certificate must verify under the next one's
-/// key (digest per the child's declared algorithm), the last must
-/// self-sign, and the attStmt must verify over authData || clientDataHash
-/// under the leaf's key (RS256 or ES256).
+/// key (digest per the child's declared algorithm), and the attStmt must
+/// verify over authData || clientDataHash under the leaf's key (RS256 or
+/// ES256). The tail terminates at trust: byte-equal to a pinned root, or
+/// signed by one. Real tokens ship the device cert plus at most the
+/// issuing FIDO Attestation CA, so the MDS anchor certificates for the
+/// reference device are pinned alongside the roots. Intact-but-unpinned
+/// chains are UnknownVendor.
 pub fn verify_with_pins(att: &PackedAttestation, pins: &[Vec<u8>]) -> AttestationVerdict {
     if att.x5c.is_empty() || !es256_rs256_from_alg(att.alg) || !verify_attstmt(att) {
         return AttestationVerdict::Invalid;
     }
-    for i in 0..att.x5c.len() {
+    for i in 0..att.x5c.len() - 1 {
         let Some(child) = parse_cert(&att.x5c[i]) else {
             return AttestationVerdict::Invalid;
         };
-        let parent = if i + 1 < att.x5c.len() {
-            parse_cert(&att.x5c[i + 1])
-        } else {
-            parse_cert(&att.x5c[i])
-        };
-        let Some(parent) = parent else {
+        let Some(parent) = parse_cert(&att.x5c[i + 1]) else {
             return AttestationVerdict::Invalid;
         };
-        if !verify_link(&parent.key, &child.tbs_raw, &child.sig_der, &child.sig_alg_oid) {
+        if !verify_link(
+            &parent.key,
+            &child.tbs_raw,
+            &child.sig_der,
+            &child.sig_alg_oid,
+        ) {
             return AttestationVerdict::Invalid;
         }
     }
-    let root = att.x5c.last().expect("non-empty checked above");
-    if pins.iter().any(|p| p.as_slice() == root.as_slice()) {
+    let root_der = att.x5c.last().expect("non-empty checked above");
+    let Some(last) = parse_cert(root_der) else {
+        return AttestationVerdict::Invalid;
+    };
+    if pins.iter().any(|p| p.as_slice() == root_der.as_slice()) {
+        return AttestationVerdict::YubicoVerified;
+    }
+    let pinned_by_root = pins.iter().any(|p| {
+        parse_cert(p).is_some_and(|root| {
+            verify_link(&root.key, &last.tbs_raw, &last.sig_der, &last.sig_alg_oid)
+        })
+    });
+    if pinned_by_root {
         AttestationVerdict::YubicoVerified
     } else {
         AttestationVerdict::UnknownVendor
@@ -411,6 +591,32 @@ pub(crate) mod test_chain {
             Self { leaf, root_der, leaf_der }
         }
 
+        /// The real fw 5.7+ shape: the token stops at the issuing CA and
+        /// the pinned root never rides the wire. Returns the attestation
+        /// plus pins that anchor one hop above the sent tail.
+        pub fn tail_one_hop_below_pin() -> (super::PackedAttestation, Vec<Vec<u8>>) {
+            let root = SigningKey::random(&mut rand::rngs::OsRng);
+            let mid = SigningKey::random(&mut rand::rngs::OsRng);
+            let leaf = SigningKey::random(&mut rand::rngs::OsRng);
+            let root_der = build_cert(&root, &root, b"test root");
+            let mid_der = build_cert(&root, &mid, b"test issuing ca");
+            let leaf_der = build_cert(&mid, &leaf, b"test leaf");
+            let auth_data = vec![0u8; 37];
+            let mut hash = [0u8; 32];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut hash);
+            let msg = [&auth_data[..], &hash].concat();
+            let sig: p256::ecdsa::Signature = leaf.sign(&msg);
+            let att = super::PackedAttestation {
+                credential_id: vec![7u8; 16],
+                auth_data,
+                client_data_hash: hash,
+                alg: -7,
+                sig: sig.to_der().as_bytes().to_vec(),
+                x5c: vec![leaf_der, mid_der],
+            };
+            (att, vec![root_der])
+        }
+
         pub fn pins(&self) -> Vec<Vec<u8>> {
             vec![self.root_der.clone()]
         }
@@ -445,6 +651,15 @@ mod tests {
         let c = TestChain::new();
         assert_eq!(
             verify_with_pins(&c.attestation(), &c.pins()),
+            AttestationVerdict::YubicoVerified
+        );
+    }
+
+    #[test]
+    fn tail_one_hop_below_the_pin_still_verifies() {
+        let (att, pins) = TestChain::tail_one_hop_below_pin();
+        assert_eq!(
+            verify_with_pins(&att, &pins),
             AttestationVerdict::YubicoVerified
         );
     }

@@ -91,7 +91,7 @@ fun UnlockScreen(
             onSuccess = { kek ->
                 state = AuthState.Unlocking
                 scope.launch {
-                    when (authViewModel.openAndUnlockWithKek(vaultPath, kek)) {
+                    when (val result = authViewModel.openAndUnlockWithKek(vaultPath, kek)) {
                         is UnlockResult.Success -> {
                             state = AuthState.Unlocked
                             finishUnlock()
@@ -100,8 +100,13 @@ fun UnlockScreen(
                             state = AuthState.Error(t("login.deviceMismatch"))
                         }
                         is UnlockResult.Failure -> {
-                            // Stale KEK (password changed elsewhere) fails closed.
-                            state = AuthState.Error(t("login.biometricStale"))
+                            val failure = result.message
+                            state = AuthState.Error(
+                                if (failure.contains("security key", ignoreCase = true) ||
+                                    failure.contains("llave", ignoreCase = true) ||
+                                    failure.contains("chave", ignoreCase = true)
+                                ) failure else t("login.biometricStale"),
+                            )
                         }
                     }
                 }
@@ -170,7 +175,7 @@ fun UnlockScreen(
                     onClick = {
                         state = AuthState.Unlocking
                         scope.launch {
-                            when (authViewModel.openAndUnlock(vaultPath, password)) {
+                            when (val result = authViewModel.openAndUnlock(vaultPath, password)) {
                                 is UnlockResult.Success -> {
                                     state = AuthState.Unlocked
                                     // Offer quick-unlock enrollment once, right
@@ -192,7 +197,13 @@ fun UnlockScreen(
                                     state = AuthState.Error(t("login.deviceMismatch"))
                                 }
                                 is UnlockResult.Failure -> {
-                                    state = AuthState.Error(t("login.wrongPassword"))
+                                    val failure = result.message
+                                    state = AuthState.Error(
+                                        if (failure.contains("security key", ignoreCase = true) ||
+                                            failure.contains("llave", ignoreCase = true) ||
+                                            failure.contains("chave", ignoreCase = true)
+                                        ) failure else t("login.wrongPassword"),
+                                    )
                                 }
                             }
                         }
@@ -201,6 +212,15 @@ fun UnlockScreen(
                     loading = state is AuthState.Unlocking,
                     leadingIcon = Icons.Default.Lock,
                 )
+
+                if (state is AuthState.Unlocking) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = t("login.securityKeyHold"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
                 if (biometric.isAvailable() && biometricEnrolled) {
                     Spacer(Modifier.height(12.dp))

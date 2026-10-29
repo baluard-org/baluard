@@ -5,6 +5,7 @@ import xyz.actitud.baluard.MobileCatalogInput
 import xyz.actitud.baluard.MobileSyncStatus
 import xyz.actitud.baluard.MobileProvider
 import xyz.actitud.baluard.MobileVaultInterface
+import xyz.actitud.baluard.MobileHardwareTransport
 
 /**
  * In-memory [MobileVaultInterface] stub for commonTest. Every method records
@@ -64,6 +65,25 @@ open class StubVault(
         return ""
     }
     override suspend fun syncOnBackground() { calls += "syncOnBackground" }
+
+    override suspend fun hardwareStatus(platformCapable: Boolean): String =
+        """{"capable":$platformCapable,"enabled":false,"backend":"fido2","interaction":"per-use"}"""
+    override suspend fun hardwareEnable(transport: MobileHardwareTransport): String = err()
+    override suspend fun hardwareDisable(transport: MobileHardwareTransport): String = err()
+    override suspend fun unlockWithSecurityKey(
+        masterPassword: String,
+        transport: MobileHardwareTransport,
+    ) = err()
+    override suspend fun unlockWithSecurityKeyAndKek(
+        kek: ByteArray,
+        transport: MobileHardwareTransport,
+    ) = err()
+    override suspend fun changeMasterPasswordWithSecurityKey(
+        oldPassword: String,
+        newPassword: String,
+        transport: MobileHardwareTransport,
+    ) = err()
+
     override suspend fun syncPullNow() { calls += "syncPullNow" }
     override suspend fun syncOfflineTick() { calls += "syncOfflineTick" }
     override suspend fun archiveCipher(id: String) { calls += "archiveCipher" }

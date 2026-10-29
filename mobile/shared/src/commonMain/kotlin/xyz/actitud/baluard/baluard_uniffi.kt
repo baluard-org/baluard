@@ -661,6 +661,82 @@ internal open class UniffiForeignFutureStructVoid(
 internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
     fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructVoid.UniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceMobileHardwareTransportMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceMobileHardwareTransportMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: ByteByReference,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceMobileHardwareTransportMethod2 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`request`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceMobileHardwareTransportMethod3 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`report`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceMobileHardwareTransportMethod4 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceMobileHardwareTransportMethod5 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+@Structure.FieldOrder("protocol", "supportsExtendedApdu", "transceive", "write", "read", "shutdown", "uniffiFree")
+internal open class UniffiVTableCallbackInterfaceMobileHardwareTransport(
+    @JvmField internal var `protocol`: UniffiCallbackInterfaceMobileHardwareTransportMethod0? = null,
+    @JvmField internal var `supportsExtendedApdu`: UniffiCallbackInterfaceMobileHardwareTransportMethod1? = null,
+    @JvmField internal var `transceive`: UniffiCallbackInterfaceMobileHardwareTransportMethod2? = null,
+    @JvmField internal var `write`: UniffiCallbackInterfaceMobileHardwareTransportMethod3? = null,
+    @JvmField internal var `read`: UniffiCallbackInterfaceMobileHardwareTransportMethod4? = null,
+    @JvmField internal var `shutdown`: UniffiCallbackInterfaceMobileHardwareTransportMethod5? = null,
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+) : Structure() {
+    class UniffiByValue(
+        `protocol`: UniffiCallbackInterfaceMobileHardwareTransportMethod0? = null,
+        `supportsExtendedApdu`: UniffiCallbackInterfaceMobileHardwareTransportMethod1? = null,
+        `transceive`: UniffiCallbackInterfaceMobileHardwareTransportMethod2? = null,
+        `write`: UniffiCallbackInterfaceMobileHardwareTransportMethod3? = null,
+        `read`: UniffiCallbackInterfaceMobileHardwareTransportMethod4? = null,
+        `shutdown`: UniffiCallbackInterfaceMobileHardwareTransportMethod5? = null,
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    ): UniffiVTableCallbackInterfaceMobileHardwareTransport(`protocol`,`supportsExtendedApdu`,`transceive`,`write`,`read`,`shutdown`,`uniffiFree`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceMobileHardwareTransport) {
+        `protocol` = other.`protocol`
+        `supportsExtendedApdu` = other.`supportsExtendedApdu`
+        `transceive` = other.`transceive`
+        `write` = other.`write`
+        `read` = other.`read`
+        `shutdown` = other.`shutdown`
+        `uniffiFree` = other.`uniffiFree`
+    }
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1053,38 +1129,57 @@ internal interface UniffiLib : Library {
             .also { lib: UniffiLib ->
                 uniffiCheckContractApiVersion(lib)
                 uniffiCheckApiChecksums(lib)
+                uniffiCallbackInterfaceMobileHardwareTransport.register(lib)
                 }
         }
-        
+
         // The Cleaner for the whole library
         internal val CLEANER: UniffiCleaner by lazy {
             UniffiCleaner.create()
         }
     }
 
-    fun uniffi_baluard_uniffi_fn_clone_mobileclonejob(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_clone_mobileclonejob(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): Pointer
-    fun uniffi_baluard_uniffi_fn_free_mobileclonejob(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_free_mobileclonejob(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): Unit
-    fun uniffi_baluard_uniffi_fn_method_mobileclonejob_cancel(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_method_mobileclonejob_cancel(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): Unit
     fun uniffi_baluard_uniffi_fn_method_mobileclonejob_wait_done(`ptr`: Pointer,
     ): Long
-    fun uniffi_baluard_uniffi_fn_clone_mobiledeviceflow(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_clone_mobiledeviceflow(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): Pointer
-    fun uniffi_baluard_uniffi_fn_free_mobiledeviceflow(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_free_mobiledeviceflow(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): Unit
-    fun uniffi_baluard_uniffi_fn_method_mobiledeviceflow_expires_at(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_method_mobiledeviceflow_expires_at(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobiledeviceflow_poll(`ptr`: Pointer,
     ): Long
-    fun uniffi_baluard_uniffi_fn_method_mobiledeviceflow_user_code(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_method_mobiledeviceflow_user_code(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
-    fun uniffi_baluard_uniffi_fn_method_mobiledeviceflow_verification_uri(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_method_mobiledeviceflow_verification_uri(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
-    fun uniffi_baluard_uniffi_fn_clone_mobilevault(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_clone_mobilehardwaretransport(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): Pointer
-    fun uniffi_baluard_uniffi_fn_free_mobilevault(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_free_mobilehardwaretransport(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
+    ): Unit
+    fun uniffi_baluard_uniffi_fn_init_callback_vtable_mobilehardwaretransport(`vtable`: UniffiVTableCallbackInterfaceMobileHardwareTransport,
+    ): Unit
+    fun uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_protocol(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    fun uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_supports_extended_apdu(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
+    ): Byte
+    fun uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_transceive(`ptr`: Pointer,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    fun uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_write(`ptr`: Pointer,`report`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): Unit
+    fun uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_read(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    fun uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_shutdown(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
+    ): Unit
+    fun uniffi_baluard_uniffi_fn_clone_mobilevault(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
+    ): Pointer
+    fun uniffi_baluard_uniffi_fn_free_mobilevault(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
     ): Unit
     fun uniffi_baluard_uniffi_fn_method_mobilevault_activity_events(`ptr`: Pointer,`limit`: Long,
     ): Long
@@ -1105,6 +1200,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_avatar_get(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_avatar_set(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_change_master_password_with_security_key(`ptr`: Pointer,`oldPassword`: RustBuffer.ByValue,`newPassword`: RustBuffer.ByValue,`transport`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_catalog_list(`ptr`: Pointer,
     ): Long
@@ -1195,6 +1292,12 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_group_rename(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_groups_list(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_hardware_disable(`ptr`: Pointer,`transport`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_hardware_enable(`ptr`: Pointer,`transport`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_hardware_status(`ptr`: Pointer,`platformCapable`: Byte,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_health_report(`ptr`: Pointer,
     ): Long
@@ -1336,6 +1439,10 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_unlock_with_kek(`ptr`: Pointer,`kek`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_unlock_with_security_key(`ptr`: Pointer,`masterPassword`: RustBuffer.ByValue,`transport`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_unlock_with_security_key_and_kek(`ptr`: Pointer,`kek`: RustBuffer.ByValue,`transport`: Pointer,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_update_cipher(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_vault_id(`ptr`: Pointer,
@@ -1356,21 +1463,21 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_enroll_device_with_phrase(`vaultPath`: RustBuffer.ByValue,`masterPassword`: RustBuffer.ByValue,`recoveryPhrase`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
     ): Long
-    fun uniffi_baluard_uniffi_fn_func_generate_passphrase(`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_func_generate_passphrase(`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
-    fun uniffi_baluard_uniffi_fn_func_generate_password(`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_func_generate_password(`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
-    fun uniffi_baluard_uniffi_fn_func_generate_recovery_phrase(uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_func_generate_recovery_phrase(uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     fun uniffi_baluard_uniffi_fn_func_git_hostkey_trust(`attemptId`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_git_probe(`url`: RustBuffer.ByValue,`credentialsJson`: RustBuffer.ByValue,
     ): Long
-    fun uniffi_baluard_uniffi_fn_func_init_data_dir(`dataDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_func_init_data_dir(`dataDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): Unit
     fun uniffi_baluard_uniffi_fn_func_list_vault_repos(`provider`: RustBuffer.ByValue,
     ): Long
-    fun uniffi_baluard_uniffi_fn_func_mobile_version(uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_func_mobile_version(uniffi_out_err: UniffiRustCallStatus,
     ): Int
     fun uniffi_baluard_uniffi_fn_func_open_shared_guest(`revealB64`: RustBuffer.ByValue,`passphrase`: RustBuffer.ByValue,
     ): Long
@@ -1380,9 +1487,9 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_recover_kit_for_path(`vaultPath`: RustBuffer.ByValue,`phrase`: RustBuffer.ByValue,`newPassword`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,
     ): Long
-    fun uniffi_baluard_uniffi_fn_func_recovery_sheet_bytes(`format`: RustBuffer.ByValue,`title`: RustBuffer.ByValue,`warning`: RustBuffer.ByValue,`phrase`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_func_recovery_sheet_bytes(`format`: RustBuffer.ByValue,`title`: RustBuffer.ByValue,`warning`: RustBuffer.ByValue,`phrase`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
-    fun uniffi_baluard_uniffi_fn_func_set_token_encryption_key(`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_baluard_uniffi_fn_func_set_token_encryption_key(`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): Unit
     fun uniffi_baluard_uniffi_fn_func_spike_async_probe(
     ): Long
@@ -1392,13 +1499,13 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_web_oauth_status(`provider`: RustBuffer.ByValue,
     ): Long
-    fun ffi_baluard_uniffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
-    fun ffi_baluard_uniffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
-    fun ffi_baluard_uniffi_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): Unit
-    fun ffi_baluard_uniffi_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     fun ffi_baluard_uniffi_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1406,7 +1513,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_u8(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Byte
     fun ffi_baluard_uniffi_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1414,7 +1521,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_i8(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Byte
     fun ffi_baluard_uniffi_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1422,7 +1529,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_u16(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Short
     fun ffi_baluard_uniffi_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1430,7 +1537,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_i16(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Short
     fun ffi_baluard_uniffi_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1438,7 +1545,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_u32(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Int
     fun ffi_baluard_uniffi_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1446,7 +1553,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_i32(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Int
     fun ffi_baluard_uniffi_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1454,7 +1561,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_u64(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Long
     fun ffi_baluard_uniffi_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1462,7 +1569,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_i64(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Long
     fun ffi_baluard_uniffi_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1470,7 +1577,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_f32(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Float
     fun ffi_baluard_uniffi_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1478,7 +1585,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_f64(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Double
     fun ffi_baluard_uniffi_rust_future_poll_pointer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1486,7 +1593,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_pointer(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_pointer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_pointer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Pointer
     fun ffi_baluard_uniffi_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1494,7 +1601,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_rust_buffer(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     fun ffi_baluard_uniffi_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -1502,7 +1609,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_free_void(`handle`: Long,
     ): Unit
-    fun ffi_baluard_uniffi_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun ffi_baluard_uniffi_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Unit
     fun uniffi_baluard_uniffi_checksum_func_background_fetch(
     ): Short
@@ -1568,6 +1675,18 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobiledeviceflow_verification_uri(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_protocol(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_supports_extended_apdu(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_transceive(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_write(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_read(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_shutdown(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_activity_events(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_activity_refusals(
@@ -1587,6 +1706,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_avatar_get(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_avatar_set(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_change_master_password_with_security_key(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_list(
     ): Short
@@ -1677,6 +1798,12 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_group_rename(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_groups_list(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_hardware_disable(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_hardware_enable(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_hardware_status(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_health_report(
     ): Short
@@ -1818,13 +1945,17 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_unlock_with_kek(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_unlock_with_security_key(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_unlock_with_security_key_and_kek(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_update_cipher(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_vault_id(
     ): Short
     fun ffi_baluard_uniffi_uniffi_contract_version(
     ): Int
-    
+
 }
 
 private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
@@ -1935,6 +2066,24 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobiledeviceflow_verification_uri() != 32094.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_protocol() != 64382.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_supports_extended_apdu() != 13168.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_transceive() != 48383.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_write() != 57277.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_read() != 15283.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_shutdown() != 4916.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_activity_events() != 26452.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1963,6 +2112,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_avatar_set() != 44545.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_change_master_password_with_security_key() != 33669.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_list() != 10134.toShort()) {
@@ -2098,6 +2250,15 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_groups_list() != 22798.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_hardware_disable() != 43475.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_hardware_enable() != 36261.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_hardware_status() != 3307.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_health_report() != 18356.toShort()) {
@@ -2310,6 +2471,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_unlock_with_kek() != 3707.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_unlock_with_security_key() != 57523.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_unlock_with_security_key_and_kek() != 24325.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_update_cipher() != 61017.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2396,7 +2563,7 @@ inline fun <T : Disposable?, R> T.use(block: (T) -> R) =
         }
     }
 
-/** 
+/**
  * Used to instantiate an interface without an actual pointer, for fakes in tests, mostly.
  *
  * @suppress
@@ -2711,16 +2878,16 @@ private class JavaLangRefCleanable(
     override fun clean() = cleanable.clean()
 }
 public interface MobileCloneJobInterface {
-    
+
     fun `cancel`()
-    
+
     /**
      * Await clone completion. The start functions return the job
      * immediately so cancel() can fire mid-clone; this is where the
      * clone's error surfaces.
      */
     suspend fun `waitDone`()
-    
+
     companion object
 }
 
@@ -2806,17 +2973,17 @@ open class MobileCloneJob: Disposable, AutoCloseable, MobileCloneJobInterface {
     }
 
     override fun `cancel`()
-        = 
+        =
     callWithPointer {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobileclonejob_cancel(
         it, _status)
 }
     }
-    
-    
 
-    
+
+
+
     /**
      * Await clone completion. The start functions return the job
      * immediately so cancel() can fire mid-clone; this is where the
@@ -2829,7 +2996,7 @@ open class MobileCloneJob: Disposable, AutoCloseable, MobileCloneJobInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobileclonejob_wait_done(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
@@ -2837,18 +3004,18 @@ open class MobileCloneJob: Disposable, AutoCloseable, MobileCloneJobInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
 
-    
-    
+
+
+
     companion object
-    
+
 }
 
 /**
@@ -2979,15 +3146,15 @@ public object FfiConverterTypeMobileCloneJob: FfiConverter<MobileCloneJob, Point
 
 
 public interface MobileDeviceFlowInterface {
-    
+
     fun `expiresAt`(): kotlin.ULong
-    
+
     suspend fun `poll`(): MobileDeviceFlowStatus
-    
+
     fun `userCode`(): kotlin.String
-    
+
     fun `verificationUri`(): kotlin.String
-    
+
     companion object
 }
 
@@ -3082,9 +3249,9 @@ open class MobileDeviceFlow: Disposable, AutoCloseable, MobileDeviceFlowInterfac
     }
     )
     }
-    
 
-    
+
+
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `poll`() : MobileDeviceFlowStatus {
@@ -3092,7 +3259,7 @@ open class MobileDeviceFlow: Disposable, AutoCloseable, MobileDeviceFlowInterfac
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobiledeviceflow_poll(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -3115,7 +3282,7 @@ open class MobileDeviceFlow: Disposable, AutoCloseable, MobileDeviceFlowInterfac
     }
     )
     }
-    
+
 
     override fun `verificationUri`(): kotlin.String {
             return FfiConverterString.lift(
@@ -3127,14 +3294,14 @@ open class MobileDeviceFlow: Disposable, AutoCloseable, MobileDeviceFlowInterfac
     }
     )
     }
-    
 
-    
 
-    
-    
+
+
+
+
     companion object
-    
+
 }
 
 /**
@@ -3265,56 +3432,530 @@ public object FfiConverterTypeMobileDeviceFlow: FfiConverter<MobileDeviceFlow, P
 
 
 /**
+ * Android implements this interface with IsoDep or UsbDeviceConnection.
+ * The object is operation-scoped and `shutdown` always runs exactly once.
+ */
+public interface MobileHardwareTransport {
+
+    fun `protocol`(): MobileTransportProtocol
+
+    fun `supportsExtendedApdu`(): kotlin.Boolean
+
+    /**
+     * NFC: one raw APDU in, raw response body plus SW1/SW2 out.
+     */
+    fun `transceive`(`request`: kotlin.ByteArray): kotlin.ByteArray
+
+    /**
+     * USB: one 65-byte CTAPHID report in either direction.
+     */
+    fun `write`(`report`: kotlin.ByteArray)
+
+    fun `read`(): kotlin.ByteArray
+
+    fun `shutdown`()
+
+    companion object
+}
+
+/**
+ * Android implements this interface with IsoDep or UsbDeviceConnection.
+ * The object is operation-scoped and `shutdown` always runs exactly once.
+ */
+open class MobileHardwareTransportImpl: Disposable, AutoCloseable, MobileHardwareTransport {
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_free_mobilehardwaretransport(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_clone_mobilehardwaretransport(pointer!!, status)
+        }
+    }
+
+    override fun `protocol`(): MobileTransportProtocol {
+            return FfiConverterTypeMobileTransportProtocol.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_protocol(
+        it, _status)
+}
+    }
+    )
+    }
+
+
+
+    @Throws(BaluardException::class)override fun `supportsExtendedApdu`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithPointer {
+    uniffiRustCallWithError(BaluardException) { _status ->
+    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_supports_extended_apdu(
+        it, _status)
+}
+    }
+    )
+    }
+
+
+
+    /**
+     * NFC: one raw APDU in, raw response body plus SW1/SW2 out.
+     */
+    @Throws(BaluardException::class)override fun `transceive`(`request`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(BaluardException) { _status ->
+    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_transceive(
+        it, FfiConverterByteArray.lower(`request`),_status)
+}
+    }
+    )
+    }
+
+
+
+    /**
+     * USB: one 65-byte CTAPHID report in either direction.
+     */
+    @Throws(BaluardException::class)override fun `write`(`report`: kotlin.ByteArray)
+        =
+    callWithPointer {
+    uniffiRustCallWithError(BaluardException) { _status ->
+    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_write(
+        it, FfiConverterByteArray.lower(`report`),_status)
+}
+    }
+
+
+
+
+    @Throws(BaluardException::class)override fun `read`(): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(BaluardException) { _status ->
+    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_read(
+        it, _status)
+}
+    }
+    )
+    }
+
+
+    override fun `shutdown`()
+        =
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilehardwaretransport_shutdown(
+        it, _status)
+}
+    }
+
+
+
+
+
+
+
+    companion object
+
+}
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+internal const val IDX_CALLBACK_FREE = 0
+// Callback return codes
+internal const val UNIFFI_CALLBACK_SUCCESS = 0
+internal const val UNIFFI_CALLBACK_ERROR = 1
+internal const val UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
+
+/**
+ * @suppress
+ */
+public abstract class FfiConverterCallbackInterface<CallbackInterface: Any>: FfiConverter<CallbackInterface, Long> {
+    internal val handleMap = UniffiHandleMap<CallbackInterface>()
+
+    internal fun drop(handle: Long) {
+        handleMap.remove(handle)
+    }
+
+    override fun lift(value: Long): CallbackInterface {
+        return handleMap.get(value)
+    }
+
+    override fun read(buf: ByteBuffer) = lift(buf.getLong())
+
+    override fun lower(value: CallbackInterface) = handleMap.insert(value)
+
+    override fun allocationSize(value: CallbackInterface) = 8UL
+
+    override fun write(value: CallbackInterface, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceMobileHardwareTransport {
+    internal object `protocol`: UniffiCallbackInterfaceMobileHardwareTransportMethod0 {
+        override fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeMobileHardwareTransport.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`protocol`(
+                )
+            }
+            val writeReturn = { value: MobileTransportProtocol -> uniffiOutReturn.setValue(FfiConverterTypeMobileTransportProtocol.lower(value)) }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `supportsExtendedApdu`: UniffiCallbackInterfaceMobileHardwareTransportMethod1 {
+        override fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: ByteByReference,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeMobileHardwareTransport.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`supportsExtendedApdu`(
+                )
+            }
+            val writeReturn = { value: kotlin.Boolean -> uniffiOutReturn.setValue(FfiConverterBoolean.lower(value)) }
+            uniffiTraitInterfaceCallWithError(
+                uniffiCallStatus,
+                makeCall,
+                writeReturn,
+                { e: BaluardException -> FfiConverterTypeBaluardError.lower(e) }
+            )
+        }
+    }
+    internal object `transceive`: UniffiCallbackInterfaceMobileHardwareTransportMethod2 {
+        override fun callback(`uniffiHandle`: Long,`request`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeMobileHardwareTransport.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`transceive`(
+                    FfiConverterByteArray.lift(`request`),
+                )
+            }
+            val writeReturn = { value: kotlin.ByteArray -> uniffiOutReturn.setValue(FfiConverterByteArray.lower(value)) }
+            uniffiTraitInterfaceCallWithError(
+                uniffiCallStatus,
+                makeCall,
+                writeReturn,
+                { e: BaluardException -> FfiConverterTypeBaluardError.lower(e) }
+            )
+        }
+    }
+    internal object `write`: UniffiCallbackInterfaceMobileHardwareTransportMethod3 {
+        override fun callback(`uniffiHandle`: Long,`report`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeMobileHardwareTransport.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`write`(
+                    FfiConverterByteArray.lift(`report`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCallWithError(
+                uniffiCallStatus,
+                makeCall,
+                writeReturn,
+                { e: BaluardException -> FfiConverterTypeBaluardError.lower(e) }
+            )
+        }
+    }
+    internal object `read`: UniffiCallbackInterfaceMobileHardwareTransportMethod4 {
+        override fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeMobileHardwareTransport.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`read`(
+                )
+            }
+            val writeReturn = { value: kotlin.ByteArray -> uniffiOutReturn.setValue(FfiConverterByteArray.lower(value)) }
+            uniffiTraitInterfaceCallWithError(
+                uniffiCallStatus,
+                makeCall,
+                writeReturn,
+                { e: BaluardException -> FfiConverterTypeBaluardError.lower(e) }
+            )
+        }
+    }
+    internal object `shutdown`: UniffiCallbackInterfaceMobileHardwareTransportMethod5 {
+        override fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeMobileHardwareTransport.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`shutdown`(
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeMobileHardwareTransport.handleMap.remove(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceMobileHardwareTransport.UniffiByValue(
+        `protocol`,
+        `supportsExtendedApdu`,
+        `transceive`,
+        `write`,
+        `read`,
+        `shutdown`,
+        uniffiFree,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_baluard_uniffi_fn_init_callback_vtable_mobilehardwaretransport(vtable)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMobileHardwareTransport: FfiConverter<MobileHardwareTransport, Pointer> {
+    internal val handleMap = UniffiHandleMap<MobileHardwareTransport>()
+
+    override fun lower(value: MobileHardwareTransport): Pointer {
+        return Pointer(handleMap.insert(value))
+    }
+
+    override fun lift(value: Pointer): MobileHardwareTransport {
+        return MobileHardwareTransportImpl(value)
+    }
+
+    override fun read(buf: ByteBuffer): MobileHardwareTransport {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: MobileHardwareTransport) = 8UL
+
+    override fun write(value: MobileHardwareTransport, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
  * Opaque handle to an open vault session. Created by [`open_vault`] or
  * [`create_vault`]; held by reference on the Kotlin/Swift side. Cheap to
  * clone internally (wraps an `Arc`).
  */
 public interface MobileVaultInterface {
-    
+
     /**
      * This device's local share-event log (S1b-1), in chronological
      * order (oldest first, per the core contract; the client reverses
      * for display). The wrapper clamps the limit (max 500).
      */
     suspend fun `activityEvents`(`limit`: kotlin.ULong): kotlin.String
-    
+
     /**
      * This device's local refusal log lines (S1b-1). The wrapper
      * clamps the limit (max 200).
      */
     suspend fun `activityRefusals`(`limit`: kotlin.ULong): kotlin.String
-    
+
     /**
      * Add a new cipher (JSON payload per the daemon wire format). Returns the
      * new cipher's JSON (with generated id, tier, epoch).
      */
     suspend fun `addCipher`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Pending sensitive-op asks (§6.5 quorum_admin_ops): {pending:
      * [{kind, params_digest, initiated_by, initiated_at, required,
      * approvals}]}. Read-only, unlocked-gated.
      */
     suspend fun `approvalsList`(): kotlin.String
-    
+
     /**
      * Archive a cipher: hide from the main list, search, and suggestions.
      */
     suspend fun `archiveCipher`(`id`: kotlin.String)
-    
+
     /**
      * Record a user REJECTION for a (package, domain) pairing: the picker
      * never suggests the pairing again.
      */
     suspend fun `autofillAppReject`(`package`: kotlin.String, `domain`: kotlin.String)
-    
+
     /**
      * Record a user TRUST decision for a (package, domain) pairing
      * (path B app-to-web matching). Web-saved logins for `domain` may
      * then fill inside the native app `package`.
      */
     suspend fun `autofillAppTrust`(`package`: kotlin.String, `domain`: kotlin.String)
-    
+
     /**
      * Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
      * logins against a fill target: `https://...` for web fills,
@@ -3325,171 +3966,173 @@ public interface MobileVaultInterface {
      * path-B app-to-web flow (empty unless suggest_app_logins is on).
      */
     suspend fun `autofillQuery`(`target`: kotlin.String): kotlin.String
-    
+
     /**
      * Vault avatar as base64 ("" when none). Decrypts meta/avatar.enc,
      * migrating legacy plaintext on managing devices.
      */
     suspend fun `avatarGet`(): kotlin.String
-    
+
     /**
      * Set the vault avatar. Payload {"data": "<base64>", "ext": "png|jpg|jpeg|gif|webp"};
      * empty data removes it. Managing devices only; ~256KB decoded cap.
      */
     suspend fun `avatarSet`(`payload`: kotlin.String)
-    
+
+    suspend fun `changeMasterPasswordWithSecurityKey`(`oldPassword`: kotlin.String, `newPassword`: kotlin.String, `transport`: MobileHardwareTransport)
+
     /**
      * Optional plaintext catalog (admin-curated collection names):
      * `{catalog: [{collection_id, name}]}`.
      */
     suspend fun `collectionCatalogList`(): kotlin.String
-    
+
     /**
      * Publish the request catalog (admin-gated): the entries requesters
      * may ask for by name. An empty list clears the catalog (opt-out).
      * Returns `{published: true}`.
      */
     suspend fun `collectionCatalogSet`(`entries`: List<MobileCatalogInput>): kotlin.String
-    
+
     /**
      * Mint a collection (admin-gated core). Returns `{id}`.
      */
     suspend fun `collectionCreate`(`name`: kotlin.String): kotlin.String
-    
+
     /**
      * Delete a collection (admin-gated core; grants die with it,
      * entries are preserved). Returns `{ok: true}`.
      */
     suspend fun `collectionDelete`(`id`: kotlin.String): kotlin.String
-    
+
     /**
      * Grant collection access. Payload: `{id, member_id, access:
      * "read"|"write"|"manage", expires_at?}` (expires_at is an absolute
      * epoch second; absent = never).
      */
     suspend fun `collectionGrant`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Rename a collection (admin-gated core). Returns `{ok: true}`.
      */
     suspend fun `collectionRename`(`id`: kotlin.String, `name`: kotlin.String): kotlin.String
-    
+
     /**
      * Ask for access to a collection (request-access JIT). Payload:
      * `{collection_id, access: "read"|"write", note?}`. Returns
      * `{request_id}`.
      */
     suspend fun `collectionRequestAccess`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Admin approve. Payload: `{request_id, requester_member_id,
      * access, expires_at?}`. Returns the grant summary.
      */
     suspend fun `collectionRequestsApprove`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Admin deny. Payload: `{request_id, requester_member_id}`.
      */
     suspend fun `collectionRequestsDeny`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Admin access-request inbox: `{requests: [...], malformed}`.
      */
     suspend fun `collectionRequestsList`(): kotlin.String
-    
+
     /**
      * The caller's own pending asks: `{requests: [{id, collection_id,
      * access, created_at}]}`.
      */
     suspend fun `collectionRequestsMine`(): kotlin.String
-    
+
     /**
      * Withdraw one of the caller's pending asks. Payload:
      * `{request_id}`.
      */
     suspend fun `collectionRequestsWithdraw`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Revoke a member's collection access. Payload: `{id, member_id}`.
      */
     suspend fun `collectionRevoke`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * List shared collections as JSON. Role-aware: managing devices get
      * every collection with its grant table; members get only the rows
      * they can open (grant-wrapped names), no grants key.
      */
     suspend fun `collectionsList`(): kotlin.String
-    
+
     /**
      * Import an out-of-band contact card code (lands at Channel until
      * the code check).
      */
     suspend fun `contactImportCard`(`card`: kotlin.String): kotlin.String
-    
+
     /**
      * Record the Level 2 check: the codes matched, so the contact is
      * trusted for admin-rank gates.
      */
     suspend fun `contactMarkVerified`(`pubkey`: kotlin.String): kotlin.String
-    
+
     /**
      * Remove a contact from the address book.
      */
     suspend fun `contactRemove`(`pubkey`: kotlin.String): kotlin.String
-    
+
     /**
      * Address book for the Level 2 contact check: rows carry the
      * verification code both sides compare out-of-band.
      */
     suspend fun `contactsList`(): kotlin.String
-    
+
     /**
      * Create a new folder (JSON payload `{"name": "..."}`).
      */
     suspend fun `createFolder`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Create a new tag by name.
      */
     suspend fun `createTag`(`name`: kotlin.String): kotlin.String
-    
+
     /**
      * Delete a cipher by id.
      */
     suspend fun `deleteCipher`(`id`: kotlin.String)
-    
+
     /**
      * Delete a folder by id (unassigns ciphers first).
      */
     suspend fun `deleteFolder`(`id`: kotlin.String)
-    
+
     /**
      * Delete a tag by name.
      */
     suspend fun `deleteTag`(`name`: kotlin.String): kotlin.String
-    
+
     /**
      * This device's UUID — feeds the autosync coordinator (C5: engine
      * identity is the id, never the display name).
      */
     suspend fun `deviceId`(): kotlin.String
-    
+
     suspend fun `deviceName`(): kotlin.String
-    
+
     /**
      * Revoke another device and rekey: rotates the Root Key, re-encrypts
      * ciphers, and writes the keywrap. Heavy on-device crypto; the caller
      * should surface a busy state. Refuses the current device.
      */
     suspend fun `deviceRevoke`(`deviceId`: kotlin.String): kotlin.String
-    
+
     /**
      * Fleet snapshot: {devices: [{name, device_id, enrolled_at, ...}],
      * total}. Key material is masked daemon-side.
      */
     suspend fun `devicesList`(): kotlin.String
-    
+
     /**
      * Export the vault in one of three shapes: "baluard" (the Baluard
      * backup — full-fidelity JSON in our own format, the default),
@@ -3499,7 +4142,7 @@ public interface MobileVaultInterface {
      * is enforced runtime-side and fails closed.
      */
     suspend fun `exportData`(`format`: kotlin.String): kotlin.String
-    
+
     /**
      * Export the vault as an ENCRYPTED backup (.bldbak container,
      * docs/plan-encrypted-backup.md): the full-fidelity v1 payload inside a
@@ -3509,7 +4152,7 @@ public interface MobileVaultInterface {
      * memory before returning.
      */
     suspend fun `exportEncryptedBackup`(`passphrase`: kotlin.String): EncryptedBackup
-    
+
     /**
      * Export one of this vault's logins as a passphrase-guest reveal
      * file (S2 IS-6, the export half of the share round trip). Returns
@@ -3519,46 +4162,46 @@ public interface MobileVaultInterface {
      * Guest reveals are Login-only and ride the opt-in guest door.
      */
     suspend fun `exportGuestReveal`(`cipherId`: kotlin.String, `expiresAt`: kotlin.ULong, `includeTotp`: kotlin.Boolean): kotlin.String
-    
+
     /**
      * Fetch a favicon for a login's domain. Payload is the URI or bare
      * domain; the runtime self-gates on the fetch_favicons setting (returns
      * "" when disabled or on failure). Returns JSON {data, mime} or "".
      */
     suspend fun `fetchFavicon`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Record a generated password into encrypted generator history.
      */
     suspend fun `generatorHistoryAdd`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Clear all generator history entries.
      */
     suspend fun `generatorHistoryClear`()
-    
+
     /**
      * List generator history entries as JSON string.
      */
     suspend fun `generatorHistoryList`(): kotlin.String
-    
+
     /**
      * Get a single cipher as a JSON string (the daemon wire format: nested
      * `kind` object + flat top-level fields). `decrypt` true returns field
      * values (password, notes); false returns masked/placeholder values.
      */
     suspend fun `getCipher`(`id`: kotlin.String, `decrypt`: kotlin.Boolean): kotlin.String
-    
+
     /**
      * Check if coordinator state has a pending conflict and return masked details JSON.
      */
     suspend fun `getPendingConflictDetails`(): kotlin.String
-    
+
     /**
      * Get current vault settings as JSON string.
      */
     suspend fun `getSettings`(): kotlin.String
-    
+
     /**
      * Custom-remote credentials: store or update the device-local files.
      * Payload JSON: {host, token?, username?, ssh_passphrase?, ssh_key_b64?};
@@ -3566,50 +4209,60 @@ public interface MobileVaultInterface {
      * the artifacts are gitignored device-local state.
      */
     suspend fun `gitCredentialsSet`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * The vault's origin remote URL, for credential and sync UIs.
      */
     suspend fun `gitRemoteUrl`(): kotlin.String
-    
+
     /**
      * Create a group. Payload {"name"}. Returns {"id"}.
      */
     suspend fun `groupCreate`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Delete a group. The group's grant rows are pruned from every
      * collection, so access given only through this group is removed.
      * Payload {"id"}.
      */
     suspend fun `groupDelete`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Add a member to a group. Payload {"id", "member_id"}.
      */
     suspend fun `groupMemberAdd`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Remove a member from a group. Payload {"id", "member_id"}.
      */
     suspend fun `groupMemberRemove`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Rename a group. Payload {"id", "name"}.
      */
     suspend fun `groupRename`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * List user groups. Returns {"groups": [{id, name, members: [uuid]}]}.
      */
     suspend fun `groupsList`(): kotlin.String
-    
+
+    suspend fun `hardwareDisable`(`transport`: MobileHardwareTransport): kotlin.String
+
+    suspend fun `hardwareEnable`(`transport`: MobileHardwareTransport): kotlin.String
+
+    /**
+     * Platform capability comes from Android (NFC or USB host support); no
+     * reader session opens for this status call.
+     */
+    suspend fun `hardwareStatus`(`platformCapable`: kotlin.Boolean): kotlin.String
+
     /**
      * Password health report: {"weak": [...], "reused": [...], "old": [...]}
      * with entries {cipher_id, name, reason}. Decrypts the whole vault.
      */
     suspend fun `healthReport`(): kotlin.String
-    
+
     /**
      * Import entries from an external password manager (G2, one parser
      * set for every surface). [data] is the raw file payload — text
@@ -3617,27 +4270,27 @@ public interface MobileVaultInterface {
      * JSON: {imported, skipped, folders_created, errors}.
      */
     suspend fun `importData`(`format`: kotlin.String, `data`: kotlin.ByteArray): kotlin.String
-    
+
     /**
      * Decrypt + import an encrypted backup. Wrong passphrase and corruption
      * are one error by design ("wrong password or damaged file").
      */
     suspend fun `importEncryptedBackup`(`passphrase`: kotlin.String, `container`: kotlin.ByteArray): kotlin.String
-    
+
     /**
      * Open a one-shot shared package (S2 IS-3): imports the entry into
      * this vault. `package_b64` is the base64 of the .baluard-share file.
      * Returns the import summary JSON ({item_name, sender, ...}).
      */
     suspend fun `importSharedPackage`(`packageB64`: kotlin.String): kotlin.String
-    
+
     suspend fun `isAdminDevice`(): kotlin.Boolean
-    
+
     /**
      * Whether the vault currently holds an unlocked handle in memory.
      */
     suspend fun `isUnlocked`(): kotlin.Boolean
-    
+
     /**
      * Join a shared space (member side of the join ceremony). The vault
      * must already be cloned locally (see `clone_vault_start`). Payload
@@ -3648,7 +4301,7 @@ public interface MobileVaultInterface {
      * it is zeroized after the introduction is written.
      */
     suspend fun `joinIntroduce`(`code`: kotlin.String, `password`: kotlin.String, `deviceName`: kotlin.String, `email`: kotlin.String?): kotlin.String
-    
+
     /**
      * Poll the join status: `{introduced, approved}`. While introduced
      * but not approved and the vault is locked, this best-effort pulls
@@ -3657,25 +4310,25 @@ public interface MobileVaultInterface {
      * without a manual sync.
      */
     suspend fun `joinPoll`(): kotlin.String
-    
+
     /**
      * Approve a queued join. Payload: `{req_id}`. Runs the standard
      * verification path; consumed only on success.
      */
     suspend fun `joinRequestsApprove`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Deny a queued join. Payload: `{req_id}`.
      */
     suspend fun `joinRequestsDeny`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Queued join introductions (S1a join queue).
      * `{requests: [{req_id, invite_id, device_id, display_name,
      * secret_ok}], malformed}`.
      */
     suspend fun `joinRequestsList`(): kotlin.String
-    
+
     /**
      * Stage an out-of-band introduction code into the join queue. The
      * admin received the code from the joiner (chat, email); this is
@@ -3683,44 +4336,44 @@ public interface MobileVaultInterface {
      * `{intro_code}`; returns `{req_id}`.
      */
     suspend fun `joinRequestsStage`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * List archived cipher metadata (Archive view).
      */
     suspend fun `listArchivedCiphers`(): List<MobileCipherMeta>
-    
+
     /**
      * List all ciphers' metadata (id, name, type, favorite, username).
      * Lightweight: no decryption of field values, just the index.
      */
     suspend fun `listCiphers`(): List<MobileCipherMeta>
-    
+
     /**
      * List all folders as a JSON array string.
      */
     suspend fun `listFolders`(): kotlin.String
-    
+
     /**
      * List all tags as a JSON array string.
      */
     suspend fun `listTags`(): kotlin.String
-    
+
     /**
      * List cipher metadata for entries that have a TOTP seed (hub card).
      */
     suspend fun `listTotpCiphers`(): List<MobileCipherMeta>
-    
+
     /**
      * List trashed cipher metadata (Trash view).
      */
     suspend fun `listTrashCiphers`(): List<MobileCipherMeta>
-    
+
     /**
      * Lock the vault: zeroizes in-memory keys, clears the session token,
      * deactivates auto-sync. The on-disk vault is untouched.
      */
     suspend fun `lock`()
-    
+
     /**
      * §13: claim ownership when the Owner cannot act (admin-only;
      * quorum-gated, the ask binds both member ids). `member_id` is the
@@ -3728,14 +4381,14 @@ public interface MobileVaultInterface {
      * Returns `{}`.
      */
     suspend fun `memberClaim`(`memberId`: kotlin.String): kotlin.String
-    
+
     /**
      * Mint a one-time invite code. Payload: `{role: "viewer"|"editor"
      * |"admin", transport_username?}` (role parsing fails closed).
      * Returns `{code, seat_granted, seat_error}`.
      */
     suspend fun `memberInvite`(`payload`: kotlin.String): kotlin.String
-    
+
     /**
      * Execute an approved departure: strike + tombstone "left" + Root
      * Key rotation + collection-key rotation for everything the leaver
@@ -3743,19 +4396,19 @@ public interface MobileVaultInterface {
      * once (`new_kit_phrase`). Refuses while the leaver owns the repo.
      */
     suspend fun `memberLeaveApprove`(`memberId`: kotlin.String, `offlineOverride`: kotlin.Boolean): kotlin.String
-    
+
     /**
      * Family-spaces §6: file this device's departure request. Refuses
      * the Owner row (transfer first); idempotent on re-file.
      */
     suspend fun `memberLeaveFile`(): kotlin.String
-    
+
     /**
      * Pending departures for the admin surfaces (manage-gated).
      * Returns `{pending: [{member_id, display_name, role, requested_at}]}`.
      */
     suspend fun `memberLeaveList`(): kotlin.String
-    
+
     /**
      * Remove members and rotate the root key so their key material is
      * dead. Provider seats are struck first; a strike failure refuses
@@ -3763,7 +4416,7 @@ public interface MobileVaultInterface {
      * `{removed, new_epoch, seats_struck, unstruck_seats}`.
      */
     suspend fun `memberRemove`(`memberIds`: List<kotlin.String>, `offlineOverride`: kotlin.Boolean): kotlin.String
-    
+
     /**
      * Stolen-device journey in one op: reset with a replacement invite
      * carrying the member's grants, optionally revoke-and-rekey their
@@ -3772,52 +4425,52 @@ public interface MobileVaultInterface {
      * `{successor, invite_code, collections_rotated, rotation_failed, revoke_error, kit_present, vault_id}`.
      */
     suspend fun `memberReplaceDevice`(`memberId`: kotlin.String, `revokeDevice`: kotlin.Boolean): kotlin.String
-    
+
     /**
      * Reset a member: their identity is tombstoned and a successor row
      * is minted; the member re-joins with the returned one-time code.
      * Returns `{successor_id, reset_code}`.
      */
     suspend fun `memberReset`(`memberId`: kotlin.String): kotlin.String
-    
+
     /**
      * Change a member's role (admin surface). Keywraps follow the
      * role core-side; admin rank demands a verified contact on the
      * member and refuses minors. Returns the change JSON.
      */
     suspend fun `memberSetRole`(`memberId`: kotlin.String, `role`: kotlin.String): kotlin.String
-    
+
     /**
      * Transfer ownership to a member (owner-only; core-gated). The
      * caller is demoted to Admin. Returns `{}`.
      */
     suspend fun `memberTransfer`(`memberId`: kotlin.String): kotlin.String
-    
+
     /**
      * People list. `{members: [{id, display_name, role, trust, reset,
      * removed, identity_rotated_at, is_self}], your_role}`.
      */
     suspend fun `membersList`(): kotlin.String
-    
+
     /**
      * This device's signed contact card plus its verification code.
      * The code is what the Level 2 check compares.
      */
     suspend fun `myContactCard`(): kotlin.String
-    
+
     /**
      * This device's member role ("owner"|"admin"|"editor"|"viewer").
      * Role-gated UI gates on this, never on is_admin_device: on a
      * flipped Space an admin holds no Root Key by design.
      */
     suspend fun `myRole`(): kotlin.String
-    
+
     /**
      * Needs-attention notices (S1b-4). refresh_transport triggers the
      * optional best-effort forge seat check; the phone passes false.
      */
     suspend fun `noticesList`(`refreshTransport`: kotlin.Boolean): kotlin.String
-    
+
     /**
      * Open a contact-key reveal (S2 IS-6): view-only, nothing is added
      * to the vault. `reveal_b64` is the base64 of the .baluard-share
@@ -3825,19 +4478,19 @@ public interface MobileVaultInterface {
      * boundary; only the current code does).
      */
     suspend fun `openSharedContact`(`revealB64`: kotlin.String): kotlin.String
-    
+
     /**
      * Consume a pending provider assertion (records a nonzero counter;
      * synced-model counters stay zero).
      */
     suspend fun `passkeyConsumeAssertion`(`ceremonyId`: kotlin.String): kotlin.String
-    
+
     /**
      * Run a provider assertion ceremony for one selected credential.
      * Returns `{ ceremony_id, assertion_response, new_counter }`.
      */
     suspend fun `passkeyProviderAssert`(`requestJson`: kotlin.String, `origin`: kotlin.String, `credentialId`: kotlin.String, `clientDataJson`: kotlin.String?, `clientDataHash`: kotlin.String?, `userVerified`: kotlin.Boolean): kotlin.String
-    
+
     /**
      * Run a provider registration ceremony. `request_json` is the RP's
      * create options; `client_data_json` (base64url of the caller-built
@@ -3847,25 +4500,25 @@ public interface MobileVaultInterface {
      * user_name }`; file the credential with passkeyStoreRegistered.
      */
     suspend fun `passkeyProviderRegister`(`requestJson`: kotlin.String, `origin`: kotlin.String, `clientDataJson`: kotlin.String?, `clientDataHash`: kotlin.String?, `userVerified`: kotlin.Boolean): kotlin.String
-    
+
     /**
      * File a pending provider registration into the vault: an existing
      * Login's id, or `new_login` JSON `{name, username?}` for a fresh entry.
      */
     suspend fun `passkeyStoreRegistered`(`ceremonyId`: kotlin.String, `cipherId`: kotlin.String?, `newLogin`: kotlin.String?): kotlin.String
-    
+
     /**
      * Published advisory org policies (S4-6): {policies: {knob:
      * value}} — empty object when nothing is published. Read-only,
      * unlocked-gated; member surfaces render the hints.
      */
     suspend fun `policiesList`(): kotlin.String
-    
+
     /**
      * Rename an existing folder (JSON payload `{"id": "...", "name": "..."}`).
      */
     suspend fun `renameFolder`(`payload`: kotlin.String)
-    
+
     /**
      * Master-password re-prompt verification (G18). Opens a TEMPORARY
      * handle and actually verifies the password — unlike [Self::unlock],
@@ -3876,7 +4529,7 @@ public interface MobileVaultInterface {
      * seconds) from the runtime's 30s window.
      */
     suspend fun `repromptVerify`(`masterPassword`: kotlin.String): kotlin.ULong
-    
+
     /**
      * Apply a conflict verdict: "keep_local" | "keep_remote" | "keep_both".
      * keep_local/keep_remote are raw-blob picks (cross-epoch safe, no decrypt);
@@ -3884,35 +4537,35 @@ public interface MobileVaultInterface {
      * JSON `{resolved, remaining}`.
      */
     suspend fun `resolveConflict`(`verdict`: kotlin.String): kotlin.String
-    
+
     /**
      * Resolve a pending conflict by cloning the remote entry with a new UUID (keep both).
      */
     suspend fun `resolveConflictKeepBoth`(): kotlin.String
-    
+
     /**
      * Restore a cipher from trash back to the active vault.
      */
     suspend fun `restoreCipher`(`id`: kotlin.String)
-    
+
     /**
      * Rotate the recovery phrase (D74 ceremony: current master password
      * in, new 24 words out exactly once). Flipped Spaces refuse here and
      * must use the Space Recovery Kit. Returns {phrase}.
      */
     suspend fun `rotateRecoveryPhrase`(`oldPassword`: kotlin.String): kotlin.String
-    
+
     /**
      * Assign an entry to a shared collection (None unassigns). Same grant
      * and rank gates as the daemon's cipher.set_collection route.
      */
     suspend fun `setCollection`(`cipherId`: kotlin.String, `collectionId`: kotlin.String?)
-    
+
     /**
      * Update vault settings from JSON string.
      */
     suspend fun `setSettings`(`payload`: kotlin.String)
-    
+
     /**
      * G16: create-or-reuse this vault's private repo on the connected
      * provider and wire it as the sync remote (origin, first push,
@@ -3921,7 +4574,7 @@ public interface MobileVaultInterface {
      * unlocked (the first push signs a commit).
      */
     suspend fun `setupSync`(`provider`: MobileProvider, `repoName`: kotlin.String, `cloneUrl`: kotlin.String?): kotlin.String
-    
+
     /**
      * Custom-remote setup: wire a user-supplied repository URL as the
      * sync remote. No provider token, no repo creation — credentials
@@ -3930,51 +4583,51 @@ public interface MobileVaultInterface {
      * first push signs a commit).
      */
     suspend fun `setupSyncCustom`(`cloneUrl`: kotlin.String): kotlin.String
-    
+
     /**
      * Whether the vault should auto-lock NOW (idle >= the vault's
      * `vault_timeout` policy). Side-effect free; the host calls `lock()` on
      * true. Foreground-lifecycle driven on mobile (no background walker).
      */
     suspend fun `shouldAutoLock`(): kotlin.Boolean
-    
+
     /**
      * Flip the vault to team shape (S3-7b, one-way). Afterwards
      * members keep access only to entries shared with them, starting
      * from their next unlock. Admin-gated at the core layer.
      */
     suspend fun `spaceFlip`(): kotlin.String
-    
+
     /**
      * Disable the kit (may arm the fixed-threshold approval).
      * Returns {removed}.
      */
     suspend fun `spaceKitDisable`(): kotlin.String
-    
+
     /**
      * Enable (or enable-over, which may arm the fixed-threshold
      * approval). Returns {phrase} shown exactly once.
      */
     suspend fun `spaceKitEnable`(): kotlin.String
-    
+
     /**
      * Space Recovery Kit status: {enabled}.
      */
     suspend fun `spaceKitStatus`(): kotlin.String
-    
+
     /**
      * Mint or refresh the shared-space key wraps for every live
      * member (S3-7a). Run before flipping; the report lists members
      * that still need to sign in with a current app version.
      */
     suspend fun `spacePrepare`(): kotlin.String
-    
+
     /**
      * Space policy knobs (§6.5). Returns the JSON the runtime wrapper
      * emits: {space_invite_authority, allow_viewer_export, guest_enabled}.
      */
     suspend fun `spaceSettingsGet`(): kotlin.String
-    
+
     /**
      * Set Space policy knobs (partial, admin-gated). Typed args so the
      * app never hand-builds JSON; the bridge constructs the payload.
@@ -3984,75 +4637,75 @@ public interface MobileVaultInterface {
      * width deliberate.
      */
     suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?, `joinApproval`: kotlin.String?, `quorumAdminOps`: kotlin.ULong?, `collectionCreateAuthority`: kotlin.String?)
-    
+
     /**
      * Readiness counts for the Team-shape flip (S3-7b): {prepared,
      * wrapped, missing_wrap_pubkey, pending_wrap, flipped}.
      */
     suspend fun `spaceStatus`(): kotlin.String
-    
+
     /**
      * Generate an SSH keypair. `keyType`: "ed25519" (default) | "ecdsa256".
      * Returns JSON {public_key, fingerprint, private_key}; formatted OpenSSH
      * strings only, matching the desktop generator (RSA removed, L7).
      */
     suspend fun `sshGenerateKey`(`keyType`: kotlin.String): kotlin.String
-    
+
     /**
      * Host-scheduled 30s probe while Offline + foregrounded (the one piece of
      * background_loop mobile must reproduce).
      */
     suspend fun `syncOfflineTick`()
-    
+
     /**
      * FLUSH any pending debounce immediately on background (OS suspends the
      * process within seconds; the 5s timer would be dropped).
      */
     suspend fun `syncOnBackground`()
-    
+
     /**
      * Pull on app foreground (10-min guard collapses focus flicker).
      */
     suspend fun `syncOnForeground`()
-    
+
     /**
      * Arm the 5s debounced push after a CRUD mutation (coalesces bursts).
      */
     suspend fun `syncOnMutation`()
-    
+
     /**
      * Pull immediately after unlock so other-device edits land first.
      */
     suspend fun `syncOnUnlock`()
-    
+
     /**
      * User pull-to-refresh / "Sync now".
      */
     suspend fun `syncPullNow`()
-    
+
     /**
      * Coordinator status snapshot for the sync indicator.
      */
     suspend fun `syncStatus`(): MobileSyncStatus
-    
+
     /**
      * Current TOTP code for a cipher (6 digits + seconds-until-rollover).
      * The TOTP seed NEVER crosses the FFI boundary; only the derived code.
      */
     suspend fun `totpCode`(`id`: kotlin.String): kotlin.String
-    
+
     /**
      * Unarchive a cipher: return it to the main list.
      */
     suspend fun `unarchiveCipher`(`id`: kotlin.String)
-    
+
     /**
      * Unlock the vault with the master password. Derives the KEK via Argon2id,
      * verifies the keywrap + canaries, and activates the auto-sync coordinator
      * (if the vault has a remote). Heavy: runs the KDF on the shared runtime.
      */
     suspend fun `unlock`(`masterPassword`: kotlin.String)
-    
+
     /**
      * **Autofill / extension quick-unlock path (plan §3.2).** Unlocks with a
      * pre-derived KEK, SKIPPING the Argon2id KDF. The caller retrieves the
@@ -4065,20 +4718,24 @@ public interface MobileVaultInterface {
      * (NOT the password itself). Treat as sensitive at the FFI boundary.
      */
     suspend fun `unlockWithKek`(`kek`: kotlin.ByteArray)
-    
+
+    suspend fun `unlockWithSecurityKey`(`masterPassword`: kotlin.String, `transport`: MobileHardwareTransport)
+
+    suspend fun `unlockWithSecurityKeyAndKek`(`kek`: kotlin.ByteArray, `transport`: MobileHardwareTransport)
+
     /**
      * Update an existing cipher (JSON payload). Parses `kind` from the
      * payload (does NOT clone the existing kind).
      */
     suspend fun `updateCipher`(`payload`: kotlin.String)
-    
+
     /**
      * Deterministic vault UUID (derived from the KDF salt, stable across
      * renames + git sync). Scopes platform keychain entries (e.g. the
      * biometric-gated KEK) per vault.
      */
     suspend fun `vaultId`(): kotlin.String
-    
+
     companion object
 }
 
@@ -4168,7 +4825,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         }
     }
 
-    
+
     /**
      * This device's local share-event log (S1b-1), in chronological
      * order (oldest first, per the core contract; the client reverses
@@ -4194,7 +4851,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * This device's local refusal log lines (S1b-1). The wrapper
      * clamps the limit (max 200).
@@ -4219,7 +4876,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Add a new cipher (JSON payload per the daemon wire format). Returns the
      * new cipher's JSON (with generated id, tier, epoch).
@@ -4244,7 +4901,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Pending sensitive-op asks (§6.5 quorum_admin_ops): {pending:
      * [{kind, params_digest, initiated_by, initiated_at, required,
@@ -4257,7 +4914,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_approvals_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -4270,7 +4927,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Archive a cipher: hide from the main list, search, and suggestions.
      */
@@ -4289,13 +4946,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Record a user REJECTION for a (package, domain) pairing: the picker
      * never suggests the pairing again.
@@ -4315,13 +4972,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Record a user TRUST decision for a (package, domain) pairing
      * (path B app-to-web matching). Web-saved logins for `domain` may
@@ -4342,13 +4999,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
      * logins against a fill target: `https://...` for web fills,
@@ -4378,7 +5035,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Vault avatar as base64 ("" when none). Decrypts meta/avatar.enc,
      * migrating legacy plaintext on managing devices.
@@ -4390,7 +5047,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_avatar_get(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -4403,7 +5060,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Set the vault avatar. Payload {"data": "<base64>", "ext": "png|jpg|jpeg|gif|webp"};
      * empty data removes it. Managing devices only; ~256KB decoded cap.
@@ -4423,13 +5080,35 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `changeMasterPasswordWithSecurityKey`(`oldPassword`: kotlin.String, `newPassword`: kotlin.String, `transport`: MobileHardwareTransport) {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_change_master_password_with_security_key(
+                thisPtr,
+                FfiConverterString.lower(`oldPassword`),FfiConverterString.lower(`newPassword`),FfiConverterTypeMobileHardwareTransport.lower(`transport`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+
     /**
      * Optional plaintext catalog (admin-curated collection names):
      * `{catalog: [{collection_id, name}]}`.
@@ -4441,7 +5120,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_catalog_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -4454,7 +5133,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Publish the request catalog (admin-gated): the entries requesters
      * may ask for by name. An empty list clears the catalog (opt-out).
@@ -4480,7 +5159,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Mint a collection (admin-gated core). Returns `{id}`.
      */
@@ -4504,7 +5183,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Delete a collection (admin-gated core; grants die with it,
      * entries are preserved). Returns `{ok: true}`.
@@ -4529,7 +5208,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Grant collection access. Payload: `{id, member_id, access:
      * "read"|"write"|"manage", expires_at?}` (expires_at is an absolute
@@ -4555,7 +5234,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Rename a collection (admin-gated core). Returns `{ok: true}`.
      */
@@ -4579,7 +5258,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Ask for access to a collection (request-access JIT). Payload:
      * `{collection_id, access: "read"|"write", note?}`. Returns
@@ -4605,7 +5284,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Admin approve. Payload: `{request_id, requester_member_id,
      * access, expires_at?}`. Returns the grant summary.
@@ -4630,7 +5309,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Admin deny. Payload: `{request_id, requester_member_id}`.
      */
@@ -4654,7 +5333,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Admin access-request inbox: `{requests: [...], malformed}`.
      */
@@ -4665,7 +5344,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_requests_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -4678,7 +5357,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * The caller's own pending asks: `{requests: [{id, collection_id,
      * access, created_at}]}`.
@@ -4690,7 +5369,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_requests_mine(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -4703,7 +5382,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Withdraw one of the caller's pending asks. Payload:
      * `{request_id}`.
@@ -4728,7 +5407,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Revoke a member's collection access. Payload: `{id, member_id}`.
      */
@@ -4752,7 +5431,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * List shared collections as JSON. Role-aware: managing devices get
      * every collection with its grant table; members get only the rows
@@ -4765,7 +5444,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collections_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -4778,7 +5457,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Import an out-of-band contact card code (lands at Channel until
      * the code check).
@@ -4803,7 +5482,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Record the Level 2 check: the codes matched, so the contact is
      * trusted for admin-rank gates.
@@ -4828,7 +5507,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Remove a contact from the address book.
      */
@@ -4852,7 +5531,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Address book for the Level 2 contact check: rows carry the
      * verification code both sides compare out-of-band.
@@ -4864,7 +5543,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_contacts_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -4877,7 +5556,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Create a new folder (JSON payload `{"name": "..."}`).
      */
@@ -4901,7 +5580,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Create a new tag by name.
      */
@@ -4925,7 +5604,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Delete a cipher by id.
      */
@@ -4944,13 +5623,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Delete a folder by id (unassigns ciphers first).
      */
@@ -4969,13 +5648,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Delete a tag by name.
      */
@@ -4999,7 +5678,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * This device's UUID — feeds the autosync coordinator (C5: engine
      * identity is the id, never the display name).
@@ -5010,7 +5689,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_device_id(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5023,14 +5702,14 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `deviceName`() : kotlin.String {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_device_name(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5043,7 +5722,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Revoke another device and rekey: rotates the Root Key, re-encrypts
      * ciphers, and writes the keywrap. Heavy on-device crypto; the caller
@@ -5069,7 +5748,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Fleet snapshot: {devices: [{name, device_id, enrolled_at, ...}],
      * total}. Key material is masked daemon-side.
@@ -5081,7 +5760,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_devices_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5094,7 +5773,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Export the vault in one of three shapes: "baluard" (the Baluard
      * backup — full-fidelity JSON in our own format, the default),
@@ -5123,7 +5802,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Export the vault as an ENCRYPTED backup (.bldbak container,
      * docs/plan-encrypted-backup.md): the full-fidelity v1 payload inside a
@@ -5152,7 +5831,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Export one of this vault's logins as a passphrase-guest reveal
      * file (S2 IS-6, the export half of the share round trip). Returns
@@ -5181,7 +5860,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Fetch a favicon for a login's domain. Payload is the URI or bare
      * domain; the runtime self-gates on the fetch_favicons setting (returns
@@ -5207,7 +5886,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Record a generated password into encrypted generator history.
      */
@@ -5231,7 +5910,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Clear all generator history entries.
      */
@@ -5242,7 +5921,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_generator_history_clear(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
@@ -5250,13 +5929,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * List generator history entries as JSON string.
      */
@@ -5267,7 +5946,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_generator_history_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5280,7 +5959,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Get a single cipher as a JSON string (the daemon wire format: nested
      * `kind` object + flat top-level fields). `decrypt` true returns field
@@ -5306,7 +5985,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Check if coordinator state has a pending conflict and return masked details JSON.
      */
@@ -5317,7 +5996,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_get_pending_conflict_details(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5330,7 +6009,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Get current vault settings as JSON string.
      */
@@ -5341,7 +6020,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_get_settings(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5354,7 +6033,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Custom-remote credentials: store or update the device-local files.
      * Payload JSON: {host, token?, username?, ssh_passphrase?, ssh_key_b64?};
@@ -5381,7 +6060,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * The vault's origin remote URL, for credential and sync UIs.
      */
@@ -5392,7 +6071,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_git_remote_url(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5405,7 +6084,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Create a group. Payload {"name"}. Returns {"id"}.
      */
@@ -5429,7 +6108,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Delete a group. The group's grant rows are pruned from every
      * collection, so access given only through this group is removed.
@@ -5455,7 +6134,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Add a member to a group. Payload {"id", "member_id"}.
      */
@@ -5479,7 +6158,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Remove a member from a group. Payload {"id", "member_id"}.
      */
@@ -5503,7 +6182,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Rename a group. Payload {"id", "name"}.
      */
@@ -5527,7 +6206,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * List user groups. Returns {"groups": [{id, name, members: [uuid]}]}.
      */
@@ -5538,7 +6217,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_groups_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5551,7 +6230,74 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `hardwareDisable`(`transport`: MobileHardwareTransport) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_hardware_disable(
+                thisPtr,
+                FfiConverterTypeMobileHardwareTransport.lower(`transport`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `hardwareEnable`(`transport`: MobileHardwareTransport) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_hardware_enable(
+                thisPtr,
+                FfiConverterTypeMobileHardwareTransport.lower(`transport`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Platform capability comes from Android (NFC or USB host support); no
+     * reader session opens for this status call.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `hardwareStatus`(`platformCapable`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_hardware_status(
+                thisPtr,
+                FfiConverterBoolean.lower(`platformCapable`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+
     /**
      * Password health report: {"weak": [...], "reused": [...], "old": [...]}
      * with entries {cipher_id, name, reason}. Decrypts the whole vault.
@@ -5563,7 +6309,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_health_report(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5576,7 +6322,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Import entries from an external password manager (G2, one parser
      * set for every surface). [data] is the raw file payload — text
@@ -5603,7 +6349,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Decrypt + import an encrypted backup. Wrong passphrase and corruption
      * are one error by design ("wrong password or damaged file").
@@ -5628,7 +6374,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Open a one-shot shared package (S2 IS-3): imports the entry into
      * this vault. `package_b64` is the base64 of the .baluard-share file.
@@ -5654,7 +6400,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `isAdminDevice`() : kotlin.Boolean {
@@ -5662,7 +6408,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_is_admin_device(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_i8(future, callback, continuation) },
@@ -5675,7 +6421,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Whether the vault currently holds an unlocked handle in memory.
      */
@@ -5685,7 +6431,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_is_unlocked(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_i8(future, callback, continuation) },
@@ -5698,7 +6444,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Join a shared space (member side of the join ceremony). The vault
      * must already be cloned locally (see `clone_vault_start`). Payload
@@ -5728,7 +6474,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Poll the join status: `{introduced, approved}`. While introduced
      * but not approved and the vault is locked, this best-effort pulls
@@ -5743,7 +6489,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_join_poll(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5756,7 +6502,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Approve a queued join. Payload: `{req_id}`. Runs the standard
      * verification path; consumed only on success.
@@ -5781,7 +6527,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Deny a queued join. Payload: `{req_id}`.
      */
@@ -5805,7 +6551,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Queued join introductions (S1a join queue).
      * `{requests: [{req_id, invite_id, device_id, display_name,
@@ -5818,7 +6564,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5831,7 +6577,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Stage an out-of-band introduction code into the join queue. The
      * admin received the code from the joiner (chat, email); this is
@@ -5858,7 +6604,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * List archived cipher metadata (Archive view).
      */
@@ -5869,7 +6615,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_list_archived_ciphers(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5882,7 +6628,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * List all ciphers' metadata (id, name, type, favorite, username).
      * Lightweight: no decryption of field values, just the index.
@@ -5894,7 +6640,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_list_ciphers(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5907,7 +6653,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * List all folders as a JSON array string.
      */
@@ -5918,7 +6664,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_list_folders(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5931,7 +6677,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * List all tags as a JSON array string.
      */
@@ -5942,7 +6688,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_list_tags(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5955,7 +6701,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * List cipher metadata for entries that have a TOTP seed (hub card).
      */
@@ -5966,7 +6712,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_list_totp_ciphers(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -5979,7 +6725,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * List trashed cipher metadata (Trash view).
      */
@@ -5990,7 +6736,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_list_trash_ciphers(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6003,7 +6749,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Lock the vault: zeroizes in-memory keys, clears the session token,
      * deactivates auto-sync. The on-disk vault is untouched.
@@ -6015,7 +6761,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_lock(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
@@ -6023,13 +6769,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * §13: claim ownership when the Owner cannot act (admin-only;
      * quorum-gated, the ask binds both member ids). `member_id` is the
@@ -6056,7 +6802,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Mint a one-time invite code. Payload: `{role: "viewer"|"editor"
      * |"admin", transport_username?}` (role parsing fails closed).
@@ -6082,7 +6828,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Execute an approved departure: strike + tombstone "left" + Root
      * Key rotation + collection-key rotation for everything the leaver
@@ -6109,7 +6855,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Family-spaces §6: file this device's departure request. Refuses
      * the Owner row (transfer first); idempotent on re-file.
@@ -6121,7 +6867,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_leave_file(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6134,7 +6880,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Pending departures for the admin surfaces (manage-gated).
      * Returns `{pending: [{member_id, display_name, role, requested_at}]}`.
@@ -6146,7 +6892,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_leave_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6159,7 +6905,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Remove members and rotate the root key so their key material is
      * dead. Provider seats are struck first; a strike failure refuses
@@ -6186,7 +6932,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Stolen-device journey in one op: reset with a replacement invite
      * carrying the member's grants, optionally revoke-and-rekey their
@@ -6214,7 +6960,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Reset a member: their identity is tombstoned and a successor row
      * is minted; the member re-joins with the returned one-time code.
@@ -6240,7 +6986,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Change a member's role (admin surface). Keywraps follow the
      * role core-side; admin rank demands a verified contact on the
@@ -6266,7 +7012,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Transfer ownership to a member (owner-only; core-gated). The
      * caller is demoted to Admin. Returns `{}`.
@@ -6291,7 +7037,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * People list. `{members: [{id, display_name, role, trust, reset,
      * removed, identity_rotated_at, is_self}], your_role}`.
@@ -6303,7 +7049,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_members_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6316,7 +7062,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * This device's signed contact card plus its verification code.
      * The code is what the Level 2 check compares.
@@ -6328,7 +7074,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_my_contact_card(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6341,7 +7087,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * This device's member role ("owner"|"admin"|"editor"|"viewer").
      * Role-gated UI gates on this, never on is_admin_device: on a
@@ -6354,7 +7100,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_my_role(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6367,7 +7113,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Needs-attention notices (S1b-4). refresh_transport triggers the
      * optional best-effort forge seat check; the phone passes false.
@@ -6392,7 +7138,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Open a contact-key reveal (S2 IS-6): view-only, nothing is added
      * to the vault. `reveal_b64` is the base64 of the .baluard-share
@@ -6419,7 +7165,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Consume a pending provider assertion (records a nonzero counter;
      * synced-model counters stay zero).
@@ -6444,7 +7190,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Run a provider assertion ceremony for one selected credential.
      * Returns `{ ceremony_id, assertion_response, new_counter }`.
@@ -6469,7 +7215,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Run a provider registration ceremony. `request_json` is the RP's
      * create options; `client_data_json` (base64url of the caller-built
@@ -6498,7 +7244,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * File a pending provider registration into the vault: an existing
      * Login's id, or `new_login` JSON `{name, username?}` for a fresh entry.
@@ -6523,7 +7269,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Published advisory org policies (S4-6): {policies: {knob:
      * value}} — empty object when nothing is published. Read-only,
@@ -6536,7 +7282,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_policies_list(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6549,7 +7295,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Rename an existing folder (JSON payload `{"id": "...", "name": "..."}`).
      */
@@ -6568,13 +7314,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Master-password re-prompt verification (G18). Opens a TEMPORARY
      * handle and actually verifies the password — unlike [Self::unlock],
@@ -6604,7 +7350,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Apply a conflict verdict: "keep_local" | "keep_remote" | "keep_both".
      * keep_local/keep_remote are raw-blob picks (cross-epoch safe, no decrypt);
@@ -6631,7 +7377,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Resolve a pending conflict by cloning the remote entry with a new UUID (keep both).
      */
@@ -6642,7 +7388,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_resolve_conflict_keep_both(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6655,7 +7401,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Restore a cipher from trash back to the active vault.
      */
@@ -6674,13 +7420,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Rotate the recovery phrase (D74 ceremony: current master password
      * in, new 24 words out exactly once). Flipped Spaces refuse here and
@@ -6706,7 +7452,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Assign an entry to a shared collection (None unassigns). Same grant
      * and rank gates as the daemon's cipher.set_collection route.
@@ -6726,13 +7472,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Update vault settings from JSON string.
      */
@@ -6751,13 +7497,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * G16: create-or-reuse this vault's private repo on the connected
      * provider and wire it as the sync remote (origin, first push,
@@ -6785,7 +7531,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Custom-remote setup: wire a user-supplied repository URL as the
      * sync remote. No provider token, no repo creation — credentials
@@ -6813,7 +7559,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Whether the vault should auto-lock NOW (idle >= the vault's
      * `vault_timeout` policy). Side-effect free; the host calls `lock()` on
@@ -6825,7 +7571,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_should_auto_lock(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_i8(future, callback, continuation) },
@@ -6838,7 +7584,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Flip the vault to team shape (S3-7b, one-way). Afterwards
      * members keep access only to entries shared with them, starting
@@ -6851,7 +7597,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_flip(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6864,7 +7610,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Disable the kit (may arm the fixed-threshold approval).
      * Returns {removed}.
@@ -6876,7 +7622,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_kit_disable(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6889,7 +7635,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Enable (or enable-over, which may arm the fixed-threshold
      * approval). Returns {phrase} shown exactly once.
@@ -6901,7 +7647,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_kit_enable(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6914,7 +7660,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Space Recovery Kit status: {enabled}.
      */
@@ -6925,7 +7671,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_kit_status(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6938,7 +7684,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Mint or refresh the shared-space key wraps for every live
      * member (S3-7a). Run before flipping; the report lists members
@@ -6951,7 +7697,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_prepare(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6964,7 +7710,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Space policy knobs (§6.5). Returns the JSON the runtime wrapper
      * emits: {space_invite_authority, allow_viewer_export, guest_enabled}.
@@ -6976,7 +7722,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_get(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -6989,7 +7735,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Set Space policy knobs (partial, admin-gated). Typed args so the
      * app never hand-builds JSON; the bridge constructs the payload.
@@ -7013,13 +7759,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Readiness counts for the Team-shape flip (S3-7b): {prepared,
      * wrapped, missing_wrap_pubkey, pending_wrap, flipped}.
@@ -7031,7 +7777,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_status(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -7044,7 +7790,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Generate an SSH keypair. `keyType`: "ed25519" (default) | "ecdsa256".
      * Returns JSON {public_key, fingerprint, private_key}; formatted OpenSSH
@@ -7070,7 +7816,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Host-scheduled 30s probe while Offline + foregrounded (the one piece of
      * background_loop mobile must reproduce).
@@ -7081,7 +7827,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_offline_tick(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
@@ -7089,13 +7835,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )
     }
 
-    
+
     /**
      * FLUSH any pending debounce immediately on background (OS suspends the
      * process within seconds; the 5s timer would be dropped).
@@ -7106,7 +7852,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_on_background(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
@@ -7114,13 +7860,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )
     }
 
-    
+
     /**
      * Pull on app foreground (10-min guard collapses focus flicker).
      */
@@ -7130,7 +7876,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_on_foreground(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
@@ -7138,13 +7884,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )
     }
 
-    
+
     /**
      * Arm the 5s debounced push after a CRUD mutation (coalesces bursts).
      */
@@ -7154,7 +7900,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_on_mutation(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
@@ -7162,13 +7908,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )
     }
 
-    
+
     /**
      * Pull immediately after unlock so other-device edits land first.
      */
@@ -7178,7 +7924,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_on_unlock(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
@@ -7186,13 +7932,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )
     }
 
-    
+
     /**
      * User pull-to-refresh / "Sync now".
      */
@@ -7202,7 +7948,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_pull_now(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
@@ -7210,13 +7956,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )
     }
 
-    
+
     /**
      * Coordinator status snapshot for the sync indicator.
      */
@@ -7226,7 +7972,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_status(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -7239,7 +7985,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Current TOTP code for a cipher (6 digits + seconds-until-rollover).
      * The TOTP seed NEVER crosses the FFI boundary; only the derived code.
@@ -7264,7 +8010,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
+
     /**
      * Unarchive a cipher: return it to the main list.
      */
@@ -7283,13 +8029,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Unlock the vault with the master password. Derives the KEK via Argon2id,
      * verifies the keywrap + canaries, and activates the auto-sync coordinator
@@ -7310,13 +8056,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * **Autofill / extension quick-unlock path (plan §3.2).** Unlocks with a
      * pre-derived KEK, SKIPPING the Argon2id KDF. The caller retrieves the
@@ -7343,13 +8089,57 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `unlockWithSecurityKey`(`masterPassword`: kotlin.String, `transport`: MobileHardwareTransport) {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_unlock_with_security_key(
+                thisPtr,
+                FfiConverterString.lower(`masterPassword`),FfiConverterTypeMobileHardwareTransport.lower(`transport`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `unlockWithSecurityKeyAndKek`(`kek`: kotlin.ByteArray, `transport`: MobileHardwareTransport) {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_unlock_with_security_key_and_kek(
+                thisPtr,
+                FfiConverterByteArray.lower(`kek`),FfiConverterTypeMobileHardwareTransport.lower(`transport`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+
     /**
      * Update an existing cipher (JSON payload). Parses `kind` from the
      * payload (does NOT clone the existing kind).
@@ -7369,13 +8159,13 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
     }
 
-    
+
     /**
      * Deterministic vault UUID (derived from the KDF salt, stable across
      * renames + git sync). Scopes platform keychain entries (e.g. the
@@ -7388,7 +8178,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_vault_id(
                 thisPtr,
-                
+
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -7401,12 +8191,12 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     )
     }
 
-    
 
-    
-    
+
+
+
     companion object
-    
+
 }
 
 /**
@@ -7444,10 +8234,10 @@ public object FfiConverterTypeMobileVault: FfiConverter<MobileVault, Pointer> {
  * "Backup checked: N entries" toast).
  */
 data class EncryptedBackup (
-    var `container`: kotlin.ByteArray, 
+    var `container`: kotlin.ByteArray,
     var `entries`: kotlin.UInt
 ) {
-    
+
     companion object
 }
 
@@ -7481,10 +8271,10 @@ public object FfiConverterTypeEncryptedBackup: FfiConverterRustBuffer<EncryptedB
  * plus the plaintext display name requesters see when asking.
  */
 data class MobileCatalogInput (
-    var `collectionId`: kotlin.String, 
+    var `collectionId`: kotlin.String,
     var `name`: kotlin.String
 ) {
-    
+
     companion object
 }
 
@@ -7519,38 +8309,38 @@ public object FfiConverterTypeMobileCatalogInput: FfiConverterRustBuffer<MobileC
  * review; until then `cipher_type` is a lowercase string like "login".
  */
 data class MobileCipherMeta (
-    var `id`: kotlin.String, 
-    var `name`: kotlin.String, 
+    var `id`: kotlin.String,
+    var `name`: kotlin.String,
     /**
      * Lowercase cipher type label ("login", "card", "identity", "sshkey",
      * "securenote", "bankaccount", "driverslicense", "passport").
      */
-    var `cipherType`: kotlin.String, 
-    var `favorite`: kotlin.Boolean, 
+    var `cipherType`: kotlin.String,
+    var `favorite`: kotlin.Boolean,
     /**
      * Login username (if any) for quick display in the list; None otherwise.
      */
-    var `username`: kotlin.String?, 
+    var `username`: kotlin.String?,
     /**
      * Tags for filtering (sidebar pills on desktop).
      */
-    var `tags`: List<kotlin.String>, 
+    var `tags`: List<kotlin.String>,
     /**
      * Folder id (if any) for folder filtering; resolved to a name via
      * `list_folders` on the Kotlin side.
      */
-    var `folderId`: kotlin.String?, 
+    var `folderId`: kotlin.String?,
     /**
      * Collection id (if any) — set for ciphers living inside a shared
      * collection directory; drives the Shared section filter.
      */
-    var `collectionId`: kotlin.String?, 
+    var `collectionId`: kotlin.String?,
     /**
      * Archived entries are hidden from the mobile list.
      */
     var `archived`: kotlin.Boolean
 ) {
-    
+
     companion object
 }
 
@@ -7603,26 +8393,26 @@ public object FfiConverterTypeMobileCipherMeta: FfiConverterRustBuffer<MobileCip
  * Result of creating a vault with recovery phrase returned.
  */
 data class MobileCreateResult (
-    var `vault`: MobileVault, 
-    var `recoveryPhrase`: MobileRecoveryPhrase, 
+    var `vault`: MobileVault,
+    var `recoveryPhrase`: MobileRecoveryPhrase,
     /**
      * Family vaults only: the Space Recovery Kit phrase, shown exactly
      * once at creation. Personal vaults carry None.
      */
     var `kitPhrase`: kotlin.String?
 ) : Disposable {
-    
+
     @Suppress("UNNECESSARY_SAFE_CALL") // codegen is much simpler if we unconditionally emit safe calls here
     override fun destroy() {
-        
+
         Disposable.destroy(this.`vault`)
-    
+
         Disposable.destroy(this.`recoveryPhrase`)
-    
+
         Disposable.destroy(this.`kitPhrase`)
-    
+
     }
-    
+
     companion object
 }
 
@@ -7654,10 +8444,10 @@ public object FfiConverterTypeMobileCreateResult: FfiConverterRustBuffer<MobileC
 
 
 data class MobileProviderConfig (
-    var `clientId`: kotlin.String?, 
+    var `clientId`: kotlin.String?,
     var `instanceUrl`: kotlin.String?
 ) {
-    
+
     companion object
 }
 
@@ -7696,7 +8486,7 @@ data class MobileRecoveryPhrase (
      */
     var `phrase`: kotlin.String
 ) {
-    
+
     companion object
 }
 
@@ -7722,14 +8512,14 @@ public object FfiConverterTypeMobileRecoveryPhrase: FfiConverterRustBuffer<Mobil
 
 
 data class MobileRepo (
-    var `name`: kotlin.String, 
-    var `fullName`: kotlin.String, 
-    var `cloneUrl`: kotlin.String, 
-    var `private`: kotlin.Boolean, 
-    var `vaultSlug`: kotlin.String?, 
+    var `name`: kotlin.String,
+    var `fullName`: kotlin.String,
+    var `cloneUrl`: kotlin.String,
+    var `private`: kotlin.Boolean,
+    var `vaultSlug`: kotlin.String?,
     var `vaultId`: kotlin.String?
 ) {
-    
+
     companion object
 }
 
@@ -7776,12 +8566,12 @@ public object FfiConverterTypeMobileRepo: FfiConverterRustBuffer<MobileRepo> {
  * debounce-window mutation count; `last_sync` is unix seconds or None.
  */
 data class MobileSyncStatus (
-    var `active`: kotlin.Boolean, 
-    var `state`: kotlin.String, 
-    var `lastSync`: kotlin.ULong?, 
+    var `active`: kotlin.Boolean,
+    var `state`: kotlin.String,
+    var `lastSync`: kotlin.ULong?,
     var `pending`: kotlin.UInt
 ) {
-    
+
     companion object
 }
 
@@ -7822,16 +8612,16 @@ data class PassphraseConfig (
     /**
      * Word count (>= 1). Default 5.
      */
-    var `wordCount`: kotlin.UInt, 
+    var `wordCount`: kotlin.UInt,
     /**
      * Separator between words (e.g. "-").
      */
-    var `separator`: kotlin.String, 
-    var `upper`: kotlin.Boolean, 
-    var `number`: kotlin.Boolean, 
+    var `separator`: kotlin.String,
+    var `upper`: kotlin.Boolean,
+    var `number`: kotlin.Boolean,
     var `symbol`: kotlin.Boolean
 ) {
-    
+
     companion object
 }
 
@@ -7872,12 +8662,12 @@ data class PasswordConfig (
     /**
      * Password length (>= 1). Default 16.
      */
-    var `length`: kotlin.UInt, 
-    var `upper`: kotlin.Boolean, 
-    var `numbers`: kotlin.Boolean, 
+    var `length`: kotlin.UInt,
+    var `upper`: kotlin.Boolean,
+    var `numbers`: kotlin.Boolean,
     var `symbols`: kotlin.Boolean
 ) {
-    
+
     companion object
 }
 
@@ -7917,29 +8707,29 @@ public object FfiConverterTypePasswordConfig: FfiConverterRustBuffer<PasswordCon
  * Typed error for the mobile FFI surface.
  */
 sealed class BaluardException: kotlin.Exception() {
-    
+
     /**
      * Network connection or transport failed.
      */
     class Network(
-        
+
         val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
             get() = "detail=${ `detail` }"
     }
-    
+
     /**
      * Git provider error (OAuth, device flow, PAT validation, repo detection).
      */
     class Provider(
-        
+
         val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
             get() = "detail=${ `detail` }"
     }
-    
+
     /**
      * Device is not enrolled in the target vault (requires 24-word recovery phrase entry).
      * Master password verification failed (wrong password).
@@ -7949,7 +8739,7 @@ sealed class BaluardException: kotlin.Exception() {
         override val message
             get() = ""
     }
-    
+
     /**
      * Device keystore no longer matches the vault (reinstalled or
      * re-cloned app, stale pairing). Re-pair the device from one that can
@@ -7957,74 +8747,74 @@ sealed class BaluardException: kotlin.Exception() {
      * wrong-password case.
      */
     class DeviceUnpaired(
-        
+
         val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
             get() = "detail=${ `detail` }"
     }
-    
+
     /**
      * Target resource or key not found.
      */
     class NotFound(
-        
+
         val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
             get() = "detail=${ `detail` }"
     }
-    
+
     /**
      * A cryptographic operation failed (Argon2id KDF, keywrap verification, BIP-39 entropy).
      */
     class Crypto(
-        
+
         val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
             get() = "detail=${ `detail` }"
     }
-    
+
     /**
      * A vault-layer operation failed (open, lock, cipher CRUD, TOTP).
      */
     class Vault(
-        
+
         val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
             get() = "detail=${ `detail` }"
     }
-    
+
     /**
      * Initializing a new vault on disk failed (device keys, keywrap, manifest).
      */
     class Creation(
-        
+
         val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
             get() = "detail=${ `detail` }"
     }
-    
+
     /**
      * Invalid input at the FFI boundary (KEK not 32 bytes, generator config).
      */
     class InvalidInput(
-        
+
         val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
             get() = "detail=${ `detail` }"
     }
-    
+
 
     companion object ErrorHandler : UniffiRustCallStatusErrorHandler<BaluardException> {
         override fun lift(error_buf: RustBuffer.ByValue): BaluardException = FfiConverterTypeBaluardError.lift(error_buf)
     }
 
-    
+
 }
 
 /**
@@ -8032,7 +8822,7 @@ sealed class BaluardException: kotlin.Exception() {
  */
 public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardException> {
     override fun read(buf: ByteBuffer): BaluardException {
-        
+
 
         return when(buf.getInt()) {
             1 -> BaluardException.Network(
@@ -8168,7 +8958,7 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
 
 
 enum class MobileDeviceFlowStatus {
-    
+
     PENDING,
     SUCCESS,
     EXPIRED,
@@ -8200,7 +8990,7 @@ public object FfiConverterTypeMobileDeviceFlowStatus: FfiConverterRustBuffer<Mob
 
 
 enum class MobileProvider {
-    
+
     GIT_HUB,
     GIT_LAB,
     CODEBERG;
@@ -8221,6 +9011,36 @@ public object FfiConverterTypeMobileProvider: FfiConverterRustBuffer<MobileProvi
     override fun allocationSize(value: MobileProvider) = 4UL
 
     override fun write(value: MobileProvider, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class MobileTransportProtocol {
+
+    NFC,
+    USB;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMobileTransportProtocol: FfiConverterRustBuffer<MobileTransportProtocol> {
+    override fun read(buf: ByteBuffer) = try {
+        MobileTransportProtocol.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: MobileTransportProtocol) = 4UL
+
+    override fun write(value: MobileTransportProtocol, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -8511,7 +9331,7 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
@@ -8602,7 +9422,7 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 }
     )
     }
-    
+
 
         /**
          * Generate a random password. Uses OsRng (CSPRNG). Selection is unbiased
@@ -8616,7 +9436,7 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 }
     )
     }
-    
+
 
         /**
          * Generate a fresh random 24-word BIP-39 recovery phrase. Uses `OsRng` under
@@ -8630,7 +9450,7 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 }
     )
     }
-    
+
 
         /**
          * Bless a daemon-observed SSH host key by attempt id. Device-level:
@@ -8677,13 +9497,13 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
         /**
          * Set the platform-specific data directory (used by Android/iOS to point at app storage).
          */ fun `initDataDir`(`dataDir`: kotlin.String)
-        = 
+        =
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_init_data_dir(
         FfiConverterString.lower(`dataDir`),_status)
 }
-    
-    
+
+
 
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8710,7 +9530,7 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 }
     )
     }
-    
+
 
         /**
          * Derive a 32-byte key-encryption key (KEK) from a master password + salt via
@@ -8768,7 +9588,7 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
         // lift function
         { Unit },
-        
+
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
@@ -8811,7 +9631,7 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 }
     )
     }
-    
+
 
         /**
          * Install the provider-token encryption key (M3). The mobile app calls
@@ -8821,13 +9641,13 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
          * plaintext 0600 file (headless/test environments only).
          */
     @Throws(BaluardException::class) fun `setTokenEncryptionKey`(`key`: kotlin.ByteArray)
-        = 
+        =
     uniffiRustCallWithError(BaluardException) { _status ->
     UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_set_token_encryption_key(
         FfiConverterByteArray.lower(`key`),_status)
 }
-    
-    
+
+
 
         /**
          * Trivial async fn to validate the UniFFI async -> Kotlin `suspend` bridge
