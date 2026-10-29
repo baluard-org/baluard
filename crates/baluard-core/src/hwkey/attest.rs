@@ -28,7 +28,7 @@ use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs1v15::{Signature as RsaSignature, VerifyingKey as RsaVerifyingKey};
 use rsa::signature::Verifier;
 use rsa::RsaPublicKey;
-use sha2::{Sha256, Sha512};
+use sha2::{Digest, Sha256, Sha512};
 
 /// What [`crate::hwkey::fido::Token::make_credential`] reports, mapped
 /// from the CTAP2 attestation object. All fields the verifier needs,
@@ -76,6 +76,10 @@ struct CertParts {
     /// (1.2.840.113549.1.1.{11,13} RSA, 1.2.840.10045.4.3.2 ECDSA-SHA256).
     sig_alg_oid: Vec<u8>,
     key: PubKey,
+    /// basicConstraints cA, when the extension is present.
+    ca: Option<bool>,
+    /// id-fido-gen-ce-aaguid (1.3.6.1.4.1.45724.1.1.4) value, when present.
+    aaguid: Option<[u8; 16]>,
 }
 
 /// One DER TLV element: tag, value, the raw element (tag+len+value),
@@ -192,12 +196,152 @@ fn parse_cert(der: &[u8]) -> Option<CertParts> {
             _ => return None,
         }
     }
+    // M6: extensions bind the certificate to what it may vouch for.
+    // basicConstraints cA gates issuers; the FIDO AAGUID extension ties
+    // the device certificate to one authenticator model.
+    let mut ca = None;
+    let mut aaguid = None;
+    let mut rest = cur;
+    while !rest.is_empty() {
+        let el = tlv(rest)?;
+        rest = el.rest;
+        if el.tag != 0xA3 {
+            continue;
+        }
+        let seq = tlv(el.body)?;
+        if seq.tag != 0x30 {
+            return None;
+        }
+        let mut exts = seq.body;
+        while !exts.is_empty() {
+            let ext = tlv(exts)?;
+            exts = ext.rest;
+            if ext.tag != 0x30 {
+                return None;
+            }
+            let oid = tlv(ext.body)?;
+            if oid.tag != 0x06 {
+                return None;
+            }
+            // Extension ::= SEQUENCE { oid, critical BOOLEAN DEFAULT FALSE,
+            // extnValue OCTET STRING }. Skip the optional critical flag.
+            let mut val = tlv(oid.rest)?;
+            if val.tag == 0x01 {
+                val = tlv(val.rest)?;
+            }
+            if val.tag != 0x04 {
+                return None;
+            }
+            let value_body = val.body;
+            match oid.body {
+                // basicConstraints (2.5.29.19)
+                [0x55, 0x1D, 0x13] => {
+                    let bc = tlv(value_body)?;
+                    if bc.tag != 0x30 {
+                        return None;
+                    }
+                    let first = tlv(bc.body)?;
+                    ca = Some(match (first.tag, first.body) {
+                        (0x01, [0]) => false,
+                        (0x01, [v]) if *v != 0 => true,
+                        // cA defaults to false when absent.
+                        (0x30, _) | (0x02, _) => false,
+                        _ => return None,
+                    });
+                }
+                // id-fido-gen-ce-aaguid (1.3.6.1.4.1.45724.1.1.4)
+                [
+                    0x2B,
+                    0x06,
+                    0x01,
+                    0x04,
+                    0x01,
+                    0x82,
+                    0xE5,
+                    0x1C,
+                    0x01,
+                    0x01,
+                    0x04,
+                ] => {
+                    aaguid = Some(value_body.try_into().ok()?);
+                }
+                _ => {}
+            }
+        }
+    }
     Some(CertParts {
         tbs_raw: tbs.raw.to_vec(),
         sig_der: sig.body[1..].to_vec(),
         sig_alg_oid,
         key: key?,
+        ca,
+        aaguid,
     })
+}
+
+/// The makeCredential attested-credential-data inside authData, bound to
+/// the caller's relying party. Every check here ties the signed bytes to
+/// the ceremony Baluard actually ran: a genuine attestation replayed
+/// over a different credential, rp, or model must not verify.
+struct AttestedData<'a> {
+    aaguid: &'a [u8],
+    credential_id: &'a [u8],
+    /// authData extension map (present when the ED flag is set).
+    extensions: Option<&'a [u8]>,
+}
+
+fn parse_attested_auth_data(auth_data: &[u8]) -> Option<AttestedData<'_>> {
+    // rpIdHash(32) || flags(1) || counter(4) || aaguid(16) ||
+    // credIdLen(2) || credId || COSE key || extensions?
+    if auth_data.len() < 55 {
+        return None;
+    }
+    let expected_rp = Sha256::digest(crate::hwkey::fido::RP_ID);
+    if auth_data[..32] != expected_rp[..] {
+        return None;
+    }
+    let flags = auth_data[32];
+    // UP and AT are mandatory for a makeCredential attestation.
+    if flags & 0x41 != 0x41 {
+        return None;
+    }
+    let aaguid = &auth_data[37..53];
+    let cred_len = u16::from_be_bytes([auth_data[53], auth_data[54]]) as usize;
+    let cred_end = 55usize.checked_add(cred_len)?;
+    if auth_data.len() < cred_end + 1 {
+        return None;
+    }
+    let credential_id = &auth_data[55..cred_end];
+    let extensions = if flags & 0x80 != 0 {
+        // Skip the COSE key: one canonical CBOR item, bounds-checked.
+        let cose_end = crate::hwkey::cbor::item_end(&auth_data[cred_end..])? + cred_end;
+        Some(&auth_data[cose_end..])
+    } else {
+        None
+    };
+    Some(AttestedData {
+        aaguid,
+        credential_id,
+        extensions,
+    })
+}
+
+/// The hmac-secret extension must be affirmatively present: the enable
+/// form answers `true` (applied), the assertion form answers the output
+/// ciphertext. A missing or false entry means the credential cannot do
+/// the job the seal needs it for.
+fn hmac_secret_extension_present(extensions: Option<&[u8]>) -> bool {
+    let Some(bytes) = extensions else {
+        return false;
+    };
+    let Ok((value, _)) = crate::hwkey::cbor::Value::decode(bytes) else {
+        return false;
+    };
+    matches!(
+        value.get_text("hmac-secret"),
+        Some(crate::hwkey::cbor::Value::Bool(true))
+            | Some(crate::hwkey::cbor::Value::ByteString(_))
+    )
 }
 
 /// PKCS#1 v1.5 / ECDSA verification of `msg` under `key`, choosing the
@@ -437,6 +581,26 @@ pub fn verify_with_pins(att: &PackedAttestation, pins: &[Vec<u8>]) -> Attestatio
     if att.x5c.is_empty() || !es256_rs256_from_alg(att.alg) || !verify_attstmt(att) {
         return AttestationVerdict::Invalid;
     }
+    // M6: the signature is only half the proof. The signed authData
+    // must describe the ceremony Baluard ran and the credential the
+    // caller will use, and the leaf must vouch for that same model.
+    let Some(attested) = parse_attested_auth_data(&att.auth_data) else {
+        return AttestationVerdict::Invalid;
+    };
+    if attested.credential_id != att.credential_id {
+        return AttestationVerdict::Invalid;
+    }
+    if !hmac_secret_extension_present(attested.extensions) {
+        return AttestationVerdict::Invalid;
+    }
+    let Some(leaf_parts) = parse_cert(&att.x5c[0]) else {
+        return AttestationVerdict::Invalid;
+    };
+    if let Some(cert_aaguid) = leaf_parts.aaguid {
+        if cert_aaguid.as_slice() != attested.aaguid {
+            return AttestationVerdict::Invalid;
+        }
+    }
     for i in 0..att.x5c.len() - 1 {
         let Some(child) = parse_cert(&att.x5c[i]) else {
             return AttestationVerdict::Invalid;
@@ -444,6 +608,11 @@ pub fn verify_with_pins(att: &PackedAttestation, pins: &[Vec<u8>]) -> Attestatio
         let Some(parent) = parse_cert(&att.x5c[i + 1]) else {
             return AttestationVerdict::Invalid;
         };
+        // Only a CA may vouch for another certificate. An explicit
+        // cA=false is a structural refusal, not a vendor signal.
+        if parent.ca == Some(false) {
+            return AttestationVerdict::Invalid;
+        }
         if !verify_link(
             &parent.key,
             &child.tbs_raw,
@@ -485,7 +654,17 @@ fn verify_attstmt(att: &PackedAttestation) -> bool {
     let mut msg = Vec::with_capacity(att.auth_data.len() + 32);
     msg.extend_from_slice(&att.auth_data);
     msg.extend_from_slice(&att.client_data_hash);
-    verify_link(&leaf.key, &msg, &att.sig, &leaf.sig_alg_oid)
+    // The attStmt digest is the attestation's own declared algorithm,
+    // not whatever the certificate happens to be signed with.
+    let alg_oid: &[u8] = match att.alg {
+        // ecdsa-with-SHA256 (1.2.840.10045.4.3.2)
+        -7 => &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02],
+        // sha256WithRSAEncryption (1.2.840.113549.1.1.11)
+        -257 => &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B],
+        _ => return false,
+    };
+    let ok = verify_link(&leaf.key, &msg, &att.sig, alg_oid);
+    ok
 }
 
 /// Verify against the bundled Yubico pin.
@@ -501,6 +680,7 @@ pub fn verify(att: &PackedAttestation) -> AttestationVerdict {
 pub(crate) mod test_chain {
     use p256::ecdsa::signature::Signer;
     use p256::ecdsa::{SigningKey, VerifyingKey};
+    use sha2::{Digest, Sha256};
 
     pub struct TestChain {
         pub leaf: SigningKey,
@@ -548,6 +728,17 @@ pub(crate) mod test_chain {
     }
 
     fn build_cert(signing: &SigningKey, subject_key: &SigningKey, subject: &[u8]) -> Vec<u8> {
+        build_cert_ext(signing, subject_key, subject, &[], None)
+    }
+
+    /// build_cert with X.509 extensions and an optional CA marking.
+    pub fn build_cert_ext(
+        signing: &SigningKey,
+        subject_key: &SigningKey,
+        subject: &[u8],
+        extensions: &[Vec<u8>],
+        ca: Option<bool>,
+    ) -> Vec<u8> {
         let point = VerifyingKey::from(subject_key).to_encoded_point(false);
         let algid = tlv_bytes(0x30, &[alg_oid(), curve_oid()].concat());
         let bits = tlv_bytes(0x03, &[&[0u8], point.as_bytes()].concat());
@@ -561,7 +752,20 @@ pub(crate) mod test_chain {
             ]
             .concat(),
         );
-        let tbs_body = [
+        let mut exts: Vec<Vec<u8>> = extensions.to_vec();
+        if let Some(is_ca) = ca {
+            // basicConstraints (2.5.29.19): SEQUENCE { cA BOOLEAN }.
+            let bc_body = tlv_bytes(0x30, &tlv_bytes(0x01, &[u8::from(is_ca)]));
+            exts.push(tlv_bytes(
+                0x30,
+                &[
+                    vec![0x06, 0x03, 0x55, 0x1D, 0x13],
+                    tlv_bytes(0x04, &bc_body),
+                ]
+                .concat(),
+            ));
+        }
+        let mut fields = vec![
             tlv_bytes(0xA0, &tlv_bytes(0x02, &[2u8])),
             tlv_bytes(0x02, &[1u8]),
             ecdsa_sig_alg(),
@@ -569,8 +773,12 @@ pub(crate) mod test_chain {
             validity,
             name,
             spki,
-        ]
-        .concat();
+        ];
+        if !exts.is_empty() {
+            // [3] EXPLICIT Extensions (SEQUENCE OF Extension).
+            fields.push(tlv_bytes(0xA3, &tlv_bytes(0x30, &exts.concat())));
+        }
+        let tbs_body = fields.concat();
         let tbs = tlv_bytes(0x30, &tbs_body);
         let sig: p256::ecdsa::Signature = signing.sign(&tbs);
         let sig_der = sig.to_der();
@@ -579,6 +787,42 @@ pub(crate) mod test_chain {
             &[tbs, ecdsa_sig_alg(), tlv_bytes(0x03, &[&[0u8], sig_der.as_bytes()].concat())]
                 .concat(),
         )
+    }
+
+    /// id-fido-gen-ce-aaguid (1.3.6.1.4.1.45724.1.1.4): OCTET STRING of
+    /// the 16 raw AAGUID bytes (webauthn-rs-core's parse shape).
+    pub fn aaguid_extension(aaguid: &[u8; 16]) -> Vec<u8> {
+        let oid = vec![
+            0x06, 0x0B, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xE5, 0x1C, 0x01, 0x01, 0x04,
+        ];
+        tlv_bytes(0x30, &[oid, tlv_bytes(0x04, aaguid)].concat())
+    }
+
+    /// hmac-secret applied extension (authData extensions map).
+    pub fn hmac_secret_extension() -> Vec<u8> {
+        tlv_bytes(
+            0x30,
+            &[vec![0x06, 0x03, 0x2B, 0x81, 0x04], tlv_bytes(0x05, &[])].concat(),
+        )
+    }
+
+    /// Spec-shaped makeCredential authData: rpIdHash, UP|AT|ED flags,
+    /// zero counter, AAGUID, credential id, a 1-byte placeholder COSE
+    /// key, and the applied hmac-secret extension map.
+    pub fn auth_data(credential_id: &[u8], aaguid: &[u8; 16]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(&Sha256::digest(crate::hwkey::fido::RP_ID));
+        v.push(0x41 | 0x80);
+        v.extend_from_slice(&[0u8; 4]);
+        v.extend_from_slice(aaguid);
+        v.extend_from_slice(&(credential_id.len() as u16).to_be_bytes());
+        v.extend_from_slice(credential_id);
+        v.push(0xA0); // placeholder COSE map (parser does not read it)
+        // Canonical CBOR {"hmac-secret": true}.
+        v.extend_from_slice(&[0xA1, 0x6B]);
+        v.extend_from_slice(b"hmac-secret");
+        v.push(0xF5);
+        v
     }
 
     impl TestChain {
@@ -602,13 +846,14 @@ pub(crate) mod test_chain {
             let root_der = build_cert(&root, &root, b"test root");
             let mid_der = build_cert(&root, &mid, b"test issuing ca");
             let leaf_der = build_cert(&mid, &leaf, b"test leaf");
-            let auth_data = vec![0u8; 37];
+            let credential_id = vec![7u8; 16];
+            let auth_data = auth_data(&credential_id, &[0u8; 16]);
             let mut hash = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut hash);
             let msg = [&auth_data[..], &hash].concat();
             let sig: p256::ecdsa::Signature = leaf.sign(&msg);
             let att = super::PackedAttestation {
-                credential_id: vec![7u8; 16],
+                credential_id,
                 auth_data,
                 client_data_hash: hash,
                 alg: -7,
@@ -625,13 +870,20 @@ pub(crate) mod test_chain {
         /// A correctly-signed attestation: attStmt signed by the leaf
         /// key over authData || hash (ES256).
         pub fn attestation(&self) -> super::PackedAttestation {
-            let auth_data = vec![0u8; 37];
+            self.attestation_for(&[9u8; 16])
+        }
+
+        /// Attestation bound to a specific credential id: authData and
+        /// the top-level credential id always agree (M6).
+        pub fn attestation_for(&self, credential_id: &[u8]) -> super::PackedAttestation {
+            let credential_id = credential_id.to_vec();
+            let auth_data = auth_data(&credential_id, &[0u8; 16]);
             let mut hash = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut hash);
             let msg = [&auth_data[..], &hash].concat();
             let sig: p256::ecdsa::Signature = self.leaf.sign(&msg);
             super::PackedAttestation {
-                credential_id: vec![9u8; 16],
+                credential_id,
                 auth_data,
                 client_data_hash: hash,
                 alg: -7,
@@ -694,6 +946,166 @@ mod tests {
             }
             let _ = parse_cert(&buf);
         }
+    }
+
+    // M6: a replayed genuine attestation over a different credential
+    // must not verdict Verified. The chain is honest; the binding is not.
+    struct Bound {
+        att: PackedAttestation,
+        pins: Vec<Vec<u8>>,
+        auth_data: Vec<u8>,
+        credential_id: Vec<u8>,
+        leaf: p256::ecdsa::SigningKey,
+    }
+
+    fn bound_chain() -> Bound {
+        let root = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let leaf = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let root_der = test_chain::build_cert_ext(&root, &root, b"root", &[], Some(true));
+        let aaguid = [7u8; 16];
+        let credential_id = vec![9u8; 16];
+        let leaf_der = test_chain::build_cert_ext(
+            &root,
+            &leaf,
+            b"device",
+            &[test_chain::aaguid_extension(&aaguid)],
+            Some(false),
+        );
+        let auth_data = test_chain::auth_data(&credential_id, &aaguid);
+        let mut hash = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut hash);
+        let msg = [&auth_data[..], &hash].concat();
+        let sig: p256::ecdsa::Signature = p256::ecdsa::signature::Signer::sign(&leaf, &msg);
+        Bound {
+            att: PackedAttestation {
+                credential_id: credential_id.clone(),
+                auth_data: auth_data.clone(),
+                client_data_hash: hash,
+                alg: -7,
+                sig: sig.to_der().as_bytes().to_vec(),
+                x5c: vec![leaf_der, root_der.clone()],
+            },
+            pins: vec![root_der],
+            auth_data,
+            credential_id,
+            leaf,
+        }
+    }
+
+    fn resign(b: &mut Bound) {
+        let msg = [&b.att.auth_data[..], &b.att.client_data_hash].concat();
+        let sig: p256::ecdsa::Signature = p256::ecdsa::signature::Signer::sign(&b.leaf, &msg);
+        b.att.sig = sig.to_der().as_bytes().to_vec();
+    }
+
+    #[test]
+    fn a_fully_bound_attestation_verifies() {
+        let b = bound_chain();
+        assert_eq!(
+            verify_with_pins(&b.att, &b.pins),
+            AttestationVerdict::YubicoVerified
+        );
+    }
+
+    #[test]
+    fn a_replayed_credential_id_is_refused() {
+        let mut b = bound_chain();
+        // The signature is genuine; the credential id the caller will
+        // derive against is NOT the one the authenticator attested.
+        b.att.credential_id = vec![0xEE; 16];
+        assert_eq!(
+            verify_with_pins(&b.att, &b.pins),
+            AttestationVerdict::Invalid
+        );
+    }
+
+    #[test]
+    fn a_foreign_rp_id_hash_is_refused() {
+        let mut b = bound_chain();
+        b.att.auth_data[..32].copy_from_slice(&[0x42; 32]);
+        resign(&mut b); // honestly re-signed over the tampered authData
+        assert_eq!(
+            verify_with_pins(&b.att, &b.pins),
+            AttestationVerdict::Invalid
+        );
+    }
+
+    #[test]
+    fn missing_user_presence_or_attested_data_flags_are_refused() {
+        let mut b = bound_chain();
+        b.att.auth_data[32] &= !0x01; // UP cleared
+        resign(&mut b);
+        assert_eq!(
+            verify_with_pins(&b.att, &b.pins),
+            AttestationVerdict::Invalid
+        );
+        let mut b = bound_chain();
+        b.att.auth_data[32] &= !0x40; // AT cleared
+        resign(&mut b);
+        assert_eq!(
+            verify_with_pins(&b.att, &b.pins),
+            AttestationVerdict::Invalid
+        );
+    }
+
+    #[test]
+    fn a_missing_hmac_secret_extension_is_refused() {
+        let mut b = bound_chain();
+        // ED flag set but no extensions map present: truncate to the
+        // COSE placeholder and re-sign honestly.
+        let keep = b.auth_data.len() - 15; // drop the 15-byte ext map
+        b.att.auth_data = b.auth_data[..keep].to_vec();
+        resign(&mut b);
+        assert_eq!(
+            verify_with_pins(&b.att, &b.pins),
+            AttestationVerdict::Invalid
+        );
+    }
+
+    #[test]
+    fn an_aaguid_mismatch_is_refused() {
+        let mut b = bound_chain();
+        // Flip one AAGUID byte inside authData (offset 37), re-sign.
+        b.att.auth_data[37] ^= 0xFF;
+        resign(&mut b);
+        assert_eq!(
+            verify_with_pins(&b.att, &b.pins),
+            AttestationVerdict::Invalid
+        );
+    }
+
+    #[test]
+    fn a_non_ca_certificate_cannot_be_an_intermediate() {
+        // The chain root is NOT marked CA; the chain verifies
+        // cryptographically but must not be trusted as an issuer.
+        let root = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let leaf = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let root_der = test_chain::build_cert_ext(&root, &root, b"root", &[], Some(false));
+        let aaguid = [7u8; 16];
+        let credential_id = vec![9u8; 16];
+        let leaf_der = test_chain::build_cert_ext(
+            &root,
+            &leaf,
+            b"device",
+            &[test_chain::aaguid_extension(&aaguid)],
+            Some(false),
+        );
+        let auth_data = test_chain::auth_data(&credential_id, &aaguid);
+        let hash = [3u8; 32];
+        let msg = [&auth_data[..], &hash].concat();
+        let sig: p256::ecdsa::Signature = p256::ecdsa::signature::Signer::sign(&leaf, &msg);
+        let att = PackedAttestation {
+            credential_id,
+            auth_data,
+            client_data_hash: hash,
+            alg: -7,
+            sig: sig.to_der().as_bytes().to_vec(),
+            x5c: vec![leaf_der, root_der.clone()],
+        };
+        assert_eq!(
+            verify_with_pins(&att, &[root_der]),
+            AttestationVerdict::Invalid
+        );
     }
 
     #[test]

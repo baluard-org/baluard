@@ -6,7 +6,7 @@
 
 pub mod apdu;
 pub mod authenticator;
-pub mod cbor;
+pub use super::cbor;
 pub mod ctaphid;
 pub mod pinproto;
 pub mod protocol;

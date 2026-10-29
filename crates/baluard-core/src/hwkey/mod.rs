@@ -329,6 +329,7 @@ pub mod fido;
 /// FIDO2 packed-attestation verification (the enroll-time
 /// anti-counterfeit check; plan "Attestation at enroll").
 pub mod attest;
+pub mod cbor;
 
 /// Transport-agnostic CTAP2 client (the mobile backend; plan slices 4A-4D).
 #[cfg(feature = "ctap-client")]
