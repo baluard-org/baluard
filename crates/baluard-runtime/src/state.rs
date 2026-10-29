@@ -109,6 +109,30 @@ pub struct VaultState {
     pub autosync: crate::autosync::AutoSyncHandle,
 }
 
+/// Why a quick-unlock primitive failed. The daemon rate limiter charges
+/// only credential guesses: a wrong PIN or unusable request is a Guess,
+/// while a failure AFTER the credential proved itself (hardware-seal
+/// outcome, stale key material, operational error) is budget-neutral.
+#[derive(Debug)]
+pub enum QuickUnlockError {
+    Guess(String),
+    Proven(String),
+}
+
+impl QuickUnlockError {
+    pub fn message(&self) -> &str {
+        match self {
+            QuickUnlockError::Guess(m) | QuickUnlockError::Proven(m) => m,
+        }
+    }
+}
+
+impl std::fmt::Display for QuickUnlockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
 impl VaultState {
     /// Create a new empty state pointing at a vault directory.
     pub fn new(vault_path: PathBuf) -> Self {
@@ -7716,12 +7740,21 @@ impl VaultState {
     /// Biometric unlock for THIS vault. Retrieves this vault's stored master
     /// password from the OS keychain and performs vault unlock. The secret
     /// NEVER leaves this process.
-    pub async fn biometric_unlock(self: &Arc<Self>) -> Result<String, String> {
-        let vault_id = self.vault_id_str().await?;
-        let master_password = baluard_core::biometric::unlock(&vault_id)?;
-        self.unlock(&master_password)
-            .await
-            .map_err(|e| e.to_string())?;
+    pub async fn biometric_unlock(self: &Arc<Self>) -> Result<String, QuickUnlockError> {
+        let vault_id = self.vault_id_str().await.map_err(QuickUnlockError::Guess)?;
+        let master_password =
+            baluard_core::biometric::unlock(&vault_id).map_err(QuickUnlockError::Guess)?;
+        self.unlock(&master_password).await.map_err(|e| {
+            // Only a canary rejection is a credential guess (a stale
+            // stored password); every other failure — hardware-seal
+            // outcome proving the password, stale keywrap, unpaired
+            // device — is budget-neutral for the daemon's rate limiter.
+            if baluard_core::error::is_password_failure(&e) {
+                QuickUnlockError::Guess(e.to_string())
+            } else {
+                QuickUnlockError::Proven(e.to_string())
+            }
+        })?;
         Ok(serde_json::json!({"success": true}).to_string())
     }
 
@@ -8097,9 +8130,12 @@ impl VaultState {
     /// `unlock_with_kek` runs AFTER the lock is released, which is safe
     /// because a correct PIN returns the KEK out (the escrow stays put) and
     /// a wrong PIN never reaches it.
-    pub async fn pin_unlock(self: &Arc<Self>, payload: &str) -> Result<String, String> {
-        let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
-        let pin = req["pin"].as_str().ok_or("missing pin")?;
+    pub async fn pin_unlock(self: &Arc<Self>, payload: &str) -> Result<String, QuickUnlockError> {
+        let req: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| QuickUnlockError::Guess(e.to_string()))?;
+        let pin = req["pin"]
+            .as_str()
+            .ok_or(QuickUnlockError::Guess("missing pin".into()))?;
 
         // Atomic verify-and-record under a single escrow lock hold. This is
         // the fix for the TOCTOU where a concurrent wrong-PIN attempt could
@@ -8109,9 +8145,11 @@ impl VaultState {
         let kek = {
             let mut guard = self.pin.lock().await;
             let Some(escrow) = guard.as_ref() else {
-                return Err("PIN Quick Unlock is not enabled for this vault. \
+                return Err(QuickUnlockError::Guess(
+                    "PIN Quick Unlock is not enabled for this vault. \
                      Unlock with the master password and re-enable it."
-                    .to_string());
+                        .into(),
+                ));
             };
             match escrow.verify_or_record_failure(pin, &self.pin_failures) {
                 Ok(kek) => kek,
@@ -8119,18 +8157,22 @@ impl VaultState {
                     // Cap reached: destroy the escrow NOW, under this lock,
                     // so the next attempt sees None.
                     *guard = None;
-                    return Err("Too many wrong PINs. PIN Quick Unlock has been disabled — \
+                    return Err(QuickUnlockError::Guess(
+                        "Too many wrong PINs. PIN Quick Unlock has been disabled — \
                          use the master password and re-enable PIN to continue."
-                        .to_string());
+                            .into(),
+                    ));
                 }
-                Err(msg) => return Err(msg),
+                Err(msg) => return Err(QuickUnlockError::Guess(msg)),
             }
         };
 
         // unlock_with_kek runs the shared tail (keywrap HPKE unwrap +
         // canaries) so a corrupted/stale keywrap still fails closed.
         let mut new_handle = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)
-            .map_err(|e| format!("Failed to open vault for unlock: {e}"))?;
+            .map_err(|e| {
+                QuickUnlockError::Proven(format!("Failed to open vault for unlock: {e}"))
+            })?;
         match new_handle.unlock_with_kek(&kek) {
             Ok(()) => {
                 // Success: clear the PIN failure counter, then land on the
@@ -8140,7 +8182,7 @@ impl VaultState {
                     .store(0, std::sync::atomic::Ordering::Relaxed);
                 self.finish_unlock(new_handle)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| QuickUnlockError::Proven(e.to_string()))?;
                 Ok(serde_json::json!({ "success": true }).to_string())
             }
             Err(e) => {
@@ -8151,10 +8193,10 @@ impl VaultState {
                 // gets a clear “re-enable PIN” signal instead of burning the
                 // 5-strike budget on a PIN they remember correctly.
                 *self.pin.lock().await = None;
-                Err(format!(
+                Err(QuickUnlockError::Proven(format!(
                     "PIN unlock failed (the saved key is stale, usually because \
                      the master password changed). Re-enable PIN unlock. Underlying error: {e}"
-                ))
+                )))
             }
         }
     }

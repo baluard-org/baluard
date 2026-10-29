@@ -5178,3 +5178,66 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
     let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
     assert!(parsed.get("slug").is_none(), "request consumed: {parsed}");
 }
+
+/// Hardware-seal outcomes are not password guesses: a locked-out-past-10
+/// lockout must never arise from repeated "chip is unavailable" failures
+/// (the forgotten-key-at-home scenario), or the user locks themselves out
+/// by retrying with the key unplugged.
+#[tokio::test]
+#[serial_test::serial]
+async fn hardware_unlock_failures_do_not_lock_out_the_route() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let _registry = HwRegistryGuard::new();
+    baluard_core::hwkey::install(Arc::new(RouteHwMock {
+        backend: "tap-mock",
+        available: true,
+        tap: true,
+    }));
+
+    let (_tmp, state) = open_unlocked("hw-rate-route").await;
+    register_in_registry("hw-rate-route", &state.vault_path);
+    let host: baluard_daemon::host::SharedVaultHost = Arc::new(VaultHost::new());
+    host.insert("hw-rate-route".into(), state.clone()).await;
+    host.switch("hw-rate-route").await.expect("activate vault");
+    let token = state.get_session_token().await.expect("active vault token");
+    let response = route_host_request(
+        GatewayRequest {
+            action: "vault.hw_enable".into(),
+            payload: serde_json::json!({"consent": false, "backend": "tap-mock"}).to_string(),
+            session_token: token,
+            slug: String::new(),
+        },
+        &host,
+    )
+    .await;
+    assert!(
+        response.success,
+        "enable failed: {}",
+        response.error_message
+    );
+
+    state.lock().await.expect("lock sealed vault");
+    baluard_core::hwkey::uninstall();
+
+    for attempt in 0..11 {
+        let response = route_host_request(
+            GatewayRequest {
+                action: "vault.unlock".into(),
+                payload: serde_json::json!({"password": MASTER}).to_string(),
+                session_token: String::new(),
+                slug: "hw-rate-route".into(),
+            },
+            &host,
+        )
+        .await;
+        assert!(
+            !response.success,
+            "attempt {attempt} unlocked with the chip gone"
+        );
+        assert!(
+            response.error_message.contains("chip is unavailable"),
+            "attempt {attempt}: expected the hardware error, got: {}",
+            response.error_message
+        );
+    }
+}
