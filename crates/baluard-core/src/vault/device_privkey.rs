@@ -556,11 +556,11 @@ pub fn open_bytes_hw_with_ck(
         return Err(VaultError::HardwareConsentUnavailable.into());
     }
 
-    // Chip first so a hardware failure surfaces as the typed unavailable
-    // error, not an opaque AEAD mismatch.
-    let hw_secret = hw
-        .derive(binding, &peer, consent)
-        .map_err(|_| crate::hwkey::hw_unavailable_error())?;
+    // Chip first so a hardware failure surfaces as the store's typed
+    // outcome (missing key, wrong key, touch timeout/cancel, busy), not
+    // an opaque AEAD mismatch. The error passes through untouched: the
+    // store already classified it.
+    let hw_secret = hw.derive(binding, &peer, consent)?;
     let ck = crate::hwkey::combine_seal_inputs(&hw_secret, seal_key);
     let aad = hw_aad(backend, &peer.0, consent_flag);
     let mut pt = crate::crypto::aead::decrypt(&ck, &envelope)
@@ -1785,6 +1785,75 @@ mod tests {
             .execute()
             .unwrap();
         (handle, password, secrets.recovery_phrase.phrase())
+    }
+
+    /// H3: the chip store's typed touch outcome must reach unlock's
+    /// caller. The open path used to collapse every derive failure into
+    /// HardwareUnavailable, making the desktop/mobile touch copy dead.
+    struct TimeoutOnDeriveMock;
+    impl crate::hwkey::HardwareKeyStore for TimeoutOnDeriveMock {
+        fn backend_id(&self) -> &'static str {
+            "tap-mock"
+        }
+        fn probe(&self) -> crate::hwkey::HwCapability {
+            crate::hwkey::HwCapability::Available {
+                backend: "tap-mock".into(),
+            }
+        }
+        fn interaction(&self) -> crate::hwkey::Interaction {
+            crate::hwkey::Interaction::PerUse
+        }
+        fn create_binding(
+            &self,
+            _: Uuid,
+            _: crate::hwkey::HwConsent,
+        ) -> Result<crate::hwkey::BindingInfo, BaluardError> {
+            unreachable!("the file is already sealed; no enrollment expected")
+        }
+        fn derive_ephemeral(
+            &self,
+            _: &str,
+            _: crate::hwkey::HwConsent,
+        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError>
+        {
+            unreachable!("the file is already sealed; no enrollment expected")
+        }
+        fn derive(
+            &self,
+            _: &str,
+            _: &crate::hwkey::Handshake,
+            _: crate::hwkey::HwConsent,
+        ) -> Result<crate::hwkey::SharedSecret, BaluardError> {
+            Err(VaultError::HardwareTouchTimeout.into())
+        }
+        fn delete_binding(&self, _: &str) -> Result<(), BaluardError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn typed_touch_outcome_survives_the_open_path() {
+        let _lock = HW_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let p = tmp_path("hw-typed-touch");
+        seal_file(&p, INNER, &[7u8; 32], None).unwrap();
+        assert!(enable_hw_seal(&p, &[7u8; 32], Uuid::new_v4(), None, false, None).unwrap());
+        // Same backend id, but the chip now times out instead of deriving.
+        crate::hwkey::install(std::sync::Arc::new(TimeoutOnDeriveMock));
+        let file = std::fs::read_to_string(&p).unwrap();
+        let err = open_sealed_hw_with_ck(&[7u8; 32], file.as_bytes()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                BaluardError::Vault(VaultError::HardwareTouchTimeout)
+            ),
+            "expected HardwareTouchTimeout, got: {err}"
+        );
+        crate::hwkey::uninstall();
+        hw_env_restore(_old_env);
+        std::fs::remove_file(&p).ok();
     }
 
     fn seal_to_tap(handle: &mut VaultHandle) {
