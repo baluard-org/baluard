@@ -32,6 +32,10 @@ fun securityKeyErrorMessage(error: Throwable): String {
         detail.contains("not tapped", ignoreCase = true) ||
             detail.contains("timed out", ignoreCase = true) -> t("settings.hardwareKeyTimeout")
         detail.contains("cancel", ignoreCase = true) -> t("settings.hardwareKeyCancelled")
+        // The chip (and with it the key) could not be reached at all:
+        // the same guidance as a mid-operation hold, phrased as connect.
+        detail.contains("chip is unavailable", ignoreCase = true) ||
+            detail.contains("security chip", ignoreCase = true) -> t("settings.hardwareKeyHold")
         detail.contains("NFC", ignoreCase = true) ||
             detail.contains("Hold the security key", ignoreCase = true) ||
             detail.contains("USB", ignoreCase = true) -> t("settings.hardwareKeyHold")

@@ -25,5 +25,13 @@ sealed interface UnlockResult {
 
     /** Keystore no longer matches the vault: re-pair, do not retry the password. */
     data object DeviceMismatch : UnlockResult
+
+    /** A rejected credential: wrong master password or stale KEK. */
+    data object WrongPassword : UnlockResult
+
+    /** The hardware seal needs its key: missing, wrong key, tap, busy. */
+    data class SecurityKey(val message: String) : UnlockResult
+
+    /** Anything else, already mapped to localized user copy. */
     data class Failure(val message: String) : UnlockResult
 }
