@@ -235,9 +235,86 @@ impl Value {
     }
 }
 
+/// Byte length of the first CBOR item in `bytes`, without building the
+/// value tree. Bounds-checked at every step, so concatenated items (a
+/// COSE key followed by the authData extension map) can be walked.
+pub fn item_end(bytes: &[u8]) -> Option<usize> {
+    fn skip(bytes: &[u8], depth: u32) -> Option<usize> {
+        if depth > Value::MAX_DEPTH {
+            return None;
+        }
+        let (&head, rest) = bytes.split_first()?;
+        let major = head >> 5;
+        let arg = head & 0x1f;
+        let (val, mut rest) = match arg {
+            v @ 0..=23 => (v as u64, rest),
+            24 => {
+                let (&b, r) = rest.split_first()?;
+                (b as u64, r)
+            }
+            25 => {
+                let (b, r) = rest.split_at_checked(2)?;
+                (u16::from_be_bytes([b[0], b[1]]) as u64, r)
+            }
+            26 => {
+                let (b, r) = rest.split_at_checked(4)?;
+                (u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as u64, r)
+            }
+            27 => {
+                let (b, r) = rest.split_at_checked(8)?;
+                (
+                    u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+                    r,
+                )
+            }
+            _ => return None,
+        };
+        match major {
+            0 | 1 | 7 => Some(bytes.len() - rest.len()),
+            2 | 3 => {
+                let len = usize::try_from(val).ok()?;
+                let (_, r) = rest.split_at_checked(len)?;
+                Some(bytes.len() - r.len())
+            }
+            4 | 5 => {
+                let n = if major == 4 { val } else { val.checked_mul(2)? };
+                for _ in 0..n {
+                    let used = skip(rest, depth + 1)?;
+                    rest = &rest[used..];
+                }
+                Some(bytes.len() - rest.len())
+            }
+            6 => {
+                skip(rest, depth + 1)?;
+                Some(bytes.len() - rest.len())
+            }
+            _ => None,
+        }
+    }
+    skip(bytes, 0)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Value;
+    use super::{item_end, Value};
+
+    #[test]
+    fn item_end_walks_concatenated_items() {
+        // COSE placeholder map followed by the extension map: the first
+        // item ends after its own byte, the second consumes the rest.
+        let mut bytes = vec![0xA0, 0xA1, 0x6B];
+        bytes.extend_from_slice(b"hmac-secret");
+        bytes.push(0xF5);
+        assert_eq!(item_end(&bytes), Some(1));
+        assert_eq!(item_end(&bytes[1..]), Some(bytes.len() - 1));
+        // Nested containers and long-form lengths are bounds-checked.
+        assert_eq!(item_end(&[0x82, 0x01, 0x02]), Some(3));
+        assert_eq!(item_end(&[0x58, 0x03, 1, 2, 3]), Some(5));
+        assert_eq!(item_end(&[0x58, 0xFF, 1, 2]), None);
+        assert_eq!(item_end(&[0xA1, 0x01]), None);
+        assert_eq!(item_end(&[]), None);
+    }
+
 
     // RFC 8949 Appendix A vectors that fall inside the CTAP2 subset.
     #[test]
