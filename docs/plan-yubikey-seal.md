@@ -224,7 +224,7 @@ the selected `backend`, a per-backend `backends` array (capable/reason/interacti
 any-backend capability, with consent support read from the sealed or first-available backend;
 hardware sealing/opening runs in `spawn_blocking` so a tap wait never stalls the async executor;
 `just sysdeps desktop` checks libudev plus the U2F udev rules package per distro and prints the
-install command, and the deb/rpm metadata recommends `libu2f-udev`; all desktop daemon-sidecar
+install command; deb metadata recommends `libu2f-udev` while rpm relies on systemd's FIDO rules; all desktop daemon-sidecar
 build branches in the justfile compile with `baluard-daemon/fido2`. Two latent bugs fixed along
 the way: `hw_status` read consent from the vault directory instead of `meta/device-privkey.json`
 (always false), and the TPM backend plus its real-chip test lagged the slice-0 `Handshake`/
