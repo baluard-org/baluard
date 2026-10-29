@@ -5604,6 +5604,18 @@ impl VaultHandle {
         // a truncated override, and skipping here verified nothing
         super::canary::verify_kek_canary(&session_key, &canary_data)?;
 
+        // M3: finish or roll back a hw rotation a previous session left
+        // torn. AFTER the canary: a wrong-password guess must never pay a
+        // chip touch (the heal opens the staged seal, which derives on
+        // PerUse backends). No-op without staging; fail-safe when the
+        // chip is gone (the staged seal cannot be inspected, so nothing
+        // is decided).
+        crate::vault::device_privkey::heal_pending_hw_rotation(
+            &self.path,
+            self.device_id,
+            &devkey_seal,
+        )?;
+
         // S3-7b: team-shape member devices hold no Root Key. Their unlock
         // path is identity seed (device-local, KEK-sealed) → identity keys
         // → the identity-keyed space.wrap → SMK → meta IKM. No keywrap
@@ -11166,9 +11178,9 @@ pub struct LockedCipherInfo {
 // ── Keyring-backed device private key storage ──
 
 /// Device private key material (X25519 + Ed25519).
-struct DevicePrivKeys {
-    x25519: x25519_dalek::StaticSecret,
-    ed25519: ed25519_dalek::SigningKey,
+pub(crate) struct DevicePrivKeys {
+    pub(crate) x25519: x25519_dalek::StaticSecret,
+    pub(crate) ed25519: ed25519_dalek::SigningKey,
 }
 
 /// Load device private keys: injected keystore first (mobile), then the
@@ -11250,7 +11262,7 @@ fn identity_artifact_snapshots(vault_path: &Path, device_id: Uuid) -> Vec<(PathB
         .collect()
 }
 
-fn cache_device_signing_key(vault_path: &Path, device_id: Uuid, keys: &DevicePrivKeys) {
+pub(crate) fn cache_device_signing_key(vault_path: &Path, device_id: Uuid, keys: &DevicePrivKeys) {
     DEVICE_SIGNING_KEYS
         .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
         .lock()
