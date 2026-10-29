@@ -10055,6 +10055,7 @@ mod pin_hw_escrow_tests {
     async fn pin_unlock_tap_runs_off_the_runtime_worker() {
         let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let _env = HwEnvGuard::clear();
+        TAP_OFF_WORKER.store(false, Ordering::SeqCst);
         let (_dir, state) = sealed_pin_vault(false).await;
         baluard_core::hwkey::install(Arc::new(PinHwMock {
             probe_blocking_thread: true,
