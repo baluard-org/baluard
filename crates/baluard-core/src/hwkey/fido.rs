@@ -246,18 +246,35 @@ mod real {
     #[allow(dead_code)]
     pub struct CtapToken;
 
-    // Consumed from slice 2's daemon registry wiring.
+    // ctap-hid-fido2 3.6.0 returns anyhow text errors; the embedded CTAP
+    // status code is the only machine-readable signal it offers.
+    #[allow(dead_code)]
+    pub(super) fn classify_message(msg: &str) -> TokenError {
+        if msg.contains("0x2F CTAP2_ERR_USER_ACTION_TIMEOUT") {
+            TokenError::Timeout
+        } else if msg.contains("0x2D CTAP2_ERR_KEEPALIVE_CANCEL") {
+            TokenError::Cancelled
+        } else if msg.contains("0x06 CTAP1_ERR_CHANNEL_BUSY") {
+            TokenError::Busy
+        } else if msg.contains("0x2E CTAP2_ERR_NO_CREDENTIALS") {
+            TokenError::UnknownCredential
+        } else {
+            TokenError::Device(msg.to_string())
+        }
+    }
+
+    // Consumed from slice 2's daemon registry wiring. Nothing reachable
+    // here means no token: the detail (hidapi text) carries nothing the
+    // user can act on beyond plugging the key in.
     #[allow(dead_code)]
     fn open() -> Result<ctap_hid_fido2::FidoKeyHid, TokenError> {
-        FidoKeyHidFactory::create(&Cfg::init()).map_err(|e| TokenError::Device(format!("{e}")))
+        FidoKeyHidFactory::create(&Cfg::init()).map_err(|_| TokenError::KeyMissing)
     }
 
     impl Token for CtapToken {
         fn info(&self) -> Result<TokenInfo, TokenError> {
             let dev = open()?;
-            let info = dev
-                .get_info()
-                .map_err(|e| TokenError::Device(format!("{e}")))?;
+            let info = dev.get_info().map_err(|e| classify_message(&e.to_string()))?;
             let mut aaguid = [0u8; 16];
             if info.aaguid.len() == 16 {
                 aaguid.copy_from_slice(&info.aaguid);
@@ -283,7 +300,7 @@ mod real {
                 .build();
             let att = dev
                 .make_credential_with_args(&args)
-                .map_err(|e| TokenError::Device(format!("{e}")))?;
+                .map_err(|e| classify_message(&e.to_string()))?;
             Ok(PackedAttestation {
                 credential_id: att.credential_descriptor.id,
                 auth_data: att.auth_data,
@@ -307,7 +324,7 @@ mod real {
                 .build();
             let assertions = dev
                 .get_assertion_with_args(&args)
-                .map_err(|e| TokenError::Device(format!("{e}")))?;
+                .map_err(|e| classify_message(&e.to_string()))?;
             let a = assertions
                 .first()
                 .ok_or_else(|| TokenError::Device("no assertion returned".into()))?;
@@ -331,8 +348,29 @@ mod real {
 #[cfg(feature = "fido2")]
 pub use real::store;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "fido2"))]
 mod tests {
+
+    #[test]
+    fn desktop_adapter_classifies_the_library_text() {
+        // The exact message shapes ctap-hid-fido2 3.6.0 emits
+        // (response_status err = <get_status_message>).
+        use crate::hwkey::fido::real::classify_message;
+        use crate::hwkey::fido::TokenError;
+        let timeout = "response_status err = 0x2F CTAP2_ERR_USER_ACTION_TIMEOUT   Timeout waiting for user interaction.";
+        assert!(matches!(classify_message(timeout), TokenError::Timeout));
+        let cancel = "response_status err = 0x2D CTAP2_ERR_KEEPALIVE_CANCEL  Pending keep alive was cancelled.";
+        assert!(matches!(classify_message(cancel), TokenError::Cancelled));
+        let busy = "response_status err = 0x06 CTAP1_ERR_CHANNEL_BUSY Channel busy.";
+        assert!(matches!(classify_message(busy), TokenError::Busy));
+        let none = "response_status err = 0x2E CTAP2_ERR_NO_CREDENTIALS    No valid credentials provided.";
+        assert!(matches!(classify_message(none), TokenError::UnknownCredential));
+        // Unknown library text keeps its detail for diagnostics.
+        assert!(matches!(
+            classify_message("read err = 0xFE"),
+            TokenError::Device(msg) if msg.contains("read err")
+        ));
+    }
     use super::super::{
         Handshake, HardwareKeyStore, HwAttestation, HwCapability, HwConsent, binding_vault_id,
     };
