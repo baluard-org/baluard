@@ -94,6 +94,8 @@ Fix: do the hardware work (open old seal, derive new ephemeral) in `spawn_blocki
 
 ### H8. In-house CTAP2 client: CBOR decoder has no recursion limit (process abort)
 
+FIXED (2026-10-29, wave 5): `Value::decode` threads a recursion depth (`decode_at(bytes, depth)`, `MAX_DEPTH = 16` — CTAP2 structures nest about 5 deep) and refuses arrays/maps beyond it with the ordinary `DecodeError`, so every existing `map_err(...Malformed)` consumer handles hostile input through the normal path. Red proof: the 7609-byte nested-`0x81` depth bomb (one maximum CTAPHID message) aborted the test binary with `fatal runtime error: stack overflow` before the fix — an abort, which UniFFI panic catching cannot intercept — and decodes as a plain error after. Regressions pin the boundary: 16 nested arrays decode, 17 refuse, the max-message bomb refuses. Suites: ctap-client CTAP 58, fido2-enabled core lib 1009, 0 failed.
+
 `crates/baluard-core/src/hwkey/ctap/cbor.rs:163-183`. `Value::decode` recurses on arrays and maps with no depth bound. Reproduced in a scratch crate: 7609 bytes of nested `0x81` (exactly one maximum CTAPHID message) overflows a 2 MiB thread stack; NFC accepts ~32 KiB (`apdu.rs:134`). A stack overflow is an abort, not a panic, so UniFFI's panic catching does not help: a malicious USB device or an NFC-emulating phone kills the Android app (and, if desktop moves to the in-tree client, the daemon). Fix: thread a depth counter, refuse beyond 16 (CTAP structures nest about 5 deep). Add a depth-bomb test.
 
 ### H9. In-house CTAPHID reads KEEPALIVE status and ERROR code from the length byte

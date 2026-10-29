@@ -99,7 +99,19 @@ impl Value {
         }
     }
 
+    /// H8: CTAP2 structures nest about 5 deep; anything deeper is hostile
+    /// (a stack overflow is an abort, which panic catchers cannot stop),
+    /// so the decoder refuses beyond this recursion depth.
+    pub const MAX_DEPTH: u32 = 16;
+
     pub fn decode(bytes: &[u8]) -> Result<(Value, &[u8]), DecodeError> {
+        Self::decode_at(bytes, 0)
+    }
+
+    fn decode_at(bytes: &[u8], depth: u32) -> Result<(Value, &[u8]), DecodeError> {
+        if depth > Self::MAX_DEPTH {
+            return Err(DecodeError);
+        }
         let (&first, rest) = bytes.split_first().ok_or(DecodeError)?;
         let major = first >> 5;
         let info = first & 0x1f;
@@ -151,7 +163,7 @@ impl Value {
                 let mut items = Vec::new();
                 let mut rest = rest;
                 for _ in 0..arg {
-                    let (item, r) = Value::decode(rest)?;
+                    let (item, r) = Value::decode_at(rest, depth + 1)?;
                     items.push(item);
                     rest = r;
                 }
@@ -161,8 +173,8 @@ impl Value {
                 let mut pairs = Vec::new();
                 let mut rest = rest;
                 for _ in 0..arg {
-                    let (k, r) = Value::decode(rest)?;
-                    let (v, r) = Value::decode(r)?;
+                    let (k, r) = Value::decode_at(rest, depth + 1)?;
+                    let (v, r) = Value::decode_at(r, depth + 1)?;
                     pairs.push((k, v));
                     rest = r;
                 }
@@ -314,5 +326,38 @@ mod tests {
         assert!(Value::decode(b"\x5f\x41\x31\xff").is_err()); // indefinite byte string
         assert!(Value::decode(b"\x45\x01\x02\x03").is_err()); // truncated
         assert!(Value::decode(b"").is_err());
+    }
+
+    /// H8: recursion depth. A hostile device (malicious USB HID stack or
+    /// NFC-emulating phone) sends nested arrays; a stack overflow is an
+    /// abort, which panic catchers cannot intercept.
+    #[test]
+    fn nesting_at_the_depth_limit_still_decodes() {
+        // 16 nested arrays with a terminal unsigned: the innermost child
+        // lands exactly at depth 16 and is accepted.
+        let mut bomb = vec![0x01u8];
+        for _ in 0..16 {
+            bomb.insert(0, 0x81);
+        }
+        assert!(Value::decode(&bomb).is_ok());
+    }
+
+    #[test]
+    fn depth_bomb_beyond_the_limit_is_refused() {
+        // 17 nested arrays: one past the limit.
+        let mut bomb = vec![0x01u8];
+        for _ in 0..17 {
+            bomb.insert(0, 0x81);
+        }
+        assert!(Value::decode(&bomb).is_err());
+    }
+
+    #[test]
+    fn max_ctap_message_depth_bomb_is_refused() {
+        // 7609 nested 0x81 = one maximum CTAPHID message. On the 2 MiB
+        // threads mobile runtimes spawn this overflows the stack before
+        // the limit existed; it must decode as a plain error instead.
+        let bomb = vec![0x81u8; 7609];
+        assert!(Value::decode(&bomb).is_err());
     }
 }
