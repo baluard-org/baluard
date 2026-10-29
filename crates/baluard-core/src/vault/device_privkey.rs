@@ -335,49 +335,6 @@ pub fn rotate_seal_key(
             seal_file(path, &inner, new_seal_key, device_id)?;
             Ok(true)
         }
-        PrivkeyFileKind::SealedHw => {
-            // Password change with the hardware seal: fresh ephemeral per
-            // write, binding survives. Fails closed when the chip is gone
-            // (the phrase path remains the rescue).
-            let file = std::fs::read_to_string(path)
-                .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
-            let backend = hw_backend_of(file.as_bytes())?;
-            let hw = crate::hwkey::store_for(&backend)
-                .ok_or_else(crate::hwkey::hw_unavailable_error)?;
-            let v: serde_json::Value = serde_json::from_str(&file)
-                .map_err(|e| VaultError::Corrupt(format!("hw-sealed devkey json: {e}")))?;
-            let binding = v["hw_binding"]
-                .as_str()
-                .ok_or_else(|| VaultError::Corrupt("hw-sealed devkey missing binding".into()))?
-                .to_string();
-            let id = device_id.or_else(|| {
-                v["device_id"]
-                    .as_str()
-                    .and_then(|s| Uuid::parse_str(s).ok())
-            });
-            let mode = crate::hwkey::HwConsent::from_flag(v["consent"].as_bool() == Some(true));
-            let (inner, old_ck) = open_bytes_hw_with_ck(&*hw, old_seal_key, file.as_bytes())?;
-            // Rotation re-seals under the SAME binding without re-attesting;
-            // the recorded verdict carries over.
-            let attestation = v["hw_attestation"]
-                .as_str()
-                .and_then(hw_attestation_from_str);
-            let out = seal_bytes_hw(&*hw, &binding, new_seal_key, &inner, id, mode, attestation)?;
-            staged_reseal(
-                path.parent().and_then(Path::parent).as_deref(),
-                path,
-                &out.bytes,
-                || {
-                    rebind_identity_artifacts(
-                        path.parent().and_then(Path::parent).as_deref().unwrap(),
-                        id,
-                        &ik_of(&old_ck),
-                        &ik_of(&out.content_key),
-                    )
-                },
-            )?;
-            Ok(true)
-        }
         PrivkeyFileKind::Sealed => {
             let file = std::fs::read_to_string(path)
                 .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
@@ -394,7 +351,65 @@ pub fn rotate_seal_key(
             seal_file(path, &inner, new_seal_key, id)?;
             Ok(true)
         }
+        PrivkeyFileKind::SealedHw => {
+            // Password change with the hardware seal: fresh ephemeral per
+            // write, binding survives. Fails closed when the chip is gone
+            // (the phrase path remains the rescue).
+            let file = std::fs::read_to_string(path)
+                .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
+            let (inner, old_ck) = open_sealed_hw_with_ck(old_seal_key, file.as_bytes())?;
+            rotate_seal_key_with_inner(path, &inner, &old_ck, new_seal_key, device_id)
+        }
     }
+}
+
+/// Re-seal an hw-sealed device file under a new seal key using an inner
+/// JSON the caller already opened. Sharing the open lets a password
+/// change reuse the same inner for the HPKE re-wrap and the re-seal: on
+/// a PerUse backend every extra open is another user tap.
+pub fn rotate_seal_key_with_inner(
+    path: &Path,
+    inner: &str,
+    old_ck: &zeroize::Zeroizing<[u8; 32]>,
+    new_seal_key: &[u8; 32],
+    device_id: Option<Uuid>,
+) -> Result<bool, BaluardError> {
+    let file = std::fs::read_to_string(path)
+        .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
+    let backend = hw_backend_of(file.as_bytes())?;
+    let hw = crate::hwkey::store_for(&backend).ok_or_else(crate::hwkey::hw_unavailable_error)?;
+    let v: serde_json::Value = serde_json::from_str(&file)
+        .map_err(|e| VaultError::Corrupt(format!("hw-sealed devkey json: {e}")))?;
+    let binding = v["hw_binding"]
+        .as_str()
+        .ok_or_else(|| VaultError::Corrupt("hw-sealed devkey missing binding".into()))?
+        .to_string();
+    let id = device_id.or_else(|| {
+        v["device_id"]
+            .as_str()
+            .and_then(|s| Uuid::parse_str(s).ok())
+    });
+    let mode = crate::hwkey::HwConsent::from_flag(v["consent"].as_bool() == Some(true));
+    // Rotation re-seals under the SAME binding without re-attesting; the
+    // recorded verdict carries over.
+    let attestation = v["hw_attestation"]
+        .as_str()
+        .and_then(hw_attestation_from_str);
+    let out = seal_bytes_hw(&*hw, &binding, new_seal_key, inner, id, mode, attestation)?;
+    staged_reseal(
+        path.parent().and_then(Path::parent).as_deref(),
+        path,
+        &out.bytes,
+        || {
+            rebind_identity_artifacts(
+                path.parent().and_then(Path::parent).as_deref().unwrap(),
+                id,
+                &ik_of(old_ck),
+                &ik_of(&out.content_key),
+            )
+        },
+    )?;
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -2739,6 +2754,37 @@ mod tests {
             crate::vault::handle::cached_device_signing_key(dir.path(), decoy_id).is_some(),
             "the healed session must sign: cache missing under the healed id"
         );
+        hw_env_restore(_old_env);
+    }
+
+    /// A password change on an hw-sealed vault opens the sealed file
+    /// ONCE: the same inner JSON serves the HPKE re-wrap and the
+    /// re-seal. A PerUse backend turns every re-open into a tap, so the
+    /// whole change must pay exactly two chip ops (open + seal).
+    #[test]
+    fn password_change_pays_two_taps_not_three() {
+        use std::sync::atomic::Ordering;
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        crate::hwkey::install(std::sync::Arc::new(CountingTapMock(counter.clone())));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+        drop(handle);
+
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        let before = counter.load(Ordering::SeqCst);
+        h.change_master_password(&password, "new passphrase entirely")
+            .unwrap();
+        let taps = counter.load(Ordering::SeqCst) - before;
+        assert_eq!(taps, 2, "the change re-opened the sealed file (3 taps)");
+        h.lock();
+        let mut h2 = VaultHandle::open(dir.path()).unwrap();
+        h2.unlock("new passphrase entirely").unwrap();
+        assert!(h2.is_unlocked());
         hw_env_restore(_old_env);
     }
 

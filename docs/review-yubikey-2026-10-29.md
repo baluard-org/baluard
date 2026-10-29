@@ -88,6 +88,8 @@ FIXED (2026-10-29, wave 8): enabling now ROTATES the device keypair on root-hold
 
 ### H7. `change_master_password` holds the vault write lock across a token wait
 
+FIXED (2026-10-29, wave 10): the runtime method snapshots what the core op needs (path, ids, KDF params, Root Key) under a short READ lock, releases it, and runs the whole file/chip phase in `spawn_blocking` via the new `VaultHandle::change_master_password_files` free function; a short write lock afterwards commits the in-memory keys (`apply_master_password_change`) — refusing if the slot now holds a different vault, and degrading safely if the vault was locked or closed mid-change (the files already carry the new keys; the next unlock verifies them). Red-first: `password_change_does_not_hold_the_write_lock_across_taps` (multi-thread runtime — the unsplit path's `block_in_place` panics on the current-thread test flavor) measured a plain `is_unlocked` read blocking 661 ms behind the tap pre-fix; post-fix it returns while the tap is pending. The core wrapper keeps the exact old behavior for CLI Direct mode and tests.
+
 `crates/baluard-runtime/src/state.rs:852-866`. The `inner.write()` guard is held across `block_in_place`, which frees the executor thread but not the lock. With an hw seal the core op needs three assertions (H8), so every request for this vault (status, list, lock, the auto-lock walker, the desktop heartbeat) stalls up to ~90 s. `block_in_place` also panics on a current-thread runtime; the comment asserts both runtimes are multi-thread, but nothing enforces it.
 
 Fix: do the hardware work (open old seal, derive new ephemeral) in `spawn_blocking` without the lock, then take the write lock only for the file writes and in-memory key swap, re-checking that the device file bytes did not change meanwhile.
@@ -162,6 +164,8 @@ The cold path (`BaluardAutofillService.kt:116` → `AutofillActivity.kt:151`) st
 FIXED (2026-10-29, wave 8): `VaultState` carries a per-vault `devkey_ops` tokio mutex held for the whole body of `hw_enable`, `hw_disable`, `hw_set_consent`, and `change_master_password` (the last takes it BEFORE the inner write lock — the hierarchy every devkey op follows). Red-first: two racing enables drove `create_binding` concurrently on the unserialized code and physically collided at the device-file write; the serialization regression (`device_key_operations_serialize_per_vault`) counts maximum concurrent binding creations and pins it at 1.
 
 ### M2. Password change on an hw-sealed vault needs three taps, not ~2
+
+FIXED (2026-10-29, wave 10): the sealed device file is opened ONCE per change — the C1 pre-check and the Step-4 key load share `read_privkey_file_with_ck`, and the same inner JSON feeds both the HPKE re-wrap and the re-seal through the new `rotate_seal_key_with_inner` (rotate_seal_key's SealedHw arm opens and delegates to it). Taps: open + seal = 2. Red-first: `password_change_pays_two_taps_not_three` counted 3 chip ops before the fix and 2 after, with the new password still unlocking.
 
 `handle.rs:5853` (`load_device_privkeys`, tap 1), then `rotate_seal_key` opens again (tap 2) and seals with a fresh salt (tap 3, `device_privkey.rs:333-360`). Fix: open once, reuse the inner JSON for both the HPKE re-wrap and the re-seal.
 

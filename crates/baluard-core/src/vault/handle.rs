@@ -6006,13 +6006,56 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
+        let root_key = match &self.state {
+            VaultState::Unlocked(u) => u.root()?.clone(),
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let (new_session_key, new_devkey_seal) = Self::change_master_password_files(
+            &self.path,
+            self.vault_id,
+            self.device_id,
+            &self.kdf_params,
+            &root_key,
+            old_password,
+            new_password,
+        )?;
+        self.apply_master_password_change(new_session_key, new_devkey_seal);
+        Ok(())
+    }
 
+    /// Commit the keys a completed change_master_password_files produced.
+    /// A no-op on a locked vault: the files already carry the new keys
+    /// and the next unlock verifies them.
+    pub fn apply_master_password_change(
+        &mut self,
+        new_session_key: [u8; 32],
+        new_devkey_seal: [u8; 32],
+    ) {
+        if let VaultState::Unlocked(ref mut u) = self.state {
+            u.session_key = new_session_key;
+            u.devkey_seal = new_devkey_seal;
+        }
+    }
+
+    /// Everything a master-password change writes, minus the in-memory
+    /// key commit: the runtime runs this OFF the vault lock so the chip
+    /// taps never pin other vault operations, then applies the returned
+    /// keys under a short write lock.
+    pub fn change_master_password_files(
+        vault_path: &std::path::Path,
+        vault_id: Uuid,
+        device_id: Uuid,
+        kdf_params: &crate::types::KdfParams,
+        root_key: &RootKey,
+        old_password: &str,
+        new_password: &str,
+    ) -> Result<([u8; 32], [u8; 32]), BaluardError> {
         // Step 1: Verify old password
-        let old_kek = kdf::derive_kek(old_password, &self.kdf_params)?;
+        let old_kek = kdf::derive_kek(old_password, kdf_params)?;
         let old_session_key = hkdf_derive::derive_session_key(&old_kek)?;
         let old_devkey_seal = hkdf_derive::derive_devkey_seal_key(&old_kek)?;
         let canary_data =
-            std::fs::read(self.path.join("meta/kek-canary.enc")).map_err(|e| match e.kind() {
+            std::fs::read(vault_path.join("meta/kek-canary.enc")).map_err(|e| match e.kind() {
                 std::io::ErrorKind::NotFound => VaultError::Corrupt(
                     "kek canary is missing; vault metadata is incomplete".into(),
                 ),
@@ -6021,31 +6064,25 @@ impl VaultHandle {
         super::canary::verify_kek_canary(&old_session_key, &canary_data)
             .map_err(|_| VaultError::Corrupt("old master password incorrect".into()))?;
 
-        // C1 pre-check: a sealed devkey file must open under the OLD seal
-        // key BEFORE we rotate anything, otherwise a later failure would
-        // leave a file the next unlock cannot open (lockout). Fail here,
-        // before any write.
-        let devkey_path = self.path.join("meta/device-privkey.json");
-        if crate::vault::device_privkey::file_kind(&devkey_path)
-            == crate::vault::device_privkey::PrivkeyFileKind::Sealed
-        {
-            let file = std::fs::read_to_string(&devkey_path)?;
-            crate::vault::device_privkey::open_bytes(&old_devkey_seal, file.as_bytes())?;
-        }
+        // C1 pre-check: the sealed devkey file must open under the OLD
+        // seal key BEFORE we rotate anything, otherwise a later failure
+        // would leave a file the next unlock cannot open (lockout). This
+        // open is shared with Step 4 below (M2: on a PerUse seal every
+        // extra open is another tap).
+        let devkey_path = vault_path.join("meta/device-privkey.json");
+        let (privkey_inner, hw_ck) = crate::vault::device_privkey::read_privkey_file_with_ck(
+            &devkey_path,
+            Some(&old_devkey_seal),
+        )?;
+        let privkeys = parse_privkey_json(&privkey_inner)?;
+        cache_device_signing_key(vault_path, device_id, &privkeys);
 
         // Step 2: Derive new KEK with existing KDF params
-        // (could optionally re-calibrate, but keep it simple for now)
-        let new_kek = kdf::derive_kek(new_password, &self.kdf_params)?;
+        let new_kek = kdf::derive_kek(new_password, kdf_params)?;
         let new_session_key = hkdf_derive::derive_session_key(&new_kek)?;
 
-        // Step 3: Get current root key from unlocked state
-        let root_key = match &self.state {
-            VaultState::Unlocked(u) => u.root()?.clone(),
-            VaultState::Locked => return Err(VaultError::Locked.into()),
-        };
-
-        // Step 4: Load device private key for HPKE re-wrap
-        let privkeys = load_device_privkeys(&self.path, self.device_id, Some(&old_devkey_seal))?;
+        // Step 4: device private key for the HPKE re-wrap — opened once
+        // above (the sealed open IS the pre-check).
         let x25519_public = x25519_dalek::PublicKey::from(&privkeys.x25519);
 
         let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
@@ -6054,21 +6091,19 @@ impl VaultHandle {
             "root-key-keywrap",
         )?;
         let keywrap_data = serde_json::json!({
-            "device_id": self.device_id.to_string(),
+            "device_id": device_id.to_string(),
             "ephemeral_public": hex::encode(eph_pub),
             "encrypted_key": hex::encode(ct),
             "tag": hex::encode(tag),
         });
-        let keywrap_path = self
-            .path
-            .join(format!("meta/keywrap/{}.json", self.device_id));
+        let keywrap_path = vault_path.join(format!("meta/keywrap/{}.json", device_id));
         let original_keywrap = std::fs::read(&keywrap_path)?;
         let keywrap_json = serde_json::to_string_pretty(&keywrap_data).unwrap();
-        let canary_path = self.path.join("meta/kek-canary.enc");
+        let canary_path = vault_path.join("meta/kek-canary.enc");
         let new_canary = if canary_path.exists() {
             Some(super::canary::create_kek_canary(
                 &new_session_key,
-                self.vault_id,
+                vault_id,
             )?)
         } else {
             None
@@ -6080,13 +6115,30 @@ impl VaultHandle {
         let original_devkey = std::fs::read(&devkey_path)?;
         // rotate_seal_key also rebinds the identity artifacts (member seed
         // + identity.enc); snapshot them for the same rollback.
-        let identity_snapshot = identity_artifact_snapshots(&self.path, self.device_id);
-        crate::vault::device_privkey::rotate_seal_key(
-            &devkey_path,
-            &old_devkey_seal,
-            &new_devkey_seal,
-            Some(self.device_id),
-        )?;
+        let identity_snapshot = identity_artifact_snapshots(vault_path, device_id);
+        match crate::vault::device_privkey::file_kind(&devkey_path) {
+            crate::vault::device_privkey::PrivkeyFileKind::SealedHw => {
+                crate::vault::device_privkey::rotate_seal_key_with_inner(
+                    &devkey_path,
+                    &privkey_inner,
+                    hw_ck.as_ref().ok_or_else(|| {
+                        VaultError::Metadata(
+                            "hw-sealed devkey opened without its content key".into(),
+                        )
+                    })?,
+                    &new_devkey_seal,
+                    Some(device_id),
+                )?;
+            }
+            _ => {
+                crate::vault::device_privkey::rotate_seal_key(
+                    &devkey_path,
+                    &old_devkey_seal,
+                    &new_devkey_seal,
+                    Some(device_id),
+                )?;
+            }
+        }
         let restore_devkey = || {
             let _ = super::write_vault_file(&devkey_path, &original_devkey);
             for (path, bytes) in &identity_snapshot {
@@ -6108,12 +6160,7 @@ impl VaultHandle {
             }
         }
 
-        // Step 7: commit the new in-memory keys only after all files agree.
-        let _ = crate::vault::device_privkey::write_device_id(&self.path, self.device_id);
-        if let VaultState::Unlocked(ref mut u) = self.state {
-            u.session_key = new_session_key;
-            u.devkey_seal = new_devkey_seal;
-        }
+        let _ = crate::vault::device_privkey::write_device_id(vault_path, device_id);
 
         // Step 8: Disable old biometric secret (it stores the old password)
         // Caller should re-enable biometric with the new password after this.
@@ -6121,11 +6168,11 @@ impl VaultHandle {
         // untouched. Log on failure: stale secret will cause canary mismatch
         // on next biometric unlock, which is self-correcting (user falls
         // back to manual password entry).
-        if let Err(e) = crate::biometric::disable(&self.vault_id.to_string()) {
+        if let Err(e) = crate::biometric::disable(&vault_id.to_string()) {
             eprintln!("warning: failed to disable biometric after password change: {e}");
         }
 
-        Ok(())
+        Ok((new_session_key, new_devkey_seal))
     }
 
     /// Migrate plaintext metadata files to encrypted format.
