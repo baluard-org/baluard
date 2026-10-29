@@ -5655,11 +5655,22 @@ impl VaultHandle {
         // enrolled candidates to provide self-healing recovery against corrupted or
         // spoofed meta/device-id entries (F1 self-healing fix).
         let mut hw_ck: Option<zeroize::Zeroizing<[u8; 32]>> = None;
+        // The sealed privkey file is device-local and identical for every
+        // keywrap candidate, so it is opened at most once per unlock; on
+        // a PerUse backend every re-open is another tap. A failed open is
+        // final for this unlock: adopt and the heal both need the same
+        // keys, so neither retries it.
+        let mut keys_cache: Option<(DevicePrivKeys, Option<zeroize::Zeroizing<[u8; 32]>>)> = None;
+        let mut keys_failed = false;
         let (root_key, _matched_device_id) = {
-            let attempt_unwrap = |dev_id: Uuid| -> Result<
-                (RootKey, Option<zeroize::Zeroizing<[u8; 32]>>),
-                BaluardError,
-            > {
+            let attempt_unwrap = |dev_id: Uuid,
+                                  keys_cache: &mut Option<(
+                DevicePrivKeys,
+                Option<zeroize::Zeroizing<[u8; 32]>>,
+            )>,
+                                  keys_failed: &mut bool,
+                                  hw_ck: &mut Option<zeroize::Zeroizing<[u8; 32]>>|
+             -> Result<RootKey, BaluardError> {
                 let kw_path = self.path.join(format!("meta/keywrap/{dev_id}.json"));
                 if !kw_path.exists() {
                     return Err(VaultError::NotFound(format!("keywrap for {dev_id}")).into());
@@ -5667,8 +5678,27 @@ impl VaultHandle {
                 let kw_json = std::fs::read_to_string(&kw_path)
                     .map_err(|e| VaultError::Metadata(format!("reading keywrap: {e}")))?;
                 let parsed_kw = super::keywrap::parse_keywrap_json(&kw_json)?;
-                let (privs, ck) =
-                    load_device_privkeys_with_ck(&self.path, dev_id, Some(&devkey_seal))?;
+                if keys_cache.is_none() {
+                    if *keys_failed {
+                        // Short-circuit only; the caller surfaces the first,
+                        // typed open error.
+                        return Err(
+                            VaultError::Metadata("device private key unavailable".into()).into(),
+                        );
+                    }
+                    match load_device_privkeys_with_ck(
+                        &self.path,
+                        self.device_id,
+                        Some(&devkey_seal),
+                    ) {
+                        Ok(pair) => *keys_cache = Some(pair),
+                        Err(e) => {
+                            *keys_failed = true;
+                            return Err(e);
+                        }
+                    }
+                }
+                let (privs, ck) = keys_cache.as_ref().expect("keys opened above");
                 // A keystore that opens but does not match any keywrap is a
                 // stale/reinstalled device, not a wrong password: label it
                 // so surfaces can offer re-pairing instead of retrying the
@@ -5690,22 +5720,43 @@ impl VaultHandle {
                     .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
                 let rk = RootKey::from_bytes(rk_bytes);
                 self.verify_root_key(&rk)?;
-                Ok((rk, ck))
+                *hw_ck = ck.clone();
+                Ok(rk)
             };
 
-            match attempt_unwrap(self.device_id) {
-                Ok((rk, ck)) => {
-                    hw_ck = ck;
-                    (rk, self.device_id)
-                }
+            match attempt_unwrap(
+                self.device_id,
+                &mut keys_cache,
+                &mut keys_failed,
+                &mut hw_ck,
+            ) {
+                Ok(rk) => (rk, self.device_id),
                 Err(primary_err) => {
+                    // The keys themselves could not be opened: adopt and
+                    // the heal both need the same keys, so neither can do
+                    // better — surface the typed open error directly.
+                    if keys_failed {
+                        return Err(primary_err);
+                    }
+                    if keys_cache.is_none() {
+                        match load_device_privkeys_with_ck(
+                            &self.path,
+                            self.device_id,
+                            Some(&devkey_seal),
+                        ) {
+                            Ok(pair) => keys_cache = Some(pair),
+                            Err(e) => return Err(e),
+                        }
+                    }
                     // P3: prefer this device's fresh wrap from the committed
                     // rekey transaction (its own keywrap file is stale or
                     // missing after a rotation by another device) BEFORE the
                     // F1 cross-device heal: a survivor must not silently
                     // adopt another device's identity while its own wrap is
                     // recoverable.
-                    if let Some(rk) = self.adopt_rekey_txn_root(&devkey_seal, &mut hw_ck) {
+                    if let Some(rk) = self
+                        .adopt_rekey_txn_root(&mut hw_ck, keys_cache.as_ref().unwrap())
+                    {
                         (rk, self.device_id)
                     } else {
                         let keywrap_dir = self.path.join("meta/keywrap");
@@ -5713,12 +5764,19 @@ impl VaultHandle {
                         if keywrap_dir.exists() {
                             if let Ok(entries) = std::fs::read_dir(&keywrap_dir) {
                                 for entry in entries.flatten() {
+                                    if keys_failed {
+                                        break;
+                                    }
                                     let name = entry.file_name().to_string_lossy().to_string();
                                     if let Some(id_str) = name.strip_suffix(".json") {
                                         if let Ok(candidate_id) = Uuid::parse_str(id_str) {
                                             if candidate_id != self.device_id {
-                                                if let Ok((rk, ck)) = attempt_unwrap(candidate_id) {
-                                                    hw_ck = ck;
+                                                if let Ok(rk) = attempt_unwrap(
+                                                    candidate_id,
+                                                    &mut keys_cache,
+                                                    &mut keys_failed,
+                                                    &mut hw_ck,
+                                                ) {
                                                     healed = Some((rk, candidate_id));
                                                     break;
                                                 }
@@ -5734,6 +5792,13 @@ impl VaultHandle {
                             let _ = crate::vault::device_privkey::write_device_id(
                                 &self.path, healed_id,
                             );
+                            // The session continues under the healed id:
+                            // repopulate the signing cache under it so sync
+                            // signs instead of falling back unsigned (the
+                            // open above cached under the spoofed id).
+                            if let Some((privs, _)) = keys_cache.as_ref() {
+                                cache_device_signing_key(&self.path, healed_id, privs);
+                            }
                             (rk, healed_id)
                         } else {
                             return Err(primary_err);
@@ -7909,8 +7974,8 @@ impl VaultHandle {
     /// None and the original unlock error stands.
     fn adopt_rekey_txn_root(
         &self,
-        devkey_seal: &[u8; 32],
         hw_ck_out: &mut Option<zeroize::Zeroizing<[u8; 32]>>,
+        privs_ck: &(DevicePrivKeys, Option<zeroize::Zeroizing<[u8; 32]>>),
     ) -> Option<RootKey> {
         let epoch = self.determine_current_epoch();
         if epoch == 0 {
@@ -7933,9 +7998,8 @@ impl VaultHandle {
             .wrapped_root_keys
             .iter()
             .find(|e| e.device_id == self.device_id)?;
-        let (privs, ck) =
-            load_device_privkeys_with_ck(&self.path, self.device_id, Some(devkey_seal)).ok()?;
-        *hw_ck_out = ck;
+        let (privs, ck) = privs_ck;
+        *hw_ck_out = ck.clone();
         let unwrapped = hpke_wrap::unwrap_key(
             &entry.ephemeral_public,
             &entry.encrypted_key,

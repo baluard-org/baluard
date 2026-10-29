@@ -2641,6 +2641,107 @@ mod tests {
         hw_env_restore(_old_env);
     }
 
+    /// The sealed device file is device-local and identical for every
+    /// keywrap candidate, so one unlock pays at most one chip open: the
+    /// cross-device heal must reuse the opened keys, not re-derive per
+    /// candidate (a PerUse backend turns every re-open into a tap).
+    #[test]
+    fn unlock_pays_one_tap_across_the_cross_device_heal() {
+        use std::sync::atomic::Ordering;
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        crate::hwkey::install(std::sync::Arc::new(CountingTapMock(counter.clone())));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+        let device_id = handle.device_id;
+        drop(handle);
+
+        // Corrupt the device's own keywrap so the primary HPKE unwrap
+        // fails AFTER the chip open, and plant a decoy candidate for the
+        // heal loop to scan.
+        let kw_path = dir.path().join(format!("meta/keywrap/{device_id}.json"));
+        let mut kw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&kw_path).unwrap()).unwrap();
+        kw["encrypted_key"] = serde_json::Value::String(hex::encode([0u8; 80]));
+        std::fs::write(&kw_path, kw.to_string()).unwrap();
+        let decoy_id = uuid::Uuid::new_v4();
+        let decoy = serde_json::json!({
+            "device_id": decoy_id.to_string(),
+            "ephemeral_public": hex::encode([7u8; 32]),
+            "encrypted_key": hex::encode([9u8; 80]),
+            "tag": hex::encode([11u8; 16]),
+        });
+        std::fs::write(
+            dir.path().join(format!("meta/keywrap/{decoy_id}.json")),
+            decoy.to_string(),
+        )
+        .unwrap();
+
+        crate::hwkey::uninstall();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        crate::hwkey::install(std::sync::Arc::new(CountingTapMock(counter.clone())));
+        let before = counter.load(Ordering::SeqCst);
+        let err = h.unlock(&password).unwrap_err();
+        let taps = counter.load(Ordering::SeqCst) - before;
+        assert!(
+            err.to_string().contains("does not match this vault"),
+            "err: {err}"
+        );
+        assert_eq!(taps, 1, "the heal re-opened the sealed file per candidate");
+        hw_env_restore(_old_env);
+    }
+
+    /// The heal-success leg: a candidate keywrap that wraps the root to
+    /// the LOCAL device key (the F1 spoofed-marker shape) heals the
+    /// unlock with exactly one chip open, and the signing cache ends up
+    /// populated under the HEALED id so the session's sync signs.
+    #[test]
+    fn unlock_heals_through_a_candidate_with_one_tap() {
+        use std::sync::atomic::Ordering;
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        crate::hwkey::install(std::sync::Arc::new(CountingTapMock(counter.clone())));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+        let device_id = handle.device_id;
+        drop(handle);
+
+        // The real wrap, stored under a foreign name: the local keywrap
+        // is wrapped to the local x25519 pubkey, so the heal succeeds.
+        let real_kw = dir.path().join(format!("meta/keywrap/{device_id}.json"));
+        let decoy_id = uuid::Uuid::new_v4();
+        std::fs::copy(
+            &real_kw,
+            dir.path().join(format!("meta/keywrap/{decoy_id}.json")),
+        )
+        .unwrap();
+        let mut kw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&real_kw).unwrap()).unwrap();
+        kw["encrypted_key"] = serde_json::Value::String(hex::encode([0u8; 80]));
+        std::fs::write(&real_kw, kw.to_string()).unwrap();
+
+        crate::hwkey::uninstall();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        crate::hwkey::install(std::sync::Arc::new(CountingTapMock(counter.clone())));
+        let before = counter.load(Ordering::SeqCst);
+        h.unlock(&password).unwrap();
+        let taps = counter.load(Ordering::SeqCst) - before;
+        assert!(h.is_unlocked());
+        assert_eq!(h.device_id, decoy_id);
+        assert_eq!(taps, 1, "the healed unlock paid more than one chip open");
+        assert!(
+            crate::vault::handle::cached_device_signing_key(dir.path(), decoy_id).is_some(),
+            "the healed session must sign: cache missing under the healed id"
+        );
+        hw_env_restore(_old_env);
+    }
+
     /// Hardware failures are not password guesses: unlocking a sealed
     /// vault with the chip gone must never advance the on-disk failed-
     /// attempt counter (a forgotten key at home cannot lock the user
