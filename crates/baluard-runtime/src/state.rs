@@ -878,27 +878,61 @@ impl VaultState {
         old_password: &str,
         new_password: &str,
     ) -> Result<(), String> {
-        // M1: take the devkey op lock BEFORE the inner write lock (the
-        // hierarchy every devkey op follows), so a racing hw_enable /
-        // hw_disable / consent change cannot interleave its device-file
+        // M1: take the devkey op lock BEFORE the inner lock (the hierarchy
+        // every devkey op follows), so a racing hw_enable / hw_disable /
+        // consent change cannot interleave its device-file
         // read-modify-write with the re-seal inside the password change.
         let _ops = self.devkey_ops.lock().await;
+        // H7: snapshot what the core op needs under a READ lock, then run
+        // the change OFF the vault lock — the chip taps must not pin
+        // other vault operations for their duration.
+        let (vault_path, vault_id, device_id, kdf_params, root_key) = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault not opened")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked".into());
+            }
+            let root = handle
+                .unlocked()
+                .root()
+                .map_err(|e| format!("{e}"))?
+                .clone();
+            (
+                handle.path.clone(),
+                handle.vault_id,
+                handle.device_id,
+                handle.kdf_params.clone(),
+                root,
+            )
+        };
+        let old = old_password.to_string();
+        let new = new_password.to_string();
+        let files_path = vault_path.clone();
+        let (new_session_key, new_devkey_seal) = tokio::task::spawn_blocking(move || {
+            baluard_core::vault::handle::VaultHandle::change_master_password_files(
+                &files_path,
+                vault_id,
+                device_id,
+                &kdf_params,
+                &root_key,
+                &old,
+                &new,
+            )
+        })
+        .await
+        .map_err(|e| format!("password change task: {e}"))?
+        .map_err(|e| format!("{e}"))?;
+        // Short write lock: commit the in-memory keys. A lock or close
+        // mid-change is fine — the files already carry the new keys and
+        // the next unlock verifies them; a different vault in the slot
+        // must not receive them.
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened")?;
-
-        if !handle.is_unlocked() {
-            return Err("Vault is locked".into());
+        if handle.path != vault_path || handle.device_id != device_id {
+            return Err("Vault changed during the password change".into());
         }
-
-        // The core op re-keys the device-key seal through the chip, so an
-        // hw-sealed vault waits for a user tap here. block_in_place frees
-        // the other executor tasks for that wait (multi-thread runtimes
-        // only: daemon and the UniFFI mobile runtime both are).
-        tokio::task::block_in_place(|| {
-            handle
-                .change_master_password(old_password, new_password)
-                .map_err(|e| format!("{e}"))
-        })
+        handle.apply_master_password_change(new_session_key, new_devkey_seal);
+        Ok(())
     }
 
     /// Replace the vault's recovery phrase (master-password gated in the
@@ -10218,5 +10252,127 @@ mod devkey_op_lock_tests {
             1,
             "racing enables overlapped inside create_binding"
         );
+    }
+
+    struct SlowSealMock;
+
+    impl baluard_core::hwkey::HardwareKeyStore for SlowSealMock {
+        fn backend_id(&self) -> &'static str {
+            "slow-seal"
+        }
+
+        fn probe(&self) -> baluard_core::hwkey::HwCapability {
+            baluard_core::hwkey::HwCapability::Available {
+                backend: "slow-seal".into(),
+            }
+        }
+
+        fn interaction(&self) -> baluard_core::hwkey::Interaction {
+            baluard_core::hwkey::Interaction::PerUse
+        }
+
+        fn create_binding(
+            &self,
+            vault_id: uuid::Uuid,
+            _: baluard_core::hwkey::HwConsent,
+        ) -> Result<baluard_core::hwkey::BindingInfo, baluard_core::error::BaluardError> {
+            Ok(baluard_core::hwkey::BindingInfo {
+                binding: baluard_core::hwkey::binding_tag(vault_id),
+                attestation: None,
+            })
+        }
+
+        fn derive_ephemeral(
+            &self,
+            binding: &str,
+            _: baluard_core::hwkey::HwConsent,
+        ) -> Result<
+            (
+                baluard_core::hwkey::Handshake,
+                baluard_core::hwkey::SharedSecret,
+            ),
+            baluard_core::error::BaluardError,
+        > {
+            let mut secret = [0u8; 32];
+            for (index, byte) in binding.bytes().chain([0x04, 0x02]).enumerate() {
+                secret[index % 32] ^= byte;
+            }
+            Ok((
+                baluard_core::hwkey::Handshake(vec![0x04, 0x02]),
+                zeroize::Zeroizing::new(secret),
+            ))
+        }
+
+        fn derive(
+            &self,
+            binding: &str,
+            handshake: &baluard_core::hwkey::Handshake,
+            _: baluard_core::hwkey::HwConsent,
+        ) -> Result<baluard_core::hwkey::SharedSecret, baluard_core::error::BaluardError> {
+            // The reopen tap: slow enough that the test can observe the
+            // lock state while the "user holds the key" window is open.
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            let mut secret = [0u8; 32];
+            for (index, byte) in binding
+                .bytes()
+                .chain(handshake.0.iter().copied())
+                .enumerate()
+            {
+                secret[index % 32] ^= byte;
+            }
+            Ok(zeroize::Zeroizing::new(secret))
+        }
+
+        fn delete_binding(&self, _: &str) -> Result<(), baluard_core::error::BaluardError> {
+            Ok(())
+        }
+    }
+
+    /// The chip wait in a password change must not pin the vault lock:
+    /// other vault operations stay readable while the user holds the key.
+    /// Multi-thread flavor: the unsplit path uses block_in_place, which
+    /// panics on the current-thread test runtime.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn password_change_does_not_hold_the_write_lock_across_taps() {
+        let _store = TEST_STORE_LOCK.lock().unwrap();
+        let _env = HwEnvGuard::clear();
+        baluard_core::hwkey::install(Arc::new(SlowSealMock));
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(VaultState::new(dir.path().to_path_buf()));
+        let old_pass = format!("slow-seal-pass-{}", 1);
+        let new_pass = format!("slow-seal-pass-{}", 2);
+        state
+            .create_vault(
+                &serde_json::json!({"password": old_pass, "profile": "mobile_low"}).to_string(),
+            )
+            .await
+            .unwrap();
+        state.unlock(&old_pass).await.unwrap();
+        state
+            .hw_enable(false, Some("slow-seal".into()))
+            .await
+            .unwrap();
+
+        let changer = {
+            let st = state.clone();
+            let old = old_pass.clone();
+            let new = new_pass.clone();
+            tokio::spawn(async move { st.change_master_password(&old, &new).await })
+        };
+        // Give the change time to reach its chip wait (which runs under
+        // the write lock on the unsplit path).
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let started = std::time::Instant::now();
+        state.is_unlocked().await;
+        let elapsed = started.elapsed();
+        changer.await.unwrap().unwrap();
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "a vault read blocked {elapsed:?} behind the password change's tap"
+        );
+
+        state.lock().await.unwrap();
+        state.unlock(&new_pass).await.unwrap();
     }
 }
