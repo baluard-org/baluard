@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import { createSignal, createEffect, Show, For } from "solid-js";
 import { Transition } from "../lib/transition";
 import { useVault } from "../context/VaultContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -273,18 +273,20 @@ export default function SettingsModal() {
     { id: "keepass-xml", label: t("settings.formatKeePassXml") },
   ];
 
+  // Hot-plug poll. The effect's RETURNED cleanup disposes per run and on
+  // unmount, so closing the settings stops probing and no interval
+  // survives the modal.
   createEffect(
     () => vault.showSettingsModal(),
     (isOpen) => {
-      if (isOpen) {
-        loadSettings();
-        setImportSource("");
-        loadHwStatus();
-        // Hot-plug: a security key can be inserted while the settings
-        // are open; re-probe so the guard card appears without a reopen.
-        const hwPoll = setInterval(loadHwStatus, 4000);
-        onCleanup(() => clearInterval(hwPoll));
-      }
+      if (!isOpen) return;
+      loadSettings();
+      setImportSource("");
+      loadHwStatus();
+      // Hot-plug: a security key can be inserted while the settings
+      // are open; re-probe so the guard card appears without a reopen.
+      const hwPoll = setInterval(loadHwStatus, 4000);
+      return () => clearInterval(hwPoll);
     },
   );
 
