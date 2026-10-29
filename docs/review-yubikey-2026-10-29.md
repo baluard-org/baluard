@@ -179,7 +179,7 @@ FIXED for the hw paths (2026-10-29, wave 8): the hw re-seal flows (consent chang
 
 ### M5. Attestation verifier: DER length parser panics on hostile input
 
-`crates/baluard-core/src/hwkey/attest.rs:104`: `&buf[2..2 + n]` with `n` up to 4 but only `buf.len() >= 2` checked. A token (or a malicious USB device posing as one) answering an x5c entry of `30 84` panics the verifier. On desktop the panic kills the `spawn_blocking` task (the enable fails with a join error); on mobile it unwinds across the UniFFI boundary into Kotlin as an internal error. Fix: `if buf.len() < 2 + n { return None; }`, plus a fuzz/property test over `parse_cert`.
+`crates/baluard-core/src/hwkey/attest.rs:104`: `&buf[2..2 + n]` with `n` up to 4 but only `buf.len() >= 2` checked. A token (or a malicious USB device posing as one) answering an x5c entry of `30 84` panics the verifier. On desktop the panic kills the `spawn_blocking` task (the enable fails with a join error); on mobile it unwinds across the UniFFI boundary into Kotlin as an internal error. FIXED (2026-10-29, wave 15): the DER TLV reader checks the announced long-form length bytes are present before slicing (`buf.len() < 2 + n` refuses), and the end offset uses `checked_add` so a maximal announced length cannot overflow. parse_cert is total: every truncation of a genuine cert plus length-mangled forms (`30 84`, `30 82 FF`, `30 84 FF FF FF FF`, `30 80`, garbage, empty) return None, and a 300-case xorshift sweep exercises arbitrary bytes. Red-first: the new `tlv_refuses_a_truncated_long_form_length` panicked at exactly attest.rs:104 (`30 84`) before the guard. Suites: attest 13/0, core lib 951/0 (+2).
 
 ### M6. Attestation verifier ignores authData and the attested credential
 
