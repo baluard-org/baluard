@@ -83,6 +83,10 @@ pub fn init_with_nonce(link: &dyn HidLink, nonce: &[u8; 8]) -> Result<DeviceInfo
     let mut resp = link.read()?;
     for _ in 0..MAX_STALE_INIT_FRAMES {
         if resp[1..5] == BROADCAST_CID && resp[5] == CTAPHID_ERROR {
+            let bcnt = ((resp[6] as usize) << 8) | resp[7] as usize;
+            if bcnt < 1 {
+                return Err(CtapHidError::Malformed);
+            }
             return Err(CtapHidError::Hid(resp[8]));
         }
         if resp[1..5] == BROADCAST_CID && resp[5] == CTAPHID_INIT && resp[8..16] == *nonce {
@@ -182,10 +186,18 @@ fn read_response(
         let cmd = report[5];
         match cmd {
             CTAPHID_KEEPALIVE => {
+                if ((report[6] as usize) << 8 | report[7] as usize) < 1 {
+                    return Err(CtapHidError::Malformed);
+                }
                 on_keepalive(report[8]);
                 continue;
             }
-            CTAPHID_ERROR => return Err(CtapHidError::Hid(report[8])),
+            CTAPHID_ERROR => {
+                if ((report[6] as usize) << 8 | report[7] as usize) < 1 {
+                    return Err(CtapHidError::Malformed);
+                }
+                return Err(CtapHidError::Hid(report[8]));
+            }
             c if c == want => {
                 total = ((report[6] as usize) << 8) | report[7] as usize;
                 if total > MAX_MESSAGE {
@@ -313,6 +325,7 @@ mod tests {
         let mut busy = [0u8; 65];
         busy[1..5].copy_from_slice(&BROADCAST_CID);
         busy[5] = CTAPHID_ERROR;
+        busy[6..8].copy_from_slice(&1u16.to_be_bytes());
         busy[8] = 0x06;
         let link = QueueLink::new(vec![Ok(busy)]);
         assert_eq!(init_with_nonce(&link, &nonce), Err(CtapHidError::Hid(0x06)));
@@ -404,6 +417,7 @@ mod tests {
         let mut up = [0u8; 65];
         up[1..5].copy_from_slice(&cid);
         up[5] = CTAPHID_KEEPALIVE;
+        up[6..8].copy_from_slice(&1u16.to_be_bytes());
         up[8] = 2; // user presence needed, first payload byte
         let mut done = [0u8; 65];
         done[1..5].copy_from_slice(&cid);
@@ -423,12 +437,29 @@ mod tests {
         let mut err = [0u8; 65];
         err[1..5].copy_from_slice(&cid);
         err[5] = CTAPHID_ERROR;
+        err[6..8].copy_from_slice(&1u16.to_be_bytes());
         err[8] = 0x06; // channel busy, first payload byte
         let link = QueueLink::new(vec![Ok(err)]);
         let mut ignored = Vec::new();
         assert_eq!(
             cbor(&link, &cid, &[0x04], &mut |_| ignored.push(0u8)),
             Err(CtapHidError::Hid(0x06))
+        );
+    }
+
+    #[test]
+    fn zero_length_status_frames_are_malformed() {
+        // A KEEPALIVE/ERROR frame with BCNT = 0 has no status byte to
+        // read; indexing the padding would invent a code.
+        let cid = [1u8, 2, 3, 4];
+        let mut err = [0u8; 65];
+        err[1..5].copy_from_slice(&cid);
+        err[5] = CTAPHID_ERROR;
+        // [6..8] stay zero: BCNT = 0.
+        let link = QueueLink::new(vec![Ok(err)]);
+        assert_eq!(
+            cbor(&link, &cid, &[0x04], &mut |_| {}),
+            Err(CtapHidError::Malformed)
         );
     }
 

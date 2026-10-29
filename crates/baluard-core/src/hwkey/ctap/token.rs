@@ -6,7 +6,7 @@
 use super::super::attest::PackedAttestation;
 use super::super::fido::{RP_ID, Token, TokenError, TokenInfo};
 use super::apdu::{ApduForm, Transceive};
-use super::ctaphid::HidLink;
+use super::ctaphid::{CtapHidError, HidLink};
 use super::protocol::{ClientError, Ctap2Error, CtapClient};
 use uuid::Uuid;
 
@@ -127,6 +127,9 @@ pub fn map_client_error(error: ClientError) -> TokenError {
         ClientError::Unsupported(message) if message.contains("hmac-secret") => {
             TokenError::NoHmacSecret
         }
+        // CTAPHID channel-busy (0x06) is a busy key; the other HID
+        // protocol codes are transport-class failures.
+        ClientError::Hid(CtapHidError::Hid(0x06)) => TokenError::Busy,
         ClientError::Hid(_) | ClientError::Apdu(_) => TokenError::KeyMissing,
         other => TokenError::Device(other.to_string()),
     }
@@ -163,6 +166,18 @@ impl_token!(NfcToken<T: Transceive>);
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hid_busy_maps_to_busy_not_key_missing() {
+        // An HID ERROR frame carrying channel-busy is a busy key, not a
+        // missing one (H9 consumer half).
+        assert!(matches!(
+            super::map_client_error(ClientError::Hid(
+                crate::hwkey::ctap::ctaphid::CtapHidError::Hid(0x06)
+            )),
+            TokenError::Busy
+        ));
+    }
     use super::*;
     use crate::hwkey::ctap::authenticator::{ModelLink, SoftAuthenticator};
     use crate::hwkey::fido::parse_binding;
