@@ -150,6 +150,11 @@ pub struct RemoteMigrateReport {
 }
 
 impl SyncEngine {
+    /// The signing key this engine will sign commits with, if loaded.
+    pub(crate) fn signing_key(&self) -> Option<&ed25519_dalek::SigningKey> {
+        self.signing_key.as_ref()
+    }
+
     /// Create a new SyncEngine for a vault at the given path.
     /// Loads persisted state machine from disk if available.
     ///
@@ -185,7 +190,7 @@ impl SyncEngine {
         let recovery_signer_path = vault_path.join("meta/recovery-signer.key");
         let signing_key = match Self::load_recovery_signing_key(vault_path, devkey_seal) {
             Ok(Some(key)) => Some(key),
-            Ok(None) => match Self::load_signing_key(vault_path, devkey_seal, None) {
+            Ok(None) => match Self::load_signing_key(vault_path, devkey_seal, Some(device_id)) {
                 Ok(key) => key,
                 Err(e) => {
                     eprintln!("warning: failed to load signing key: {e}");
@@ -194,7 +199,7 @@ impl SyncEngine {
             },
             Err(e) => {
                 eprintln!("warning: failed to load recovery signing key: {e}");
-                match Self::load_signing_key(vault_path, devkey_seal, None) {
+                match Self::load_signing_key(vault_path, devkey_seal, Some(device_id)) {
                     Ok(key) => key,
                     Err(e2) => {
                         eprintln!("warning: failed to load signing key: {e2}");
@@ -3852,10 +3857,20 @@ impl SyncEngine {
         devkey_seal: Option<&[u8; 32]>,
     ) -> Result<Option<ed25519_dalek::SigningKey>, BaluardError> {
         // Fallback: sealed-or-legacy device-privkey file (C1). Sealed files
-        // fail closed without the seal subkey.
+        // fail closed without the seal subkey. SealedHw never opens here:
+        // sync must not tap (the cache serves the key when the vault is
+        // unlocked; cold construction stays unsigned by design).
         let path = vault_path.join("meta/device-privkey.json");
         if !path.exists() {
             return Ok(None);
+        }
+        if crate::vault::device_privkey::file_kind(&path)
+            == crate::vault::device_privkey::PrivkeyFileKind::SealedHw
+        {
+            return Err(SyncError::Git(
+                "signing key is behind the hardware seal; unlock the vault first".into(),
+            )
+            .into());
         }
         let data = crate::vault::device_privkey::read_privkey_file(&path, devkey_seal)
             .map_err(|e| SyncError::Git(format!("read privkey: {e}")))?;
