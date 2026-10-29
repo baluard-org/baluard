@@ -97,7 +97,7 @@ fn tlv(buf: &[u8]) -> Option<Tlv<'_>> {
         (2usize, lb as usize)
     } else {
         let n = (lb & 0x7f) as usize;
-        if n == 0 || n > 4 {
+        if n == 0 || n > 4 || buf.len() < 2 + n {
             return None;
         }
         let mut len = 0usize;
@@ -106,14 +106,15 @@ fn tlv(buf: &[u8]) -> Option<Tlv<'_>> {
         }
         (2 + n, len)
     };
-    if buf.len() < i + len {
+    let end = i.checked_add(len)?;
+    if buf.len() < end {
         return None;
     }
     Some(Tlv {
         tag,
-        body: &buf[i..i + len],
-        raw: &buf[..i + len],
-        rest: &buf[i + len..],
+        body: &buf[i..end],
+        raw: &buf[..end],
+        rest: &buf[end..],
     })
 }
 
@@ -645,6 +646,55 @@ pub(crate) mod test_chain {
 mod tests {
     use super::test_chain::TestChain;
     use super::*;
+
+    #[test]
+    fn tlv_refuses_a_truncated_long_form_length() {
+        // M5: the long-form length read must not slice past the buffer.
+        // 30 84 announces a 4-byte length with none present.
+        assert!(tlv(&[0x30, 0x84]).is_none());
+        assert!(tlv(&[0x30, 0x82, 0x01]).is_none());
+        assert!(tlv(&[0x30, 0x81]).is_none());
+        // Indefinite and oversized length forms are refused, not read.
+        assert!(tlv(&[0x30, 0x80]).is_none());
+        assert!(tlv(&[0x30, 0x85, 1, 2, 3, 4, 5]).is_none());
+        // A maximal announced length must not overflow the bounds add.
+        assert!(tlv(&[0x30, 0x84, 0xFF, 0xFF, 0xFF, 0xFF]).is_none());
+        // A valid long-form length still parses.
+        let ok = tlv(&[0x30, 0x82, 0x00, 0x02, 0xAA, 0xBB]).expect("valid long form");
+        assert_eq!(ok.body, &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn parse_cert_is_total_over_hostile_input() {
+        // M5: hostile x5c entries must verdict, never panic. Sweep every
+        // truncation of a genuine certificate plus length-mangled forms.
+        let c = TestChain::new();
+        for n in 0..c.leaf_der.len() {
+            assert!(parse_cert(&c.leaf_der[..n]).is_none() || n == c.leaf_der.len());
+        }
+        for hostile in [
+            vec![0x30, 0x84],
+            vec![0x30, 0x82, 0xFF],
+            vec![0x30, 0x84, 0xFF, 0xFF, 0xFF, 0xFF],
+            vec![0x30, 0x80],
+            vec![0xFF; 64],
+            vec![],
+        ] {
+            let _ = parse_cert(&hostile);
+        }
+        // Deterministic pseudo-random sweep: any byte pattern must return.
+        let mut x: u32 = 0x9E37_79B9;
+        for len in 0..300usize {
+            let mut buf = Vec::with_capacity(len);
+            for _ in 0..len {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                buf.push((x >> 24) as u8);
+            }
+            let _ = parse_cert(&buf);
+        }
+    }
 
     #[test]
     fn genuine_chain_pins_as_yubico_verified() {
