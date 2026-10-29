@@ -1858,6 +1858,58 @@ mod tests {
         hw_env_restore(_old_env);
     }
 
+    /// While UNLOCKED, SyncEngine::new must serve the signing key from the
+    /// in-memory cache: construction pays zero chip operations and works
+    /// even with no seal subkey handed over (sealed vaults used to re-open
+    /// the file through the chip on every sync, tapping mid-cycle, or
+    /// wedge unsigned without it).
+    #[cfg(feature = "git-sync")]
+    #[test]
+    fn sync_engine_reads_the_signing_key_cache_without_tapping() {
+        use std::sync::atomic::Ordering;
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        crate::hwkey::install(std::sync::Arc::new(CountingTapMock(counter.clone())));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        let ops_after_unlock = counter.load(Ordering::SeqCst);
+        assert!(ops_after_unlock > 0);
+
+        let with_seal = crate::sync::engine::SyncEngine::new(
+            dir.path(),
+            &h.device_id.to_string(),
+            h.devkey_seal().as_ref(),
+        );
+        let cached =
+            crate::vault::handle::cached_device_signing_key(dir.path(), h.device_id).unwrap();
+        let with_seal_key = with_seal.signing_key().unwrap();
+        assert_eq!(with_seal_key.to_bytes(), cached.to_bytes());
+        let without_seal =
+            crate::sync::engine::SyncEngine::new(dir.path(), &h.device_id.to_string(), None);
+        assert_eq!(
+            without_seal.signing_key().unwrap().to_bytes(),
+            cached.to_bytes()
+        );
+        assert_eq!(counter.load(Ordering::SeqCst), ops_after_unlock);
+
+        // After lock the cache is empty: the file fallback must refuse the
+        // sealed-hw file without any chip operation (cold construction
+        // stays unsigned; sync never taps).
+        let seal = h.devkey_seal().unwrap();
+        h.lock();
+        let cold =
+            crate::sync::engine::SyncEngine::new(dir.path(), &h.device_id.to_string(), Some(&seal));
+        assert!(cold.signing_key().is_none());
+        assert_eq!(counter.load(Ordering::SeqCst), ops_after_unlock);
+        hw_env_restore(_old_env);
+    }
+
     /// The phrase path is the rescue: with the token LOST and no hardware
     /// store registered, recovery enrolls a fresh device, the caller seals
     /// that key at birth, and the vault opens on the password alone. The
