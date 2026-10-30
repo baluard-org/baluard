@@ -399,7 +399,15 @@
     "tabContacts": "Contatos",
     "tabOutboxes": "Caixas de saída",
     "tabSpace": "Cofre",
-    "hwTitle": "Proteger com o chip de segurança deste dispositivo",
+        "hwKeyTitle": "Proteger com sua chave de segurança",
+    "hwKeyOn": "Este cofre está protegido por sua chave de segurança.",
+    "hwKeyOff": "Este cofre não está protegido por uma chave de segurança.",
+    "hwKeyEnableTitle": "Ativar a proteção da chave de segurança?",
+    "hwKeyEnableBody": "Um disco ou backup roubado sozinho não poderá mais abrir este cofre, nem mesmo com a senha. Se você perder a chave, precisará da frase de recuperação para abrir este cofre novamente.",
+    "hwKeyDisableTitle": "Desativar a proteção da chave de segurança?",
+    "hwKeyEnabledToast": "A proteção da chave de segurança está ativada.",
+    "hwKeyDisabledToast": "A proteção da chave de segurança está desativada.",
+"hwTitle": "Proteger com o chip de segurança deste dispositivo",
     "hwDesc": "Um disco ou backup roubado sozinho não pode abrir este cofre, nem mesmo com a senha.",
     "hwOn": "Este cofre está protegido pelo chip de segurança.",
     "hwOff": "Este cofre não está protegido pelo chip de segurança.",
@@ -575,7 +583,9 @@
     "hwTouchTimeout": "Nenhum toque foi detectado na chave. Tente novamente.",
     "hwBusy": "A chave de segurança está ocupada em outro aplicativo. Feche-o e tente novamente.",
     "hwKeyWrong": "Esta não é a chave de segurança com a qual este cofre foi protegido.",
-    "hwKeyMissing": "Conecte sua chave de segurança."
+        "hwKeyUvForced": "Esta chave sempre exige sua própria verificação e não pode proteger este cofre.",
+    "hwKeyPinRequired": "Esta chave exige seu PIN para esta operação. Use uma chave sem PIN.",
+"hwKeyMissing": "Conecte sua chave de segurança."
   },
   "categories": {
     "allItems": "Todos os itens",

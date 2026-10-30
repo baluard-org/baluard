@@ -870,11 +870,31 @@ fun SettingsScreen(
                     var hardwareEnabled by remember(vaultPath) { mutableStateOf(false) }
                     var hardwareBusy by remember { mutableStateOf(false) }
                     var hardwareAttestation by remember { mutableStateOf<String?>(null) }
+                    var confirmHardwareEnable by remember { mutableStateOf(false) }
                     LaunchedEffect(vaultPath) {
                         runCatching {
                             val status = Json.parseToJsonElement(vault.hardwareStatus(true)).jsonObject
                             hardwareEnabled = status.str("enabled") == "true"
                             hardwareAttestation = status.str("attestation")?.takeIf { it.isNotEmpty() && it != "null" }
+                        }
+                    }
+                    fun runHardwareChange(want: Boolean) {
+                        hardwareBusy = true
+                        scope.launch {
+                            try {
+                                val response = xyz.actitud.baluard.platform.withSecurityKeyTransport { transport ->
+                                    if (want) vault.hardwareEnable(transport) else vault.hardwareDisable(transport)
+                                }
+                                val json = Json.parseToJsonElement(response).jsonObject
+                                hardwareEnabled = want
+                                hardwareAttestation = json.str("attestation")
+                                    ?.takeIf { it.isNotEmpty() && it != "null" }
+                                Toast.success(t(if (want) "settings.hardwareKeyEnabled" else "settings.hardwareKeyDisabled"))
+                            } catch (e: Exception) {
+                                Toast.error(xyz.actitud.baluard.platform.securityKeyErrorMessage(e))
+                            } finally {
+                                hardwareBusy = false
+                            }
                         }
                     }
                     Row(
@@ -903,34 +923,32 @@ fun SettingsScreen(
                             checked = hardwareEnabled,
                             enabled = !hardwareBusy,
                             onCheckedChange = { want ->
-                                println("BaluardSecKey toggle want=$want busy=$hardwareBusy")
-                                hardwareBusy = true
-                                scope.launch {
-                                    try {
-                                        val response = xyz.actitud.baluard.platform.withSecurityKeyTransport { transport ->
-                                            if (want) {
-                                                vault.hardwareEnable(transport)
-                                            } else {
-                                                vault.hardwareDisable(transport)
-                                            }
-                                        }
-                                        val json = Json.parseToJsonElement(response).jsonObject
-                                        hardwareEnabled = want
-                                        hardwareAttestation = json.str("attestation")
-                                            ?.takeIf { it.isNotEmpty() && it != "null" }
-                                        Toast.success(t(if (want) "settings.hardwareKeyEnabled" else "settings.hardwareKeyDisabled"))
-                                    } catch (e: Exception) {
-                                        println("BaluardSecKey failed: ${e::class.simpleName}: ${e.message}")
-                                        Toast.error(xyz.actitud.baluard.platform.securityKeyErrorMessage(e))
-                                    } finally {
-                                        hardwareBusy = false
-                                    }
-                                }
+                                if (want) confirmHardwareEnable = true else runHardwareChange(false)
                             },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                             ),
+                        )
+                    }
+                    if (confirmHardwareEnable) {
+                        AlertDialog(
+                            onDismissRequest = { confirmHardwareEnable = false },
+                            title = { Text(t("settings.hardwareKeyEnableTitle")) },
+                            text = { Text(t("settings.hardwareKeyEnableBody")) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    confirmHardwareEnable = false
+                                    runHardwareChange(true)
+                                }) {
+                                    Text(t("common.confirm"))
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmHardwareEnable = false }) {
+                                    Text(t("common.cancel"))
+                                }
+                            },
                         )
                     }
                     BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))

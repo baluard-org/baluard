@@ -14,6 +14,8 @@ export const ERROR_PATTERNS = [
   { pattern: /not tapped in time|touch was cancelled/i, key: "errors.hwTouchTimeout" },
   { pattern: /security key is busy/i, key: "errors.hwBusy" },
   { pattern: /not the security key/i, key: "errors.hwKeyWrong" },
+  { pattern: /uv-forced/i, key: "errors.hwKeyUvForced" },
+  { pattern: /pin-required|requires its PIN/i, key: "errors.hwKeyPinRequired" },
   { pattern: /no security key is plugged|connect a compatible security key/i, key: "errors.hwKeyMissing" },
   { pattern: /hardware unavailable|hardware seal|security chip|secure enclave|tpm/i, key: "errors.hardwareUnavailable" },
   { pattern: /invalid password|incorrect password|password incorrect/i, key: "errors.invalidPassword" },
