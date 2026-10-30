@@ -30,6 +30,8 @@ Same class on the admin path: `load_identity_cache` (`handle.rs:4820`) opens the
 
 Fix: when the device file is hw-sealed, every device-local secret that unlocks vault material must be under the hw-combined key. Simplest: move the identity seed (and the passphrase-mode identity wrap key) INSIDE the hw-sealed device-privkey inner JSON, or derive `identity_wrap_key` from `HKDF(hw_secret || devkey_seal)` and re-seal the seed in `enable_hw_seal` / `disable_hw_seal` / `rotate_seal_key`. Add a test that opens the member identity with the password alone after enable and expects failure.
 
+FIXED (2026-10-29, wave 1, commit `0bfeaae8`): identity artifacts now bind to HKDF of the hardware content key, with eager member-seed rebinds at every re-key site and lazy identity healing. The member tail performs a real hardware open and feeds the signing-key cache; regression tests prove password-only identity access fails after enable and that rotation, disable, consent changes, and quick unlock preserve the binding.
+
 ## HIGH
 
 ### H1. SyncEngine ignores the signing-key cache: every sync re-opens the sealed file (tap or unsigned commit)
@@ -238,20 +240,16 @@ Verification: runtime 72/0 (+1), UniFFI 26/0, daemon 195/0 across 11 suites, sha
 
 ## Test gaps
 
-- No test that `SyncEngine::new` on an hw-sealed vault obtains a signing key without calling the backend (H1). A tap mock that panics on `derive` after unlock would catch it.
-- No test that a `Hardware*` error leaves both unlock counters untouched (H2), or that a PIN escrow survives a hardware failure (H5).
-- No test counts assertions per operation. A counting tap mock would pin: unlock = 1, KEK unlock = 1, password change = 2 (after M2), and failed unlock = 1 on a multi-device vault (H4).
-- No member-shape (flipped vault, team member) hw test at all; C1 would have shown up as "identity opens without the chip".
-- No concurrency test for enable vs password change (M1).
-- Attestation: no negative tests for authData mismatch (wrong rpIdHash, credential id mismatch, AAGUID mismatch), no truncated-DER fuzzing (M5), no self-attestation acceptance (M7).
-- Typed-error mapping tests exist for the mock token only; nothing asserts the open path preserves them (H3).
-- Software-authenticator mirroring (bugs the model cannot catch): KEEPALIVE/ERROR offset in fixtures (H9); makeCredential AT|ED layout misparse asserted as `None` (M11); the model parses the client's key agreement with the client's own `cose_p256_public` (`authenticator.rs:345`) and encrypts with the client's own `SharedSecret`, so v2 `IV||ct` framing and v1 zero-IV encryption are only self-checked; getInfo carries no options map, so `clientPin`/`alwaysUv` parsing never runs through the real client; `ModelLink` ignores CID and sequence (`authenticator.rs:527-555`); the model always returns key 1, never sets AT in assertions, never sends 91xx; its x5c is `[0x30, 0x00]`, so `CtapToken` → `create_binding` → attestation verify never runs end to end.
-- Mobile/desktop: SettingsModal effect cleanup (H10); Kotlin unlock-error → localized copy mapping (H11); autofill with a sealed vault, cold path and merged vaults (H12); a non-`BaluardException` thrown from a transport callback; NFC tag loss then re-tap; signing-key cache cleared on drop/close (M13); `isHardwareError` per error string (M14); `LAST_TRANSPORT_ERROR` override order (L14).
-- Needed: depth-bomb and huge-length fuzzing of `Value::decode`, `parse_assertion`, `parse_make_credential`; byte-exact request vectors captured from libfido2 or a real YubiKey (getInfo, clientPIN getKeyAgreement, getAssertion with hmac-secret); an external KAT for protocol-2 encrypt/decrypt.
+The hermetic gaps associated with C1, H1-H12, M1-M16, and L1-L18 are closed by their wave regressions. Remaining evidence work:
+
+- The software authenticator still uses a placeholder x5c certificate, so its end-to-end tests do not prove `CtapToken` -> `FidoStore::create_binding` -> attestation verification against a genuine chain. Add a genuine-chain model fixture and explicit UnknownVendor/Invalid cases.
+- Byte-exact request vectors still need capture from libfido2 or a real YubiKey for getInfo, clientPIN getKeyAgreement, makeCredential, and getAssertion with hmac-secret. This guards against client/model co-deviance.
+- Slice 4D must re-run the recovery/rotation audit legs through UniFFI and close the mobile providers join-flow seal-at-birth residual.
+- Physical checks remain for NFC/USB lifecycle behavior, wrong and multiple keys, cancellation/removal, desktop HID, and coexistence with other FIDO consumers. Hermetic tests cannot prove these.
 
 ## Open questions
 
-1. C1 scope: which keys does the admin passphrase-mode identity unwrap on a flipped vault? If any collection key or the SMK, C1 applies to admin devices too.
-2. Is a device-key rotation at enable (H6) acceptable for 1.0, given it touches the roster and needs a sync to propagate, or should 1.0 ship the honest-copy variant?
-3. Should a hardware failure during unlock ever fall through to the F1 cross-device heal? The review assumes never.
-4. Does ctap-hid-fido2 3.6 refuse to open when two FIDO HID devices are present, or pick one? Needs a hardware check (M10).
+1. RESOLVED: C1 applies to member devices and to passphrase-mode admin identity material. Both are now hardware-bound; keystore-mode admin identities were already outside the password-only path.
+2. RESOLVED: device-key rotation at enable shipped in wave 8. It uses the old-key-signed roster commit, staged sibling files, unlock-time tear healing, and no previous-key schema field.
+3. RESOLVED: a failed device-file open does not fall through to candidate heals within the same unlock. Candidates share one open; successful heals use the same opened keys and refresh the signing cache under the healed device id.
+4. CODE RESOLVED, PHYSICAL CONFIRMATION PENDING: ctap-hid-fido2 3.6 refuses its multi-device factory path, so the desktop adapter enumerates unique HID paths itself. Enrollment requires exactly one responsive key; derivation advances after UnknownCredential or transport-level Device errors. A real two-token run remains in the physical checklist.
