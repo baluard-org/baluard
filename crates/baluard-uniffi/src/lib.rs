@@ -351,6 +351,9 @@ pub async fn derive_kek_for_vault(
 
 pub(crate) fn map_unlock_error(error: baluard_core::error::BaluardError) -> BaluardError {
     match &error {
+        baluard_core::error::BaluardError::Vault(
+            baluard_core::error::VaultError::PasswordMismatch,
+        ) => BaluardError::WrongPassword,
         baluard_core::error::BaluardError::Vault(baluard_core::error::VaultError::Corrupt(m))
             if m.contains("master password incorrect") =>
         {

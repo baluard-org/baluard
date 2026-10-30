@@ -8115,11 +8115,24 @@ impl VaultState {
             .devkey_seal()
             .await
             .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
-        if baluard_core::hwkey::available().is_none() {
+        let privkey_path = self.vault_path.join("meta/device-privkey.json");
+        let file = std::fs::read(&privkey_path).map_err(|e| format!("reading hardware seal: {e}"))?;
+        if baluard_core::vault::device_privkey::file_kind(&privkey_path)
+            == baluard_core::vault::device_privkey::PrivkeyFileKind::SealedHw
+        {
+            let backend = baluard_core::vault::device_privkey::hw_backend_of(&file)
+                .map_err(|e| e.to_string())?;
+            if baluard_core::hwkey::store_for(&backend).is_none() {
+                return Err(if backend == "fido2" {
+                    "Connect the security key that guards this vault.".to_string()
+                } else {
+                    "This device has no usable security chip.".to_string()
+                });
+            }
+        } else if baluard_core::hwkey::available().is_none() {
             return Err("This device has no usable security chip.".to_string());
         }
         let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
-        let privkey_path = self.vault_path.join("meta/device-privkey.json");
         tokio::task::spawn_blocking(move || {
             baluard_core::vault::device_privkey::disable_hw_seal(&privkey_path, &seal, device_id)
         })
@@ -8137,11 +8150,24 @@ impl VaultState {
             .devkey_seal()
             .await
             .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
-        if baluard_core::hwkey::available().is_none() {
+        let privkey_path = self.vault_path.join("meta/device-privkey.json");
+        let file = std::fs::read(&privkey_path).map_err(|e| format!("reading hardware seal: {e}"))?;
+        if baluard_core::vault::device_privkey::file_kind(&privkey_path)
+            == baluard_core::vault::device_privkey::PrivkeyFileKind::SealedHw
+        {
+            let backend = baluard_core::vault::device_privkey::hw_backend_of(&file)
+                .map_err(|e| e.to_string())?;
+            if baluard_core::hwkey::store_for(&backend).is_none() {
+                return Err(if backend == "fido2" {
+                    "Connect the security key that guards this vault.".to_string()
+                } else {
+                    "This device has no usable security chip.".to_string()
+                });
+            }
+        } else if baluard_core::hwkey::available().is_none() {
             return Err("This device has no usable security chip.".to_string());
         }
         let device_id = baluard_core::vault::device_privkey::read_device_id(&self.vault_path);
-        let privkey_path = self.vault_path.join("meta/device-privkey.json");
         let changed = tokio::task::spawn_blocking(move || {
             baluard_core::vault::device_privkey::set_hw_seal_consent(
                 &privkey_path,

@@ -20,6 +20,8 @@ pub enum ApduError {
     StatusWord([u8; 2]),
     /// The token replied with malformed framing (empty body, bad lengths).
     Malformed,
+    /// The token stayed in its keepalive state beyond the bounded wait.
+    Timeout,
 }
 
 /// Platform byte-exchange: send one APDU, receive the raw response body plus
@@ -164,7 +166,7 @@ fn collect_response(
             [0x91, _] => {
                 keepalives += 1;
                 if keepalives > MAX_KEEPALIVE_POLLS {
-                    return Err(ApduError::Malformed);
+                    return Err(ApduError::Timeout);
                 }
                 std::thread::sleep(KEEPALIVE_POLL_DELAY);
                 let (reply, next) = trans.transceive(&[0x80, 0x11, 0x00, 0x00, 0x00])?;
@@ -317,7 +319,7 @@ mod tests {
         }
         assert_eq!(
             collect_response(&Busy, Vec::new(), [0x91, 0x00]),
-            Err(ApduError::Malformed)
+            Err(ApduError::Timeout)
         );
     }
 

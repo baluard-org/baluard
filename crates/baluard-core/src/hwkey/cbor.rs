@@ -151,11 +151,13 @@ impl Value {
             0 => Ok((Value::Unsigned(arg), rest)),
             1 => Ok((Value::Negative(-1 - (arg as i64)), rest)),
             2 => {
-                let (data, rest) = take(arg as usize, rest)?;
+                let len = usize::try_from(arg).map_err(|_| DecodeError)?;
+                let (data, rest) = take(len, rest)?;
                 Ok((Value::ByteString(data.to_vec()), rest))
             }
             3 => {
-                let (data, rest) = take(arg as usize, rest)?;
+                let len = usize::try_from(arg).map_err(|_| DecodeError)?;
+                let (data, rest) = take(len, rest)?;
                 let text = std::str::from_utf8(data).map_err(|_| DecodeError)?;
                 Ok((Value::TextString(text.to_string()), rest))
             }
@@ -436,6 +438,16 @@ mod tests {
         // the limit existed; it must decode as a plain error instead.
         let bomb = vec![0x81u8; 7609];
         assert!(Value::decode(&bomb).is_err());
+    }
+
+    #[test]
+    fn oversized_length_headers_fail_without_truncating() {
+        let mut bytes = vec![0x5b];
+        bytes.extend_from_slice(&u64::MAX.to_be_bytes());
+        assert!(Value::decode(&bytes).is_err());
+        let mut text = vec![0x7b];
+        text.extend_from_slice(&u64::MAX.to_be_bytes());
+        assert!(Value::decode(&text).is_err());
     }
 
     #[test]
