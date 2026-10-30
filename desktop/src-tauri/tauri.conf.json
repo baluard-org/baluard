@@ -1,7 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Baluard",
-  "version": "0.1.0",
   "identifier": "xyz.actitud.baluard",
   "build": {
     "frontendDist": "../dist",
