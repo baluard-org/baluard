@@ -84,6 +84,7 @@ pub enum ClientError {
     Ctap2(Ctap2Error),
     /// The token cannot serve the PIN-less hmac-secret seal.
     Unsupported(String),
+    NoHmacSecret,
     Malformed(String),
 }
 
@@ -94,6 +95,7 @@ impl std::fmt::Display for ClientError {
             ClientError::Apdu(e) => write!(f, "security key NFC error: {e:?}"),
             ClientError::Ctap2(e) => write!(f, "{e}"),
             ClientError::Unsupported(m) => write!(f, "security key unsupported: {m}"),
+            ClientError::NoHmacSecret => write!(f, "security key has no hmac-secret"),
             ClientError::Malformed(m) => write!(f, "security key response malformed: {m}"),
         }
     }
@@ -372,7 +374,7 @@ impl<'a> CtapClient<'a> {
             return Err(ClientError::Unsupported("no FIDO2 support".into()));
         }
         if !info.extensions.iter().any(|e| e == "hmac-secret") {
-            return Err(ClientError::Unsupported("no hmac-secret extension".into()));
+            return Err(ClientError::NoHmacSecret);
         }
         if info.pin_protocols.is_empty() {
             return Err(ClientError::Unsupported("no pinUvAuth protocol".into()));
@@ -516,7 +518,7 @@ impl<'a> CtapClient<'a> {
         if let Some(s) = salt2 {
             salt.extend_from_slice(s);
         }
-        let salt_enc = secrets.encrypt(&salt);
+        let salt_enc = secrets.encrypt(&salt).map_err(ClientError::Malformed)?;
         let salt_auth = secrets.authenticate(&salt_enc);
         let mut hmac_secret = vec![
             // The extension input carries the CLIENT keyAgreement COSE

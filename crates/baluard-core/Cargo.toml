@@ -54,7 +54,7 @@ zeroize.workspace = true
 # Pure-Rust CTAP2 client (slices 4A-4D of the security-key plan): the transport-
 # agnostic backend phones use, where hidapi cannot exist. aes+cbc serve the
 # pinUvAuth salt encryption only; both are stdlib-class RustCrypto crates.
-aes = { version = "0.8", optional = true }
+aes = { version = "0.8", optional = true, features = ["zeroize"] }
 cbc = { version = "0.1", optional = true, features = ["alloc"] }
 octocrab.workspace = true
 secrecy.workspace = true

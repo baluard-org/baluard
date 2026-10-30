@@ -67,7 +67,7 @@ pub trait Token: Send + Sync {
     /// vault, carrying the attestation the enroll path verifies.
     fn make_credential(&self, vault_id: Uuid) -> Result<PackedAttestation, TokenError>;
     /// Tap the token and derive the hmac-secret output for `salt`.
-    fn get_secret(&self, credential_id: &[u8], salt: &[u8; 32]) -> Result<[u8; 32], TokenError>;
+    fn get_secret(&self, credential_id: &[u8], salt: &[u8; 32]) -> Result<zeroize::Zeroizing<[u8; 32]>, TokenError>;
 }
 
 pub struct FidoStore {
@@ -103,9 +103,13 @@ pub fn parse_binding(binding: &str) -> Result<Vec<u8>, BaluardError> {
         .split_once(':')
         .ok_or_else(|| VaultError::Corrupt("fido binding missing credential id".into()))?;
     Uuid::parse_str(id).map_err(|_| VaultError::Corrupt("fido binding vault id".into()))?;
-    base64::engine::general_purpose::STANDARD
+    let credential = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| VaultError::Corrupt(format!("fido binding credential id: {e}")).into())
+        .map_err(|e| VaultError::Corrupt(format!("fido binding credential id: {e}")))?;
+    if credential.len() > 1023 {
+        return Err(VaultError::Corrupt("fido binding credential id is too long".into()).into());
+    }
+    Ok(credential)
 }
 
 fn map_token(e: TokenError) -> BaluardError {
@@ -169,6 +173,12 @@ impl super::HardwareKeyStore for FidoStore {
         }
         self.preflight()?;
         let att = self.token.make_credential(vault_id).map_err(map_token)?;
+        if att.credential_id.len() > 1023 {
+            return Err(VaultError::Metadata(
+                "security key returned an oversized credential id".into(),
+            )
+            .into());
+        }
         // Plan policy: a cryptographically invalid attestation chain is
         // a hard refuse; unknown-vendor chains are allowed with copy at
         // the surface layer.
@@ -207,7 +217,7 @@ impl super::HardwareKeyStore for FidoStore {
         let mut salt = [0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut salt);
         let secret = self.token.get_secret(&cred, &salt).map_err(map_token)?;
-        Ok((super::Handshake(salt.to_vec()), Zeroizing::new(secret)))
+        Ok((super::Handshake(salt.to_vec()), secret))
     }
 
     fn derive(
@@ -227,7 +237,7 @@ impl super::HardwareKeyStore for FidoStore {
             .map_err(|_| VaultError::Corrupt("fido handshake is not a 32-byte salt".into()))?;
         self.preflight()?;
         let secret = self.token.get_secret(&cred, &salt).map_err(map_token)?;
-        Ok(Zeroizing::new(secret))
+        Ok(secret)
     }
 
     fn delete_binding(&self, _binding: &str) -> Result<(), BaluardError> {
@@ -368,7 +378,7 @@ mod real {
             &self,
             credential_id: &[u8],
             salt: &[u8; 32],
-        ) -> Result<[u8; 32], TokenError> {
+        ) -> Result<zeroize::Zeroizing<[u8; 32]>, TokenError> {
             let found = devices();
             if found.is_empty() {
                 return Err(TokenError::KeyMissing);
@@ -389,7 +399,7 @@ mod real {
                         .ok_or_else(|| TokenError::Device("no assertion returned".into()))?;
                     for e in &a.extensions {
                         if let Gext::HmacSecret(Some(out)) = e {
-                            return Ok(*out);
+                            return Ok(zeroize::Zeroizing::new(*out));
                         }
                     }
                     Err(TokenError::Device(
@@ -556,7 +566,7 @@ mod tests {
             &self,
             credential_id: &[u8],
             salt: &[u8; 32],
-        ) -> Result<[u8; 32], TokenError> {
+        ) -> Result<zeroize::Zeroizing<[u8; 32]>, TokenError> {
             self.fail_err()?;
             let creds = self.creds.lock().unwrap();
             let secret = creds
@@ -566,12 +576,22 @@ mod tests {
             let mut h = Sha256::new();
             h.update(secret);
             h.update(salt);
-            Ok(h.finalize().into())
+            Ok(zeroize::Zeroizing::new(h.finalize().into()))
         }
     }
 
     fn store(tok: MockToken) -> FidoStore {
         FidoStore::new(Box::new(tok))
+    }
+
+    #[test]
+    fn oversized_credential_ids_are_refused() {
+        let binding = format!(
+            "fido:{}:{}",
+            uuid::Uuid::new_v4(),
+            base64::engine::general_purpose::STANDARD.encode([7u8; 1024])
+        );
+        assert!(parse_binding(&binding).is_err());
     }
 
     #[test]

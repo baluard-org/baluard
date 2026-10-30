@@ -4792,6 +4792,7 @@ impl VaultHandle {
             // outcomes prove the password, and stale-keywrap/unpaired
             // metadata failures are not the user's input.
             let err = result.err().unwrap();
+            clear_cached_device_signing_key(&self.path, self.device_id);
             if crate::error::is_password_failure(&err) {
                 let _ = self.record_failed_attempt();
             }
@@ -4818,6 +4819,7 @@ impl VaultHandle {
                 Ok(())
             }
             Err(e) => {
+                clear_cached_device_signing_key(&self.path, self.device_id);
                 // Only a canary rejection is a credential guess.
                 if crate::error::is_password_failure(&e) {
                     let _ = self.record_failed_attempt();
@@ -5503,7 +5505,11 @@ impl VaultHandle {
     }
 
     pub fn unlock_with_kek(&mut self, kek: &[u8; 32]) -> Result<(), BaluardError> {
-        self.unlock_tail(kek, None)
+        let result = self.unlock_tail(kek, None);
+        if result.is_err() {
+            clear_cached_device_signing_key(&self.path, self.device_id);
+        }
+        result
     }
 
     /// Legacy Contact view (docs/plan-legacy-contact.md): unlock a

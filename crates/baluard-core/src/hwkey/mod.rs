@@ -296,17 +296,20 @@ pub fn probe_status() -> HwCapability {
 /// Shared-secret derivation used by the v2-hw seal:
 /// `HKDF-SHA256(ikm = hw_secret || kek_subkey, info = seal-type bytes)`.
 /// Public so the seal layer and its tests share one construction.
-pub fn combine_seal_inputs(hw_secret: &[u8; 32], kek_subkey: &[u8; 32]) -> [u8; 32] {
+pub fn combine_seal_inputs(
+    hw_secret: &[u8; 32],
+    kek_subkey: &[u8; 32],
+) -> Zeroizing<[u8; 32]> {
     use hkdf::Hkdf;
     use sha2::Sha256;
     let mut ikm = Zeroizing::new([0u8; 64]);
     ikm[..32].copy_from_slice(hw_secret);
     ikm[32..].copy_from_slice(kek_subkey);
     let hk = Hkdf::<Sha256>::new(None, &*ikm);
-    let mut okm = [0u8; 32];
+    let mut okm = Zeroizing::new([0u8; 32]);
     hk.expand(
         crate::vault::device_privkey::SEAL_TYPE_HW.as_bytes(),
-        &mut okm,
+        &mut *okm,
     )
     .expect("32-byte okm");
     okm

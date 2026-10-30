@@ -68,6 +68,10 @@ fun UnlockScreen(
     val scope = rememberCoroutineScope()
     val biometric = remember { Biometric() }
     var biometricEnrolled by remember(vaultPath) { mutableStateOf(biometric.isEnrolled(vaultPath)) }
+    var securityKeyRequired by remember(vaultPath) { mutableStateOf(false) }
+    LaunchedEffect(vaultPath) {
+        securityKeyRequired = authViewModel.requiresSecurityKey(vaultPath)
+    }
 
     fun finishUnlock() {
         // The unlock is done; the master password must not outlive the
@@ -213,7 +217,7 @@ fun UnlockScreen(
                     leadingIcon = Icons.Default.Lock,
                 )
 
-                if (state is AuthState.Unlocking) {
+                if (state is AuthState.Unlocking && securityKeyRequired) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = t("login.securityKeyHold"),

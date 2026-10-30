@@ -8,13 +8,35 @@
 
 use aes::Aes256;
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, block_padding::NoPadding};
-use hkdf::Hkdf;
 use p256::ecdh::EphemeralSecret;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 type CbcEnc = cbc::Encryptor<Aes256>;
+
+fn derive_protocol_two(ikm: &[u8]) -> Zeroizing<Vec<u8>> {
+    use hmac::{Hmac, Mac};
+    let mut extract = <Hmac<Sha256> as Mac>::new_from_slice(&[0u8; 32]).expect("any key size");
+    extract.update(ikm);
+    let prk = Zeroizing::new(extract.finalize().into_bytes());
+    let mut out = Zeroizing::new(vec![0u8; 64]);
+    for (info, offset) in [
+        (b"CTAP2 HMAC key".as_slice(), 0),
+        (b"CTAP2 AES key".as_slice(), 32),
+    ] {
+        let mut expand = <Hmac<Sha256> as Mac>::new_from_slice(&prk).expect("any key size");
+        expand.update(info);
+        expand.update(&[1]);
+        out[offset..offset + 32].copy_from_slice(&expand.finalize().into_bytes());
+    }
+    out
+}
+
+fn sha256_secret(input: &[u8]) -> Zeroizing<Vec<u8>> {
+    let digest = Zeroizing::new(Sha256::digest(input));
+    Zeroizing::new(digest.to_vec())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
@@ -73,37 +95,37 @@ fn cose_p256(public: &p256::PublicKey) -> Vec<u8> {
 /// AES-256-CBC with no padding. hmac-secret plaintexts (32/64-byte salts) are
 /// always block-aligned, so padding never applies. The output is wiped on
 /// drop because decryption yields the hmac-secret output.
-fn aes_cbc(key: &[u8], iv: &[u8; 16], data: &[u8], encrypt: bool) -> Zeroizing<Vec<u8>> {
-    debug_assert!(data.len() % 16 == 0);
+fn aes_cbc(
+    key: &[u8],
+    iv: &[u8; 16],
+    data: &[u8],
+    encrypt: bool,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    if data.len() % 16 != 0 {
+        return Err("plaintext not block-aligned".into());
+    }
     let mut out = Zeroizing::new(vec![0u8; data.len()]);
     if encrypt {
         CbcEnc::new(key.into(), iv.into())
             .encrypt_padded_b2b_mut::<NoPadding>(data, &mut out)
-            .expect("aligned cbc");
+            .map_err(|_| "aligned cbc".to_string())?;
     } else {
         cbc::Decryptor::<Aes256>::new(key.into(), iv.into())
             .decrypt_padded_b2b_mut::<NoPadding>(data, &mut out)
-            .expect("aligned cbc");
+            .map_err(|_| "aligned cbc".to_string())?;
     }
-    out
+    Ok(out)
 }
 
 impl SharedSecret {
     /// Token-side constructor (the software authenticator model): same
     /// derivations as [`SharedSecret::new`] from the already-computed ECDH
     /// output Z.
+    #[cfg(test)]
     pub fn from_shared_z(protocol: Protocol, z: &[u8]) -> Result<Self, String> {
         let secret = match protocol {
-            Protocol::One => Zeroizing::new(Sha256::digest(z).to_vec()),
-            Protocol::Two => {
-                let hk = Hkdf::<Sha256>::new(Some(&[0u8; 32]), z);
-                let mut out = vec![0u8; 64];
-                hk.expand(b"CTAP2 HMAC key", &mut out[..32])
-                    .map_err(|e| e.to_string())?;
-                hk.expand(b"CTAP2 AES key", &mut out[32..])
-                    .map_err(|e| e.to_string())?;
-                Zeroizing::new(out)
-            }
+            Protocol::One => sha256_secret(z),
+            Protocol::Two => derive_protocol_two(z),
         };
         Ok(Self {
             protocol,
@@ -131,17 +153,8 @@ impl SharedSecret {
         let client_public = client.public_key();
         let client_cose = cose_p256(&client_public);
         let secret = match protocol {
-            Protocol::One => Zeroizing::new(Sha256::digest(shared.as_slice()).to_vec()),
-            Protocol::Two => {
-                let hk = Hkdf::<Sha256>::new(Some(&[0u8; 32]), shared.as_slice());
-                let mut out = vec![0u8; 64];
-                // Two expands from one extract, per the spec's key split.
-                hk.expand(b"CTAP2 HMAC key", &mut out[..32])
-                    .map_err(|e| e.to_string())?;
-                hk.expand(b"CTAP2 AES key", &mut out[32..])
-                    .map_err(|e| e.to_string())?;
-                Zeroizing::new(out)
-            }
+            Protocol::One => sha256_secret(shared.as_slice()),
+            Protocol::Two => derive_protocol_two(shared.as_slice()),
         };
         Ok(Self {
             protocol,
@@ -176,16 +189,18 @@ impl SharedSecret {
 
     /// encrypt(key, demPlaintext): protocol 1 uses a zero IV; protocol 2
     /// prepends a fresh random IV to the ciphertext.
-    pub fn encrypt(&self, plaintext: &[u8]) -> Vec<u8> {
+    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, String> {
         match self.protocol {
-            Protocol::One => aes_cbc(&self.secret, &[0u8; 16], plaintext, true).to_vec(),
+            Protocol::One => {
+                aes_cbc(&self.secret, &[0u8; 16], plaintext, true).map(|out| out.to_vec())
+            }
             Protocol::Two => {
                 let mut iv = [0u8; 16];
                 rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut iv);
                 let mut out = Vec::with_capacity(16 + plaintext.len());
                 out.extend_from_slice(&iv);
-                out.extend_from_slice(&aes_cbc(&self.secret[32..], &iv, plaintext, true));
-                out
+                out.extend_from_slice(&aes_cbc(&self.secret[32..], &iv, plaintext, true)?);
+                Ok(out)
             }
         }
     }
@@ -197,7 +212,7 @@ impl SharedSecret {
                 if ciphertext.is_empty() || ciphertext.len() % 16 != 0 {
                     return Err("ciphertext not block-aligned".into());
                 }
-                Ok(aes_cbc(&self.secret, &[0u8; 16], ciphertext, false))
+                aes_cbc(&self.secret, &[0u8; 16], ciphertext, false)
             }
             Protocol::Two => {
                 if ciphertext.len() < 16 + 16 || (ciphertext.len() - 16) % 16 != 0 {
@@ -205,7 +220,7 @@ impl SharedSecret {
                 }
                 let (iv, ct) = ciphertext.split_at(16);
                 let iv: [u8; 16] = iv.try_into().expect("16-byte iv");
-                Ok(aes_cbc(&self.secret[32..], &iv, ct, false))
+                aes_cbc(&self.secret[32..], &iv, ct, false)
             }
         }
     }
@@ -235,13 +250,23 @@ mod tests {
     ];
 
     #[test]
+    fn unaligned_cbc_input_is_an_error_not_a_release_panic() {
+        let err = aes_cbc(&[0u8; 32], &[0u8; 16], &[0u8; 15], true).unwrap_err();
+        assert!(err.contains("aligned"));
+    }
+
+    #[test]
     fn aes_cbc_matches_nist_vector() {
         assert_eq!(
-            aes_cbc(&NIST_KEY, &NIST_IV, &NIST_PT, true).as_slice(),
+            aes_cbc(&NIST_KEY, &NIST_IV, &NIST_PT, true)
+                .unwrap()
+                .as_slice(),
             NIST_CT
         );
         assert_eq!(
-            aes_cbc(&NIST_KEY, &NIST_IV, &NIST_CT, false).as_slice(),
+            aes_cbc(&NIST_KEY, &NIST_IV, &NIST_CT, false)
+                .unwrap()
+                .as_slice(),
             NIST_PT
         );
     }
@@ -260,7 +285,7 @@ mod tests {
             let ss = SharedSecret::new(protocol, &token_key()).unwrap();
             for salt_len in [32usize, 64] {
                 let salt: Vec<u8> = (0..salt_len).map(|i| (i * 7 + 3) as u8).collect();
-                let sealed = ss.encrypt(&salt);
+                let sealed = ss.encrypt(&salt).unwrap();
                 assert_eq!(
                     sealed.len(),
                     if protocol == Protocol::Two {
@@ -284,7 +309,7 @@ mod tests {
 
         // Protocol 2 must be random-IV (identical inputs -> distinct outputs).
         let ss2 = SharedSecret::new(Protocol::Two, &token_key()).unwrap();
-        let (a, b) = (ss2.encrypt(&salt), ss2.encrypt(&salt));
+        let (a, b) = (ss2.encrypt(&salt).unwrap(), ss2.encrypt(&salt).unwrap());
         assert_ne!(a, b);
         assert_eq!(ss2.decrypt(&a).unwrap().as_slice(), salt);
         assert_eq!(ss2.decrypt(&b).unwrap().as_slice(), salt);
