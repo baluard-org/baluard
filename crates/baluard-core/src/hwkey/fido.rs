@@ -264,13 +264,10 @@ mod real {
     use ctap_hid_fido2::{Cfg, FidoKeyHidFactory};
     use uuid::Uuid;
 
-    // Consumed from slice 2's daemon registry wiring.
-    #[allow(dead_code)]
     pub struct CtapToken;
 
     // ctap-hid-fido2 3.6.0 returns anyhow text errors; the embedded CTAP
     // status code is the only machine-readable signal it offers.
-    #[allow(dead_code)]
     pub(super) fn classify_message(msg: &str) -> TokenError {
         if msg.contains("0x2F CTAP2_ERR_USER_ACTION_TIMEOUT") {
             TokenError::Timeout

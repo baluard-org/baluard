@@ -1117,8 +1117,6 @@ internal open class UniffiVTableCallbackInterfaceMobileHardwareTransport(
 
 
 
-
-
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1200,8 +1198,6 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_avatar_get(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_avatar_set(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
-    ): Long
-    fun uniffi_baluard_uniffi_fn_method_mobilevault_change_master_password_with_security_key(`ptr`: Pointer,`oldPassword`: RustBuffer.ByValue,`newPassword`: RustBuffer.ByValue,`transport`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_catalog_list(`ptr`: Pointer,
     ): Long
@@ -1707,8 +1703,6 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_avatar_set(
     ): Short
-    fun uniffi_baluard_uniffi_checksum_method_mobilevault_change_master_password_with_security_key(
-    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_list(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_set(
@@ -2112,9 +2106,6 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_avatar_set() != 44545.toShort()) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_change_master_password_with_security_key() != 33669.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_list() != 10134.toShort()) {
@@ -3979,8 +3970,6 @@ public interface MobileVaultInterface {
      */
     suspend fun `avatarSet`(`payload`: kotlin.String)
 
-    suspend fun `changeMasterPasswordWithSecurityKey`(`oldPassword`: kotlin.String, `newPassword`: kotlin.String, `transport`: MobileHardwareTransport)
-
     /**
      * Optional plaintext catalog (admin-curated collection names):
      * `{catalog: [{collection_id, name}]}`.
@@ -5073,28 +5062,6 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_avatar_set(
                 thisPtr,
                 FfiConverterString.lower(`payload`),
-            )
-        },
-        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
-        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
-        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
-        // lift function
-        { Unit },
-
-        // Error FFI converter
-        BaluardException.ErrorHandler,
-    )
-    }
-
-
-    @Throws(BaluardException::class)
-    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `changeMasterPasswordWithSecurityKey`(`oldPassword`: kotlin.String, `newPassword`: kotlin.String, `transport`: MobileHardwareTransport) {
-        return uniffiRustCallAsync(
-        callWithPointer { thisPtr ->
-            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_change_master_password_with_security_key(
-                thisPtr,
-                FfiConverterString.lower(`oldPassword`),FfiConverterString.lower(`newPassword`),FfiConverterTypeMobileHardwareTransport.lower(`transport`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
