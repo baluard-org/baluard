@@ -60,7 +60,7 @@ fn map_runtime_hardware_error(error: String) -> BaluardError {
         || error.contains("security chip")
         || error.contains("chip is unavailable");
     match (hardware_failure, detail) {
-        (true, Some(detail)) => BaluardError::Vault { detail },
+        (true, Some(detail)) => BaluardError::SecurityKey { detail },
         _ => error.into(),
     }
 }
@@ -69,7 +69,7 @@ fn map_core_hardware_error(error: baluard_core::error::BaluardError) -> BaluardE
     let detail = take_transport_error();
     if baluard_core::error::is_hardware_error(&error) {
         if let Some(detail) = detail {
-            return BaluardError::Vault { detail };
+            return BaluardError::SecurityKey { detail };
         }
     }
     crate::map_unlock_error(error)
@@ -378,6 +378,9 @@ mod tests {
         let wrong =
             map_core_hardware_error(baluard_core::error::VaultError::PasswordMismatch.into());
         assert!(matches!(wrong, BaluardError::WrongPassword));
+        let timeout =
+            map_core_hardware_error(baluard_core::error::VaultError::HardwareTouchTimeout.into());
+        assert!(matches!(timeout, BaluardError::SecurityKey { .. }));
 
         record_transport_error("Turn on NFC and retry".into());
         let wrong_runtime = map_runtime_hardware_error("master password incorrect".into());
@@ -388,7 +391,7 @@ mod tests {
         record_transport_error("Turn on NFC and retry".into());
         let probe = map_runtime_hardware_error("Connect a compatible security key.".into());
         assert!(
-            matches!(probe, BaluardError::Vault { detail } if detail == "Turn on NFC and retry")
+            matches!(probe, BaluardError::SecurityKey { detail } if detail == "Turn on NFC and retry")
         );
     }
 

@@ -53,6 +53,10 @@ pub enum BaluardError {
     #[error("vault error: {detail}")]
     Vault { detail: String },
 
+    /// A security key was required, missing, rejected, busy, or cancelled.
+    #[error("security key: {detail}")]
+    SecurityKey { detail: String },
+
     /// The vault's device key is sealed under a hardware security key:
     /// autofill cannot serve it from this process (no key transport), and
     /// unlocking the app does not change that. A 1.0 policy refusal, not
@@ -85,8 +89,26 @@ impl From<baluard_core::generator::GenerateError> for BaluardError {
     }
 }
 
+fn security_key_detail(error: &baluard_core::error::BaluardError) -> Option<String> {
+    if baluard_core::error::is_hardware_error(error)
+        || matches!(
+            error,
+            baluard_core::error::BaluardError::Vault(
+                baluard_core::error::VaultError::Metadata(detail)
+            ) if detail.starts_with("security key:")
+        )
+    {
+        Some(error.to_string())
+    } else {
+        None
+    }
+}
+
 impl From<baluard_core::error::BaluardError> for BaluardError {
     fn from(e: baluard_core::error::BaluardError) -> Self {
+        if let Some(detail) = security_key_detail(&e) {
+            return Self::SecurityKey { detail };
+        }
         match e {
             baluard_core::error::BaluardError::Crypto(ce) => Self::Crypto {
                 detail: ce.to_string(),

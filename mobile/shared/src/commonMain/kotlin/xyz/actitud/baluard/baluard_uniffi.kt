@@ -8755,6 +8755,17 @@ sealed class BaluardException: kotlin.Exception() {
     }
 
     /**
+     * A security key was required, missing, rejected, busy, or cancelled.
+     */
+    class SecurityKey(
+
+        val `detail`: kotlin.String
+        ) : BaluardException() {
+        override val message
+            get() = "detail=${ `detail` }"
+    }
+
+    /**
      * The vault's device key is sealed under a hardware security key:
      * autofill cannot serve it from this process (no key transport), and
      * unlocking the app does not change that. A 1.0 policy refusal, not
@@ -8823,11 +8834,14 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
             7 -> BaluardException.Vault(
                 FfiConverterString.read(buf),
                 )
-            8 -> BaluardException.SecurityKeyRequired()
-            9 -> BaluardException.Creation(
+            8 -> BaluardException.SecurityKey(
                 FfiConverterString.read(buf),
                 )
-            10 -> BaluardException.InvalidInput(
+            9 -> BaluardException.SecurityKeyRequired()
+            10 -> BaluardException.Creation(
+                FfiConverterString.read(buf),
+                )
+            11 -> BaluardException.InvalidInput(
                 FfiConverterString.read(buf),
                 )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
@@ -8866,6 +8880,11 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
                 + FfiConverterString.allocationSize(value.`detail`)
             )
             is BaluardException.Vault -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+            is BaluardException.SecurityKey -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
                 + FfiConverterString.allocationSize(value.`detail`)
@@ -8923,17 +8942,22 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
-            is BaluardException.SecurityKeyRequired -> {
+            is BaluardException.SecurityKey -> {
                 buf.putInt(8)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is BaluardException.SecurityKeyRequired -> {
+                buf.putInt(9)
                 Unit
             }
             is BaluardException.Creation -> {
-                buf.putInt(9)
+                buf.putInt(10)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.InvalidInput -> {
-                buf.putInt(10)
+                buf.putInt(11)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }

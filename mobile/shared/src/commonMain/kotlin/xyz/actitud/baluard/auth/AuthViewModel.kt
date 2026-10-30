@@ -171,27 +171,13 @@ class AuthViewModel(private val repo: VaultRepository) {
 }
 
 /**
- * One error-to-outcome map for every unlock path. The Rust error strings
- * are stable English constants; the UI never string-matches them itself.
+ * UniFFI supplies the outcome type. Only its detail text is mapped to
+ * localized copy; unrelated errors never become security-key failures.
  */
-internal fun classifyUnlockError(e: Throwable): UnlockResult {
-    val detail = e.message.orEmpty()
-    return when {
-        detail.contains("wrong password", ignoreCase = true) ||
-            detail.contains("master password incorrect", ignoreCase = true) ->
-            UnlockResult.WrongPassword
-        detail.contains("security key", ignoreCase = true) ||
-            detail.contains("security chip", ignoreCase = true) ||
-            detail.contains("chip is unavailable", ignoreCase = true) ||
-            detail.contains("not tapped", ignoreCase = true) ||
-            detail.contains("timed out", ignoreCase = true) ||
-            detail.contains("cancel", ignoreCase = true) ||
-            detail.contains("busy", ignoreCase = true) ||
-            detail.contains("NFC", ignoreCase = true) ||
-            detail.contains("USB", ignoreCase = true) ->
-            UnlockResult.SecurityKey(
-                xyz.actitud.baluard.platform.securityKeyErrorMessage(e),
-            )
-        else -> UnlockResult.Failure(xyz.actitud.baluard.i18n.t("login.unlockFailed"))
-    }
+internal fun classifyUnlockError(e: Throwable): UnlockResult = when (e) {
+    is xyz.actitud.baluard.BaluardException.WrongPassword -> UnlockResult.WrongPassword
+    is xyz.actitud.baluard.BaluardException.SecurityKey -> UnlockResult.SecurityKey(
+        xyz.actitud.baluard.platform.securityKeyErrorMessage(e),
+    )
+    else -> UnlockResult.Failure(xyz.actitud.baluard.i18n.t("login.unlockFailed"))
 }
