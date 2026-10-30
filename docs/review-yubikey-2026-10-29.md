@@ -126,7 +126,7 @@ FIXED (2026-10-29, wave 23): runtime `VaultState` now owns cache teardown throug
 
 ### M14. Desktop treats security-key failures as a wrong password
 
-`desktop/src/lib/utils.js:160-163` `isHardwareError` does not match "no security key is plugged", "not tapped in time", "busy", "not the security key", or "touch was cancelled", so `LoginScreen.jsx:176` plays the wrong-password shake and a 2 s brute lock while the toast says "Plug in your security key". With H3 most of these never arrive anyway; fix both together and add a vitest per error string.
+FIXED (2026-10-29, wave 24): `isHardwareError` now recognizes `security key` alongside the existing chip/hardware patterns, so `LoginScreen.handleUnlock` returns before the red shake and 2-second brute-lock for every typed Hardware* outcome and for transport detail wrapped as `metadata error: security key: ...`. A red-first table covers all nine core Hardware variant messages (missing/wrong key, timeout, cancel, busy, touch-required, unavailable/consent/auth-failed) as both strings and Error objects, plus the metadata-wrapped transport form; `master password incorrect` remains false. Suites: utils 44/44, desktop 295/295 (+11), git diff --check clean.
 
 ### M15. Android NFC/USB transport lifecycle
 
