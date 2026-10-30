@@ -1,17 +1,6 @@
 # Plan: security key seal (FIDO2 hmac-secret backend)
 
-> Status: DRAFT v4 (2026-10-28), external-review round applied, scope ruled: Android 1.0 ships NFC + USB-OTG; iOS is a post-1.0 fast-follow; autofill refuses on hw-sealed vaults. v3 was desktop-only; v4 pulls
-> the phone into 1.0 (slices 4A-4D): the mobile app becomes the NFC reader and the same seal,
-> consent, and attestation contracts carry over. The review round corrected the 4A protocol scope
-> (hmac-secret needs the pinUvAuth shared-secret layer, not three bare commands), named the
-> runtime registry change the per-operation session model requires, replaced byte-transcript
-> tests with a software authenticator model plus an RNG seam, fixed the NFC gesture (tap and
-> hold — no second sensor touch), and decided the autofill stance. v1 designed a PIV backend; the target
-> hardware turned out to be a Security Key C NFC (FIDO-only, 5.7.4, genuine per Yubico's
-> verification service), so the design retargeted at the FIDO2 hmac-secret extension. Round two
-> removed the PIN design entirely (hmac-secret works PIN-less), answered the silent-mode question
-> (no knob exists; the tap is the model), and tightened the consent contract, binding format, and
-> attestation policy. Builds on `docs/plan-hardware-backed-keys.md`.
+> Status: IMPLEMENTATION v5 (2026-10-30): slices 0 through 4C are landed in code and peer-reviewed, including the complete C/H/M/L/N finding program and residual R1-R3 fixes through commit `75d2b37`. Android ships NFC and USB-OTG for 1.0; iOS remains a post-1.0 fast-follow. Slice 4D and the slice-5 physical acceptance checklist remain open. Existing hardware seals require re-enrollment after the credential-bound AAD format change. v1 designed a PIV backend; the target hardware is a Security Key C NFC (FIDO-only, 5.7.4), so the design retargeted at FIDO2 hmac-secret. Builds on `docs/plan-hardware-backed-keys.md`.
 
 ## Why this, and what we steal
 
@@ -310,7 +299,7 @@ ctap-hid-fido2 vectors pin the crypto. EXIT GATE: the new client runs over CTAPH
 desktop against the reference key — real firmware contact BEFORE any phone work, so
 Kotlin/Swift is never where protocol bugs surface. An adapter-parity test asserts both adapters
 parse the same recorded makeCredential response into byte-identical PackedAttestation.
-CODE COMPLETE (2026-10-28; physical-key exit gate still pending): `hwkey/ctap/` now carries the
+LANDED IN CODE (2026-10-30; physical-key exit gate still pending): `hwkey/ctap/` now carries the
 canonical CBOR codec, pinUvAuth protocols 1+2, ISO 7814-4/APDU and CTAPHID framing, the four-command
 client, the software authenticator, and `CtapToken` behind the existing `Token` seam. The hermetic
 suite covers end-to-end enroll/derive, salt tampering, wrong credentials, algorithm and capability
@@ -322,7 +311,7 @@ one non-discoverable credential and requires two taps. NFC is also wired through
 extended or chained APDUs selected from platform capability. Review hardening added independent
 protocol-1/2 saltAuth vectors, U2F_V2 selection followed by a CTAP2 getInfo proof, correct 61xx and
 91xx response handling, secret zeroization/redacted debug output, bounded CTAPHID messages, and
-stale-frame recovery; 56 hermetic tests pass with the physical-key gate still pending.
+stale-frame recovery, credential-bound AAD, bounded decoding, and canonical request encoding; 68 hermetic CTAP tests pass with the physical-key gate still pending.
 (4B) platform transports, the runtime store model, and the UniFFI surface. The runtime change
 the review forced into the open: the global registry (a OnceLock map) is consulted INSIDE the
 unlock tail and password-change paths, and MobileVault has no hw surface at all today — "call
@@ -358,14 +347,15 @@ POST-1.0 fast-follow that reuses 4A-4D unchanged (open question 6). The mobile s
 (`fido2`) and the SAME `fido:` binding format as desktop, so the seal AAD is identical and the
 transports are interchangeable on a device that has both (state.rs's match arm and the trait
 doc currently disagree on `fido` vs `fido2` — fixed in this slice).
-CODE COMPLETE (2026-10-28; Android physical NFC/USB gates pending): the implementation uses one
+LANDED IN CODE (2026-10-30; Android physical NFC/USB gates pending): the implementation uses one
 serialized process-wide operation lock plus an RAII transport scope rather than thread-locals,
 because runtime hardware work hops into spawn_blocking. The UniFFI callback carries NFC APDUs or
 65-byte CTAPHID reports and is always shut down by scope exit and Kotlin finally. Android reader
-mode is lazy, retains one IsoDep across all APDUs, selects NFC-A/B, and chooses extended or chained
-framing from IsoDep capability. USB filtering requires a Yubico non-boot HID interface with 64-byte
-IN/OUT endpoints, handles permission and cleanup, and converts Android's 64-byte reports at the
-CTAPHID boundary. Settings, password and quick unlock select the key path before the KDF, mobile
+mode starts when the operation transport is created, retains one IsoDep across all APDUs, selects
+NFC-A/B, evicts a failed tag for a clean retry, and chooses extended or chained framing from IsoDep
+capability. USB accepts generic FIDO devices after validating usage page 0xF1D0 from the HID report
+descriptor, requires a non-boot interface with 64-byte IN/OUT endpoints, handles permission and
+cleanup, and converts Android's 64-byte reports at the CTAPHID boundary. Settings, password and quick unlock select the key path before the KDF, mobile
 autofill refuses sealed vaults with explicit open-in-app copy, and password changes perform all
 hardware work before metadata writes with old-file restoration on later write failure. Sync never
 taps: an unlock caches the device's Ed25519 signing key in memory (cleared on lock) and
@@ -418,10 +408,10 @@ FLAG_READER_SKIP_NDEF_CHECK so the system tag dispatcher cannot steal the tap), 
 to KeyMissing/Cancelled with retry copy, timeout and cancel handling, quick-unlock copy that
 says "biometric, then hold the key" so the second factor never reads as a bug, and the
 autofill-refusal copy from the threat model. Error sanitizer maps the typed outcomes; i18n in
-StringsEn/Es/Pt under the parity tests. (4D) mobile parity closure: the providers join flow
+StringsEn/Es/Pt under the parity tests. LANDED IN CODE (2026-10-30): Android Settings and unlock flows carry the enroll confirmation, transport-specific touch guidance, typed and localized outcomes, quick-unlock key preflight, and honest sealed-vault autofill refusal in en/es/pt. The full review program subsequently hardened these flows, the transports, and the shared runtime; physical acceptance remains slice 5. (4D) PENDING mobile parity closure: the providers join flow
 adopts the slice-4 proof-then-seal privkey write (closing the recorded plaintext residual), the
 feature-parity matrix gains the hardware row, and the hermetic audit legs re-run through the
-UniFFI surface (dependent on 4B's store model) to pin the mobile path. (5) hardware-in-loop on
+UniFFI surface (dependent on 4B's store model) to pin the mobile path. (5) PENDING hardware-in-loop on
 the reference device: enroll, unlock with tap, wrong-key rejection, pull-mid-touch, cancel
 mid-touch, disable, re-enroll, rotation re-seal, phrase recovery unplugged, gpg-agent/browser
 WebAuthn running alongside, a second token
@@ -429,8 +419,7 @@ inserted, and — importantly — a token that already carries a user PIN and ot
 passkeys, confirming Baluard disturbs nothing. The same checklist runs on the PHONE over NFC:
 NFC enroll, NFC unlock (foreground), mid-session removal, timeout, wrong key, the same token that
 carries browser passkeys on the phone platform, the autofill refusal copy on a hw-sealed
-vault, and Android USB-OTG unlock (the per-plug permission dialog accepted). iOS legs run with
-the post-1.0 fast-follow.
+vault, and Android USB-OTG unlock (the per-plug permission dialog accepted). USB-OTG enrollment and verified attestation have passed on the reference Samsung and YubiKey; the remaining legs require a fresh build and re-enrollment after the AAD format change. The desktop HID gate has not run because no token was attached to the workstation. iOS legs run with the post-1.0 fast-follow.
 
 ## Test bar
 
