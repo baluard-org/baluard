@@ -11384,7 +11384,7 @@ pub(crate) fn cache_device_signing_key(vault_path: &Path, device_id: Uuid, keys:
         );
 }
 
-pub(crate) fn cached_device_signing_key(
+pub fn cached_device_signing_key(
     vault_path: &Path,
     device_id: Uuid,
 ) -> Option<ed25519_dalek::SigningKey> {
@@ -11402,6 +11402,15 @@ pub(crate) fn clear_cached_device_signing_key(vault_path: &Path, device_id: Uuid
         .lock()
         .expect("device signing key cache")
         .remove(&(vault_path.to_path_buf(), device_id));
+}
+
+/// Drop every signing key cached for a vault whose runtime session ended.
+pub fn clear_cached_device_signing_keys_for_vault(vault_path: &Path) {
+    DEVICE_SIGNING_KEYS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("device signing key cache")
+        .retain(|(path, _), _| path != vault_path);
 }
 
 /// Parse device private keys from JSON string.

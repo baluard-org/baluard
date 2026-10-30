@@ -137,6 +137,15 @@ impl std::fmt::Display for QuickUnlockError {
     }
 }
 
+impl Drop for VaultState {
+    fn drop(&mut self) {
+        // The runtime state owns the session lifecycle; temporary core
+        // handles (reprompt, migration) must not clear another session's
+        // cache when they drop.
+        baluard_core::vault::handle::clear_cached_device_signing_keys_for_vault(&self.vault_path);
+    }
+}
+
 impl VaultState {
     /// Create a new empty state pointing at a vault directory.
     pub fn new(vault_path: PathBuf) -> Self {
