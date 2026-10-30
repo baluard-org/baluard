@@ -176,10 +176,7 @@ impl ProviderConfig {
         }
         let insecure = std::env::var("BALUARD_ALLOW_INSECURE_INSTANCE").is_ok();
         // Strip userinfo, query and fragment: keep scheme://host[:port]/path.
-        let after_scheme = url
-            .split_once("://")
-            .map(|(_, rest)| rest)
-            .unwrap_or(url);
+        let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
         let authority_path = after_scheme.split(['?', '#']).next().unwrap_or("");
         // The authority ends at the first '/'; the host is what follows
         // the LAST '@' (userinfo cannot contain '/').
@@ -202,7 +199,6 @@ impl ProviderConfig {
         };
         format!("{scheme}{authority}")
     }
-
 
     /// Effective client_secret for web-flow token exchange: explicit
     /// override, then the `BALUARD_<PROVIDER>_CLIENT_SECRET` env var, then

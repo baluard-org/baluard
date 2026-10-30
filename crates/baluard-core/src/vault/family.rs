@@ -622,8 +622,7 @@ mod tests {
         let mut expired = crate::vault::members::load_ownership_contest(&path).unwrap();
         expired.ask_initiated_at =
             crate::vault::members::unix_now_pub().saturating_sub(31 * 24 * 3600);
-        expired.window_until =
-            crate::vault::members::unix_now_pub().saturating_sub(24 * 3600);
+        expired.window_until = crate::vault::members::unix_now_pub().saturating_sub(24 * 3600);
         let contest_file = path.join("meta/contests/ownership-claim.json");
         std::fs::write(&contest_file, serde_json::to_vec(&expired).unwrap()).unwrap();
         handle.ownership_claim(claimant.id).unwrap();
@@ -698,8 +697,7 @@ mod tests {
         // claim falls through to a fresh gated arm — ownership never
         // moved.
         assert!(
-            err.to_string()
-                .contains("confirmed but not executed"),
+            err.to_string().contains("confirmed but not executed"),
             "{err}"
         );
         assert_ne!(

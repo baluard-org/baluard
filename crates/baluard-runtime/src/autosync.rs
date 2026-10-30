@@ -750,7 +750,8 @@ impl AutoSyncHandle {
                     // coalescing; firing here would defeat the debounce.
                     if g.state == AutoSyncState::Dirty && g.debounce.is_none() {
                         drop(g);
-                        self.fire_sync(device_id.clone(), generation, SYNC_OP_TIMEOUT).await;
+                        self.fire_sync(device_id.clone(), generation, SYNC_OP_TIMEOUT)
+                            .await;
                         break;
                     }
                 }

@@ -210,7 +210,10 @@ pub fn binding_tag_for(vault_id: Uuid, consent: HwConsent) -> String {
 pub fn binding_vault_id(binding: &str) -> Option<Uuid> {
     if let Some(rest) = binding.strip_prefix("fido:") {
         // fido:<vault_id>:<opaque credential id>
-        return rest.split(':').next().and_then(|id| Uuid::parse_str(id).ok());
+        return rest
+            .split(':')
+            .next()
+            .and_then(|id| Uuid::parse_str(id).ok());
     }
     binding
         .strip_prefix("baluard-hwc:")
@@ -254,13 +257,22 @@ pub fn store_for(backend_id: &str) -> Option<Arc<dyn HardwareKeyStore>> {
     if hw_disabled() {
         return None;
     }
-    hw_store().read().expect("hw store lock").get(backend_id).cloned()
+    hw_store()
+        .read()
+        .expect("hw store lock")
+        .get(backend_id)
+        .cloned()
 }
 
 /// Every installed backend, registry order. Status surfaces list these;
 /// callers still probe before use.
 pub fn installed_all() -> Vec<Arc<dyn HardwareKeyStore>> {
-    hw_store().read().expect("hw store lock").values().cloned().collect()
+    hw_store()
+        .read()
+        .expect("hw store lock")
+        .values()
+        .cloned()
+        .collect()
 }
 
 /// The default keystore: the first installed backend probing available.
@@ -270,9 +282,9 @@ pub fn available() -> Option<Arc<dyn HardwareKeyStore>> {
     if hw_disabled() {
         return None;
     }
-    installed_all().into_iter().find(|s| {
-        matches!(s.probe(), HwCapability::Available { .. })
-    })
+    installed_all()
+        .into_iter()
+        .find(|s| matches!(s.probe(), HwCapability::Available { .. }))
 }
 
 /// Probe for status surfaces: reports the kill-switch and unavailable
@@ -296,10 +308,7 @@ pub fn probe_status() -> HwCapability {
 /// Shared-secret derivation used by the v2-hw seal:
 /// `HKDF-SHA256(ikm = hw_secret || kek_subkey, info = seal-type bytes)`.
 /// Public so the seal layer and its tests share one construction.
-pub fn combine_seal_inputs(
-    hw_secret: &[u8; 32],
-    kek_subkey: &[u8; 32],
-) -> Zeroizing<[u8; 32]> {
+pub fn combine_seal_inputs(hw_secret: &[u8; 32], kek_subkey: &[u8; 32]) -> Zeroizing<[u8; 32]> {
     use hkdf::Hkdf;
     use sha2::Sha256;
     let mut ikm = Zeroizing::new([0u8; 64]);
@@ -476,7 +485,10 @@ mod tests {
             let mut h = Sha256::new();
             h.update(b"b");
             h.update(binding.as_bytes());
-            Ok((Handshake(vec![0x04, 0x01]), Zeroizing::new(h.finalize().into())))
+            Ok((
+                Handshake(vec![0x04, 0x01]),
+                Zeroizing::new(h.finalize().into()),
+            ))
         }
         fn derive(
             &self,

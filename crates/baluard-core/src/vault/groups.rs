@@ -275,8 +275,8 @@ pub fn list_group_files(vault_path: &Path) -> Result<Vec<GroupFile>, BaluardErro
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let bytes = std::fs::read(&path)
-            .map_err(|e| VaultError::Metadata(format!("group read: {e}")))?;
+        let bytes =
+            std::fs::read(&path).map_err(|e| VaultError::Metadata(format!("group read: {e}")))?;
         if bytes.len() > MAX_GROUP_FILE_BYTES {
             return Err(VaultError::InvalidOperation(
                 "A group file is too large to process.".into(),
@@ -292,10 +292,9 @@ pub fn list_group_files(vault_path: &Path) -> Result<Vec<GroupFile>, BaluardErro
             .into());
         }
         if path.file_stem().and_then(|x| x.to_str()) != Some(file.id.to_string().as_str()) {
-            return Err(VaultError::InvalidOperation(
-                "A group file does not match its id.".into(),
-            )
-            .into());
+            return Err(
+                VaultError::InvalidOperation("A group file does not match its id.".into()).into(),
+            );
         }
         out.push(file);
     }
@@ -916,8 +915,7 @@ mod tests {
         // leaver's gkwrap live (prune_member). The strict walk must
         // error instead of skipping.
         let p = group_file_path(&path, &file.id);
-        let mut damaged: GroupFile =
-            serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        let mut damaged: GroupFile = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
         damaged.gk_wrapped = serde_json::json!({"not": "a wrap"});
         let leaver = Uuid::new_v4();
         damaged.members.push(leaver);

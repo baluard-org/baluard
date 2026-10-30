@@ -8,9 +8,9 @@
 //! The wait is a social control: a modified client ignores it, and the
 //! plan says so. Real denial is Root Key rotation, not a record.
 
+use base64::Engine as _;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use hmac::{Hmac, Mac};
-use base64::Engine as _;
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
@@ -198,8 +198,9 @@ fn verify_fields(
         .map_err(|e| VaultError::Corrupt(format!("legacy signature hex: {e}")))?;
     let sig = Signature::from_slice(&sig_bytes)
         .map_err(|_| VaultError::Corrupt("invalid legacy signature".into()))?;
-    signature::verify(verifying_key, &tagged_payload(tag, fields), &sig)
-        .map_err(|_| VaultError::Corrupt("legacy record: invalid owner signature (tampered?)".into()))?;
+    signature::verify(verifying_key, &tagged_payload(tag, fields), &sig).map_err(|_| {
+        VaultError::Corrupt("legacy record: invalid owner signature (tampered?)".into())
+    })?;
     Ok(())
 }
 
@@ -233,10 +234,7 @@ pub fn sign_record(record: &mut LegacyRecord, lk: &SigningKey) -> Result<(), Bal
 
 /// Verify a record against the kit's `LK` public. Returns the parsed
 /// verifying key reuse so callers can chain alive-record checks.
-pub fn verify_record(
-    record: &LegacyRecord,
-    lk_public: &[u8; 32],
-) -> Result<(), BaluardError> {
+pub fn verify_record(record: &LegacyRecord, lk_public: &[u8; 32]) -> Result<(), BaluardError> {
     let sig = record
         .owner_signature
         .as_deref()
@@ -384,8 +382,8 @@ pub fn open_layer(
         .map_err(|e| VaultError::Corrupt(format!("legacy layer nonce: {e}")))?;
     let ct = hex::decode(ct_hex)
         .map_err(|e| VaultError::Corrupt(format!("legacy layer ciphertext: {e}")))?;
-    let tag_bytes = hex::decode(tag_hex)
-        .map_err(|e| VaultError::Corrupt(format!("legacy layer tag: {e}")))?;
+    let tag_bytes =
+        hex::decode(tag_hex).map_err(|e| VaultError::Corrupt(format!("legacy layer tag: {e}")))?;
     if nonce_bytes.len() != 12 || tag_bytes.len() != 16 {
         return Err(VaultError::Corrupt("legacy layer lengths".into()).into());
     }
@@ -443,8 +441,8 @@ fn normalize_armor(text: &str) -> String {
 /// normalized header bytes as AAD so the letter cannot be altered
 /// silently. Wrong passphrase and corruption are indistinguishable.
 pub fn seal_kit(letter: &str, body: &KitBody, passphrase: &str) -> Result<String, BaluardError> {
-    let body_json = serde_json::to_vec(body)
-        .map_err(|e| VaultError::Metadata(format!("kit body: {e}")))?;
+    let body_json =
+        serde_json::to_vec(body).map_err(|e| VaultError::Metadata(format!("kit body: {e}")))?;
     let params = kdf::create_params(KdfProfile::DesktopStd);
     let kek = kdf::derive_kek(passphrase, &params)
         .map_err(|e| VaultError::Metadata(format!("kit kdf: {e}")))?;
@@ -457,14 +455,20 @@ pub fn seal_kit(letter: &str, body: &KitBody, passphrase: &str) -> Result<String
     if !aad_letter.ends_with('\n') {
         aad_letter.push('\n');
     }
-    let envelope = aead::encrypt(&kek, &body_json, aad_letter.as_bytes(), &nonce, EnvelopeHeader {
-        version: 1,
-        alg_id: crate::ALG_AES_256_GCM,
-        key_epoch: 0,
-        nonce_counter: 0,
-        update_seq: 0,
-        tier: None,
-    })
+    let envelope = aead::encrypt(
+        &kek,
+        &body_json,
+        aad_letter.as_bytes(),
+        &nonce,
+        EnvelopeHeader {
+            version: 1,
+            alg_id: crate::ALG_AES_256_GCM,
+            key_epoch: 0,
+            nonce_counter: 0,
+            update_seq: 0,
+            tier: None,
+        },
+    )
     .map_err(|e| VaultError::Metadata(format!("kit seal: {e}")))?;
 
     let sealed = serde_json::json!({
@@ -534,9 +538,18 @@ pub fn open_kit(armor: &str, passphrase: &str) -> Result<KitBody, BaluardError> 
         .map_err(|_| VaultError::Corrupt("wrong passphrase or damaged file".into()))?;
     let params = KdfParams {
         profile: KdfProfile::DesktopStd,
-        memory_kib: kdf_json.get("memory_kib").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-        time_cost: kdf_json.get("time_cost").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-        parallelism: kdf_json.get("parallelism").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        memory_kib: kdf_json
+            .get("memory_kib")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        time_cost: kdf_json
+            .get("time_cost")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        parallelism: kdf_json
+            .get("parallelism")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
         salt,
     };
     let kek = kdf::derive_kek(passphrase, &params)
@@ -590,7 +603,9 @@ pub fn derive_phase(
     }
     // No activity signal: the silence counts from the arm day, so a
     // never-written heartbeat cannot shorten the wait below the window.
-    let latest = last_activity_day.unwrap_or(record.created_day).max(record.created_day);
+    let latest = last_activity_day
+        .unwrap_or(record.created_day)
+        .max(record.created_day);
     let silence = now_day.saturating_sub(latest);
     if silence >= record.window_days {
         LegacyPhase::Open
@@ -601,7 +616,9 @@ pub fn derive_phase(
 
 /// Load a synced owner record from `meta/legacy/<kit_id>.json`.
 pub fn load_record(vault_path: &Path, kit_id: &str) -> Result<Option<LegacyRecord>, BaluardError> {
-    let path = vault_path.join("meta/legacy").join(format!("{kit_id}.json"));
+    let path = vault_path
+        .join("meta/legacy")
+        .join(format!("{kit_id}.json"));
     if !path.exists() {
         return Ok(None);
     }
@@ -639,7 +656,9 @@ pub fn save_layer(vault_path: &Path, kit_id: &str, packed: &str) -> Result<(), B
 
 /// Load the sealed layer blob.
 pub fn load_layer(vault_path: &Path, kit_id: &str) -> Result<Option<String>, BaluardError> {
-    let path = vault_path.join("meta/legacy").join(format!("{kit_id}.layer"));
+    let path = vault_path
+        .join("meta/legacy")
+        .join(format!("{kit_id}.layer"));
     if !path.exists() {
         return Ok(None);
     }
@@ -818,7 +837,13 @@ pub fn rewrap_after_rotation(
         // The layer holds the Root Key itself, so rotation replaces its
         // plaintext: the old blob opens to a key that no longer decrypts
         // anything, and re-sealing it would brick the contact's recovery.
-        let new_packed = seal_layer(&ek, new_root_key, &record.vault_id, &store.kit_id, new_epoch)?;
+        let new_packed = seal_layer(
+            &ek,
+            new_root_key,
+            &record.vault_id,
+            &store.kit_id,
+            new_epoch,
+        )?;
         save_layer(vault_path, &store.kit_id, &new_packed)?;
         record.epoch = new_epoch;
         record.seq += 1;
@@ -847,7 +872,9 @@ pub fn save_alive(vault_path: &Path, alive: &AliveRecord) -> Result<(), BaluardE
 
 /// Load the heartbeat; None when none was ever written.
 pub fn load_alive(vault_path: &Path, kit_id: &str) -> Result<Option<AliveRecord>, BaluardError> {
-    let path = vault_path.join("meta/legacy").join(format!("{kit_id}.alive"));
+    let path = vault_path
+        .join("meta/legacy")
+        .join(format!("{kit_id}.alive"));
     if !path.exists() {
         return Ok(None);
     }
@@ -950,11 +977,7 @@ pub struct ArmOutcome {
 /// then restore the store that existed before this attempt (replace
 /// re-arms after a close; deleting it would erase the previous kit's
 /// letter and LK seed). `prior` None removes a fresh store.
-fn rollback_arm(
-    vault_path: &Path,
-    kit_id: &str,
-    prior: Option<&[u8]>,
-) -> Result<(), BaluardError> {
+fn rollback_arm(vault_path: &Path, kit_id: &str, prior: Option<&[u8]>) -> Result<(), BaluardError> {
     remove_artifacts(vault_path, kit_id)?;
     let record_path = vault_path
         .join("meta/legacy")
@@ -991,10 +1014,7 @@ pub async fn arm(
         return Err(VaultError::Locked.into());
     }
     if window_days > 365 {
-        return Err(VaultError::InvalidOperation(
-            "legacy window: at most 365 days".into(),
-        )
-        .into());
+        return Err(VaultError::InvalidOperation("legacy window: at most 365 days".into()).into());
     }
     let root: [u8; 64] = *handle.unlocked().root()?.as_bytes();
     let epoch = handle.unlocked().current_epoch;
@@ -1089,7 +1109,13 @@ pub async fn arm(
 
     let title = format!("Baluard legacy contact ({})", &kit_id[..8]);
     match provider
-        .add_deploy_key(token, &remote.owner, &remote.repo, &title, &dk.public_openssh)
+        .add_deploy_key(
+            token,
+            &remote.owner,
+            &remote.repo,
+            &title,
+            &dk.public_openssh,
+        )
         .await
     {
         Ok(forge_key_id) => {
@@ -1153,7 +1179,9 @@ pub fn heartbeat(
             .map_err(|_| VaultError::Corrupt("legacy store seed length".into()))?,
     );
     let today = today_day();
-    let last_seq = load_alive(vault_path, &store.kit_id)?.map(|a| a.seq).unwrap_or(0);
+    let last_seq = load_alive(vault_path, &store.kit_id)?
+        .map(|a| a.seq)
+        .unwrap_or(0);
     if let Some(existing) = load_alive(vault_path, &store.kit_id)? {
         if today.saturating_sub(existing.day) <= HEARTBEAT_REFRESH_DAYS {
             return Ok(false);
@@ -1296,10 +1324,9 @@ pub fn resend(
         return Err(VaultError::Corrupt("legacy record missing".into()).into());
     };
     if record.state != LegacyState::Armed {
-        return Err(VaultError::InvalidOperation(
-            "this kit was closed; make a new one".into(),
-        )
-        .into());
+        return Err(
+            VaultError::InvalidOperation("this kit was closed; make a new one".into()).into(),
+        );
     }
     Ok((store.kit_armor, store.kit_id))
 }
@@ -1307,22 +1334,19 @@ pub fn resend(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::types::mock::MockProvider;
     use crate::providers::types::ProviderToken;
+    use crate::providers::types::mock::MockProvider;
 
     /// Open a fresh vault for the owner-op tests: create, drop the
     /// ceremony handle, re-open, unlock.
     fn open_vault(dir: &tempfile::TempDir) -> crate::vault::handle::VaultHandle {
         let password = "test-password-123";
-        let (handle, _secrets) = crate::vault::creation::VaultCreator::new(
-            dir.path(),
-            password,
-            "test-device",
-        )
-        .kdf_profile(crate::types::KdfProfile::MobileLow)
-        .initialize_git(false)
-        .execute()
-        .unwrap();
+        let (handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(dir.path(), password, "test-device")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(false)
+                .execute()
+                .unwrap();
         drop(handle);
         let mut handle = crate::vault::handle::VaultHandle::open(dir.path()).unwrap();
         handle.unlock(password).unwrap();
@@ -1420,15 +1444,9 @@ mod tests {
         // Denied: forge key removed, blob deleted, Root Key rotated, and
         // the store re-sealed under the NEW root by the rotation hook.
         let old_epoch = handle.unlocked().current_epoch;
-        close(
-            dir.path(),
-            &mut handle,
-            &mock,
-            &tok,
-            CloseReason::Denied,
-        )
-        .await
-        .unwrap();
+        close(dir.path(), &mut handle, &mock, &tok, CloseReason::Denied)
+            .await
+            .unwrap();
         assert!(
             mock.seat_log
                 .lock()
@@ -1522,7 +1540,6 @@ mod tests {
         .unwrap();
         assert!(!outcome.kit_armor.is_empty());
     }
-
 
     fn test_record() -> LegacyRecord {
         LegacyRecord {
@@ -1637,7 +1654,10 @@ mod tests {
         };
         sign_alive(&mut alive, &lk).unwrap();
         let alive_json = serde_json::to_string(&alive).unwrap();
-        assert_eq!(verify_alive(&alive_json, &record, &lk_public).unwrap(), 20_000);
+        assert_eq!(
+            verify_alive(&alive_json, &record, &lk_public).unwrap(),
+            20_000
+        );
 
         let mut other_kit = AliveRecord {
             kit_id: "other".into(),
@@ -1652,8 +1672,14 @@ mod tests {
     fn ek_check_binds_record_to_kit_key() {
         let ek1 = [1u8; 32];
         let ek2 = [2u8; 32];
-        assert_ne!(ek_check(&ek1, "kit").unwrap(), ek_check(&ek2, "kit").unwrap());
-        assert_eq!(ek_check(&ek1, "kit").unwrap(), ek_check(&ek1, "kit").unwrap());
+        assert_ne!(
+            ek_check(&ek1, "kit").unwrap(),
+            ek_check(&ek2, "kit").unwrap()
+        );
+        assert_eq!(
+            ek_check(&ek1, "kit").unwrap(),
+            ek_check(&ek1, "kit").unwrap()
+        );
     }
 
     #[test]
@@ -1787,10 +1813,7 @@ mod tests {
         assert!(!clone.path().join("meta/device-privkey.json").exists());
 
         let body = open_kit(&outcome.kit_armor, "four quiet words").unwrap();
-        let ek: [u8; 32] = hex::decode(&body.ek)
-            .unwrap()
-            .try_into()
-            .unwrap();
+        let ek: [u8; 32] = hex::decode(&body.ek).unwrap().try_into().unwrap();
 
         let record = load_record(clone.path(), &body.kit_id).unwrap().unwrap();
         assert_eq!(record.state, LegacyState::Armed);
@@ -1807,8 +1830,7 @@ mod tests {
         let root = open_layer(&ek, &layer, &body.vault_id, &body.kit_id, record.epoch).unwrap();
         let root_key = crate::keys::hierarchy::RootKey::from_bytes(*root);
         let mut view =
-            crate::vault::handle::VaultHandle::open_with_root_key(clone.path(), &root_key)
-                .unwrap();
+            crate::vault::handle::VaultHandle::open_with_root_key(clone.path(), &root_key).unwrap();
         assert!(view.is_unlocked());
         let list = view.list_cipher_meta().unwrap();
         assert!(list.is_empty());
@@ -1853,16 +1875,16 @@ mod tests {
             derive_phase(&record, Some(1_000), 1_010),
             LegacyPhase::Quiet
         );
-        assert_eq!(
-            derive_phase(&record, Some(1_000), 1_030),
-            LegacyPhase::Open
-        );
+        assert_eq!(derive_phase(&record, Some(1_000), 1_030), LegacyPhase::Open);
         // No signal at all: the silence counts from the arm day (1_000).
         assert_eq!(derive_phase(&record, None, 1_029), LegacyPhase::Quiet);
         assert_eq!(derive_phase(&record, None, 1_030), LegacyPhase::Open);
 
         record.state = LegacyState::Closed;
         record.reason = Some(CloseReason::Denied);
-        assert_eq!(derive_phase(&record, Some(1_000), 9_999), LegacyPhase::Closed);
+        assert_eq!(
+            derive_phase(&record, Some(1_000), 9_999),
+            LegacyPhase::Closed
+        );
     }
 }

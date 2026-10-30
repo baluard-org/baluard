@@ -454,7 +454,10 @@ impl MobileVault {
     /// (if the vault has a remote). Heavy: runs the KDF on the shared runtime.
     pub async fn unlock(&self, master_password: String) -> Result<(), BaluardError> {
         let _operation = crate::hardware::MOBILE_OPERATION_LOCK.lock().await;
-        self.state.unlock(&master_password).await.map_err(map_unlock_error)
+        self.state
+            .unlock(&master_password)
+            .await
+            .map_err(map_unlock_error)
     }
 
     /// Lock the vault: zeroizes in-memory keys, clears the session token,
@@ -2328,7 +2331,8 @@ impl MobileCloneJob {
         loop {
             let mut g = self.result.lock().await;
             if let Some(r) = g.take() {
-                self.completed.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.completed
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 return r;
             }
             if self.completed.load(std::sync::atomic::Ordering::Relaxed) {
@@ -2737,8 +2741,9 @@ mod tests {
             "BIP-39 must be 24 words"
         );
 
-        let mut params =
-            baluard_core::types::KdfParams::from_profile(baluard_core::types::KdfProfile::MobileLow);
+        let mut params = baluard_core::types::KdfParams::from_profile(
+            baluard_core::types::KdfProfile::MobileLow,
+        );
         params.salt = vec![0u8; 32];
         let key = baluard_core::crypto::kdf::derive_kek("password123", &params).unwrap();
         assert_eq!(key.len(), 32, "KEK must be 32 bytes (AES-256)");
@@ -3503,9 +3508,7 @@ mod tests {
 
         match vault.autofill_query("https://github.com".to_string()).await {
             Err(BaluardError::SecurityKeyRequired) => {}
-            Err(other) => panic!(
-                "expected the typed SecurityKeyRequired refusal, got {other:?}"
-            ),
+            Err(other) => panic!("expected the typed SecurityKeyRequired refusal, got {other:?}"),
             Ok(_) => panic!("hardware-sealed vault served autofill matches"),
         }
     }

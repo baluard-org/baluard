@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::crypto::aead;
-use zeroize::Zeroizing;
 use crate::error::{BaluardError, VaultError};
 use crate::keys::hierarchy::ItemKey;
 use crate::types::{
@@ -17,6 +16,7 @@ use crate::types::{
 use crate::vault::envelope;
 use crate::vault::padding;
 use crate::{ALG_AES_256_GCM, BALUARD_VERSION};
+use zeroize::Zeroizing;
 
 /// Encrypted cipher file data: envelope + metadata for storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,8 +47,10 @@ pub fn encrypt_cipher(
 ) -> Result<CipherFile, BaluardError> {
     // Serialize cipher data
     let cipher_data = CipherEnvelopeData::from_input(input);
-    let json: Zeroizing<Vec<u8>> = Zeroizing::new(serde_json::to_vec(&cipher_data)
-        .map_err(|e| VaultError::Metadata(format!("cipher serialization: {e}")))?);
+    let json: Zeroizing<Vec<u8>> = Zeroizing::new(
+        serde_json::to_vec(&cipher_data)
+            .map_err(|e| VaultError::Metadata(format!("cipher serialization: {e}")))?,
+    );
 
     // Tier selection
     let tier = Tier::fit(json.len()).ok_or_else(|| {

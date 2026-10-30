@@ -661,10 +661,7 @@ mod tests {
         let ext = Value::Map(vec![(
             Value::TextString("hmac-secret".into()),
             Value::Map(vec![
-                (
-                    Value::Unsigned(1),
-                    key_agreement_map(&secret),
-                ),
+                (Value::Unsigned(1), key_agreement_map(&secret)),
                 (Value::Unsigned(2), Value::ByteString(salt_enc)),
                 (Value::Unsigned(3), Value::ByteString(salt_auth)),
                 (Value::Unsigned(4), Value::Unsigned(1)),
@@ -706,10 +703,7 @@ mod tests {
         let ext = Value::Map(vec![(
             Value::TextString("hmac-secret".into()),
             Value::Map(vec![
-                (
-                    Value::Unsigned(1),
-                    key_agreement_map(&secret),
-                ),
+                (Value::Unsigned(1), key_agreement_map(&secret)),
                 (Value::Unsigned(2), Value::ByteString(salt_enc)),
                 (
                     Value::Unsigned(3),

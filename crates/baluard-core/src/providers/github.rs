@@ -106,13 +106,15 @@ impl GitHubProvider {
 
     /// Build an octocrab client from a token.
     fn client_from_token(&self, token: &ProviderToken) -> Result<Octocrab, ProviderError> {
-        let mut builder = Octocrab::builder()
-            .personal_token(token.access_token().expose_secret().to_string());
+        let mut builder =
+            Octocrab::builder().personal_token(token.access_token().expose_secret().to_string());
         // GHES mounts REST under /api/v3; without this the enterprise PAT
         // would be sent to api.github.com instead of the instance.
         let base = self.config.effective_instance_url(Provider::GitHub);
         if base != Provider::GitHub.default_instance_url() {
-            builder = builder.base_uri(format!("{base}/api/v3")).map_err(api_error)?;
+            builder = builder
+                .base_uri(format!("{base}/api/v3"))
+                .map_err(api_error)?;
         }
         builder.build().map_err(api_error)
     }
@@ -1072,10 +1074,7 @@ fn parse_deploy_keys(
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            read_only: k
-                .get("read_only")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
+            read_only: k.get("read_only").and_then(|v| v.as_bool()).unwrap_or(true),
         })
         .collect())
 }

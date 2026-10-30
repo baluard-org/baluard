@@ -217,10 +217,7 @@ fn e2e_init_unlock_lock_roundtrip() {
         .stdout(predicates::str::contains("Vault locked."));
 
     // Lock must actually end the session: reads after it fail.
-    baluard_daemon(&guard)
-        .arg("list")
-        .assert()
-        .failure();
+    baluard_daemon(&guard).arg("list").assert().failure();
 
     // The init phrase is real enrollment material for multi-device flows.
     assert!(created["recovery_phrase"].as_str().unwrap().len() > 100);
@@ -1096,7 +1093,6 @@ fn e2e_ssh_changed_hostkey_refused() {
         err.contains("changed"),
         "expected changed-key refusal: {err}"
     );
-
 
     // And a stale/bogus id still refuses with the usual message.
     let out = cmd(&["git-trust", "deadbeefdeadbeefdeadbeefdeadbeef"]);

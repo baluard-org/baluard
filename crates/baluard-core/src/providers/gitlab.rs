@@ -896,12 +896,8 @@ impl ForgeProvider for GitLabProvider {
             // Only a rejection of the grant itself kills re-auth; a
             // transient 429/5xx must not force a full reconnect.
             return match st {
-                400 | 401 => Err(ProviderError::AuthFailed(format!(
-                    "refresh HTTP {st}"
-                ))),
-                _ => Err(ProviderError::Transient(format!(
-                    "refresh HTTP {st}"
-                ))),
+                400 | 401 => Err(ProviderError::AuthFailed(format!("refresh HTTP {st}"))),
+                _ => Err(ProviderError::Transient(format!("refresh HTTP {st}"))),
             };
         }
         let d: serde_json::Value = resp
@@ -915,10 +911,7 @@ impl ForgeProvider for GitLabProvider {
         // A response without refresh_token keeps the old one: GitLab has
         // already invalidated nothing until it issues a new pair, and
         // erroring here would discard the fresh access token.
-        let new_rt = d["refresh_token"]
-            .as_str()
-            .unwrap_or(rt_plain)
-            .to_string();
+        let new_rt = d["refresh_token"].as_str().unwrap_or(rt_plain).to_string();
         let expires_in = d["expires_in"].as_u64().unwrap_or(7200);
         let scopes = d["scope"].as_str().unwrap_or(&token.scopes).to_string();
         Ok(Some(ProviderToken::with_refresh(
@@ -956,7 +949,13 @@ mod tests {
         // Add: URL-encoded project path, no can_push in the body.
         api.push(201, r#"{"id": 51}"#);
         let id = gl
-            .add_deploy_key(&tok, "grp/sub", "r", "baluard-legacy-contact", "ssh-ed25519 AAA")
+            .add_deploy_key(
+                &tok,
+                "grp/sub",
+                "r",
+                "baluard-legacy-contact",
+                "ssh-ed25519 AAA",
+            )
             .await
             .unwrap();
         assert_eq!(id, 51);
@@ -977,12 +976,16 @@ mod tests {
 
         // Remove: 204 then 404 idempotent.
         api.push(204, "");
-        gl.remove_deploy_key(&tok, "grp/sub", "r", 51).await.unwrap();
+        gl.remove_deploy_key(&tok, "grp/sub", "r", 51)
+            .await
+            .unwrap();
         let (method, path, _) = &api.requests()[2];
         assert_eq!(method, "DELETE");
         assert_eq!(path, "/api/v4/projects/grp%2Fsub%2Fr/deploy_keys/51");
         api.push(404, r#"{"message":"404 Not Found"}"#);
-        gl.remove_deploy_key(&tok, "grp/sub", "r", 51).await.unwrap();
+        gl.remove_deploy_key(&tok, "grp/sub", "r", 51)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

@@ -422,7 +422,8 @@ fn fresh_ask(
     };
     // A Pending outcome that never hit disk would leave the confirming
     // admin telling the initiator to chase an ask nobody can see.
-    write_record(vault_path, &op).map_err(|e| VaultError::Metadata(format!("approval record: {e}")))?;
+    write_record(vault_path, &op)
+        .map_err(|e| VaultError::Metadata(format!("approval record: {e}")))?;
     Ok(ApprovalOutcome::Pending)
 }
 
@@ -440,7 +441,11 @@ pub fn consume_matching(
 /// Remove every pending record of `kind` whose digest differs from
 /// `keep_digest` — a fresh ask supersedes older asks of the same kind
 /// (a new transfer target invalidates the old one).
-pub fn consume_other_of_kind(vault_path: &Path, kind: &str, keep_digest: &str) -> Result<(), BaluardError> {
+pub fn consume_other_of_kind(
+    vault_path: &Path,
+    kind: &str,
+    keep_digest: &str,
+) -> Result<(), BaluardError> {
     let consumed_at = crate::vault::collections::now_secs_pub();
     for (path, op) in list_pending_paths(vault_path) {
         if op.kind == kind && op.params_digest != keep_digest {

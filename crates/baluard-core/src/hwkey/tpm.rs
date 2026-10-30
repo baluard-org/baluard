@@ -378,15 +378,13 @@ impl HardwareKeyStore for TpmStore {
         // No session at all: the key's auth is empty by design (the
         // silence requirement), and this firmware misbehaves with
         // sessions on these commands.
-        ctx.execute_without_session(
-            |ctx| -> Result<(Handshake, SharedSecret), BaluardError> {
-                let (z, pub_point) = ctx
-                    .ecdh_key_gen(key)
-                    .map_err(|_| crate::hwkey::hw_unavailable_error())?;
-                let peer_bytes = Self::point_bytes(&pub_point)?;
-                Ok((Handshake(peer_bytes.to_vec()), Self::secret_from_z(&z)?))
-            },
-        )
+        ctx.execute_without_session(|ctx| -> Result<(Handshake, SharedSecret), BaluardError> {
+            let (z, pub_point) = ctx
+                .ecdh_key_gen(key)
+                .map_err(|_| crate::hwkey::hw_unavailable_error())?;
+            let peer_bytes = Self::point_bytes(&pub_point)?;
+            Ok((Handshake(peer_bytes.to_vec()), Self::secret_from_z(&z)?))
+        })
     }
 
     fn derive(
@@ -404,14 +402,12 @@ impl HardwareKeyStore for TpmStore {
         let key = Self::load_key(&mut ctx, handle)?;
         // Sessionless like derive_ephemeral: the key carries no auth and
         // some firmware rejects needless auth sessions.
-        ctx.execute_without_session(
-            |ctx| -> Result<SharedSecret, BaluardError> {
-                let z = ctx
-                    .ecdh_z_gen(key, peer_point)
-                    .map_err(|_| crate::hwkey::hw_unavailable_error())?;
-                Self::secret_from_z(&z)
-            },
-        )
+        ctx.execute_without_session(|ctx| -> Result<SharedSecret, BaluardError> {
+            let z = ctx
+                .ecdh_z_gen(key, peer_point)
+                .map_err(|_| crate::hwkey::hw_unavailable_error())?;
+            Self::secret_from_z(&z)
+        })
     }
 
     fn delete_binding(&self, _binding: &str) -> Result<(), BaluardError> {

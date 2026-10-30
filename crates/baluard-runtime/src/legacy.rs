@@ -4,13 +4,13 @@
 //! accounts; nothing is taken from the request beyond the owner's own
 //! choices (window, passphrase, letter).
 
+use baluard_core::BaluardError;
+use baluard_core::error::VaultError;
 use baluard_core::legacy as core_legacy;
 use baluard_core::providers::token::ProvidersState;
 use baluard_core::providers::types::{Provider, ProviderConfig, ProviderToken};
 use baluard_core::sync::engine::read_remote_announcement;
 use baluard_core::vault::handle::VaultHandle;
-use baluard_core::error::VaultError;
-use baluard_core::BaluardError;
 
 use crate::providers::ensure_valid_token;
 
@@ -75,8 +75,9 @@ async fn resolve_remote(vault_path: &std::path::Path) -> Result<ResolvedRemote, 
 
     // The provider must be one this device is connected to, and the
     // remote host must be that provider's (possibly self-hosted) home.
-    let state = ProvidersState::load()
-        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("reading provider state: {e}"))))?;
+    let state = ProvidersState::load().map_err(|e| {
+        BaluardError::from(VaultError::Metadata(format!("reading provider state: {e}")))
+    })?;
     for provider in [Provider::GitHub, Provider::GitLab, Provider::Codeberg] {
         let Some(info) = state.get(provider) else {
             continue;
@@ -136,10 +137,7 @@ fn require_unlocked(handle: &VaultHandle) -> Result<(), String> {
 }
 
 /// legacy.status: the owner-side poll (banner + settings screen).
-pub fn status_json(
-    vault_path: &std::path::Path,
-    handle: &VaultHandle,
-) -> Result<String, String> {
+pub fn status_json(vault_path: &std::path::Path, handle: &VaultHandle) -> Result<String, String> {
     require_unlocked(handle)?;
     let st = core_legacy::status(vault_path, handle).map_err(|e| e.to_string())?;
     serde_json::to_string(&st).map_err(|e| e.to_string())
@@ -160,7 +158,9 @@ pub async fn arm_json(
             st.phase,
             core_legacy::LegacyPhase::Quiet | core_legacy::LegacyPhase::Open
         ) {
-            let remote = resolve_remote(vault_path).await.map_err(|e| e.to_string())?;
+            let remote = resolve_remote(vault_path)
+                .await
+                .map_err(|e| e.to_string())?;
             let forge = baluard_core::providers::provider_for(remote.provider, remote.config)
                 .map_err(|e| e.to_string())?;
             core_legacy::close(
@@ -182,7 +182,9 @@ pub async fn arm_json(
         .ok_or("missing passphrase")?;
     let letter = p["letter"].as_str().unwrap_or("");
     let contact_name = p["contact_name"].as_str().unwrap_or("your contact");
-    let remote = resolve_remote(vault_path).await.map_err(|e| e.to_string())?;
+    let remote = resolve_remote(vault_path)
+        .await
+        .map_err(|e| e.to_string())?;
     let forge = baluard_core::providers::provider_for(remote.provider, remote.config)
         .map_err(|e| e.to_string())?;
     let outcome = core_legacy::arm(
@@ -215,7 +217,9 @@ pub async fn close_json(
         "disarmed" => core_legacy::CloseReason::Disarmed,
         other => return Err(format!("unknown close reason: {other}")),
     };
-    let remote = resolve_remote(vault_path).await.map_err(|e| e.to_string())?;
+    let remote = resolve_remote(vault_path)
+        .await
+        .map_err(|e| e.to_string())?;
     let forge = baluard_core::providers::provider_for(remote.provider, remote.config)
         .map_err(|e| e.to_string())?;
     core_legacy::close(vault_path, handle, forge.as_ref(), &remote.token, reason)
@@ -225,10 +229,7 @@ pub async fn close_json(
 }
 
 /// legacy.resend: byte-identical re-export of the stored kit.
-pub fn resend_json(
-    vault_path: &std::path::Path,
-    handle: &VaultHandle,
-) -> Result<String, String> {
+pub fn resend_json(vault_path: &std::path::Path, handle: &VaultHandle) -> Result<String, String> {
     require_unlocked(handle)?;
     let (armor, kit_id) = core_legacy::resend(vault_path, handle).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "kit_id": kit_id, "kit_armor": armor }).to_string())
@@ -403,7 +404,9 @@ pub async fn open_contact_view(
             .try_into()
             .map_err(|_| VaultError::Corrupt("kit lk key length".into()))?;
         core_legacy::verify_record(&record, &lk_public)?;
-        let alive_path = target.join("meta/legacy").join(format!("{}.alive", body.kit_id));
+        let alive_path = target
+            .join("meta/legacy")
+            .join(format!("{}.alive", body.kit_id));
         let last_alive_day = match std::fs::read_to_string(&alive_path) {
             Ok(raw) => Some(core_legacy::verify_alive(&raw, &record, &lk_public)?),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -416,9 +419,7 @@ pub async fn open_contact_view(
             core_legacy::LegacyState::Armed => {}
             core_legacy::LegacyState::Closed => {
                 let why = match record.reason {
-                    Some(core_legacy::CloseReason::Denied) => {
-                        "the owner refused this request"
-                    }
+                    Some(core_legacy::CloseReason::Denied) => "the owner refused this request",
                     Some(core_legacy::CloseReason::Replaced) => {
                         "the owner handed the kit to someone else"
                     }
@@ -436,7 +437,11 @@ pub async fn open_contact_view(
         // rewind this; the wait guards mistakes, not determination.
         let today = core_legacy::today_day();
         let phase = core_legacy::derive_phase(&record, last_alive_day, today);
-        let silence = today.saturating_sub(last_alive_day.unwrap_or(record.created_day).max(record.created_day));
+        let silence = today.saturating_sub(
+            last_alive_day
+                .unwrap_or(record.created_day)
+                .max(record.created_day),
+        );
         if phase != core_legacy::LegacyPhase::Open {
             let wait = record.window_days.saturating_sub(silence);
             return Err(VaultError::InvalidOperation(format!(
@@ -450,7 +455,9 @@ pub async fn open_contact_view(
         // the layer opens to the vault's Root Key.
         let check = core_legacy::ek_check(&ek, &body.kit_id)?;
         if check != record.ek_check {
-            return Err(VaultError::Corrupt("this kit does not match the vault copy".into()).into());
+            return Err(
+                VaultError::Corrupt("this kit does not match the vault copy".into()).into(),
+            );
         }
         let layer = core_legacy::load_layer(&target, &body.kit_id)?.ok_or_else(|| {
             VaultError::NotFound("the vault copy is missing its layer blob".to_string())
@@ -464,8 +471,9 @@ pub async fn open_contact_view(
             return Err(VaultError::Corrupt("this kit belongs to a different vault".into()).into());
         }
 
-                let root_key = baluard_core::keys::hierarchy::RootKey::from_bytes(*root);
-        let handle = baluard_core::vault::handle::VaultHandle::open_with_root_key(&target, &root_key)?;
+        let root_key = baluard_core::keys::hierarchy::RootKey::from_bytes(*root);
+        let handle =
+            baluard_core::vault::handle::VaultHandle::open_with_root_key(&target, &root_key)?;
         let vault_name = handle
             .get_settings()
             .ok()
@@ -510,4 +518,3 @@ fn url_host(url: &str) -> String {
         },
     }
 }
-

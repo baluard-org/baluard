@@ -100,24 +100,20 @@ pub fn handle_init(
     let password = match std::env::var("BALUARD_PASSWORD") {
         Ok(pw) => {
             if pw.len() < 8 {
-
                 return Err("password must be at least 8 characters".into());
             }
             zeroize::Zeroizing::new(pw)
         }
         Err(_) if !is_tty() => {
-
             return Err("no password available. Set BALUARD_PASSWORD or run interactively.".into());
         }
         Err(_) => {
             let pw = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
             let confirm = zeroize::Zeroizing::new(prompt_password("Confirm password: ")?);
             if *pw != *confirm {
-
                 return Err("passwords do not match".into());
             }
             if pw.len() < 8 {
-
                 return Err("password must be at least 8 characters".into());
             }
             pw
@@ -159,7 +155,6 @@ pub fn handle_init(
                     match baluard_core::vault::slug::validate_slug(&cleaned) {
                         Ok(()) => Some(cleaned),
                         Err(e) => {
-
                             return Err(format!("invalid slug: {e}").into());
                         }
                     }
@@ -220,7 +215,6 @@ pub fn handle_init(
     let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
     if let Some(ref s) = slug {
         if reg.exists(s) {
-
             return Err("vault '{s}' already exists in registry".into());
         }
     }
@@ -230,8 +224,9 @@ pub fn handle_init(
         if let Some(ref s) = slug {
             let p = baluard_core::paths::vaults_dir().join(s);
             if p.exists() {
-
-                return Err(format!("error: vault directory already exists: {}", p.display()).into());
+                return Err(
+                    format!("error: vault directory already exists: {}", p.display()).into(),
+                );
             }
             if !json {
                 println!("Vault path: {}", p.display());
@@ -700,7 +695,6 @@ pub fn handle_get(
     let cipher_id = match uuid::Uuid::parse_str(id_or_name) {
         Ok(id) => id,
         Err(_) => {
-
             return Err("Searching by name is not supported yet; the entry id is required.".into());
         }
     };
@@ -1021,7 +1015,11 @@ pub fn handle_list(
                     }
                 }
                 println!();
-                println!("{} entr{}", ciphers.len(), if ciphers.len() == 1 { "y" } else { "ies" });
+                println!(
+                    "{} entr{}",
+                    ciphers.len(),
+                    if ciphers.len() == 1 { "y" } else { "ies" }
+                );
             }
             Ok(())
         }
@@ -1722,7 +1720,9 @@ pub fn handle_approvals(
                     println!("  params: {brief}");
                 }
             }
-            println!("Approve by repeating the same ask (members claim/transfer, role, reset, and the other sensitive ops carry their own approvals).");
+            println!(
+                "Approve by repeating the same ask (members claim/transfer, role, reset, and the other sensitive ops carry their own approvals)."
+            );
             Ok(())
         }
     }
@@ -1806,9 +1806,7 @@ pub fn handle_legacy(
                     contact
                 }
             );
-            println!(
-                "The kit opens only after {days} day(s) without you unlocking the vault."
-            );
+            println!("The kit opens only after {days} day(s) without you unlocking the vault.");
             println!("A read-only key {fp} was added to {url}.");
             Ok(())
         }
@@ -1839,7 +1837,11 @@ pub fn handle_legacy(
             if !ok {
                 return Ok(());
             }
-            post(socket, "legacy.close", &serde_json::json!({"reason": "denied"}))?;
+            post(
+                socket,
+                "legacy.close",
+                &serde_json::json!({"reason": "denied"}),
+            )?;
             println!("Denied. The vault has been re-keyed and the read-only key removed.");
             Ok(())
         }
@@ -1862,7 +1864,10 @@ pub fn handle_legacy(
             let armor = data["kit_armor"].as_str().unwrap_or("");
             let path = std::env::current_dir()?.join(format!("legacy-kit-{kit_id}.bldlegacy"));
             std::fs::write(&path, armor)?;
-            println!("The kit letter is saved at {} (identical to the original).", path.display());
+            println!(
+                "The kit letter is saved at {} (identical to the original).",
+                path.display()
+            );
             Ok(())
         }
     }
@@ -3299,7 +3304,9 @@ pub fn handle_enroll_with_phrase(
             Err(_) => {
                 // Masked prompt: the phrase is a root secret; echoing it
                 // would leave it in terminal scrollback.
-                prompt_password("Recovery phrase (24 words): ")?.trim().to_string()
+                prompt_password("Recovery phrase (24 words): ")?
+                    .trim()
+                    .to_string()
             }
         },
     };
@@ -4222,7 +4229,6 @@ pub fn handle_settings_get(
             Ok(())
         }
         ConnectMode::Direct => {
-
             return Err("Settings requires daemon mode. Use --socket or start the daemon.".into());
         }
     }
@@ -4267,7 +4273,6 @@ pub fn handle_settings_set(
             Ok(())
         }
         ConnectMode::Direct => {
-
             return Err("Settings requires daemon mode. Use --socket or start the daemon.".into());
         }
     }
@@ -4290,8 +4295,9 @@ pub fn handle_space_settings_get(
             Ok(())
         }
         ConnectMode::Direct => {
-
-            return Err("Space settings requires daemon mode. Use --socket or start the daemon.".into());
+            return Err(
+                "Space settings requires daemon mode. Use --socket or start the daemon.".into(),
+            );
         }
     }
 }
@@ -4394,8 +4400,9 @@ pub fn handle_space_settings_set(
             Ok(())
         }
         ConnectMode::Direct => {
-
-            return Err("Space settings requires daemon mode. Use --socket or start the daemon.".into());
+            return Err(
+                "Space settings requires daemon mode. Use --socket or start the daemon.".into(),
+            );
         }
     }
 }

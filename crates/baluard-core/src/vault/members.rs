@@ -389,7 +389,11 @@ pub fn write_ownership_contest(
     // The window derives from the gate's signed ask time: execution
     // re-derives and requires the equality, so a restored record with
     // a tampered window_until never executes.
-    let ask_time = if ask_initiated_at != 0 { ask_initiated_at } else { now };
+    let ask_time = if ask_initiated_at != 0 {
+        ask_initiated_at
+    } else {
+        now
+    };
     let record = OwnershipContest {
         format: OWNERSHIP_CONTEST_FORMAT.to_string(),
         old_owner_id,
@@ -565,7 +569,8 @@ pub fn reset_member(
     old.identity_signing_pubkey_previous = old.identity_signing_pubkey.take();
     old.identity_rotation_signature = None;
     old.identity_wrap_pubkey = None;
-    let successor = MemberFile {        id: successor_id,
+    let successor = MemberFile {
+        id: successor_id,
         display_name: old.display_name.clone(),
         // The successor keeps the predecessor's self-declared email (the
         // admin can correct it; the rejoin introduction can supersede).
@@ -911,10 +916,7 @@ pub fn list_members_strict(vault_path: &Path) -> Result<Vec<MemberFile>, Baluard
         // No directory = legacy vault (pre-S1a): empty roster.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(members),
         Err(e) => {
-            return Err(VaultError::Metadata(format!(
-                "member roster unreadable: {e}"
-            ))
-            .into())
+            return Err(VaultError::Metadata(format!("member roster unreadable: {e}")).into());
         }
     };
     for entry in entries.flatten() {
@@ -1614,18 +1616,21 @@ pub fn rebind_member_unlock_identity_seed(
     if !path.exists() {
         return Ok(false);
     }
-    let data = std::fs::read_to_string(&path)
-        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("read member unlock: {e}"))))?;
-    let mut unlock: MemberUnlock = serde_json::from_str(&data)
-        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("parse member unlock: {e}"))))?;
+    let data = std::fs::read_to_string(&path).map_err(|e| {
+        BaluardError::from(VaultError::Metadata(format!("read member unlock: {e}")))
+    })?;
+    let mut unlock: MemberUnlock = serde_json::from_str(&data).map_err(|e| {
+        BaluardError::from(VaultError::Metadata(format!("parse member unlock: {e}")))
+    })?;
     let Some(sealed_hex) = unlock.identity_seed_sealed.as_deref() else {
         return Ok(false);
     };
-    let sealed = hex::decode(sealed_hex)
-        .map_err(|_| VaultError::Corrupt("member identity seed".into()))?;
+    let sealed =
+        hex::decode(sealed_hex).map_err(|_| VaultError::Corrupt("member identity seed".into()))?;
     let keys = crate::vault::identity::open_identity(from_key, &sealed)?;
-    unlock.identity_seed_sealed =
-        Some(hex::encode(crate::vault::identity::seal_identity(to_key, &keys)?));
+    unlock.identity_seed_sealed = Some(hex::encode(crate::vault::identity::seal_identity(
+        to_key, &keys,
+    )?));
     super::write_vault_file(
         &path,
         serde_json::to_string_pretty(&unlock).unwrap().as_bytes(),

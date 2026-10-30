@@ -447,11 +447,26 @@ mod tests {
             identity_wrap_pubkey: hex::encode([9u8; 32]),
             created_at: ts,
         };
-        upsert_contact(dir.path(), &key, &mk(1_700_000_100), ContactTrust::Channel, 1).unwrap();
+        upsert_contact(
+            dir.path(),
+            &key,
+            &mk(1_700_000_100),
+            ContactTrust::Channel,
+            1,
+        )
+        .unwrap();
         // A replayed OLDER (still validly signed) card must not roll the
         // stored identity back to a possibly rotated-out wrap key.
-        assert!(upsert_contact(dir.path(), &key, &mk(1_700_000_000), ContactTrust::Channel, 2)
-            .is_err());
+        assert!(
+            upsert_contact(
+                dir.path(),
+                &key,
+                &mk(1_700_000_000),
+                ContactTrust::Channel,
+                2
+            )
+            .is_err()
+        );
     }
 
     #[test]

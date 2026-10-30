@@ -373,7 +373,9 @@ pub fn parse(data: &str) -> ImportResult {
                         let last_used_date = h
                             .last_used_date
                             .as_deref()
-                            .and_then(|d| d.parse::<u64>().ok().or_else(|| parse_iso8601_to_unix(d)))
+                            .and_then(|d| {
+                                d.parse::<u64>().ok().or_else(|| parse_iso8601_to_unix(d))
+                            })
                             .unwrap_or(0);
                         Some(PasswordHistoryEntry {
                             password,
@@ -583,7 +585,6 @@ mod tests {
         // Integer lastUsedDate must parse, not reset to 0.
         assert_eq!(history[0].last_used_date, 1700000000);
     }
-
 
     #[test]
     fn parse_bw_json_with_all_types() {

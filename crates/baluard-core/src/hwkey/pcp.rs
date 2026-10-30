@@ -259,11 +259,7 @@ impl PcpStore {
 
     /// Run the agreement against an imported peer point under `prov` and
     /// derive the raw X coordinate, reversed from CNG's little-endian.
-    fn agree(
-        prov: usize,
-        chip_key: usize,
-        peer: &Handshake,
-    ) -> Result<SharedSecret, BaluardError> {
+    fn agree(prov: usize, chip_key: usize, peer: &Handshake) -> Result<SharedSecret, BaluardError> {
         let blob = point_to_blob(peer)?;
         let blob_type = wide(ECC_PUBLIC_BLOB);
         let mut peer_key: usize = 0;

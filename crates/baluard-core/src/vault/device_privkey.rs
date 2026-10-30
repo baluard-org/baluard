@@ -97,10 +97,7 @@ pub fn local_device_id(vault_path: &Path) -> String {
     let reg_path = vault_path.join("meta/devices.json");
     if reg_path.exists() {
         if let Ok(data) = std::fs::read_to_string(&reg_path) {
-            if let Ok(reg) = serde_json::from_str::<
-                crate::devices::DeviceRegistry,
-            >(&data)
-            {
+            if let Ok(reg) = serde_json::from_str::<crate::devices::DeviceRegistry>(&data) {
                 if let Some((id, _)) = reg.devices.iter().next() {
                     return id.to_string();
                 }
@@ -214,10 +211,9 @@ pub fn open_bytes(seal_key: &[u8; 32], file: &[u8]) -> Result<String, BaluardErr
     // unauthenticated and proves nothing on its own.
     if envelope.aad != SEAL_TYPE.as_bytes() {
         pt.zeroize();
-        return Err(VaultError::Corrupt(
-            "sealed devkey was sealed for a different purpose".into(),
-        )
-        .into());
+        return Err(
+            VaultError::Corrupt("sealed devkey was sealed for a different purpose".into()).into(),
+        );
     }
     let inner = String::from_utf8(pt.clone())
         .map_err(|e| VaultError::Corrupt(format!("devkey plaintext utf8: {e}")))?;
@@ -271,10 +267,13 @@ pub fn read_privkey_file(
 pub fn read_privkey_file_with_ck(
     path: &Path,
     seal_key: Option<&[u8; 32]>,
-) -> Result<(
+) -> Result<
+    (
         zeroize::Zeroizing<String>,
         Option<zeroize::Zeroizing<[u8; 32]>>,
-    ), BaluardError> {
+    ),
+    BaluardError,
+> {
     match file_kind(path) {
         PrivkeyFileKind::Absent => {
             Err(VaultError::NotFound("device private key not found".into()).into())
@@ -291,16 +290,14 @@ pub fn read_privkey_file_with_ck(
             let key = seal_key.ok_or_else(|| BaluardError::from(VaultError::Locked))?;
             let file = std::fs::read_to_string(path)
                 .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
-            open_sealed_hw_with_ck(key, file.as_bytes())
-                .map(|(inner, ck)| (inner, Some(ck)))
+            open_sealed_hw_with_ck(key, file.as_bytes()).map(|(inner, ck)| (inner, Some(ck)))
         }
         PrivkeyFileKind::LegacyPlaintext => std::fs::read_to_string(path)
             .map(|inner| (zeroize::Zeroizing::new(inner), None))
             .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")).into()),
-        PrivkeyFileKind::Damaged => Err(VaultError::Corrupt(
-            "device private key file is damaged".into(),
-        )
-        .into()),
+        PrivkeyFileKind::Damaged => {
+            Err(VaultError::Corrupt("device private key file is damaged".into()).into())
+        }
     }
 }
 
@@ -556,10 +553,7 @@ pub fn open_bytes_hw_with_ck(
     hw: &dyn crate::hwkey::HardwareKeyStore,
     seal_key: &[u8; 32],
     file: &[u8],
-) -> Result<(
-        zeroize::Zeroizing<String>,
-        zeroize::Zeroizing<[u8; 32]>,
-    ), BaluardError> {
+) -> Result<(zeroize::Zeroizing<String>, zeroize::Zeroizing<[u8; 32]>), BaluardError> {
     let v: serde_json::Value = serde_json::from_slice(file)
         .map_err(|e| VaultError::Corrupt(format!("hw-sealed devkey json: {e}")))?;
     if v["type"].as_str() != Some(SEAL_TYPE_HW) {
@@ -676,10 +670,7 @@ pub fn open_sealed_hw(
 pub fn open_sealed_hw_with_ck(
     seal_key: &[u8; 32],
     file: &[u8],
-) -> Result<(
-        zeroize::Zeroizing<String>,
-        zeroize::Zeroizing<[u8; 32]>,
-    ), BaluardError> {
+) -> Result<(zeroize::Zeroizing<String>, zeroize::Zeroizing<[u8; 32]>), BaluardError> {
     let backend = hw_backend_of(file)?;
     let hw = crate::hwkey::store_for(&backend).ok_or_else(|| {
         // Typed distinction: a different chip installed is "wrong card";
@@ -711,10 +702,8 @@ pub fn enable_hw_seal(
     backend: Option<&str>,
 ) -> Result<bool, BaluardError> {
     let hw = match backend {
-        Some(id) => crate::hwkey::store_for(id)
-            .ok_or_else(crate::hwkey::hw_unavailable_error)?,
-        None => crate::hwkey::available()
-            .ok_or_else(crate::hwkey::hw_unavailable_error)?,
+        Some(id) => crate::hwkey::store_for(id).ok_or_else(crate::hwkey::hw_unavailable_error)?,
+        None => crate::hwkey::available().ok_or_else(crate::hwkey::hw_unavailable_error)?,
     };
     let interaction = hw.interaction();
     let mode = if interaction == crate::hwkey::Interaction::PerUse {
@@ -732,8 +721,7 @@ pub fn enable_hw_seal(
         PrivkeyFileKind::Absent => Ok(false),
         PrivkeyFileKind::SealedHw => Ok(false),
         PrivkeyFileKind::Damaged => Err(VaultError::Corrupt(
-            "device private key file is damaged; refusing to move it to the hardware seal"
-                .into(),
+            "device private key file is damaged; refusing to move it to the hardware seal".into(),
         )
         .into()),
         PrivkeyFileKind::LegacyPlaintext | PrivkeyFileKind::Sealed => {
@@ -750,9 +738,7 @@ pub fn enable_hw_seal(
             )?;
             verify_hw_seal_opens(&*hw, seal_key, &out.bytes, &inner)?;
             super::write_vault_file(path, &out.bytes).map_err(|e| {
-                BaluardError::from(VaultError::Metadata(format!(
-                    "write hw-sealed devkey: {e}"
-                )))
+                BaluardError::from(VaultError::Metadata(format!("write hw-sealed devkey: {e}")))
             })?;
             // Eager identity rebind where the old keys are derivable: the
             // member seed (devkey_seal) and keystore-mode identity.enc.
@@ -785,8 +771,7 @@ pub fn disable_hw_seal(
     let file = std::fs::read_to_string(path)
         .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
     let backend = hw_backend_of(file.as_bytes())?;
-    let hw = crate::hwkey::store_for(&backend)
-        .ok_or_else(crate::hwkey::hw_unavailable_error)?;
+    let hw = crate::hwkey::store_for(&backend).ok_or_else(crate::hwkey::hw_unavailable_error)?;
     let (inner, old_ck) = open_bytes_hw_with_ck(&*hw, seal_key, file.as_bytes())?;
     let binding = serde_json::from_str::<serde_json::Value>(&file)
         .ok()
@@ -838,8 +823,7 @@ pub fn set_hw_seal_consent(
     let file = std::fs::read_to_string(path)
         .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
     let backend = hw_backend_of(file.as_bytes())?;
-    let hw = crate::hwkey::store_for(&backend)
-        .ok_or_else(crate::hwkey::hw_unavailable_error)?;
+    let hw = crate::hwkey::store_for(&backend).ok_or_else(crate::hwkey::hw_unavailable_error)?;
     let v: serde_json::Value = serde_json::from_str(&file)
         .map_err(|e| VaultError::Corrupt(format!("hw-sealed devkey json: {e}")))?;
     let old_binding = v["hw_binding"]
@@ -1422,7 +1406,10 @@ mod tests {
         let p = tmp_path("rotate");
         seal_file(&p, INNER, &[1u8; 32], None).unwrap();
         assert!(rotate_seal_key(&p, &[1u8; 32], &[2u8; 32], None).unwrap());
-        assert_eq!(read_privkey_file(&p, Some(&[2u8; 32])).unwrap().as_str(), INNER);
+        assert_eq!(
+            read_privkey_file(&p, Some(&[2u8; 32])).unwrap().as_str(),
+            INNER
+        );
         assert!(read_privkey_file(&p, Some(&[1u8; 32])).is_err());
         std::fs::remove_file(&p).ok();
     }
@@ -1465,8 +1452,7 @@ mod tests {
             &self,
             binding: &str,
             _consent: crate::hwkey::HwConsent,
-        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError>
-        {
+        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError> {
             use sha2::{Digest, Sha256};
             let mut peer = vec![0x04u8];
             peer.resize(65, 0);
@@ -1624,7 +1610,10 @@ mod tests {
         assert_eq!(file_kind(&p), PrivkeyFileKind::Sealed);
         let raw = std::fs::read_to_string(&p).unwrap();
         assert!(!raw.contains("hw_binding"));
-        assert_eq!(read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(), INNER);
+        assert_eq!(
+            read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(),
+            INNER
+        );
         assert_eq!(
             m.deleted.lock().unwrap().as_slice(),
             std::slice::from_ref(&binding)
@@ -1656,7 +1645,10 @@ mod tests {
             v["handshake"].as_str().unwrap().to_string()
         };
         assert_ne!(eph_before, eph_after, "fresh ephemeral per write");
-        assert_eq!(read_privkey_file(&p, Some(&[2u8; 32])).unwrap().as_str(), INNER);
+        assert_eq!(
+            read_privkey_file(&p, Some(&[2u8; 32])).unwrap().as_str(),
+            INNER
+        );
         assert!(read_privkey_file(&p, Some(&[1u8; 32])).is_err());
         crate::hwkey::uninstall();
         hw_env_restore(_old_env);
@@ -1684,7 +1676,10 @@ mod tests {
         assert_eq!(file_kind(&p), PrivkeyFileKind::LegacyPlaintext);
         assert!(reseal_if_legacy(&p, &[7u8; 32], None).unwrap());
         assert_eq!(file_kind(&p), PrivkeyFileKind::Sealed);
-        assert_eq!(read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(), INNER);
+        assert_eq!(
+            read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(),
+            INNER
+        );
         hw_env_restore(_old_env);
         std::fs::remove_file(&p).ok();
     }
@@ -1752,7 +1747,10 @@ mod tests {
 
         // Open works (the mock verifies users trivially); password change
         // preserves the mode.
-        assert_eq!(read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(), INNER);
+        assert_eq!(
+            read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(),
+            INNER
+        );
         assert!(rotate_seal_key(&p, &[7u8; 32], &[9u8; 32], None).unwrap());
         let raw = std::fs::read_to_string(&p).unwrap();
         assert!(raw.contains("\"consent\":true"));
@@ -1763,7 +1761,10 @@ mod tests {
         let raw = std::fs::read_to_string(&p).unwrap();
         assert!(raw.contains("\"consent\":false"));
         assert!(raw.contains("baluard-hw:") && !raw.contains("baluard-hwc:"));
-        assert_eq!(read_privkey_file(&p, Some(&[9u8; 32])).unwrap().as_str(), INNER);
+        assert_eq!(
+            read_privkey_file(&p, Some(&[9u8; 32])).unwrap().as_str(),
+            INNER
+        );
         assert!(
             m.deleted
                 .lock()
@@ -1913,8 +1914,7 @@ mod tests {
             &self,
             binding: &str,
             _: crate::hwkey::HwConsent,
-        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError>
-        {
+        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError> {
             use sha2::{Digest, Sha256};
             let mut h = Sha256::new();
             h.update(b"b");
@@ -1970,8 +1970,7 @@ mod tests {
             &self,
             binding: &str,
             _: crate::hwkey::HwConsent,
-        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError>
-        {
+        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError> {
             use sha2::{Digest, Sha256};
             let mut h = Sha256::new();
             h.update(b"t");
@@ -2047,10 +2046,7 @@ mod tests {
             .remove("hw_backend");
         super::super::write_vault_file(&p, v.to_string().as_bytes()).unwrap();
         let err = read_privkey_file(&p, Some(&[7u8; 32])).unwrap_err();
-        assert!(
-            err.to_string().contains("missing backend"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("missing backend"), "got: {err}");
         crate::hwkey::uninstall();
         hw_env_restore(_old_env);
         std::fs::remove_file(&p).ok();
@@ -2069,9 +2065,8 @@ mod tests {
         let raw = std::fs::read_to_string(&p).unwrap();
         let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         let big = vec![0x04u8; 4096];
-        v["handshake"] = serde_json::Value::String(
-            base64::engine::general_purpose::STANDARD.encode(big),
-        );
+        v["handshake"] =
+            serde_json::Value::String(base64::engine::general_purpose::STANDARD.encode(big));
         super::super::write_vault_file(&p, v.to_string().as_bytes()).unwrap();
         assert!(read_privkey_file(&p, Some(&[7u8; 32])).is_err());
         crate::hwkey::uninstall();
@@ -2091,7 +2086,10 @@ mod tests {
         assert!(enable_hw_seal(&p, &[7u8; 32], vault_id, None, false, None).unwrap());
         assert_eq!(file_kind(&p), PrivkeyFileKind::SealedHw);
         assert!(file_consents(&p), "tap requirement must be AAD-bound");
-        assert_eq!(read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(), INNER);
+        assert_eq!(
+            read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(),
+            INNER
+        );
         crate::hwkey::uninstall();
         hw_env_restore(_old_env);
         std::fs::remove_file(&p).ok();
@@ -2169,14 +2167,20 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["hw_attestation"].as_str(), Some("verified"));
         // The verdict is informational, never an open input.
-        assert_eq!(read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(), INNER);
+        assert_eq!(
+            read_privkey_file(&p, Some(&[7u8; 32])).unwrap().as_str(),
+            INNER
+        );
         // A seal-key rotation re-seals without re-attesting; the recorded
         // verdict carries over.
         assert!(rotate_seal_key(&p, &[7u8; 32], &[9u8; 32], None).unwrap());
         let raw = std::fs::read_to_string(&p).unwrap();
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["hw_attestation"].as_str(), Some("verified"));
-        assert_eq!(read_privkey_file(&p, Some(&[9u8; 32])).unwrap().as_str(), INNER);
+        assert_eq!(
+            read_privkey_file(&p, Some(&[9u8; 32])).unwrap().as_str(),
+            INNER
+        );
         crate::hwkey::uninstall();
         hw_env_restore(_old_env);
         std::fs::remove_file(&p).ok();
@@ -2250,10 +2254,11 @@ mod tests {
 
     fn audit_vault(dir: &std::path::Path) -> (VaultHandle, String, String) {
         let password = "audit password 123".to_string();
-        let (handle, secrets) = crate::vault::creation::VaultCreator::new(dir, &password, "this-device")
-            .kdf_profile(crate::types::KdfProfile::MobileLow)
-            .execute()
-            .unwrap();
+        let (handle, secrets) =
+            crate::vault::creation::VaultCreator::new(dir, &password, "this-device")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .execute()
+                .unwrap();
         (handle, password, secrets.recovery_phrase.phrase())
     }
 
@@ -2284,8 +2289,7 @@ mod tests {
             &self,
             _: &str,
             _: crate::hwkey::HwConsent,
-        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError>
-        {
+        ) -> Result<(crate::hwkey::Handshake, crate::hwkey::SharedSecret), BaluardError> {
             unreachable!("the file is already sealed; no enrollment expected")
         }
         fn derive(
@@ -2567,10 +2571,7 @@ mod tests {
         let file = std::fs::read_to_string(&p).unwrap();
         let err = open_sealed_hw_with_ck(&[7u8; 32], file.as_bytes()).unwrap_err();
         assert!(
-            matches!(
-                err,
-                BaluardError::Vault(VaultError::HardwareTouchTimeout)
-            ),
+            matches!(err, BaluardError::Vault(VaultError::HardwareTouchTimeout)),
             "expected HardwareTouchTimeout, got: {err}"
         );
         crate::hwkey::uninstall();
@@ -2582,8 +2583,15 @@ mod tests {
         let seal_key = handle.unlocked().devkey_seal;
         let p = handle.path.join("meta/device-privkey.json");
         assert!(
-            enable_hw_seal(&p, &seal_key, handle.vault_id, Some(handle.device_id), false, None)
-                .unwrap()
+            enable_hw_seal(
+                &p,
+                &seal_key,
+                handle.vault_id,
+                Some(handle.device_id),
+                false,
+                None
+            )
+            .unwrap()
         );
         assert_eq!(file_kind(&p), PrivkeyFileKind::SealedHw);
         handle.lock();
@@ -2595,7 +2603,10 @@ mod tests {
         crate::crypto::kdf::derive_kek(password, &params).unwrap()
     }
 
-    fn root_from_phrase(vault_path: &std::path::Path, phrase: &str) -> crate::keys::hierarchy::RootKey {
+    fn root_from_phrase(
+        vault_path: &std::path::Path,
+        phrase: &str,
+    ) -> crate::keys::hierarchy::RootKey {
         let parsed = crate::recovery::RecoveryPhrase::from_phrase(phrase).unwrap();
         let seed = parsed.derive_key();
         let secret = x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(&seed[..32]).unwrap());
@@ -2632,10 +2643,16 @@ mod tests {
         crate::hwkey::uninstall();
         let mut h = VaultHandle::open(dir.path()).unwrap();
         let err = h.unlock(&password).unwrap_err();
-        assert!(err.to_string().contains("chip is unavailable"), "err: {err}");
+        assert!(
+            err.to_string().contains("chip is unavailable"),
+            "err: {err}"
+        );
         let kek = kek_of(dir.path(), &password);
         let err = h.unlock_with_kek(&kek).unwrap_err();
-        assert!(err.to_string().contains("chip is unavailable"), "err: {err}");
+        assert!(
+            err.to_string().contains("chip is unavailable"),
+            "err: {err}"
+        );
 
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         h.unlock_with_kek(&kek).unwrap();
@@ -2729,10 +2746,24 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(DriftingMock));
         let devkey = dir.path().join("meta/device-privkey.json");
         let before = std::fs::read(&devkey).unwrap();
-        let err = enable_hw_seal(&devkey, &devkey_seal, handle.vault_id, Some(handle.device_id), false, Some("drifting"))
-            .unwrap_err();
-        assert!(matches!(err, BaluardError::Vault(VaultError::Corrupt(_))), "drifting seal must refuse: {err:?}");
-        assert_eq!(std::fs::read(&devkey).unwrap(), before, "the working device file must survive a failed verify-open");
+        let err = enable_hw_seal(
+            &devkey,
+            &devkey_seal,
+            handle.vault_id,
+            Some(handle.device_id),
+            false,
+            Some("drifting"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, BaluardError::Vault(VaultError::Corrupt(_))),
+            "drifting seal must refuse: {err:?}"
+        );
+        assert_eq!(
+            std::fs::read(&devkey).unwrap(),
+            before,
+            "the working device file must survive a failed verify-open"
+        );
         crate::hwkey::uninstall();
         hw_env_restore(_env);
     }
@@ -3148,7 +3179,8 @@ mod tests {
         );
 
         // Password change with the chip present re-keys the seal.
-        h2.change_master_password(&password, "new password 456").unwrap();
+        h2.change_master_password(&password, "new password 456")
+            .unwrap();
         h2.lock();
         let mut h3 = VaultHandle::open(dir.path()).unwrap();
         h3.unlock("new password 456").unwrap();
@@ -3156,9 +3188,10 @@ mod tests {
         // Token gone mid-session: the C1 guard refuses BEFORE any write,
         // so the old password still opens the vault afterwards.
         crate::hwkey::uninstall();
-        assert!(h3
-            .change_master_password("new password 456", "another pass 789")
-            .is_err());
+        assert!(
+            h3.change_master_password("new password 456", "another pass 789")
+                .is_err()
+        );
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         h3.lock();
         let mut h4 = VaultHandle::open(dir.path()).unwrap();
@@ -3190,8 +3223,7 @@ mod tests {
         let identity = crate::vault::identity::IdentityKeys::generate().unwrap();
         let seed_sealed =
             hex::encode(crate::vault::identity::seal_identity(&devkey_seal, &identity).unwrap());
-        let kdf_json =
-            std::fs::read_to_string(vault_path.join("meta/kdf-params.json")).unwrap();
+        let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json")).unwrap();
         let row = serde_json::json!({
             // A foreign device id: the row must be rebindable but never
             // match THIS device's admin unlock canary lookup.
@@ -3229,7 +3261,8 @@ mod tests {
         // Password change re-keys the seed to the new content key.
         let mut h = VaultHandle::open(&vault_path).unwrap();
         h.unlock(&password).unwrap();
-        h.change_master_password(&password, "rotated pass 456").unwrap();
+        h.change_master_password(&password, "rotated pass 456")
+            .unwrap();
         h.lock();
         let new_seal = {
             let kdf_json =
@@ -3289,7 +3322,13 @@ mod tests {
             };
             crate::crypto::kdf::derive_kek(&password, &params).unwrap()
         };
-        assert!(crate::vault::identity::open_identity(&passphrase_key(), &std::fs::read(&identity_path).unwrap()).is_ok());
+        assert!(
+            crate::vault::identity::open_identity(
+                &passphrase_key(),
+                &std::fs::read(&identity_path).unwrap()
+            )
+            .is_ok()
+        );
 
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         seal_to_tap(&mut handle);
@@ -3322,7 +3361,10 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let mut q = VaultHandle::open(&vault_path).unwrap();
         q.unlock_with_kek(&kek).unwrap();
-        assert!(q.identity().is_some(), "quick unlock must load the healed identity");
+        assert!(
+            q.identity().is_some(),
+            "quick unlock must load the healed identity"
+        );
 
         crate::hwkey::uninstall();
         hw_env_restore(_old_env);

@@ -933,8 +933,7 @@ pub fn upsert_grant(
                     .is_some_and(|m| m.role == crate::vault::members::MemberRole::Viewer)
             }) {
                 return Err(VaultError::InvalidOperation(
-                    "Groups containing Viewers cannot be given write or manage access."
-                        .into(),
+                    "Groups containing Viewers cannot be given write or manage access.".into(),
                 )
                 .into());
             }

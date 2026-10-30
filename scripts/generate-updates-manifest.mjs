@@ -15,8 +15,11 @@
 //
 // Usage:
 //   node scripts/generate-updates-manifest.mjs \
-//     --tag v0.2.0 --artifacts-dir <dir> --out latest.json \
+//     --tag 0.2.0 --artifacts-dir <dir> --out latest.json \
 //     [--notes-file NOTES.md] [--pub-date 2026-10-30T12:00:00Z]
+//
+// House rule (2026-10-30): versions and tags carry NO v prefix. A v-prefixed
+// tag is still accepted so an old habit cannot wedge a release.
 
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, basename } from "node:path";
@@ -41,8 +44,8 @@ for (const required of ["tag", "artifacts-dir", "out"]) {
 }
 
 const tag = args["tag"];
-if (!/^v\d/.test(tag)) {
-  console.error(`--tag must look like v0.2.0 (got ${tag})`);
+if (!/^v?\d/.test(tag)) {
+  console.error(`--tag must look like 0.2.0 or v0.2.0 (got ${tag})`);
   process.exit(2);
 }
 const version = tag.replace(/^v/, "");
