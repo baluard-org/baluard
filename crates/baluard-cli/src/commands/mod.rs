@@ -14,6 +14,8 @@ use crate::client;
 
 use std::path::Path;
 
+pub mod agent;
+
 use baluard_core::types::{CipherInput, KdfProfile};
 use baluard_core::vault::handle::{CipherRead, VaultHandle};
 use base64::Engine;
