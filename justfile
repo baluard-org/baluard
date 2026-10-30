@@ -460,6 +460,14 @@ desktop-build: _sysdeps-desktop _sidecar desktop-deps
 	fi
 	{{ linuxbrew_env }} cd desktop && npm run tauri build
 
+# D79: print (do not run) the updater signing-key generation command.
+# The private key never leaves your machine; the PUBLIC key from that
+# output replaces REPLACE_WITH_UPDATER_PUBLIC_KEY in
+# desktop/src-tauri/tauri.conf.json, and the private key becomes the
+# TAURI_SIGNING_PRIVATE_KEY repository secret.
+updater-key:
+	@echo 'npx @tauri-apps/cli signer generate -w ~/.tauri/baluard-updater.key'
+
 # Install-and-launch smoke test for a built Linux package (deb or rpm).
 # Usage: just smoke-pkg desktop/src-tauri/target/release/bundle/deb/*.deb
 # Installs with the distro package manager (declared runtime deps must

@@ -17,6 +17,11 @@ name: release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose assets feed the channel manifest (publish-updates job only)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -37,7 +42,8 @@ jobs:
             librsvg2-dev \
             patchelf \
             protobuf-compiler \
-            rpm
+            rpm \
+            libfuse2
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -53,11 +59,17 @@ jobs:
           cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
           cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 
-      - name: Build desktop bundles (deb, rpm)
+      - name: Build desktop bundles (deb, rpm, appimage)
+        env:
+          # Updater artifacts (*.AppImage.sig) are only produced when the
+          # signing key is present; without it AppImage builds are unsigned
+          # and the channel manifest step will refuse them.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cd desktop
           npm install
-          npm run tauri build -- --bundles deb,rpm
+          npm run tauri build -- --bundles deb,rpm,appimage
 
       - name: Collect CLI + daemon archives
         run: |
@@ -71,6 +83,8 @@ jobs:
           path: |
             desktop/src-tauri/target/release/bundle/deb/*.deb
             desktop/src-tauri/target/release/bundle/rpm/*.rpm
+            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            desktop/src-tauri/target/release/bundle/appimage/*.AppImage.sig
             baluard-cli-linux-x86_64.tar.gz
           if-no-files-found: error
 
@@ -105,11 +119,16 @@ jobs:
           cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
           cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 
-      - name: Build desktop bundle (dmg)
+      - name: Build desktop bundle (dmg + updatable app)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cd desktop
           npm install
-          npm run tauri build -- --bundles dmg
+          # The "app" target produces the signed .app.tar.gz the updater
+          # installs; the dmg stays the first-install shape.
+          npm run tauri build -- --bundles dmg,app
 
       - name: Collect CLI + daemon archives
         run: |
@@ -122,6 +141,8 @@ jobs:
           name: macos
           path: |
             desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
             baluard-cli-macos-aarch64.tar.gz
           if-no-files-found: error
 
@@ -196,3 +217,54 @@ jobs:
             TAG="v$(node -p "require('./desktop/src-tauri/tauri.conf.json').version")"
           fi
           gh release create "$TAG" --draft --generate-notes --title "$TAG" artifacts/*/*
+
+  # D79: the channel manifest is the ONLY mutable piece (fixed updates-beta /
+  # updates-stable tags hold it; versioned releases hold immutable artifacts)
+  # and it is published LAST, by this separate dispatch, AFTER the versioned
+  # release above has been reviewed and published from its draft. Running it
+  # earlier would point clients at downloads that are not live yet.
+  publish-updates:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download published release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release-assets
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+            --dir release-assets \
+            --pattern '*.AppImage' --pattern '*.AppImage.sig' \
+            --pattern '*.app.tar.gz' --pattern '*.app.tar.gz.sig'
+
+      - name: Generate the channel manifest (signature versions asserted)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --json body -q .body > notes.md
+          node scripts/generate-updates-manifest.mjs \
+            --tag "${{ inputs.tag }}" \
+            --artifacts-dir release-assets \
+            --notes-file notes.md \
+            --out latest.json
+
+      - name: Upload the manifest to its channel (manifest moves, artifacts don't)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          case "$TAG" in
+            *beta*|*rc*) CHANNEL="updates-beta" ;;
+            *)           CHANNEL="updates-stable" ;;
+          esac
+          gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
+              --title "$CHANNEL" \
+              --notes "Moving manifest for the $CHANNEL updater channel. Do not delete: installed apps poll this release for updates."
+          gh release upload "$CHANNEL" --repo "$GITHUB_REPOSITORY" latest.json --clobber

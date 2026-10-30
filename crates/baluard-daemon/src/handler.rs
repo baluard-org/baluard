@@ -340,6 +340,7 @@ const HOST_ACTIONS: &[&str] = &[
     "vaults.register_local",
     "vaults.lock_all",
     "vaults.on_app_blur",
+    "system.prepare_update",
     "bridge.list",
     "bridge.config",
     "bridge.match",
@@ -733,7 +734,21 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
 
     // ── Host-level routes: no target vault needed ──
     match req.action.as_str() {
-        "ping" => return ok_resp("pong", None),
+        // D79: the ping payload doubles as the version handshake. The NMH
+        // relay already reports this shape (nmh_version + proto_version); the
+        // desktop additionally refuses a `version` that differs from the
+        // daemon build it shipped with, so a stale sidecar after an update
+        // surfaces instead of serving old code.
+        "ping" => {
+            return ok_resp(
+                serde_json::json!({
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "proto_version": baluard_core::BALUARD_VERSION,
+                })
+                .to_string(),
+                None,
+            )
+        }
 
         // `vaults.*` routes operate on the host map + registry.
         "vaults.list" => {
@@ -1284,6 +1299,23 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
             log::info!("[daemon] lock_all fired: locked {locked} vault(s)");
             return ok_resp(serde_json::json!({"locked": locked}).to_string(), None);
         }
+
+        // system.prepare_update: D79 update prep. Drains each vault's sync
+        // cycle (bounded) then locks it, so the desktop may stop this daemon
+        // and replace the binaries without killing a commit or re-key
+        // mid-flight. No token: lock-class defensive primitive like
+        // vaults.lock_all. Returns the locked slugs; a sync that will not
+        // drain names its vault in the error.
+        "system.prepare_update" => match host.prepare_for_update().await {
+            Ok(slugs) => {
+                log::info!("[daemon] prepare_update: drained and locked {} vault(s)", slugs.len());
+                return ok_resp(serde_json::json!({ "locked": slugs, }).to_string(), None);
+            }
+            Err(e) => {
+                log::warn!("[daemon] prepare_update refused: {e}");
+                return err_response(e);
+            }
+        },
 
         // vaults.on_app_blur: policy-driven lock on window blur / minimize.
         // Replaces the old unconditional lock_all the desktop fired on every

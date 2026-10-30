@@ -880,6 +880,27 @@ impl VaultState {
         Ok(())
     }
 
+    /// D79 update prep for one vault: wait for any in-flight sync cycle to
+    /// finish (bounded), then lock while STILL holding the cycle guard so no
+    /// new cycle can start between drain and lock. A wedged network cycle
+    /// refuses the update instead of hanging it; the desktop surfaces the
+    /// retry. The cycle guard and lock() take locks in the same order the
+    /// sync cycle uses (cycle_lock, then inner), so this cannot deadlock.
+    pub async fn prepare_for_update(&self) -> Result<(), String> {
+        const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+        self.prepare_for_update_with_timeout(DRAIN_TIMEOUT).await
+    }
+
+    pub(crate) async fn prepare_for_update_with_timeout(
+        &self,
+        drain_timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        let _cycle = tokio::time::timeout(drain_timeout, self.autosync.cycle_lock_guard())
+            .await
+            .map_err(|_| "a sync cycle is still running; retry in a moment".to_string())?;
+        self.lock().await
+    }
+
     /// Change the master password. Requires vault to be unlocked.
     /// H1 fix: re-wraps KEK and disables stale biometric secret.
     pub async fn change_master_password(
@@ -9925,6 +9946,49 @@ mod enroll_phrase_seal_tests {
             std::fs::read_to_string(dir.path().join("meta/device-privkey.json")).unwrap(),
             privkey_before
         );
+    }
+}
+
+/// D79: the desktop stops the daemon only after prepare_update reports
+/// success, so a refused drain must leave the vault unlocked and a finished
+/// cycle must drain-and-lock. The with_timeout variant keeps the refusal
+/// test fast instead of waiting out the 30s production budget.
+#[cfg(test)]
+mod prepare_update_tests {
+    use super::*;
+    use std::time::Duration;
+
+    const MASTER: &str = "prepare-update-master-password";
+
+    async fn unlocked_vault() -> (tempfile::TempDir, Arc<VaultState>) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(VaultState::new(dir.path().to_path_buf()));
+        state
+            .create_vault(
+                &serde_json::json!({"password": MASTER, "profile": "mobile_low"}).to_string(),
+            )
+            .await
+            .unwrap();
+        state.unlock(MASTER).await.unwrap();
+        (dir, state)
+    }
+
+    #[tokio::test]
+    async fn prepare_for_update_refuses_while_a_sync_cycle_is_in_flight() {
+        let (_dir, state) = unlocked_vault().await;
+        let cycle = state.autosync.cycle_lock_guard().await;
+        let err = state
+            .prepare_for_update_with_timeout(Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert!(err.contains("sync cycle is still running"), "got: {err}");
+        assert!(state.is_unlocked().await, "a refused prepare must not lock");
+        drop(cycle);
+        state
+            .prepare_for_update_with_timeout(Duration::from_secs(2))
+            .await
+            .expect("drains and locks once the cycle finishes");
+        assert!(!state.is_unlocked().await);
     }
 }
 

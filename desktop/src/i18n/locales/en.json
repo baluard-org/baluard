@@ -399,7 +399,7 @@
     "tabContacts": "Contacts",
     "tabOutboxes": "Outboxes",
     "tabSpace": "Vault",
-        "hwKeyTitle": "Guard with your security key",
+    "hwKeyTitle": "Guard with your security key",
     "hwKeyOn": "This vault is guarded by your security key.",
     "hwKeyOff": "This vault is not guarded by a security key.",
     "hwKeyEnableTitle": "Turn on the security key guard?",
@@ -407,7 +407,7 @@
     "hwKeyDisableTitle": "Turn off the security key guard?",
     "hwKeyEnabledToast": "Security key guard is on.",
     "hwKeyDisabledToast": "Security key guard is off.",
-"hwTitle": "Guard with this device's security chip",
+    "hwTitle": "Guard with this device's security chip",
     "hwDesc": "A stolen disk or backup alone cannot open this vault, even with the password.",
     "hwOn": "This vault is guarded by the security chip.",
     "hwOff": "This vault is not guarded by the security chip.",
@@ -583,9 +583,9 @@
     "hwTouchTimeout": "No touch was detected on the key. Try again.",
     "hwBusy": "The security key is busy in another application. Close it and try again.",
     "hwKeyWrong": "This is not the security key this vault was sealed to.",
-        "hwKeyUvForced": "This key always demands its own verification and cannot guard this vault.",
+    "hwKeyUvForced": "This key always demands its own verification and cannot guard this vault.",
     "hwKeyPinRequired": "This key requires its PIN for this operation. Use a key without a PIN.",
-"hwKeyMissing": "Plug in your security key."
+    "hwKeyMissing": "Plug in your security key."
   },
   "categories": {
     "allItems": "All items",
@@ -1263,5 +1263,21 @@
     "openGo": "Open the vault",
     "replaceBtn": "Hand the kit to someone new",
     "replaceNote": "This makes a brand-new kit for a new person (or new passphrase). The current kit stops working immediately and the vault re-keys — the old letter becomes useless."
+  },
+  "update": {
+    "availableTitle": "Version {version} is available",
+    "installNow": "Install and restart",
+    "installing": "Installing version {version}…",
+    "dismiss": "Dismiss",
+    "checkFailed": "Could not check for updates.",
+    "upToDate": "You're up to date.",
+    "checkNow": "Check for updates",
+    "checking": "Checking…",
+    "autoChecks": "Check for updates automatically",
+    "settingsTitle": "Updates",
+    "settingsDesc": "Channel: {channel}",
+    "managed": "Updates for this installation are managed externally.",
+    "versionMismatchTitle": "Baluard's background service is out of date",
+    "versionMismatchBody": "The app and its background service are different versions.\nQuit Baluard completely and start it again."
   }
 }
