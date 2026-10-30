@@ -593,7 +593,15 @@ pub fn parse_make_credential(
         .ok_or_else(|| ClientError::Malformed("authData".into()))?;
     let att = parse_attestation(&v, client_data_hash)?;
     let acd = attested_credential_data(auth_data)?;
-    let hmac_output_enc = auth_data_extensions(auth_data)?;
+    let hmac_output_enc = match auth_data_extensions(auth_data)? {
+        HmacSecretExtension::Enabled => None,
+        HmacSecretExtension::Output(out) => Some(out),
+        HmacSecretExtension::Missing => {
+            return Err(ClientError::Malformed(
+                "makeCredential did not enable hmac-secret".into(),
+            ));
+        }
+    };
     Ok(MadeCredential {
         credential_id: acd.0,
         credential_public_key: acd.1,
@@ -676,31 +684,44 @@ fn attested_credential_data(auth_data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Clie
 /// authData trailing extensions (flags bit 7): a canonical CBOR map whose
 /// "hmac-secret" entry is the encrypted output (creation or assertion).
 /// When the attested-credential flag is set, the ACD block is skipped first.
-fn auth_data_extensions(auth_data: &[u8]) -> Result<Option<Vec<u8>>, ClientError> {
+enum HmacSecretExtension {
+    Missing,
+    Enabled,
+    Output(Vec<u8>),
+}
+
+fn auth_data_extensions(auth_data: &[u8]) -> Result<HmacSecretExtension, ClientError> {
     const ATTESTED_FLAG: u8 = 0x40;
     const EXT_FLAG: u8 = 0x80;
     if auth_data.len() < 37 || auth_data[32] & EXT_FLAG == 0 {
-        return Ok(None);
+        return Ok(HmacSecretExtension::Missing);
     }
     let mut at = 37;
     if auth_data[32] & ATTESTED_FLAG != 0 {
-        let len = u16::from_be_bytes([
-            *auth_data
-                .get(at + 16)
-                .ok_or_else(|| ClientError::Malformed("cred len".into()))?,
-            *auth_data
-                .get(at + 17)
-                .ok_or_else(|| ClientError::Malformed("cred len".into()))?,
-        ]) as usize;
-        at += 16 + 2 + len;
+        if auth_data.len() < 55 {
+            return Err(ClientError::Malformed("attested credential data".into()));
+        }
+        let len = u16::from_be_bytes([auth_data[53], auth_data[54]]) as usize;
+        let cred_end = 55usize
+            .checked_add(len)
+            .filter(|end| *end <= auth_data.len())
+            .ok_or_else(|| ClientError::Malformed("credential id".into()))?;
+        // Extensions follow the COSE key, not the credential id. Decode
+        // exactly one bounded item to find the extension map's offset.
+        at = crate::hwkey::cbor::item_end(&auth_data[cred_end..])
+            .map(|end| end + cred_end)
+            .ok_or_else(|| ClientError::Malformed("credential public key".into()))?;
     }
-    let (v, _) = Value::decode(&auth_data[at..])
-        .map_err(|_| ClientError::Malformed("authData ext".into()))?;
+    let tail = auth_data
+        .get(at..)
+        .ok_or_else(|| ClientError::Malformed("authData ext".into()))?;
+    let (v, _) = Value::decode(tail).map_err(|_| ClientError::Malformed("authData ext".into()))?;
     // Enable-form makeCredential answers "hmac-secret": true (applied, no
     // output); only salt-bearing requests and assertions carry ciphertext.
     match v.get_text("hmac-secret") {
-        Some(Value::ByteString(out)) => Ok(Some(out.to_vec())),
-        Some(Value::Bool(true)) | None => Ok(None),
+        Some(Value::ByteString(out)) => Ok(HmacSecretExtension::Output(out.to_vec())),
+        Some(Value::Bool(true)) => Ok(HmacSecretExtension::Enabled),
+        None => Ok(HmacSecretExtension::Missing),
         Some(_) => Err(ClientError::Malformed("hmac-secret output".into())),
     }
 }
@@ -730,8 +751,14 @@ pub fn parse_assertion(body: &[u8], secrets: &SharedSecret) -> Result<Assertion,
         .and_then(Value::as_bytes)
         .ok_or_else(|| ClientError::Malformed("assertion signature".into()))?
         .to_vec();
-    let enc = auth_data_extensions(&auth_data)?
-        .ok_or_else(|| ClientError::Malformed("hmac-secret assertion output".into()))?;
+    let enc = match auth_data_extensions(&auth_data)? {
+        HmacSecretExtension::Output(out) => out,
+        _ => {
+            return Err(ClientError::Malformed(
+                "hmac-secret assertion output".into(),
+            ));
+        }
+    };
     let plain = secrets.decrypt(&enc).map_err(ClientError::Malformed)?;
     if plain.len() != 32 && plain.len() != 64 {
         return Err(ClientError::Malformed("hmac-secret output length".into()));
@@ -785,6 +812,47 @@ pub fn cose_p256_public(key: &Value) -> Result<Vec<u8>, ClientError> {
 mod tests {
     use super::*;
     use crate::hwkey::ctap::cbor::Value;
+
+    #[test]
+    fn hostile_attested_credential_length_is_refused_without_panicking() {
+        let mut auth_data = vec![0u8; 55];
+        auth_data[32] = 0x40 | 0x80;
+        auth_data[53..55].copy_from_slice(&u16::MAX.to_be_bytes());
+        assert!(matches!(
+            auth_data_extensions(&auth_data),
+            Err(ClientError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn make_credential_requires_the_hmac_secret_ack() {
+        let mut auth_data = vec![0u8; 37];
+        auth_data[32] = 0x40 | 0x80;
+        auth_data.extend_from_slice(&[0u8; 16]);
+        auth_data.extend_from_slice(&1u16.to_be_bytes());
+        auth_data.push(9);
+        // Empty COSE map, then an extensions map WITHOUT hmac-secret.
+        auth_data.extend_from_slice(&[0xA0, 0xA0]);
+        let body = Value::Map(vec![
+            (Value::Unsigned(2), Value::ByteString(auth_data)),
+            (
+                Value::Unsigned(3),
+                Value::Map(vec![
+                    (Value::TextString("alg".into()), Value::Negative(-7)),
+                    (Value::TextString("sig".into()), Value::ByteString(vec![1])),
+                    (
+                        Value::TextString("x5c".into()),
+                        Value::Array(vec![Value::ByteString(vec![0x30, 0x00])]),
+                    ),
+                ]),
+            ),
+        ])
+        .encode();
+        assert!(matches!(
+            parse_make_credential(&body, &[0u8; 32]),
+            Err(ClientError::Malformed(_))
+        ));
+    }
 
     #[test]
     fn cose_point_extraction_rejects_non_p256() {
