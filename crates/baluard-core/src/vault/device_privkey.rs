@@ -13,15 +13,15 @@
 //! - The unlocked `VaultHandle` retains the 32-byte subkey (never the KEK)
 //!   so post-unlock consumers (sync signing, password change) can open the
 //!   file without keeping the KEK resident.
-//! - Phrase-only flows (recovery, enroll-with-phrase) run before any
-//!   master-password material exists, so they still write the legacy
-//!   plaintext file; the next successful unlock re-seals it lazily
-//!   ([`reseal_if_legacy`]). That window is the residual exposure, and it
-//!   is strictly shorter than the previous always-plaintext state.
+//! - Daemon/CLI phrase enrollment requires the new master password and
+//!   seals the fresh device key at birth. Pre-fix plaintext files remain
+//!   readable and re-seal lazily on the next successful unlock
+//!   ([`reseal_if_legacy`]); the bounded mobile join-flow residual is
+//!   tracked separately in slice 4D.
 //!
 //! File formats:
 //! - sealed v1: `{"type":"baluard-devkey-seal-v1","envelope":"<base64>"}`
-//! - legacy (pre-seal vaults + phrase-flow writes): the inner JSON itself,
+//! - legacy (pre-seal vaults and pre-fix phrase-flow writes): the inner JSON itself,
 //!   detected by the presence of `x25519_private`.
 
 use std::path::Path;

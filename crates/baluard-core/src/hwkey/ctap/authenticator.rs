@@ -531,6 +531,7 @@ mod tests {
                 let mut r = [0u8; 65];
                 r[1..5].copy_from_slice(&ctaphid::wire::BROADCAST_CID);
                 r[5] = cmd;
+                r[6..8].copy_from_slice(&17u16.to_be_bytes());
                 r[8..16].copy_from_slice(&report[8..16]); // nonce echo
                 r[16..20].copy_from_slice(&self.cid);
                 r[20] = 2;

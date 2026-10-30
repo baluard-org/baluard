@@ -27,6 +27,7 @@ suspend fun <T> withSecurityKeyTransport(
 fun securityKeyErrorMessage(error: Throwable): String {
     val detail = error.message.orEmpty()
     return when {
+        error is xyz.actitud.baluard.BaluardException.WrongPassword -> t("login.wrongPassword")
         detail.contains("wrong password", ignoreCase = true) ||
             detail.contains("master password incorrect", ignoreCase = true) -> t("login.wrongPassword")
         detail.contains("not tapped", ignoreCase = true) ||

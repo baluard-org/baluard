@@ -5,11 +5,11 @@
 //! A device with a usable security chip (Secure Enclave, TPM 2.0) installs
 //! a [`HardwareKeyStore`] implementation at daemon startup; devices without
 //! one install nothing and every surface stays exactly as it is today
-//! (seal v1). The chip never holds vault keys - it contributes an ECDH
-//! secret to the seal's content key, so both the password AND the chip are
-//! required to open the sealed file. Silent chips add zero unlock
-//! friction; interactive backends (the FIDO2 security-key seal) demand
-//! exactly one physical tap per use.
+//! (seal v1). The hardware never holds vault keys: chip backends contribute
+//! an ECDH secret and FIDO2 backends an hmac-secret output to the seal's
+//! content key, so both the password AND the hardware are required to open
+//! the sealed file. Silent chips add zero unlock friction; FIDO2 keys demand
+//! a physical tap per use.
 //!
 //! Platform backends live behind the `hw-seal` cargo feature. The daemon
 //! owns all hardware operations; CLI, desktop frontend, NMH, and mobile
@@ -47,7 +47,7 @@ impl Handshake {
     }
 }
 
-/// The ECDH output. Never leaves the process; zeroized on drop.
+/// The backend agreement output (ECDH or hmac-secret). Zeroized on drop.
 pub type SharedSecret = Zeroizing<[u8; 32]>;
 
 /// Result of probing this device for a usable hardware keystore.
@@ -80,7 +80,7 @@ pub enum Interaction {
 /// so an open resolves the SAME backend that sealed it.
 pub trait HardwareKeyStore: Send + Sync {
     /// Registry key and seal-file record ("secure-enclave", "tpm-esapi",
-    /// "fido", "mock"). Must be unique per compiled backend.
+    /// "fido2", "mock"). Must be unique per compiled backend.
     fn backend_id(&self) -> &'static str;
     fn probe(&self) -> HwCapability;
     /// Whether this backend's chips can demand the platform's own user

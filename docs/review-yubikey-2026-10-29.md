@@ -211,14 +211,18 @@ Suites for the sweep: FIDO2 core lib 1054/0 failed/1 ignored, default core lib 9
 
 ## NIT
 
-- N1. `mod.rs:82` trait doc lists `"fido"` as a backend id; the code uses `"fido2"`.
-- N2. `mod.rs:1-16` module docs still say "contributes an ECDH secret" and "Silent chips add zero friction" as the general model; the FIDO answerer is neither ECDH nor silent.
-- N3. `device_privkey.rs:10-20` module docs still describe phrase-flow plaintext writes as current behavior; slice 4 closed that for daemon/CLI (mobile join residual remains, 4D).
-- N5. `ctap/cbor.rs:99-101` cites RFC 8949 §4.2.1 ordering; CTAP2 requires RFC 7049 length-first ordering. Equivalent for every map emitted today, divergent for mixed-type keys.
-- N6. `ctaphid.rs:93-103` does not validate INIT reply BCNT >= 17 or reject an allocated CID of 0 / broadcast.
-- N7. `change_master_password_with_security_key` (UniFFI) has no Kotlin caller; `WrongPassword.message` is `""`, so the wrong-password branch in `securityKeyErrorMessage` never matches.
-- N8. es `errors.hardwareUnavailable` says "caja fuerte"; every other string says "bóveda".
-- N4. `fido.rs:245-250` `#[allow(dead_code)]` with "consumed from slice 2" comments on code that is consumed now.
+FIXED (2026-10-30, wave 28):
+
+- N1. The trait's backend-id examples now say `fido2`, matching the registry and seal records.
+- N2. Module docs describe both backend primitive families (chip ECDH and FIDO hmac-secret) and no longer present silent ECDH as the universal model.
+- N3. Device-file lifecycle docs now record password-proven, sealed-at-birth daemon/CLI phrase enrollment; only pre-fix plaintext files use lazy reseal, with the bounded mobile join residual explicitly left to 4D.
+- N4. Stale `allow(dead_code)` attributes and the "consumed from slice 2" comment were removed from live FIDO adapter code.
+- N5. CTAP2 maps now use RFC 7049 canonical length-first key ordering, then bytewise ordering for equal lengths. A mixed integer/text/negative-key vector pins the difference from RFC 8949 bytewise-only ordering; the CTAP suite and protocol KATs stay green.
+- N6. CTAPHID INIT validates BCNT >= 17 and rejects allocated CID 0 and broadcast. The software authenticator's INIT fixture was missing BCNT and was strictened too; short/zero/broadcast regressions pass.
+- N7. `BaluardException.WrongPassword` is matched by type, so its generated empty message cannot bypass localized wrong-password copy. The unused `change_master_password_with_security_key` UniFFI method was removed rather than kept as dead public API; bindings and StubVault were regenerated/updated. The transactional core password-change implementation remains used by daemon/desktop and can be re-exposed when mobile grows that UI.
+- N8. Spanish `errors.hardwareUnavailable` now says "bóveda" instead of "caja fuerte".
+
+Verification: CTAP 68/0 failed/1 ignored, FIDO2 core lib 1056/0/1 ignored (+2), UniFFI 26/0, default core check, shared + androidApp tests and Kotlin compilation, git diff --check clean. No new production formatting drift.
 
 ## Test gaps
 
