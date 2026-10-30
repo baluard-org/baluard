@@ -7760,18 +7760,9 @@ impl VaultState {
         let vault_id = handle.vault_id.to_string();
         drop(guard);
 
-        let pw = Zeroizing::new(password.to_string());
-        let vp = vault_path.clone();
-        let mut temp = tokio::task::spawn_blocking(move || -> Result<VaultHandle, String> {
-            let mut h = VaultHandle::open(&vp).map_err(|e| format!("Open failed: {e}"))?;
-            h.unlock(&pw)
-                .map_err(|_| "Incorrect master password".to_string())?;
-            Ok(h)
-        })
-        .await
-        .map_err(|e| format!("verify task: {e}"))??;
-        temp.lock();
-
+        self.verify_master_password(password)
+            .await
+            .map_err(|_| "Incorrect master password".to_string())?;
         baluard_core::biometric::enable(&vault_id, password)?;
 
         Ok(serde_json::json!({
@@ -8884,23 +8875,11 @@ impl VaultState {
         Ok(json.to_string())
     }
 
-    /// Verify master password for reprompt. Opens a temporary handle and attempts unlock.
-    /// Returns a short-lived grant. Does NOT change the main vault state.
+    /// Verify the master password without opening a second vault session.
     pub async fn reprompt_verify(&self, master_password: &str) -> Result<String, String> {
-        // Argon2id pins a worker for ~1s: run the open+verify on a
-        // blocking thread.
-        let vault_path = self.vault_path.clone();
-        let password = Zeroizing::new(master_password.to_string());
-        let mut temp_handle =
-            tokio::task::spawn_blocking(move || -> Result<VaultHandle, String> {
-                let mut h =
-                    VaultHandle::open(&vault_path).map_err(|e| format!("Open failed: {e}"))?;
-                h.unlock(&password)
-                    .map_err(|_| "Incorrect master password".to_string())?;
-                Ok(h)
-            })
+        self.verify_master_password(master_password)
             .await
-            .map_err(|e| format!("verify task: {e}"))??;
+            .map_err(|_| "Incorrect master password".to_string())?;
 
         // Password verified. The grant is time-window only: `expires_at` is
         // all the client needs. No grant_token is minted — a returned token
@@ -8910,11 +8889,7 @@ impl VaultState {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
-            + 30; // 30 second grant
-
-        // Lock the temporary handle (zeroize keys)
-        temp_handle.lock();
-
+            + 30;
         Ok(serde_json::json!({
             "granted": true,
             "expires_at": expires_at,
@@ -10190,6 +10165,49 @@ mod pin_hw_escrow_tests {
         assert!(
             TAP_OFF_WORKER.load(Ordering::SeqCst),
             "the chip derive ran on the async runtime worker"
+        );
+    }
+
+    #[tokio::test]
+    async fn password_rechecks_keep_the_live_signing_cache_without_tapping() {
+        let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _env = HwEnvGuard::clear();
+        let (dir, state) = sealed_pin_vault(false).await;
+        baluard_core::hwkey::install(Arc::new(PinHwMock {
+            probe_blocking_thread: false,
+        }));
+        state.unlock(MASTER).await.unwrap();
+        let info = serde_json::from_str::<serde_json::Value>(&state.info().await.unwrap()).unwrap();
+        let device_id = uuid::Uuid::parse_str(info["device_id"].as_str().unwrap()).unwrap();
+        assert!(baluard_core::vault::handle::cached_device_signing_key(
+            dir.path(),
+            device_id
+        )
+        .is_some());
+
+        // Password-only proofs must work with the key unplugged and must not
+        // let a temporary handle evict the live session's signing key.
+        baluard_core::hwkey::uninstall();
+        state.reprompt_verify(MASTER).await.unwrap();
+        assert!(baluard_core::vault::handle::cached_device_signing_key(
+            dir.path(),
+            device_id
+        )
+        .is_some());
+        state.reprompt_verify("definitely-wrong").await.unwrap_err();
+        assert!(baluard_core::vault::handle::cached_device_signing_key(
+            dir.path(),
+            device_id
+        )
+        .is_some());
+
+        let _ = state
+            .biometric_enable(&serde_json::json!({"password": MASTER}).to_string())
+            .await;
+        assert!(
+            baluard_core::vault::handle::cached_device_signing_key(dir.path(), device_id)
+                .is_some(),
+            "biometric password verification evicted the live signing key"
         );
     }
 }

@@ -224,6 +224,18 @@ FIXED (2026-10-30, wave 28):
 
 Verification: CTAP 68/0 failed/1 ignored, FIDO2 core lib 1056/0/1 ignored (+2), UniFFI 26/0, default core check, shared + androidApp tests and Kotlin compilation, git diff --check clean. No new production formatting drift.
 
+## Follow-up residual fixes (2026-10-30)
+
+Claude's general verification pass found three residual items; all are fixed:
+
+- R1 (signing cache): reprompt and biometric setup no longer unlock and lock temporary VaultHandles. Both use the canary-only password proof, so they cannot evict the live session's signing key on success or failure. The sealed-vault regression covers successful reprompt, wrong-password reprompt, and biometric setup with the key unplugged, asserting the cache survives each path.
+- R2 (extra tap): the same canary-only change removes the full-unlock tap from reprompt and biometric setup. The regression performs reprompt with no hardware store installed, proving no chip interaction is required.
+- R3 (mobile error typing): UniFFI now emits BaluardError::SecurityKey for typed core hardware failures and security-key transport detail. Kotlin classifies only WrongPassword and SecurityKey exception types; unrelated text such as "database busy" remains a generic localized failure. Localized detail mapping is unchanged. Bindings and tests were regenerated/updated.
+
+R4 remains a test/physical-verification item, not a claimed code fix: the software authenticator still needs genuine attestation-chain coverage and captured real-token vectors. It stays with the physical checklist.
+
+Verification: runtime 72/0 (+1), UniFFI 26/0, daemon 195/0 across 11 suites, shared + androidApp tests and Kotlin compilation green. Agy approved R1-R3 with zero actionable findings.
+
 ## Test gaps
 
 - No test that `SyncEngine::new` on an hw-sealed vault obtains a signing key without calling the backend (H1). A tap mock that panics on `derive` after unlock would catch it.
