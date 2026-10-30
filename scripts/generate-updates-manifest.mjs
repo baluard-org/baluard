@@ -57,14 +57,22 @@ function walk(dir) {
   return files;
 }
 
-// The trusted comment is covered by the minisign signature; the Tauri CLI
-// records tab-separated key:value pairs there. The updater plugin reads the
-// same field, so asserting it here closes the version-substitution window
-// before any client ever sees the manifest. (\s already covers tabs; a
-// class like [^\s\\t] would wrongly exclude the literal letter "t" and
-// break every beta tag.)
+// The .sig file is BASE64 of the minisign text (tauri-plugin-updater's
+// verify_signature base64-decodes it before parsing), so decode first, then
+// read the trusted comment. The comment is covered by the signature itself;
+// the updater plugin asserts the same field client-side, so checking it here
+// closes the version-substitution window before any client sees the
+// manifest. ([^\s] not [^\s\\t]: the latter excludes the literal letter
+// "t" and breaks every beta tag.)
 function signedVersionOf(sigPath) {
-  const text = readFileSync(sigPath, "utf8");
+  const raw = readFileSync(sigPath, "utf8");
+  const b64 = raw.replace(/\s+/g, "");
+  let text = raw;
+  try {
+    text = Buffer.from(b64, "base64").toString("utf8");
+  } catch {
+    // Not base64: fall back to raw text so a plain-text fixture still parses.
+  }
   const line = text.split("\n").find((l) => l.startsWith("trusted comment:"));
   if (!line) return null;
   return line.match(/version:([^\s]+)/)?.[1] ?? null;

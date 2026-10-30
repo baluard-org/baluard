@@ -29,8 +29,21 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-24.04
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tag != '') }} # publish-only dispatch skips the builds
     steps:
       - uses: actions/checkout@v4
+
+      - name: Refuse to ship the placeholder updater key
+        run: |
+          # H2: a bundle carrying REPLACE_WITH_UPDATER_PUBLIC_KEY installs
+          # fine and can then never self-update (the plugin refuses to
+          # verify against a placeholder). Fail the release instead.
+          if grep -q 'REPLACE_WITH_UPDATER_PUBLIC_KEY' desktop/src-tauri/tauri.conf.json; then
+            echo "tauri.conf.json still carries the updater pubkey placeholder.";
+            echo "Generate the keypair (just updater-key), commit the public key,";
+            echo "and store the private key as the TAURI_SIGNING_PRIVATE_KEY secret.";
+            exit 1;
+          fi
 
       - name: Install build dependencies
         run: |
@@ -90,6 +103,7 @@ jobs:
 
   macos:
     runs-on: macos-14
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tag != '') }} # publish-only dispatch skips the builds
     steps:
       - uses: actions/checkout@v4
 
@@ -105,6 +119,12 @@ jobs:
       # tauri build below. Without them tauri ad-hoc signs.
       - name: Signing mode
         run: |
+          # H2: the same placeholder gate the Linux job runs; this job
+          # produces the signed macOS updater artifact.
+          if grep -q 'REPLACE_WITH_UPDATER_PUBLIC_KEY' desktop/src-tauri/tauri.conf.json; then
+            echo "tauri.conf.json still carries the updater pubkey placeholder.";
+            exit 1;
+          fi
           if [ -n "${{ secrets.APPLE_CERTIFICATE_P12 }}" ]; then
             echo "APPLE_SIGNING_IDENTITY=Developer ID Application" >> "$GITHUB_ENV"
           else
@@ -148,6 +168,7 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tag != '') }} # publish-only dispatch skips the builds
     steps:
       - uses: actions/checkout@v4
 
@@ -226,6 +247,9 @@ jobs:
   publish-updates:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
     runs-on: ubuntu-24.04
+    env:
+      # Never interpolate a dispatch input straight into shell: env indirection only.
+      TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -238,7 +262,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p release-assets
-          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --dir release-assets \
             --pattern '*.AppImage' --pattern '*.AppImage.sig' \
             --pattern '*.app.tar.gz' --pattern '*.app.tar.gz.sig'
@@ -247,9 +271,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --json body -q .body > notes.md
+          # C2: the channel rule must match the client's is_prerelease
+          # (any semver prerelease suffix is beta). An alpha tag routed to
+          # the stable manifest would be offered to every stable user.
+          case "$TAG" in
+            *-*|*beta*|*rc*|*alpha*) echo "refusing prerelease tag; this job publishes the stable manifest"; exit 1 ;;
+          esac
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body > notes.md
           node scripts/generate-updates-manifest.mjs \
-            --tag "${{ inputs.tag }}" \
+            --tag "$TAG" \
             --artifacts-dir release-assets \
             --notes-file notes.md \
             --out latest.json
@@ -258,10 +288,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ inputs.tag }}"
           case "$TAG" in
-            *beta*|*rc*) CHANNEL="updates-beta" ;;
-            *)           CHANNEL="updates-stable" ;;
+            *beta*|*rc*|*alpha*|*dev*|*pre*) CHANNEL="updates-beta" ;;
+            *)                               CHANNEL="updates-stable" ;;
           esac
           gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
