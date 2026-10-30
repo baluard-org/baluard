@@ -18,17 +18,18 @@ import android.os.Build
 import xyz.actitud.baluard.BaluardException
 import xyz.actitud.baluard.MobileHardwareTransport
 import xyz.actitud.baluard.MobileTransportProtocol
+import xyz.actitud.baluard.shared.BuildConfig
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-private const val YUBICO_VENDOR_ID = 0x1050
+private const val FIDO_USAGE_PAGE = 0xF1D0
 private const val TAG_WAIT_SECONDS = 20L
 private const val USB_PERMISSION_WAIT_SECONDS = 60L
 
 private fun crumb(message: String) {
-    println("BaluardUsb[${Thread.currentThread().name}] $message")
+    if (BuildConfig.DEBUG) println("BaluardUsb[${Thread.currentThread().name}] $message")
 }
 private const val USB_IO_TIMEOUT_MS = 20_000
 
@@ -42,9 +43,42 @@ actual fun newSecurityKeyTransport(): MobileHardwareTransport {
     val context = AppContextHolder.require()
     val activity = AppContextHolder.activity()
         ?: throw BaluardException.Vault("Open Baluard before connecting the key")
-    val usb = context.getSystemService(UsbManager::class.java)
-        ?.deviceList?.values?.firstOrNull(::isFidoDevice)
-    return if (usb != null) UsbSecurityKeyTransport(context, usb) else NfcSecurityKeyTransport(activity)
+    return AndroidSecurityKeyTransport(context, activity)
+}
+
+/** Selects USB at operation start, including a key plugged after Unlock. */
+private class AndroidSecurityKeyTransport(
+    private val context: Context,
+    private val activity: androidx.fragment.app.FragmentActivity,
+) : MobileHardwareTransport {
+    private var delegate: MobileHardwareTransport? = null
+
+    private fun transport(): MobileHardwareTransport = delegate ?: run {
+        val usb = context.getSystemService(UsbManager::class.java)
+            ?.deviceList?.values?.firstOrNull(::isFidoDevice)
+        val selected: MobileHardwareTransport = if (usb != null) {
+            UsbSecurityKeyTransport(context, usb)
+        } else {
+            NfcSecurityKeyTransport(activity)
+        }
+        delegate = selected
+        selected
+    }
+
+    private inline fun <T> callback(block: () -> T): T = try {
+        block()
+    } catch (e: BaluardException) {
+        throw e
+    } catch (e: Exception) {
+        throw BaluardException.Vault("Security key operation failed: ${e.message ?: e.javaClass.simpleName}")
+    }
+
+    override fun protocol(): MobileTransportProtocol = callback { transport().protocol() }
+    override fun supportsExtendedApdu(): Boolean = callback { transport().supportsExtendedApdu() }
+    override fun transceive(request: ByteArray): ByteArray = callback { transport().transceive(request) }
+    override fun write(report: ByteArray) = callback { transport().write(report) }
+    override fun read(): ByteArray = callback { transport().read() }
+    override fun shutdown(): Unit = callback { delegate?.shutdown() }
 }
 
 private fun fidoInterface(device: UsbDevice): UsbInterface? {
@@ -68,8 +102,49 @@ private fun fidoInterface(device: UsbDevice): UsbInterface? {
     return null
 }
 
-private fun isFidoDevice(device: UsbDevice): Boolean =
-    device.vendorId == YUBICO_VENDOR_ID && fidoInterface(device) != null
+private fun isFidoDevice(device: UsbDevice): Boolean = fidoInterface(device) != null
+
+internal fun hidReportHasFidoUsagePage(report: ByteArray): Boolean {
+    var offset = 0
+    while (offset < report.size) {
+        val prefix = report[offset].toInt() and 0xFF
+        offset++
+        if (prefix == 0xFE) {
+            if (offset + 2 > report.size) return false
+            val length = report[offset].toInt() and 0xFF
+            offset += 2 + length
+            continue
+        }
+        val size = when (prefix and 0x03) {
+            0, 1, 2 -> prefix and 0x03
+            else -> 4
+        }
+        if (offset + size > report.size) return false
+        val type = (prefix shr 2) and 0x03
+        val tag = (prefix shr 4) and 0x0F
+        if (type == 1 && tag == 0 && size in 1..2) {
+            var page = 0
+            for (i in 0 until size) page = page or ((report[offset + i].toInt() and 0xFF) shl (8 * i))
+            if (page == FIDO_USAGE_PAGE) return true
+        }
+        offset += size
+    }
+    return false
+}
+
+private fun hasFidoUsagePage(connection: UsbDeviceConnection, iface: UsbInterface): Boolean {
+    val descriptor = ByteArray(4096)
+    val read = connection.controlTransfer(
+        UsbConstants.USB_DIR_IN or UsbConstants.USB_TYPE_STANDARD or 0x01,
+        0x06,
+        0x22 shl 8,
+        iface.id,
+        descriptor,
+        descriptor.size,
+        2_000,
+    )
+    return read > 0 && hidReportHasFidoUsagePage(descriptor.copyOf(read))
+}
 
 private class NfcSecurityKeyTransport(
     private val activity: androidx.fragment.app.FragmentActivity,
@@ -81,6 +156,10 @@ private class NfcSecurityKeyTransport(
     private val closed = AtomicBoolean(false)
     @Volatile private var connectedTag: IsoDep? = null
     @Volatile private var extendedApdu = false
+
+    init {
+        startReader()
+    }
 
     override fun protocol(): MobileTransportProtocol = MobileTransportProtocol.NFC
     override fun supportsExtendedApdu(): Boolean {
@@ -116,8 +195,16 @@ private class NfcSecurityKeyTransport(
         return try {
             tag.transceive(request)
         } catch (e: Exception) {
+            clearConnectedTag(tag)
             throw BaluardException.Vault("Security key connection lost. Hold it steady and retry")
         }
+    }
+
+    @Synchronized
+    private fun clearConnectedTag(tag: IsoDep) {
+        if (connectedTag === tag) connectedTag = null
+        tags.remove(tag)
+        runCatching { tag.close() }
     }
 
     @Synchronized
@@ -259,6 +346,9 @@ private class UsbSecurityKeyTransport(
             crumb("claim iface=${iface.id} ok=$claimed")
             if (!claimed) {
                 throw BaluardException.Vault("Could not claim the USB key")
+            }
+            if (!hasFidoUsagePage(conn, iface)) {
+                throw BaluardException.Vault("The USB device is not a FIDO security key")
             }
             var inp: UsbEndpoint? = null
             var outp: UsbEndpoint? = null
