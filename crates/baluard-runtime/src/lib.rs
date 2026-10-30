@@ -21,6 +21,7 @@
 //! What does NOT live here: the Unix-socket listener, protobuf routing, and
 //! desktop keychain glue — those stay in `baluard-daemon`.
 
+pub mod agents;
 pub mod autosync;
 pub mod bridge;
 pub mod crypto;
@@ -32,6 +33,10 @@ pub mod providers;
 pub mod rate_limit;
 pub mod state;
 
+pub use agents::{
+    AGENT_ALLOWED_ACTIONS, DEFAULT_TTL_SECS, PeerBinding, PendingOutcome, PendingQueue,
+    PendingRequest, pid_in_process_tree,
+};
 pub use autosync::{AutoSyncHandle, AutoSyncState, AutoSyncStatus};
 pub use bridge::SharedBridgeRegistry;
 pub use host::{SharedVaultHost, SnapshotError, VaultHost, VaultPresence};
