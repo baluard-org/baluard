@@ -121,6 +121,7 @@ pub struct GetInfo {
     pub pin_protocols: Vec<u8>,
     pub pin_set: bool,
     pub uv_forced: bool,
+    pub make_cred_uv_not_required: bool,
 }
 
 /// A makeCredential result: the new credential plus its attestation object.
@@ -169,6 +170,28 @@ pub struct CtapClient<'a> {
     channel: Channel<'a>,
     /// getInfo answers are stable for one connection; ask the key once.
     info: OnceCell<GetInfo>,
+}
+
+fn get_info_request() -> Vec<u8> {
+    // authenticatorGetInfo takes no parameters: the command byte alone.
+    vec![CMD_GET_INFO]
+}
+
+fn parse_pin_protocols(value: Option<Value>) -> Result<Vec<u8>, ClientError> {
+    let Some(Value::Array(items)) = value else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for item in items {
+        let n = item
+            .as_unsigned()
+            .and_then(|n| u8::try_from(n).ok())
+            .ok_or_else(|| ClientError::Malformed("pinUvAuth protocol".into()))?;
+        if n == 1 || n == 2 {
+            out.push(n);
+        }
+    }
+    Ok(out)
 }
 
 impl<'a> CtapClient<'a> {
@@ -276,10 +299,7 @@ impl<'a> CtapClient<'a> {
     }
 
     fn fetch_info(&self) -> Result<GetInfo, ClientError> {
-        // getInfo request: empty map (optionally with 0x01 extensions list).
-        let req = Value::Map(vec![]).encode();
-        let payload = [&[CMD_GET_INFO][..], &req[..]].concat();
-        let (status, body) = self.cbor_wait(&payload)?;
+        let (status, body) = self.cbor_wait(&get_info_request())?;
         let body = Self::check(status, body)?;
         let (v, rest) =
             Value::decode(&body).map_err(|_| ClientError::Malformed("getInfo".into()))?;
@@ -314,18 +334,11 @@ impl<'a> CtapClient<'a> {
         let aaguid = field(3)
             .and_then(|v| v.as_bytes().and_then(|b| <[u8; 16]>::try_from(b).ok()))
             .ok_or_else(|| ClientError::Malformed("getInfo aaguid".into()))?;
-        let max_msg_size = field(5).and_then(|v| v.as_unsigned().map(|n| n as u32));
+        let max_msg_size =
+            field(5).and_then(|v| v.as_unsigned().and_then(|n| u32::try_from(n).ok()));
         // CTAP2 authenticatorGetInfo: key 6 is pinUvAuthProtocols (key 7 is
         // maxCredentialCountInList).
-        let pin_protocols = field(6)
-            .map(|v| match v {
-                Value::Array(items) => items
-                    .into_iter()
-                    .filter_map(|n| n.as_unsigned().map(|n| n as u8))
-                    .collect(),
-                _ => Vec::new(),
-            })
-            .unwrap_or_default();
+        let pin_protocols = parse_pin_protocols(field(6))?;
         let option = |name: &str| {
             field(4)
                 .and_then(|options| match options {
@@ -348,6 +361,7 @@ impl<'a> CtapClient<'a> {
             pin_protocols,
             pin_set: option("clientPin"),
             uv_forced: option("alwaysUv"),
+            make_cred_uv_not_required: option("makeCredUvNotRqd"),
         })
     }
 
@@ -504,24 +518,28 @@ impl<'a> CtapClient<'a> {
         }
         let salt_enc = secrets.encrypt(&salt);
         let salt_auth = secrets.authenticate(&salt_enc);
+        let mut hmac_secret = vec![
+            // The extension input carries the CLIENT keyAgreement COSE
+            // as an inline map, never a byte string.
+            (
+                Value::Unsigned(1),
+                Value::decode(&secrets.client_cose)
+                    .map_err(|_| ClientError::Malformed("keyAgreement COSE".into()))?
+                    .0,
+            ),
+            (Value::Unsigned(2), Value::ByteString(salt_enc)),
+            (Value::Unsigned(3), Value::ByteString(salt_auth)),
+        ];
+        // CTAP2.0 predates pinUvAuthProtocol: key 4 exists only for 2.
+        if secrets.protocol == super::pinproto::Protocol::Two {
+            hmac_secret.push((
+                Value::Unsigned(4),
+                Value::Unsigned(protocol_number(secrets)),
+            ));
+        }
         let extensions = Value::Map(vec![(
             Value::TextString("hmac-secret".into()),
-            Value::Map(vec![
-                // The extension input carries the CLIENT keyAgreement COSE
-                // as an inline map, never a byte string.
-                (
-                    Value::Unsigned(1),
-                    Value::decode(&secrets.client_cose)
-                        .map_err(|_| ClientError::Malformed("keyAgreement COSE".into()))?
-                        .0,
-                ),
-                (Value::Unsigned(2), Value::ByteString(salt_enc)),
-                (Value::Unsigned(3), Value::ByteString(salt_auth)),
-                (
-                    Value::Unsigned(4),
-                    Value::Unsigned(protocol_number(secrets)),
-                ),
-            ]),
+            Value::Map(hmac_secret),
         )]);
         let mut map = vec![
             (Value::Unsigned(1), Value::TextString(rp_id.into())),
@@ -556,7 +574,7 @@ impl<'a> CtapClient<'a> {
         let payload = build_request(CMD_GET_ASSERTION, map);
         let (status, body) = self.cbor(&payload, on_keepalive)?;
         let body = Self::check(status, body)?;
-        parse_assertion(&body, secrets)
+        parse_assertion(&body, secrets, allow_ids.first().map(Vec::as_slice))
     }
 }
 
@@ -614,6 +632,33 @@ fn parse_attestation(
     v: &Value,
     client_data_hash: &[u8; 32],
 ) -> Result<PackedAttestation, ClientError> {
+    let fmt = v
+        .get(1)
+        .and_then(|v| match v {
+            Value::TextString(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .unwrap_or("packed");
+    let auth_data = v
+        .get(2)
+        .and_then(Value::as_bytes)
+        .ok_or_else(|| ClientError::Malformed("authData".into()))?;
+    let credential_id = attested_credential_data(auth_data)?.0;
+    if fmt == "none" {
+        return Ok(PackedAttestation {
+            credential_id,
+            auth_data: auth_data.to_vec(),
+            client_data_hash: *client_data_hash,
+            alg: 0,
+            sig: Vec::new(),
+            x5c: Vec::new(),
+        });
+    }
+    if fmt != "packed" {
+        return Err(ClientError::Unsupported(format!(
+            "attestation format {fmt}"
+        )));
+    }
     let stmt = v
         .get(3)
         .ok_or_else(|| ClientError::Malformed("attStmt".into()))?;
@@ -626,25 +671,22 @@ fn parse_attestation(
         .get_text("sig")
         .and_then(Value::as_bytes)
         .ok_or_else(|| ClientError::Malformed("attStmt sig".into()))?;
-    // x5c is an ARRAY of DER certificates, leaf first.
-    let x5c = stmt
-        .get_text("x5c")
-        .and_then(Value::as_array)
-        .map(|certs| {
-            certs
-                .iter()
-                .filter_map(Value::as_bytes)
-                .map(|cert| cert.to_vec())
-                .collect::<Vec<_>>()
-        })
-        .filter(|certs| !certs.is_empty())
-        .ok_or_else(|| ClientError::Malformed("attStmt x5c".into()))?;
-    let auth_data = v
-        .get(2)
-        .and_then(Value::as_bytes)
-        .ok_or_else(|| ClientError::Malformed("authData".into()))?;
+    // x5c is optional for self-attestation; when present every entry
+    // must be a DER byte string, never silently filtered.
+    let x5c = match stmt.get_text("x5c") {
+        None => Vec::new(),
+        Some(Value::Array(certs)) => certs
+            .iter()
+            .map(|cert| {
+                cert.as_bytes()
+                    .map(|der| der.to_vec())
+                    .ok_or_else(|| ClientError::Malformed("attStmt x5c entry".into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(ClientError::Malformed("attStmt x5c".into())),
+    };
     Ok(PackedAttestation {
-        credential_id: attested_credential_data(auth_data)?.0,
+        credential_id,
         auth_data: auth_data.to_vec(),
         client_data_hash: *client_data_hash,
         alg,
@@ -726,21 +768,39 @@ fn auth_data_extensions(auth_data: &[u8]) -> Result<HmacSecretExtension, ClientE
     }
 }
 
+fn assertion_credential_id(v: &Value, requested: Option<&[u8]>) -> Result<Vec<u8>, ClientError> {
+    let Some(descriptor) = v.get(1) else {
+        // With a one-entry allowList the authenticator may omit this.
+        return requested
+            .map(|id| id.to_vec())
+            .ok_or_else(|| ClientError::Malformed("assertion credentialId".into()));
+    };
+    let id = descriptor
+        .get_text("id")
+        .and_then(Value::as_bytes)
+        .ok_or_else(|| ClientError::Malformed("assertion credentialId".into()))?;
+    if requested.is_some_and(|requested| id != requested) {
+        return Err(ClientError::Malformed(
+            "assertion returned a different credential".into(),
+        ));
+    }
+    Ok(id.to_vec())
+}
+
 /// getAssertion response: {1: credentialId, 2: authData, 3: signature, 4: user,
 /// 5: numberOfCredentials}; the hmac-secret output rides the authData
 /// extensions map, exactly as in makeCredential.
-pub fn parse_assertion(body: &[u8], secrets: &SharedSecret) -> Result<Assertion, ClientError> {
+pub fn parse_assertion(
+    body: &[u8],
+    secrets: &SharedSecret,
+    requested_credential_id: Option<&[u8]>,
+) -> Result<Assertion, ClientError> {
     let (v, rest) =
         Value::decode(body).map_err(|_| ClientError::Malformed("getAssertion".into()))?;
     if !rest.is_empty() {
         return Err(ClientError::Malformed("getAssertion trailing bytes".into()));
     }
-    let credential_id = v
-        .get(1)
-        .and_then(|d| d.get_text("id"))
-        .and_then(Value::as_bytes)
-        .ok_or_else(|| ClientError::Malformed("assertion credentialId".into()))?
-        .to_vec();
+    let credential_id = assertion_credential_id(&v, requested_credential_id)?;
     let auth_data = v
         .get(2)
         .and_then(Value::as_bytes)
@@ -852,6 +912,108 @@ mod tests {
             parse_make_credential(&body, &[0u8; 32]),
             Err(ClientError::Malformed(_))
         ));
+    }
+
+    fn make_credential_response(fmt: &str, stmt: Value) -> Vec<u8> {
+        let mut auth_data = vec![0u8; 37];
+        auth_data[32] = 0x40 | 0x80;
+        auth_data.extend_from_slice(&[0u8; 16]);
+        auth_data.extend_from_slice(&1u16.to_be_bytes());
+        auth_data.push(9);
+        auth_data.extend_from_slice(&[0xA0]);
+        auth_data.extend_from_slice(
+            Value::Map(vec![(
+                Value::TextString("hmac-secret".into()),
+                Value::Bool(true),
+            )])
+            .encode()
+            .as_slice(),
+        );
+        Value::Map(vec![
+            (Value::Unsigned(1), Value::TextString(fmt.into())),
+            (Value::Unsigned(2), Value::ByteString(auth_data)),
+            (Value::Unsigned(3), stmt),
+        ])
+        .encode()
+    }
+
+    #[test]
+    fn none_fmt_produces_an_empty_attestation() {
+        let body = make_credential_response("none", Value::Map(vec![]));
+        let made = parse_make_credential(&body, &[0u8; 32]).unwrap();
+        assert_eq!(made.attestation.alg, 0);
+        assert!(made.attestation.sig.is_empty());
+        assert!(made.attestation.x5c.is_empty());
+    }
+
+    #[test]
+    fn packed_self_attestation_allows_no_x5c() {
+        let body = make_credential_response(
+            "packed",
+            Value::Map(vec![
+                (Value::TextString("alg".into()), Value::Negative(-7)),
+                (Value::TextString("sig".into()), Value::ByteString(vec![1])),
+            ]),
+        );
+        let made = parse_make_credential(&body, &[0u8; 32]).unwrap();
+        assert!(made.attestation.x5c.is_empty());
+        assert_eq!(made.attestation.sig, vec![1]);
+    }
+
+    #[test]
+    fn malformed_x5c_entries_are_not_silently_dropped() {
+        let body = make_credential_response(
+            "packed",
+            Value::Map(vec![
+                (Value::TextString("alg".into()), Value::Negative(-7)),
+                (Value::TextString("sig".into()), Value::ByteString(vec![1])),
+                (
+                    Value::TextString("x5c".into()),
+                    Value::Array(vec![Value::ByteString(vec![0x30, 0x00]), Value::Bool(true)]),
+                ),
+            ]),
+        );
+        assert!(parse_make_credential(&body, &[0u8; 32]).is_err());
+    }
+
+    #[test]
+    fn assertion_credential_falls_back_to_the_allow_list_id() {
+        let requested = [7u8; 16];
+        let empty = Value::Map(vec![]);
+        assert_eq!(
+            assertion_credential_id(&empty, Some(&requested)).unwrap(),
+            requested
+        );
+        let other = Value::Map(vec![(
+            Value::Unsigned(1),
+            Value::Map(vec![(
+                Value::TextString("id".into()),
+                Value::ByteString(vec![8u8; 16]),
+            )]),
+        )]);
+        assert!(assertion_credential_id(&other, Some(&requested)).is_err());
+    }
+
+    #[test]
+    fn get_info_request_has_no_parameter_map() {
+        assert_eq!(get_info_request(), vec![CMD_GET_INFO]);
+    }
+
+    #[test]
+    fn pin_protocol_numbers_are_checked_and_filtered() {
+        let parsed = parse_pin_protocols(Some(Value::Array(vec![
+            Value::Unsigned(1),
+            Value::Unsigned(99),
+            Value::Unsigned(2),
+        ])))
+        .unwrap();
+        assert_eq!(parsed, vec![1, 2]);
+        assert!(parse_pin_protocols(Some(Value::Array(vec![Value::Unsigned(256)]))).is_err());
+        assert!(
+            parse_pin_protocols(Some(Value::Array(vec![Value::Unsigned(99)])))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

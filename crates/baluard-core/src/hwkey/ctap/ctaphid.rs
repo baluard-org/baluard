@@ -35,6 +35,11 @@ pub const MAX_MESSAGE: usize = INIT_PAYLOAD + MAX_CONT_FRAMES * CONT_PAYLOAD;
 /// Frames skipped while waiting for our INIT reply: replies to earlier
 /// handshakes and traffic left in the pipe by an aborted operation.
 const MAX_STALE_INIT_FRAMES: usize = 16;
+/// A touch wait cannot spin forever: about a minute of authenticator
+/// keepalives, then the operation is cancelled on the token.
+const MAX_KEEPALIVE_FRAMES: usize = 600;
+/// Other hidraw clients' traffic is ignored, but cannot starve us forever.
+const MAX_FOREIGN_FRAMES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CtapHidError {
@@ -44,6 +49,8 @@ pub enum CtapHidError {
     Hid(u8),
     /// Framing was well-formed but semantically wrong (nonce, channel, seq).
     Malformed,
+    /// The authenticator stayed in keepalive past the operation deadline.
+    Timeout,
 }
 
 /// Byte-level HID link. 65-byte reports including the leading report id.
@@ -178,16 +185,27 @@ fn read_response(
     let mut payload: Vec<u8> = Vec::new();
     let total;
     let mut seq = 0u8;
+    let mut keepalives = 0usize;
+    let mut foreign = 0usize;
     loop {
         let report = link.read()?;
         if report[1..5] != *cid {
-            return Err(CtapHidError::Malformed);
+            foreign += 1;
+            if foreign > MAX_FOREIGN_FRAMES {
+                return Err(CtapHidError::Malformed);
+            }
+            continue;
         }
         let cmd = report[5];
         match cmd {
             CTAPHID_KEEPALIVE => {
                 if ((report[6] as usize) << 8 | report[7] as usize) < 1 {
                     return Err(CtapHidError::Malformed);
+                }
+                keepalives += 1;
+                if keepalives > MAX_KEEPALIVE_FRAMES {
+                    send_cancel(link, cid)?;
+                    return Err(CtapHidError::Timeout);
                 }
                 on_keepalive(report[8]);
                 continue;
@@ -412,6 +430,41 @@ mod tests {
     }
 
     #[test]
+    fn foreign_channel_frames_are_skipped() {
+        let cid = [1u8, 2, 3, 4];
+        let mut foreign = [0u8; 65];
+        foreign[1..5].copy_from_slice(&[9, 9, 9, 9]);
+        foreign[5] = CTAPHID_CBOR;
+        foreign[6..8].copy_from_slice(&1u16.to_be_bytes());
+        foreign[8] = 0x2f;
+        let mut done = [0u8; 65];
+        done[1..5].copy_from_slice(&cid);
+        done[5] = CTAPHID_CBOR;
+        done[6..8].copy_from_slice(&1u16.to_be_bytes());
+        done[8] = 0x00;
+        let link = QueueLink::new(vec![Ok(foreign), Ok(done)]);
+        let (status, _) = cbor(&link, &cid, &[0x04], &mut |_| {}).unwrap();
+        assert_eq!(status, 0);
+    }
+
+    #[test]
+    fn keepalive_wait_is_bounded_and_cancels_the_token() {
+        let cid = [1u8, 2, 3, 4];
+        let mut up = [0u8; 65];
+        up[1..5].copy_from_slice(&cid);
+        up[5] = CTAPHID_KEEPALIVE;
+        up[6..8].copy_from_slice(&1u16.to_be_bytes());
+        up[8] = 2;
+        let link = QueueLink::new(vec![Ok(up); 601]);
+        assert_eq!(
+            cbor(&link, &cid, &[0x02], &mut |_| {}),
+            Err(CtapHidError::Timeout)
+        );
+        let writes = link.written.borrow();
+        assert_eq!(writes.last().unwrap()[5], CTAPHID_CANCEL);
+    }
+
+    #[test]
     fn keepalive_frames_are_observed_and_skipped() {
         let cid = [1u8, 2, 3, 4];
         let mut up = [0u8; 65];
@@ -464,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn foreign_channel_frames_are_refused() {
+    fn foreign_channel_noise_does_not_become_a_protocol_error() {
         let cid = [1u8, 2, 3, 4];
         let mut other = [0u8; 65];
         other[1..5].copy_from_slice(&[9, 9, 9, 9]);
@@ -473,7 +526,7 @@ mod tests {
         let mut ignored = Vec::new();
         assert_eq!(
             cbor(&link, &cid, &[0x04], &mut |_| ignored.push(0u8)),
-            Err(CtapHidError::Malformed)
+            Err(CtapHidError::Link)
         );
     }
 

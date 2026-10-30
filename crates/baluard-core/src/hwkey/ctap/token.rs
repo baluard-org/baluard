@@ -61,6 +61,7 @@ pub fn token_info(client: CtapClient<'_>) -> Result<TokenInfo, TokenError> {
         hmac_secret: info.extensions.iter().any(|e| e == "hmac-secret"),
         pin_set: info.pin_set,
         uv_forced: info.uv_forced,
+        make_cred_uv_not_required: info.make_cred_uv_not_required,
     })
 }
 
@@ -130,6 +131,7 @@ pub fn map_client_error(error: ClientError) -> TokenError {
         // CTAPHID channel-busy (0x06) is a busy key; the other HID
         // protocol codes are transport-class failures.
         ClientError::Hid(CtapHidError::Hid(0x06)) => TokenError::Busy,
+        ClientError::Hid(CtapHidError::Timeout) => TokenError::Timeout,
         ClientError::Hid(_) | ClientError::Apdu(_) => TokenError::KeyMissing,
         other => TokenError::Device(other.to_string()),
     }
@@ -166,6 +168,16 @@ impl_token!(NfcToken<T: Transceive>);
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn keepalive_deadline_maps_to_touch_timeout() {
+        assert!(matches!(
+            super::map_client_error(ClientError::Hid(
+                crate::hwkey::ctap::ctaphid::CtapHidError::Timeout
+            )),
+            TokenError::Timeout
+        ));
+    }
 
     #[test]
     fn hid_busy_maps_to_busy_not_key_missing() {

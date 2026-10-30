@@ -336,14 +336,14 @@ impl SoftAuthenticator {
             return (ERR_MISSING_PARAMETER, Vec::new());
         };
         let protocol = match ext.get(4).and_then(Value::as_unsigned) {
-            Some(1) => Protocol::One,
+            // CTAP2.0 predates key 4: its absence selects protocol 1.
+            None => Protocol::One,
             Some(2) => Protocol::Two,
             _ => return (ERR_OPERATION_DENIED, Vec::new()),
         };
         // The extension input carries the CLIENT keyAgreement COSE map;
         // reduce it to the raw P-256 point for the token-side ECDH.
-        let client_point = match crate::hwkey::ctap::protocol::cose_p256_public(client_cose).ok()
-        {
+        let client_point = match crate::hwkey::ctap::protocol::cose_p256_public(client_cose).ok() {
             Some(p) => p,
             None => return (ERR_OPERATION_DENIED, Vec::new()),
         };
