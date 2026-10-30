@@ -67,7 +67,11 @@ pub trait Token: Send + Sync {
     /// vault, carrying the attestation the enroll path verifies.
     fn make_credential(&self, vault_id: Uuid) -> Result<PackedAttestation, TokenError>;
     /// Tap the token and derive the hmac-secret output for `salt`.
-    fn get_secret(&self, credential_id: &[u8], salt: &[u8; 32]) -> Result<zeroize::Zeroizing<[u8; 32]>, TokenError>;
+    fn get_secret(
+        &self,
+        credential_id: &[u8],
+        salt: &[u8; 32],
+    ) -> Result<zeroize::Zeroizing<[u8; 32]>, TokenError>;
 }
 
 pub struct FidoStore {
@@ -139,7 +143,7 @@ impl super::HardwareKeyStore for FidoStore {
             Ok(_) => {
                 return super::HwCapability::Available {
                     backend: "fido2".into(),
-                }
+                };
             }
             Err(TokenError::KeyMissing) => "no-token",
             Err(TokenError::Timeout) => "touch-timeout",
@@ -185,8 +189,7 @@ impl super::HardwareKeyStore for FidoStore {
         let verdict = attest::verify(&att);
         if verdict == attest::AttestationVerdict::Invalid {
             return Err(VaultError::Metadata(
-                "the security key's attestation is invalid; it cannot hold the seal"
-                    .into(),
+                "the security key's attestation is invalid; it cannot hold the seal".into(),
             )
             .into());
         }
@@ -260,8 +263,8 @@ mod real {
         MakeCredentialArgsBuilder,
     };
     use ctap_hid_fido2::public_key_credential_user_entity::PublicKeyCredentialUserEntity;
-    use ctap_hid_fido2::{HidInfo, HidParam};
     use ctap_hid_fido2::{Cfg, FidoKeyHidFactory};
+    use ctap_hid_fido2::{HidInfo, HidParam};
     use uuid::Uuid;
 
     pub struct CtapToken;
@@ -351,8 +354,7 @@ mod real {
             let dev = open_single()?;
             let mut challenge = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut challenge);
-            let user =
-                PublicKeyCredentialUserEntity::new(Some(vault_id.as_bytes()), None, None);
+            let user = PublicKeyCredentialUserEntity::new(Some(vault_id.as_bytes()), None, None);
             let args = MakeCredentialArgsBuilder::new(super::RP_ID, &challenge)
                 .without_pin_and_uv()
                 .user_entity(&user)
@@ -450,16 +452,20 @@ mod tests {
     fn desktop_adapter_classifies_the_library_text() {
         // The exact message shapes ctap-hid-fido2 3.6.0 emits
         // (response_status err = <get_status_message>).
-        use crate::hwkey::fido::real::classify_message;
         use crate::hwkey::fido::TokenError;
+        use crate::hwkey::fido::real::classify_message;
         let timeout = "response_status err = 0x2F CTAP2_ERR_USER_ACTION_TIMEOUT   Timeout waiting for user interaction.";
         assert!(matches!(classify_message(timeout), TokenError::Timeout));
         let cancel = "response_status err = 0x2D CTAP2_ERR_KEEPALIVE_CANCEL  Pending keep alive was cancelled.";
         assert!(matches!(classify_message(cancel), TokenError::Cancelled));
         let busy = "response_status err = 0x06 CTAP1_ERR_CHANNEL_BUSY Channel busy.";
         assert!(matches!(classify_message(busy), TokenError::Busy));
-        let none = "response_status err = 0x2E CTAP2_ERR_NO_CREDENTIALS    No valid credentials provided.";
-        assert!(matches!(classify_message(none), TokenError::UnknownCredential));
+        let none =
+            "response_status err = 0x2E CTAP2_ERR_NO_CREDENTIALS    No valid credentials provided.";
+        assert!(matches!(
+            classify_message(none),
+            TokenError::UnknownCredential
+        ));
         // Unknown library text keeps its detail for diagnostics.
         assert!(matches!(
             classify_message("read err = 0xFE"),
@@ -555,7 +561,10 @@ mod tests {
             let mut secret = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut secret);
             let att = self.chain.attestation_for(vault_id.as_bytes());
-            self.creds.lock().unwrap().insert(att.credential_id.clone(), secret);
+            self.creds
+                .lock()
+                .unwrap()
+                .insert(att.credential_id.clone(), secret);
             Ok(att)
         }
 
@@ -617,7 +626,11 @@ mod tests {
         let (handshake, secret) = s.derive_ephemeral(&binding, HwConsent::PerUse).unwrap();
         assert_eq!(handshake.0.len(), 32);
         let again = s.derive(&binding, &handshake, HwConsent::PerUse).unwrap();
-        assert_eq!(secret.as_ref(), again.as_ref(), "same salt must reproduce z");
+        assert_eq!(
+            secret.as_ref(),
+            again.as_ref(),
+            "same salt must reproduce z"
+        );
         let mut other_salt = handshake.0.clone();
         other_salt[0] ^= 0xff;
         let different = s

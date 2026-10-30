@@ -867,13 +867,20 @@ async fn system_prepare_update_drains_and_locks_every_open_vault() {
         ..Default::default()
     };
     let resp = route_host_request(req, &Arc::new(host)).await;
-    assert!(resp.success, "prepare_update must succeed: {:?}", resp.error_message);
+    assert!(
+        resp.success,
+        "prepare_update must succeed: {:?}",
+        resp.error_message
+    );
     let v: serde_json::Value =
         serde_json::from_str(&resp.payload).expect("prepare_update payload is JSON");
     let mut locked: Vec<String> = serde_json::from_value(v["locked"].clone()).unwrap();
     locked.sort();
     assert_eq!(locked, vec!["prep-1".to_string(), "prep-2".to_string()]);
-    assert!(!s1.is_unlocked().await && !s2.is_unlocked().await, "both vaults must lock");
+    assert!(
+        !s1.is_unlocked().await && !s2.is_unlocked().await,
+        "both vaults must lock"
+    );
 }
 
 // ── §4.8-1: sharing surfaces (members / requests / activity) ──
@@ -4920,7 +4927,11 @@ impl baluard_core::hwkey::HardwareKeyStore for RouteHwMock {
         _: baluard_core::hwkey::HwConsent,
     ) -> Result<baluard_core::hwkey::SharedSecret, baluard_core::error::BaluardError> {
         let mut secret = [0u8; 32];
-        for (index, byte) in binding.bytes().chain(handshake.0.iter().copied()).enumerate() {
+        for (index, byte) in binding
+            .bytes()
+            .chain(handshake.0.iter().copied())
+            .enumerate()
+        {
             secret[index % 32] ^= byte;
         }
         Ok(zeroize::Zeroizing::new(secret))
@@ -5138,7 +5149,11 @@ async fn hw_routes_select_a_tap_backend_and_report_every_probe() {
         &host,
     )
     .await;
-    assert!(response.success, "enable failed: {}", response.error_message);
+    assert!(
+        response.success,
+        "enable failed: {}",
+        response.error_message
+    );
     let enabled: serde_json::Value = serde_json::from_str(&response.payload).unwrap();
     assert_eq!(enabled["backend"], "tap-mock");
     assert_eq!(enabled["attestation"], "verified");
@@ -5161,7 +5176,10 @@ async fn hw_routes_select_a_tap_backend_and_report_every_probe() {
     assert_eq!(backends[1]["interaction"], "per-use");
 
     state.lock().await.expect("lock sealed vault");
-    state.unlock(MASTER).await.expect("reopen through tap backend");
+    state
+        .unlock(MASTER)
+        .await
+        .expect("reopen through tap backend");
 }
 
 #[tokio::test]

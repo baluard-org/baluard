@@ -4006,15 +4006,18 @@ impl SyncEngine {
                 {
                     let mut inherited = |m: &str| {
                         (0..ancestor.parent_count()).any(|i| {
-                            ancestor.parent_id(i).ok().and_then(|pid| {
-                                repo.find_commit(pid).ok().and_then(|p| {
-                                    Self::members_tree_lookup(repo, &p, &mut seed_cache)
-                                        .ok()
-                                        .flatten()
+                            ancestor
+                                .parent_id(i)
+                                .ok()
+                                .and_then(|pid| {
+                                    repo.find_commit(pid).ok().and_then(|p| {
+                                        Self::members_tree_lookup(repo, &p, &mut seed_cache)
+                                            .ok()
+                                            .flatten()
+                                    })
                                 })
-                            })
-                            .map(|ps| ps.tombstoned.iter().any(|t| t == m))
-                            .unwrap_or(false)
+                                .map(|ps| ps.tombstoned.iter().any(|t| t == m))
+                                .unwrap_or(false)
                         })
                     };
                     Self::extend_tombstone_introducers(
@@ -4044,15 +4047,18 @@ impl SyncEngine {
                 if let Ok(Some(own)) = Self::members_tree_lookup(repo, &commit, &mut own_cache) {
                     let mut inherited = |m: &str| {
                         (0..commit.parent_count()).any(|i| {
-                            commit.parent_id(i).ok().and_then(|pid| {
-                                repo.find_commit(pid).ok().and_then(|p| {
-                                    Self::members_tree_lookup(repo, &p, &mut own_cache)
-                                        .ok()
-                                        .flatten()
+                            commit
+                                .parent_id(i)
+                                .ok()
+                                .and_then(|pid| {
+                                    repo.find_commit(pid).ok().and_then(|p| {
+                                        Self::members_tree_lookup(repo, &p, &mut own_cache)
+                                            .ok()
+                                            .flatten()
+                                    })
                                 })
-                            })
-                            .map(|ps| ps.tombstoned.iter().any(|t| t == m))
-                            .unwrap_or(false)
+                                .map(|ps| ps.tombstoned.iter().any(|t| t == m))
+                                .unwrap_or(false)
                         })
                     };
                     Self::extend_tombstone_introducers(
@@ -4209,15 +4215,18 @@ impl SyncEngine {
                 if let Ok(Some(own)) = Self::members_tree_lookup(repo, &commit, &mut own_cache) {
                     let mut inherited = |m: &str| {
                         (0..commit.parent_count()).any(|i| {
-                            commit.parent_id(i).ok().and_then(|pid| {
-                                repo.find_commit(pid).ok().and_then(|p| {
-                                    Self::members_tree_lookup(repo, &p, &mut own_cache)
-                                        .ok()
-                                        .flatten()
+                            commit
+                                .parent_id(i)
+                                .ok()
+                                .and_then(|pid| {
+                                    repo.find_commit(pid).ok().and_then(|p| {
+                                        Self::members_tree_lookup(repo, &p, &mut own_cache)
+                                            .ok()
+                                            .flatten()
+                                    })
                                 })
-                            })
-                            .map(|ps| ps.tombstoned.iter().any(|t| t == m))
-                            .unwrap_or(false)
+                                .map(|ps| ps.tombstoned.iter().any(|t| t == m))
+                                .unwrap_or(false)
                         })
                     };
                     Self::extend_tombstone_introducers(
@@ -4517,7 +4526,10 @@ impl SyncEngine {
             if let Some(own_roster) =
                 Self::roster_tree_lookup(repo, commit, &mut Default::default())?
             {
-                let additions = own_roster.keys().filter(|id| !parent_roster.contains_key(*id)).count();
+                let additions = own_roster
+                    .keys()
+                    .filter(|id| !parent_roster.contains_key(*id))
+                    .count();
                 if additions != 1 {
                     return Ok(None);
                 }
@@ -5408,7 +5420,12 @@ impl SyncEngine {
                         .unwrap_or(false)
                 })
             };
-            Self::extend_tombstone_introducers(sticky_tombstoned, &own, &mut inherited, commit.id());
+            Self::extend_tombstone_introducers(
+                sticky_tombstoned,
+                &own,
+                &mut inherited,
+                commit.id(),
+            );
         }
         let (role, member_id) = match members.as_ref() {
             Some(snapshot) => {
@@ -5432,11 +5449,10 @@ impl SyncEngine {
         let tombstoned_deny = member_id
             .and_then(|m| sticky_tombstoned.get(m))
             .map(|intros| {
-                !intros
-                    .iter()
-                    .any(|intro| {
-                        repo.graph_descendant_of(*intro, commit.id()).unwrap_or(false)
-                    })
+                !intros.iter().any(|intro| {
+                    repo.graph_descendant_of(*intro, commit.id())
+                        .unwrap_or(false)
+                })
             })
             .unwrap_or(false);
         if tombstoned_deny {

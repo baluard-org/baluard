@@ -57,7 +57,9 @@ impl ProvidersState {
     /// The process-wide lock closes the lost-update window between two
     /// concurrent connects doing load-modify-save.
     pub fn save(&self) -> Result<(), std::io::Error> {
-        let _guard = providers_state_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = providers_state_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let path = Self::path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;

@@ -18,7 +18,17 @@ use crate::providers::types::Provider;
 use secrecy::{ExposeSecret, SecretString};
 
 /// Common PAT prefixes to scrub from error messages.
-const PAT_PREFIXES: &[&str] = &["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-", "glpt-", "glcbt-"];
+const PAT_PREFIXES: &[&str] = &[
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    "glpt-",
+    "glcbt-",
+];
 
 /// Scrub potential credentials from a git2 error message.
 /// Removes URL userinfo (user:token@host) and common PAT prefixes.
@@ -393,12 +403,12 @@ fn credentials_attempt(
                 Some(th) => {
                     return Err(git2::Error::from_str(&format!(
                         "refusing to send SSH credentials to untrusted host: {th}"
-                    )))
+                    )));
                 }
                 None => {
                     return Err(git2::Error::from_str(
                         "refusing to send SSH credentials: the target host could not be determined",
-                    ))
+                    ));
                 }
             }
         }
@@ -495,14 +505,12 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
     // libgit2 only pre-checks fast-forward locally: a server-side
     // refusal (branch protection, pre-receive) otherwise returns Ok and
     // sync reports success while nothing landed.
-    callbacks.push_update_reference(|refname, status| {
-        match status {
-            Some(msg) => Err(git2::Error::from_str(&format!(
-                "the remote rejected {}: {}",
-                refname, msg
-            ))),
-            None => Ok(()),
-        }
+    callbacks.push_update_reference(|refname, status| match status {
+        Some(msg) => Err(git2::Error::from_str(&format!(
+            "the remote rejected {}: {}",
+            refname, msg
+        ))),
+        None => Ok(()),
     });
 
     // M5 fix: enforce known_hosts for SSH connections, passthrough for HTTPS.
@@ -852,13 +860,19 @@ pub fn persist_in_memory(vault_path: &Path, cfg: &CredentialConfig) -> Result<()
 mod tests {
 
     #[test]
-fn extract_host_handles_bracketed_ipv6() {
-    assert_eq!(extract_host("ssh://git@[2001:db8::1]:2222/repo.git"), Some("2001:db8::1".to_string()));
-    assert_eq!(extract_host("ssh://[::1]/repo"), Some("::1".to_string()));
-    assert_eq!(extract_host("https://[2001:db8::1]:8443/x"), Some("2001:db8::1".to_string()));
-}
+    fn extract_host_handles_bracketed_ipv6() {
+        assert_eq!(
+            extract_host("ssh://git@[2001:db8::1]:2222/repo.git"),
+            Some("2001:db8::1".to_string())
+        );
+        assert_eq!(extract_host("ssh://[::1]/repo"), Some("::1".to_string()));
+        assert_eq!(
+            extract_host("https://[2001:db8::1]:8443/x"),
+            Some("2001:db8::1".to_string())
+        );
+    }
 
-#[test]
+    #[test]
     fn extract_host_ignores_userinfo_spoofed_through_the_path() {
         // A crafted URL must not resolve to the host named after the @
         // in its path: the token bound to github.com would be released
@@ -872,7 +886,10 @@ fn extract_host_handles_bracketed_ipv6() {
             extract_host("https://token123@github.com/owner/repo.git").as_deref(),
             Some("github.com")
         );
-        assert_eq!(extract_host("git@github.com:owner/repo.git").as_deref(), Some("github.com"));
+        assert_eq!(
+            extract_host("git@github.com:owner/repo.git").as_deref(),
+            Some("github.com")
+        );
         assert_eq!(
             extract_host("ssh://git@github.com:2222/owner/repo.git").as_deref(),
             Some("github.com")
@@ -1081,7 +1098,6 @@ mod custom_remote_tests {
             assert!(!e.message().contains("untrusted host"), "{e}");
         }
     }
-
 
     #[test]
     fn custom_credentials_writer_merges_updates_and_clears() {

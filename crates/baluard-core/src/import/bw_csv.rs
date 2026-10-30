@@ -38,16 +38,36 @@ pub fn parse(data: &str) -> ImportResult {
     let col_type = headers.iter().position(|h| h.eq_ignore_ascii_case("type"));
     let col_name = headers.iter().position(|h| h.eq_ignore_ascii_case("name"));
     let col_notes = headers.iter().position(|h| h.eq_ignore_ascii_case("notes"));
-    let col_uri = headers.iter().position(|h| h.eq_ignore_ascii_case("login_uri"));
-    let col_username = headers.iter().position(|h| h.eq_ignore_ascii_case("login_username"));
-    let col_password = headers.iter().position(|h| h.eq_ignore_ascii_case("login_password"));
-    let col_totp = headers.iter().position(|h| h.eq_ignore_ascii_case("login_totp"));
-    let col_cardholder = headers.iter().position(|h| h.eq_ignore_ascii_case("card_cardholderName"));
-    let col_brand = headers.iter().position(|h| h.eq_ignore_ascii_case("card_brand"));
-    let col_number = headers.iter().position(|h| h.eq_ignore_ascii_case("card_number"));
-    let col_exp_month = headers.iter().position(|h| h.eq_ignore_ascii_case("card_expMonth"));
-    let col_exp_year = headers.iter().position(|h| h.eq_ignore_ascii_case("card_expYear"));
-    let col_cvv = headers.iter().position(|h| h.eq_ignore_ascii_case("card_cvv"));
+    let col_uri = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("login_uri"));
+    let col_username = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("login_username"));
+    let col_password = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("login_password"));
+    let col_totp = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("login_totp"));
+    let col_cardholder = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("card_cardholderName"));
+    let col_brand = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("card_brand"));
+    let col_number = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("card_number"));
+    let col_exp_month = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("card_expMonth"));
+    let col_exp_year = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("card_expYear"));
+    let col_cvv = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("card_cvv"));
 
     // Validate key columns exist
     if col_name.is_none() {
