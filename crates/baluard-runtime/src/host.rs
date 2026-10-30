@@ -72,6 +72,8 @@ pub struct VaultHost {
     /// Host-level bridge-token registry (vault-agnostic, per Decision 10).
     /// Separate lock from `inner` so bridge auth never blocks vault ops.
     bridge: crate::bridge::SharedBridgeRegistry,
+    /// D80: pending human-approval requests, shared across all vaults.
+    pending: crate::agents::PendingQueue,
 }
 
 /// Convenience alias — the daemon always shares an `Arc<VaultHost>`.
@@ -86,6 +88,7 @@ impl VaultHost {
         Self {
             inner: RwLock::new(VaultHostInner::default()),
             bridge: std::sync::Arc::new(RwLock::new(crate::bridge::BridgeRegistry::default())),
+            pending: crate::agents::PendingQueue::new(),
         }
     }
 
@@ -419,6 +422,10 @@ impl VaultHost {
         };
         let mut locked_slugs = Vec::new();
         for (slug, state) in open {
+            // D80: an active agent grant keeps working through desktop blur.
+            if state.has_live_agent_grants() {
+                continue;
+            }
             if state.timeout_policy().await == VaultTimeout::Immediately
                 && state.lock().await.is_ok()
             {
@@ -426,6 +433,12 @@ impl VaultHost {
             }
         }
         locked_slugs
+    }
+
+    /// D80: shared pending approval queue. The daemon owns all transitions;
+    /// desktop approval surfaces only read/list and send user decisions.
+    pub fn pending_requests(&self) -> &crate::agents::PendingQueue {
+        &self.pending
     }
 
     /// Phase 6 / T15: log the aggregate `mlock` footprint across all open

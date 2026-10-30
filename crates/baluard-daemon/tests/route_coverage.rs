@@ -5453,3 +5453,447 @@ async fn hardware_unlock_failures_do_not_lock_out_the_route() {
         );
     }
 }
+
+// ── D80 agent grants ───────────────────────────────────────────────────
+
+fn agent_request(action: &str, payload: serde_json::Value, token: String) -> GatewayRequest {
+    GatewayRequest {
+        action: action.into(),
+        payload: payload.to_string(),
+        session_token: token,
+        slug: "personal".into(),
+        ..Default::default()
+    }
+}
+
+fn agent_peer(pid: u32) -> baluard_runtime::agents::PeerBinding {
+    baluard_runtime::agents::PeerBinding::new(
+        pid,
+        format!("/usr/bin/agent-{pid}"),
+        1000 + pid as u64,
+    )
+}
+
+async fn agent_host(label: &str) -> (tempfile::TempDir, Arc<VaultHost>, Arc<VaultState>) {
+    let (dir, state) = open_unlocked(label).await;
+    let host = Arc::new(VaultHost::new());
+    host.insert("personal".into(), state.clone()).await;
+    (dir, host, state)
+}
+
+#[tokio::test]
+async fn agent_request_requires_peer_identity_and_an_unlocked_vault() {
+    let (_dir, host, state) = agent_host("agent-preconditions").await;
+    let payload = serde_json::json!({
+        "slug": "personal",
+        "claimed_name": "Example agent",
+        "need": "GitHub login",
+        "item_ids": ["item-1"]
+    });
+    let req = agent_request("agents.request", payload.clone(), String::new());
+    let no_peer = route_host_request(req.clone(), &host).await;
+    assert!(!no_peer.success);
+    assert!(no_peer.error_message.contains("peer identity"));
+
+    let peer = agent_peer(41);
+    let accepted = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request("agents.request", payload, String::new()),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(accepted.success, "err: {}", accepted.error_message);
+    let v: serde_json::Value = serde_json::from_str(&accepted.payload).unwrap();
+    assert_eq!(v["status"], "pending");
+    assert!(!v["request_id"].as_str().unwrap().is_empty());
+
+    state.lock().await.unwrap();
+    let locked = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Example agent",
+                "need": "GitHub login",
+                "item_ids": ["item-2"]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(!locked.success);
+    assert!(locked.error_message.contains("locked"));
+}
+
+#[tokio::test]
+async fn agent_grants_survive_the_desktop_blur_lock() {
+    let (_dir, host, state) = agent_host("agent-blur").await;
+    state.agent_mint(agent_peer(45), vec!["item-1".into()], 60);
+    let locked = host.lock_blur_vaults().await;
+    assert!(
+        locked.is_empty(),
+        "live agent grants exempt the vault from blur lock"
+    );
+    assert!(state.is_unlocked().await);
+}
+
+#[tokio::test]
+async fn agent_approval_is_one_time_and_lock_kills_the_grant() {
+    let (_dir, host, state) = agent_host("agent-approval").await;
+    let peer = agent_peer(42);
+    let requested = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Example agent",
+                "need": "GitHub login",
+                "item_ids": ["item-1"]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    let request_id =
+        serde_json::from_str::<serde_json::Value>(&requested.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let user_token = state.get_session_token().await.unwrap();
+
+    let pending = route_host_request(
+        agent_request("agents.pending", serde_json::json!({}), user_token.clone()),
+        &host,
+    )
+    .await;
+    assert!(pending.success, "err: {}", pending.error_message);
+    let pending_json: serde_json::Value = serde_json::from_str(&pending.payload).unwrap();
+    assert_eq!(pending_json["pending"][0]["exe_path"], "/usr/bin/agent-42");
+
+    let approved = route_host_request(
+        agent_request(
+            "agents.approve",
+            serde_json::json!({"request_id": request_id}),
+            user_token,
+        ),
+        &host,
+    )
+    .await;
+    assert!(approved.success, "err: {}", approved.error_message);
+    assert!(
+        !approved.payload.contains("agt_"),
+        "desktop never receives the agent token"
+    );
+
+    let polled = route_host_request(
+        agent_request(
+            "agents.poll",
+            serde_json::json!({"request_id": request_id}),
+            String::new(),
+        ),
+        &host,
+    )
+    .await;
+    let poll_json: serde_json::Value = serde_json::from_str(&polled.payload).unwrap();
+    assert_eq!(poll_json["status"], "approved");
+    let agent_token = poll_json["token"].as_str().unwrap().to_string();
+    assert!(agent_token.starts_with("agt_"));
+    assert!(state.verify_agent_token(&agent_token).is_ok());
+
+    let replay = route_host_request(
+        agent_request(
+            "agents.poll",
+            serde_json::json!({"request_id": request_id}),
+            String::new(),
+        ),
+        &host,
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&replay.payload).unwrap()["status"],
+        "unknown"
+    );
+
+    let crossover = route_host_request(
+        agent_request("vault.list", serde_json::json!({}), agent_token.clone()),
+        &host,
+    )
+    .await;
+    assert!(!crossover.success);
+    assert!(
+        crossover
+            .error_message
+            .contains("agent grants cannot call user session routes")
+    );
+
+    state.lock().await.unwrap();
+    let err = state
+        .verify_agent_token(&agent_token)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("invalidated by a vault lock"), "{err}");
+}
+
+#[tokio::test]
+async fn agent_denial_is_reported_without_a_grant() {
+    let (_dir, host, state) = agent_host("agent-denial").await;
+    let peer = agent_peer(43);
+    let requested = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Example agent",
+                "need": "GitHub login",
+                "item_ids": ["item-1"]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    let request_id =
+        serde_json::from_str::<serde_json::Value>(&requested.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let denied = route_host_request(
+        agent_request(
+            "agents.deny",
+            serde_json::json!({"request_id": request_id}),
+            state.get_session_token().await.unwrap(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(denied.success, "err: {}", denied.error_message);
+    let polled = route_host_request(
+        agent_request(
+            "agents.poll",
+            serde_json::json!({"request_id": request_id}),
+            String::new(),
+        ),
+        &host,
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&polled.payload).unwrap()["status"],
+        "denied"
+    );
+}
+
+#[tokio::test]
+async fn agent_approval_requires_the_user_token_and_caps_prompt_flooding() {
+    let (_dir, host, _state) = agent_host("agent-caps").await;
+    let peer = agent_peer(44);
+    let payload = serde_json::json!({
+        "slug": "personal",
+        "claimed_name": "Example agent",
+        "need": "GitHub login",
+        "item_ids": ["item-1"]
+    });
+    let requested = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request("agents.request", payload.clone(), String::new()),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    let request_id =
+        serde_json::from_str::<serde_json::Value>(&requested.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+    let refused = route_host_request(
+        agent_request(
+            "agents.approve",
+            serde_json::json!({"request_id": request_id}),
+            "wrong-user-token".into(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(!refused.success);
+    assert!(host.pending_requests().get(&request_id).is_some());
+
+    let (_other_dir, other_state) = open_unlocked("agent-approval-mismatch").await;
+    host.insert("other".into(), other_state.clone()).await;
+    let mut wrong_vault = agent_request(
+        "agents.approve",
+        serde_json::json!({"request_id": request_id}),
+        other_state.get_session_token().await.unwrap(),
+    );
+    wrong_vault.slug = "other".into();
+    let mismatch = route_host_request(wrong_vault, &host).await;
+    assert!(!mismatch.success);
+    assert!(mismatch.error_message.contains("different vault"));
+    assert!(
+        host.pending_requests().get(&request_id).is_some(),
+        "a wrong-vault approval must leave the request pending"
+    );
+
+    let flooded = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request("agents.request", payload, String::new()),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(!flooded.success);
+    assert!(flooded.error_message.contains("already waiting"));
+}
+
+#[tokio::test]
+async fn agent_run_injects_only_approved_fields_and_scrubs_both_streams() {
+    let (_dir, host, state) = agent_host("agent-run").await;
+    let mut input = login_input("GitHub", "octocat");
+    if let CipherKind::Login(ref mut data) = input.kind {
+        data.password = Some(format!("agent-password-{}", uuid::Uuid::new_v4()));
+    }
+    let item_id = state
+        .add_cipher(&serde_json::to_string(&input).unwrap())
+        .await
+        .unwrap();
+    let cipher: serde_json::Value =
+        serde_json::from_str(&state.get_cipher(&item_id, true).await.unwrap()).unwrap();
+    let expected_password = cipher["password"].as_str().unwrap().to_string();
+    let peer = baluard_runtime::agents::PeerBinding::new(
+        std::process::id(),
+        "/usr/bin/current-test-agent",
+        0,
+    );
+    let requested = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Example agent",
+                "need": "GitHub login",
+                "item_ids": [item_id]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    let request_id =
+        serde_json::from_str::<serde_json::Value>(&requested.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let approved = route_host_request(
+        agent_request(
+            "agents.approve",
+            serde_json::json!({"request_id": request_id}),
+            state.get_session_token().await.unwrap(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(approved.success, "err: {}", approved.error_message);
+    let polled = route_host_request(
+        agent_request(
+            "agents.poll",
+            serde_json::json!({"request_id": request_id}),
+            String::new(),
+        ),
+        &host,
+    )
+    .await;
+    let agent_token = serde_json::from_str::<serde_json::Value>(&polled.payload).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let run = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.run",
+            serde_json::json!({
+                "argv": ["sh", "-c", "printf 'token=%s\\n' \"$GITHUB_TOKEN\"; printf 'err=%s\\n' \"$GITHUB_TOKEN\" >&2"],
+                "inject": [{"name": "GITHUB_TOKEN", "item_id": item_id, "field": "password"}]
+            }),
+            agent_token.clone(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(run.success, "err: {}", run.error_message);
+    let result: serde_json::Value = serde_json::from_str(&run.payload).unwrap();
+    assert_eq!(result["status"], 0);
+    assert_eq!(result["stdout"], "token=[REDACTED]\n");
+    assert_eq!(result["stderr"], "err=[REDACTED]\n");
+    assert!(!run.payload.contains(&expected_password));
+
+    let outside = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.run",
+            serde_json::json!({
+                "argv": ["sh", "-c", "printf should-not-run"],
+                "inject": [{"name": "OTHER", "item_id": uuid::Uuid::new_v4(), "field": "password"}]
+            }),
+            agent_token.clone(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(!outside.success);
+    assert!(outside.error_message.contains("outside the approved items"));
+
+    let unrelated_peer = agent_peer(1);
+    let wrong_process = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.run",
+            serde_json::json!({"argv": ["true"], "inject": []}),
+            agent_token.clone(),
+        ),
+        &host,
+        Some(&unrelated_peer),
+    )
+    .await;
+    assert!(!wrong_process.success);
+    assert!(
+        wrong_process
+            .error_message
+            .contains("different process tree")
+    );
+
+    let user_token = state.get_session_token().await.unwrap();
+    let listed = route_host_request(
+        agent_request("agents.list", serde_json::json!({}), user_token.clone()),
+        &host,
+    )
+    .await;
+    assert!(listed.success, "err: {}", listed.error_message);
+    let grants: serde_json::Value = serde_json::from_str(&listed.payload).unwrap();
+    assert_eq!(grants["grants"][0]["item_ids"][0], item_id);
+    assert_eq!(grants["grants"][0]["pid"], std::process::id());
+
+    let self_revoked = route_host_request(
+        agent_request(
+            "agents.revoke_own",
+            serde_json::json!({}),
+            agent_token.clone(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(self_revoked.success, "err: {}", self_revoked.error_message);
+    assert!(state.verify_agent_token(&agent_token).is_err());
+    assert!(state.agent_live_grants().is_empty());
+
+    let revoked = route_host_request(
+        agent_request("agents.revoke", serde_json::json!({}), user_token),
+        &host,
+    )
+    .await;
+    assert!(revoked.success, "err: {}", revoked.error_message);
+    assert!(state.verify_agent_token(&agent_token).is_err());
+    assert!(state.agent_live_grants().is_empty());
+}

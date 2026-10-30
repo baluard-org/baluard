@@ -72,6 +72,7 @@ use crate::autosync::SYNC_OP_TIMEOUT;
 pub async fn handle_connection(mut stream: UnixStream, host: SharedVaultHost) -> Result<()> {
     // Peer credential check: reject connections from different UIDs
     verify_peer_uid(&stream)?;
+    let peer = peer_binding(&stream);
 
     let (mut reader, mut writer) = stream.split();
     let mut buf = BytesMut::with_capacity(4096);
@@ -112,7 +113,7 @@ pub async fn handle_connection(mut stream: UnixStream, host: SharedVaultHost) ->
             }
         };
 
-        let response = route_host_request(request, &host).await;
+        let response = route_host_request_with_peer(request, &host, peer.as_ref()).await;
         let resp_bytes = response.encode_to_vec();
         write_frame(&mut writer, &resp_bytes).await?;
     }
@@ -183,7 +184,7 @@ fn error_response(msg: impl Into<String>) -> Vec<u8> {
     .encode_to_vec()
 }
 
-fn err_response(msg: impl Into<String>) -> GatewayResponse {
+pub(crate) fn err_response(msg: impl Into<String>) -> GatewayResponse {
     GatewayResponse {
         success: false,
         error_message: msg.into(),
@@ -291,6 +292,15 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     // IN PLACE against the active vault (same trust as vaults.list_full_all)
     // because the payload crosses vault boundaries.
     "vault.search",
+    "agents.request",
+    "agents.poll",
+    "agents.pending",
+    "agents.approve",
+    "agents.deny",
+    "agents.revoke",
+    "agents.list",
+    "agents.run",
+    "agents.revoke_own",
 ];
 
 /// Default-deny gate for the per-vault dispatcher. Unknown actions require
@@ -341,6 +351,15 @@ const HOST_ACTIONS: &[&str] = &[
     "vaults.lock_all",
     "vaults.on_app_blur",
     "system.prepare_update",
+    "agents.request",
+    "agents.poll",
+    "agents.pending",
+    "agents.approve",
+    "agents.deny",
+    "agents.revoke",
+    "agents.list",
+    "agents.run",
+    "agents.revoke_own",
     "bridge.list",
     "bridge.config",
     "bridge.match",
@@ -470,7 +489,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
-fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
+pub(crate) fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
     GatewayResponse {
         success: true,
         error_message: String::new(),
@@ -724,6 +743,14 @@ enum MarkerCheck {
 /// delegates to `route_request`. The snapshot is taken ONCE per request so a
 /// mid-request `switch` cannot re-route an in-flight operation.
 pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
+    route_host_request_with_peer(req, host, None).await
+}
+
+pub async fn route_host_request_with_peer(
+    req: GatewayRequest,
+    host: &SharedVaultHost,
+    peer: Option<&baluard_runtime::agents::PeerBinding>,
+) -> GatewayResponse {
     log::debug!(
         "[daemon] <- action={} has_token={} slug={} payload_slug={}",
         req.action,
@@ -731,6 +758,10 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
         req.slug,
         extract_slug(&req.payload).is_some()
     );
+
+    if req.action.starts_with("agents.") {
+        return crate::agents::handle_agent_route(&req, host, peer).await;
+    }
 
     // ── Host-level routes: no target vault needed ──
     match req.action.as_str() {
@@ -4206,6 +4237,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             req.action
         ));
     }
+    // D80: agent grants are process-bound, never user sessions. Every
+    // agents.* route is handled at host level; reaching here with this
+    // prefix is an attempted privilege-class crossover.
+    if req
+        .session_token
+        .starts_with(baluard_runtime::agents::AGENT_TOKEN_PREFIX)
+    {
+        return err_response("agent grants cannot call user session routes");
+    }
     if action_requires_session_token(&req.action) {
         if let Err(e) = state.verify_session_token(&req.session_token).await {
             return err_response(e);
@@ -7238,6 +7278,84 @@ async fn sync_disconnect(_p: &std::path::Path, _payload: &str) -> Result<String,
 }
 
 // ── Peer credential verification ──
+
+/// D80: resolve process identity once per connection. Agent grants use this
+/// rather than trusting a claimed name in the payload.
+#[cfg(target_os = "linux")]
+fn peer_binding(stream: &UnixStream) -> Option<baluard_runtime::agents::PeerBinding> {
+    use std::os::unix::io::AsRawFd;
+    let fd = stream.as_raw_fd();
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut cred_len: libc::socklen_t = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let ret = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut cred as *mut _ as *mut _,
+            &mut cred_len,
+        )
+    };
+    if ret != 0 || cred.pid <= 0 {
+        return None;
+    }
+    let pid = cred.pid as u32;
+    let exe_path = std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()?
+        .to_string_lossy()
+        .into_owned();
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let start_ticks = linux_start_ticks(&stat)?;
+    Some(baluard_runtime::agents::PeerBinding::new(
+        pid,
+        exe_path,
+        start_ticks,
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_start_ticks(stat: &str) -> Option<u64> {
+    // /proc/<pid>/stat field 22. The comm field may contain spaces, so parse
+    // after the final ')' instead of splitting the whole line naively.
+    let rest = stat.rsplit_once(") ")?.1;
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+#[cfg(target_os = "macos")]
+fn peer_binding(stream: &UnixStream) -> Option<baluard_runtime::agents::PeerBinding> {
+    use std::os::unix::io::AsRawFd;
+    let fd = stream.as_raw_fd();
+    let mut pid: libc::pid_t = 0;
+    let ret = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            &mut pid as *mut _ as *mut _,
+            &mut (std::mem::size_of::<libc::pid_t>() as libc::socklen_t),
+        )
+    };
+    if ret != 0 || pid <= 0 {
+        return None;
+    }
+    // macOS has no stable /proc start tick. The pid+executable pair still
+    // binds the approval; process-tree walking uses the live process table.
+    let mut buf = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let len =
+        unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr() as *mut libc::c_void, buf.len() as u32) };
+    if len <= 0 {
+        return None;
+    }
+    let exe_path = String::from_utf8_lossy(&buf[..len as usize]).into_owned();
+    Some(baluard_runtime::agents::PeerBinding::new(
+        pid as u32, exe_path, 0,
+    ))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn peer_binding(_stream: &UnixStream) -> Option<baluard_runtime::agents::PeerBinding> {
+    None
+}
 
 /// Verify the connecting process runs as the same UID as the daemon.
 /// Prevents other local users from connecting to the Unix socket.
