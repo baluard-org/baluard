@@ -42,6 +42,9 @@ pub struct TokenInfo {
     /// the PIN-less CredRandomWithoutUV path this backend requires can
     /// never run.
     pub uv_forced: bool,
+    /// CTAP 2.1 makeCredUvNotRqd: PIN-less enrollment is permitted even
+    /// when the token has a PIN. Absent on CTAP2.0 firmware.
+    pub make_cred_uv_not_required: bool,
 }
 
 #[derive(Debug)]
@@ -80,6 +83,13 @@ impl FidoStore {
         let info = self.token.info().map_err(map_token)?;
         if !info.hmac_secret || info.uv_forced {
             return Err(VaultError::HardwareUnavailable.into());
+        }
+        if info.pin_set && !info.make_cred_uv_not_required {
+            return Err(VaultError::Metadata(
+                "security key: this token requires its PIN for hmac-secret; use a key without a PIN"
+                    .into(),
+            )
+            .into());
         }
         Ok(())
     }
@@ -121,6 +131,7 @@ impl super::HardwareKeyStore for FidoStore {
         let reason = match self.token.info() {
             Ok(info) if !info.hmac_secret => "token-without-hmac-secret",
             Ok(info) if info.uv_forced => "uv-forced",
+            Ok(info) if info.pin_set && !info.make_cred_uv_not_required => "pin-required",
             Ok(_) => {
                 return super::HwCapability::Available {
                     backend: "fido2".into(),
@@ -320,6 +331,10 @@ mod real {
                     hmac_secret: info.extensions.iter().any(|e| e == "hmac-secret"),
                     pin_set: info.options.iter().any(|(k, v)| k == "clientPin" && *v),
                     uv_forced: info.options.iter().any(|(k, v)| k == "alwaysUv" && *v),
+                    make_cred_uv_not_required: info
+                        .options
+                        .iter()
+                        .any(|(k, v)| k == "makeCredUvNotRqd" && *v),
                 });
             }
             Err(last_error)
@@ -466,6 +481,8 @@ mod tests {
     struct MockToken {
         hmac_secret: bool,
         uv_forced: bool,
+        pin_set: bool,
+        make_cred_uv_not_required: bool,
         creds: Mutex<HashMap<Vec<u8>, [u8; 32]>>,
         fail: Option<TokenError>,
         chain: crate::hwkey::attest::test_chain::TestChain,
@@ -476,6 +493,8 @@ mod tests {
             Self {
                 hmac_secret: true,
                 uv_forced: false,
+                pin_set: false,
+                make_cred_uv_not_required: true,
                 creds: Mutex::new(HashMap::new()),
                 fail: None,
                 chain: crate::hwkey::attest::test_chain::TestChain::new(),
@@ -487,6 +506,11 @@ mod tests {
         }
         fn uv_forced(mut self) -> Self {
             self.uv_forced = true;
+            self
+        }
+        fn pin_required(mut self) -> Self {
+            self.pin_set = true;
+            self.make_cred_uv_not_required = false;
             self
         }
         fn failing(mut self, e: TokenError) -> Self {
@@ -513,8 +537,9 @@ mod tests {
             Ok(TokenInfo {
                 aaguid: [7u8; 16],
                 hmac_secret: self.hmac_secret,
-                pin_set: false,
+                pin_set: self.pin_set,
                 uv_forced: self.uv_forced,
+                make_cred_uv_not_required: self.make_cred_uv_not_required,
             })
         }
 
@@ -582,6 +607,16 @@ mod tests {
             .derive(&binding, &Handshake(other_salt), HwConsent::PerUse)
             .unwrap();
         assert_ne!(secret.as_ref(), different.as_ref());
+    }
+
+    #[test]
+    fn pin_required_ctap20_token_gets_a_plain_reason() {
+        let store = FidoStore::new(Box::new(MockToken::new().pin_required()));
+        let err = store.preflight().unwrap_err();
+        assert!(
+            matches!(vault_err(&err), VaultError::Metadata(msg) if msg.contains("PIN")),
+            "pin-required token must explain itself: {err:?}"
+        );
     }
 
     #[test]
