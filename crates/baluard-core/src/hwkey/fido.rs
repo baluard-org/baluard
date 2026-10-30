@@ -239,6 +239,7 @@ mod real {
         MakeCredentialArgsBuilder,
     };
     use ctap_hid_fido2::public_key_credential_user_entity::PublicKeyCredentialUserEntity;
+    use ctap_hid_fido2::{HidInfo, HidParam};
     use ctap_hid_fido2::{Cfg, FidoKeyHidFactory};
     use uuid::Uuid;
 
@@ -263,32 +264,69 @@ mod real {
         }
     }
 
-    // Consumed from slice 2's daemon registry wiring. Nothing reachable
-    // here means no token: the detail (hidapi text) carries nothing the
-    // user can act on beyond plugging the key in.
-    #[allow(dead_code)]
-    fn open() -> Result<ctap_hid_fido2::FidoKeyHid, TokenError> {
-        FidoKeyHidFactory::create(&Cfg::init()).map_err(|_| TokenError::KeyMissing)
+    /// Every plugged FIDO HID, keyed by its unique path. The library's
+    /// single-device factory refuses multiples outright; the seal instead
+    /// tries each token for a derivation and asks for one at enrollment.
+    fn devices() -> Vec<HidInfo> {
+        ctap_hid_fido2::get_fidokey_devices()
+    }
+
+    fn open_param(param: &HidParam) -> Result<ctap_hid_fido2::FidoKeyHid, TokenError> {
+        FidoKeyHidFactory::create_by_params(std::slice::from_ref(param), &Cfg::init())
+            .map_err(|e| classify_message(&e.to_string()))
+    }
+
+    fn open_single() -> Result<ctap_hid_fido2::FidoKeyHid, TokenError> {
+        let found = devices();
+        match found.len() {
+            0 => Err(TokenError::KeyMissing),
+            1 => open_param(&found[0].param),
+            _ => Err(TokenError::Device(
+                "multiple security keys are plugged in; keep only the key you want to use".into(),
+            )),
+        }
+    }
+
+    /// NO_CREDENTIALS and device/open failures mean "try the next
+    /// token": an unsupported or unopenable key must not hide the right
+    /// one. Timeouts, cancellation and busy are real user outcomes.
+    pub(super) fn try_next_device(error: &TokenError) -> bool {
+        matches!(error, TokenError::UnknownCredential | TokenError::Device(_))
     }
 
     impl Token for CtapToken {
         fn info(&self) -> Result<TokenInfo, TokenError> {
-            let dev = open()?;
-            let info = dev.get_info().map_err(|e| classify_message(&e.to_string()))?;
-            let mut aaguid = [0u8; 16];
-            if info.aaguid.len() == 16 {
-                aaguid.copy_from_slice(&info.aaguid);
+            let found = devices();
+            if found.is_empty() {
+                return Err(TokenError::KeyMissing);
             }
-            Ok(TokenInfo {
-                aaguid,
-                hmac_secret: info.extensions.iter().any(|e| e == "hmac-secret"),
-                pin_set: info.options.iter().any(|(k, v)| k == "clientPin" && *v),
-                uv_forced: info.options.iter().any(|(k, v)| k == "alwaysUv" && *v),
-            })
+            let mut last_error = TokenError::KeyMissing;
+            for device in found {
+                let info = match open_param(&device.param)
+                    .and_then(|dev| dev.get_info().map_err(|e| classify_message(&e.to_string())))
+                {
+                    Ok(info) => info,
+                    Err(error) => {
+                        last_error = error;
+                        continue;
+                    }
+                };
+                let mut aaguid = [0u8; 16];
+                if info.aaguid.len() == 16 {
+                    aaguid.copy_from_slice(&info.aaguid);
+                }
+                return Ok(TokenInfo {
+                    aaguid,
+                    hmac_secret: info.extensions.iter().any(|e| e == "hmac-secret"),
+                    pin_set: info.options.iter().any(|(k, v)| k == "clientPin" && *v),
+                    uv_forced: info.options.iter().any(|(k, v)| k == "alwaysUv" && *v),
+                });
+            }
+            Err(last_error)
         }
 
         fn make_credential(&self, vault_id: Uuid) -> Result<PackedAttestation, TokenError> {
-            let dev = open()?;
+            let dev = open_single()?;
             let mut challenge = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut challenge);
             let user =
@@ -316,26 +354,42 @@ mod real {
             credential_id: &[u8],
             salt: &[u8; 32],
         ) -> Result<[u8; 32], TokenError> {
-            let dev = open()?;
-            let args = GetAssertionArgsBuilder::new(super::RP_ID, salt)
-                .without_pin_and_uv()
-                .credential_id(credential_id)
-                .extensions(&[Gext::HmacSecret(Some(*salt))])
-                .build();
-            let assertions = dev
-                .get_assertion_with_args(&args)
-                .map_err(|e| classify_message(&e.to_string()))?;
-            let a = assertions
-                .first()
-                .ok_or_else(|| TokenError::Device("no assertion returned".into()))?;
-            for e in &a.extensions {
-                if let Gext::HmacSecret(Some(out)) = e {
-                    return Ok(*out);
+            let found = devices();
+            if found.is_empty() {
+                return Err(TokenError::KeyMissing);
+            }
+            let mut last_error = TokenError::UnknownCredential;
+            for device in found {
+                let result = open_param(&device.param).and_then(|dev| {
+                    let args = GetAssertionArgsBuilder::new(super::RP_ID, salt)
+                        .without_pin_and_uv()
+                        .credential_id(credential_id)
+                        .extensions(&[Gext::HmacSecret(Some(*salt))])
+                        .build();
+                    let assertions = dev
+                        .get_assertion_with_args(&args)
+                        .map_err(|e| classify_message(&e.to_string()))?;
+                    let a = assertions
+                        .first()
+                        .ok_or_else(|| TokenError::Device("no assertion returned".into()))?;
+                    for e in &a.extensions {
+                        if let Gext::HmacSecret(Some(out)) = e {
+                            return Ok(*out);
+                        }
+                    }
+                    Err(TokenError::Device(
+                        "assertion carried no hmac-secret output".into(),
+                    ))
+                });
+                match result {
+                    Ok(secret) => return Ok(secret),
+                    Err(error) if try_next_device(&error) => {
+                        last_error = error;
+                    }
+                    Err(error) => return Err(error),
                 }
             }
-            Err(TokenError::Device(
-                "assertion carried no hmac-secret output".into(),
-            ))
+            Err(last_error)
         }
     }
 
@@ -350,6 +404,25 @@ pub use real::store;
 
 #[cfg(all(test, feature = "fido2"))]
 mod tests {
+
+    #[test]
+    fn only_an_unknown_credential_moves_to_the_next_device() {
+        assert!(super::real::try_next_device(
+            &super::TokenError::UnknownCredential
+        ));
+        // An unopenable/unsupported token must not hide the right key.
+        assert!(super::real::try_next_device(&super::TokenError::Device(
+            "permission denied".into()
+        )));
+        for err in [
+            super::TokenError::Timeout,
+            super::TokenError::Cancelled,
+            super::TokenError::Busy,
+            super::TokenError::KeyMissing,
+        ] {
+            assert!(!super::real::try_next_device(&err));
+        }
+    }
 
     #[test]
     fn desktop_adapter_classifies_the_library_text() {
