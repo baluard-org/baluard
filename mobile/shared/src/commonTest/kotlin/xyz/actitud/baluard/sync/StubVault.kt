@@ -78,12 +78,6 @@ open class StubVault(
         kek: ByteArray,
         transport: MobileHardwareTransport,
     ) = err()
-    override suspend fun changeMasterPasswordWithSecurityKey(
-        oldPassword: String,
-        newPassword: String,
-        transport: MobileHardwareTransport,
-    ) = err()
-
     override suspend fun syncPullNow() { calls += "syncPullNow" }
     override suspend fun syncOfflineTick() { calls += "syncOfflineTick" }
     override suspend fun archiveCipher(id: String) { calls += "archiveCipher" }

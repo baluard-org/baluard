@@ -6,6 +6,14 @@ import kotlin.test.assertEquals
 
 class SecurityKeyErrorMessageTest {
     @Test
+    fun typedWrongPasswordDoesNotNeedAnExceptionMessage() {
+        assertEquals(
+            t("login.wrongPassword"),
+            securityKeyErrorMessage(xyz.actitud.baluard.BaluardException.WrongPassword()),
+        )
+    }
+
+    @Test
     fun probeReasonsGetSpecificCopy() {
         assertEquals(
             t("settings.hardwareKeyTimeout"),

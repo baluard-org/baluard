@@ -325,22 +325,6 @@ impl MobileVault {
             .await
             .map_err(map_core_hardware_error)
     }
-
-    pub async fn change_master_password_with_security_key(
-        &self,
-        old_password: String,
-        new_password: String,
-        transport: Arc<dyn MobileHardwareTransport>,
-    ) -> Result<(), BaluardError> {
-        let _operation = MOBILE_OPERATION_LOCK.lock().await;
-        let _scope = TransportScope::enter(transport);
-        let old_password = zeroize::Zeroizing::new(old_password);
-        let new_password = zeroize::Zeroizing::new(new_password);
-        self.state
-            .change_master_password(&old_password, &new_password)
-            .await
-            .map_err(map_runtime_hardware_error)
-    }
 }
 
 #[cfg(test)]

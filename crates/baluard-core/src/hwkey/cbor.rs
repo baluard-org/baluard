@@ -83,12 +83,11 @@ impl Value {
             }
             Value::Map(pairs) => {
                 write_head(out, 5, pairs.len() as u64);
-                // Canonical order: sort by the encoded key bytes (RFC 8949
-                // §4.2.1 length-first rule is subsumed by bytewise comparison
-                // for these value shapes).
+                // CTAP2 canonical CBOR (RFC 7049): encoded key length first,
+                // then bytewise lexical order for equal-length keys.
                 let mut encoded: Vec<(Vec<u8>, &Value)> =
                     pairs.iter().map(|(k, v)| (k.encode(), v)).collect();
-                encoded.sort_by(|a, b| a.0.cmp(&b.0));
+                encoded.sort_by(|a, b| a.0.len().cmp(&b.0.len()).then_with(|| a.0.cmp(&b.0)));
                 for (k, v) in encoded {
                     out.extend_from_slice(&k);
                     v.encode_into(out);
@@ -438,6 +437,18 @@ mod tests {
         // the limit existed; it must decode as a plain error instead.
         let bomb = vec![0x81u8; 7609];
         assert!(Value::decode(&bomb).is_err());
+    }
+
+    #[test]
+    fn canonical_maps_use_length_first_key_order() {
+        let value = Value::Map(vec![
+            (Value::TextString("z".into()), Value::Unsigned(0)),
+            (Value::Unsigned(255), Value::Unsigned(1)),
+            (Value::Negative(-1), Value::Unsigned(2)),
+        ]);
+        let encoded = value.encode();
+        // 0x20 (-1) is one byte; 0x18ff (255) and 0x617a ("z") are two.
+        assert_eq!(encoded, vec![0xa3, 0x20, 0x02, 0x18, 0xff, 0x01, 0x61, 0x7a, 0x00]);
     }
 
     #[test]

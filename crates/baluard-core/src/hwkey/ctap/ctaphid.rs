@@ -104,7 +104,14 @@ pub fn init_with_nonce(link: &dyn HidLink, nonce: &[u8; 8]) -> Result<DeviceInfo
     if resp[1..5] != BROADCAST_CID || resp[5] != CTAPHID_INIT || resp[8..16] != *nonce {
         return Err(CtapHidError::Malformed);
     }
+    let bcnt = ((resp[6] as usize) << 8) | resp[7] as usize;
+    if bcnt < 17 {
+        return Err(CtapHidError::Malformed);
+    }
     let cid = [resp[16], resp[17], resp[18], resp[19]];
+    if cid == [0, 0, 0, 0] || cid == BROADCAST_CID {
+        return Err(CtapHidError::Malformed);
+    }
     Ok(DeviceInfo {
         cid,
         version_major: resp[21],
@@ -261,6 +268,7 @@ mod tests {
             let mut r = [0u8; 65];
             r[1..5].copy_from_slice(&BROADCAST_CID);
             r[5] = CTAPHID_INIT;
+            r[6..8].copy_from_slice(&17u16.to_be_bytes());
             r[8..16].copy_from_slice(nonce);
             r[16..20].copy_from_slice(&[0x01, 0x02, 0x03, 0x04]);
             r[20] = 2; // protocol version
@@ -298,6 +306,25 @@ mod tests {
         assert_eq!(sent[5], CTAPHID_INIT);
         assert_eq!(&sent[6..8], &8u16.to_be_bytes());
         assert_eq!(&sent[8..16], &nonce[..]);
+    }
+
+    #[test]
+    fn init_refuses_short_replies_and_invalid_channel_ids() {
+        let nonce = [7u8; 8];
+        let mut short = QueueLink::init_ok_response(&nonce);
+        short[6..8].copy_from_slice(&16u16.to_be_bytes());
+        assert_eq!(
+            init_with_nonce(&QueueLink::new(vec![Ok(short)]), &nonce),
+            Err(CtapHidError::Malformed)
+        );
+        for cid in [[0, 0, 0, 0], BROADCAST_CID] {
+            let mut reply = QueueLink::init_ok_response(&nonce);
+            reply[16..20].copy_from_slice(&cid);
+            assert_eq!(
+                init_with_nonce(&QueueLink::new(vec![Ok(reply)]), &nonce),
+                Err(CtapHidError::Malformed)
+            );
+        }
     }
 
     #[test]
