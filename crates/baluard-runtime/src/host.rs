@@ -643,6 +643,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn close_clears_the_device_signing_key_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault");
+        let password = format!("close-cache-pass-{}", std::process::id());
+        let handle = baluard_core::vault::creation::VaultCreator::new(&path, &password, "device")
+            .execute()
+            .unwrap()
+            .0;
+        let device_id = handle.device_id;
+        drop(handle);
+        let state = Arc::new(VaultState::new(path.clone()));
+        state.unlock(&password).await.unwrap();
+        assert!(
+            baluard_core::vault::handle::cached_device_signing_key(&path, device_id).is_some(),
+            "unlock must warm the cache"
+        );
+        let host = VaultHost::new();
+        host.insert("alpha".into(), state).await;
+        assert!(host.close("alpha").await);
+        assert!(
+            baluard_core::vault::handle::cached_device_signing_key(&path, device_id).is_none(),
+            "closing the runtime state must clear its signing key"
+        );
+    }
+
+    #[tokio::test]
     async fn close_clears_active_in_one_critical_section() {
         let host = VaultHost::new();
         let state = Arc::new(VaultState::new(PathBuf::from("/tmp/x")));
