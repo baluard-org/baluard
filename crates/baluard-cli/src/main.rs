@@ -39,8 +39,28 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum AgentAction {
+    /// List requests waiting for a human decision.
+    Pending,
+    /// Approve a pending request by id.
+    Approve { request_id: String },
+    /// Deny a pending request by id.
+    Deny { request_id: String },
+    /// List live agent grants.
+    List,
+    /// Revoke every agent grant for this vault.
+    Revoke,
+}
+
+#[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // Pre-existing: Commands has unit + struct variants of widely different sizes
 enum Commands {
+    /// Inspect and decide agent credential requests (human approver surface).
+    Agents {
+        #[command(subcommand)]
+        action: AgentAction,
+    },
+
     /// Create a new vault with master password.
     Init {
         /// KDF profile: mobile-low, desktop-std, desktop-high.
@@ -98,6 +118,19 @@ enum Commands {
         /// Output format for decrypted content.
         #[arg(long, default_value = "quiet")]
         output: String,
+    },
+
+    /// Run a command with human-approved credentials injected into its environment.
+    Run {
+        /// Environment injection: NAME=ITEM_ID:FIELD. Repeat for each value.
+        #[arg(long = "inject", required = true)]
+        inject: Vec<String>,
+        /// Plain-language reason shown on the approval prompt.
+        #[arg(long, default_value = "credential access")]
+        need: String,
+        /// Command and arguments, after --.
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
     },
 
     /// List all ciphers.
@@ -1801,7 +1834,23 @@ fn main() {
     // the connect mode: --direct wins if explicitly asked or if the daemon is
     // unreachable. Otherwise stay in daemon mode and let per-request slug
     // routing do the targeting.
-    let forced_direct = if cli.direct {
+    // D80: a self-declared agent must use the scoped approval path instead
+    // of the stored user session token.
+    if std::env::var("BALUARD_AGENT").ok().as_deref() == Some("1")
+        && !matches!(&cli.command, Commands::Run { .. })
+    {
+        eprintln!(
+            "{}",
+            serde_json::json!({"error": "BALUARD_AGENT=1 requires `baluard run --inject ... -- <cmd>`"})
+        );
+        std::process::exit(1);
+    }
+
+    let forced_direct = if matches!(&cli.command, Commands::Run { .. }) {
+        // D80 run refuses --direct/--socket in its handler; do not even ping
+        // a caller-selected daemon before that refusal.
+        false
+    } else if cli.direct {
         true
     } else if let Some(ref vault_slug) = cli.vault {
         // Install the override (idempotent — single process).
@@ -1822,6 +1871,9 @@ fn main() {
     };
 
     let result = match cli.command {
+        Commands::Agents { action } => {
+            commands::agent::handle_agent_action(action, cli.socket.as_deref())
+        }
         // Init always direct (creates vault on disk)
         Commands::Init {
             profile,
@@ -1918,6 +1970,13 @@ fn main() {
             decrypt,
             &output,
         ),
+        Commands::Run {
+            inject,
+            need,
+            command,
+        } => {
+            commands::agent::handle_run(cli.direct, cli.socket.as_deref(), &inject, &need, &command)
+        }
         Commands::List { archived } => {
             commands::handle_list(mode, &vault_path, cli.socket.as_deref(), archived)
         }

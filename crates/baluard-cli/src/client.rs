@@ -223,6 +223,31 @@ fn request_to_with_slug(
     socket_path: Option<&str>,
     slug: &str,
 ) -> Result<GatewayResponse> {
+    let token = get_session_token(socket_path).unwrap_or_default();
+    request_with_session(action, payload, socket_path, slug, token, true)
+}
+
+/// D80 agent calls never load or persist the user's stored session token.
+/// The daemon socket is pinned to the default path for this surface.
+pub fn request_agent(action: &str, payload: &str, token: &str) -> Result<GatewayResponse> {
+    request_with_session(
+        action,
+        payload,
+        None,
+        vault_slug_override().unwrap_or(""),
+        token.to_string(),
+        false,
+    )
+}
+
+fn request_with_session(
+    action: &str,
+    payload: &str,
+    socket_path: Option<&str>,
+    slug: &str,
+    session_token: String,
+    persist_response_token: bool,
+) -> Result<GatewayResponse> {
     let socket = socket_path
         .map(PathBuf::from)
         .unwrap_or_else(default_socket_path);
@@ -232,7 +257,7 @@ fn request_to_with_slug(
     let mut req = GatewayRequest {
         action: action.to_string(),
         payload: payload.to_string(),
-        session_token: get_session_token(socket_path).unwrap_or_default(),
+        session_token,
         slug: slug.to_string(),
     };
     let mut body = req.encode_to_vec();
@@ -276,7 +301,7 @@ fn request_to_with_slug(
         GatewayResponse::decode(resp_data).context("Failed to decode daemon response")?;
 
     // R7-2: Store session token from daemon if present
-    if !response.session_token.is_empty() {
+    if persist_response_token && !response.session_token.is_empty() {
         set_session_token(&response.session_token, socket_path);
     }
 
