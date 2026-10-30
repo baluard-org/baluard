@@ -446,7 +446,7 @@ internal val ES: Map<String, String> = mapOf(
     "settings.hardwareKey" to "Llave de seguridad",
     "settings.hardwareKeyHint" to "Exige tu YubiKey junto con la contraseña maestra.",
     "settings.hardwareKeyEnableTitle" to "¿Activar la protección de la llave de seguridad?",
-    "settings.hardwareKeyEnableBody" to "Si pierdes esta llave, necesitarás la frase de recuperación para volver a abrir esta bóveda. El autollenado dejará de funcionar para esta bóveda mientras la protección esté activada.",
+    "settings.hardwareKeyEnableBody" to "Si pierdes esta llave, necesitarás la frase de recuperación para volver a abrir esta bóveda. El autocompletado dejará de funcionar para esta bóveda mientras la protección esté activada.",
     "settings.hardwareKeyUvForced" to "Esta llave siempre exige su propia verificación y no puede proteger esta bóveda.",
     "settings.hardwareKeyPinRequired" to "Esta llave exige su PIN para esta operación. Usa una llave sin PIN.",
     "settings.hardwareKeyHold" to "Acerca la llave al teléfono o conéctala por USB y tócala cuando parpadee.",
