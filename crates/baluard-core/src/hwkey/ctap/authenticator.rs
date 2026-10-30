@@ -387,7 +387,7 @@ impl SoftAuthenticator {
         if salt.len() >= 64 {
             outputs.extend(hmac_sha256(&cred.cred_random, &salt[32..64]));
         }
-        let ext_out = secret.encrypt(&outputs);
+        let ext_out = secret.encrypt(&outputs).expect("model salt alignment");
         self.sign_counter += 1;
 
         let mut auth_data = Vec::new();
@@ -655,7 +655,7 @@ mod tests {
         // forge by encrypting one salt and authenticating another.
         let salt = [5u8; 32];
         let other = [6u8; 32];
-        let salt_enc = secret.encrypt(&salt);
+        let salt_enc = secret.encrypt(&salt).unwrap();
         let salt_auth = secret.authenticate(&other);
         let ext = Value::Map(vec![(
             Value::TextString("hmac-secret".into()),
@@ -699,7 +699,7 @@ mod tests {
         let info = client.require_hmac_secret().unwrap();
         let secret = client.shared_secret(&info).unwrap();
         assert_eq!(secret.protocol, Protocol::Two);
-        let salt_enc = secret.encrypt(&[5u8; 32]);
+        let salt_enc = secret.encrypt(&[5u8; 32]).unwrap();
         let salt_auth = secret.authenticate(&salt_enc);
         assert_eq!(salt_auth.len(), 32);
         let ext = Value::Map(vec![(
@@ -843,6 +843,6 @@ mod tests {
         let client =
             client_of(SoftAuthenticator::new(master()).with_extensions(vec!["credProtect"]));
         let err = client.require_hmac_secret().unwrap_err();
-        assert!(matches!(err, ClientError::Unsupported(_)));
+        assert!(matches!(err, ClientError::NoHmacSecret));
     }
 }

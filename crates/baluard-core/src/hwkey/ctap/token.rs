@@ -5,7 +5,7 @@
 
 use super::super::attest::PackedAttestation;
 use super::super::fido::{RP_ID, Token, TokenError, TokenInfo};
-use super::apdu::{ApduForm, Transceive};
+use super::apdu::{ApduError, ApduForm, Transceive};
 use super::ctaphid::{CtapHidError, HidLink};
 use super::protocol::{ClientError, Ctap2Error, CtapClient};
 use uuid::Uuid;
@@ -91,7 +91,7 @@ pub fn get_secret(
     client: CtapClient<'_>,
     credential_id: &[u8],
     salt: &[u8; 32],
-) -> Result<[u8; 32], TokenError> {
+) -> Result<zeroize::Zeroizing<[u8; 32]>, TokenError> {
     let info = client.require_hmac_secret().map_err(map_client_error)?;
     let shared = client.shared_secret(&info).map_err(map_client_error)?;
     let assertion = client
@@ -106,7 +106,7 @@ pub fn get_secret(
         )
         .map_err(map_client_error)?;
     match assertion.secrets.as_slice() {
-        [secret] => Ok(**secret),
+        [secret] => Ok(zeroize::Zeroizing::new(**secret)),
         _ => Err(TokenError::Device(
             "assertion did not carry exactly one hmac-secret output".into(),
         )),
@@ -119,19 +119,22 @@ pub fn map_client_error(error: ClientError) -> TokenError {
     match error {
         ClientError::Ctap2(Ctap2Error(code)) => match code {
             0x06 => TokenError::Busy,
-            0x2d => TokenError::Cancelled,
+            0x27 | 0x2d => TokenError::Cancelled,
             0x2e | 0x22 => TokenError::UnknownCredential,
             0x2f => TokenError::Timeout,
             0x31 | 0x36 | 0x3c | 0x3f => TokenError::UvForced,
             _ => TokenError::Device(format!("CTAP2 status 0x{code:02x}")),
         },
-        ClientError::Unsupported(message) if message.contains("hmac-secret") => {
-            TokenError::NoHmacSecret
-        }
+        ClientError::NoHmacSecret => TokenError::NoHmacSecret,
+        ClientError::Unsupported(_) => TokenError::Device(
+            "security key does not support this operation".into(),
+        ),
         // CTAPHID channel-busy (0x06) is a busy key; the other HID
         // protocol codes are transport-class failures.
         ClientError::Hid(CtapHidError::Hid(0x06)) => TokenError::Busy,
-        ClientError::Hid(CtapHidError::Timeout) => TokenError::Timeout,
+        ClientError::Hid(CtapHidError::Timeout) | ClientError::Apdu(ApduError::Timeout) => {
+            TokenError::Timeout
+        }
         ClientError::Hid(_) | ClientError::Apdu(_) => TokenError::KeyMissing,
         other => TokenError::Device(other.to_string()),
     }
@@ -152,7 +155,7 @@ macro_rules! impl_token {
                 &self,
                 credential_id: &[u8],
                 salt: &[u8; 32],
-            ) -> Result<[u8; 32], TokenError> {
+            ) -> Result<zeroize::Zeroizing<[u8; 32]>, TokenError> {
                 get_secret(
                     self.client().map_err(map_client_error)?,
                     credential_id,
@@ -168,6 +171,22 @@ impl_token!(NfcToken<T: Transceive>);
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn operation_denied_and_nfc_deadline_are_typed() {
+        assert!(matches!(
+            map_client_error(ClientError::Ctap2(Ctap2Error(0x27))),
+            TokenError::Cancelled
+        ));
+        assert!(matches!(
+            map_client_error(ClientError::Apdu(ApduError::Timeout)),
+            TokenError::Timeout
+        ));
+        assert!(matches!(
+            map_client_error(ClientError::Unsupported("no pinUvAuth protocol".into())),
+            TokenError::Device(message) if !message.contains("pinUvAuth")
+        ));
+    }
 
     #[test]
     fn keepalive_deadline_maps_to_touch_timeout() {
@@ -301,7 +320,7 @@ mod tests {
         let first = token.get_secret(&attestation.credential_id, &salt).unwrap();
         let second = token.get_secret(&attestation.credential_id, &salt).unwrap();
         assert_eq!(first, second);
-        assert_ne!(first, [0u8; 32]);
+        assert_ne!(*first, [0u8; 32]);
         assert!(*token.link.extended_seen.lock().unwrap());
     }
 
@@ -325,7 +344,7 @@ mod tests {
         reader.model = Mutex::new(SoftAuthenticator::new(master()).with_versions(vec!["U2F_V2"]));
         let token = NfcToken::new(reader);
         let error = token.info().unwrap_err();
-        assert!(matches!(error, TokenError::Device(m) if m.contains("CTAP2")));
+        assert!(matches!(error, TokenError::Device(m) if m.contains("does not support")));
 
         let mut garbage = ModelApdu::new(SoftAuthenticator::new(master()));
         garbage.select_reply = b"SOMETHING";
@@ -342,7 +361,7 @@ mod tests {
         let secret = token
             .get_secret(&attestation.credential_id, &[7u8; 32])
             .unwrap();
-        assert_ne!(secret, [0u8; 32]);
+        assert_ne!(*secret, [0u8; 32]);
         assert!(!*token.link.extended_seen.lock().unwrap());
 
         // The same reader refuses the default extended shape.
@@ -398,7 +417,7 @@ mod tests {
                 &mut |_| {},
             )
             .unwrap();
-        assert_eq!(through_token, *expected.secrets[0]);
+        assert_eq!(*through_token, *expected.secrets[0]);
         assert_eq!(
             token.get_secret(&attestation.credential_id, &salt).unwrap(),
             through_token
@@ -537,6 +556,6 @@ mod real_key_gate {
             .get_secret(&attestation.credential_id, &salt)
             .expect("tap to derive again");
         assert_eq!(first, second);
-        assert_ne!(first, [0u8; 32]);
+        assert_ne!(*first, [0u8; 32]);
     }
 }

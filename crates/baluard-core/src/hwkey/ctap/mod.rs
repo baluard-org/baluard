@@ -5,6 +5,7 @@
 //! hermetic test harness (software authenticator + scripted transports).
 
 pub mod apdu;
+#[cfg(test)]
 pub mod authenticator;
 pub use super::cbor;
 pub mod ctaphid;

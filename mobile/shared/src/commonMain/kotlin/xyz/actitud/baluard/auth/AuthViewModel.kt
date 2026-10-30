@@ -76,6 +76,10 @@ class AuthViewModel(private val repo: VaultRepository) {
         }
     }
 
+    suspend fun requiresSecurityKey(path: String): Boolean = runCatching {
+        requiresSecurityKey(repo.openVault(path))
+    }.getOrDefault(false)
+
     private suspend fun requiresSecurityKey(vault: MobileVault): Boolean = runCatching {
         val status = Json.parseToJsonElement(
             vault.hardwareStatus(xyz.actitud.baluard.platform.securityKeysSupported()),
