@@ -75,7 +75,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_UPDATER_PUBLIC_KEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUwNzA3OTA4MTFFNTQ1NDAKUldSQVJlVVJDSGx3NEdZN2ZOczE0YjFwMzl3dG5TaW9WbWNxQm1XUXc1SzJMRG82SGhXTFp6OEsK",
       "requireSignedVersion": true,
       "allowDowngrades": false,
       "windows": {
