@@ -367,7 +367,7 @@
     "tabContacts": "Contactos",
     "tabOutboxes": "Buzones",
     "tabSpace": "Bóveda",
-        "hwKeyTitle": "Proteger con tu llave de seguridad",
+    "hwKeyTitle": "Proteger con tu llave de seguridad",
     "hwKeyOn": "Esta bóveda está protegida por tu llave de seguridad.",
     "hwKeyOff": "Esta bóveda no está protegida por una llave de seguridad.",
     "hwKeyEnableTitle": "¿Activar la protección de la llave de seguridad?",
@@ -375,7 +375,7 @@
     "hwKeyDisableTitle": "¿Desactivar la protección de la llave de seguridad?",
     "hwKeyEnabledToast": "La protección de la llave de seguridad está activada.",
     "hwKeyDisabledToast": "La protección de la llave de seguridad está desactivada.",
-"hwTitle": "Proteger con el chip de seguridad de este dispositivo",
+    "hwTitle": "Proteger con el chip de seguridad de este dispositivo",
     "hwDesc": "Un disco o respaldo robado solo no puede abrir esta bóveda, ni siquiera con la contraseña.",
     "hwOn": "Esta bóveda está protegida por el chip de seguridad.",
     "hwOff": "Esta bóveda no está protegida por el chip de seguridad.",
@@ -551,9 +551,9 @@
     "hwTouchTimeout": "No se detectó el toque en la llave. Inténtalo de nuevo.",
     "hwBusy": "La llave de seguridad está ocupada en otra aplicación. Ciérrala e inténtalo de nuevo.",
     "hwKeyWrong": "Esta no es la llave de seguridad con la que se protegió esta bóveda.",
-        "hwKeyUvForced": "Esta llave siempre exige su propia verificación y no puede proteger esta bóveda.",
+    "hwKeyUvForced": "Esta llave siempre exige su propia verificación y no puede proteger esta bóveda.",
     "hwKeyPinRequired": "Esta llave exige su PIN para esta operación. Usa una llave sin PIN.",
-"hwKeyMissing": "Conecta tu llave de seguridad."
+    "hwKeyMissing": "Conecta tu llave de seguridad."
   },
   "categories": {
     "allItems": "Todos los elementos",
@@ -1263,5 +1263,21 @@
     "openGo": "Abrir la caja fuerte",
     "replaceBtn": "Entregar el kit a otra persona",
     "replaceNote": "Esto crea un kit completamente nuevo para otra persona (o con otra frase). El kit actual deja de funcionar de inmediato y la caja fuerte cambia de llaves: la carta antigua se vuelve inservible."
+  },
+  "update": {
+    "availableTitle": "La versión {version} está disponible",
+    "installNow": "Instalar y reiniciar",
+    "installing": "Instalando la versión {version}…",
+    "dismiss": "Descartar",
+    "checkFailed": "No se pudo buscar actualizaciones.",
+    "upToDate": "Ya tienes la última versión.",
+    "checkNow": "Buscar actualizaciones",
+    "checking": "Buscando…",
+    "autoChecks": "Buscar actualizaciones automáticamente",
+    "settingsTitle": "Actualizaciones",
+    "settingsDesc": "Canal: {channel}",
+    "managed": "Las actualizaciones de esta instalación se gestionan externamente.",
+    "versionMismatchTitle": "El servicio en segundo plano de Baluard está desactualizado",
+    "versionMismatchBody": "La aplicación y su servicio en segundo plano son versiones distintas.\nCierra Baluard por completo y vuelve a iniciarlo."
   }
 }

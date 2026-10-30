@@ -27,6 +27,12 @@ tauri-plugin-dialog = "2"
 # Community plugin (no official Tauri biometry plugin exists). Pinned EXACT
 # per audit D10: a password manager should upgrade this dependency as a
 # conscious decision, not via a caret drift. Review scope on every bump.
+# D79: signed in-app updates (AppImage on Linux, .app.tar.gz on macOS).
+# Pinned EXACT like the community plugin above: the updater is the one
+# dependency that can replace running binaries, so bumps are a conscious
+# security review (2.12 embeds the artifact version in the minisign
+# trusted comment; require_signed_version refuses version-less legacy sigs).
+tauri-plugin-updater = "=2.12.0"
 tauri-plugin-biometry = "=0.2.8"
 prost = "0.13"
 anyhow = "1"
