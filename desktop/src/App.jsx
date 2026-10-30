@@ -1,4 +1,5 @@
 import { onSettled, Show, createSignal } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon, showWindow } from "./lib/daemon.js";
 import { disableAutofill } from "./lib/disableAutofill.js";
@@ -7,6 +8,7 @@ import { VaultProvider } from "./context/VaultContext.jsx";
 import { VaultSwitcherProvider } from "./context/VaultSwitcherContext.jsx";
 import { AutoSyncProvider } from "./context/AutoSyncContext.jsx";
 import { ConflictResolutionProvider } from "./context/ConflictResolutionContext.jsx";
+import { UpdateProvider } from "./context/UpdateContext.jsx";
 
 import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
@@ -17,10 +19,28 @@ import VaultView from "./components/VaultView.jsx";
 import AutoSyncIndicator from "./components/AutoSyncIndicator.jsx";
 import ConflictResolutionPanel from "./components/ConflictResolutionPanel.jsx";
 import ToastContainer from "./components/ToastContainer.jsx";
+import UpdateBanner from "./components/UpdateBanner.jsx";
+
+// D79 version gate: after an update, a stale daemon (the bundled sidecar
+// did not get replaced) must be impossible to talk to, not quietly wrong.
+// This blocks the whole app until the versions agree again.
+function VersionGate(props) {
+  const { t } = useI18n();
+  return (
+    <div class="absolute inset-0 z-[100] bg-[var(--color-bg, #101014)] flex items-center justify-center p-8">
+      <div class="max-w-sm text-center space-y-3">
+        <div class="text-sm font-bold text-[var(--color-text)]">{t("update.versionMismatchTitle")}</div>
+        <p class="text-xs text-[var(--color-muted)] whitespace-pre-line">{t("update.versionMismatchBody")}</p>
+        <p class="text-[10px] text-[var(--color-muted)] font-mono">{props.detail}</p>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const auth = useAuth();
   const { t } = useI18n();
+  const [versionMismatch, setVersionMismatch] = createSignal(null);
 
   // Audit C8/D9: the dev conflict trigger is dynamically imported and only
   // in dev builds. Vite drops `if (import.meta.env.DEV)` blocks statically
@@ -45,6 +65,19 @@ export default function App() {
         // Detect macOS to apply titlebar adjustments
         if (navigator.userAgent.includes("Mac")) {
           document.documentElement.classList.add("platform-mac");
+        }
+
+        // Version gate FIRST: a stale daemon answers old protocol shapes and
+        // every later probe would misread it as vault state.
+        try {
+          const v = await invoke("daemon_version");
+          if (v && v.matches === false) {
+            setVersionMismatch(`${v.version || "?"} / expected ${v.expected}`);
+            await showWindow();
+            return;
+          }
+        } catch {
+          // Pre-handshake desktops have no command; dev/browser tests skip.
         }
 
         // Autofill is off app-wide by default; inputs opt in with data-autofill="on".
@@ -88,8 +121,14 @@ export default function App() {
   });
 
   return (
-    <VaultSwitcherProvider>
+    <UpdateProvider>
+      <VaultSwitcherProvider>
       <div class="app relative w-full h-full overflow-hidden">
+        {/* D79: updates ride above everything; a stale daemon blocks all */}
+        <Show when={versionMismatch()}>
+          <VersionGate detail={versionMismatch()} />
+        </Show>
+        <UpdateBanner />
         {/* macOS window drag region */}
         <Show when={navigator.userAgent.includes("Mac")}>
           <div data-tauri-drag-region class="absolute top-0 left-0 right-0 h-7 z-50 cursor-default" />
@@ -134,6 +173,7 @@ export default function App() {
           </div>
         </Show>
       </div>
-    </VaultSwitcherProvider>
+      </VaultSwitcherProvider>
+    </UpdateProvider>
   );
 }

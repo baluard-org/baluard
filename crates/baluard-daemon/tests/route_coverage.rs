@@ -829,6 +829,53 @@ async fn vault_host_lock_all_returns_count() {
     assert_eq!(n, 2, "lock_all returns count of locked vaults");
 }
 
+#[tokio::test]
+async fn ping_payload_carries_the_version_handshake() {
+    // D79: the desktop refuses a daemon whose build version differs from the
+    // one it shipped with; this pins the wire shape it parses.
+    let req = GatewayRequest {
+        action: "ping".into(),
+        ..Default::default()
+    };
+    let resp = route_host_request(req, &Arc::new(VaultHost::new())).await;
+    assert!(resp.success, "ping must succeed");
+    let v: serde_json::Value = serde_json::from_str(&resp.payload).expect("ping payload is JSON");
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(v["proto_version"], baluard_core::BALUARD_VERSION);
+}
+
+#[tokio::test]
+async fn system_prepare_update_drains_and_locks_every_open_vault() {
+    // D79 update prep: the desktop stops the daemon only after this route
+    // reports success, so it must lock every open vault (draining any sync
+    // cycle first) and report what it locked.
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let host = VaultHost::new();
+    let (_d1, p1) = make_vault("prep-1");
+    let (_d2, p2) = make_vault("prep-2");
+    let s1 = Arc::new(VaultState::new(p1.clone()));
+    let s2 = Arc::new(VaultState::new(p2.clone()));
+    s1.open().await.unwrap();
+    s2.open().await.unwrap();
+    s1.unlock(MASTER).await.unwrap();
+    s2.unlock(MASTER).await.unwrap();
+    host.insert("prep-1".into(), s1.clone()).await;
+    host.insert("prep-2".into(), s2.clone()).await;
+
+    let req = GatewayRequest {
+        action: "system.prepare_update".into(),
+        ..Default::default()
+    };
+    let resp = route_host_request(req, &Arc::new(host)).await;
+    assert!(resp.success, "prepare_update must succeed: {:?}", resp.error_message);
+    let v: serde_json::Value =
+        serde_json::from_str(&resp.payload).expect("prepare_update payload is JSON");
+    let mut locked: Vec<String> = serde_json::from_value(v["locked"].clone()).unwrap();
+    locked.sort();
+    assert_eq!(locked, vec!["prep-1".to_string(), "prep-2".to_string()]);
+    assert!(!s1.is_unlocked().await && !s2.is_unlocked().await, "both vaults must lock");
+}
+
 // ── §4.8-1: sharing surfaces (members / requests / activity) ──
 
 #[tokio::test]

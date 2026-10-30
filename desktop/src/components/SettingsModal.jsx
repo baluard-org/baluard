@@ -15,6 +15,7 @@ import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeou
 import { biometryAvailable } from "../lib/biometry.js";
 import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
+import UpdateSettingsRow from "./UpdateSettingsRow.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 import SyncTab from "./SyncTab.jsx";
 import PeopleTab from "./PeopleTab.jsx";
@@ -1034,6 +1035,8 @@ export default function SettingsModal() {
                     </div>
                   </div>
                 </Show>
+
+                <UpdateSettingsRow />
               </Show>
 
               <Show when={activeTab() === "data"}>

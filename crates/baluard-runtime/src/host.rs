@@ -371,6 +371,32 @@ impl VaultHost {
         locked
     }
 
+    /// D79: drain in-flight sync cycles and lock every vault before a desktop
+    /// update replaces the binaries. Returns the slugs it locked; the error
+    /// names the first vault whose sync cycle did not finish in time.
+    pub async fn prepare_for_update(&self) -> Result<Vec<String>, String> {
+        // Snapshot the arcs once, drop the host lock, then drain+lock each
+        // vault sequentially (same shape as lock_all: never hold the host
+        // lock across a vault's cycle/inner locks).
+        let open: Vec<(String, Arc<VaultState>)> = {
+            let guard = self.inner.read().await;
+            guard
+                .vaults
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        };
+        let mut locked = Vec::new();
+        for (slug, state) in open {
+            state
+                .prepare_for_update()
+                .await
+                .map_err(|e| format!("{slug}: {e}"))?;
+            locked.push(slug);
+        }
+        Ok(locked)
+    }
+
     /// Lock only the open vaults whose timeout policy is `Immediately`. Called
     /// by the desktop on window blur / minimize so backgrounding the app
     /// honors each vault's own policy instead of unconditionally locking

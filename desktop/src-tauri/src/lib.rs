@@ -13,8 +13,11 @@ use std::time::Duration;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
-use tauri_plugin_shell::ShellExt;
 use zeroize::Zeroize;
+
+mod daemon_ctl;
+mod updater;
+use updater::{updater_check, updater_install, updater_status};
 
 /// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -29,9 +32,9 @@ use proto::{GatewayRequest, GatewayResponse};
 
 // ── Daemon child process ──
 
-use tauri_plugin_shell::process::CommandChild;
+pub(crate) use tauri_plugin_shell::process::CommandChild;
 
-struct Daemon(Option<CommandChild>);
+pub(crate) struct Daemon(pub(crate) Option<CommandChild>);
 impl Drop for Daemon {
     fn drop(&mut self) {
         // Send SIGTERM first so daemon can zeroize keys gracefully.
@@ -58,7 +61,7 @@ impl Drop for Daemon {
 // ── Socket path ──
 
 #[cfg(unix)]
-fn default_socket_path() -> PathBuf {
+pub(crate) fn default_socket_path() -> PathBuf {
     baluard_core::paths::socket_path()
 }
 
@@ -96,7 +99,7 @@ fn decode_varint(data: &[u8]) -> Result<(u64, usize), String> {
 }
 
 #[cfg(unix)]
-fn send_request(action: &str, payload: &str) -> Result<String, String> {
+pub(crate) fn send_request(action: &str, payload: &str) -> Result<String, String> {
     send_request_with_token(action, payload, "", "").map(|(data, _)| data)
 }
 
@@ -578,6 +581,40 @@ async fn daemon_status() -> bool {
     tauri::async_runtime::spawn_blocking(|| send_request("ping", "").is_ok())
         .await
         .unwrap_or(false)
+}
+
+/// D79 version handshake: the daemon's build version against the one this
+/// app shipped with. The frontend blocks on a mismatch — after an update a
+/// stale sidecar must be impossible to talk to, not quietly wrong.
+#[tauri::command]
+async fn daemon_version() -> serde_json::Value {
+    #[cfg(unix)]
+    {
+        let payload = tauri::async_runtime::spawn_blocking(send_ping_payload)
+            .await
+            .ok()
+            .flatten();
+        let version = payload
+            .as_deref()
+            .and_then(daemon_ctl::version_from_ping_payload)
+            .unwrap_or_default();
+        let expected = env!("BALUARD_DAEMON_VERSION").to_string();
+        serde_json::json!({
+            "version": version,
+            "expected": expected,
+            "matches": !version.is_empty() && version == expected,
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        serde_json::json!({ "version": "", "expected": "", "matches": true })
+    }
+}
+
+/// Ping the daemon and return its raw payload (helper for the handshake).
+#[cfg(unix)]
+fn send_ping_payload() -> Option<String> {
+    send_request("ping", "").ok()
 }
 
 /// Reveal the main window once the frontend has finished loading and rendering,
@@ -1348,6 +1385,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_biometry::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Mutex::new(None::<Daemon>))
         .manage(Mutex::new(SessionStore {
             tokens: std::collections::HashMap::new(),
@@ -1388,89 +1426,12 @@ pub fn run() {
                     .build(),
             )?;
 
-            // Always stop any existing daemon and start fresh.
-            // Prevents stale daemon from a previous Tauri session from serving
-            // outdated code after a sidecar rebuild.
+            // D79: adopt a healthy same-version daemon, replace a stale or
+            // unresponsive one, otherwise spawn the bundled sidecar. The
+            // lifecycle rules (version handshake, adopt-vs-kill, rollback
+            // respawn) live in daemon_ctl so the updater shares them.
             #[cfg(unix)]
-            {
-                // Kill only processes whose binary is exactly "baluard-daemon".
-                // Do NOT use lsof -t -U — on macOS it can return PIDs of unrelated
-                // processes (OrbStack, Docker, Ice, Ghostty, etc.) that hold Unix sockets.
-                let socket = default_socket_path();
-                if let Ok(output) = std::process::Command::new("pgrep")
-                    .args(["-x", "baluard-daemon"])
-                    .output()
-                {
-                    let pids = String::from_utf8_lossy(&output.stdout);
-                    for pid in pids.split_whitespace() {
-                        if let Ok(p) = pid.parse::<i32>() {
-                            unsafe { libc::kill(p, libc::SIGTERM); }
-                            log::info!("Stopped old daemon pid={p}");
-                        }
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(300));
-                let _ = std::fs::remove_file(&socket);
-
-                // Use tauri-plugin-shell sidecar for bundle-relative binary path.
-                // Binary must exist at src-tauri/binaries/baluard-daemon-{target-triple}
-                //
-                // Let the daemon resolve the vault from the registry's
-                // active_vault field. No --vault-path needed — the daemon
-                // reads <data_dir>/registry.json on startup (P1).
-                log::info!("Starting daemon with --socket {}",
-                    socket.display());
-
-                    let sidecar_command = app.shell().sidecar("baluard-daemon")
-                        .map_err(|e| format!("Sidecar not found: {e}"))?;
-
-                    let sidecar_command = sidecar_command
-                        .args(["--socket", default_socket_path().to_str().unwrap_or("/tmp/baluard.sock")]);
-
-                    // Spawn the daemon. We MUST keep the stdout/stderr receiver alive
-                    // — dropping it closes the pipe and the daemon can fail on EPIPE
-                    // (or, more importantly, we lose the daemon's startup error output).
-                    // Forward events to the desktop log in Tauri's async runtime.
-                    let (mut rx, child) = sidecar_command.spawn()
-                        .map_err(|e| format!("Failed to start daemon: {e}"))?;
-
-                    tauri::async_runtime::spawn(async move {
-                        use tauri_plugin_shell::process::CommandEvent;
-                        while let Some(event) = rx.recv().await {
-                            match event {
-                                CommandEvent::Stdout(b) => {
-                                    log::info!("[daemon] {}", String::from_utf8_lossy(&b).trim_end());
-                                }
-                                CommandEvent::Stderr(b) => {
-                                    log::warn!("[daemon] {}", String::from_utf8_lossy(&b).trim_end());
-                                }
-                                CommandEvent::Error(e) => log::error!("[daemon] {e}"),
-                                CommandEvent::Terminated(t) => {
-                                    log::warn!("[daemon] terminated code={:?} signal={:?}", t.code, t.signal);
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        }
-                    });
-
-                    let state = app.state::<Mutex<Option<Daemon>>>();
-                    *state.lock().unwrap() = Some(Daemon(Some(child)));
-                    log::info!("Daemon started via sidecar");
-
-                    // Wait for daemon readiness (up to 5s — first launch may
-                    // spend time on Argon2id KDF when initializing the vault).
-                    for attempt in 0..50 {
-                        if send_request("ping", "").is_ok() {
-                            log::info!("Daemon ready after {}ms", attempt * 100);
-                            break;
-                        }
-                        if attempt == 49 {
-                            return Err("Daemon failed to start within 5s. Check logs/daemon.log and logs/desktop.log for the daemon's error output.".into());
-                        }
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-            }
+            daemon_ctl::start_daemon(app.handle())?;
 
             // Set window icon explicitly so it shows correctly in alt+tab / cmd+tab
             // even during dev mode (bundle icons only apply to installed apps).
@@ -1669,6 +1630,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             daemon_request,
             daemon_status,
+            daemon_version,
+            updater_status,
+            updater_check,
+            updater_install,
             show_window,
             update_tray_icon,
             save_recovery_phrase,
@@ -1700,6 +1665,15 @@ pub fn run() {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
+            }
+            // D79: stop the daemon BEFORE the process tears down: SIGTERM,
+            // then wait for real exit (the old Drop-only path slept 200ms and
+            // hoped). An adopted daemon (started by the CLI or the browser
+            // extension) is locked over the socket instead of killed.
+            if let tauri::RunEvent::Exit = event {
+                daemon_ctl::on_app_exit(
+                    app_handle.state::<Mutex<Option<Daemon>>>().inner(),
+                );
             }
             // Linux: clean exit clears the watchdog marker so the next
             // launch does not read this run as a rendering crash. A

@@ -399,7 +399,7 @@
     "tabContacts": "Contatos",
     "tabOutboxes": "Caixas de saída",
     "tabSpace": "Cofre",
-        "hwKeyTitle": "Proteger com sua chave de segurança",
+    "hwKeyTitle": "Proteger com sua chave de segurança",
     "hwKeyOn": "Este cofre está protegido por sua chave de segurança.",
     "hwKeyOff": "Este cofre não está protegido por uma chave de segurança.",
     "hwKeyEnableTitle": "Ativar a proteção da chave de segurança?",
@@ -407,7 +407,7 @@
     "hwKeyDisableTitle": "Desativar a proteção da chave de segurança?",
     "hwKeyEnabledToast": "A proteção da chave de segurança está ativada.",
     "hwKeyDisabledToast": "A proteção da chave de segurança está desativada.",
-"hwTitle": "Proteger com o chip de segurança deste dispositivo",
+    "hwTitle": "Proteger com o chip de segurança deste dispositivo",
     "hwDesc": "Um disco ou backup roubado sozinho não pode abrir este cofre, nem mesmo com a senha.",
     "hwOn": "Este cofre está protegido pelo chip de segurança.",
     "hwOff": "Este cofre não está protegido pelo chip de segurança.",
@@ -583,9 +583,9 @@
     "hwTouchTimeout": "Nenhum toque foi detectado na chave. Tente novamente.",
     "hwBusy": "A chave de segurança está ocupada em outro aplicativo. Feche-o e tente novamente.",
     "hwKeyWrong": "Esta não é a chave de segurança com a qual este cofre foi protegido.",
-        "hwKeyUvForced": "Esta chave sempre exige sua própria verificação e não pode proteger este cofre.",
+    "hwKeyUvForced": "Esta chave sempre exige sua própria verificação e não pode proteger este cofre.",
     "hwKeyPinRequired": "Esta chave exige seu PIN para esta operação. Use uma chave sem PIN.",
-"hwKeyMissing": "Conecte sua chave de segurança."
+    "hwKeyMissing": "Conecte sua chave de segurança."
   },
   "categories": {
     "allItems": "Todos os itens",
@@ -1263,5 +1263,21 @@
     "openGo": "Abrir o cofre",
     "replaceBtn": "Entregar o kit a outra pessoa",
     "replaceNote": "Isso cria um kit totalmente novo para outra pessoa (ou com outra frase). O kit atual para de funcionar imediatamente e o cofre troca de chaves: a carta antiga fica inutilizável."
+  },
+  "update": {
+    "availableTitle": "A versão {version} está disponível",
+    "installNow": "Instalar e reiniciar",
+    "installing": "Instalando a versão {version}…",
+    "dismiss": "Descartar",
+    "checkFailed": "Não foi possível verificar atualizações.",
+    "upToDate": "Você já está em dia.",
+    "checkNow": "Verificar atualizações",
+    "checking": "Verificando…",
+    "autoChecks": "Verificar atualizações automaticamente",
+    "settingsTitle": "Atualizações",
+    "settingsDesc": "Canal: {channel}",
+    "managed": "As atualizações desta instalação são gerenciadas externamente.",
+    "versionMismatchTitle": "O serviço em segundo plano do Baluard está desatualizado",
+    "versionMismatchBody": "O aplicativo e o serviço em segundo plano são de versões diferentes.\nFeche o Baluard completamente e abra-o novamente."
   }
 }
