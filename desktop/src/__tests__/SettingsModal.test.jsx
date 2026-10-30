@@ -233,12 +233,69 @@ describe("SettingsModal security-key guard flow", () => {
     await waitFor(() => expect(rendered.getByTestId("hw-touch-wait")).toBeTruthy());
     expect(rendered.getByText(/hwTouchBodyName/).textContent).toContain("Alice");
 
+    expect(rendered.getByTestId("hw-touch-cancel").textContent).toBe("common.hide");
     fireEvent.click(rendered.getByTestId("hw-touch-cancel"));
     flush();
     expect(rendered.queryByTestId("hw-touch-wait")).toBeNull();
 
     resolveEnable(JSON.stringify({ enabled: true, backend: "fido2", attestation: "verified" }));
-    await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledWith("settings.hwEnabledToast"));
+    await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledWith("settings.hwKeyEnabledToast"));
+  });
+
+  it("keeps a sealed key card visible when the key is unplugged and uses key copy", async () => {
+    mockBase(
+      fidoStatus({
+        capable: false,
+        seal: "v2-hw",
+        enabled: true,
+        backends: [{ backend: "fido2", capable: false, reason: "no-token", interaction: "per-use" }],
+      }),
+      () => Promise.resolve(""),
+    );
+    const rendered = render(() => <SettingsModal />);
+    await openDataTab(rendered);
+    expect(rendered.getByText("settings.hwKeyTitle")).toBeTruthy();
+    expect(rendered.getByText("settings.hwKeyOn")).toBeTruthy();
+  });
+
+  it("does not probe the key while a touch operation is pending", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveEnable;
+      let statusCalls = 0;
+      daemonMock.mockImplementation((action) => {
+        if (action === "settings.get") {
+          return Promise.resolve(JSON.stringify({ vault_timeout: "15m", fetch_favicons: false, display_name: "Alice", avatar_ext: "png" }));
+        }
+        if (action === "vault.avatar.get") return Promise.resolve("");
+        if (action === "vault.pin_status" || action === "vault.biometric_status") {
+          return Promise.resolve(JSON.stringify({ enabled: false }));
+        }
+        if (action === "vault.hw_status") {
+          statusCalls += 1;
+          return Promise.resolve(fidoStatus());
+        }
+        if (action === "vault.hw_enable") {
+          return new Promise((resolve) => { resolveEnable = resolve; });
+        }
+        return Promise.resolve("");
+      });
+      const rendered = render(() => <SettingsModal />);
+      await vi.advanceTimersByTimeAsync(50);
+      fireEvent.click(rendered.getByText("settings.tabData", { exact: false }));
+      await vi.advanceTimersByTimeAsync(50);
+      fireEvent.click(rendered.getByTestId("hw-toggle"));
+      await vi.advanceTimersByTimeAsync(50);
+      fireEvent.click(rendered.getByTestId("confirm-accept"));
+      await vi.advanceTimersByTimeAsync(50);
+      const before = statusCalls;
+      await vi.advanceTimersByTimeAsync(4500);
+      expect(statusCalls).toBe(before);
+      resolveEnable(JSON.stringify({ enabled: true, backend: "fido2", attestation: "verified" }));
+      await vi.advanceTimersByTimeAsync(50);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("an unknown-vendor key still enables but warns instead of celebrating", async () => {
@@ -302,7 +359,7 @@ describe("SettingsModal security-key guard flow", () => {
       const disable = calls.find(([a]) => a === "vault.hw_disable");
       expect(disable).toBeTruthy();
       expect(disable[1]).toBe("retype-my-pass");
-      await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledWith("settings.hwDisabledToast"));
+      await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledWith("settings.hwKeyDisabledToast"));
     } finally {
       delete window.__baluardReprompt;
     }
@@ -319,7 +376,7 @@ describe("SettingsModal security-key guard flow", () => {
       await waitFor(() => expect(rendered.getByTestId("confirm-accept")).toBeTruthy());
       fireEvent.click(rendered.getByTestId("confirm-accept"));
       flush();
-      await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledWith("settings.hwEnabledToast"));
+      await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledWith("settings.hwKeyEnabledToast"));
       expect(repromptShow).not.toHaveBeenCalled();
     } finally {
       delete window.__baluardReprompt;

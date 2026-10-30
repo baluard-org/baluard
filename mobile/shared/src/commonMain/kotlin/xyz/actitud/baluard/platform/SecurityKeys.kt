@@ -30,7 +30,11 @@ fun securityKeyErrorMessage(error: Throwable): String {
         detail.contains("wrong password", ignoreCase = true) ||
             detail.contains("master password incorrect", ignoreCase = true) -> t("login.wrongPassword")
         detail.contains("not tapped", ignoreCase = true) ||
+            detail.contains("touch-timeout", ignoreCase = true) ||
             detail.contains("timed out", ignoreCase = true) -> t("settings.hardwareKeyTimeout")
+        detail.contains("uv-forced", ignoreCase = true) -> t("settings.hardwareKeyUvForced")
+        detail.contains("pin-required", ignoreCase = true) ||
+            detail.contains("requires its PIN", ignoreCase = true) -> t("settings.hardwareKeyPinRequired")
         detail.contains("cancel", ignoreCase = true) -> t("settings.hardwareKeyCancelled")
         // The chip (and with it the key) could not be reached at all:
         // the same guidance as a mid-operation hold, phrased as connect.

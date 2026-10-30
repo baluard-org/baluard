@@ -141,6 +141,18 @@ export default function SettingsModal() {
   // Device security chip (progressive enhancement): the card renders
   // only when the probe reports a usable chip; devices without one see
   // nothing (docs/plan-hardware-backed-keys.md §2).
+  const HW_KEY_COPY = {
+    "settings.hwTitle": "settings.hwKeyTitle",
+    "settings.hwOn": "settings.hwKeyOn",
+    "settings.hwOff": "settings.hwKeyOff",
+    "settings.hwEnableTitle": "settings.hwKeyEnableTitle",
+    "settings.hwEnableBody": "settings.hwKeyEnableBody",
+    "settings.hwDisableTitle": "settings.hwKeyDisableTitle",
+    "settings.hwEnabledToast": "settings.hwKeyEnabledToast",
+    "settings.hwDisabledToast": "settings.hwKeyDisabledToast",
+  };
+  const hwUsesKey = () => hwStatus()?.backend === "fido2";
+  const hwText = (key) => t(hwUsesKey() ? (HW_KEY_COPY[key] || key) : key);
   const [hwStatus, setHwStatus] = createSignal(null);
   const [hwBusy, setHwBusy] = createSignal(false);
   const [hwConfirm, setHwConfirm] = createSignal(null); // "enable" | "disable" | null
@@ -182,7 +194,8 @@ export default function SettingsModal() {
     }
   }
 
-  async function loadHwStatus() {
+  async function loadHwStatus(force = false) {
+    if (hwBusy() && !force) return;
     try {
       setHwStatus(JSON.parse(await daemon("vault.hw_status")));
     } catch {
@@ -214,11 +227,11 @@ export default function SettingsModal() {
         if (res.attestation === "unknown-vendor") {
           toastWarning(t("settings.hwAttestUnknownToast"));
         } else {
-          toastSuccess(t("settings.hwEnabledToast"));
+          toastSuccess(hwText("settings.hwEnabledToast"));
         }
       } else if (mode === "disable") {
         await daemon("vault.hw_disable", sealPassword);
-        toastSuccess(t("settings.hwDisabledToast"));
+        toastSuccess(hwText("settings.hwDisabledToast"));
       } else {
         // "consent-on" | "consent-off": re-key between the silent and
         // per-use-confirmation chip keys.
@@ -232,7 +245,7 @@ export default function SettingsModal() {
           t(mode === "consent-on" ? "settings.hwConsentOnToast" : "settings.hwConsentOffToast"),
         );
       }
-      await loadHwStatus();
+      await loadHwStatus(true);
     } catch (e) {
       toastError(sanitizeError(e, t));
     } finally {
@@ -1026,14 +1039,14 @@ export default function SettingsModal() {
               <Show when={activeTab() === "data"}>
                 {/* Device security chip: AND-wraps this device's key seal
                     with the platform keystore. Hidden unless capable. */}
-                <Show when={hwStatus()?.capable}>
+                <Show when={hwStatus()?.capable || hwStatus()?.seal === "v2-hw" || hwStatus()?.enabled}>
                   <div class="space-y-3 mb-6" data-testid="hw-guard-card">
                     <div class="flex items-center justify-between">
                       <div class="flex flex-col flex-1 pr-4">
-                        <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.hwTitle")}</span>
+                        <span class="text-xs font-bold text-[var(--color-text)]">{hwText("settings.hwTitle")}</span>
                         <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.hwDesc")}</span>
                         <span class="text-[10px] text-[var(--color-muted)] mt-0.5">
-                          {hwStatus()?.enabled ? t("settings.hwOn") : t("settings.hwOff")}
+                          {hwStatus()?.enabled ? hwText("settings.hwOn") : hwText("settings.hwOff")}
                         </span>
                         <Show when={hwStatus()?.enabled && hwStatus()?.attestation}>
                           <span class="text-[10px] text-[var(--color-muted)] mt-0.5">
@@ -1074,7 +1087,7 @@ export default function SettingsModal() {
                           onClick={() => setHwTouchHidden(true)}
                           class="px-4 py-2 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-all cursor-pointer shrink-0"
                         >
-                          {t("common.cancel")}
+                          {t("common.hide")}
                         </button>
                       </div>
                     </Show>
@@ -1106,8 +1119,8 @@ export default function SettingsModal() {
                 <ConfirmModal
                   show={!!hwConfirm()}
                   idPrefix="hw-guard"
-                  title={t(hwConfirm() === "enable" ? "settings.hwEnableTitle" : hwConfirm() === "disable" ? "settings.hwDisableTitle" : hwConfirm() === "consent-on" ? "settings.hwConsentOnTitle" : "settings.hwConsentOffTitle")}
-                  body={t(hwConfirm() === "enable" ? "settings.hwEnableBody" : hwConfirm() === "disable" ? "settings.hwDisableBody" : hwConfirm() === "consent-on" ? "settings.hwConsentOnBody" : "settings.hwConsentOffBody")}
+                  title={hwText(hwConfirm() === "enable" ? "settings.hwEnableTitle" : hwConfirm() === "disable" ? "settings.hwDisableTitle" : hwConfirm() === "consent-on" ? "settings.hwConsentOnTitle" : "settings.hwConsentOffTitle")}
+                  body={hwText(hwConfirm() === "enable" ? "settings.hwEnableBody" : hwConfirm() === "disable" ? "settings.hwDisableBody" : hwConfirm() === "consent-on" ? "settings.hwConsentOnBody" : "settings.hwConsentOffBody")}
                   confirmLabel={t(hwConfirm() === "enable" ? "settings.hwEnable" : hwConfirm() === "disable" ? "settings.hwDisable" : hwConfirm() === "consent-on" ? "settings.hwConsentOn" : "settings.hwConsentOff")}
                   confirmVariant={hwConfirm() === "disable" || hwConfirm() === "consent-off" ? "danger" : "primary"}
                   onConfirm={hwToggle}

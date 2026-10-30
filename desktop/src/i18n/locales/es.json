@@ -367,7 +367,15 @@
     "tabContacts": "Contactos",
     "tabOutboxes": "Buzones",
     "tabSpace": "Bóveda",
-    "hwTitle": "Proteger con el chip de seguridad de este dispositivo",
+        "hwKeyTitle": "Proteger con tu llave de seguridad",
+    "hwKeyOn": "Esta bóveda está protegida por tu llave de seguridad.",
+    "hwKeyOff": "Esta bóveda no está protegida por una llave de seguridad.",
+    "hwKeyEnableTitle": "¿Activar la protección de la llave de seguridad?",
+    "hwKeyEnableBody": "Un disco o respaldo robado solo ya no podrá abrir esta bóveda, ni siquiera con la contraseña. Si pierdes la llave, necesitarás la frase de recuperación para volver a abrir esta bóveda.",
+    "hwKeyDisableTitle": "¿Desactivar la protección de la llave de seguridad?",
+    "hwKeyEnabledToast": "La protección de la llave de seguridad está activada.",
+    "hwKeyDisabledToast": "La protección de la llave de seguridad está desactivada.",
+"hwTitle": "Proteger con el chip de seguridad de este dispositivo",
     "hwDesc": "Un disco o respaldo robado solo no puede abrir esta bóveda, ni siquiera con la contraseña.",
     "hwOn": "Esta bóveda está protegida por el chip de seguridad.",
     "hwOff": "Esta bóveda no está protegida por el chip de seguridad.",
@@ -543,7 +551,9 @@
     "hwTouchTimeout": "No se detectó el toque en la llave. Inténtalo de nuevo.",
     "hwBusy": "La llave de seguridad está ocupada en otra aplicación. Ciérrala e inténtalo de nuevo.",
     "hwKeyWrong": "Esta no es la llave de seguridad con la que se protegió esta bóveda.",
-    "hwKeyMissing": "Conecta tu llave de seguridad."
+        "hwKeyUvForced": "Esta llave siempre exige su propia verificación y no puede proteger esta bóveda.",
+    "hwKeyPinRequired": "Esta llave exige su PIN para esta operación. Usa una llave sin PIN.",
+"hwKeyMissing": "Conecta tu llave de seguridad."
   },
   "categories": {
     "allItems": "Todos los elementos",
