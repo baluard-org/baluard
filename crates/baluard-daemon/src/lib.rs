@@ -17,7 +17,10 @@
 // touching every call site in handler.rs / main.rs.
 pub use baluard_runtime::{autosync, bridge, crypto, host, pin, rate_limit, state};
 
+mod agent_run;
+mod agents;
 pub mod handler;
+mod scrub;
 pub mod socket_path;
 
 pub mod proto {

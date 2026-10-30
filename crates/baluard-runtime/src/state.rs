@@ -80,6 +80,9 @@ pub struct VaultState {
     /// a future lock path forgets to clear the token, a stale token dies
     /// here (defense in depth for the lock chokepoint cascade).
     session_generation: AtomicU64,
+    /// D80: peer-bound agent grants; invalidated through the same lock
+    /// generation so explicit/auto lock needs no extra grant scan.
+    agent_grants: crate::agents::AgentGrants,
     /// P1c: Generation at which the current token was minted (0 = none).
     session_token_generation: AtomicU64,
     /// Last activity timestamp (seconds since epoch). Updated on every IPC request.
@@ -172,8 +175,59 @@ impl VaultState {
             pin: tokio::sync::Mutex::new(None),
             devkey_ops: tokio::sync::Mutex::new(()),
             pin_failures: std::sync::atomic::AtomicU32::new(0),
+            agent_grants: crate::agents::AgentGrants::new(),
             autosync,
         }
+    }
+
+    /// D80: current lock generation for agent-grant minting.
+    fn agent_generation(&self) -> u64 {
+        self.session_generation.load(Ordering::Relaxed)
+    }
+
+    /// D80: mint an agent grant after a human approval. The daemon never
+    /// returns the token again; only its digest is retained.
+    pub fn agent_mint(
+        &self,
+        peer: crate::agents::PeerBinding,
+        item_ids: Vec<String>,
+        ttl_secs: u64,
+    ) -> String {
+        self.agent_grants
+            .mint(peer, item_ids, ttl_secs, self.agent_generation())
+    }
+
+    /// D80: verify an agent token against this vault's live grants. Agent
+    /// traffic never feeds `touch_activity`, so polling cannot hold off
+    /// auto-lock.
+    pub fn verify_agent_token(
+        &self,
+        token: &str,
+    ) -> Result<crate::agents::AgentVerdict, baluard_core::error::BaluardError> {
+        self.agent_grants.verify(token, self.agent_generation())
+    }
+
+    pub fn agent_live_peers(&self) -> Vec<crate::agents::PeerBinding> {
+        self.agent_grants.live_peers(self.agent_generation())
+    }
+
+    pub fn agent_live_grants(&self) -> Vec<crate::agents::AgentGrantView> {
+        self.agent_grants.live_grant_views(self.agent_generation())
+    }
+
+    /// D80 blur-lock exemption: vaults.on_app_blur skips vaults with live
+    /// grants; explicit lock and auto-lock never consult this.
+    pub fn has_live_agent_grants(&self) -> bool {
+        self.agent_grants.has_live_grants(self.agent_generation())
+    }
+
+    pub fn revoke_agent_grants(&self) {
+        self.agent_grants.revoke_all();
+    }
+
+    pub fn revoke_agent_token(&self, token: &str) -> bool {
+        self.agent_grants
+            .revoke_token(token, self.agent_generation())
     }
 
     /// Touch last activity timestamp (called on every IPC request).
