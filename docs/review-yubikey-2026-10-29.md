@@ -122,7 +122,7 @@ The cold path (`BaluardAutofillService.kt:116` → `AutofillActivity.kt:151`) st
 
 ### M13. Signing-key cache outlives `vaults.close`
 
-`VaultHandle` has no `Drop`; `VaultHost::close` (`crates/baluard-runtime/src/host.rs:253`) removes the state without calling `lock()`, so the process-global `DEVICE_SIGNING_KEYS` entry (`handle.rs:11086`) keeps the Ed25519 key after close and after a lost unlock race. Combined with L5, the "cleared on lock" claim is incomplete. Fix: clear in a `Drop for VaultHandle` (covers every exit), keep the explicit clear in `lock()`.
+FIXED (2026-10-29, wave 23): runtime `VaultState` now owns cache teardown through `Drop`, calling a core `clear_cached_device_signing_keys_for_vault(path)` that removes every device entry for that vault. This covers host close, insert-replacement, and lost unlock races when the last `Arc<VaultState>` drains. The review's suggested `Drop for VaultHandle` was deliberately NOT used: temporary core handles (reprompt/migration) share the same `(path, device_id)` cache key as the real session, so their drop would wrongly clear a still-active session's key. Runtime state is the correct lifecycle owner; explicit per-device clearing on `VaultHandle::lock` remains. Red-first: `close_clears_the_device_signing_key_cache` unlocked a real vault, observed the warm cache, closed its host entry, and previously found the key still cached. Suites: runtime 71/0 (+1), core lib 972/0, daemon + uniffi checks green, own rustfmt hunks clean.
 
 ### M14. Desktop treats security-key failures as a wrong password
 
