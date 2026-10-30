@@ -125,7 +125,12 @@ pub fn verify_host_key(host: &str, port: u16, key_type: &str, key: &[u8]) -> Hos
             continue;
         }
         let (has_revoked_marker, host_patterns, entry_key_type, entry_key_b64) = if idx > 0 {
-            (marker_revoked, parts[idx].split(',').collect::<Vec<_>>(), parts[idx + 1], parts[idx + 2])
+            (
+                marker_revoked,
+                parts[idx].split(',').collect::<Vec<_>>(),
+                parts[idx + 1],
+                parts[idx + 2],
+            )
         } else {
             let first_field = parts[0];
             let mut legacy_revoked = false;

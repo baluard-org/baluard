@@ -203,12 +203,11 @@ pub fn verify_root_check(root_key: &RootKey, kit: &RecoveryKitFile) -> Result<()
         ciphertext: ct_vec,
         tag: tag_arr,
     };
-    let plaintext = crate::crypto::aead::decrypt(&key, &envelope)
-        .map_err(|_| {
-            VaultError::Corrupt(
-                "recovery kit does not match this vault's root key; re-enable the kit".into(),
-            )
-        })?;
+    let plaintext = crate::crypto::aead::decrypt(&key, &envelope).map_err(|_| {
+        VaultError::Corrupt(
+            "recovery kit does not match this vault's root key; re-enable the kit".into(),
+        )
+    })?;
     let expected = format!(
         "{}|{}|{}|{}",
         kit.vault_id,
@@ -387,10 +386,12 @@ pub fn recover_root_from_kit(
     tag.copy_from_slice(&tag_bytes);
 
     let mut decrypted = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &secret, KIT_CONTEXT)?;
-    let root_bytes: Zeroizing<[u8; 64]> = Zeroizing::new(decrypted
-        .as_slice()
-        .try_into()
-        .map_err(|_| VaultError::Corrupt("recovered root key is invalid length".into()))?);
+    let root_bytes: Zeroizing<[u8; 64]> = Zeroizing::new(
+        decrypted
+            .as_slice()
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("recovered root key is invalid length".into()))?,
+    );
     zeroize::Zeroize::zeroize(&mut decrypted);
     let root = RootKey::from_bytes(*root_bytes);
     // The unwrapped key must open the kit's seal: a git-swapped kit

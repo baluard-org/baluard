@@ -48,7 +48,6 @@ pub fn parse(data: &str) -> ImportResult {
         return result;
     }
 
-
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
         idx.and_then(|i| record.get(i).map(|s| s.to_string()))
             .filter(|s| !s.is_empty())

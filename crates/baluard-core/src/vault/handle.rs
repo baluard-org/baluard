@@ -49,7 +49,9 @@ fn collect_descendant_ids(
 
 /// Parse the cipher id out of a `ciphers/` or `trash/` envelope path.
 fn cipher_id_of_envelope(path: &std::path::Path) -> Option<Uuid> {
-    path.file_stem()?.to_str().and_then(|s| Uuid::parse_str(s).ok())
+    path.file_stem()?
+        .to_str()
+        .and_then(|s| Uuid::parse_str(s).ok())
 }
 
 pub struct VaultHandle {
@@ -243,8 +245,6 @@ pub(crate) struct QuorumGrant {
     pub nonce: String,
     pub ask_initiated_at: u64,
 }
-
-
 
 impl VaultHandle {
     /// Open a vault from disk (locked state).
@@ -572,9 +572,7 @@ impl VaultHandle {
             .map(|op| op.approvals.clone())
             .unwrap_or_default();
         let (ask_time, stale) = match existing.as_ref() {
-            Some(op) if crate::vault::approvals::ask_is_stale(op.initiated_at, now) => {
-                (now, true)
-            }
+            Some(op) if crate::vault::approvals::ask_is_stale(op.initiated_at, now) => (now, true),
             Some(op) => (op.initiated_at, false),
             None => (now, false),
         };
@@ -747,16 +745,14 @@ impl VaultHandle {
                 Some(member_state(&id)?)
             }
             "transfer_ownership" => {
-                let new_member_id =
-                    Uuid::parse_str(params.get("new_member_id")?.as_str()?).ok()?;
+                let new_member_id = Uuid::parse_str(params.get("new_member_id")?.as_str()?).ok()?;
                 Some(serde_json::json!({
                     "owner": crate::vault::members::owner_member_id(&self.path),
                     "target": member_state(&new_member_id)?,
                 }))
             }
             "ownership_claim" => {
-                let new_owner_id =
-                    Uuid::parse_str(params.get("new_owner_id")?.as_str()?).ok()?;
+                let new_owner_id = Uuid::parse_str(params.get("new_owner_id")?.as_str()?).ok()?;
                 Some(serde_json::json!({
                     "owner": crate::vault::members::owner_member_id(&self.path),
                     "target": member_state(&new_owner_id)?,
@@ -4764,7 +4760,8 @@ impl VaultHandle {
                 // device the unlock tail already bound the identity to the
                 // hw content key; do not clobber that with the bare
                 // password subkey (C1 review fix).
-                let hw_bound = matches!(&self.state, VaultState::Unlocked(u) if u.identity_hw_key.is_some());
+                let hw_bound =
+                    matches!(&self.state, VaultState::Unlocked(u) if u.identity_hw_key.is_some());
                 if !hw_bound {
                     if let VaultState::Unlocked(u) = &mut self.state {
                         u.identity_wrap_key = Some(devkey_seal_m.clone());
@@ -5518,16 +5515,18 @@ impl VaultHandle {
     /// the passphrase already opened the kit — so nothing here touches
     /// keywraps or member unlocks. The canary proves the layer's Root
     /// Key is THIS vault's key before any derived key exists.
-    pub fn open_with_root_key(path: &Path, root: &crate::keys::hierarchy::RootKey) -> Result<Self, BaluardError> {
+    pub fn open_with_root_key(
+        path: &Path,
+        root: &crate::keys::hierarchy::RootKey,
+    ) -> Result<Self, BaluardError> {
         let mut handle = VaultHandle::open(path)?;
-        let canary_data = std::fs::read(path.join("meta/rk-canary.enc")).map_err(|e| {
-            match e.kind() {
+        let canary_data =
+            std::fs::read(path.join("meta/rk-canary.enc")).map_err(|e| match e.kind() {
                 std::io::ErrorKind::NotFound => VaultError::Corrupt(
                     "this vault copy has no root canary; the kit cannot verify it".into(),
                 ),
                 _ => VaultError::Metadata(format!("reading root canary: {e}")),
-            }
-        })?;
+            })?;
         crate::vault::canary::verify_rk_canary(root, &canary_data)?;
 
         let current_epoch = handle.determine_current_epoch();
@@ -5760,8 +5759,8 @@ impl VaultHandle {
                     // F1 cross-device heal: a survivor must not silently
                     // adopt another device's identity while its own wrap is
                     // recoverable.
-                    if let Some(rk) = self
-                        .adopt_rekey_txn_root(&mut hw_ck, keys_cache.as_ref().unwrap())
+                    if let Some(rk) =
+                        self.adopt_rekey_txn_root(&mut hw_ck, keys_cache.as_ref().unwrap())
                     {
                         (rk, self.device_id)
                     } else {
@@ -5994,9 +5993,7 @@ impl VaultHandle {
                 });
                 super::write_vault_file(
                     &self.path.join("meta/identity-escrow.json"),
-                    serde_json::to_string_pretty(&escrow)
-                        .unwrap()
-                        .as_bytes(),
+                    serde_json::to_string_pretty(&escrow).unwrap().as_bytes(),
                 )?;
             }
         }
@@ -6634,10 +6631,7 @@ impl VaultHandle {
         // after the root swap this read would try the OLD file under
         // the NEW key and fail.
         let names = self.stored_device_names()?;
-        self.write_settings_with_names(
-            settings,
-            if names.is_empty() { None } else { Some(names) },
-        )
+        self.write_settings_with_names(settings, if names.is_empty() { None } else { Some(names) })
     }
 
     /// Settings rewrite with a caller-captured device-name map: the
@@ -8436,11 +8430,11 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
-        let path = self
-            .cipher_file_path(cipher_id)
-            .ok_or_else(|| BaluardError::from(VaultError::InvalidOperation(
+        let path = self.cipher_file_path(cipher_id).ok_or_else(|| {
+            BaluardError::from(VaultError::InvalidOperation(
                 "That entry's file could not be located.".into(),
-            )))?;
+            ))
+        })?;
         self.resolve_item_key(unlocked, &path, cipher_id, key_epoch)
     }
 
@@ -8950,8 +8944,7 @@ impl VaultHandle {
                         if let Ok(modified) = metadata.modified() {
                             if modified < limit {
                                 if let Some(id) = cipher_id_of_envelope(&ipath) {
-                                    let attach_dir =
-                                        self.path.join("entries").join(id.to_string());
+                                    let attach_dir = self.path.join("entries").join(id.to_string());
                                     if attach_dir.is_dir() {
                                         std::fs::remove_dir_all(&attach_dir)?;
                                     }
@@ -9156,8 +9149,9 @@ impl VaultHandle {
                 // keyless copies: inherit the stored secrets by id.
                 for cred in new_creds.iter_mut() {
                     if cred.private_key.is_none() || cred.prf_key.is_none() {
-                        if let Some(stored) =
-                            old_creds.iter().find(|c| c.credential_id == cred.credential_id)
+                        if let Some(stored) = old_creds
+                            .iter()
+                            .find(|c| c.credential_id == cred.credential_id)
                         {
                             if cred.private_key.is_none() {
                                 cred.private_key = stored.private_key.clone();
@@ -11344,7 +11338,8 @@ fn load_device_privkeys_with_ck(
     // here and gets re-sealed lazily on the next successful unlock.
     let privkey_path = vault_path.join("meta/device-privkey.json");
     if privkey_path.exists() {
-        let (json, ck) = crate::vault::device_privkey::read_privkey_file_with_ck(&privkey_path, seal_key)?;
+        let (json, ck) =
+            crate::vault::device_privkey::read_privkey_file_with_ck(&privkey_path, seal_key)?;
         let keys = parse_privkey_json(&json)?;
         cache_device_signing_key(vault_path, device_id, &keys);
         return Ok((keys, ck));
@@ -13560,12 +13555,7 @@ mod tests {
             repo: String::new(),
             origin_url: String::new(),
         };
-        legacy::save_store(
-            dir.path(),
-            &old_root.clone().try_into().unwrap(),
-            &store,
-        )
-        .unwrap();
+        legacy::save_store(dir.path(), &old_root.clone().try_into().unwrap(), &store).unwrap();
 
         // ── Rotate ──
         handle.rotate_root_key().unwrap();
@@ -13619,8 +13609,8 @@ mod tests {
         assert_eq!(legacy_record.epoch, new_epoch);
         assert!(legacy_record.seq > 1);
         let new_packed = legacy::load_layer(dir.path(), kit_id).unwrap().unwrap();
-        let opened = legacy::open_layer(&legacy_ek, &new_packed, &vault_id_str, kit_id, new_epoch)
-            .unwrap();
+        let opened =
+            legacy::open_layer(&legacy_ek, &new_packed, &vault_id_str, kit_id, new_epoch).unwrap();
         assert_eq!(opened.as_slice(), new_root.as_slice());
         let reopened = legacy::load_store(dir.path(), &new_root.clone().try_into().unwrap())
             .unwrap()

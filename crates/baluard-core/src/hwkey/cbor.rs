@@ -297,7 +297,7 @@ pub fn item_end(bytes: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{item_end, Value};
+    use super::{Value, item_end};
 
     #[test]
     fn item_end_walks_concatenated_items() {
@@ -315,7 +315,6 @@ mod tests {
         assert_eq!(item_end(&[0xA1, 0x01]), None);
         assert_eq!(item_end(&[]), None);
     }
-
 
     // RFC 8949 Appendix A vectors that fall inside the CTAP2 subset.
     #[test]
@@ -448,7 +447,10 @@ mod tests {
         ]);
         let encoded = value.encode();
         // 0x20 (-1) is one byte; 0x18ff (255) and 0x617a ("z") are two.
-        assert_eq!(encoded, vec![0xa3, 0x20, 0x02, 0x18, 0xff, 0x01, 0x61, 0x7a, 0x00]);
+        assert_eq!(
+            encoded,
+            vec![0xa3, 0x20, 0x02, 0x18, 0xff, 0x01, 0x61, 0x7a, 0x00]
+        );
     }
 
     #[test]

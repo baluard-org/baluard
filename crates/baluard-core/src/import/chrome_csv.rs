@@ -35,14 +35,17 @@ pub fn parse(data: &str) -> ImportResult {
 
     let col_name = headers.iter().position(|h| h.eq_ignore_ascii_case("name"));
     let col_url = headers.iter().position(|h| h.eq_ignore_ascii_case("url"));
-    let col_username = headers.iter().position(|h| h.eq_ignore_ascii_case("username"));
-    let col_password = headers.iter().position(|h| h.eq_ignore_ascii_case("password"));
+    let col_username = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("username"));
+    let col_password = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("password"));
     let col_note = headers.iter().position(|h| h.eq_ignore_ascii_case("note"));
     if !headers.iter().any(|h| h.eq_ignore_ascii_case("url")) {
         result.skip(format!("Not a chrome CSV: no 'url' column"));
         return result;
     }
-
 
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
         idx.and_then(|i| record.get(i).map(|s| s.to_string()))

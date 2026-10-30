@@ -24,10 +24,10 @@
 //! FIDO MDS anchor certificates for the reference device, whose 5.7.4
 //! chain runs leaf -> FIDO Attestation CA -> intermediate -> Root 1.
 
+use rsa::RsaPublicKey;
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs1v15::{Signature as RsaSignature, VerifyingKey as RsaVerifyingKey};
 use rsa::signature::Verifier;
-use rsa::RsaPublicKey;
 use sha2::{Digest, Sha256, Sha512};
 
 /// What [`crate::hwkey::fido::Token::make_credential`] reports, mapped
@@ -181,9 +181,7 @@ fn parse_cert(der: &[u8]) -> Option<CertParts> {
                     let oid = alg_oid(s1.body)?;
                     key = Some(match oid.as_slice() {
                         // 1.2.840.10045.2.1 ecPublicKey
-                        [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01] => {
-                            PubKey::Ec(keybits.to_vec())
-                        }
+                        [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01] => PubKey::Ec(keybits.to_vec()),
                         // 1.2.840.113549.1.1.1 rsaEncryption
                         [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01] => {
                             PubKey::Rsa(keybits.to_vec())
@@ -409,10 +407,14 @@ fn verify_link(key: &PubKey, msg: &[u8], sig: &[u8], sig_alg: &[u8]) -> bool {
             // vice versa, but the digest follows the declared alg.
             match sig_alg {
                 [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B] => {
-                    RsaVerifyingKey::<Sha256>::new(pubk).verify(msg, &sig).is_ok()
+                    RsaVerifyingKey::<Sha256>::new(pubk)
+                        .verify(msg, &sig)
+                        .is_ok()
                 }
                 [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0D] => {
-                    RsaVerifyingKey::<Sha512>::new(pubk).verify(msg, &sig).is_ok()
+                    RsaVerifyingKey::<Sha512>::new(pubk)
+                        .verify(msg, &sig)
+                        .is_ok()
                 }
                 _ => false,
             }
@@ -838,8 +840,12 @@ pub(crate) mod test_chain {
         let sig_der = sig.to_der();
         tlv_bytes(
             0x30,
-            &[tbs, ecdsa_sig_alg(), tlv_bytes(0x03, &[&[0u8], sig_der.as_bytes()].concat())]
-                .concat(),
+            &[
+                tbs,
+                ecdsa_sig_alg(),
+                tlv_bytes(0x03, &[&[0u8], sig_der.as_bytes()].concat()),
+            ]
+            .concat(),
         )
     }
 
@@ -914,7 +920,11 @@ pub(crate) mod test_chain {
             let leaf = SigningKey::random(&mut rand::rngs::OsRng);
             let root_der = build_cert(&root, &root, b"test root");
             let leaf_der = build_cert(&root, &leaf, b"test leaf");
-            Self { leaf, root_der, leaf_der }
+            Self {
+                leaf,
+                root_der,
+                leaf_der,
+            }
         }
 
         /// The real fw 5.7+ shape: the token stops at the issuing CA and
@@ -1284,7 +1294,10 @@ mod tests {
         let mut att = c.attestation();
         let last = att.sig.len() - 1;
         att.sig[last] ^= 0xff;
-        assert_eq!(verify_with_pins(&att, &c.pins()), AttestationVerdict::Invalid);
+        assert_eq!(
+            verify_with_pins(&att, &c.pins()),
+            AttestationVerdict::Invalid
+        );
     }
 
     #[test]
@@ -1292,7 +1305,10 @@ mod tests {
         let c = TestChain::new();
         let mut att = c.attestation();
         att.auth_data[0] ^= 0x01;
-        assert_eq!(verify_with_pins(&att, &c.pins()), AttestationVerdict::Invalid);
+        assert_eq!(
+            verify_with_pins(&att, &c.pins()),
+            AttestationVerdict::Invalid
+        );
     }
 
     #[test]
@@ -1314,7 +1330,10 @@ mod tests {
         let c = TestChain::new();
         let mut att = c.attestation();
         att.alg = -47; // ES256K: not supported by this verifier
-        assert_eq!(verify_with_pins(&att, &c.pins()), AttestationVerdict::Invalid);
+        assert_eq!(
+            verify_with_pins(&att, &c.pins()),
+            AttestationVerdict::Invalid
+        );
     }
 
     #[test]
@@ -1322,7 +1341,10 @@ mod tests {
         let c = TestChain::new();
         let mut att = c.attestation();
         att.x5c.clear();
-        assert_eq!(verify_with_pins(&att, &c.pins()), AttestationVerdict::Invalid);
+        assert_eq!(
+            verify_with_pins(&att, &c.pins()),
+            AttestationVerdict::Invalid
+        );
     }
 
     #[test]
@@ -1331,7 +1353,10 @@ mod tests {
         let mut att = c.attestation();
         let n = att.x5c[0].len();
         att.x5c[0].truncate(n / 2);
-        assert_eq!(verify_with_pins(&att, &c.pins()), AttestationVerdict::Invalid);
+        assert_eq!(
+            verify_with_pins(&att, &c.pins()),
+            AttestationVerdict::Invalid
+        );
     }
 
     #[test]
@@ -1345,7 +1370,12 @@ mod tests {
         };
         assert!(matches!(cert.key, PubKey::Rsa(_)));
         // The pin self-signs under its own key.
-        assert!(verify_link(&cert.key, &cert.tbs_raw, &cert.sig_der, &cert.sig_alg_oid));
+        assert!(verify_link(
+            &cert.key,
+            &cert.tbs_raw,
+            &cert.sig_der,
+            &cert.sig_alg_oid
+        ));
     }
 
     #[test]
@@ -1365,6 +1395,9 @@ mod tests {
         // attStmt check, so assert on pins via verify_with_pins with a
         // matching attStmt impossible here - just assert Invalid (the
         // empty RS256 signature fails first).
-        assert_eq!(verify_with_pins(&att, &bundled_pin()), AttestationVerdict::Invalid);
+        assert_eq!(
+            verify_with_pins(&att, &bundled_pin()),
+            AttestationVerdict::Invalid
+        );
     }
 }

@@ -1419,10 +1419,12 @@ impl DeviceManager {
             &recovery_x25519_secret,
             "recovery-keywrap",
         )?;
-        let rk_arr: Zeroizing<[u8; 64]> = Zeroizing::new(root_key_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?);
+        let rk_arr: Zeroizing<[u8; 64]> = Zeroizing::new(
+            root_key_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?,
+        );
         let root_key = RootKey::from_bytes(*rk_arr);
         zeroize::Zeroize::zeroize(&mut root_key_bytes);
 
@@ -1498,10 +1500,9 @@ impl DeviceManager {
         });
         let privkey_path = vault_path.join("meta/device-privkey.json");
         let privkey_json = serde_json::to_string_pretty(&privkey_data).unwrap();
-        crate::secret_file::write_secret_file(&privkey_path, privkey_json.as_bytes())
-            .map_err(|e| BaluardError::Device(DeviceError::Keystore(format!(
-                "write device privkey: {e}"
-            ))))?;
+        crate::secret_file::write_secret_file(&privkey_path, privkey_json.as_bytes()).map_err(
+            |e| BaluardError::Device(DeviceError::Keystore(format!("write device privkey: {e}"))),
+        )?;
         let _ = crate::vault::device_privkey::write_device_id(&vault_path, new_device_id);
 
         // Step 12: Persist recovered state
@@ -1608,10 +1609,12 @@ impl DeviceManager {
             &recovery_x25519_secret,
             "recovery-keywrap",
         )?;
-        let rk_arr: Zeroizing<[u8; 64]> = Zeroizing::new(root_key_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?);
+        let rk_arr: Zeroizing<[u8; 64]> = Zeroizing::new(
+            root_key_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?,
+        );
         let root_key = RootKey::from_bytes(*rk_arr);
         zeroize::Zeroize::zeroize(&mut root_key_bytes);
 
@@ -1986,14 +1989,14 @@ fn load_seen_nonces(vault_path: &Path) -> Result<Vec<String>, BaluardError> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let data = std::fs::read_to_string(&path)
-        .map_err(|e| BaluardError::Device(DeviceError::Keystore(format!(
+    let data = std::fs::read_to_string(&path).map_err(|e| {
+        BaluardError::Device(DeviceError::Keystore(format!(
             "seen-nonces unreadable: {e}"
-        ))))?;
-    serde_json::from_str(&data)
-        .map_err(|e| BaluardError::Device(DeviceError::Keystore(format!(
-            "seen-nonces corrupt: {e}"
-        ))))
+        )))
+    })?;
+    serde_json::from_str(&data).map_err(|e| {
+        BaluardError::Device(DeviceError::Keystore(format!("seen-nonces corrupt: {e}")))
+    })
 }
 
 /// Atomic file write: delegate to the shared secret-file writer (0600

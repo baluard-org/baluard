@@ -126,9 +126,9 @@ pub fn map_client_error(error: ClientError) -> TokenError {
             _ => TokenError::Device(format!("CTAP2 status 0x{code:02x}")),
         },
         ClientError::NoHmacSecret => TokenError::NoHmacSecret,
-        ClientError::Unsupported(_) => TokenError::Device(
-            "security key does not support this operation".into(),
-        ),
+        ClientError::Unsupported(_) => {
+            TokenError::Device("security key does not support this operation".into())
+        }
         // CTAPHID channel-busy (0x06) is a busy key; the other HID
         // protocol codes are transport-class failures.
         ClientError::Hid(CtapHidError::Hid(0x06)) => TokenError::Busy,

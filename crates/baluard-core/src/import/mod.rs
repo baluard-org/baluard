@@ -127,7 +127,10 @@ mod tests {
 
     #[test]
     fn bitwarden_full_names_resolve() {
-        assert_eq!(ImportFormat::from_name("bitwarden"), Some(ImportFormat::BwJson));
+        assert_eq!(
+            ImportFormat::from_name("bitwarden"),
+            Some(ImportFormat::BwJson)
+        );
         assert_eq!(
             ImportFormat::from_name("bitwarden-json"),
             Some(ImportFormat::BwJson)

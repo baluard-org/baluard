@@ -161,7 +161,8 @@ fn catalog_path(vault_path: &Path) -> PathBuf {
 /// non-empty identity wrap pubkey, sorted by member id for determinism.
 pub fn approver_set(vault_path: &Path) -> Result<Vec<(Uuid, String)>, BaluardError> {
     // Strict roster: a damaged admin row must shrink no quorum.
-    let mut out: Vec<(Uuid, String)> = members::list_members_strict(vault_path)?.into_iter()
+    let mut out: Vec<(Uuid, String)> = members::list_members_strict(vault_path)?
+        .into_iter()
         .filter(|row| {
             row.removed.is_none()
                 && row.reset.is_none()
@@ -1257,9 +1258,7 @@ mod tests {
         let mut row = member_row(admin, members::MemberRole::Admin, Some("cc".repeat(32)));
         row.email = Some("a".repeat(4_096));
         members::write_member(&path, &row).unwrap();
-        let p = path
-            .join("meta/members")
-            .join(format!("{admin}.json"));
+        let p = path.join("meta/members").join(format!("{admin}.json"));
         // Damage beyond repair: truncate the row file.
         std::fs::write(&p, b"{").unwrap();
         assert!(approver_set(&path).is_err());

@@ -253,7 +253,9 @@ fn git_open(outbox: &Path) -> Result<git2::Repository, BaluardError> {
         Err(e) if e.code() == git2::ErrorCode::NotFound => {
             git2::Repository::init(outbox).map_err(|e| deny(&format!("outbox repo init: {e}")))
         }
-        Err(e) => Err(deny(&format!("outbox folder is not a usable repository: {e}"))),
+        Err(e) => Err(deny(&format!(
+            "outbox folder is not a usable repository: {e}"
+        ))),
     }
 }
 
@@ -341,9 +343,13 @@ fn read_hostile(path: &Path, cap: u64, what: &str) -> Result<Vec<u8>, BaluardErr
 }
 
 fn read_marker(outbox: &Path) -> Result<OutboxMarker, BaluardError> {
-    let data = read_hostile(&outbox.join(OUTBOX_MARKER), 256 * 1024, "outbox marker unreadable")?;
-    let marker: OutboxMarker =
-        serde_json::from_slice(&data).map_err(|e| deny(&format!("outbox marker unreadable: {e}")))?;
+    let data = read_hostile(
+        &outbox.join(OUTBOX_MARKER),
+        256 * 1024,
+        "outbox marker unreadable",
+    )?;
+    let marker: OutboxMarker = serde_json::from_slice(&data)
+        .map_err(|e| deny(&format!("outbox marker unreadable: {e}")))?;
     marker.owner_card.verify()?;
     Ok(marker)
 }

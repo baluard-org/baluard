@@ -460,19 +460,19 @@ impl VaultState {
         // Argon2id pins a worker for ~1s and 64-256MB otherwise.
         let vault_path = self.vault_path.clone();
         let password = Zeroizing::new(master_password.to_string());
-        let new_handle =
-            tokio::task::spawn_blocking(
-                move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
+        let new_handle = tokio::task::spawn_blocking(
+            move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
                 let mut h = VaultHandle::open(&vault_path)?;
                 h.unlock(&password)?;
                 Ok(h)
-            })
-            .await
-            .map_err(|e| {
-                baluard_core::error::BaluardError::from(
-                    baluard_core::error::VaultError::Metadata(format!("unlock task: {e}")),
-                )
-            })??;
+            },
+        )
+        .await
+        .map_err(|e| {
+            baluard_core::error::BaluardError::from(baluard_core::error::VaultError::Metadata(
+                format!("unlock task: {e}"),
+            ))
+        })??;
 
         self.finish_unlock(new_handle).await
     }
@@ -728,7 +728,6 @@ impl VaultState {
                 }
             }
         }
-
     }
 
     /// S3-3 expiry-that-rotates executor: drop expired grants + rotate
@@ -1052,20 +1051,19 @@ impl VaultState {
         // keywrap: run on a blocking thread like the password path.
         let vault_path = self.vault_path.clone();
         let kek = *kek;
-        let mut new_handle =
-            tokio::task::spawn_blocking(
-                move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
-                    let mut h = VaultHandle::open(&vault_path)?;
-                    h.unlock_with_kek(&kek)?;
-                    Ok(h)
-                },
-            )
-            .await
-            .map_err(|e| {
-                baluard_core::error::BaluardError::from(
-                    baluard_core::error::VaultError::Metadata(format!("unlock task: {e}")),
-                )
-            })??;
+        let mut new_handle = tokio::task::spawn_blocking(
+            move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
+                let mut h = VaultHandle::open(&vault_path)?;
+                h.unlock_with_kek(&kek)?;
+                Ok(h)
+            },
+        )
+        .await
+        .map_err(|e| {
+            baluard_core::error::BaluardError::from(baluard_core::error::VaultError::Metadata(
+                format!("unlock task: {e}"),
+            ))
+        })??;
 
         self.finish_unlock(new_handle).await
     }
@@ -1088,23 +1086,21 @@ impl VaultState {
         }
         let vault_path = self.vault_path.clone();
         let kek = *kek;
-        let new_handle =
-            tokio::task::spawn_blocking(
-                move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
-                    let mut h = VaultHandle::open(&vault_path)?;
-                    h.unlock_with_kek(&kek)?;
-                    Ok(h)
-                },
-            )
-            .await
-            .map_err(|e| {
-                baluard_core::error::BaluardError::from(
-                    baluard_core::error::VaultError::Metadata(format!("unlock task: {e}")),
-                )
-            })??;
+        let new_handle = tokio::task::spawn_blocking(
+            move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
+                let mut h = VaultHandle::open(&vault_path)?;
+                h.unlock_with_kek(&kek)?;
+                Ok(h)
+            },
+        )
+        .await
+        .map_err(|e| {
+            baluard_core::error::BaluardError::from(baluard_core::error::VaultError::Metadata(
+                format!("unlock task: {e}"),
+            ))
+        })??;
         self.finish_unlock_session(new_handle).await
     }
-
 
     /// List all cipher IDs (works locked or unlocked).
     #[allow(dead_code)]
@@ -1564,7 +1560,11 @@ impl VaultState {
             let lang = v.as_str().ok_or("lang must be a string")?;
             // Lands in git-tracked plaintext settings-pub.json: keep it a
             // plausible locale tag, not free-form text.
-            if lang.len() > 16 || !lang.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            if lang.len() > 16
+                || !lang
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
                 return Err("lang must be a short locale tag".into());
             }
             settings.lang = Some(lang.to_string());
@@ -2690,7 +2690,9 @@ impl VaultState {
         };
         {
             let guard = self.inner.read().await;
-            let handle = guard.as_ref().ok_or("Vault is locked. Unlock first.".to_string())?;
+            let handle = guard
+                .as_ref()
+                .ok_or("Vault is locked. Unlock first.".to_string())?;
             if !handle.is_unlocked() {
                 return Err("Vault is locked. Unlock first.".into());
             }
@@ -2701,9 +2703,10 @@ impl VaultState {
             }
             None => None,
         };
-        let new_login_value: Option<serde_json::Value> = match new_login.filter(|s| !s.is_empty())
-        {
-            Some(s) => Some(serde_json::from_str(s).map_err(|e| format!("Invalid new_login: {e}"))?),
+        let new_login_value: Option<serde_json::Value> = match new_login.filter(|s| !s.is_empty()) {
+            Some(s) => {
+                Some(serde_json::from_str(s).map_err(|e| format!("Invalid new_login: {e}"))?)
+            }
             None => None,
         };
 
@@ -5277,14 +5280,10 @@ impl VaultState {
     /// Attach an already-unlocked contact view handle and mint its
     /// session token. The daemon route owns the allowlist that keeps
     /// the session read-only.
-    pub async fn contact_attach(
-        &self,
-        handle: baluard_core::vault::handle::VaultHandle,
-    ) {
+    pub async fn contact_attach(&self, handle: baluard_core::vault::handle::VaultHandle) {
         let _ = self.finish_unlock_session(handle).await;
         self.mint_session_token().await;
     }
-
 
     pub async fn legacy_status(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
@@ -7885,11 +7884,9 @@ impl VaultState {
                 PrivkeyFileKind::Absent => "absent",
             };
             let sealed_backend = if seal == "v2-hw" {
-                std::fs::read(&privkey_path)
-                    .ok()
-                    .and_then(|bytes| {
-                        baluard_core::vault::device_privkey::hw_backend_of(&bytes).ok()
-                    })
+                std::fs::read(&privkey_path).ok().and_then(|bytes| {
+                    baluard_core::vault::device_privkey::hw_backend_of(&bytes).ok()
+                })
             } else {
                 None
             };
@@ -8128,7 +8125,8 @@ impl VaultState {
             .await
             .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
         let privkey_path = self.vault_path.join("meta/device-privkey.json");
-        let file = std::fs::read(&privkey_path).map_err(|e| format!("reading hardware seal: {e}"))?;
+        let file =
+            std::fs::read(&privkey_path).map_err(|e| format!("reading hardware seal: {e}"))?;
         if baluard_core::vault::device_privkey::file_kind(&privkey_path)
             == baluard_core::vault::device_privkey::PrivkeyFileKind::SealedHw
         {
@@ -8163,7 +8161,8 @@ impl VaultState {
             .await
             .ok_or_else(|| "Vault is locked. Unlock first.".to_string())?;
         let privkey_path = self.vault_path.join("meta/device-privkey.json");
-        let file = std::fs::read(&privkey_path).map_err(|e| format!("reading hardware seal: {e}"))?;
+        let file =
+            std::fs::read(&privkey_path).map_err(|e| format!("reading hardware seal: {e}"))?;
         if baluard_core::vault::device_privkey::file_kind(&privkey_path)
             == baluard_core::vault::device_privkey::PrivkeyFileKind::SealedHw
         {
@@ -8219,10 +8218,10 @@ impl VaultState {
         // two Argon2id runs would otherwise pin the worker ~2s.
         let vault_path = self.vault_path.clone();
         let password = Zeroizing::new(password.to_string());
-        let (mut temp, kek) = tokio::task::spawn_blocking(
-            move || -> Result<(VaultHandle, [u8; 32]), String> {
-                let mut temp = VaultHandle::open(&vault_path)
-                    .map_err(|e| format!("Open failed: {e}"))?;
+        let (mut temp, kek) =
+            tokio::task::spawn_blocking(move || -> Result<(VaultHandle, [u8; 32]), String> {
+                let mut temp =
+                    VaultHandle::open(&vault_path).map_err(|e| format!("Open failed: {e}"))?;
                 // Confirm the password is correct (raises clear error +
                 // advances nothing persistent — temp handle is discarded).
                 temp.unlock(&password)
@@ -8230,10 +8229,9 @@ impl VaultState {
                 let kek = baluard_core::crypto::kdf::derive_kek(&password, &temp.kdf_params)
                     .map_err(|e| format!("derive kek: {e}"))?;
                 Ok((temp, kek))
-            },
-        )
-        .await
-        .map_err(|e| format!("verify task: {e}"))??;
+            })
+            .await
+            .map_err(|e| format!("verify task: {e}"))??;
 
         let escrow = crate::pin::PinEscrow::new(kek, pin)?;
         *self.pin.lock().await = Some(escrow);
@@ -8480,8 +8478,9 @@ impl VaultState {
             .ok_or("missing attachment_id")?;
         // Validate before any path use: the id later joins a filesystem
         // path, and synced cipher meta is member-writable data.
-        let attach_uuid: uuid::Uuid =
-            attach_id.parse().map_err(|e| format!("invalid attachment_id: {e}"))?;
+        let attach_uuid: uuid::Uuid = attach_id
+            .parse()
+            .map_err(|e| format!("invalid attachment_id: {e}"))?;
 
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
@@ -8519,8 +8518,8 @@ impl VaultState {
         // (symlinks) and bound the read, mirroring the backup container
         // guards. A git-supplied symlink at this path would otherwise
         // read /dev/zero or a huge file into memory.
-        let attach_stat = std::fs::symlink_metadata(&attach_path)
-            .map_err(|e| format!("read: {e}"))?;
+        let attach_stat =
+            std::fs::symlink_metadata(&attach_path).map_err(|e| format!("read: {e}"))?;
         if !attach_stat.is_file() {
             return Err("Attachment is not a regular file".into());
         }
@@ -9345,7 +9344,8 @@ fn cipher_to_json(c: &baluard_core::types::Cipher) -> serde_json::Value {
         "attachments": c.attachments,
         "custom_fields": c.custom_fields,
     });
-    json["kind"] = redact_kind_secrets(serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null));
+    json["kind"] =
+        redact_kind_secrets(serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null));
     match &c.kind {
         baluard_core::types::CipherKind::Login(data) => {
             json["username"] = serde_json::json!(data.username);
@@ -9995,8 +9995,8 @@ mod prepare_update_tests {
 #[cfg(test)]
 mod pin_hw_escrow_tests {
     use super::VaultState;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     const MASTER: &str = "pin-hw-master-pass-7";
     const PIN: &str = "246813";
@@ -10076,7 +10076,11 @@ mod pin_hw_escrow_tests {
                 TAP_OFF_WORKER.store(!on_worker, Ordering::SeqCst);
             }
             let mut secret = [0u8; 32];
-            for (index, byte) in binding.bytes().chain(handshake.0.iter().copied()).enumerate() {
+            for (index, byte) in binding
+                .bytes()
+                .chain(handshake.0.iter().copied())
+                .enumerate()
+            {
                 secret[index % 32] ^= byte;
             }
             Ok(zeroize::Zeroizing::new(secret))
@@ -10243,34 +10247,27 @@ mod pin_hw_escrow_tests {
         state.unlock(MASTER).await.unwrap();
         let info = serde_json::from_str::<serde_json::Value>(&state.info().await.unwrap()).unwrap();
         let device_id = uuid::Uuid::parse_str(info["device_id"].as_str().unwrap()).unwrap();
-        assert!(baluard_core::vault::handle::cached_device_signing_key(
-            dir.path(),
-            device_id
-        )
-        .is_some());
+        assert!(
+            baluard_core::vault::handle::cached_device_signing_key(dir.path(), device_id).is_some()
+        );
 
         // Password-only proofs must work with the key unplugged and must not
         // let a temporary handle evict the live session's signing key.
         baluard_core::hwkey::uninstall();
         state.reprompt_verify(MASTER).await.unwrap();
-        assert!(baluard_core::vault::handle::cached_device_signing_key(
-            dir.path(),
-            device_id
-        )
-        .is_some());
+        assert!(
+            baluard_core::vault::handle::cached_device_signing_key(dir.path(), device_id).is_some()
+        );
         state.reprompt_verify("definitely-wrong").await.unwrap_err();
-        assert!(baluard_core::vault::handle::cached_device_signing_key(
-            dir.path(),
-            device_id
-        )
-        .is_some());
+        assert!(
+            baluard_core::vault::handle::cached_device_signing_key(dir.path(), device_id).is_some()
+        );
 
         let _ = state
             .biometric_enable(&serde_json::json!({"password": MASTER}).to_string())
             .await;
         assert!(
-            baluard_core::vault::handle::cached_device_signing_key(dir.path(), device_id)
-                .is_some(),
+            baluard_core::vault::handle::cached_device_signing_key(dir.path(), device_id).is_some(),
             "biometric password verification evicted the live signing key"
         );
     }

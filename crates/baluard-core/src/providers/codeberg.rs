@@ -647,10 +647,7 @@ impl ForgeProvider for CodebergProvider {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string(),
-                read_only: k
-                    .get("read_only")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true),
+                read_only: k.get("read_only").and_then(|v| v.as_bool()).unwrap_or(true),
             })
             .collect())
     }
@@ -715,12 +712,8 @@ impl ForgeProvider for CodebergProvider {
             let s = resp.status();
             let st = resp.status().as_u16();
             return match st {
-                400 | 401 => Err(ProviderError::AuthFailed(format!(
-                    "refresh HTTP {st}"
-                ))),
-                _ => Err(ProviderError::Transient(format!(
-                    "refresh HTTP {st}"
-                ))),
+                400 | 401 => Err(ProviderError::AuthFailed(format!("refresh HTTP {st}"))),
+                _ => Err(ProviderError::Transient(format!("refresh HTTP {st}"))),
             };
         }
         let d: serde_json::Value = resp

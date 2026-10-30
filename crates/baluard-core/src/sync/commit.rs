@@ -46,8 +46,6 @@ mod tests {
         let sig = signature::sign(&signing, payload).unwrap();
 
         let tampered = b"tree 9e1f7a3 parent a3f9c11 committer x";
-        assert!(
-            verify_commit_signature(&verifying.to_bytes(), tampered, &sig.to_bytes()).is_err()
-        );
+        assert!(verify_commit_signature(&verifying.to_bytes(), tampered, &sig.to_bytes()).is_err());
     }
 }

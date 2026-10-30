@@ -747,7 +747,7 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
                 })
                 .to_string(),
                 None,
-            )
+            );
         }
 
         // `vaults.*` routes operate on the host map + registry.
@@ -1308,7 +1308,10 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
         // drain names its vault in the error.
         "system.prepare_update" => match host.prepare_for_update().await {
             Ok(slugs) => {
-                log::info!("[daemon] prepare_update: drained and locked {} vault(s)", slugs.len());
+                log::info!(
+                    "[daemon] prepare_update: drained and locked {} vault(s)",
+                    slugs.len()
+                );
                 return ok_resp(serde_json::json!({ "locked": slugs, }).to_string(), None);
             }
             Err(e) => {
@@ -1325,7 +1328,10 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
         // count locked so the desktop can clear just those tokens.
         "vaults.on_app_blur" => {
             let slugs = host.lock_blur_vaults().await;
-            log::info!("[daemon] on_app_blur: locked {} Immediately-policy vault(s)", slugs.len());
+            log::info!(
+                "[daemon] on_app_blur: locked {} Immediately-policy vault(s)",
+                slugs.len()
+            );
             return ok_resp(
                 serde_json::json!({"locked": slugs.len(), "slugs": slugs}).to_string(),
                 None,
@@ -3286,7 +3292,7 @@ fn handle_git_probe(mut req: GatewayRequest) -> GatewayResponse {
         Err(e) => {
             req.payload.zeroize();
             req.payload.zeroize();
-        return err_response(format!("Invalid payload: {e}"));
+            return err_response(format!("Invalid payload: {e}"));
         }
     };
     let Some(url) = v["url"].as_str().map(str::to_string) else {
@@ -3316,14 +3322,14 @@ fn handle_git_probe(mut req: GatewayRequest) -> GatewayResponse {
                             Ok(pem) => Some(pem),
                             Err(_) => {
                                 req.payload.zeroize();
-        return err_response(
+                                return err_response(
                                     "SSH key material is not valid UTF-8".to_string(),
                                 );
                             }
                         },
                         Err(_) => {
                             req.payload.zeroize();
-        return err_response("ssh_key_b64 is not valid base64".to_string());
+                            return err_response("ssh_key_b64 is not valid base64".to_string());
                         }
                     }
                 };
@@ -3332,7 +3338,7 @@ fn handle_git_probe(mut req: GatewayRequest) -> GatewayResponse {
                     Some(h) if !h.is_empty() => h,
                     _ => {
                         req.payload.zeroize();
-                        return err_response("cannot derive the host from the URL".to_string())
+                        return err_response("cannot derive the host from the URL".to_string());
                     }
                 };
                 Some(
@@ -3548,10 +3554,7 @@ async fn handle_legacy_contact_view(
             return err_response(format!("Invalid payload: {e}"));
         }
     };
-    let letter = v["letter"]
-        .as_str()
-        .map(str::to_string)
-        .unwrap_or_default();
+    let letter = v["letter"].as_str().map(str::to_string).unwrap_or_default();
     let passphrase = v["passphrase"]
         .as_str()
         .map(|p| zeroize::Zeroizing::new(p.to_string()));
@@ -3568,17 +3571,15 @@ async fn handle_legacy_contact_view(
         Err(e) => return err_response(e.to_string()),
     };
 
-    let slug = baluard_core::vault::slug::normalize_slug(&format!("legacy-view-{}", &opened.kit_id[..8]));
+    let slug =
+        baluard_core::vault::slug::normalize_slug(&format!("legacy-view-{}", &opened.kit_id[..8]));
     let target = opened.handle.path.clone();
     let vault_name = opened.vault_name.clone();
     let owner_note = opened.owner_note.clone();
     let silence_days = opened.silence_days;
     let window_days = opened.window_days;
 
-    let state = std::sync::Arc::new(baluard_runtime::VaultState::with_contact_view(
-        target,
-        true,
-    ));
+    let state = std::sync::Arc::new(baluard_runtime::VaultState::with_contact_view(target, true));
     state.contact_attach(opened.handle).await;
     host.insert(slug.clone(), state.clone()).await;
     // Every unlock path flips the daemon's active pointer to the new
@@ -7488,8 +7489,7 @@ mod tests {
         // (5) Non-action allowlist stays minimal and real.
         for n in NON_ACTIONS {
             assert!(
-                cleaned.contains(&format!("\"{n}\" =>"))
-                    || cleaned.contains(&format!("\"{n}\" |")),
+                cleaned.contains(&format!("\"{n}\" =>")) || cleaned.contains(&format!("\"{n}\" |")),
                 "NON_ACTIONS entry {n} is not a match arm"
             );
         }
@@ -7528,10 +7528,7 @@ mod tests {
                 .initialize_git(false)
                 .execute()
                 .unwrap();
-        let state = std::sync::Arc::new(VaultState::with_contact_view(
-            handle.path.clone(),
-            true,
-        ));
+        let state = std::sync::Arc::new(VaultState::with_contact_view(handle.path.clone(), true));
         state.contact_attach(handle).await;
         let token = state.get_session_token().await.unwrap();
 

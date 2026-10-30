@@ -26,11 +26,16 @@ pub fn parse(data: &str) -> ImportResult {
         .and_then(|n| n.text().map(|t| t.to_string()));
     let mut recycled = std::collections::HashSet::new();
     if let Some(ref uuid) = recycle_bin_uuid {
-        if let Some(bin) = doc
-            .descendants()
-            .find(|n| n.has_tag_name("Group") && n.children().any(|c| c.has_tag_name("UUID") && c.text() == Some(uuid.as_str())))
-        {
-            recycled.extend(bin.descendants().filter(|n| n.has_tag_name("Entry")).map(|n| n.id()));
+        if let Some(bin) = doc.descendants().find(|n| {
+            n.has_tag_name("Group")
+                && n.children()
+                    .any(|c| c.has_tag_name("UUID") && c.text() == Some(uuid.as_str()))
+        }) {
+            recycled.extend(
+                bin.descendants()
+                    .filter(|n| n.has_tag_name("Entry"))
+                    .map(|n| n.id()),
+            );
         }
     }
 
@@ -219,7 +224,6 @@ mod tests {
             .unwrap();
         assert!(work.contains(&note_idx));
     }
-
 
     #[test]
     fn parse_keepass_xml() {
