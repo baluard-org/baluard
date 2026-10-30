@@ -53,6 +53,15 @@ fn channel_endpoint(channel: &str) -> Result<Url, String> {
 }
 
 fn configured(app: &AppHandle) -> bool {
+    // D79: only the AppImage self-updates. On deb/rpm/Flatpak/Snap the
+    // package manager owns updates; the embedded pubkey would otherwise
+    // make updater_status promise an updater that can never resolve its
+    // manifest entry (TargetNotFound) on a manual check. The AppImage
+    // runtime always exports $APPIMAGE; extracted-run inherits it too.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("APPIMAGE").is_none() {
+        return false;
+    }
     let Some(updater) = app.config().plugins.0.get("updater") else {
         return false;
     };
@@ -62,8 +71,16 @@ fn configured(app: &AppHandle) -> bool {
     }
 }
 
+// Single version source: the desktop crate's Cargo manifest. The tauri
+// config carries no version field; Config.version could silently drift from
+// the daemon handshake's BALUARD_DAEMON_VERSION (each parses its manifest
+// independently), so everything reads package_info instead.
+fn app_version(app: &AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 fn builder(app: &AppHandle) -> Result<tauri_plugin_updater::UpdaterBuilder, String> {
-    let channel = channel_for_version(app.config().version.clone().as_deref().unwrap_or(""));
+    let channel = channel_for_version(&app_version(&app));
     let endpoint = channel_endpoint(channel)?;
     app.updater_builder()
         .endpoints(vec![endpoint])
@@ -83,8 +100,8 @@ fn update_info(update: &tauri_plugin_updater::Update) -> UpdateInfo {
 pub(crate) async fn updater_status(app: AppHandle) -> UpdaterStatus {
     UpdaterStatus {
         configured: configured(&app),
-        channel: channel_for_version(app.config().version.clone().as_deref().unwrap_or("")),
-        version: app.config().version.clone().unwrap_or_default(),
+        channel: channel_for_version(&app_version(&app)),
+        version: app_version(&app),
     }
 }
 
@@ -140,30 +157,19 @@ async fn install_inner(
         None => return Err("No update is available.".into()),
     };
 
-    // 1. Drain + lock. A sync that will not finish refuses the update.
-    // (Windows has no daemon IPC yet: nothing to prepare there.)
-    #[cfg(unix)]
-    crate::send_request("system.prepare_update", "")
-        .map_err(|e| format!("Cannot prepare for the update: {e}"))?;
-
-    // 2. Stop the daemon and hold the door: nothing respawns it until the
-    // new version starts (or this rollback path does). A daemon that will
-    // not die releases the gate again — the adopt-or-replace startup rules
-    // must keep applying, so the suppression flag may not outlive this call.
-    crate::daemon_ctl::suppress_respawn();
-    if let Err(e) = crate::daemon_ctl::stop_daemon_and_wait(daemon.inner()) {
-        crate::daemon_ctl::clear_respawn_suppression();
-        return Err(format!("The security service could not be stopped: {e}"));
-    }
-
+    // 1. Download FIRST, while the app still works: the vaults stay open
+    // and usable during the transfer. Only the final install needs the
+    // daemon stopped. (M1: a download that fails never locks anything.)
     let app_for_events = app.clone();
     let version = update.version.clone();
+    let mut received: u64 = 0;
     let downloaded = update
         .download(
             move |chunk, total| {
+                received += chunk as u64;
                 let _ = app_for_events.emit(
                     "updater://progress",
-                    serde_json::json!({ "downloaded": chunk, "total": total }),
+                    serde_json::json!({ "downloaded": received, "total": total }),
                 );
             },
             || {},
@@ -172,11 +178,26 @@ async fn install_inner(
 
     let bytes = match downloaded {
         Ok(bytes) => bytes,
-        Err(e) => {
-            let _ = crate::daemon_ctl::restart_daemon(&app);
-            return Err(format!("Download failed: {e}"));
-        }
+        Err(e) => return Err(format!("Download failed: {e}")),
     };
+
+    // 2. Drain + lock. A sync that will not finish refuses the update.
+    // (Windows has no daemon IPC yet: nothing to prepare there.)
+    #[cfg(unix)]
+    crate::send_request("system.prepare_update", "").map_err(|e| {
+        let _ = crate::daemon_ctl::restart_daemon(&app);
+        format!("Cannot prepare for the update: {e}")
+    })?;
+
+    // 3. Stop the daemon and hold the door: nothing respawns it until the
+    // new version starts (or this rollback path does). A daemon that will
+    // not die releases the gate again — the adopt-or-replace startup rules
+    // must keep applying, so the suppression flag may not outlive this call.
+    crate::daemon_ctl::suppress_respawn();
+    if let Err(e) = crate::daemon_ctl::stop_daemon_and_wait(daemon.inner()) {
+        crate::daemon_ctl::clear_respawn_suppression();
+        return Err(format!("The security service could not be stopped: {e}"));
+    }
 
     let version_for_log = version.clone();
     let installed = tauri::async_runtime::spawn_blocking(move || {
