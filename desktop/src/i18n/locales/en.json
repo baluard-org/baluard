@@ -399,7 +399,15 @@
     "tabContacts": "Contacts",
     "tabOutboxes": "Outboxes",
     "tabSpace": "Vault",
-    "hwTitle": "Guard with this device's security chip",
+        "hwKeyTitle": "Guard with your security key",
+    "hwKeyOn": "This vault is guarded by your security key.",
+    "hwKeyOff": "This vault is not guarded by a security key.",
+    "hwKeyEnableTitle": "Turn on the security key guard?",
+    "hwKeyEnableBody": "A stolen disk or backup alone will no longer be able to open this vault, even with the password. If you lose the key, you will need the recovery phrase to open this vault again.",
+    "hwKeyDisableTitle": "Turn off the security key guard?",
+    "hwKeyEnabledToast": "Security key guard is on.",
+    "hwKeyDisabledToast": "Security key guard is off.",
+"hwTitle": "Guard with this device's security chip",
     "hwDesc": "A stolen disk or backup alone cannot open this vault, even with the password.",
     "hwOn": "This vault is guarded by the security chip.",
     "hwOff": "This vault is not guarded by the security chip.",
@@ -575,7 +583,9 @@
     "hwTouchTimeout": "No touch was detected on the key. Try again.",
     "hwBusy": "The security key is busy in another application. Close it and try again.",
     "hwKeyWrong": "This is not the security key this vault was sealed to.",
-    "hwKeyMissing": "Plug in your security key."
+        "hwKeyUvForced": "This key always demands its own verification and cannot guard this vault.",
+    "hwKeyPinRequired": "This key requires its PIN for this operation. Use a key without a PIN.",
+"hwKeyMissing": "Plug in your security key."
   },
   "categories": {
     "allItems": "All items",

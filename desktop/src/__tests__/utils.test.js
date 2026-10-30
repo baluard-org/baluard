@@ -39,6 +39,18 @@ describe("isHardwareError", () => {
 // ── sanitizeError ──
 
 describe("sanitizeError", () => {
+  test("explains incompatible security keys instead of saying they are unplugged", () => {
+    expect(sanitizeError("Connect a compatible security key. (uv-forced)", t)).toBe(
+      "errors.hwKeyUvForced",
+    );
+    expect(sanitizeError("Connect a compatible security key. (pin-required)", t)).toBe(
+      "errors.hwKeyPinRequired",
+    );
+    expect(sanitizeError("security key: this token requires its PIN for hmac-secret", t)).toBe(
+      "errors.hwKeyPinRequired",
+    );
+  });
+
   test("matches daemon not running", () => {
     expect(sanitizeError("Cannot connect to daemon", t)).toBe("errors.daemonNotRunning");
   });
