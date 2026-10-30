@@ -1,6 +1,7 @@
 import { describe, test, expect, vi } from "vitest";
 import {
   sanitizeError,
+  isHardwareError,
   generateSecurePassword,
   uriStr,
   getCuratedColor,
@@ -10,6 +11,30 @@ import {
 } from "../lib/utils.js";
 
 const t = (key) => key;
+
+// ── isHardwareError ──
+
+describe("isHardwareError", () => {
+  test.each([
+    "this vault is guarded by this device's security chip and the chip is unavailable",
+    "this vault demands confirmation on every unlock and this device's security chip cannot do that",
+    "no security key is plugged in; plug it in to unlock",
+    "this is not the security key this vault was sealed to",
+    "the security key was not tapped in time; try again",
+    "the security key touch was cancelled",
+    "the security key is busy in another application; close it and try again",
+    "this security key requires a touch on every unlock and cannot provide a silent seal",
+    "this vault's security chip confirmation failed - try again, or recover this device with the recovery phrase",
+    "metadata error: security key: transport detail",
+  ])("does not treat a hardware failure as a wrong password: %s", (message) => {
+    expect(isHardwareError(message)).toBe(true);
+    expect(isHardwareError(new Error(message))).toBe(true);
+  });
+
+  test("still recognizes a credential failure", () => {
+    expect(isHardwareError("master password incorrect")).toBe(false);
+  });
+});
 
 // ── sanitizeError ──
 

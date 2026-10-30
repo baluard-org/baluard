@@ -159,5 +159,5 @@ export function detectCardBrand(number) {
 /// password: the unlock screen must not show "wrong password" for it.
 export function isHardwareError(raw) {
   const str = typeof raw === "string" ? raw : (raw?.message || String(raw || ""));
-  return /hardware unavailable|hardware seal|security chip|secure enclave|tpm/i.test(str);
+  return /hardware unavailable|hardware seal|security chip|security key|secure enclave|tpm/i.test(str);
 }
