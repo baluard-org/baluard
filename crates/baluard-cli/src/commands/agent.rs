@@ -50,30 +50,34 @@ pub fn handle_run(
         Ok(value) => value,
         Err(e) => deny(&e),
     };
-    let Some(request_id) = requested["request_id"].as_str().map(str::to_string) else {
-        deny("daemon returned no agent request id");
-    };
-
     let mut agent_token = zeroize::Zeroizing::new(String::new());
-    for _ in 0..120 {
-        let polled = match agent_call(
-            "agents.poll",
-            serde_json::json!({"request_id": request_id}),
-            "",
-        ) {
-            Ok(value) => value,
-            Err(e) => deny(&e),
+    if requested["status"] == "approved" {
+        agent_token =
+            zeroize::Zeroizing::new(requested["token"].as_str().unwrap_or_default().to_string());
+    } else {
+        let Some(request_id) = requested["request_id"].as_str().map(str::to_string) else {
+            deny("daemon returned no agent request id");
         };
-        match polled["status"].as_str().unwrap_or("unknown") {
-            "pending" => std::thread::sleep(std::time::Duration::from_secs(1)),
-            "approved" => {
-                agent_token = zeroize::Zeroizing::new(
-                    polled["token"].as_str().unwrap_or_default().to_string(),
-                );
-                break;
+        for _ in 0..120 {
+            let polled = match agent_call(
+                "agents.poll",
+                serde_json::json!({"request_id": request_id}),
+                "",
+            ) {
+                Ok(value) => value,
+                Err(e) => deny(&e),
+            };
+            match polled["status"].as_str().unwrap_or("unknown") {
+                "pending" => std::thread::sleep(std::time::Duration::from_secs(1)),
+                "approved" => {
+                    agent_token = zeroize::Zeroizing::new(
+                        polled["token"].as_str().unwrap_or_default().to_string(),
+                    );
+                    break;
+                }
+                "denied" => deny("agent credential request was denied"),
+                _ => deny("agent credential request expired"),
             }
-            "denied" => deny("agent credential request was denied"),
-            _ => deny("agent credential request expired"),
         }
     }
     if agent_token.is_empty() {

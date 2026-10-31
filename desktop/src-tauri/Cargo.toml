@@ -34,6 +34,8 @@ tauri-plugin-dialog = "2"
 # trusted comment; require_signed_version refuses version-less legacy sigs).
 tauri-plugin-updater = "=2.12.0"
 tauri-plugin-biometry = "=0.2.8"
+# Exact pin per audit D10: upgrades are conscious, reviewed bumps.
+tauri-plugin-notification = "=2.3.3"
 prost = "0.13"
 anyhow = "1"
 libc = "0.2"

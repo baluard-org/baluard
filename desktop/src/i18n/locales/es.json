@@ -1279,5 +1279,27 @@
     "managed": "Las actualizaciones de esta instalación se gestionan externamente.",
     "versionMismatchTitle": "El servicio en segundo plano de Baluard está desactualizado",
     "versionMismatchBody": "La aplicación y su servicio en segundo plano son versiones distintas.\nCierra Baluard por completo y vuelve a iniciarlo."
+  },
+  "agents": {
+    "title": "Solicitud de credenciales",
+    "requester": "Proceso solicitante",
+    "items": "Entradas solicitadas",
+    "approve": "Aprobar durante 15 minutos",
+    "deny": "Denegar",
+    "approveAll": "Aprobar todo durante 15 minutos",
+    "settingsTitle": "Acceso de agentes",
+    "settingsDesc": "Revisa qué herramientas locales pueden usar entradas y revoca su acceso.",
+    "activeGrants": "Acceso activo",
+    "revokeAll": "Revocar todo el acceso de agentes",
+    "yolo": "Permitir acceso de agentes sin preguntar",
+    "yoloDesc": "Solo en este dispositivo. Las herramientas locales pueden pedir credenciales sin aprobación.",
+    "yoloWarning": "Esto elimina la aprobación en este dispositivo. Cualquier proceso local puede pedir credenciales. Actívalo solo si confías en todas las herramientas que ejecutas.",
+    "approved": "Acceso aprobado durante 15 minutos.",
+    "denied": "Solicitud denegada.",
+    "revoked": "Acceso de agentes revocado.",
+    "yoloEnabled": "El acceso de agentes ya no preguntará en este dispositivo.",
+    "yoloDisabled": "El acceso de agentes pedirá aprobación.",
+    "notifyTitle": "Solicitud de credenciales de Baluard",
+    "notifyBody": "{name} pide usar entradas de la bóveda."
   }
 }

@@ -9,6 +9,7 @@ import { VaultSwitcherProvider } from "./context/VaultSwitcherContext.jsx";
 import { AutoSyncProvider } from "./context/AutoSyncContext.jsx";
 import { ConflictResolutionProvider } from "./context/ConflictResolutionContext.jsx";
 import { UpdateProvider } from "./context/UpdateContext.jsx";
+import { AgentApprovalProvider } from "./context/AgentApprovalContext.jsx";
 
 import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
@@ -161,6 +162,7 @@ export default function App() {
         <Show when={auth.status() === "unlocked"}>
           <div class="app__vault absolute inset-0 vault-enter">
             <VaultProvider>
+              <AgentApprovalProvider>
               <ConflictResolutionProvider>
                 <AutoSyncProvider>
                   <AutoSyncIndicator />
@@ -169,6 +171,7 @@ export default function App() {
                   <DevTriggerSlot />
                 </AutoSyncProvider>
               </ConflictResolutionProvider>
+              </AgentApprovalProvider>
             </VaultProvider>
           </div>
         </Show>
