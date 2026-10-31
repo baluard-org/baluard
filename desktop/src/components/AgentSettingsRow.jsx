@@ -1,4 +1,4 @@
-import { Show, createSignal } from "solid-js";
+import { Show, For, createSignal, onSettled } from "solid-js";
 import { useAgentApprovals } from "../context/AgentApprovalContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { Button } from "./Primitives.jsx";
@@ -9,6 +9,10 @@ export default function AgentSettingsRow() {
   const { t } = useI18n();
   const [confirmYolo, setConfirmYolo] = createSignal(false);
   if (!agents) return null;
+
+  onSettled(() => {
+    agents.refreshAudit();
+  });
 
   function enableYolo() {
     setConfirmYolo(false);
@@ -34,6 +38,19 @@ export default function AgentSettingsRow() {
           <Button data-testid="agent-revoke" onClick={agents.revoke} class="py-2 text-xs">
             {t("agents.revokeAll")}
           </Button>
+        </div>
+      </Show>
+      <Show when={agents.events().length > 0}>
+        <div class="space-y-2">
+          <div class="text-xs font-semibold">{t("agents.recentActivity")}</div>
+          <For each={agents.events().slice(0, 5)}>
+            {(event) => (
+              <div class="rounded border border-[var(--color-border)] p-2 text-[10px]">
+                <div>{t(`agents.event.${event.event}`)}</div>
+                <div class="text-[var(--color-muted)] break-all font-mono mt-1">{event.exe_path}</div>
+              </div>
+            )}
+          </For>
         </div>
       </Show>
       <label class="flex items-start gap-2 text-xs cursor-pointer">
