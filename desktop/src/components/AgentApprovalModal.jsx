@@ -11,7 +11,6 @@ export default function AgentApprovalModal(props) {
       accentClass="border-amber-500"
       minHeightClass="min-h-[22rem]"
       ariaLabelledby="agent-approval-title"
-      onEscape={() => props.request && props.onDeny?.(props.request.request_id)}
     >
       <Show when={props.request}>
         {(request) => (

@@ -261,7 +261,7 @@ pub async fn handle_agent_route(
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid agent denial: {e}")),
             };
-            let (_slug, state) = match target_state(req, host, None).await {
+            let (slug, state) = match target_state(req, host, None).await {
                 Ok(pair) => pair,
                 Err(resp) => return resp,
             };
@@ -269,6 +269,15 @@ pub async fn handle_agent_route(
                 return resp;
             }
             let pending = host.pending_requests().get(&payload.request_id);
+            // Deny must respect the same vault boundary as approve: a
+            // request pinned to another vault is not deniable from here.
+            if pending
+                .as_ref()
+                .and_then(|p| p.vault_slug.as_deref())
+                .is_some_and(|s| s != slug)
+            {
+                return err_response("agent request belongs to a different vault");
+            }
             if !host.pending_requests().deny(&payload.request_id) {
                 return err_response("agent request is no longer pending");
             }
@@ -303,7 +312,7 @@ pub async fn handle_agent_route(
             ok_resp(serde_json::json!({"revoked": true}).to_string(), None)
         }
         "agents.audit" => {
-            let (_slug, state) = match target_state(req, host, None).await {
+            let (slug, state) = match target_state(req, host, None).await {
                 Ok(pair) => pair,
                 Err(resp) => return resp,
             };
@@ -314,6 +323,9 @@ pub async fn handle_agent_route(
                 Ok(events) => events,
                 Err(e) => return err_response(format!("agent audit: {e}")),
             };
+            // The audit store is global across vaults; a vault-scoped
+            // viewer sees only its own history.
+            let events: Vec<_> = events.into_iter().filter(|e| e.vault == slug).collect();
             let start = events.len().saturating_sub(100);
             ok_resp(
                 serde_json::json!({"events": &events[start..]}).to_string(),

@@ -245,7 +245,12 @@ object AutofillResponseBuilder {
             @Suppress("DEPRECATION")
             Dataset.Builder(views)
         }
+        // A dataset with presentation-only fields and no authentication
+        // throws on build() (API 32+); the auth intent is the whole point
+        // of this row.
         return ds
+            .setId("unlock-" + vaultPath.hashCode())
+            .setAuthentication(pending.intentSender)
     }
 
     /**
@@ -319,11 +324,14 @@ object AutofillResponseBuilder {
     suspend fun copyTotpFor(context: Context, match: AutofillSession.Match) {
         AutofillSession.totpCode(match.vaultPath, match.id)?.let { code ->
             xyz.actitud.baluard.platform.copyToClipboard(code)
-            android.widget.Toast.makeText(
-                context,
-                t("a11y.totpCopied"),
-                android.widget.Toast.LENGTH_SHORT,
-            ).show()
+            // This runs on Dispatchers.Default; Toast needs a Looper.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(
+                    context,
+                    t("a11y.totpCopied"),
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
         }
     }
 

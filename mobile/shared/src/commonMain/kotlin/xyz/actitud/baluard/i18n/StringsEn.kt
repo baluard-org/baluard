@@ -11,6 +11,7 @@ internal val EN: Map<String, String> = mapOf(
     "vault.noMatch" to "No items matching your criteria",
     "common.back" to "Back",
     "common.cancel" to "Cancel",
+    "common.confirm" to "Confirm",
     "common.continue" to "Continue",
     "common.copy" to "Copy",
     "common.search" to "Search",

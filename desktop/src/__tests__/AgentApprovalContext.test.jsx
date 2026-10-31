@@ -14,8 +14,9 @@ vi.mock("../i18n/index.jsx", () => ({ useI18n: () => ({ t: (key) => key }) }));
 vi.mock("../context/VaultContext.jsx", () => ({
   useVault: () => ({ ciphers: () => [{ id: "item-1", name: "GitHub" }] }),
 }));
+const switcherMock = vi.hoisted(() => ({ activeSlug: () => "personal" }));
 vi.mock("../context/VaultSwitcherContext.jsx", () => ({
-  useVaultSwitcher: () => ({ activeSlug: () => "personal" }),
+  useVaultSwitcher: () => switcherMock,
 }));
 vi.mock("../context/toastSignal.js", () => ({
   toastSuccess: mocks.toastSuccess,
@@ -24,6 +25,11 @@ vi.mock("../context/toastSignal.js", () => ({
 vi.mock("../components/AgentApprovalModal.jsx", () => ({ default: () => null }));
 
 import { AgentApprovalProvider, useAgentApprovals } from "../context/AgentApprovalContext.jsx";
+import { createSignal } from "solid-js";
+
+// Same solid-js instance as the app code, so writes retrigger its effects.
+const [activeSlug, setActiveSlug] = createSignal("personal");
+switcherMock.activeSlug = activeSlug;
 
 const pendingRow = {
   request_id: "req-1",
@@ -117,5 +123,34 @@ describe("AgentApprovalProvider", () => {
       body: "agents.notifyBody",
     });
     Object.defineProperty(document, "hidden", { configurable: true, value: false });
+  });
+
+  it("re-reads the audit when the active vault changes", async () => {
+    render(() => <AgentApprovalProvider><Capture /></AgentApprovalProvider>);
+    await waitFor(() => expect(mocks.daemon).toHaveBeenCalledWith("agents.audit"));
+    const auditCalls = () => mocks.daemon.mock.calls.filter(([a]) => a === "agents.audit").length;
+    const before = auditCalls();
+    setActiveSlug("work");
+    await waitFor(() => expect(auditCalls()).toBeGreaterThan(before));
+    // Every audit read after the switch is for the new vault is implied by
+    // the context passing no args; the point is the refresh fires at all.
+    expect(auditCalls()).toBe(before + 1);
+  });
+
+  it("notifies an unfocused app and stays quiet on a focused one", async () => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    const realHasFocus = document.hasFocus;
+    document.hasFocus = () => false;
+    render(() => <AgentApprovalProvider><Capture /></AgentApprovalProvider>);
+    await waitFor(() => expect(api.pending()).toHaveLength(1));
+    await api.refresh();
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(mocks.invoke).toHaveBeenCalledWith("notify_agent_request", expect.anything());
+    // Focused + visible: no notification.
+    document.hasFocus = () => true;
+    await api.deny(api.pending()[0].request_id);
+    await waitFor(() => expect(api.pending()).toHaveLength(0));
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    document.hasFocus = realHasFocus;
   });
 });
