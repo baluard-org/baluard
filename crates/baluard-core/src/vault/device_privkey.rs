@@ -927,6 +927,18 @@ pub(crate) fn rebind_identity_artifacts(
     to_key: &[u8; 32],
 ) -> Result<(), BaluardError> {
     crate::vault::members::rebind_member_unlock_identity_seed(vault, from_key, to_key)?;
+    rebind_identity_files(vault, device_id, from_key, to_key)
+}
+
+/// Identity files only (meta/identity.enc plus the member-scoped copy);
+/// the member unlock seed has its own source key and is rebound
+/// separately, so a rollback with mixed sources cannot cross-bind.
+pub(crate) fn rebind_identity_files(
+    vault: &Path,
+    device_id: Option<Uuid>,
+    from_key: &[u8; 32],
+    to_key: &[u8; 32],
+) -> Result<(), BaluardError> {
     let mut paths = vec![vault.join("meta/identity.enc")];
     if let Some(id) = device_id {
         if let Some(member) = crate::vault::members::member_id_for_device(vault, id) {
@@ -1134,11 +1146,10 @@ fn rotate_and_seal(
     // roster. Without a git repo the update stays local (an unsynced
     // vault has no peers to verify it).
     let roster_path = vault.join("meta/devices.json");
-    let mut registry: crate::devices::DeviceRegistry = serde_json::from_str(
-        &std::fs::read_to_string(&roster_path)
-            .map_err(|e| VaultError::Metadata(format!("read roster: {e}")))?,
-    )
-    .map_err(|e| VaultError::Corrupt(format!("parse roster: {e}")))?;
+    let old_roster = std::fs::read_to_string(&roster_path)
+        .map_err(|e| VaultError::Metadata(format!("read roster: {e}")))?;
+    let mut registry: crate::devices::DeviceRegistry = serde_json::from_str(&old_roster)
+        .map_err(|e| VaultError::Corrupt(format!("parse roster: {e}")))?;
     {
         let entry = registry
             .devices
@@ -1160,8 +1171,31 @@ fn rotate_and_seal(
         {
             let engine =
                 crate::sync::engine::SyncEngine::new(vault, &device_id.to_string(), Some(seal_key));
-            let repo = engine.open_repo()?;
-            engine.commit_all(&repo, "rotate device keys")?;
+            let commit = engine
+                .open_repo()
+                .and_then(|repo| engine.commit_all(&repo, "rotate device keys"));
+            if let Err(commit_err) = commit {
+                // A failed commit must not leave the worktree rotated: the
+                // next sync commit would carry a roster naming a key this
+                // device does not hold yet. Roll back per artifact (the
+                // seed was bound under the seal key, identity files under
+                // the keystore wrap key; whole-vault rebinds would
+                // cross-bind them) and keep the staging until the restore
+                // has landed, so a mid-rollback crash still leaves the
+                // unlock heal its tear evidence.
+                crate::vault::members::rebind_member_unlock_identity_seed(
+                    vault, &new_ik, seal_key,
+                )?;
+                if let Some(legacy) = identity_keystore_wrap_key(vault) {
+                    rebind_identity_files(vault, Some(device_id), &new_ik, &legacy)?;
+                }
+                crate::vault::write_vault_file(&roster_path, old_roster.as_bytes())
+                    .map_err(|we| VaultError::Metadata(format!("restore roster: {we}")))?;
+                let _ = std::fs::remove_file(&staged_privkey);
+                let _ = std::fs::remove_file(&staged_keywrap);
+                let _ = std::fs::remove_file(sibling_rotation_marker(vault));
+                return Err(commit_err);
+            }
         }
     }
 
@@ -1348,10 +1382,14 @@ pub(crate) fn heal_pending_hw_rotation(
     // staged-ik, so old-ik — derivable from the on-disk seal, which
     // promotion never replaced on this path — is the target.
     if is_rotation {
+        // Per-artifact targets: the seed returns to the seal key and the
+        // identity files to the keystore wrap key; whole-vault rebinds
+        // would cross-bind them (both sit under the staged ik now).
+        let _ =
+            crate::vault::members::rebind_member_unlock_identity_seed(vault, &staged_ik, seal_key);
         if let Some(kk) = identity_keystore_wrap_key(vault) {
-            let _ = rebind_identity_artifacts(vault, Some(device_id), &staged_ik, &kk);
+            let _ = rebind_identity_files(vault, Some(device_id), &staged_ik, &kk);
         }
-        let _ = rebind_identity_artifacts(vault, Some(device_id), &staged_ik, seal_key);
     } else {
         let old_ik = (|| -> Option<zeroize::Zeroizing<[u8; 32]>> {
             let bytes = std::fs::read(vault.join("meta/device-privkey.json")).ok()?;
@@ -2711,6 +2749,56 @@ mod tests {
     // committed roster (roll back, restore the worktree roster from the
     // commit) — reading the worktree would promote a key no commit
     // admits and strand the device's next commits.
+    #[test]
+    fn a_failed_rotation_commit_rolls_back_the_worktree() {
+        let _lock = HW_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _env = hw_env_clear();
+        crate::hwkey::install(std::sync::Arc::new(TapMock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        let seal = handle.unlocked().devkey_seal;
+        // Sabotage the repo so the rotation's commit fails mid-flight.
+        std::fs::remove_dir_all(handle.path.join(".git/objects")).unwrap();
+
+        let devkey = handle.path.join("meta/device-privkey.json");
+        let privkey_before = std::fs::read(&devkey).unwrap();
+        let roster_path = handle.path.join("meta/devices.json");
+        let roster_before = std::fs::read_to_string(&roster_path).unwrap();
+
+        let result = enable_hw_seal_rotating(
+            &handle.path,
+            handle.vault_id,
+            handle.device_id,
+            &seal,
+            Some(handle.unlocked().root().unwrap()),
+            false,
+            None,
+        );
+        // The rotation reports failure either way; the assertion is the
+        // worktree state after it.
+        assert!(result.is_err(), "the sabotaged commit must fail");
+
+        // The worktree is back: roster unchanged, no staging left, the
+        // device file untouched.
+        assert_eq!(
+            std::fs::read_to_string(&roster_path).unwrap(),
+            roster_before,
+            "roster must be restored after a failed commit"
+        );
+        assert!(!handle.path.join("meta/device-privkey.json.new").exists());
+        assert!(
+            !handle
+                .path
+                .join("meta/device-privkey.json.rotation")
+                .exists()
+        );
+        assert_eq!(std::fs::read(&devkey).unwrap(), privkey_before);
+
+        // The vault still opens with its original key material.
+        handle.lock();
+        handle.unlock(&password).unwrap();
+    }
+
     #[test]
     fn heal_uses_the_committed_roster_for_rotation_tears() {
         let _lock = HW_LOCK.lock().unwrap_or_else(|p| p.into_inner());
