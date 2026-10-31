@@ -1,4 +1,4 @@
-import { createSignal, onMount, onCleanup, Show } from "solid-js";
+import { createSignal, onSettled, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -46,13 +46,13 @@ export default function LegacyBanner() {
     }
   }
 
-  onMount(() => {
+  onSettled(() => {
     void check();
     window.addEventListener("focus", check);
-    onCleanup(() => {
+    return () => {
       alive = false;
       window.removeEventListener("focus", check);
-    });
+    };
   });
 
   return (

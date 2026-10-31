@@ -1,9 +1,9 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-10-30 (D80 scoped agent credential access landed: process-bound 15-minute grants, daemon-side environment injection and output scrubbing, CLI runs and human approvals, desktop approval and grant management, device-local password-gated permissive mode, and a tamper-evident audit trail. Signed desktop self-updates and the updater key pipeline also landed. Remaining: physical acceptance and the 0.1.0 beta build.)
+> Last updated: 2026-10-30 (0.1.0 is the first public beta. Physical acceptance runs during beta. Desktop builds target Linux and Windows locally plus self-signed macOS on ATTD-ZenX until an Apple Developer account is configured. Android uses a new release signing key for later Play Console distribution. D80 scoped agent credential access and signed desktop self-updates are landed.)
 > Previous (2026-10-26): Legacy Contact shipped end to end for 1.0, including the trusted-contact recovery core, deploy-key management, owner CLI and desktop flows, the user manual, and the owner-dies E2E. The feature-parity backlog was empty; manual tests and release engineering remained.
-> Next up: (1) Slice 4D: seal the mobile providers join-flow device key at birth, add the parity-matrix hardware row, and run the audit legs through UniFFI. (2) Slice 5 physical checklist on Android NFC + USB-OTG and desktop HID; rebuild the APK, re-enroll after the credential-bound AAD change, and capture real-token protocol vectors plus genuine attestation fixtures. The Samsung is currently unreachable over ADB and no desktop token is attached. (3) 1.0 release engineering and Esteban's manual UAT list below. Post-1.0: G12 iOS depth including NFC security keys.
+> Next up: (1) Assemble and sign the 0.1.0 Linux, Windows, macOS, and Android artifacts. (2) Create the draft release for Esteban's review, then publish versioned artifacts and the updates-stable manifest last. (3) Run physical security-key acceptance and the remaining manual UAT during beta. Post-1.0: G12 iOS depth including NFC security keys.
 
 ---
 

@@ -11,7 +11,7 @@
 //     (AuthContext re-uses the existing unlock screen)
 //   - clicking a CLOSED vault = same as locked (unlock opens + inserts)
 
-import { createSignal, createContext, useContext, onSettled, onMount, onCleanup } from "solid-js";
+import { createSignal, createContext, useContext, onSettled } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import { daemon } from "../lib/daemon.js";
 import { AuthContext } from "./AuthContext.jsx";
@@ -31,7 +31,8 @@ function VaultSwitcherProvider(props) {
   // shell when the vault being VIEWED locked; a background
   // Immediately-policy vault locking must not kick the user out.
   const auth = useContext(AuthContext);
-  onMount(() => {
+  onSettled(() => {
+    let disposed = false;
     let unlisten;
     listen("baluard://blur-locked", (e) => {
       const slugs = Array.isArray(e.payload) ? e.payload : [];
@@ -42,8 +43,14 @@ function VaultSwitcherProvider(props) {
         clearHeldPhrase();
         auth.setVaultInfo(null);
       }
-    }).then((fn) => { unlisten = fn; });
-    onCleanup(() => unlisten?.());
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   });
 
   async function refresh() {
