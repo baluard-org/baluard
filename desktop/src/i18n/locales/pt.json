@@ -1279,5 +1279,27 @@
     "managed": "As atualizações desta instalação são gerenciadas externamente.",
     "versionMismatchTitle": "O serviço em segundo plano do Baluard está desatualizado",
     "versionMismatchBody": "O aplicativo e o serviço em segundo plano são de versões diferentes.\nFeche o Baluard completamente e abra-o novamente."
+  },
+  "agents": {
+    "title": "Pedido de credenciais",
+    "requester": "Processo solicitante",
+    "items": "Itens solicitados",
+    "approve": "Aprovar por 15 minutos",
+    "deny": "Negar",
+    "approveAll": "Aprovar tudo por 15 minutos",
+    "settingsTitle": "Acesso de agentes",
+    "settingsDesc": "Revise quais ferramentas locais podem usar itens e revogue o acesso.",
+    "activeGrants": "Acesso ativo",
+    "revokeAll": "Revogar todo o acesso de agentes",
+    "yolo": "Permitir acesso de agentes sem perguntar",
+    "yoloDesc": "Somente neste dispositivo. Ferramentas locais podem pedir credenciais sem aprovação.",
+    "yoloWarning": "Isso remove a aprovação neste dispositivo. Qualquer processo local pode pedir credenciais. Ative somente se você confiar em todas as ferramentas que executa.",
+    "approved": "Acesso aprovado por 15 minutos.",
+    "denied": "Pedido negado.",
+    "revoked": "Acesso de agentes revogado.",
+    "yoloEnabled": "O acesso de agentes não perguntará mais neste dispositivo.",
+    "yoloDisabled": "O acesso de agentes pedirá aprovação.",
+    "notifyTitle": "Pedido de credenciais do Baluard",
+    "notifyBody": "{name} está pedindo para usar itens do cofre."
   }
 }

@@ -1279,5 +1279,27 @@
     "managed": "Updates for this installation are managed externally.",
     "versionMismatchTitle": "Baluard's background service is out of date",
     "versionMismatchBody": "The app and its background service are different versions.\nQuit Baluard completely and start it again."
+  },
+  "agents": {
+    "title": "Credential request",
+    "requester": "Requesting process",
+    "items": "Entries requested",
+    "approve": "Approve for 15 minutes",
+    "deny": "Deny",
+    "approveAll": "Approve all for 15 minutes",
+    "settingsTitle": "Agent access",
+    "settingsDesc": "Review which local tools can use entries and revoke their access.",
+    "activeGrants": "Active access",
+    "revokeAll": "Revoke all agent access",
+    "yolo": "Allow agent access without asking",
+    "yoloDesc": "On this device only. Local tools can request credentials without an approval prompt.",
+    "yoloWarning": "This removes the approval prompt on this device. Any local process can request credentials. Enable only if you trust every tool you run.",
+    "approved": "Access approved for 15 minutes.",
+    "denied": "Request denied.",
+    "revoked": "Agent access revoked.",
+    "yoloEnabled": "Agent access will no longer ask on this device.",
+    "yoloDisabled": "Agent access will ask for approval.",
+    "notifyTitle": "Baluard credential request",
+    "notifyBody": "{name} is asking to use vault entries."
   }
 }

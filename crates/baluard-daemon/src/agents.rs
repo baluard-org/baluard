@@ -85,6 +85,13 @@ pub async fn handle_agent_route(
             if !state.is_unlocked().await {
                 return err_response(format!("Vault '{slug}' is locked"));
             }
+            if yolo_enabled(&slug) {
+                let token = state.agent_mint(peer.clone(), payload.item_ids, DEFAULT_TTL_SECS);
+                return ok_resp(
+                    serde_json::json!({"status": "approved", "token": token}).to_string(),
+                    None,
+                );
+            }
             match host.pending_requests().push(
                 Some(slug),
                 peer.clone(),
@@ -123,7 +130,7 @@ pub async fn handle_agent_route(
             }
         }
         "agents.pending" => {
-            let (_slug, state) = match target_state(req, host, None).await {
+            let (slug, state) = match target_state(req, host, None).await {
                 Ok(pair) => pair,
                 Err(resp) => return resp,
             };
@@ -134,6 +141,7 @@ pub async fn handle_agent_route(
                 .pending_requests()
                 .list()
                 .into_iter()
+                .filter(|p| p.vault_slug.as_deref().map_or(true, |s| s == slug))
                 .map(|p| {
                     serde_json::json!({
                         "request_id": p.request_id,
@@ -207,7 +215,7 @@ pub async fn handle_agent_route(
             ok_resp(serde_json::json!({"revoked": true}).to_string(), None)
         }
         "agents.list" => {
-            let (_slug, state) = match target_state(req, host, None).await {
+            let (slug, state) = match target_state(req, host, None).await {
                 Ok(pair) => pair,
                 Err(resp) => return resp,
             };
@@ -226,9 +234,41 @@ pub async fn handle_agent_route(
                     })
                 })
                 .collect();
-            ok_resp(serde_json::json!({"grants": grants}).to_string(), None)
+            ok_resp(
+                serde_json::json!({"grants": grants, "yolo": yolo_enabled(&slug)}).to_string(),
+                None,
+            )
         }
         "agents.run" => crate::agent_run::run(req, host, peer).await,
+        "agents.set_yolo" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid agent setting: {e}")),
+            };
+            let enabled = payload["enabled"].as_bool().unwrap_or(false);
+            let (slug, state) = match target_state(req, host, None).await {
+                Ok(pair) => pair,
+                Err(resp) => return resp,
+            };
+            if let Err(resp) = verify_user(req, &state).await {
+                return resp;
+            }
+            if enabled {
+                let Some(password) = payload["master_password"].as_str() else {
+                    return err_response(
+                        "Master password required to allow agent access without prompts",
+                    );
+                };
+                if let Err(e) = crate::handler::verify_seal_change_password(&state, password).await
+                {
+                    return err_response(e);
+                }
+            }
+            if let Err(e) = write_yolo(&slug, enabled) {
+                return err_response(e);
+            }
+            ok_resp(serde_json::json!({"enabled": enabled}).to_string(), None)
+        }
         "agents.revoke_own" => {
             let (_slug, state) = match target_state(req, host, None).await {
                 Ok(pair) => pair,
@@ -242,4 +282,43 @@ pub async fn handle_agent_route(
         }
         _ => err_response(format!("Unknown action: {}", req.action)),
     }
+}
+
+// D80: permissive mode is a device-local policy file, never vault settings
+// and therefore never git-synced to another machine.
+fn yolo_path() -> std::path::PathBuf {
+    baluard_core::paths::data_dir().join("agent-yolo.json")
+}
+
+fn yolo_enabled(slug: &str) -> bool {
+    std::fs::read_to_string(yolo_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| value.get(slug).and_then(serde_json::Value::as_bool))
+        == Some(true)
+}
+
+fn write_yolo(slug: &str, enabled: bool) -> Result<(), String> {
+    let path = yolo_path();
+    let mut value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !value.is_object() {
+        value = serde_json::json!({});
+    }
+    value[slug] = serde_json::Value::Bool(enabled);
+    let parent = path
+        .parent()
+        .ok_or("agent setting has no parent directory")?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("create agent setting directory: {e}"))?;
+    let tmp = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
+    std::fs::write(&tmp, value.to_string()).map_err(|e| format!("write agent setting: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("secure agent setting: {e}"))?;
+    }
+    std::fs::rename(&tmp, &path).map_err(|e| format!("commit agent setting: {e}"))
 }

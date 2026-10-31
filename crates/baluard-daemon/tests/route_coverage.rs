@@ -5897,3 +5897,92 @@ async fn agent_run_injects_only_approved_fields_and_scrubs_both_streams() {
     assert!(state.verify_agent_token(&agent_token).is_err());
     assert!(state.agent_live_grants().is_empty());
 }
+
+#[tokio::test]
+async fn agent_permissive_mode_is_password_gated_and_device_local() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, host, state) = agent_host("agent-yolo").await;
+    let peer = agent_peer(46);
+    let user_token = state.get_session_token().await.unwrap();
+    let wrong = route_host_request(
+        agent_request(
+            "agents.set_yolo",
+            serde_json::json!({"enabled": true, "master_password": "wrong"}),
+            user_token.clone(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(!wrong.success);
+    assert!(wrong.error_message.contains("master password incorrect"));
+    baluard_daemon::rate_limit::global().record_success(&state.vault_path.to_string_lossy());
+
+    let enabled = route_host_request(
+        agent_request(
+            "agents.set_yolo",
+            serde_json::json!({"enabled": true, "master_password": MASTER}),
+            user_token.clone(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(enabled.success, "err: {}", enabled.error_message);
+    let listed = route_host_request(
+        agent_request("agents.list", serde_json::json!({}), user_token.clone()),
+        &host,
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&listed.payload).unwrap()["yolo"],
+        true
+    );
+    assert!(
+        baluard_core::paths::data_dir()
+            .join("agent-yolo.json")
+            .exists()
+    );
+
+    let payload = serde_json::json!({
+        "slug": "personal",
+        "claimed_name": "Example agent",
+        "need": "GitHub login",
+        "item_ids": ["item-1"]
+    });
+    let automatic = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request("agents.request", payload.clone(), String::new()),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(automatic.success, "err: {}", automatic.error_message);
+    let automatic_json: serde_json::Value = serde_json::from_str(&automatic.payload).unwrap();
+    assert_eq!(automatic_json["status"], "approved");
+    assert!(
+        automatic_json["token"]
+            .as_str()
+            .unwrap()
+            .starts_with("agt_")
+    );
+    assert!(host.pending_requests().list().is_empty());
+
+    let disabled = route_host_request(
+        agent_request(
+            "agents.set_yolo",
+            serde_json::json!({"enabled": false}),
+            user_token,
+        ),
+        &host,
+    )
+    .await;
+    assert!(disabled.success, "err: {}", disabled.error_message);
+    let manual = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request("agents.request", payload, String::new()),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&manual.payload).unwrap()["status"],
+        "pending"
+    );
+}

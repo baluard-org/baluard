@@ -11,9 +11,15 @@
     {
       "identifier": "opener:allow-open-url",
       "allow": [
-        { "url": "http://**" },
-        { "url": "https://**" },
-        { "url": "mailto:*" }
+        {
+          "url": "http://**"
+        },
+        {
+          "url": "https://**"
+        },
+        {
+          "url": "mailto:*"
+        }
       ]
     },
     {
@@ -27,6 +33,7 @@
     },
     "shell:allow-kill",
     "biometry:default",
-    "dialog:default"
+    "dialog:default",
+    "notification:default"
   ]
 }
