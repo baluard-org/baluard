@@ -3,12 +3,6 @@ syntax = "proto3";
 package baluard.auth;
 
 
-message DeviceIdentityEscrow {
-  string device_id = 1;
-  string encrypted_private_key = 2; // Device's X25519 private key symmetrically wrapped with Master Password KEK
-  string signature_public_key = 3;  // Ed25519 public key
-}
-
 message GatewayRequest {
   string action = 1;
   string payload = 2;

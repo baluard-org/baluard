@@ -182,10 +182,6 @@ class BaluardAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun runOnUiThread(block: () -> Unit) {
-        android.os.Handler(android.os.Looper.getMainLooper()).post(block)
-    }
-
     private fun toastMain(message: String) {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             android.widget.Toast.makeText(applicationContext, message, android.widget.Toast.LENGTH_SHORT).show()

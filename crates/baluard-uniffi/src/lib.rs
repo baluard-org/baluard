@@ -28,8 +28,6 @@ pub enum BaluardError {
     #[error("provider error: {detail}")]
     Provider { detail: String },
 
-    /// Device is not enrolled in the target vault (requires 24-word recovery phrase entry).
-
     /// Master password verification failed (wrong password).
     #[error("wrong master password")]
     WrongPassword,
@@ -288,7 +286,6 @@ pub fn recovery_sheet_bytes(
     })
 }
 
-/// Derive a 32-byte key-encryption key (KEK) from a master password + salt via
 /// Open a passphrase-guest reveal (S2 IS-6, G4): the host-level,
 /// vault-agnostic shared-file leg. Pure compute — bytes in, an Argon2id
 /// derivation over the user-supplied passphrase, fields out; nothing on
@@ -2035,7 +2032,6 @@ pub async fn create_vault_with_recovery(
 // config records use u32 (not usize) because UniFFI prefers fixed-width ints
 // at the boundary; usize is platform-dependent.
 
-/// Options for [`generate_password`]. Mirrors `baluard_core::generator::PasswordOptions`.
 /// One request-catalog entry the admin publishes: the collection id
 /// plus the plaintext display name requesters see when asking.
 #[derive(uniffi::Record)]
@@ -2090,18 +2086,6 @@ pub fn generate_passphrase(config: PassphraseConfig) -> Result<String, BaluardEr
         symbol: config.symbol,
     };
     Ok(baluard_core::generator::generate_passphrase(&opts)?)
-}
-
-/// Trivial async fn to validate the UniFFI async -> Kotlin `suspend` bridge
-/// against the real `baluard-runtime` dependency (proves the tokio runtime +
-/// spawn_blocking path compiles and crosses the FFI boundary). Returns a
-/// fixed string; the point is the async machinery, not the value.
-#[uniffi::export]
-pub async fn spike_async_probe() -> String {
-    // Touch the runtime dep so the linker pulls it in and we prove the version
-    // matrix (tokio + uniffi + baluard-runtime) compiles together.
-    let _ = baluard_runtime::AutoSyncState::Idle;
-    "baluard-uniffi async bridge ok".to_string()
 }
 
 // ── Provider connection & device flow (Slice B) ──────────────────────
@@ -2747,15 +2731,6 @@ mod tests {
         params.salt = vec![0u8; 32];
         let key = baluard_core::crypto::kdf::derive_kek("password123", &params).unwrap();
         assert_eq!(key.len(), 32, "KEK must be 32 bytes (AES-256)");
-    }
-
-    #[tokio::test]
-    async fn async_bridge_compiles_and_runs() {
-        // Validates the UniFFI async -> Kotlin suspend path will have a working
-        // tokio runtime underneath (the actual suspend bridging is verified
-        // on-device in the Phase 1 APK build; here we prove the Rust side runs).
-        let s = spike_async_probe().await;
-        assert!(s.contains("async bridge ok"));
     }
 
     #[test]

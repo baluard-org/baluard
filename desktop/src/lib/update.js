@@ -45,8 +45,15 @@ export function setAutoChecksEnabled(enabled, store = window.localStorage) {
 }
 
 // Random 0..STARTUP_JITTER_MS so a fleet of users does not ping GitHub in
-// the same second after launch.
-export function startupDelayMs(rand = Math.random) {
+// the same second after launch. crypto.getRandomValues per the house rule;
+// the injectable rand keeps tests deterministic.
+function cryptoRand() {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / 2 ** 32;
+}
+
+export function startupDelayMs(rand = cryptoRand) {
   return Math.floor(rand() * STARTUP_JITTER_MS);
 }
 

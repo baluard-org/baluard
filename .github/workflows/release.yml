@@ -1,6 +1,6 @@
 # 1.0 release pipeline (SKELETON — review alongside the signing rulings).
 #
-# Fires only on a pushed v* tag or an explicit workflow_dispatch; pushing
+# Fires only on an explicit workflow_dispatch; pushing
 # this file alone runs nothing. The release job publishes a DRAFT release so
 # the artifacts can be inspected before going live.
 #
