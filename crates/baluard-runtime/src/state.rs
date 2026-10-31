@@ -498,11 +498,25 @@ impl VaultState {
             let guard = self.inner.read().await;
             if let Some(ref handle) = *guard {
                 if handle.is_unlocked() {
-                    // Raced another unlock, or the 4h expiry dropped the
-                    // token while the vault stayed open: the caller just
-                    // presented the master password, so minting is safe.
+                    drop(guard);
+                    // A session token is a bearer capability: minting or
+                    // acknowledging one demands the master password, the
+                    // same canary oracle a locked unlock pays first. The
+                    // short-circuit skips the tail, never the proof.
+                    self.verify_master_password(master_password)
+                        .await
+                        .map_err(|e| {
+                            if e == "master password incorrect" {
+                                baluard_core::error::BaluardError::from(
+                                    baluard_core::error::VaultError::PasswordMismatch,
+                                )
+                            } else {
+                                baluard_core::error::BaluardError::from(
+                                    baluard_core::error::VaultError::Metadata(e),
+                                )
+                            }
+                        })?;
                     if self.get_session_token().await.is_none() {
-                        drop(guard);
                         return self.finish_unlock_already_open().await;
                     }
                     return Ok(());
@@ -10007,6 +10021,48 @@ mod enroll_phrase_seal_tests {
 /// success, so a refused drain must leave the vault unlocked and a finished
 /// cycle must drain-and-lock. The with_timeout variant keeps the refusal
 /// test fast instead of waiting out the 30s production budget.
+#[cfg(test)]
+mod unlock_proof_tests {
+    use super::*;
+
+    const MASTER: &str = "unlock-proof-master-password";
+
+    async fn unlocked_vault() -> (tempfile::TempDir, Arc<VaultState>) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(VaultState::new(dir.path().to_path_buf()));
+        state
+            .create_vault(
+                &serde_json::json!({"password": MASTER, "profile": "mobile_low"}).to_string(),
+            )
+            .await
+            .unwrap();
+        state.unlock(MASTER).await.unwrap();
+        (dir, state)
+    }
+
+    // B1: while the vault is open, vault.unlock with an arbitrary
+    // password used to return Ok and re-mint the session token with no
+    // proof at all, handing the bearer capability to any same-user
+    // caller. The short-circuit may skip the tail, never the proof.
+    #[tokio::test]
+    async fn unlock_on_an_open_vault_demands_the_master_password() {
+        let (_dir, state) = unlocked_vault().await;
+        let err = state
+            .unlock("definitely-not-the-password")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("master password incorrect"),
+            "got: {err}"
+        );
+        state
+            .unlock(MASTER)
+            .await
+            .expect("the real password still unlocks");
+        assert!(state.get_session_token().await.is_some());
+    }
+}
+
 #[cfg(test)]
 mod prepare_update_tests {
     use super::*;

@@ -850,6 +850,56 @@ async fn malformed_payloads_do_not_reset_the_failure_budget() {
     baluard_daemon::rate_limit::global().record_success(&state.vault_path.to_string_lossy());
 }
 
+// B1: on an already-unlocked vault, vault.unlock with an arbitrary
+// password must refuse and charge the budget (the same classification a
+// locked unlock pays) instead of succeeding and minting the token.
+#[tokio::test]
+async fn unlock_on_an_open_vault_refuses_and_charges_a_garbage_password() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_tmp, state) = open_unlocked("unlock-proof").await;
+    register_in_registry("unlock-proof", &state.vault_path);
+    let host: baluard_daemon::host::SharedVaultHost = Arc::new(VaultHost::new());
+    host.insert("unlock-proof".into(), state.clone()).await;
+    host.switch("unlock-proof").await.expect("activate vault");
+    baluard_daemon::rate_limit::global().record_success(&state.vault_path.to_string_lossy());
+    let send = |payload: String| {
+        route_host_request(
+            GatewayRequest {
+                action: "vault.unlock".to_string(),
+                payload,
+                session_token: String::new(),
+                slug: "unlock-proof".to_string(),
+            },
+            &host,
+        )
+    };
+
+    let r = send(serde_json::json!({"password": "definitely-not-the-password"}).to_string()).await;
+    assert!(
+        r.error_message.contains("master password incorrect"),
+        "{}",
+        r.error_message
+    );
+
+    // The handler sleeps out the 2s attempt-1 backoff before returning,
+    // so a second guess is allowed in and charges the counter again.
+    // The third probe then hits the attempt-2 window, which proves both
+    // guesses charged (a neutral route would leave the counter at zero).
+    let r = send(serde_json::json!({"password": "definitely-not-the-password"}).to_string()).await;
+    assert!(
+        r.error_message.contains("master password incorrect"),
+        "{}",
+        r.error_message
+    );
+    let r = send(serde_json::json!({"password": "definitely-not-the-password"}).to_string()).await;
+    assert!(
+        r.error_message.contains("Too many failed attempts"),
+        "{}",
+        r.error_message
+    );
+    baluard_daemon::rate_limit::global().record_success(&state.vault_path.to_string_lossy());
+}
+
 // ── VaultHost: switch + lock_all ──────────────────────────────────
 
 #[tokio::test]
