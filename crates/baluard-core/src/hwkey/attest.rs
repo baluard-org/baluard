@@ -238,6 +238,12 @@ fn parse_cert(der: &[u8]) -> Option<CertParts> {
                     if bc.tag != 0x30 {
                         return None;
                     }
+                    if bc.body.is_empty() {
+                        // cA BOOLEAN DEFAULT FALSE: the empty SEQUENCE
+                        // encoding is explicit false on the wire.
+                        ca = Some(false);
+                        continue;
+                    }
                     let first = tlv(bc.body)?;
                     ca = Some(match (first.tag, first.body) {
                         (0x01, [0]) => false,
@@ -261,7 +267,21 @@ fn parse_cert(der: &[u8]) -> Option<CertParts> {
                     0x01,
                     0x04,
                 ] => {
-                    aaguid = Some(value_body.try_into().ok()?);
+                    // RFC 5280: extnValue carries the DER of the extension
+                    // value; WebAuthn 8.2.1 defines that value as
+                    // OCTET STRING(16), so the wire body is 04 10 || aaguid.
+                    // Some soft tokens skip the inner wrap; both shapes are
+                    // equality-bound to attested.aaguid below either way.
+                    let bytes: &[u8] = if value_body.len() == 16 {
+                        value_body
+                    } else {
+                        let inner = tlv(value_body)?;
+                        if inner.tag != 0x04 || inner.body.len() != 16 {
+                            return None;
+                        }
+                        inner.body
+                    };
+                    aaguid = Some(bytes.try_into().ok()?);
                 }
                 _ => {}
             }
@@ -754,7 +774,7 @@ pub(crate) mod test_chain {
         }
     }
 
-    fn tlv_bytes(tag: u8, body: &[u8]) -> Vec<u8> {
+    pub(super) fn tlv_bytes(tag: u8, body: &[u8]) -> Vec<u8> {
         let mut v = vec![tag];
         v.extend(tlv_len(body.len()));
         v.extend_from_slice(body);
@@ -849,13 +869,18 @@ pub(crate) mod test_chain {
         )
     }
 
-    /// id-fido-gen-ce-aaguid (1.3.6.1.4.1.45724.1.1.4): OCTET STRING of
-    /// the 16 raw AAGUID bytes (webauthn-rs-core's parse shape).
+    /// id-fido-gen-ce-aaguid (1.3.6.1.4.1.45724.1.1.4). RFC 5280 extnValue
+    /// carries the DER of the extension value, and WebAuthn 8.2.1 defines
+    /// that value as OCTET STRING(16), so the wire shape is double-wrapped:
+    /// extnValue = 04 12 || 04 10 || 16 AAGUID bytes.
     pub fn aaguid_extension(aaguid: &[u8; 16]) -> Vec<u8> {
         let oid = vec![
             0x06, 0x0B, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xE5, 0x1C, 0x01, 0x01, 0x04,
         ];
-        tlv_bytes(0x30, &[oid, tlv_bytes(0x04, aaguid)].concat())
+        tlv_bytes(
+            0x30,
+            &[oid, tlv_bytes(0x04, &tlv_bytes(0x04, aaguid))].concat(),
+        )
     }
 
     /// Spec-shaped authData with a caller-supplied COSE public key.
@@ -1005,6 +1030,54 @@ mod tests {
         // A valid long-form length still parses.
         let ok = tlv(&[0x30, 0x82, 0x00, 0x02, 0xAA, 0xBB]).expect("valid long form");
         assert_eq!(ok.body, &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn spec_and_legacy_aaguid_extension_shapes_parse() {
+        // B2: RFC 5280 extnValue carries the DER of the extension value,
+        // so spec-shaped certs double-wrap (04 10 || 16 bytes). Legacy
+        // soft tokens single-wrap. parse_cert must read both; a wrong
+        // shape must not silently drop the extension.
+        let leaf = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let aaguid = [0x5Du8; 16];
+        let spec = test_chain::build_cert_ext(
+            &leaf,
+            &leaf,
+            b"device",
+            &[test_chain::aaguid_extension(&aaguid)],
+            Some(false),
+        );
+        let parts = parse_cert(&spec).expect("spec-shaped AAGUID parses");
+        assert_eq!(parts.aaguid, Some(aaguid));
+
+        let oid = vec![
+            0x06, 0x0B, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xE5, 0x1C, 0x01, 0x01, 0x04,
+        ];
+        let legacy_ext =
+            test_chain::tlv_bytes(0x30, &[oid, test_chain::tlv_bytes(0x04, &aaguid)].concat());
+        let legacy =
+            test_chain::build_cert_ext(&leaf, &leaf, b"device", &[legacy_ext], Some(false));
+        let parts = parse_cert(&legacy).expect("legacy single-wrap AAGUID parses");
+        assert_eq!(parts.aaguid, Some(aaguid));
+    }
+
+    #[test]
+    fn empty_basic_constraints_sequence_means_ca_false() {
+        // B2: cA BOOLEAN DEFAULT FALSE, so conforming CAs may encode the
+        // empty SEQUENCE (30 00). It must parse as explicit false, and a
+        // parent carrying it stays a structural refusal.
+        let leaf = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let bc = test_chain::tlv_bytes(
+            0x30,
+            &[
+                vec![0x06, 0x03, 0x55, 0x1D, 0x13],
+                test_chain::tlv_bytes(0x04, &[0x30, 0x00]),
+            ]
+            .concat(),
+        );
+        let der = test_chain::build_cert_ext(&leaf, &leaf, b"x", &[bc], None);
+        let parts = parse_cert(&der).expect("empty SEQUENCE basicConstraints parses");
+        assert_eq!(parts.ca, Some(false));
     }
 
     #[test]
