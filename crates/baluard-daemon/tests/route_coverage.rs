@@ -5483,6 +5483,7 @@ async fn agent_host(label: &str) -> (tempfile::TempDir, Arc<VaultHost>, Arc<Vaul
 
 #[tokio::test]
 async fn agent_request_requires_peer_identity_and_an_unlocked_vault() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-preconditions").await;
     let payload = serde_json::json!({
         "slug": "personal",
@@ -5529,6 +5530,7 @@ async fn agent_request_requires_peer_identity_and_an_unlocked_vault() {
 
 #[tokio::test]
 async fn agent_grants_survive_the_desktop_blur_lock() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-blur").await;
     state.agent_mint(agent_peer(45), vec!["item-1".into()], 60);
     let locked = host.lock_blur_vaults().await;
@@ -5541,6 +5543,7 @@ async fn agent_grants_survive_the_desktop_blur_lock() {
 
 #[tokio::test]
 async fn agent_approval_is_one_time_and_lock_kills_the_grant() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-approval").await;
     let peer = agent_peer(42);
     let requested = baluard_daemon::handler::route_host_request_with_peer(
@@ -5640,6 +5643,7 @@ async fn agent_approval_is_one_time_and_lock_kills_the_grant() {
 
 #[tokio::test]
 async fn agent_denial_is_reported_without_a_grant() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-denial").await;
     let peer = agent_peer(43);
     let requested = baluard_daemon::handler::route_host_request_with_peer(
@@ -5689,6 +5693,7 @@ async fn agent_denial_is_reported_without_a_grant() {
 
 #[tokio::test]
 async fn agent_approval_requires_the_user_token_and_caps_prompt_flooding() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, _state) = agent_host("agent-caps").await;
     let peer = agent_peer(44);
     let payload = serde_json::json!({
@@ -5749,6 +5754,7 @@ async fn agent_approval_requires_the_user_token_and_caps_prompt_flooding() {
 
 #[tokio::test]
 async fn agent_run_injects_only_approved_fields_and_scrubs_both_streams() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-run").await;
     let mut input = login_input("GitHub", "octocat");
     if let CipherKind::Login(ref mut data) = input.kind {
@@ -5874,6 +5880,25 @@ async fn agent_run_injects_only_approved_fields_and_scrubs_both_streams() {
     let grants: serde_json::Value = serde_json::from_str(&listed.payload).unwrap();
     assert_eq!(grants["grants"][0]["item_ids"][0], item_id);
     assert_eq!(grants["grants"][0]["pid"], std::process::id());
+
+    let audited = route_host_request(
+        agent_request("agents.audit", serde_json::json!({}), user_token.clone()),
+        &host,
+    )
+    .await;
+    assert!(audited.success, "err: {}", audited.error_message);
+    let audit: serde_json::Value = serde_json::from_str(&audited.payload).unwrap();
+    let kinds: Vec<&str> = audit["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["event"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"requested"));
+    assert!(kinds.contains(&"approved"));
+    assert!(kinds.contains(&"run_started"));
+    assert!(kinds.contains(&"run_finished"));
+    assert!(!audited.payload.contains(&expected_password));
 
     let self_revoked = route_host_request(
         agent_request(

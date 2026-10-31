@@ -79,6 +79,19 @@ pub async fn run(
         return err_response("agent injection is invalid or outside the approved items");
     }
 
+    if let Err(error) = crate::agent_audit::append(
+        &baluard_core::paths::data_dir(),
+        "run_started",
+        &_slug,
+        peer,
+        None,
+        payload.argv.first().map(String::as_str),
+        &verdict.grant_item_ids,
+        "started",
+    ) {
+        return err_response(format!("agent audit failed: {error}"));
+    }
+
     let mut values: Vec<(String, Zeroizing<String>)> = Vec::new();
     for injection in &payload.inject {
         let json = match state.get_cipher(&injection.item_id, true).await {
@@ -182,6 +195,18 @@ pub async fn run(
     let stdout = crate::scrub::scrub_output(&stdout, &secrets);
     let stderr = crate::scrub::scrub_output(&stderr, &secrets);
     payload.argv.zeroize();
+    if let Err(error) = crate::agent_audit::append(
+        &baluard_core::paths::data_dir(),
+        "run_finished",
+        &_slug,
+        peer,
+        None,
+        None,
+        &verdict.grant_item_ids,
+        &format!("exit:{}", status.code().unwrap_or(-1)),
+    ) {
+        eprintln!("agent audit: {error}");
+    }
     ok_resp(
         serde_json::json!({
             "status": status.code().unwrap_or(-1),

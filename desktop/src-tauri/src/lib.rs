@@ -339,6 +339,15 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "notices.list",
         "activity.events",
         "activity.refusals",
+        // D80: only human administration routes. Agent request, poll, and
+        // credential execution stay unavailable to the webview.
+        "agents.pending",
+        "agents.approve",
+        "agents.deny",
+        "agents.revoke",
+        "agents.list",
+        "agents.set_yolo",
+        "agents.audit",
     "vaults.register_local",
     "vaults.switch",
     // clone from provider

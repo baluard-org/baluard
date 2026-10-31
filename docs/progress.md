@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-10-30 (Security-key work through slice 4C and the full adversarial review program landed and pushed: desktop FIDO2, the pure-Rust CTAP2 client, Android NFC + USB-OTG, hw-bound identity sealing, rotation/crash healing, typed errors, transactional password changes, and all C/H/M/L/N plus residual R1-R3 findings. Reference hardware enrolled over USB-OTG with a verified Yubico attestation. Main is at 75d2b37. Remaining: slice 4D mobile parity closure and physical acceptance.)
+> Last updated: 2026-10-30 (D80 scoped agent credential access landed: process-bound 15-minute grants, daemon-side environment injection and output scrubbing, CLI runs and human approvals, desktop approval and grant management, device-local password-gated permissive mode, and a tamper-evident audit trail. Signed desktop self-updates and the updater key pipeline also landed. Remaining: physical acceptance and the 0.1.0 beta build.)
 > Previous (2026-10-26): Legacy Contact shipped end to end for 1.0, including the trusted-contact recovery core, deploy-key management, owner CLI and desktop flows, the user manual, and the owner-dies E2E. The feature-parity backlog was empty; manual tests and release engineering remained.
 > Next up: (1) Slice 4D: seal the mobile providers join-flow device key at birth, add the parity-matrix hardware row, and run the audit legs through UniFFI. (2) Slice 5 physical checklist on Android NFC + USB-OTG and desktop HID; rebuild the APK, re-enroll after the credential-bound AAD change, and capture real-token protocol vectors plus genuine attestation fixtures. The Samsung is currently unreachable over ADB and no desktop token is attached. (3) 1.0 release engineering and Esteban's manual UAT list below. Post-1.0: G12 iOS depth including NFC security keys.
 
@@ -9,7 +9,7 @@
 
 ## Current Frontier (read this first on session start)
 
-Active work: **security-key closure and 1.0 release preparation** (`docs/plan-yubikey-seal.md` tracks slices 4D and 5; `docs/feature-parity.md` tracks platform parity; `docs/e2e-testing.md` owns the test plan). Mobile Phase 7 (iOS AutoFill Credential Provider extension) is parked past 1.0. Android Phases 0 through 6 are complete.
+Active work: **0.1.0 beta release preparation and physical acceptance** (`docs/plan-yubikey-seal.md` tracks slices 4D and 5; `docs/feature-parity.md` tracks platform parity; `docs/e2e-testing.md` owns the test plan). Mobile Phase 7 (iOS AutoFill Credential Provider extension) is parked past 1.0. Android Phases 0 through 6 are complete.
 
 | Wave / Phase | Work | State |
 |---|---|---|
