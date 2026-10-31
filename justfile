@@ -468,6 +468,11 @@ desktop-build: _sysdeps-desktop _sidecar desktop-deps
 updater-key:
 	@echo 'npx @tauri-apps/cli signer generate -w ~/.tauri/baluard-updater.key'
 
+# Print the Android upload-key command. The keystore and passwords stay with you.
+android-release-key:
+	@echo 'mkdir -p ~/.baluard && keytool -genkeypair -v -keystore ~/.baluard/baluard-android-upload.keystore -alias baluard-upload -keyalg RSA -keysize 4096 -validity 10000'
+	@echo 'Back up the keystore and passwords before building the release.'
+
 # Install-and-launch smoke test for a built Linux package (deb or rpm).
 # Usage: just smoke-pkg desktop/src-tauri/target/release/bundle/deb/*.deb
 # Installs with the distro package manager (declared runtime deps must
