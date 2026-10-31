@@ -1380,11 +1380,23 @@ pub fn run() {
         render::write_marker();
     }
 
+#[tauri::command]
+fn notify_agent_request(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_biometry::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Mutex::new(None::<Daemon>))
         .manage(Mutex::new(SessionStore {
@@ -1631,6 +1643,7 @@ pub fn run() {
             daemon_request,
             daemon_status,
             daemon_version,
+            notify_agent_request,
             updater_status,
             updater_check,
             updater_install,

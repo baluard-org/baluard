@@ -301,6 +301,7 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     "agents.list",
     "agents.run",
     "agents.revoke_own",
+    "agents.set_yolo",
 ];
 
 /// Default-deny gate for the per-vault dispatcher. Unknown actions require
@@ -360,6 +361,7 @@ const HOST_ACTIONS: &[&str] = &[
     "agents.list",
     "agents.run",
     "agents.revoke_own",
+    "agents.set_yolo",
     "bridge.list",
     "bridge.config",
     "bridge.match",
@@ -673,7 +675,7 @@ fn extract_slug(payload: &str) -> Option<String> {
 /// the master password — the session token alone must not let a
 /// compromised webview weaken the seal. Canary-only proof: no chip tap,
 /// no full unlock. Guesses burn the per-vault unlock budget.
-async fn verify_seal_change_password(
+pub(crate) async fn verify_seal_change_password(
     state: &SharedVaultState,
     master_password: &str,
 ) -> Result<(), String> {

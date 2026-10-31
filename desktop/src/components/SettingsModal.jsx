@@ -16,6 +16,7 @@ import { biometryAvailable } from "../lib/biometry.js";
 import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import UpdateSettingsRow from "./UpdateSettingsRow.jsx";
+import AgentSettingsRow from "./AgentSettingsRow.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 import SyncTab from "./SyncTab.jsx";
 import PeopleTab from "./PeopleTab.jsx";
@@ -1037,6 +1038,7 @@ export default function SettingsModal() {
                 </Show>
 
                 <UpdateSettingsRow />
+                <AgentSettingsRow />
               </Show>
 
               <Show when={activeTab() === "data"}>
