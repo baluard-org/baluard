@@ -59,7 +59,11 @@ export default function AgentSettingsRow() {
           type="checkbox"
           checked={agents.yolo()}
           onChange={(e) => {
-            if (e.currentTarget.checked) setConfirmYolo(true);
+            const wants = e.currentTarget.checked;
+            // The native box follows the signal until a confirmed enable
+            // flips it; cancelling must not leave a stale visual state.
+            e.currentTarget.checked = agents.yolo();
+            if (wants) setConfirmYolo(true);
             else agents.setYolo(false).catch(() => {});
           }}
         />
