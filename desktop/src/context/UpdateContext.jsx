@@ -5,7 +5,7 @@
 // checks surface errors. Installs never run in the background — an
 // available update waits for the user's click.
 
-import { createContext, useContext, createSignal, onMount, onCleanup } from "solid-js";
+import { createContext, useContext, createSignal, onSettled } from "solid-js";
 import {
   updaterStatus,
   updaterCheck,
@@ -87,31 +87,24 @@ export function UpdateProvider(props) {
     setError(null);
   }
 
-  onMount(() => {
+  onSettled(() => {
+    let disposed = false;
     let unlisten;
     listenUpdateProgress((p) => {
       if (p && typeof p.downloaded === "number") {
         setProgress({ received: p.downloaded, total: p.total ?? 0 });
       }
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
-    onCleanup(() => unlisten?.());
 
-    // Registered SYNCHRONOUSLY in the mount owner: the await below loses
-    // the reactive owner, and an onCleanup registered after it never fires
-    // (the H10 lesson). The timers start immediately; check() itself is a
-    // no-op until the status probe lands and confirms the updater.
     const first = setTimeout(() => {
       if (backgroundCheckDue()) check({ manual: false });
     }, startupDelayMs());
     const timer = setInterval(() => {
       if (backgroundCheckDue()) check({ manual: false });
     }, CHECK_INTERVAL_MS);
-    onCleanup(() => {
-      clearTimeout(first);
-      clearInterval(timer);
-    });
 
     (async () => {
       try {
@@ -120,6 +113,13 @@ export function UpdateProvider(props) {
         setStatus({ configured: false, channel: "", version: "" });
       }
     })();
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+      clearTimeout(first);
+      clearInterval(timer);
+    };
   });
 
   const store = {

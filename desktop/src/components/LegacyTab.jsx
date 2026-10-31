@@ -1,4 +1,4 @@
-import { createSignal, onMount, Show } from "solid-js";
+import { createSignal, onSettled, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError, generatePassphrase } from "../lib/utils.js";
@@ -32,7 +32,7 @@ export default function LegacyTab() {
   const [confirmKind, setConfirmKind] = createSignal(null); // deny|disarm
   const [replacing, setReplacing] = createSignal(false); // arm form open while armed
 
-  onMount(() => void load());
+  onSettled(() => void load());
 
   async function load() {
     try {
