@@ -1800,6 +1800,16 @@ fn main() {
     // recognised variables.
     let _ = dotenvy::dotenv();
 
+    // Hardware-backed key seal: --direct opens sealed device files in
+    // this process, so it needs the same stores the daemon registers
+    // (platform chip when built with hw-seal, FIDO2 when built with
+    // fido2). Without a store every SealedHw vault fails closed.
+    if let Some(store) = baluard_core::hwkey::platform_store() {
+        baluard_core::hwkey::install(store);
+    }
+    #[cfg(feature = "fido2")]
+    baluard_core::hwkey::install(baluard_core::hwkey::fido::store());
+
     let cli = Cli::parse();
 
     // Resolve --vault flag.

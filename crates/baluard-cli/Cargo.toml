@@ -52,3 +52,8 @@ e2e-hooks = ["baluard-core/e2e-hooks"]
 # TPM-backed devkey seal (plan-hardware-backed-keys Phase 3); the
 # daemon installs the platform store at startup when built with it.
 hw-seal = ["baluard-core/hw-seal"]
+# FIDO2 security-key seal: --direct unlock and seal management on
+# hardware-sealed vaults. The daemon-first path needs this only in the
+# daemon binary, but a --direct caller without it fails closed on any
+# SealedHw vault.
+fido2 = ["baluard-core/fido2"]

@@ -11177,12 +11177,21 @@ impl VaultHandle {
         let Ok(mut manifest) = crate::integrity::IntegrityManifest::load(&self.path) else {
             return;
         };
-        let seal_key = self.devkey_seal();
-        let Ok(privkeys) = load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())
-        else {
-            return;
+        // R5: cache-first so a security-key session never taps per save;
+        // a cold process pays one derive here and warms the cache.
+        let signing_key = match cached_device_signing_key(&self.path, self.device_id) {
+            Some(key) => key,
+            None => {
+                let seal_key = self.devkey_seal();
+                let Ok(privkeys) =
+                    load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())
+                else {
+                    return;
+                };
+                cache_device_signing_key(&self.path, self.device_id, &privkeys);
+                privkeys.ed25519
+            }
         };
-        let signing_key = privkeys.ed25519;
         if manifest
             .record(object_id, seq, &self.device_id.to_string(), &signing_key)
             .is_err()
