@@ -2312,10 +2312,58 @@ async fn route_bridge_request(
     match req.action.as_str() {
         "bridge.match" => handle_bridge_match(req, host, &vault_name).await,
         "bridge.config" => handle_bridge_config(&state).await,
-        // vault.get / vault.add / vault.update / cipher.totp_code /
+        // B10 (Decision 7 minimalism): a bridge read returns only the
+        // fill fields; notes, history, custom fields, the totp seed,
+        // and passkeys stay behind the desktop.
+        "vault.get" => {
+            let mut resp = route_request(delegated, &state).await;
+            if resp.success {
+                resp.payload = bridge_redact_get(&resp.payload);
+            }
+            resp
+        }
+        // vault.add / vault.update / cipher.totp_code /
         // generator.* / sync.autosync_status all reuse the normal path.
         _ => route_request(delegated, &state).await,
     }
+}
+
+/// B10 (Decision 7): a bridge vault.get returns the fill pair only.
+/// The extension consumes username, password, and a totp presence flag
+/// (the derived code rides cipher.totp_code); notes, history, custom
+/// fields, and passkeys never cross to the browser.
+fn bridge_redact_get(payload: &str) -> String {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return payload.to_string();
+    };
+    fn scrub(obj: &mut serde_json::Value) {
+        let Some(map) = obj.as_object_mut() else {
+            return;
+        };
+        for field in [
+            "notes",
+            "password_history",
+            "custom_fields",
+            "fido2_credentials",
+            "totp_uri",
+        ] {
+            map.remove(field);
+        }
+        if let Some(totp) = map.get("totp") {
+            let present = match totp {
+                serde_json::Value::String(s) => !s.is_empty(),
+                serde_json::Value::Bool(b) => *b,
+                serde_json::Value::Null => false,
+                _ => true,
+            };
+            map.insert("totp".into(), serde_json::Value::Bool(present));
+        }
+    }
+    scrub(&mut v);
+    if let Some(data) = v.get_mut("kind").and_then(|k| k.get_mut("data")) {
+        scrub(data);
+    }
+    v.to_string()
 }
 
 /// Does a vault.update payload attempt to mutate passkey or URI fields?
