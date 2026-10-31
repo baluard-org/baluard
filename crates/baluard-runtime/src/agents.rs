@@ -30,8 +30,11 @@ pub const AGENT_TOKEN_PREFIX: &str = "agt_";
 /// Caps on simultaneously pending approval requests (per executable and
 /// total) so one hostile or buggy process cannot flood the desktop with
 /// prompts or crowd out a real request.
-pub const MAX_PENDING_PER_EXE: usize = 1;
-pub const MAX_PENDING_TOTAL: usize = 3;
+/// One pending slot per executable blocked a second concurrent `baluard
+/// run`; four keeps legitimate parallel agents flowing while the total
+/// cap still bounds the prompt flood the desktop shows.
+pub const MAX_PENDING_PER_EXE: usize = 4;
+pub const MAX_PENDING_TOTAL: usize = 6;
 pub const DEFAULT_TTL_SECS: u64 = 900;
 
 /// Process identity the daemon resolves from the socket peer credentials.
@@ -503,25 +506,34 @@ mod tests {
     }
 
     #[test]
-    fn per_executable_cap_blocks_a_second_request_from_the_same_exe() {
+    fn per_executable_cap_allows_concurrent_runs_but_still_bounds_a_flood() {
         let q = PendingQueue::new();
-        let p = peer(7);
-        q.push(
-            Some("personal".into()),
-            p.clone(),
-            "A".into(),
-            "n".into(),
-            vec![],
-        )
-        .unwrap();
+        // A second, third, and fourth concurrent run from the same
+        // executable are legitimate and must queue.
+        for pid in 1..=MAX_PENDING_PER_EXE as u32 {
+            let mut p = peer(pid);
+            p.exe_path = "/usr/bin/agent".into();
+            q.push(Some("personal".into()), p, "A".into(), "n".into(), vec![])
+                .unwrap();
+        }
+        let mut overflow = peer(90);
+        overflow.exe_path = "/usr/bin/agent".into();
         let err = q
-            .push(Some("personal".into()), p, "A".into(), "n".into(), vec![])
+            .push(
+                Some("personal".into()),
+                overflow,
+                "A".into(),
+                "n".into(),
+                vec![],
+            )
             .unwrap_err();
         assert_eq!(err, QueueFull);
         // A different executable is not blocked by the per-exe cap.
+        let mut other = peer(91);
+        other.exe_path = "/usr/bin/other".into();
         q.push(
             Some("personal".into()),
-            peer(8),
+            other,
             "B".into(),
             "n".into(),
             vec![],
@@ -530,15 +542,15 @@ mod tests {
     }
 
     #[test]
-    fn total_cap_blocks_the_fourth_pending_request() {
+    fn total_cap_bounds_the_pending_flood() {
         let q = PendingQueue::new();
-        for pid in 1..=3u32 {
+        for pid in 1..=MAX_PENDING_TOTAL as u32 {
             let mut p = peer(pid);
             p.exe_path = format!("/usr/bin/exe-{pid}");
             q.push(None, p, "n".into(), "n".into(), vec![]).unwrap();
         }
-        let mut p = peer(4);
-        p.exe_path = "/usr/bin/exe-4".into();
+        let mut p = peer(MAX_PENDING_TOTAL as u32 + 1);
+        p.exe_path = "/usr/bin/exe-overflow".into();
         assert_eq!(
             q.push(None, p, "n".into(), "n".into(), vec![]).unwrap_err(),
             QueueFull
