@@ -7390,8 +7390,6 @@ fn peer_binding(stream: &UnixStream) -> Option<baluard_runtime::agents::PeerBind
     if ret != 0 || pid <= 0 {
         return None;
     }
-    // macOS has no stable /proc start tick. The pid+executable pair still
-    // binds the approval; process-tree walking uses the live process table.
     let mut buf = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
     let len =
         unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr() as *mut libc::c_void, buf.len() as u32) };
@@ -7399,8 +7397,15 @@ fn peer_binding(stream: &UnixStream) -> Option<baluard_runtime::agents::PeerBind
         return None;
     }
     let exe_path = String::from_utf8_lossy(&buf[..len as usize]).into_owned();
+    // NEW-2: the process start time binds the approval against pid reuse
+    // exactly like the Linux start ticks; 0 only when the kernel refuses.
+    let start_ticks = crate::agent_run::macos_proc_info(pid as u32)
+        .map(|(_, start)| start)
+        .unwrap_or(0);
     Some(baluard_runtime::agents::PeerBinding::new(
-        pid as u32, exe_path, 0,
+        pid as u32,
+        exe_path,
+        start_ticks,
     ))
 }
 
