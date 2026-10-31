@@ -60,13 +60,36 @@ function getStoredLocale() {
 const I18nContext = createContext(null);
 
 export function I18nProvider(props) {
-  const [locale, setLocaleSignal] = createSignal(getStoredLocale());
+  const [locale, setLocaleSignal] = createSignal("en");
   const [dict, setDict] = createSignal(enDict);
 
   const loaded = new Map([["en", enDict]]);
+  // The most recent request wins when two imports resolve out of order.
+  let wanted = "en";
+
+  async function apply(l) {
+    let flat;
+    if (loaded.has(l)) {
+      flat = loaded.get(l);
+    } else {
+      try {
+        const mod = await import(`./locales/${l}.json`);
+        flat = flatten(mod.default ?? mod);
+        loaded.set(l, flat);
+      } catch {
+        console.warn(`Locale "${l}" not found, keeping current`);
+        return;
+      }
+    }
+    if (wanted !== l) return;
+    setDict(flat);
+    setLocaleSignal(l);
+    try { localStorage.setItem(STORAGE_KEY, l); } catch { /* noop */ }
+  }
 
   async function setLocale(l) {
-    if (l === locale()) return;
+    if (l === wanted && l === locale()) return;
+    wanted = l;
 
     if (l === "en") {
       setDict(enDict);
@@ -75,25 +98,13 @@ export function I18nProvider(props) {
       return;
     }
 
-    if (!loaded.has(l)) {
-      try {
-        const mod = await import(`./locales/${l}.json`);
-        const flat = flatten(mod.default ?? mod);
-        loaded.set(l, flat);
-        // Guard: if locale changed again while we were loading, bail
-        if (locale() !== l) return;
-        setDict(flat);
-        setLocaleSignal(l);
-      } catch {
-        console.warn(`Locale "${l}" not found, keeping current`);
-        return;
-      }
-    } else {
-      setDict(loaded.get(l));
-      setLocaleSignal(l);
-    }
-    try { localStorage.setItem(STORAGE_KEY, l); } catch { /* noop */ }
+    await apply(l);
   }
+
+  // The signals start at "en" so the early-return guard cannot skip the
+  // boot load of a stored non-English locale.
+  const stored = getStoredLocale();
+  if (stored !== "en") setLocale(stored);
 
   function t(key, vars) {
     const count = typeof vars?.count === "number" ? vars.count : undefined;
