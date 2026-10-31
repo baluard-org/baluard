@@ -15,6 +15,7 @@ export function AgentApprovalProvider(props) {
   const { t } = useI18n();
   const [pending, setPending] = createSignal([]);
   const [grants, setGrants] = createSignal([]);
+  const [events, setEvents] = createSignal([]);
   const [yolo, setYoloState] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const knownRequests = new Set();
@@ -52,8 +53,20 @@ export function AgentApprovalProvider(props) {
     }
   }
 
+  async function refreshAudit() {
+    const slug = switcher.activeSlug();
+    try {
+      const data = await daemon("agents.audit").then(JSON.parse);
+      if (disposed || slug !== switcher.activeSlug()) return;
+      setEvents(Array.isArray(data.events) ? data.events.slice(-10).reverse() : []);
+    } catch {
+      // The next settings refresh retries without interrupting approvals.
+    }
+  }
+
   onSettled(() => {
     refresh();
+    refreshAudit();
     const timer = setInterval(refresh, 2000);
     return () => {
       disposed = true;
@@ -67,6 +80,7 @@ export function AgentApprovalProvider(props) {
     try {
       await daemon(action, { request_id: requestId });
       setPending((rows) => rows.filter((row) => row.request_id !== requestId));
+      refreshAudit();
       toastSuccess(t(action === "agents.approve" ? "agents.approved" : "agents.denied"));
     } catch (e) {
       toastError(e.message);
@@ -83,6 +97,7 @@ export function AgentApprovalProvider(props) {
         await daemon("agents.approve", { request_id: row.request_id });
       }
       setPending([]);
+      refreshAudit();
       toastSuccess(t("agents.approved"));
     } catch (e) {
       toastError(e.message);
@@ -96,6 +111,7 @@ export function AgentApprovalProvider(props) {
     try {
       await daemon("agents.revoke");
       setGrants([]);
+      refreshAudit();
       toastSuccess(t("agents.revoked"));
     } catch (e) {
       toastError(e.message);
@@ -109,6 +125,7 @@ export function AgentApprovalProvider(props) {
         ...(enabled ? { master_password: masterPassword } : {}),
       });
       setYoloState(enabled);
+      refreshAudit();
       toastSuccess(t(enabled ? "agents.yoloEnabled" : "agents.yoloDisabled"));
     } catch (e) {
       toastError(e.message);
@@ -124,6 +141,7 @@ export function AgentApprovalProvider(props) {
   const store = {
     pending,
     grants,
+    events,
     yolo,
     busy,
     approve: (id) => decide("agents.approve", id),
@@ -132,6 +150,7 @@ export function AgentApprovalProvider(props) {
     revoke,
     setYolo,
     refresh,
+    refreshAudit,
   };
 
   return (

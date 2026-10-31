@@ -1300,6 +1300,15 @@
     "yoloEnabled": "El acceso de agentes ya no preguntará en este dispositivo.",
     "yoloDisabled": "El acceso de agentes pedirá aprobación.",
     "notifyTitle": "Solicitud de credenciales de Baluard",
-    "notifyBody": "{name} pide usar entradas de la bóveda."
+    "notifyBody": "{name} pide usar entradas de la bóveda.",
+    "recentActivity": "Actividad reciente",
+    "event.requested": "Acceso solicitado",
+    "event.approved": "Acceso aprobado",
+    "event.denied": "Solicitud denegada",
+    "event.run_started": "Comando iniciado",
+    "event.run_finished": "Comando finalizado",
+    "event.revoked": "Acceso revocado",
+    "event.yolo_enabled": "Aprobaciones desactivadas",
+    "event.yolo_disabled": "Aprobaciones activadas"
   }
 }

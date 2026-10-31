@@ -1300,6 +1300,15 @@
     "yoloEnabled": "Agent access will no longer ask on this device.",
     "yoloDisabled": "Agent access will ask for approval.",
     "notifyTitle": "Baluard credential request",
-    "notifyBody": "{name} is asking to use vault entries."
+    "notifyBody": "{name} is asking to use vault entries.",
+    "recentActivity": "Recent activity",
+    "event.requested": "Access requested",
+    "event.approved": "Access approved",
+    "event.denied": "Request denied",
+    "event.run_started": "Command started",
+    "event.run_finished": "Command finished",
+    "event.revoked": "Access revoked",
+    "event.yolo_enabled": "Approval prompts disabled",
+    "event.yolo_disabled": "Approval prompts enabled"
   }
 }

@@ -1300,6 +1300,15 @@
     "yoloEnabled": "O acesso de agentes não perguntará mais neste dispositivo.",
     "yoloDisabled": "O acesso de agentes pedirá aprovação.",
     "notifyTitle": "Pedido de credenciais do Baluard",
-    "notifyBody": "{name} está pedindo para usar itens do cofre."
+    "notifyBody": "{name} está pedindo para usar itens do cofre.",
+    "recentActivity": "Atividade recente",
+    "event.requested": "Acesso solicitado",
+    "event.approved": "Acesso aprovado",
+    "event.denied": "Pedido negado",
+    "event.run_started": "Comando iniciado",
+    "event.run_finished": "Comando concluído",
+    "event.revoked": "Acesso revogado",
+    "event.yolo_enabled": "Aprovações desativadas",
+    "event.yolo_disabled": "Aprovações ativadas"
   }
 }

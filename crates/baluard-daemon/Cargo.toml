@@ -23,6 +23,7 @@ zeroize = { workspace = true }
 argon2 = { workspace = true }
 chrono = "0.4"
 hex = { workspace = true }
+sha2 = { workspace = true }
 rand = { workspace = true }
 x25519-dalek = { workspace = true }
 url = { workspace = true }

@@ -37,6 +37,9 @@ function payloadFor(action) {
   if (action === "agents.pending") {
     return JSON.stringify({ pending: [pendingRow] });
   }
+  if (action === "agents.audit") {
+    return JSON.stringify({ events: [{ event: "run_finished", exe_path: "/usr/bin/local-agent" }] });
+  }
   if (action === "agents.list") {
     return JSON.stringify({ grants: [{ exe_path: "/usr/bin/local-agent", item_ids: ["item-1"] }], yolo: false });
   }
@@ -68,6 +71,7 @@ describe("AgentApprovalProvider", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(api.pending()).toHaveLength(1);
     expect(api.grants()).toHaveLength(1);
+    expect(api.events()).toHaveLength(1);
     const before = mocks.daemon.mock.calls.length;
     await vi.advanceTimersByTimeAsync(2100);
     expect(mocks.daemon.mock.calls.length).toBeGreaterThan(before);

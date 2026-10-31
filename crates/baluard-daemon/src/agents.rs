@@ -53,6 +53,39 @@ async fn verify_user(
         .map_err(err_response)
 }
 
+fn audit(
+    event: &str,
+    vault: &str,
+    peer: &PeerBinding,
+    request_id: Option<&str>,
+    item_ids: &[String],
+    outcome: &str,
+) -> Result<(), String> {
+    crate::agent_audit::append(
+        &baluard_core::paths::data_dir(),
+        event,
+        vault,
+        peer,
+        request_id,
+        None,
+        item_ids,
+        outcome,
+    )
+}
+
+fn audit_best_effort(
+    event: &str,
+    vault: &str,
+    peer: &PeerBinding,
+    request_id: Option<&str>,
+    item_ids: &[String],
+    outcome: &str,
+) {
+    if let Err(error) = audit(event, vault, peer, request_id, item_ids, outcome) {
+        eprintln!("agent audit: {error}");
+    }
+}
+
 /// Handles every `agents.*` action at host level. Returning a response for
 /// unknown agent actions keeps the default-deny route from ever treating an
 /// agent grant as a user session token.
@@ -85,13 +118,28 @@ pub async fn handle_agent_route(
             if !state.is_unlocked().await {
                 return err_response(format!("Vault '{slug}' is locked"));
             }
+            let yolo_audit_slug = slug.clone();
+            let yolo_audit_items = payload.item_ids.clone();
             if yolo_enabled(&slug) {
                 let token = state.agent_mint(peer.clone(), payload.item_ids, DEFAULT_TTL_SECS);
+                if let Err(error) = audit(
+                    "approved",
+                    &yolo_audit_slug,
+                    peer,
+                    None,
+                    &yolo_audit_items,
+                    "permissive-mode",
+                ) {
+                    state.revoke_agent_token(&token);
+                    return err_response(format!("agent audit failed: {error}"));
+                }
                 return ok_resp(
                     serde_json::json!({"status": "approved", "token": token}).to_string(),
                     None,
                 );
             }
+            let audit_slug = slug.clone();
+            let audit_item_ids = payload.item_ids.clone();
             match host.pending_requests().push(
                 Some(slug),
                 peer.clone(),
@@ -99,10 +147,21 @@ pub async fn handle_agent_route(
                 payload.need,
                 payload.item_ids,
             ) {
-                Ok(request_id) => ok_resp(
-                    serde_json::json!({"request_id": request_id, "status": "pending"}).to_string(),
-                    None,
-                ),
+                Ok(request_id) => {
+                    audit_best_effort(
+                        "requested",
+                        &audit_slug,
+                        peer,
+                        Some(&request_id),
+                        &audit_item_ids,
+                        "pending",
+                    );
+                    ok_resp(
+                        serde_json::json!({"request_id": request_id, "status": "pending"})
+                            .to_string(),
+                        None,
+                    )
+                }
                 Err(_) => err_response(
                     "another agent request is already waiting; approve or deny it first",
                 ),
@@ -180,7 +239,19 @@ pub async fn handle_agent_route(
             let Some(pending) = host.pending_requests().take(&payload.request_id) else {
                 return err_response("agent request is no longer pending");
             };
+            let audit_pending = pending.clone();
             let token = state.agent_mint(pending.peer, pending.item_ids, DEFAULT_TTL_SECS);
+            if let Err(error) = audit(
+                "approved",
+                audit_pending.vault_slug.as_deref().unwrap_or(&slug),
+                &audit_pending.peer,
+                Some(&payload.request_id),
+                &audit_pending.item_ids,
+                "approved",
+            ) {
+                state.revoke_agent_token(&token);
+                return err_response(format!("agent audit failed: {error}"));
+            }
             host.pending_requests()
                 .complete_approved(&payload.request_id, token);
             ok_resp(serde_json::json!({"approved": true}).to_string(), None)
@@ -197,14 +268,25 @@ pub async fn handle_agent_route(
             if let Err(resp) = verify_user(req, &state).await {
                 return resp;
             }
+            let pending = host.pending_requests().get(&payload.request_id);
             if !host.pending_requests().deny(&payload.request_id) {
                 return err_response("agent request is no longer pending");
             }
             host.pending_requests().complete_denied(&payload.request_id);
+            if let Some(pending) = pending {
+                audit_best_effort(
+                    "denied",
+                    pending.vault_slug.as_deref().unwrap_or(""),
+                    &pending.peer,
+                    Some(&payload.request_id),
+                    &pending.item_ids,
+                    "denied",
+                );
+            }
             ok_resp(serde_json::json!({"denied": true}).to_string(), None)
         }
         "agents.revoke" => {
-            let (_slug, state) = match target_state(req, host, None).await {
+            let (slug, state) = match target_state(req, host, None).await {
                 Ok(pair) => pair,
                 Err(resp) => return resp,
             };
@@ -212,7 +294,31 @@ pub async fn handle_agent_route(
                 return resp;
             }
             state.revoke_agent_grants();
+            let audit_peer = peer.cloned().unwrap_or_else(|| PeerBinding {
+                pid: 0,
+                exe_path: "<unresolved local client>".into(),
+                start_ticks: 0,
+            });
+            audit_best_effort("revoked", &slug, &audit_peer, None, &[], "revoked-all");
             ok_resp(serde_json::json!({"revoked": true}).to_string(), None)
+        }
+        "agents.audit" => {
+            let (_slug, state) = match target_state(req, host, None).await {
+                Ok(pair) => pair,
+                Err(resp) => return resp,
+            };
+            if let Err(resp) = verify_user(req, &state).await {
+                return resp;
+            }
+            let events = match crate::agent_audit::read_events(&baluard_core::paths::data_dir()) {
+                Ok(events) => events,
+                Err(e) => return err_response(format!("agent audit: {e}")),
+            };
+            let start = events.len().saturating_sub(100);
+            ok_resp(
+                serde_json::json!({"events": &events[start..]}).to_string(),
+                None,
+            )
         }
         "agents.list" => {
             let (slug, state) = match target_state(req, host, None).await {
@@ -263,6 +369,25 @@ pub async fn handle_agent_route(
                 {
                     return err_response(e);
                 }
+            }
+            let audit_peer = peer.cloned().unwrap_or_else(|| PeerBinding {
+                pid: 0,
+                exe_path: "<unresolved local client>".into(),
+                start_ticks: 0,
+            });
+            if let Err(error) = audit(
+                if enabled {
+                    "yolo_enabled"
+                } else {
+                    "yolo_disabled"
+                },
+                &slug,
+                &audit_peer,
+                None,
+                &[],
+                "saved",
+            ) {
+                return err_response(format!("agent audit failed: {error}"));
             }
             if let Err(e) = write_yolo(&slug, enabled) {
                 return err_response(e);
