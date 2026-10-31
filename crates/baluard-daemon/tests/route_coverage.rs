@@ -4259,6 +4259,185 @@ async fn bridge_vault_get_returns_only_fill_fields() {
     }
 }
 
+#[tokio::test]
+async fn agent_run_captures_output_from_a_slow_command() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, host, state) = agent_host("agent-run-slow").await;
+    let mut input = login_input("Slow", "slow-user");
+    if let CipherKind::Login(ref mut data) = input.kind {
+        data.password = Some(format!("slow-password-{}", uuid::Uuid::new_v4()));
+    }
+    let item_id = state
+        .add_cipher(&serde_json::to_string(&input).unwrap())
+        .await
+        .unwrap();
+    let peer = baluard_runtime::agents::PeerBinding::new(
+        std::process::id(),
+        "/usr/bin/slow-test-agent",
+        0,
+    );
+    let requested = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Slow agent",
+                "need": "slow script",
+                "item_ids": [item_id]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    let request_id =
+        serde_json::from_str::<serde_json::Value>(&requested.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let approved = route_host_request(
+        agent_request(
+            "agents.approve",
+            serde_json::json!({"request_id": request_id}),
+            state.get_session_token().await.unwrap(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(approved.success, "err: {}", approved.error_message);
+    let polled = route_host_request(
+        agent_request(
+            "agents.poll",
+            serde_json::json!({"request_id": request_id}),
+            String::new(),
+        ),
+        &host,
+    )
+    .await;
+    let agent_token = serde_json::from_str::<serde_json::Value>(&polled.payload).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // A legitimate command that produces its output past the drain grace
+    // must keep it: the grace bounds capture only after the child exits.
+    let run = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.run",
+            serde_json::json!({
+                "argv": ["sh", "-c", "sleep 12 && echo finished_after_12s"],
+                "inject": [{"name": "S_TOKEN", "item_id": item_id, "field": "password"}]
+            }),
+            agent_token,
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(run.success, "err: {}", run.error_message);
+    let result: serde_json::Value = serde_json::from_str(&run.payload).unwrap();
+    assert_eq!(result["status"], 0, "stdout: {}", result["stdout"]);
+    assert!(
+        result["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("finished_after_12s"),
+        "output from a slow command was lost: {}",
+        result["stdout"]
+    );
+}
+
+#[tokio::test]
+async fn agent_run_output_capture_cannot_hang_on_a_pipe_holder() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, host, state) = agent_host("agent-run-hang").await;
+    let mut input = login_input("Hang", "pipe-user");
+    if let CipherKind::Login(ref mut data) = input.kind {
+        data.password = Some(format!("hang-password-{}", uuid::Uuid::new_v4()));
+    }
+    let item_id = state
+        .add_cipher(&serde_json::to_string(&input).unwrap())
+        .await
+        .unwrap();
+    let peer = baluard_runtime::agents::PeerBinding::new(
+        std::process::id(),
+        "/usr/bin/hang-test-agent",
+        0,
+    );
+    let requested = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Hang agent",
+                "need": "pipe holder",
+                "item_ids": [item_id]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    let request_id =
+        serde_json::from_str::<serde_json::Value>(&requested.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let approved = route_host_request(
+        agent_request(
+            "agents.approve",
+            serde_json::json!({"request_id": request_id}),
+            state.get_session_token().await.unwrap(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(approved.success, "err: {}", approved.error_message);
+    let polled = route_host_request(
+        agent_request(
+            "agents.poll",
+            serde_json::json!({"request_id": request_id}),
+            String::new(),
+        ),
+        &host,
+    )
+    .await;
+    let agent_token = serde_json::from_str::<serde_json::Value>(&polled.payload).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // The child exits immediately, but a background grandchild inherits
+    // the stdout pipe and holds it far past the command timeout. The
+    // output capture must have a deadline of its own.
+    let run = tokio::time::timeout(
+        std::time::Duration::from_secs(25),
+        baluard_daemon::handler::route_host_request_with_peer(
+            agent_request(
+                "agents.run",
+                serde_json::json!({
+                    "argv": ["sh", "-c", "sleep 45 & echo started"],
+                    "inject": [{"name": "H_TOKEN", "item_id": item_id, "field": "password"}]
+                }),
+                agent_token,
+            ),
+            &host,
+            Some(&peer),
+        ),
+    )
+    .await;
+    let resp = match run {
+        Ok(resp) => resp,
+        Err(_) => panic!("agents.run hung past 25s: output capture has no deadline"),
+    };
+    assert!(resp.success, "err: {}", resp.error_message);
+    let result: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(result["status"], 0);
+    assert!(result["stdout"].as_str().unwrap().contains("started"));
+}
+
 async fn bridge_slug_scoped_reads_fail_closed() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
 

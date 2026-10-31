@@ -13,6 +13,11 @@ use zeroize::{Zeroize, Zeroizing};
 
 const MAX_AGENT_OUTPUT: usize = 1024 * 1024;
 const AGENT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+// NEW-1: the command timeout covers only the direct child; a background
+// grandchild can hold the output pipes far longer. The grace window below
+// bounds capture AFTER the child exits — it must never cut off a command
+// that is still running and producing output.
+const AGENT_DRAIN_GRACE: Duration = Duration::from_secs(10);
 
 #[derive(serde::Deserialize)]
 struct RunPayload {
@@ -135,6 +140,11 @@ pub async fn run(
     }
 
     let mut command = tokio::process::Command::new(&payload.argv[0]);
+    // NEW-1: the child leads its own process group so a timeout can sweep
+    // background grandchildren that would otherwise outlive the ceiling
+    // still holding injected secrets.
+    #[cfg(unix)]
+    command.process_group(0);
     if let Some(cwd) = &payload.cwd {
         let dir = std::path::PathBuf::from(cwd);
         if !dir.is_dir() {
@@ -167,38 +177,27 @@ pub async fn run(
         Some(stderr) => stderr,
         None => return err_response("agent command stderr is unavailable"),
     };
-    let stdout_task = tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        child_stdout
-            .take((MAX_AGENT_OUTPUT + 1) as u64)
-            .read_to_end(&mut bytes)
-            .await
-            .map(|_| bytes)
-    });
-    let stderr_task = tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        child_stderr
-            .take((MAX_AGENT_OUTPUT + 1) as u64)
-            .read_to_end(&mut bytes)
-            .await
-            .map(|_| bytes)
-    });
+    let (exit_tx, exit_rx) = tokio::sync::watch::channel(false);
+    let stdout_task = tokio::spawn(drain_capped(child_stdout, exit_rx.clone()));
+    let stderr_task = tokio::spawn(drain_capped(child_stderr, exit_rx));
     let status = match tokio::time::timeout(AGENT_COMMAND_TIMEOUT, child.wait()).await {
-        Ok(Ok(status)) => status,
-        Ok(Err(e)) => return err_response(format!("agent command failed: {e}")),
+        Ok(Ok(status)) => {
+            let _ = exit_tx.send(true);
+            status
+        }
+        Ok(Err(e)) => {
+            let _ = exit_tx.send(true);
+            return err_response(format!("agent command failed: {e}"));
+        }
         Err(_) => {
+            kill_process_group(&child);
             let _ = child.kill().await;
+            let _ = exit_tx.send(true);
             return err_response("agent command timed out");
         }
     };
-    let mut stdout = match stdout_task.await {
-        Ok(Ok(bytes)) => bytes,
-        _ => return err_response("agent command stdout could not be captured"),
-    };
-    let mut stderr = match stderr_task.await {
-        Ok(Ok(bytes)) => bytes,
-        _ => return err_response("agent command stderr could not be captured"),
-    };
+    let mut stdout = stdout_task.await.unwrap_or_default();
+    let mut stderr = stderr_task.await.unwrap_or_default();
     let truncated = stdout.len() > MAX_AGENT_OUTPUT || stderr.len() > MAX_AGENT_OUTPUT;
     stdout.truncate(MAX_AGENT_OUTPUT);
     stderr.truncate(MAX_AGENT_OUTPUT);
@@ -230,6 +229,54 @@ pub async fn run(
     )
 }
 
+/// Drain one capped output stream. While the child runs, reads have no
+/// deadline (a slow command keeps its output); once the child exit signal
+/// fires, a grace window ends capture so a pipe held open by a background
+/// process cannot hang the run.
+async fn drain_capped(
+    stream: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+    mut child_exited: tokio::sync::watch::Receiver<bool>,
+) -> Vec<u8> {
+    let mut reader = stream.take((MAX_AGENT_OUTPUT + 1) as u64);
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 8192];
+    let mut grace_deadline: Option<tokio::time::Instant> = None;
+    loop {
+        if let Some(deadline) = grace_deadline {
+            match tokio::time::timeout_at(deadline, reader.read(&mut buf)).await {
+                Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return bytes,
+                Ok(Ok(n)) => bytes.extend_from_slice(&buf[..n]),
+            }
+            continue;
+        }
+        tokio::select! {
+            n = reader.read(&mut buf) => match n {
+                Ok(0) | Err(_) => return bytes,
+                Ok(n) => bytes.extend_from_slice(&buf[..n]),
+            },
+            _ = child_exited.changed() => {
+                grace_deadline = Some(tokio::time::Instant::now() + AGENT_DRAIN_GRACE);
+            }
+        }
+    }
+}
+
+/// NEW-1: SIGKILL the child's whole process group so background
+/// grandchildren do not outlive the run holding injected secrets.
+#[cfg(unix)]
+fn kill_process_group(child: &tokio::process::Child) {
+    // kill(-1, sig) signals every process the user owns and kill(0, sig)
+    // signals our own group, so only a real child pid may be negated.
+    if let Some(pid) = child.id().filter(|pid| *pid > 1) {
+        unsafe {
+            libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_child: &tokio::process::Child) {}
+
 fn valid_env_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
@@ -260,40 +307,44 @@ fn process_chain(pid: u32) -> Option<Vec<(u32, u64)>> {
 
 #[cfg(target_os = "macos")]
 fn process_chain(pid: u32) -> Option<Vec<(u32, u64)>> {
-    let output = std::process::Command::new("ps")
-        .args(["-eo", "pid=,ppid="])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let parents = parse_ps_parents(&text);
     let mut chain = Vec::new();
     let mut current = pid;
     for _ in 0..8 {
-        chain.push((current, 0));
-        let Some(parent) = parents.get(&current).copied() else {
+        let Some((ppid, start)) = macos_proc_info(current) else {
             break;
         };
-        if parent == 0 || parent == current {
+        // NEW-2: the start time rides the chain so the macOS peer binding
+        // gets the same pid-reuse protection the Linux start ticks give.
+        chain.push((current, start));
+        if ppid == 0 || ppid == current {
             break;
         }
-        current = parent;
+        current = ppid;
+    }
+    if chain.is_empty() {
+        return None;
     }
     Some(chain)
 }
 
-fn parse_ps_parents(text: &str) -> std::collections::HashMap<u32, u32> {
-    let mut parents = std::collections::HashMap::new();
-    for line in text.lines() {
-        let mut fields = line.split_whitespace();
-        let Some(child) = fields.next().and_then(|field| field.parse::<u32>().ok()) else {
-            continue;
-        };
-        let Some(parent) = fields.next().and_then(|field| field.parse::<u32>().ok()) else {
-            continue;
-        };
-        parents.insert(child, parent);
+/// NEW-2: (ppid, process start seconds since epoch) via proc_pidinfo.
+/// The start time replaces the wildcard zero in the macOS peer binding.
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_proc_info(pid: u32) -> Option<(u32, u64)> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let ret = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int,
+        )
+    };
+    if ret <= 0 {
+        return None;
     }
-    parents
+    Some((info.pbi_ppid, info.pbi_start_tvsec))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -304,12 +355,4 @@ fn process_chain(_pid: u32) -> Option<Vec<(u32, u64)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ps_parser_skips_blank_and_malformed_lines() {
-        let parents = parse_ps_parents("1 0\n\nnot-a-process\n42 1\n");
-        assert_eq!(parents.get(&42), Some(&1));
-        assert_eq!(parents.get(&1), Some(&0));
-        assert_eq!(parents.len(), 2);
-    }
 }
