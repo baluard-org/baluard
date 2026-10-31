@@ -709,7 +709,7 @@ pub(crate) async fn verify_seal_change_password(
             if e == "master password incorrect" {
                 permit.commit_failure();
             } else {
-                permit.commit_success();
+                permit.commit_neutral();
             }
             Err(e)
         }
@@ -4316,7 +4316,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     if e.contains("old master password incorrect") {
                         permit.commit_failure();
                     } else {
-                        permit.commit_success();
+                        permit.commit_neutral();
                     }
                     err_response(e)
                 }
@@ -4354,7 +4354,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     if e.contains("old master password incorrect") {
                         permit.commit_failure();
                     } else {
-                        permit.commit_success();
+                        permit.commit_neutral();
                     }
                     err_response(e)
                 }
@@ -5712,7 +5712,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     if e == "Incorrect master password" {
                         permit.commit_failure();
                     } else {
-                        permit.commit_success();
+                        permit.commit_neutral();
                     }
                     req.payload.zeroize();
                     err_response(e)
@@ -5806,7 +5806,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     if e == "Incorrect master password" {
                         permit.commit_failure();
                     } else {
-                        permit.commit_success();
+                        permit.commit_neutral();
                     }
                     req.payload.zeroize();
                     err_response(e)
@@ -5943,7 +5943,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     if e == "Incorrect master password" {
                         permit.commit_failure();
                     } else {
-                        permit.commit_success();
+                        permit.commit_neutral();
                     }
                     req.payload.zeroize();
                     err_response(e)

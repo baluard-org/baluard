@@ -779,6 +779,77 @@ async fn reprompt_verify_with_wrong_master_errors() {
     assert!(err.to_lowercase().contains("incorrect") || err.to_lowercase().contains("invalid"));
 }
 
+// B4: a malformed payload on a password-verification route must not
+// reset the per-vault failure budget. Only a wrong password charges it
+// and only a correct one clears it; every other outcome is neutral.
+// The backoff message's wait-secs is the observable counter: after a
+// reset the next charge backoffs 2s, with the budget intact it backoffs
+// 4s (attempt 2).
+#[tokio::test]
+async fn malformed_payloads_do_not_reset_the_failure_budget() {
+    let (_tmp, state) = open_unlocked("limiter-neutral").await;
+    let host: baluard_daemon::host::SharedVaultHost = Arc::new(VaultHost::new());
+    host.insert("limiter-neutral".into(), state.clone()).await;
+    host.switch("limiter-neutral")
+        .await
+        .expect("activate vault");
+    let token = state.get_session_token().await.expect("session token");
+    let send = |action: &str, payload: String| {
+        route_host_request(
+            GatewayRequest {
+                action: action.to_string(),
+                payload,
+                session_token: token.to_string(),
+                slug: String::new(),
+            },
+            &host,
+        )
+    };
+    baluard_daemon::rate_limit::global().record_success(&state.vault_path.to_string_lossy());
+
+    // Charge once: a genuine wrong reprompt password.
+    let r = send("vault.reprompt_verify", "wrong-master-password-x".into()).await;
+    assert!(
+        r.error_message.contains("Incorrect master password"),
+        "{}",
+        r.error_message
+    );
+
+    // Let the 2s backoff lapse so the malformed claim is allowed in.
+    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+
+    // A malformed payload must neither charge nor reset the budget.
+    let r = send(
+        "vault.pin_enable",
+        serde_json::json!({"password": MASTER}).to_string(),
+    )
+    .await;
+    assert!(
+        r.error_message.contains("missing pin"),
+        "{}",
+        r.error_message
+    );
+
+    // Charge again; with the budget intact this is failure 2.
+    let r = send("vault.reprompt_verify", "wrong-master-password-x".into()).await;
+    assert!(
+        r.error_message.contains("Incorrect master password"),
+        "{}",
+        r.error_message
+    );
+
+    // The immediate probe reveals the counter: the 4s attempt-2 window
+    // (reported as Wait 3s after truncation) means the malformed payload
+    // did not reset it; a reset would show the 1s attempt-1 window.
+    let r = send("vault.reprompt_verify", MASTER.to_string()).await;
+    assert!(
+        r.error_message.contains("Too many failed attempts") && r.error_message.contains("Wait 3s"),
+        "expected a 4s backoff window (counter 2), got: {}",
+        r.error_message
+    );
+    baluard_daemon::rate_limit::global().record_success(&state.vault_path.to_string_lossy());
+}
+
 // ── VaultHost: switch + lock_all ──────────────────────────────────
 
 #[tokio::test]
