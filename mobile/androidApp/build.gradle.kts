@@ -95,7 +95,10 @@ android {
         }
     }
 
-    tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
+    // Fail on the signing validation task, which runs only in release
+    // builds and BEFORE any signing: a doFirst on assemble/bundle fires
+    // after validate+sign have already executed.
+    tasks.matching { it.name == "validateSigningBaluardRelease" }.configureEach {
         doFirst {
             require(releaseStoreFile.isFile) {
                 "Android release keystore not found. Run just android-release-key, then rerun."
