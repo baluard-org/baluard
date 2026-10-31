@@ -360,8 +360,9 @@ autofill refuses sealed vaults with explicit open-in-app copy, and password chan
 hardware work before metadata writes with old-file restoration on later write failure. Sync never
 taps: an unlock caches the device's Ed25519 signing key in memory (cleared on lock) and
 `SyncEngine` reads that cache before touching the sealed privkey file, so autosync and manual sync
-on a sealed vault run with the key unplugged. Change-master-password holds the executor politely:
-`block_in_place` wraps the core op so a mid-change tap does not stall other tasks.
+on a sealed vault run with the key unplugged. Change-master-password holds no lock across taps: the core op runs in
+`spawn_blocking` as a files-only transaction and the runtime applies the new
+in-memory keys after re-acquiring the vault lock.
 (C1 review wave, LANDED 2026-10-29) — the Opus review's critical finding, fixed and
 agy-peer-reviewed. Finding: on member devices of shared vaults the hw seal was a procedural gate,
 not a cryptographic one — unlock_tail_member opened the sealed device file only as a discarded

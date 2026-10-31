@@ -153,11 +153,75 @@ const STRINGS = {
     clear120: "2 minutos",
     clearNever: "Nunca",
   },
+  pt: {
+    title: "Baluard",
+    loading: "Carregando…",
+    activeVault: "Cofre",
+    retry: "Tentar novamente",
+    downloadApp: "Baixar o app Baluard",
+    // Welcome (first run)
+    welcome: "Boas-vindas ao Baluard",
+    welcomeDesc: "Baluard é um gerenciador de senhas privado. Esta extensão preenche seus logins salvos em sites — suas senhas nunca saem do seu dispositivo.",
+    haveApp: "Já tenho o Baluard instalado",
+    // Not paired (onboarding guide)
+    notPaired: "Conectar ao Baluard",
+    notPairedIntro: "Vincule este navegador ao app Baluard para preencher suas senhas automaticamente.",
+    step1: "Abra o app Baluard neste computador",
+    step2: "Em Configurações, adicione uma nova extensão do navegador",
+    step3: "Digite o código exibido no app e conecte",
+    pairCodeLabel: "Código de pareamento",
+    pairCodePlaceholder: "Código de 8 caracteres",
+    wrongCode: "Esse código não corresponde. Verifique o app Baluard e tente novamente.",
+    connectCta: "Conectar ao Baluard",
+    connect: "Aguardando aprovação",
+    connectDesc: "Toque em Aprovar no app Baluard.",
+    // Daemon states
+    appRequired: "Abra o app Baluard",
+    appRequiredDesc: "O app Baluard precisa estar aberto e desbloqueado para a extensão funcionar.",
+    locked: "Cofre bloqueado",
+    lockedDesc: "Desbloqueie o app Baluard para preencher senhas.",
+    versionSkew: "Atualização necessária",
+    versionSkewDesc: "Esta extensão precisa de um app Baluard mais recente. Atualize, por favor.",
+    updateApp: "Atualizar o app Baluard",
+    // Error / timeout
+    errorTitle: "Algo deu errado",
+    errorTimeout: "Não foi possível contatar o app Baluard. Verifique se ele está aberto e tente novamente.",
+    pairExpired: "A solicitação de conexão expirou. Tente novamente.",
+    // Ready
+    noMatches: "Nenhum login para este site",
+    fill: "Preencher",
+    copyUsername: "Copiar usuário",
+    copyPassword: "Copiar senha",
+    copyTotp: "Copiar código",
+    copied: "Copiado",
+    refresh: "Atualizar",
+    // G24 merged surfaces
+    lockedChip: "está bloqueado. Abra o Baluard.",
+    spaceRemoved: "Pode ser que você não tenha mais acesso a este espaço.",
+    askUnlock: "Toque para pedir ao app Baluard para desbloquear este cofre",
+    unlockRequested: "Desbloqueio solicitado.",
+    // Settings
+    settings: "Configurações",
+    back: "Voltar",
+    inlineAutofillTitle: "Mostrar sugestões de preenchimento em formulários de login",
+    inlineAutofillDesc: "Adiciona um pequeno botão Baluard ao lado dos campos de login. Clique nele para escolher um login e preencher o formulário — sem precisar abrir esta janela. Suas senhas nunca são preenchidas sozinhas.",
+    copyTotpTitle: "Copiar códigos de verificação ao preencher",
+    copyTotpDesc: "Após preencher um login que tem código de verificação, o código também é copiado, para você colar na próxima tela. É apagado pouco depois.",
+    clipboardClearTitle: "Limpar a área de transferência após",
+    clipboardClearDesc: "Senhas e códigos copiados são apagados da área de transferência após esse tempo.",
+    clear10: "10 segundos",
+    clear30: "30 segundos",
+    clear60: "1 minuto",
+    clear120: "2 minutos",
+    clearNever: "Nunca",
+  },
 };
 
 function detectLocale() {
   const ui = (chrome.i18n?.getUILanguage?.() || navigator.language || "en").toLowerCase();
-  return ui.startsWith("es") ? "es" : "en";
+  if (ui.startsWith("es")) return "es";
+  if (ui.startsWith("pt")) return "pt";
+  return "en";
 }
 
 const [state, setState] = createSignal("loading");

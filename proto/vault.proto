@@ -3,7 +3,7 @@ syntax = "proto3";
 package baluard.vault;
 
 
-// Envelope maps to uniform size buckets (1KB, 8KB, 64KB, 1MB)
+// Envelope maps to uniform size buckets (5KB, 30KB, 100KB, 250KB, 2MB)
 message VaultEntry {
   string uuid = 1;
   string title = 2;

@@ -26,10 +26,18 @@ import { join, relative, basename } from "node:path";
 
 const REPO = "baluard-org/baluard";
 
+const KNOWN_FLAGS = new Set(["tag", "artifacts-dir", "out"]);
+
 function parseArgs(argv) {
   const out = {};
   for (let i = 2; i < argv.length; i += 2) {
     const key = argv[i]?.replace(/^--/, "");
+    // A typo like --artifact-dir would silently map to undefined and the
+    // missing-required check below would blame the wrong flag.
+    if (!KNOWN_FLAGS.has(key)) {
+      console.error(`unknown flag --${key} (expected: ${[...KNOWN_FLAGS].map((f) => `--${f}`).join(", ")})`);
+      process.exit(2);
+    }
     out[key] = argv[i + 1];
   }
   return out;

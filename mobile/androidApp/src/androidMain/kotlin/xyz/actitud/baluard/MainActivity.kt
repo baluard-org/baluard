@@ -245,9 +245,6 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_SAVE_TOKEN = "baluard.autofill.SAVE_TOKEN"
-        const val EXTRA_SAVE_USERNAME = "baluard.autofill.SAVE_USERNAME"
-        const val EXTRA_SAVE_PASSWORD = "baluard.autofill.SAVE_PASSWORD"
-        const val EXTRA_SAVE_URI = "baluard.autofill.SAVE_URI"
     }
 
     override fun onPause() {
