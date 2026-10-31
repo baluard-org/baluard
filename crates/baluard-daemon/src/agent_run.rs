@@ -18,6 +18,10 @@ const AGENT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 struct RunPayload {
     #[serde(default)]
     slug: Option<String>,
+    /// The caller's working directory. The daemon would otherwise spawn
+    /// the child in its own cwd, breaking relative-path commands.
+    #[serde(default)]
+    cwd: Option<String>,
     argv: Vec<String>,
     #[serde(default)]
     inject: Vec<Injection>,
@@ -131,6 +135,13 @@ pub async fn run(
     }
 
     let mut command = tokio::process::Command::new(&payload.argv[0]);
+    if let Some(cwd) = &payload.cwd {
+        let dir = std::path::PathBuf::from(cwd);
+        if !dir.is_dir() {
+            return err_response(format!("agent working directory does not exist: {cwd}"));
+        }
+        command.current_dir(dir);
+    }
     command
         .args(&payload.argv[1..])
         .stdin(Stdio::null())

@@ -88,6 +88,9 @@ pub fn handle_run(
         "agents.run",
         serde_json::json!({
             "argv": argv,
+            "cwd": std::env::current_dir()
+                .ok()
+                .map(|dir| dir.display().to_string()),
             "inject": injections.iter().map(|injection| {
                 serde_json::json!({
                     "name": injection.name,

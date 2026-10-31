@@ -5863,6 +5863,21 @@ async fn agent_approval_requires_the_user_token_and_caps_prompt_flooding() {
         "a wrong-vault approval must leave the request pending"
     );
 
+    // Concurrent runs from one executable queue; the per-exe cap still
+    // bounds the flood.
+    for _ in 0..(baluard_runtime::agents::MAX_PENDING_PER_EXE - 1) {
+        let ok = baluard_daemon::handler::route_host_request_with_peer(
+            agent_request("agents.request", payload.clone(), String::new()),
+            &host,
+            Some(&peer),
+        )
+        .await;
+        assert!(
+            ok.success,
+            "concurrent runs must queue: {}",
+            ok.error_message
+        );
+    }
     let flooded = baluard_daemon::handler::route_host_request_with_peer(
         agent_request("agents.request", payload, String::new()),
         &host,
@@ -5874,6 +5889,106 @@ async fn agent_approval_requires_the_user_token_and_caps_prompt_flooding() {
 }
 
 #[tokio::test]
+async fn agent_run_honors_the_caller_working_directory() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, host, state) = agent_host("agent-run-cwd").await;
+    let mut input = login_input("GitLab", "cwd-user");
+    if let CipherKind::Login(ref mut data) = input.kind {
+        data.password = Some(format!("cwd-password-{}", uuid::Uuid::new_v4()));
+    }
+    let item_id = state
+        .add_cipher(&serde_json::to_string(&input).unwrap())
+        .await
+        .unwrap();
+    let peer =
+        baluard_runtime::agents::PeerBinding::new(std::process::id(), "/usr/bin/cwd-test-agent", 0);
+    let requested = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Cwd agent",
+                "need": "relative script",
+                "item_ids": [item_id]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    let request_id =
+        serde_json::from_str::<serde_json::Value>(&requested.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let approved = route_host_request(
+        agent_request(
+            "agents.approve",
+            serde_json::json!({"request_id": request_id}),
+            state.get_session_token().await.unwrap(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(approved.success, "err: {}", approved.error_message);
+    let polled = route_host_request(
+        agent_request(
+            "agents.poll",
+            serde_json::json!({"request_id": request_id}),
+            String::new(),
+        ),
+        &host,
+    )
+    .await;
+    let agent_token = serde_json::from_str::<serde_json::Value>(&polled.payload).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let workdir = tempfile::tempdir().unwrap();
+    std::fs::write(workdir.path().join("pwd.sh"), "#!/bin/sh\npwd\n").unwrap();
+    let run = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.run",
+            serde_json::json!({
+                "cwd": workdir.path().display().to_string(),
+                "argv": ["sh", "pwd.sh"],
+                "inject": [{"name": "G_TOKEN", "item_id": item_id, "field": "password"}]
+            }),
+            agent_token.clone(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(run.success, "err: {}", run.error_message);
+    let result: serde_json::Value = serde_json::from_str(&run.payload).unwrap();
+    assert_eq!(result["status"], 0, "stdout: {}", result["stdout"]);
+    assert_eq!(
+        result["stdout"].as_str().unwrap().trim(),
+        workdir.path().display().to_string(),
+        "child did not run in the caller's working directory"
+    );
+
+    let bad = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.run",
+            serde_json::json!({
+                "cwd": "/nonexistent-baluard-cwd-check",
+                "argv": ["true"],
+                "inject": []
+            }),
+            agent_token,
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(!bad.success);
+    assert!(bad.error_message.contains("working directory"));
+}
+
 async fn agent_run_injects_only_approved_fields_and_scrubs_both_streams() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-run").await;
