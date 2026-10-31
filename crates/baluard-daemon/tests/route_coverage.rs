@@ -4174,6 +4174,91 @@ async fn bridge_match_gate_passes_on_sibling_unlocked() {
 /// resolves; unknown, ineligible, locked, and URL-mismatched targets
 /// fail closed.
 #[tokio::test]
+async fn bridge_vault_get_returns_only_fill_fields() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, path_b) = make_vault("b10redact");
+    let state = Arc::new(VaultState::new(path_b.clone()));
+    state.open().await.expect("open");
+    state.unlock(MASTER).await.expect("unlock");
+    register_in_registry("b10redact", &path_b);
+    state
+        .add_cipher(
+            &serde_json::json!({
+                "name": "B10 Bank",
+                "notes": "secret note body",
+                "kind": {"type": "login", "data": {
+                    "username": "alice",
+                    "password": "b10-pass-xyz",
+                    "uris": [{"uri": "https://bank.example", "matchStrategy": "domain"}],
+                    "totp_uri": "otpauth://totp/Baluard:alice?secret=AAAABBBBCCCCDDDD",
+                    "custom_fields": [{"name": "api key", "value": "b10-custom-secret", "type": "text"}],
+                    "fido2_credentials": null
+                }}
+            })
+            .to_string(),
+        )
+        .await
+        .expect("add");
+    let env = state.full_envelope().await.expect("envelope");
+    let id = env["ciphers"][0]["id"].as_str().unwrap().to_string();
+
+    let host = Arc::new(VaultHost::new());
+    host.insert("b10redact".into(), state.clone()).await;
+    host.switch("b10redact").await.expect("switch");
+    let token_hex = {
+        let mut reg = host.bridge().write().await;
+        let _pair = reg.start_pair("test-harness");
+        reg.complete_pair("ext", "chrome").expect("pair").1
+    };
+    let req = GatewayRequest {
+        action: "vault.get".into(),
+        payload: serde_json::json!({
+            "id": id, "url": "https://bank.example/login", "vault_slug": "", "decrypt": true
+        })
+        .to_string(),
+        session_token: token_hex,
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let body: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+
+    // Fill needs the credential pair; everything else stays behind the
+    // desktop (Decision 7: minimal, one credential, seed never crosses).
+    assert_eq!(body["username"], "alice");
+    assert_eq!(body["password"], "b10-pass-xyz");
+    for field in [
+        "notes",
+        "password_history",
+        "custom_fields",
+        "fido2_credentials",
+    ] {
+        assert!(
+            body.get(field).is_none(),
+            "bridge vault.get leaked '{field}'"
+        );
+    }
+    assert!(
+        body.get("totp").is_some() && body["totp"].is_boolean(),
+        "totp must be a presence flag, not the seed"
+    );
+    let seed = "AAAABBBBCCCCDDDD";
+    assert!(
+        !resp.payload.contains(seed),
+        "the totp seed crossed to the bridge"
+    );
+    assert!(
+        !resp.payload.contains("b10-custom-secret"),
+        "custom fields crossed to the bridge"
+    );
+    if let Some(kind) = body.get("kind") {
+        let data = &kind["data"];
+        for field in ["totp_uri", "custom_fields", "fido2_credentials"] {
+            assert!(data.get(field).is_none(), "kind.data leaked '{field}'");
+        }
+    }
+}
+
 async fn bridge_slug_scoped_reads_fail_closed() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
 
