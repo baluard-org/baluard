@@ -1,4 +1,4 @@
-import { createSignal, createContext, useContext, onSettled } from "solid-js";
+import { createSignal, createContext, useContext, onSettled, createEffect } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { daemon } from "../lib/daemon.js";
 import { useVault } from "./VaultContext.jsx";
@@ -40,7 +40,9 @@ export function AgentApprovalProvider(props) {
       for (const row of rows) {
         if (!knownRequests.has(row.request_id)) {
           knownRequests.add(row.request_id);
-          if (document.hidden) {
+          // A visible window on a second monitor is still unfocused; the
+          // user is looking at the terminal that made the request.
+          if (document.hidden || !document.hasFocus()) {
             invoke("notify_agent_request", {
               title: t("agents.notifyTitle"),
               body: t("agents.notifyBody", { name: row.claimed_name }),
@@ -73,6 +75,14 @@ export function AgentApprovalProvider(props) {
       clearInterval(timer);
     };
   });
+
+  // The audit view is vault-scoped; re-read it when the active vault moves.
+  createEffect(
+    () => switcher.activeSlug(),
+    (slug, prev) => {
+      if (prev !== undefined && slug !== prev) refreshAudit();
+    },
+  );
 
   async function decide(action, requestId) {
     if (busy()) return;

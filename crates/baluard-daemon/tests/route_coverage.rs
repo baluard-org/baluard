@@ -5926,6 +5926,199 @@ async fn agent_grants_survive_the_desktop_blur_lock() {
     assert!(state.is_unlocked().await);
 }
 
+async fn add_other_vault(
+    dir: &tempfile::TempDir,
+    host: &Arc<VaultHost>,
+    label: &str,
+) -> Arc<VaultState> {
+    let path_b = dir.path().join(format!("vault-b-{label}"));
+    let state_b = Arc::new(VaultState::new(path_b));
+    VaultCreator::new(&state_b.vault_path, MASTER, label)
+        .execute()
+        .unwrap();
+    state_b.open().await.unwrap();
+    state_b.unlock(MASTER).await.unwrap();
+    host.insert("other".into(), state_b.clone()).await;
+    state_b
+}
+
+#[tokio::test]
+async fn agent_pending_requests_survive_the_desktop_blur_lock() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, host, state) = agent_host("agent-blur-pending").await;
+    state
+        .settings_set(&serde_json::json!({"vault_timeout": "immediately"}).to_string())
+        .await
+        .unwrap();
+    let request_id = host
+        .pending_requests()
+        .push(
+            Some("personal".into()),
+            agent_peer(46),
+            "Blur agent".into(),
+            "about to be approved".into(),
+            vec!["item-1".into()],
+        )
+        .unwrap();
+    let locked = host.lock_blur_vaults().await;
+    assert!(
+        locked.is_empty(),
+        "a pending approval prompt exempts the vault from blur lock, locked: {locked:?}"
+    );
+    assert!(state.is_unlocked().await);
+    // Once the prompt is gone the vault is blurrable again.
+    host.pending_requests().deny(&request_id);
+    host.pending_requests().complete_denied(&request_id);
+    let locked = host.lock_blur_vaults().await;
+    assert_eq!(locked, vec!["personal".to_string()]);
+}
+
+#[tokio::test]
+async fn agent_deny_respects_the_vault_boundary() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, host, state) = agent_host("agent-deny-boundary").await;
+    let state_b = add_other_vault(&_dir, &host, "deny-other").await;
+    let peer = agent_peer(47);
+    let requested = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Boundary agent",
+                "need": "cross vault deny",
+                "item_ids": ["item-1"]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    let request_id =
+        serde_json::from_str::<serde_json::Value>(&requested.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    // Vault B route (same user token, different slug): deny must refuse
+    // and keep the request pending.
+    let mut foreign = agent_request(
+        "agents.deny",
+        serde_json::json!({"request_id": request_id}),
+        state_b.get_session_token().await.unwrap(),
+    );
+    foreign.slug = "other".into();
+    let denied = route_host_request(foreign, &host).await;
+    assert!(!denied.success, "cross-vault deny must refuse");
+    assert!(
+        denied.error_message.contains("different vault"),
+        "err: {}",
+        denied.error_message
+    );
+    assert!(
+        host.pending_requests().get(&request_id).is_some(),
+        "the request must survive the refused deny"
+    );
+}
+
+#[tokio::test]
+async fn agent_audit_is_filtered_to_the_requesting_vault() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, host, state) = agent_host("agent-audit-filter").await;
+    let state_b = add_other_vault(&_dir, &host, "audit-other").await;
+
+    // One approved event on vault personal (through the real route so the
+    // audit record is written).
+    let peer = agent_peer(48);
+    let requested = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Audit agent",
+                "need": "audit filter",
+                "item_ids": ["item-1"]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    let request_id =
+        serde_json::from_str::<serde_json::Value>(&requested.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let approved = route_host_request(
+        agent_request(
+            "agents.approve",
+            serde_json::json!({"request_id": request_id}),
+            state.get_session_token().await.unwrap(),
+        ),
+        &host,
+    )
+    .await;
+    assert!(approved.success, "err: {}", approved.error_message);
+
+    // One denied event on vault other (same-vault deny, allowed).
+    let mut request_b = agent_request(
+        "agents.request",
+        serde_json::json!({
+            "claimed_name": "Other agent",
+            "need": "other vault work",
+            "item_ids": ["item-9"]
+        }),
+        String::new(),
+    );
+    request_b.slug = "other".into();
+    let requested_b = baluard_daemon::handler::route_host_request_with_peer(
+        request_b,
+        &host,
+        Some(&agent_peer(49)),
+    )
+    .await;
+    assert!(
+        requested_b.success,
+        "reqB: {} {}",
+        requested_b.error_message, requested_b.payload
+    );
+    let request_id_b =
+        serde_json::from_str::<serde_json::Value>(&requested_b.payload).unwrap()["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let mut deny_b = agent_request(
+        "agents.deny",
+        serde_json::json!({"request_id": request_id_b}),
+        state_b.get_session_token().await.unwrap(),
+    );
+    deny_b.slug = "other".into();
+    let denied_b = route_host_request(deny_b, &host).await;
+    assert!(denied_b.success, "err: {}", denied_b.error_message);
+
+    let mut audit_req = agent_request(
+        "agents.audit",
+        serde_json::json!({}),
+        state.get_session_token().await.unwrap(),
+    );
+    audit_req.slug = "personal".into();
+    let audit = route_host_request(audit_req, &host).await;
+    assert!(audit.success, "err: {}", audit.error_message);
+    let events: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&audit.payload)
+        .unwrap()["events"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        events.iter().any(|e| e["vault"] == "personal"),
+        "personal events must be present: {events:?}"
+    );
+    assert!(
+        events.iter().all(|e| e["vault"] == "personal"),
+        "audit must not leak other vaults: {events:?}"
+    );
+}
+
 #[tokio::test]
 async fn agent_approval_is_one_time_and_lock_kills_the_grant() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;

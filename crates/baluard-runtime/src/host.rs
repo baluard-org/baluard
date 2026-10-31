@@ -422,8 +422,16 @@ impl VaultHost {
         };
         let mut locked_slugs = Vec::new();
         for (slug, state) in open {
-            // D80: an active agent grant keeps working through desktop blur.
-            if state.has_live_agent_grants() {
+            // D80: an active agent grant keeps working through desktop blur,
+            // and so does a pending approval prompt - locking the vault
+            // mid-prompt would kill the request the user is about to answer.
+            if state.has_live_agent_grants()
+                || self
+                    .pending_requests()
+                    .list()
+                    .iter()
+                    .any(|p| p.vault_slug.as_deref() == Some(slug.as_str()))
+            {
                 continue;
             }
             if state.timeout_policy().await == VaultTimeout::Immediately

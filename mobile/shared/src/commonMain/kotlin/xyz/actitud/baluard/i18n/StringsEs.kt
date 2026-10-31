@@ -11,6 +11,7 @@ internal val ES: Map<String, String> = mapOf(
     "vault.favorite" to "Favorito",
     "vault.noMatch" to "Ningún elemento coincide con los criterios",
     "common.cancel" to "Cancelar",
+    "common.confirm" to "Confirmar",
     "common.continue" to "Continuar",
     "common.copy" to "Copiar",
     "common.search" to "Buscar",

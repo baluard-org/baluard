@@ -8,6 +8,7 @@ internal val PT: Map<String, String> = mapOf(
     "vault.noMatch" to "Nenhum item corresponde aos seus critérios",
     "common.back" to "Voltar",
     "common.cancel" to "Cancelar",
+    "common.confirm" to "Confirmar",
     "common.continue" to "Continuar",
     "common.copy" to "Copiar",
     "common.search" to "Pesquisar",
