@@ -36,6 +36,12 @@ kotlin {
 }
 
 android {
+    val releaseStorePath = System.getenv("BALUARD_ANDROID_KEYSTORE")
+        ?: "${System.getProperty("user.home")}/.baluard/baluard-android-upload.keystore"
+    val releaseStorePassword = System.getenv("BALUARD_ANDROID_STORE_PASSWORD")
+    val releaseKeyPassword = System.getenv("BALUARD_ANDROID_KEY_PASSWORD") ?: releaseStorePassword
+    val releaseStoreFile = file(releaseStorePath)
+
     namespace = "xyz.actitud.baluard"
     compileSdk = 35
     // BuildConfig carries the E2E gate: `-Pbaluard.e2e=true` produces a
@@ -81,6 +87,23 @@ android {
             keyAlias = "baluard"
             keyPassword = "baluard"
         }
+        create("baluardRelease") {
+            storeFile = releaseStoreFile
+            storePassword = releaseStorePassword
+            keyAlias = System.getenv("BALUARD_ANDROID_KEY_ALIAS") ?: "baluard-upload"
+            keyPassword = releaseKeyPassword
+        }
+    }
+
+    tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
+        doFirst {
+            require(releaseStoreFile.isFile) {
+                "Android release keystore not found. Run just android-release-key, then rerun."
+            }
+            require(!releaseStorePassword.isNullOrEmpty() && !releaseKeyPassword.isNullOrEmpty()) {
+                "Set BALUARD_ANDROID_STORE_PASSWORD and BALUARD_ANDROID_KEY_PASSWORD for release signing."
+            }
+        }
     }
 
     buildTypes {
@@ -96,10 +119,7 @@ android {
             )
         }
         release {
-            // Alpha: debug-keystore-signed release so local A/B testing
-            // (debug vs release ART/Compose perf) can adb install -r over
-            // the same applicationId. Store signing lands at store time.
-            signingConfig = signingConfigs.getByName("baluardDebug")
+            signingConfig = signingConfigs.getByName("baluardRelease")
             // The E2E gate exists in both build types (the shared flag
             // readers compile against both), but release is pinned false
             // so no release build can ever ship the FLAG_SECURE skip.
