@@ -11021,12 +11021,20 @@ impl VaultHandle {
         let sign_input =
             crate::device_manager::build_ack_sign_input(tx.new_epoch, &self.device_id, &txn_hash);
 
-        // Load signing key
-        let seal_key = self.devkey_seal();
-        let privkeys = load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())?;
+        // B6c: cache-first like record_integrity, so a security-key
+        // survivor finalizes without a second tap in a warm session.
+        let signing_key = match cached_device_signing_key(&self.path, self.device_id) {
+            Some(key) => key,
+            None => {
+                let seal_key = self.devkey_seal();
+                let privkeys = load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())?;
+                cache_device_signing_key(&self.path, self.device_id, &privkeys);
+                privkeys.ed25519
+            }
+        };
 
         use crate::crypto::signature;
-        let ack_sig = signature::sign(&privkeys.ed25519, &sign_input)?;
+        let ack_sig = signature::sign(&signing_key, &sign_input)?;
 
         let ack = crate::device_manager::RotationAck {
             epoch: tx.new_epoch,

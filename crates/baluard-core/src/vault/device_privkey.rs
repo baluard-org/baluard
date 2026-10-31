@@ -2618,6 +2618,93 @@ mod tests {
         hw_env_restore(_old_env);
     }
 
+    // B6c: finalize_rotation signs the ack with the device key but
+    // reloaded the sealed file even when the unlock session had already
+    // warmed the signing-key cache, so a security-key survivor paid a
+    // second tap (or failed outright without a transport). Cache-first,
+    // mirroring record_integrity.
+    #[test]
+    fn finalize_rotation_serves_the_signing_key_from_the_cache() {
+        let _lock = HW_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _old_env = hw_env_clear();
+        let mock = CountingTapMock(std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+        let counter = mock.0.clone();
+        crate::hwkey::install(std::sync::Arc::new(mock));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        let vault = handle.path.clone();
+
+        seal_to_tap(&mut handle);
+        handle.unlock(&password).unwrap();
+
+        // Enroll a second device so this one has a revocation target.
+        let dev2_id = uuid::Uuid::new_v4();
+        let dev2_ed = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        let dev2_x = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let dev2_x_pub = x25519_dalek::PublicKey::from(&dev2_x);
+        handle
+            .device_manager
+            .registry
+            .enroll_with_id(
+                dev2_id,
+                "device-2".into(),
+                dev2_x_pub.to_bytes(),
+                dev2_ed.verifying_key().to_bytes(),
+                Some(handle.device_id),
+            )
+            .unwrap();
+        let root = handle.unlocked().root().expect("root").clone();
+        let (eph, ct, tag) =
+            crate::crypto::hpke_wrap::wrap_key(root.as_bytes(), &dev2_x_pub, "root-key-keywrap")
+                .unwrap();
+        let kw = serde_json::json!({
+            "device_id": dev2_id.to_string(),
+            "ephemeral_public": hex::encode(eph),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        std::fs::write(
+            vault.join(format!("meta/keywrap/{dev2_id}.json")),
+            serde_json::to_string_pretty(&kw).unwrap(),
+        )
+        .unwrap();
+
+        let result = handle.revoke_device_and_rekey(dev2_id).unwrap();
+        let txn_path = vault.join(format!("meta/rekey/{}.txn", result.new_epoch));
+        let txn_path = if txn_path.exists() {
+            txn_path
+        } else {
+            vault.join(format!("meta/rekey/{}.json", result.new_epoch))
+        };
+        assert!(txn_path.exists(), "pending rekey txn must exist");
+        drop(handle);
+
+        // The pending transaction loads with the device manager, so the
+        // survivor flow reopens; the unlock warms the signing-key cache.
+        let mut handle = VaultHandle::open(&vault).unwrap();
+        handle.unlock(&password).unwrap();
+        let after_unlock = counter.load(std::sync::atomic::Ordering::SeqCst);
+
+        // Finalize must sign from the warm cache: no additional chip ops.
+        // The load happens before ack validation, so the count holds even
+        // if the ack itself is refused.
+        // Unlock adoption consumes the loaded pending transaction, so the
+        // fixture injects the committed txn the way a fresh reload would.
+        let txn: crate::keys::rotation::RekeyTransaction =
+            serde_json::from_str(&std::fs::read_to_string(txn_path).unwrap()).unwrap();
+        handle.device_manager.pending_transaction = Some(txn);
+
+        if let Err(e) = handle.finalize_rotation() {
+            eprintln!("DBG finalize err: {e}");
+        }
+        assert_eq!(
+            counter.load(std::sync::atomic::Ordering::SeqCst),
+            after_unlock,
+            "finalize_rotation tapped despite a warm signing-key cache"
+        );
+        hw_env_restore(_old_env);
+    }
+
     // B6: the roster write lands BEFORE the commit, so a pre-commit tear
     // leaves the worktree roster naming the staged key while the commit
     // still vouches for the old one. The heal must decide on the

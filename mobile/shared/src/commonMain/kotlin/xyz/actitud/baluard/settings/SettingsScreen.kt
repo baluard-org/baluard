@@ -1299,7 +1299,11 @@ fun SettingsScreen(
                                 fleetBusy = true
                                 scope.launch {
                                     try {
-                                        repo.deviceRevoke(vault, target.get("device_id")?.jsonPrimitive?.content.orEmpty())
+                                        // Revocation re-keys through the device key: the
+                                        // chip must be reachable inside a transport scope.
+                                        xyz.actitud.baluard.platform.withSecurityKeyTransport { transport ->
+                                            repo.deviceRevoke(vault, target.get("device_id")?.jsonPrimitive?.content.orEmpty())
+                                        }
                                         val json = repo.devicesList(vault)
                                         fleet = ((Json.parseToJsonElement(json) as? JsonObject)
                                             ?.get("devices") as? JsonArray)
