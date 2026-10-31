@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# build-android-apk.sh — produce the Baluard Android debug APK on a macOS or Linux host.
+# build-android-apk.sh — produce Baluard Android debug or release packages on macOS or Linux.
 #
 # One command: builds the Rust cdylib for all 4 ABIs, writes local.properties,
 # runs `./gradlew :androidApp:assembleDebug`, and prints the APK path.
 #
 # Usage:
-#   ./scripts/build-android-apk.sh            # build APK
+#   ./scripts/build-android-apk.sh --release # signed release APK + Play AAB
 #   ./scripts/build-android-apk.sh --install  # build + adb install on connected device
 #   ./scripts/build-android-apk.sh --install --device 192.168.1.50:38507  # pick one of several
 #   ./scripts/build-android-apk.sh --regen-bindings  # also regenerate UniFFI Kotlin bindings
@@ -31,6 +31,7 @@ DO_INSTALL=0
 DO_REGEN_BINDINGS=0
 SKIP_NATIVE=0
 DO_E2E=0
+DO_RELEASE=0
 DEVICE="${ANDROID_DEVICE:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -38,6 +39,7 @@ while [[ $# -gt 0 ]]; do
     --regen-bindings)  DO_REGEN_BINDINGS=1; shift ;;
     --skip-native)     SKIP_NATIVE=1; shift ;;
     --e2e)             DO_E2E=1; shift ;;   # -Pbaluard.e2e=true (skips FLAG_SECURE for Maestro)
+    --release)         DO_RELEASE=1; shift ;;
     --abis)            ABIS="${2:?--abis needs a comma-separated list}"; shift 2 ;;
     --device)          DEVICE="${2:?--device needs a serial}"; shift 2 ;;
     --device=*)        DEVICE="${1#--device=}"; shift ;;
@@ -197,26 +199,40 @@ fi
 echo "==> Writing mobile/local.properties (sdk.dir=$SDK_ROOT)"
 printf 'sdk.dir=%s\n' "$SDK_ROOT" > "$MOBILE_DIR/local.properties"
 
-# ── Step 3: Gradle assembleDebug on JDK 17 ──────────────────────────────────
+# ── Step 3: Gradle assemble on JDK 17 ─────────────────────────────────────
 export JAVA_HOME="$JDK17_HOME"
 export PATH="$JAVA_HOME/bin:$PATH"
-echo "==> ./gradlew :androidApp:assembleDebug  (JAVA_HOME=$JAVA_HOME)"
+if [[ $DO_RELEASE -eq 1 ]]; then
+  [[ $DO_E2E -eq 0 ]] || fail "--e2e is debug-only and cannot be combined with --release"
+  GRADLE_TASKS=(":androidApp:assembleRelease" ":androidApp:bundleRelease")
+else
+  GRADLE_TASKS=(":androidApp:assembleDebug")
+fi
+echo "==> ./gradlew ${GRADLE_TASKS[*]}  (JAVA_HOME=$JAVA_HOME)"
 GRADLE_ARGS=()
 [[ $DO_E2E -eq 1 ]] && GRADLE_ARGS+=("-Pbaluard.e2e=true")
 [[ -n "${ABIS:-}" ]] && GRADLE_ARGS+=("-Pbaluard.abis=$ABIS")
 (
   cd "$MOBILE_DIR"
-  ./gradlew :androidApp:assembleDebug "${GRADLE_ARGS[@]}"
+  ./gradlew "${GRADLE_TASKS[@]}" "${GRADLE_ARGS[@]}"
 )
 echo
 
-# ── Step 4: locate + report the APK ─────────────────────────────────────────
-APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/debug" -name '*.apk' 2>/dev/null | head -1 || true)"
-if [[ -z "$APK" ]]; then
-  fail "Gradle reported success but no debug APK found under androidApp/build/outputs/apk/debug/"
+# ── Step 4: locate + report the packages ────────────────────────────────────
+if [[ $DO_RELEASE -eq 1 ]]; then
+  APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/release" -name '*.apk' 2>/dev/null | head -1 || true)"
+  AAB="$(find "$MOBILE_DIR/androidApp/build/outputs/bundle/release" -name '*.aab' 2>/dev/null | head -1 || true)"
+  [[ -n "$APK" && -n "$AAB" ]] || fail "Gradle reported success but the release APK or AAB is missing"
+  echo "==> Release APK ready: $APK"
+  echo "==> Play AAB ready:    $AAB"
+else
+  APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/debug" -name '*.apk' 2>/dev/null | head -1 || true)"
+  if [[ -z "$APK" ]]; then
+    fail "Gradle reported success but no debug APK found under androidApp/build/outputs/apk/debug/"
+  fi
+  echo "==> APK ready:"
+  echo "    $APK"
 fi
-echo "==> APK ready:"
-echo "    $APK"
 echo "    size: $(du -h "$APK" | cut -f1)"
 
 # ── Step 5 (optional): install on a connected device ────────────────────────
