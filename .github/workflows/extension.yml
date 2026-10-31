@@ -36,4 +36,5 @@ jobs:
 
       - name: Dist drift check (B11)
         run: |
-          git diff --exit-code -- browser/chrome/dist browser/firefox/dist
+          # git diff alone misses NEW untracked dist files; status covers both.
+          test -z "$(git status --porcelain -- browser/chrome/dist browser/firefox/dist)"
