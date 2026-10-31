@@ -163,10 +163,7 @@ class BaluardAccessibilityService : AccessibilityService() {
             ?: run {
                 // Reprompt-protected (or vanished): the master-password gate
                 // only exists in the app.
-                android.widget.Toast.makeText(
-                    applicationContext, t("a11y.entryNeedsApp"),
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
+                toastMain(t("a11y.entryNeedsApp"))
                 AutofillA11yBridge.pendingFill = null
                 return@launch
             }

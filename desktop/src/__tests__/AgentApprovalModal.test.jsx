@@ -40,6 +40,31 @@ describe("AgentApprovalModal", () => {
     expect(document.querySelector('[data-testid="agent-approve-all"]')).toBeNull();
   });
 
+  it("escape does not deny the pending request", async () => {
+    const onDeny = vi.fn();
+    render(() => (
+      <AgentApprovalModal
+        request={request}
+        requests={[request]}
+        itemName={(id) => id}
+        onApprove={vi.fn()}
+        onDeny={onDeny}
+        onApproveAll={vi.fn()}
+      />
+    ));
+    await waitFor(() => expect(document.querySelector('[data-testid="agent-deny"]')).toBeTruthy());
+    // FocusTrap binds Escape on its container; the key event must bubble
+    // from inside it.
+    const denyButton = document.querySelector('[data-testid="agent-deny"]');
+    await fireEvent.keyDown(denyButton, { key: "Escape" });
+    flush();
+    expect(onDeny).not.toHaveBeenCalled();
+    // Explicit denial still works.
+    await fireEvent.click(document.querySelector('[data-testid="agent-deny"]'));
+    flush();
+    expect(onDeny).toHaveBeenCalledWith("req-1");
+  });
+
   it("emits approve and deny without any password field", async () => {
     const onApprove = vi.fn();
     const onDeny = vi.fn();
