@@ -84,6 +84,17 @@ function connect() {
     }),
     HANDSHAKE_TIMEOUT_MS
   );
+  // A failed handshake (ping error or timeout) leaves every later send
+  // queued on a permanently-rejected promise while the port stays open -
+  // the SW would never recover until restart. Drop the port so the next
+  // send reconnects and re-handshakes against a fresh host. Attaching the
+  // handler does not consume the rejection: queued sends still see it.
+  handshake.catch(() => {
+    try {
+      port?.disconnect();
+    } catch {}
+    port = null;
+  });
 }
 
 function onMessage(msg) {

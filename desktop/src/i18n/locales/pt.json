@@ -1302,13 +1302,15 @@
     "notifyTitle": "Pedido de credenciais do Baluard",
     "notifyBody": "{name} está pedindo para usar itens do cofre.",
     "recentActivity": "Atividade recente",
-    "event.requested": "Acesso solicitado",
-    "event.approved": "Acesso aprovado",
-    "event.denied": "Pedido negado",
-    "event.run_started": "Comando iniciado",
-    "event.run_finished": "Comando concluído",
-    "event.revoked": "Acesso revogado",
-    "event.yolo_enabled": "Aprovações desativadas",
-    "event.yolo_disabled": "Aprovações ativadas"
+    "event": {
+      "requested": "Acesso solicitado",
+      "approved": "Acesso aprovado",
+      "denied": "Pedido negado",
+      "run_started": "Comando iniciado",
+      "run_finished": "Comando concluído",
+      "revoked": "Acesso revogado",
+      "yolo_enabled": "Aprovações desativadas",
+      "yolo_disabled": "Aprovações ativadas"
+    }
   }
 }

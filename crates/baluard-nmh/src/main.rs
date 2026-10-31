@@ -85,7 +85,7 @@ fn dlog(msg: &str) {
 }
 
 mod proto {
-    #![allow(dead_code)] // generated; DeviceIdentityEscrow unused here
+    #![allow(dead_code)] // generated
     include!(concat!(env!("OUT_DIR"), "/baluard.auth.rs"));
 }
 
@@ -463,6 +463,19 @@ fn refresh_token() -> Result<String, ResolveError> {
     resolve_token()
 }
 
+/// True when the daemon's response means the bridge token attached to this
+/// request no longer verifies. Two shapes: the `bridge.*` sentinel, and the
+/// per-vault session rejection a popup action (`vault.get`,
+/// `cipher.totp_code`) collects after falling through the bridge gate - a
+/// LIVE bridge token delegates with the vault's current session token, so
+/// that rejection can only mean the token itself is dead (daemon restart,
+/// revoke, expiry). Mirrors the runtime's message at state.rs; if that text
+/// changes, this predicate must change with it.
+fn is_stale_bridge_failure(error: &str) -> bool {
+    error == baluard_core::bridge::STALE_TOKEN_ERROR
+        || error == "Invalid session token. Re-unlock the vault."
+}
+
 /// Forward an allowlisted bridge action to the daemon, transparently
 /// recovering from a stale bridge token. The daemon's live token map is
 /// in-memory only, so after a daemon restart (or pairing revoke / token
@@ -495,7 +508,7 @@ fn forward_with_reauth(
     };
 
     // Stale-token recovery: exactly one retry.
-    if !resp.success && resp.error_message == baluard_core::bridge::STALE_TOKEN_ERROR {
+    if !resp.success && is_stale_bridge_failure(&resp.error_message) {
         match refresh_token() {
             Ok(new_token) => {
                 dlog(&format!(
@@ -673,6 +686,19 @@ mod tests {
             }
             path
         })
+    }
+
+    #[test]
+    fn stale_detection_covers_both_daemon_shapes() {
+        assert!(is_stale_bridge_failure("stale bridge token"));
+        assert!(is_stale_bridge_failure(
+            "Invalid session token. Re-unlock the vault."
+        ));
+        assert!(!is_stale_bridge_failure(
+            "Vault 'work' is not open in the daemon."
+        ));
+        assert!(!is_stale_bridge_failure("Incorrect master password."));
+        assert!(!is_stale_bridge_failure(""));
     }
 
     // ── read_message ──

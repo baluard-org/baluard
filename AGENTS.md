@@ -117,7 +117,7 @@ All code must run on these platforms at minimum. No APIs, crates, or features th
 | Fedora | 43 | Secret Service (gnome-keyring or compatible) at runtime for keyring storage. |
 
 Implications:
-* Rust edition 2024, MSRV 1.85 (ships in all targets above).
+* Rust edition 2024, MSRV 1.85 (ships in all targets above). The optional `fido2` feature needs Rust 1.89 (ctap-hid-fido2 documents it); default builds stay 1.85.
 * macOS: `security-framework` v3 + SecAccessControl BIOMETRY_ANY. No APIs deprecated after macOS 15.
 * Linux: `keyring` crate with `linux-native-sync-persistent` + `crypto-rust` (pure-Rust D-Bus Secret Service client). No libsecret build dep; a Secret Service provider (gnome-keyring, KeePassXC) must be reachable at runtime. Build deps: `protoc` (cargo builds), WebKitGTK/GTK dev headers (desktop app). `just sysdeps` prints the per-distro install line.
 * Windows: `keyring` crate with `windows-native`. Windows Credential Manager via DPAPI.
