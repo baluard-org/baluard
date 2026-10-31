@@ -133,9 +133,10 @@ _sysdeps-desktop:
 build: _sysdeps-core
 	{{ linuxbrew_env }} cargo build
 
-# Build optimized release binaries
+# Build optimized release binaries (daemon and CLI carry fido2 so a
+# locally installed daemon and --direct both manage security-key seals)
 build-release: _sysdeps-core
-	{{ linuxbrew_env }} cargo build --release
+	{{ linuxbrew_env }} cargo build --release --workspace --features baluard-daemon/fido2,baluard-cli/fido2
 
 # Build and install CLI + daemon to ~/.local/bin
 install-local: build-release

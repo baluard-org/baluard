@@ -2814,6 +2814,42 @@ mod tests {
         hw_env_restore(_old_env);
     }
 
+    /// R5: record_integrity must serve the signing key from the
+    /// in-memory cache. It used to reload meta/device-privkey.json on
+    /// every add/update, so a desktop security-key user paid a chip tap
+    /// on every save (the same consumer-miss class the H1 fix closed
+    /// for sync but missed for integrity records).
+    #[test]
+    fn integrity_records_serve_the_signing_key_from_the_cache() {
+        use std::sync::atomic::Ordering;
+        let _g = HW_LOCK.lock().unwrap();
+        let _old_env = hw_env_clear();
+        crate::hwkey::uninstall();
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        crate::hwkey::install(std::sync::Arc::new(CountingTapMock(counter.clone())));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, password, _phrase) = audit_vault(dir.path());
+        seal_to_tap(&mut handle);
+
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        let ops_after_unlock = counter.load(Ordering::SeqCst);
+        assert!(ops_after_unlock > 0);
+
+        let input: crate::types::CipherInput =
+            serde_json::from_value(serde_json::json!({"name": "tap-per-save"})).unwrap();
+        let id = h.add_cipher(&input).unwrap();
+        let update: crate::types::CipherInput =
+            serde_json::from_value(serde_json::json!({"name": "tap-per-save-2"})).unwrap();
+        h.update_cipher(id, &update).unwrap();
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            ops_after_unlock,
+            "integrity records must not touch the chip while the session cache is warm"
+        );
+        hw_env_restore(_old_env);
+    }
+
     /// The sealed device file is device-local and identical for every
     /// keywrap candidate, so one unlock pays at most one chip open: the
     /// cross-device heal must reuse the opened keys, not re-derive per

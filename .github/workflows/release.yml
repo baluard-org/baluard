@@ -34,6 +34,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Refuse to ship the placeholder updater key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           # H2: a bundle carrying REPLACE_WITH_UPDATER_PUBLIC_KEY installs
           # fine and can then never self-update (the plugin refuses to
@@ -42,6 +44,13 @@ jobs:
             echo "tauri.conf.json still carries the updater pubkey placeholder.";
             echo "Generate the keypair (just updater-key), commit the public key,";
             echo "and store the private key as the TAURI_SIGNING_PRIVATE_KEY secret.";
+            exit 1;
+          fi
+          # B3: an empty secret builds unsigned artifacts that the
+          # manifest step then refuses, wasting a full release run.
+          # Fail before building instead.
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is empty; the release cannot sign updater artifacts.";
             exit 1;
           fi
 
@@ -68,7 +77,11 @@ jobs:
         run: |
           TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
           mkdir -p desktop/src-tauri/binaries
-          cargo build --release -p baluard-daemon -p baluard-cli
+          # B3: release binaries must carry fido2, or shipped daemons
+          # cannot manage security-key seals and --direct fails closed
+          # on every SealedHw vault.
+          cargo build --release -p baluard-daemon -p baluard-cli \
+            --features baluard-daemon/fido2,baluard-cli/fido2
           cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
           cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 
@@ -118,11 +131,18 @@ jobs:
       # APPLE_SIGNING_IDENTITY plus the notarytool credentials for the
       # tauri build below. Without them tauri ad-hoc signs.
       - name: Signing mode
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           # H2: the same placeholder gate the Linux job runs; this job
           # produces the signed macOS updater artifact.
           if grep -q 'REPLACE_WITH_UPDATER_PUBLIC_KEY' desktop/src-tauri/tauri.conf.json; then
             echo "tauri.conf.json still carries the updater pubkey placeholder.";
+            exit 1;
+          fi
+          # B3: fail before a full macOS build when signing cannot work.
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is empty; the release cannot sign updater artifacts.";
             exit 1;
           fi
           if [ -n "${{ secrets.APPLE_CERTIFICATE_P12 }}" ]; then
@@ -135,7 +155,11 @@ jobs:
         run: |
           TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
           mkdir -p desktop/src-tauri/binaries
-          cargo build --release -p baluard-daemon -p baluard-cli
+          # B3: release binaries must carry fido2, or shipped daemons
+          # cannot manage security-key seals and --direct fails closed
+          # on every SealedHw vault.
+          cargo build --release -p baluard-daemon -p baluard-cli \
+            --features baluard-daemon/fido2,baluard-cli/fido2
           cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
           cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 
@@ -194,7 +218,9 @@ jobs:
         run: |
           TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
           mkdir -p desktop/src-tauri/binaries
-          cargo build --release -p baluard-daemon -p baluard-cli
+          # B3: release binaries must carry fido2 (see the Linux job).
+          cargo build --release -p baluard-daemon -p baluard-cli \
+            --features baluard-daemon/fido2,baluard-cli/fido2
           cp target/release/baluard-daemon.exe "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE.exe"
           cp target/release/baluard.exe "desktop/src-tauri/binaries/baluard-$TRIPLE.exe"
 
@@ -229,13 +255,14 @@ jobs:
         # Draft, never auto-published: the artifacts wait for human review
         # (signing state, version pin, smoke status) before going live.
         # On a tag push the tag names the release; on a manual dispatch the
-        # version comes from tauri.conf.json so a branch name can never
-        # become a release name.
+        # version comes from the desktop crate (the build.rs tripwire keeps
+        # it equal to the daemon version) so a branch name can never
+        # become a release name. House rule: no v prefix.
         run: |
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME}"
           else
-            TAG="v$(node -p "require('./desktop/src-tauri/tauri.conf.json').version")"
+            TAG="$(node -p "require('fs').readFileSync('desktop/src-tauri/Cargo.toml','utf8').match(/^version\\s*=\\s*\"([^\"]+)\"/m)[1]")"
           fi
           gh release create "$TAG" --draft --generate-notes --title "$TAG" artifacts/*/*
 
@@ -271,12 +298,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # C2: the channel rule must match the client's is_prerelease
-          # (any semver prerelease suffix is beta). An alpha tag routed to
-          # the stable manifest would be offered to every stable user.
-          case "$TAG" in
-            *-*|*beta*|*rc*|*alpha*) echo "refusing prerelease tag; this job publishes the stable manifest"; exit 1 ;;
-          esac
+          # B3: prereleases go to the beta channel instead of failing; the
+          # old guard exited on every prerelease, making the beta branch
+          # below dead code. The C2 protection stands: a prerelease tag
+          # can never reach updates-stable because the channel derives
+          # from the same rule as the client's is_prerelease (any '-').
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body > notes.md
           node scripts/generate-updates-manifest.mjs \
             --tag "$TAG" \
@@ -289,8 +315,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           case "$TAG" in
-            *beta*|*rc*|*alpha*|*dev*|*pre*) CHANNEL="updates-beta" ;;
-            *)                               CHANNEL="updates-stable" ;;
+            *-*)                               CHANNEL="updates-beta" ;;
+            *)                                 CHANNEL="updates-stable" ;;
           esac
           gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
