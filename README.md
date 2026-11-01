@@ -62,7 +62,6 @@ For full documentation, see **[docs/index.md](docs/index.md)**.
 | [Mobile Dev Setup](docs/mobile-dev-setup.md) | Android SDK, NDK, OpenJDK 17, and Gradle setup for mobile development |
 | [Translations & Localization](docs/translations.md) | Guide for adding and maintaining desktop and mobile language translations |
 | [Brand Guidelines](docs/brand-guidelines.md) | Color palette, design tokens, visual identity rules |
-| [Progress](docs/progress.md) | Implementation status and review history |
 
 ## Contributing
 
