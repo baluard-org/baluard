@@ -6,6 +6,7 @@
 
 | Document | Description |
 |----------|-------------|
+| [Security White Paper](security-white-paper.md) | The public trust document: architecture as security model, key hierarchy, hardware sealing, sync verification, threat residuals, assurance status |
 | [Architecture Decisions](software-architecture-decisions.md) | Design rationale, tradeoffs, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6), frontend architecture (DOMAIN 7), quick unlock (D20), browser extension (D21), conflict resolution panel (D22), event-driven sync (D24) |
 | [Software Architecture](software-architecture.md) | Component diagram, data flows, IPC protocol, key lifecycle, cryptographic ceremonies |
 | [Threat Model](threat-model.md) | Adversaries, attack surfaces, mitigations (incl. T15 multi-vault key material, T10 biometric) |
