@@ -141,7 +141,7 @@ TOTP codes follow RFC 6238 with the analysis published (2fa-analysis.md). Seeds 
 
 Deletion in a git-native vault deserves its own paragraph. Deleting an entry removes it from the working vault and records the deletion in a commit, while older commits keep the encrypted past; anyone holding the repository holds every version that was ever pushed. Trash and history windows make recovery deliberate, and they also mean the remote retains everything it ever received. For a full end to a vault's life, deleting the remote repository is the real delete button.
 
-Export is plaintext by definition: an unencrypted export file sits on your disk outside every protection in this paper, so treat exported files the way you would treat a printed list. Clipboard copies of passwords clear after thirty seconds on the desktop; mobile platforms add their own clipboard expiry.
+Export is plaintext by definition: an unencrypted export file sits on your disk outside every protection in this paper, so treat exported files the way you would treat a printed list. Clipboard copies of passwords clear after sixty seconds by default on desktop and mobile; mobile platforms let you adjust or disable the timer in settings.
 
 Network egress is short enough to inventory: git sync traffic to your chosen remote, provider API calls when you connect one, optional update checks to GitHub (opt-out, jittered), and favicon fetches only if you turn them on, since fetching a favicon tells the icon's host that an entry for that domain exists. There is no telemetry, no analytics, and no crash reporter phoning home.
 

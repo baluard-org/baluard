@@ -30,7 +30,7 @@ actual fun copyToClipboard(text: String) {
  * copy's timer is the only one that can match.
  */
 private fun scheduleAutoClear(cm: android.content.ClipboardManager, ctx: Context, text: String) {
-    val seconds = runCatching { ClipboardPrefs().loadSeconds() }.getOrDefault(30)
+    val seconds = runCatching { ClipboardPrefs().loadSeconds() }.getOrDefault(60)
     if (seconds <= 0) return
     Handler(Looper.getMainLooper()).postDelayed({
         runCatching {
