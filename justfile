@@ -161,6 +161,23 @@ uninstall:
 	@sudo rm -f /usr/local/bin/{{ binary }} /usr/local/bin/{{ daemon }}
 	@echo "Uninstalled from /usr/local/bin"
 
+# ── Release staging ──────────────────────────────────────────────────────────
+
+# Sign release artifacts (minisign sidecars + signed SHA256SUMS). The updater
+# key lives at ~/.tauri/baluard-updater.key; see docs/linux-repositories.md.
+release-sign artifacts:
+	./scripts/sign-release-artifacts.sh {{ artifacts }}
+
+# Stage the apt + dnf repositories from signed artifacts (repo key: the GPG
+# key in ~/.baluard/release-gnupg; scripts/gen-release-signing-key.sh creates it).
+repo-stage artifacts out:
+	./scripts/build-apt-repo.sh {{ artifacts }} {{ out }}
+	./scripts/build-rpm-repo.sh {{ artifacts }} {{ out }}
+	cp {{ artifacts }}/SHA256SUMS {{ out }}/SHA256SUMS
+	cp {{ artifacts }}/SHA256SUMS.sig {{ out }}/SHA256SUMS.sig
+	cp ~/.baluard/release-gnupg/baluard-release.asc {{ out }}/baluard-release.asc
+	@echo "staged repository at {{ out }}"
+
 # ── Test ────────────────────────────────────────────────────────────────────
 
 # Run all tests
