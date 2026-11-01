@@ -43,11 +43,11 @@ sha256sum --check --ignore-missing SHA256SUMS
 
 ## Maintainer release flow
 
-The signing keys live outside the repository and are Esteban's to hold and back up. The release flow from built artifacts:
+The signing keys live outside the repository and are Esteban's to hold and back up. The release flow from locally built artifacts (default staging dir `./dist`, gitignored):
 
 ```sh
-just release-sign  /path/to/artifacts     # minisign sidecars + signed SHA256SUMS
-just repo-stage    /path/to/artifacts /path/to/repo-out
+just release-sign              # minisign sidecars + signed SHA256SUMS into ./dist
+just repo-stage dist repo-out  # apt + dnf fragments + key + .nojekyll into ./repo-out
 ```
 
-`repo-stage` builds the apt fragment (`pool/` + `dists/stable`, clearsigned `InRelease`), the dnf fragment (`rpms/` + signed `repodata`), and copies the public key into the repository root. Publish the output directory to the `baluard-org/repo` GitHub Pages repository root; the URLs above resolve against it.
+`repo-out` is pushed as the root of the `baluard-org/repo` GitHub Pages repository; the URLs above resolve against it.

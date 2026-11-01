@@ -6,6 +6,11 @@ set -euo pipefail
 
 ART="${1:?usage: build-rpm-repo.sh <artifacts-dir> <repo-out-dir>}"
 OUT="${2:?usage: build-rpm-repo.sh <artifacts-dir> <repo-out-dir>}"
+# The createrepo step cds into the output tree, so both paths must be
+# absolute or the relative ones break mid-script.
+mkdir -p "$OUT"
+OUT=$(cd "$OUT" && pwd)
+ART=$(cd "$ART" && pwd)
 GNUPGHOME="${BALUARD_RELEASE_GNUPGHOME:-$HOME/.baluard/release-gnupg}"
 export GNUPGHOME
 EMAIL="baluard@actitud.xyz"

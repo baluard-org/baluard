@@ -44,6 +44,13 @@ local.properties
 /desktop/src-tauri/target/
 /desktop/src-tauri/gen/
 
+# ── Release staging ──
+# Signed release artifacts (just release-sign) and the package-repo output
+# (just repo-stage) stay out of git: they are rebuilt from a tag plus the
+# release keys, never committed.
+/dist/
+/repo-out/
+
 # ── Browser Extension ──
 /extension/node_modules/
 /extension/dist/

@@ -6,6 +6,11 @@ set -euo pipefail
 
 ART="${1:?usage: build-apt-repo.sh <artifacts-dir> <repo-out-dir>}"
 OUT="${2:?usage: build-apt-repo.sh <artifacts-dir> <repo-out-dir>}"
+# The control-extraction step cds into a temp dir, so both paths must be
+# absolute or the relative ones break mid-script.
+mkdir -p "$OUT"
+OUT=$(cd "$OUT" && pwd)
+ART=$(cd "$ART" && pwd)
 GNUPGHOME="${BALUARD_RELEASE_GNUPGHOME:-$HOME/.baluard/release-gnupg}"
 export GNUPGHOME
 EMAIL="baluard@actitud.xyz"

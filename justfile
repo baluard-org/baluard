@@ -165,17 +165,21 @@ uninstall:
 
 # Sign release artifacts (minisign sidecars + signed SHA256SUMS). The updater
 # key lives at ~/.tauri/baluard-updater.key; see docs/linux-repositories.md.
-release-sign artifacts:
+# Defaults to ./dist, the gitignored local staging dir.
+release-sign artifacts="dist":
 	./scripts/sign-release-artifacts.sh {{ artifacts }}
 
 # Stage the apt + dnf repositories from signed artifacts (repo key: the GPG
 # key in ~/.baluard/release-gnupg; scripts/gen-release-signing-key.sh creates it).
-repo-stage artifacts out:
+# The output is the root of the baluard-org/repo GitHub Pages site; .nojekyll
+# keeps Pages serving the raw tree.
+repo-stage artifacts="dist" out="repo-out":
 	./scripts/build-apt-repo.sh {{ artifacts }} {{ out }}
 	./scripts/build-rpm-repo.sh {{ artifacts }} {{ out }}
 	cp {{ artifacts }}/SHA256SUMS {{ out }}/SHA256SUMS
 	cp {{ artifacts }}/SHA256SUMS.sig {{ out }}/SHA256SUMS.sig
 	cp ~/.baluard/release-gnupg/baluard-release.asc {{ out }}/baluard-release.asc
+	touch {{ out }}/.nojekyll
 	@echo "staged repository at {{ out }}"
 
 # ── Test ────────────────────────────────────────────────────────────────────
