@@ -54,6 +54,7 @@ For full documentation, see **[docs/index.md](docs/index.md)**.
 
 | Document | Description |
 |----------|-------------|
+| [Security White Paper](docs/security-white-paper.md) | How Baluard protects your data: cryptography, hardware sealing, sync trust, threat model |
 | [Architecture Decisions](docs/software-architecture-decisions.md) | Design rationale, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6) |
 | [Software Architecture](docs/software-architecture.md) | Component diagram, data flows, IPC protocol, key lifecycle, cryptographic ceremonies |
 | [Threat Model](docs/threat-model.md) | Adversaries, attack surfaces, mitigations |
