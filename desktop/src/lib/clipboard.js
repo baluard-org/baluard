@@ -14,13 +14,13 @@
  *
  * @param {string} value - the secret to copy
  * @param {object} [opts]
- * @param {number} [opts.autoClearMs=30000] - ms before auto-clearing (0 = disable)
+ * @param {number} [opts.autoClearMs=60000] - ms before auto-clearing (0 = disable)
  * @returns {Promise<void>}
  */
 import { invoke } from "@tauri-apps/api/core";
 
 export async function copyToClipboard(value, opts = {}) {
-  const autoClearMs = opts.autoClearMs ?? 30000;
+  const autoClearMs = opts.autoClearMs ?? 60000;
   await navigator.clipboard.writeText(value);
 
   try {

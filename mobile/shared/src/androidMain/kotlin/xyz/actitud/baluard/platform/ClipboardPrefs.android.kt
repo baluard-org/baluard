@@ -23,7 +23,7 @@ actual class ClipboardPrefs actual constructor() {
 
     private companion object {
         const val KEY = "clipboardClearSeconds"
-        const val DEFAULT = 30
+        const val DEFAULT = 60
         const val MAX = 600
     }
 }
