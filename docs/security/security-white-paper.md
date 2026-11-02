@@ -34,15 +34,15 @@ Verification uses a canary: an encrypted, password-bound file that proves a deri
 
 ### Key derivation
 
-Baluard uses Argon2id, the memory-hard key derivation function, exclusively. You pick a profile at vault creation and the parameters calibrate to your hardware within fixed security bands:
+Baluard uses Argon2id, the memory-hard key derivation function, exclusively. You pick a profile at vault creation, and the profile's parameters are fixed constants, identical on every machine:
 
-| Profile | Memory | Iterations | Parallelism | Target latency |
-|---|---|---|---|---|
-| Mobile low | 19 MiB | 2 | 1 | 300 to 500 ms |
-| Desktop standard | 64 MiB | 3 | 2 | 300 to 500 ms |
-| Desktop high | 256 MiB | 4 | 4 | 500 to 800 ms |
+| Profile | Memory | Iterations | Parallelism |
+|---|---|---|---|
+| Mobile low | 19 MiB | 2 | 1 |
+| Desktop standard | 64 MiB | 3 | 2 |
+| Desktop high | 256 MiB | 4 | 4 |
 
-Calibration tunes parameters toward the latency target but never below the 19 MiB security floor, so the table shows starting points, not necessarily the values your machine settled on. The profile name is kept out of the stored parameters; the calibrated numbers themselves are stored in plaintext inside the vault, so a determined observer of a sync remote can still infer a device class from them. Hiding the label raises the cost of that inference, and the parameters stay public because unlocking requires them.
+The parameters travel in plaintext inside the vault, so an observer of a sync remote can read your profile from the numbers. That is deliberate: unlocking requires them, and the profile label itself is not stored. Every derivation refuses parameters outside hard bounds (19 to 512 MiB of memory, 1 to 10 iterations, 1 to 8 lanes), so a tampered remote cannot make the app allocate itself to death the moment you type your password.
 
 ### Quick unlock
 

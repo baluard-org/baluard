@@ -136,7 +136,7 @@ pub struct CipherEnvelope {
 
 // ── KDF Profiles (D2) ──
 
-/// Argon2id calibration profiles with hard bounds.
+/// Argon2id security profiles.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KdfProfile {
     /// Low-end mobile devices.
@@ -179,18 +179,9 @@ impl KdfProfile {
             KdfProfile::DesktopHigh => 4,
         }
     }
-
-    /// Target latency range in milliseconds.
-    pub const fn latency_range_ms(&self) -> (u32, u32) {
-        match self {
-            KdfProfile::MobileLow => (300, 500),
-            KdfProfile::DesktopStd => (300, 500),
-            KdfProfile::DesktopHigh => (500, 800),
-        }
-    }
 }
 
-/// Full KDF parameters (profile + calibrated values within bounds).
+/// Full KDF parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KdfParams {
     /// Profile name is not serialized to prevent device class leakage.
