@@ -4260,6 +4260,264 @@ async fn bridge_vault_get_returns_only_fill_fields() {
 }
 
 #[tokio::test]
+async fn bridge_vault_get_refuses_non_login_kinds() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, path_b) = make_vault("b10getcard");
+    let state = Arc::new(VaultState::new(path_b.clone()));
+    state.open().await.expect("open");
+    state.unlock(MASTER).await.expect("unlock");
+    register_in_registry("b10getcard", &path_b);
+    state
+        .add_cipher(
+            &serde_json::json!({
+                "name": "B10 Card",
+                "kind": {"type": "card", "data": {
+                    "cardholder": "alice",
+                    "number": "4111111111111111",
+                    "code": "123"
+                }}
+            })
+            .to_string(),
+        )
+        .await
+        .expect("add");
+    let env = state.full_envelope().await.expect("envelope");
+    let id = env["ciphers"][0]["id"].as_str().unwrap().to_string();
+
+    let host = Arc::new(VaultHost::new());
+    host.insert("b10getcard".into(), state.clone()).await;
+    host.switch("b10getcard").await.expect("switch");
+    let token_hex = {
+        let mut reg = host.bridge().write().await;
+        let _pair = reg.start_pair("test-harness");
+        reg.complete_pair("ext", "chrome").expect("pair").1
+    };
+    let req = GatewayRequest {
+        action: "vault.get".into(),
+        payload: serde_json::json!({ "id": id, "decrypt": true }).to_string(),
+        session_token: token_hex,
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        !resp.success && resp.error_message.contains("logins only"),
+        "bridge vault.get must refuse non-Login kinds, got success={} err={}",
+        resp.success,
+        resp.error_message
+    );
+}
+
+#[tokio::test]
+async fn bridge_writes_stay_inside_decision_seven() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, path_b) = make_vault("b10write");
+    let state = Arc::new(VaultState::new(path_b.clone()));
+    state.open().await.expect("open");
+    state.unlock(MASTER).await.expect("unlock");
+    register_in_registry("b10write", &path_b);
+    state
+        .add_cipher(
+            &serde_json::json!({
+                "name": "B10 Login",
+                "kind": {"type": "login", "data": {
+                    "username": "alice",
+                    "password": "b10-pass-xyz"
+                }}
+            })
+            .to_string(),
+        )
+        .await
+        .expect("add");
+    let env = state.full_envelope().await.expect("envelope");
+    let id = env["ciphers"][0]["id"].as_str().unwrap().to_string();
+
+    let host = Arc::new(VaultHost::new());
+    host.insert("b10write".into(), state.clone()).await;
+    host.switch("b10write").await.expect("switch");
+    let token_hex = {
+        let mut reg = host.bridge().write().await;
+        let _pair = reg.start_pair("test-harness");
+        reg.complete_pair("ext", "chrome").expect("pair").1
+    };
+
+    // A data field outside Decision 7 must refuse even for a Login kind.
+    let outside = route_host_request(
+        GatewayRequest {
+            action: "vault.update".into(),
+            payload: serde_json::json!({
+                "id": id,
+                "kind": {"type": "login", "data": {
+                    "username": "alice",
+                    "password": "b10-pass-xyz",
+                    "number": "4111111111111111"
+                }}
+            })
+            .to_string(),
+            session_token: token_hex.clone(),
+            slug: String::new(),
+        },
+        &host,
+    )
+    .await;
+    assert!(
+        !outside.success && outside.error_message.contains("username, password, notes"),
+        "bridge update outside Decision 7 must refuse, got success={} err={}",
+        outside.success,
+        outside.error_message
+    );
+
+    // A non-Login kind must refuse outright.
+    let card = route_host_request(
+        GatewayRequest {
+            action: "vault.update".into(),
+            payload: serde_json::json!({
+                "id": id,
+                "kind": {"type": "card", "data": {"number": "4111111111111111"}}
+            })
+            .to_string(),
+            session_token: token_hex.clone(),
+            slug: String::new(),
+        },
+        &host,
+    )
+    .await;
+    assert!(
+        !card.success && card.error_message.contains("logins"),
+        "bridge update must refuse non-Login kinds, got success={} err={}",
+        card.success,
+        card.error_message
+    );
+
+    // The Decision 7 field set itself still goes through.
+    let allowed = route_host_request(
+        GatewayRequest {
+            action: "vault.update".into(),
+            payload: serde_json::json!({
+                "id": id,
+                "kind": {"type": "login", "data": {
+                    "username": "alice",
+                    "password": "b10-pass-rotated"
+                }}
+            })
+            .to_string(),
+            session_token: token_hex,
+            slug: String::new(),
+        },
+        &host,
+    )
+    .await;
+    assert!(
+        allowed.success,
+        "allowed bridge update failed: {}",
+        allowed.error_message
+    );
+}
+
+#[tokio::test]
+async fn agent_request_refuses_non_login_items() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, host, state) = agent_host("agent-card-item").await;
+    state
+        .add_cipher(
+            &serde_json::json!({
+                "name": "B10 Card",
+                "kind": {"type": "card", "data": {
+                    "number": "4111111111111111",
+                    "code": "123"
+                }}
+            })
+            .to_string(),
+        )
+        .await
+        .expect("add");
+    let env = state.full_envelope().await.expect("envelope");
+    let id = env["ciphers"][0]["id"].as_str().unwrap().to_string();
+    let peer = agent_peer(47);
+    let accepted = baluard_daemon::handler::route_host_request_with_peer(
+        agent_request(
+            "agents.request",
+            serde_json::json!({
+                "slug": "personal",
+                "claimed_name": "Example agent",
+                "need": "card number",
+                "item_ids": [id]
+            }),
+            String::new(),
+        ),
+        &host,
+        Some(&peer),
+    )
+    .await;
+    assert!(
+        !accepted.success && accepted.error_message.contains("logins"),
+        "agents.request must refuse non-Login items, got success={} err={}",
+        accepted.success,
+        accepted.error_message
+    );
+}
+
+#[tokio::test]
+async fn bridge_update_refuses_when_the_target_is_not_a_login() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, path_b) = make_vault("b10swap");
+    let state = Arc::new(VaultState::new(path_b.clone()));
+    state.open().await.expect("open");
+    state.unlock(MASTER).await.expect("unlock");
+    register_in_registry("b10swap", &path_b);
+    state
+        .add_cipher(
+            &serde_json::json!({
+                "name": "B10 Card",
+                "kind": {"type": "card", "data": {
+                    "cardholder": "alice",
+                    "number": "4111111111111111",
+                    "code": "123"
+                }}
+            })
+            .to_string(),
+        )
+        .await
+        .expect("add");
+    let env = state.full_envelope().await.expect("envelope");
+    let id = env["ciphers"][0]["id"].as_str().unwrap().to_string();
+
+    let host = Arc::new(VaultHost::new());
+    host.insert("b10swap".into(), state.clone()).await;
+    host.switch("b10swap").await.expect("switch");
+    let token_hex = {
+        let mut reg = host.bridge().write().await;
+        let _pair = reg.start_pair("test-harness");
+        reg.complete_pair("ext", "chrome").expect("pair").1
+    };
+
+    // A payload claiming Login aimed at a Card target: the payload-level
+    // gate alone cannot see this. The stored kind decides.
+    let resp = route_host_request(
+        GatewayRequest {
+            action: "vault.update".into(),
+            payload: serde_json::json!({
+                "id": id,
+                "kind": {"type": "login", "data": {
+                    "username": "alice",
+                    "password": "b10-pass-xyz"
+                }}
+            })
+            .to_string(),
+            session_token: token_hex,
+            slug: String::new(),
+        },
+        &host,
+    )
+    .await;
+    assert!(
+        !resp.success && resp.error_message.contains("logins"),
+        "bridge update must refuse a non-Login target, got success={} err={}",
+        resp.success,
+        resp.error_message
+    );
+}
+
+#[tokio::test]
 async fn agent_run_captures_output_from_a_slow_command() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-run-slow").await;
