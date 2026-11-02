@@ -9,7 +9,7 @@
 // target first, then it becomes active. Cancelling leaves the user on the
 // currently-displayed vault with its active pointer untouched.
 
-import { createSignal, Show, createEffect } from "solid-js";
+import { createSignal, Show, onSettled } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -44,8 +44,10 @@ export default function SwitchUnlockModal(props) {
 
   // Query the target vault's Quick Unlock status on open. The target is
   // open-but-locked by the time this modal appears (the switcher opens it).
+  // solid-js 2.0: this is a one-shot read, not reactive work — the modal
+  // remounts per target, so a plain call is the supported form.
   let statusGen = 0;
-  createEffect(() => {
+  onSettled(() => {
     const slug = props.target?.slug;
     if (!slug) {
       // No target: no stale buttons from the previously opened vault.

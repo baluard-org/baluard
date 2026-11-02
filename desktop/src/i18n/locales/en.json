@@ -600,7 +600,8 @@
     "driversLicense": "Driver license",
     "passport": "Passport & ID",
     "archive": "Archive",
-    "trash": "Trash"
+    "trash": "Trash",
+    "signingKey": "Signing key"
   },
   "types": {
     "login": "Login",
