@@ -1,6 +1,6 @@
 //! P1a: per-human identity keypair — stored data, never HKDF-derived.
 //!
-//! The identity is the crown jewel of the sharing model (plan-sharing.md
+//! The identity is the crown jewel of the sharing model (0085-sharing.md
 //! §4.1): Spaces trust THIS keypair, not any vault. Its sealing key is
 //! therefore deliberately independent of the master-password KEK:
 //!

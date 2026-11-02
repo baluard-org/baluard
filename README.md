@@ -20,7 +20,7 @@ mobile/        -> Kotlin Multiplatform / Compose app (Android shipped; iOS pendi
 
 - **Encrypted vault as a git repo** - no server; padded buckets (5 tiers) hide metadata; device identity with signed commits and enrollment proofs
 - **All 8 cipher types**, TOTP, SSH keys, passkeys (view/delete), custom fields, attachments, password health
-- **Sharing & Spaces** - invite-code joins with roles and grants, family Spaces (purpose flag, minors, phrase-only recovery kit, D61 claim window), merged search/autofill across eligible vaults
+- **Sharing & Spaces** - invite-code joins with roles and grants, family Spaces (purpose flag, minors, phrase-only recovery kit, ADR 0064 claim window), merged search/autofill across eligible vaults
 - **Backups** - full-fidelity `baluard.vault` JSON, logins-only CSV, and a passphrase-encrypted `.bldbak` container that restores into any vault
 - **Git providers** - GitHub/GitLab/Codeberg device-flow or PAT connect, repo creation, clone, auto-sync
 - **Quick unlock** - Touch ID / Windows Hello keychain, Android biometric, session PIN (Linux)
@@ -36,7 +36,7 @@ just build
 just test
 ```
 
-See **[docs/dev-setup.md](docs/dev-setup.md)** for prerequisites, platform setup, and all build commands. For mobile development setup, see **[docs/mobile-dev-setup.md](docs/mobile-dev-setup.md)**.
+See **[docs/dev/dev-setup.md](docs/dev/dev-setup.md)** for prerequisites, platform setup, and all build commands. For mobile development setup, see **[docs/dev/dev-setup-mobile.md](docs/dev/dev-setup-mobile.md)**.
 
 ### Try the demo vault
 
@@ -54,15 +54,15 @@ For full documentation, see **[docs/index.md](docs/index.md)**.
 
 | Document | Description |
 |----------|-------------|
-| [Security White Paper](docs/security-white-paper.md) | How Baluard protects your data: cryptography, hardware sealing, sync trust, threat model |
-| [Architecture Decisions](docs/software-architecture-decisions.md) | Design rationale, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6) |
-| [Software Architecture](docs/software-architecture.md) | Component diagram, data flows, IPC protocol, key lifecycle, cryptographic ceremonies |
-| [Threat Model](docs/threat-model.md) | Adversaries, attack surfaces, mitigations |
-| [2FA Analysis](docs/2fa-analysis.md) | TOTP implementation, RFC 6238/4226 compliance |
-| [Dev Setup & Workflow](docs/dev-setup.md) | Prerequisites, build commands, architecture, testing, troubleshooting |
-| [Mobile Dev Setup](docs/mobile-dev-setup.md) | Android SDK, NDK, OpenJDK 17, and Gradle setup for mobile development |
-| [Translations & Localization](docs/translations.md) | Guide for adding and maintaining desktop and mobile language translations |
-| [Brand Guidelines](docs/brand-guidelines.md) | Color palette, design tokens, visual identity rules |
+| [Security White Paper](docs/security/security-white-paper.md) | How Baluard protects your data: cryptography, hardware sealing, sync trust, threat model |
+| [Architecture Decisions](docs/adr/) | Design rationale, device fleet, lifecycle, and rotation (ADR 0101) |
+| [Software Architecture](docs/dev/software-architecture.md) | Component diagram, data flows, IPC protocol, key lifecycle, cryptographic ceremonies |
+| [Threat Model](docs/security/threat-model.md) | Adversaries, attack surfaces, mitigations |
+| [2FA Analysis](docs/security/2fa-analysis.md) | TOTP implementation, RFC 6238/4226 compliance |
+| [Dev Setup & Workflow](docs/dev/dev-setup.md) | Prerequisites, build commands, architecture, testing, troubleshooting |
+| [Mobile Dev Setup](docs/dev/dev-setup-mobile.md) | Android SDK, NDK, OpenJDK 17, and Gradle setup for mobile development |
+| [Translations & Localization](docs/dev/translations.md) | Guide for adding and maintaining desktop and mobile language translations |
+| [Brand Guidelines](docs/brand/brand-guidelines.md) | Color palette, design tokens, visual identity rules |
 
 ## Contributing
 

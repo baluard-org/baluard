@@ -1,4 +1,4 @@
-// Ring 2 of docs/e2e-testing.md Phase 4: the inline autofill dropdown driven
+// Ring 2 of the E2E harness: the inline autofill dropdown driven
 // on REAL public sites (same harness shape as pw.mjs, Ring 1).
 //
 // The dropdown UI lives inside a CLOSED shadow root (page JS cannot reach it

@@ -103,7 +103,7 @@ impl Provider {
     ///    is treated as unset.
     /// 2. The embedded default (real GitHub app; placeholder for GitLab +
     ///    Codeberg until the project app is registered — see
-    ///    `docs/git-provider-apps-and-tokens.md` §3/§4/§5).
+    ///    `docs/dev/git-provider-apps-and-tokens.md` §3/§4/§5).
     ///
     /// Returns `String` (not `&'static str`) because env-var reads are
     /// owned. Callers that need the embedded default without env influence

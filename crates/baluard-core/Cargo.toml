@@ -21,7 +21,7 @@ rand.workspace = true
 ssh-key = { version = "0.7.0-rc.10", features = ["ed25519"] }
 rand_core.workspace = true
 # FIDO2 CTAP2 client (pure Rust, MIT, vendor-reviewed for the hmac-secret
-# seal; docs/plan-yubikey-seal.md Implementation). Optional: builds only
+# seal; docs/adr/0096-yubikey-seal.md Implementation). Optional: builds only
 # under the fido2 feature, where the hidapi scaffold needs libusb/libudev
 # headers and runtime needs the Yubico udev rules.
 ctap-hid-fido2 = { version = "3.6", optional = true, default-features = false, features = [
@@ -37,7 +37,7 @@ hidapi = { version = "2.6", optional = true }
 rsa = "0.9"
 # EC verification for the same verifier (ES256 attStmt/links) and the
 # assertion-signature oracle in the passkey provider tests (§8 of
-# plan-mobile-passkeys). The earlier dev-only placement predates the
+# ADR 0095). The earlier dev-only placement predates the
 # attestation verifier (hwkey/attest.rs), which verifies in production.
 p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdsa", "ecdh", "std"] }
 bip39.workspace = true
@@ -92,7 +92,7 @@ proptest.workspace = true
 tokio.workspace = true
 tempfile = "3"
 serial_test = "3"
-# Phase 0.3 spike — see docs/plan-passkey-rs-evaluation.md
+# Phase 0.3 spike — see docs/adr/0094-passkey-rs-evaluation.md
 webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
 webauthn-rs-proto.workspace = true
 webauthn-rs-core.workspace = true
@@ -102,7 +102,7 @@ public-suffix = "0.1"
 [features]
 hw-seal = ["dep:secure-enclave-rs", "dep:tss-esapi", "dep:windows-sys"]
 # FIDO2 security-key seal (the hmac-secret design in
-# docs/plan-yubikey-seal.md). Non-default until the daemon wiring and
+# docs/adr/0096-yubikey-seal.md). Non-default until the daemon wiring and
 # packaging land; MSRV for a build WITH this feature is 1.89 (the crate
 # floor) - still under every minimum-platform target's rustc.
 fido2 = ["dep:ctap-hid-fido2", "dep:hidapi", "ctap-client"]

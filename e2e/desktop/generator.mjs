@@ -1,4 +1,4 @@
-// Desktop E2E flow 9: the password generator modal (docs/e2e-testing.md
+// Desktop E2E flow 9: the password generator modal (the E2E harness
 // Phase 3 flow coverage). Generate, switch to the passphrase tab,
 // regenerate, copy (label flip), and confirm the history row lands.
 import { remote } from "webdriverio";

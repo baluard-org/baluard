@@ -224,7 +224,7 @@ pub struct AssertionResult {
 
 /// Ceremony user validation.
 ///
-/// `user_verified` is the per-call UV grant (plan-mobile-passkeys §5): the
+/// `user_verified` is the per-call UV grant (ADR 0095 §5): the
 /// system sheet's biometric prompt or the in-app fallback decides it per
 /// request, so `Required` plus `false` fails the ceremony instead of silently
 /// passing. The two-phase desktop routes use `default()` (always verified),
@@ -421,7 +421,7 @@ pub async fn run_assertion(
     })
 }
 
-// ── Provider-grade ceremonies (plan-mobile-passkeys §8) ──
+// ── Provider-grade ceremonies (ADR 0095 §8) ──
 //
 // The credential-provider surface signs the RP's own request: challenge and
 // client-data come from the caller, UV follows the request and a per-call
@@ -781,7 +781,7 @@ pub async fn run_provider_assertion(
 
 #[cfg(all(test, feature = "passkey-ceremony"))]
 mod provider_tests {
-    //! Provider-grade ceremony tests (plan-mobile-passkeys section 8 and 13).
+    //! Provider-grade ceremony tests (ADR 0095 section 8 and 13).
     //!
     //! The assertion oracle verifies the ECDSA signature with p256 directly
     //! (dev-dependency) over authData concatenated with clientDataHash,

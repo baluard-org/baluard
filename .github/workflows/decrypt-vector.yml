@@ -2,7 +2,7 @@
 # (Python stdlib + argon2-cffi/cryptography) reads exactly what Baluard
 # writes, byte for byte, from the committed golden vector. This is the
 # cross-implementation guard for the .bldbak container spec
-# (docs/plan-encrypted-backup.md). Deliberately dependency-light: no Rust
+# (docs/adr/0099-encrypted-backup.md). Deliberately dependency-light: no Rust
 # build — the decryptor needs only pip's argon2-cffi + cryptography.
 name: decrypt-vector
 

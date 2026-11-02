@@ -4,8 +4,8 @@
 //! platform authenticator: generates passkeys at registration, serves
 //! them at assertion. Private keys encrypted under the cipher item key.
 //!
-//! See `docs/plan-passkey-support.md` Phase 1 and
-//! `docs/plan-passkey-rs-evaluation.md` for the evaluation.
+//! See `docs/adr/0095-passkey-support.md` Phase 1 and
+//! `docs/adr/0094-passkey-rs-evaluation.md` for the evaluation.
 
 pub mod ceremony;
 pub mod store;

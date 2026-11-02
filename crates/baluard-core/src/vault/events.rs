@@ -1,5 +1,5 @@
 //! S1b-1: sharing activity log — structured, human-sentence events for
-//! the Activity surface (plan-sharing §4.6).
+//! the Activity surface (ADR 0085 §4.6).
 //!
 //! Storage: `meta/share-events.enc`, AES-256-GCM under the RootKey-
 //! derived events key (rotation-covered: read pre-swap, re-encrypted

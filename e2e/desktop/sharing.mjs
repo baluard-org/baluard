@@ -1,4 +1,4 @@
-// Desktop E2E flow 4: sharing surfaces (docs/e2e-testing.md flow coverage
+// Desktop E2E flow 4: sharing surfaces (the E2E harness flow coverage
 // beyond CRUD). The runner seeds a second live member row and a pending D61
 // ownership-claim record. Drive the Collections tab (create a shared folder,
 // grant the member access, revoke), the People tab (role change on the

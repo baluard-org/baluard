@@ -13,7 +13,7 @@ import xyz.actitud.baluard.openVault
 import xyz.actitud.baluard.platform.VaultRegistry
 
 /**
- * Autofill-side vault sessions (plan D6, merged per plan-merged-search §4.8):
+ * Autofill-side vault sessions (ADR 0090, merged per ADR 0098 §4.8):
  * ONE opened [MobileVault] handle PER discovered vault, living in the
  * `:autofill` process and shared by [BaluardAutofillService] and
  * [AutofillActivity] (both declared `android:process=":autofill"`, so the
@@ -144,7 +144,7 @@ object AutofillSession {
     }
 
     /**
-     * Unlock one explicit vault (per-vault auth datasets, plan-merged-search
+     * Unlock one explicit vault (per-vault auth datasets, ADR 0098
      * §4.8): the activity passes the dataset's vault path. Same KEK rules as
      * [unlock].
      */
@@ -183,7 +183,7 @@ object AutofillSession {
 
     /**
      * Opened-but-locked vaults (path, display name) for the per-vault unlock
-     * datasets (plan-merged-search §4.8): each gets its own biometric
+     * datasets (ADR 0098 §4.8): each gets its own biometric
      * prompt, sequential and explicit.
      */
     suspend fun lockedVaults(): List<Pair<String, String>> = mutationMutex.withLock {
@@ -257,7 +257,7 @@ object AutofillSession {
     }
 
     /**
-     * Merge-eligibility for autofill (plan-merged-search §4.2/§4.3): the
+     * Merge-eligibility for autofill (ADR 0098 §4.2/§4.3): the
      * ACTIVE vault always serves its own entries; every OTHER vault
      * contributes only when merge-eligible (personal yes; org, pair, and
      * flipped team shapes never - companies do not want company items in

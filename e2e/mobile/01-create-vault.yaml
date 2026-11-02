@@ -1,4 +1,4 @@
-# Baluard E2E, flow 01 (docs/e2e-testing.md Phase 2): the creation
+# Baluard E2E, flow 01 (the E2E harness): the creation
 # wizard on a DEDICATED test device or emulator. clearState wipes every
 # vault in the app - never run against a device holding real vaults.
 # Password comes from the runner: maestro test -e MASTER_PW=...

@@ -17,7 +17,7 @@
 //! off switch (an admin disabling the kit).
 //!
 //! Recovery ceremony (device enrollment, owner-row binding, unlock) is
-//! designed in docs/emergency-org-identity.md and lands as a follow-up
+//! designed in docs/security/emergency-org-identity.md and lands as a follow-up
 //! slice; this module provides the escrow primitives.
 
 use crate::crypto::hpke_wrap;

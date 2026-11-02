@@ -1,5 +1,5 @@
 //! Linux TPM 2.0 key-agreement backend (plan:
-//! `docs/plan-hardware-backed-keys.md` §3.4, Phase 3).
+//! `docs/adr/0097-hardware-backed-keys.md` §3.4, Phase 3).
 //!
 //! Built on `tss-esapi` over the TCG ESYS stack: a P-256 ECDH key whose
 //! private half is TPM-resident and non-exportable by construction.

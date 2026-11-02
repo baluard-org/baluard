@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Browser-extension e2e (docs/e2e-testing.md Phase 4), Firefox leg: real
+# Browser-extension e2e (the E2E harness), Firefox leg: real
 # Firefox (geckodriver, temporary add-on) + real NMH + real daemon + the real
 # bridge pairing ceremony over the daemon socket.
 #

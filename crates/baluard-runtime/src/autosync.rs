@@ -268,7 +268,7 @@ impl AutoSyncHandle {
     //
     // Most events are thin wrappers over the existing daemon-side methods so
     // the mobile surface reads as lifecycle events rather than daemon
-    // internals. See `docs/plan-mobile-apps.md` §3.2/§3.5 and the Phase 0
+    // internals. See `docs/adr/0089-mobile-apps.md` §3.2/§3.5 and the Phase 0
     // Task #2 state-machine map.
 
     /// **`on_unlock`** — pull immediately after the vault unlocks so edits made

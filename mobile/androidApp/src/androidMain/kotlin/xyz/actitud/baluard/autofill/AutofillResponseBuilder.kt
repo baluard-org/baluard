@@ -53,7 +53,7 @@ object AutofillResponseBuilder {
     }
 
     /**
-     * Locked-session response (plan D6). Response-level setAuthentication is
+     * Locked-session response (ADR 0090). Response-level setAuthentication is
      * NOT rendered by Chromium's native path, so auth is a PER-DATASET
      * "Unlock Baluard" dataset: presentations-only fields (no values) plus
      * Dataset.setAuthentication pointing at [AutofillActivity], which runs
@@ -183,7 +183,7 @@ object AutofillResponseBuilder {
             }
         }
 
-        // Per-vault unlock datasets (plan-merged-search §4.8): a locked
+        // Per-vault unlock datasets (ADR 0098 §4.8): a locked
         // vault contributes nothing to the merge, but shows up here as its
         // own auth dataset - one explicit biometric prompt each.
         for ((lockedPath, lockedName) in AutofillSession.lockedVaults()) {

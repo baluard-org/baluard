@@ -1,4 +1,4 @@
-//! E2E harness for docs/e2e-testing.md Phase 1 (CLI + daemon).
+//! E2E harness for Phase 1 (CLI + daemon).
 //!
 //! Distinct from the direct-mode suites in `tests/*.rs`: every flow here
 //! spawns the real `baluard-daemon` binary on a scratch socket with its own
@@ -1468,7 +1468,7 @@ fn e2e_multi_device_enrollment_proof_forgery_refused() {
         .stdout(predicates::str::contains("ForgedDeviceB").not());
 }
 
-/// Encrypted backup (docs/plan-encrypted-backup.md): vault A exports a
+/// Encrypted backup (docs/adr/0099-encrypted-backup.md): vault A exports a
 /// passphrase-protected .bldbak container; a wrong passphrase fails with the
 /// single generic error (never an import summary); then a DIFFERENT vault B
 /// restores the same file under its own keys — the not-locked-in guarantee,

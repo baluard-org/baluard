@@ -457,7 +457,7 @@ impl ForgeProvider for GitHubProvider {
                      March 2022). Enable it in the app's settings: \
                      https://github.com/settings/developers → click the \
                      app → 'Device flow' → Enable. See \
-                     docs/git-provider-apps-and-tokens.md §3.2."
+                     docs/dev/git-provider-apps-and-tokens.md §3.2."
                         .into(),
                 ));
             }

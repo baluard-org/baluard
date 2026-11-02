@@ -1,4 +1,4 @@
-// Desktop E2E flow 1: the unlock path (docs/e2e-testing.md Phase 3).
+// Desktop E2E flow 1: the unlock path (the E2E harness).
 // Drives the REAL WebKitGTK webview through tauri-driver: type the
 // seeded vault's password into the login form, unlock, assert the
 // vault hub renders. The runner (run-e2e-desktop.sh) owns the

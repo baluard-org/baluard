@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Desktop E2E (docs/e2e-testing.md Phase 3): drives the REAL desktop
+# Desktop E2E (the E2E harness): drives the REAL desktop
 # app (WebKitGTK webview) headless under Xvfb through tauri-driver.
 #
 # Sandbox layout: one fresh BALUARD_DATA_DIR per run resets the unlock

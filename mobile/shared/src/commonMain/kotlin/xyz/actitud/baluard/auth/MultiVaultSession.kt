@@ -33,7 +33,7 @@ class SessionEntry internal constructor(
 )
 
 /**
- * The mobile multi-Space host (plan-power-pack S4-9): keeps up to [max] vaults
+ * The mobile multi-Space host (ADR 0087 S4-9): keeps up to [max] vaults
  * unlocked at once so switching Spaces does not re-run the unlock ceremony.
  * Desktop parity — the desktop VaultHost has kept multiple vaults unlocked
  * since Phase 6; the phone was the last single-vault surface.

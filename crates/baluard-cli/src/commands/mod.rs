@@ -4680,7 +4680,7 @@ pub fn handle_import(
 
 // ── Export ──
 
-/// Backup-passphrase resolution (docs/plan-encrypted-backup.md §8):
+/// Backup-passphrase resolution (docs/adr/0099-encrypted-backup.md §8):
 /// BALUARD_BACKUP_PASSPHRASE env first (scripting/E2E; --generate is then
 /// ignored with a note), else --generate prints a fresh 6-word passphrase
 /// once, else the user types it twice — a typo would produce a backup that
