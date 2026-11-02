@@ -2379,7 +2379,9 @@ mod tests {
         // Rebuild the plaintext with a kind tag only a newer client models.
         let cipher = h.decrypt_cipher_bytes(id, &bytes).unwrap();
         let mut value = serde_json::to_value(&cipher).unwrap();
-        value["kind"]["type"] = serde_json::json!("signingKey");
+        // A kind this build has never heard of. signingKey was the
+        // original stand-in and became real, so the fixture invents one.
+        value["kind"]["type"] = serde_json::json!("holoCard");
         let json = serde_json::to_vec(&value).unwrap();
 
         let tier = crate::types::Tier::fit(json.len()).unwrap();
@@ -2450,7 +2452,9 @@ mod tests {
 
         let cipher = h.decrypt_cipher_bytes(id, &bytes).unwrap();
         let mut value = serde_json::to_value(&cipher).unwrap();
-        value["kind"]["type"] = serde_json::json!("signingKey");
+        // A kind this build has never heard of. signingKey was the
+        // original stand-in and became real, so the fixture invents one.
+        value["kind"]["type"] = serde_json::json!("holoCard");
         let json = serde_json::to_vec(&value).unwrap();
         let tier = crate::types::Tier::fit(json.len()).unwrap();
         let padded = crate::vault::padding::pad(&json, tier).unwrap();
