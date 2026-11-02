@@ -118,6 +118,26 @@ pub async fn handle_agent_route(
             if !state.is_unlocked().await {
                 return err_response(format!("Vault '{slug}' is locked"));
             }
+            // L4 (D81 review): refuse non-Login items at request time, so
+            // the user never approves a grant whose run must fail. Items
+            // that do not resolve stay request-time-legal; agents.run
+            // remains the final validator.
+            for item_id in &payload.item_ids {
+                if let Ok(cipher_json) = state.get_cipher(item_id, true).await {
+                    let kind = serde_json::from_str::<serde_json::Value>(&cipher_json)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("kind")
+                                .and_then(|k| k.get("type"))
+                                .and_then(|t| t.as_str())
+                                .map(String::from)
+                        })
+                        .unwrap_or_default();
+                    if kind != "login" {
+                        return err_response("agents may only request logins");
+                    }
+                }
+            }
             let yolo_audit_slug = slug.clone();
             let yolo_audit_items = payload.item_ids.clone();
             if yolo_enabled(&slug) {
