@@ -258,8 +258,12 @@ pub fn export_bw_json(
             CipherKind::BankAccount(_) => 6,
             CipherKind::DriversLicense(_) => 7,
             CipherKind::Passport(_) => 8,
+            // D81: Bitwarden has no signing-key type, so the entry exports
+            // as a secure note whose key material rides hidden fields.
+            CipherKind::SigningKey(_) => 2,
         };
 
+        let mut signing_fields: Vec<BwExportField> = Vec::new();
         let (login, secure_note, card, identity, ssh_key, bank_account, drivers_license, passport) =
             match &cipher.kind {
                 CipherKind::Login(data) => (
@@ -368,6 +372,50 @@ pub fn export_bw_json(
                 CipherKind::Passport(data) => {
                     (None, None, None, None, None, None, None, Some(data.clone()))
                 }
+                CipherKind::SigningKey(data) => {
+                    // Deliberately lossy toward Bitwarden's schema: derived
+                    // metadata (subject, issuer, expiry, fingerprint) and
+                    // key_format have no BW note equivalent and the daemon
+                    // recomputes the derived set from the chain anyway.
+                    if data.private_key.is_some() {
+                        signing_fields.push(BwExportField {
+                            name: "private_key".into(),
+                            value: data.private_key.clone(),
+                            r#type: 1,
+                        });
+                    }
+                    if data.passphrase.is_some() {
+                        signing_fields.push(BwExportField {
+                            name: "key_passphrase".into(),
+                            value: data.passphrase.clone(),
+                            r#type: 1,
+                        });
+                    }
+                    for cert in &data.certificates {
+                        signing_fields.push(BwExportField {
+                            name: "certificate".into(),
+                            value: Some(cert.clone()),
+                            r#type: 0,
+                        });
+                    }
+                    if let Some(pk) = &data.public_key {
+                        signing_fields.push(BwExportField {
+                            name: "public_key".into(),
+                            value: Some(pk.clone()),
+                            r#type: 0,
+                        });
+                    }
+                    (
+                        None,
+                        Some(BwExportSecureNote { r#type: 0 }),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                }
             };
 
         let fields: Vec<BwExportField> = cipher
@@ -378,6 +426,7 @@ pub fn export_bw_json(
                 value: Some(f.value.clone()),
                 r#type: field_type_to_bw(&f.field_type),
             })
+            .chain(signing_fields)
             .collect();
 
         let history: Vec<BwExportHistoryEntry> = cipher
@@ -495,6 +544,31 @@ mod tests {
             archived: false,
             tags: vec![],
         }
+    }
+
+    #[test]
+    fn signing_key_exports_as_note_with_hidden_fields() {
+        let cipher = make_cipher(
+            "00000000-0000-0000-0000-000000000009",
+            "Release Key",
+            CipherKind::SigningKey(crate::types::SigningKeyData {
+                private_key: Some("MINISIGN-KEY".into()),
+                passphrase: Some("key-pass".into()),
+                public_key: Some("RWQ".into()),
+                certificates: vec!["PEMCERT".into()],
+                key_format: crate::types::KeyFormat::Base64,
+                expires_at: Some(1900000000),
+                issuer: None,
+                subject: None,
+                fingerprint: None,
+            }),
+        );
+        let json = export_bw_json(&[cipher], &[]).unwrap();
+        assert!(json.contains("\"type\": 2"), "note type: {json}");
+        assert!(json.contains("\"name\": \"private_key\""));
+        assert!(json.contains("MINISIGN-KEY"));
+        assert!(json.contains("\"name\": \"key_passphrase\""));
+        assert!(json.contains("PEMCERT"));
     }
 
     #[test]

@@ -39,7 +39,14 @@ fn mask_conflict(
 ) -> MaskedConflict {
     // Coarse sensitive-field classifier. Mirrors the semantic groups in
     // conflict.rs (username/password/totp atomic) + card/ssh private material.
-    const SENSITIVE_KEYS: &[&str] = &["password", "totp_uri", "code", "number", "private_key"];
+    const SENSITIVE_KEYS: &[&str] = &[
+        "password",
+        "totp_uri",
+        "code",
+        "number",
+        "private_key",
+        "passphrase",
+    ];
     let fields = info
         .conflicting_fields
         .iter()
@@ -7259,6 +7266,10 @@ impl VaultState {
                         baluard_core::types::CipherKind::Login(data) => data.username.clone(),
                         _ => None,
                     };
+                    let expires_at = match &c.kind {
+                        baluard_core::types::CipherKind::SigningKey(data) => data.expires_at,
+                        _ => None,
+                    };
                     metas.push(baluard_core::types::CipherMeta {
                         id: c.id,
                         name: c.name.clone(),
@@ -7274,6 +7285,7 @@ impl VaultState {
                         archived: c.archived,
                         tags: c.tags.clone(),
                         collection_id: *collection_id,
+                        expires_at,
                     });
                 }
                 _ => continue, // undecryptable trash blob: skip
@@ -9475,6 +9487,18 @@ fn cipher_to_json(c: &baluard_core::types::Cipher) -> serde_json::Value {
             json["public_key"] = serde_json::json!(data.public_key);
             json["private_key"] = serde_json::json!(data.private_key);
             json["fingerprint"] = serde_json::json!(data.key_fingerprint);
+        }
+        baluard_core::types::CipherKind::SigningKey(data) => {
+            json["public_key"] = serde_json::json!(data.public_key);
+            json["private_key"] = serde_json::json!(data.private_key);
+            json["passphrase"] = serde_json::json!(data.passphrase);
+            json["certificates"] = serde_json::json!(data.certificates);
+            json["key_format"] =
+                serde_json::to_value(data.key_format).unwrap_or(serde_json::Value::Null);
+            json["expires_at"] = serde_json::json!(data.expires_at);
+            json["issuer"] = serde_json::json!(data.issuer);
+            json["subject"] = serde_json::json!(data.subject);
+            json["fingerprint"] = serde_json::json!(data.fingerprint);
         }
         baluard_core::types::CipherKind::BankAccount(data) => {
             json["bank_name"] = serde_json::json!(data.bank_name);

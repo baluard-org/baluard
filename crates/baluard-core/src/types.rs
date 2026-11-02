@@ -635,6 +635,7 @@ pub enum CipherType {
     BankAccount,
     DriversLicense,
     Passport,
+    SigningKey,
 }
 
 /// Favicon image persisted on a Login cipher, fetched at add/edit time when
@@ -744,6 +745,67 @@ pub struct SshKeyData {
     pub public_key: Option<String>,
     #[serde(default)]
     pub key_fingerprint: Option<String>,
+}
+
+/// Signing key & certificate cipher data (D81). The private key and the
+/// key passphrase are password-class: they ride full cipher reads exactly
+/// like a Login password, never appear in metadata or bridge responses,
+/// and zeroize on drop.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SigningKeyData {
+    /// The signing key material: a PEM block, base64 raw bytes, or an
+    /// OpenPGP armored key, per `key_format`.
+    #[serde(default)]
+    pub private_key: Option<String>,
+    /// Passphrase that decrypts `private_key` (PKCS#8/minisign/p12 class).
+    #[serde(default)]
+    pub passphrase: Option<String>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    /// Leaf-first certificate chain, PEM-encoded.
+    #[serde(default)]
+    pub certificates: Vec<String>,
+    #[serde(default)]
+    pub key_format: KeyFormat,
+    /// Earliest expiry across the chain (unix seconds). Recomputed from
+    /// the certificates on save; None unless a leaf certificate parses.
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    #[serde(default)]
+    pub issuer: Option<String>,
+    #[serde(default)]
+    pub subject: Option<String>,
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+}
+
+impl Zeroize for SigningKeyData {
+    fn zeroize(&mut self) {
+        if let Some(k) = self.private_key.as_mut() {
+            k.zeroize();
+        }
+        if let Some(k) = self.passphrase.as_mut() {
+            k.zeroize();
+        }
+    }
+}
+
+impl Drop for SigningKeyData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+/// How the stored key material is encoded. DER is normalized to PEM on
+/// ingest (D81), so `base64` means raw key bytes and `openpgp` means an
+/// ASCII-armored transferable key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum KeyFormat {
+    #[default]
+    Pem,
+    Base64,
+    OpenPgp,
 }
 
 /// Bank Account-specific cipher data.
@@ -943,6 +1005,7 @@ pub enum CipherKind {
     BankAccount(BankAccountData),
     DriversLicense(DriversLicenseData),
     Passport(PassportData),
+    SigningKey(SigningKeyData),
 }
 
 impl CipherKind {
@@ -957,6 +1020,7 @@ impl CipherKind {
             CipherKind::BankAccount(_) => CipherType::BankAccount,
             CipherKind::DriversLicense(_) => CipherType::DriversLicense,
             CipherKind::Passport(_) => CipherType::Passport,
+            CipherKind::SigningKey(_) => CipherType::SigningKey,
         }
     }
 }
@@ -1348,6 +1412,10 @@ pub struct CipherMeta {
     /// list time). None = personal-flat surface.
     #[serde(default)]
     pub collection_id: Option<Uuid>,
+    /// Signing keys: earliest expiry across the chain, for the read-time
+    /// badge. Populated at index build from the decrypted kind.
+    #[serde(default)]
+    pub expires_at: Option<u64>,
 }
 
 /// Resolve a linked field's value from a cipher's data.
@@ -1495,6 +1563,44 @@ mod tests {
     #[test]
     fn cipher_type_default_is_login() {
         assert_eq!(CipherType::default(), CipherType::Login);
+    }
+
+    #[test]
+    fn signing_key_round_trips_with_signingkey_tag() {
+        let kind = CipherKind::SigningKey(SigningKeyData {
+            private_key: Some("-----BEGIN PRIVATE KEY-----".into()),
+            passphrase: Some("key-pass".into()),
+            public_key: Some("ssh-ed25519 AAAA".into()),
+            certificates: vec!["-----BEGIN CERTIFICATE-----".into()],
+            key_format: KeyFormat::Pem,
+            expires_at: Some(1900000000),
+            issuer: Some("CN=Test CA".into()),
+            subject: Some("CN=leaf.example".into()),
+            fingerprint: Some("aa:bb".into()),
+        });
+        let json = serde_json::to_string(&kind).unwrap();
+        assert!(
+            json.contains("\"type\":\"signingKey\""),
+            "serde tag must be signingKey: {json}"
+        );
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.cipher_type(), CipherType::SigningKey);
+        match back {
+            CipherKind::SigningKey(data) => {
+                assert_eq!(data.passphrase.as_deref(), Some("key-pass"));
+                assert_eq!(data.certificates.len(), 1);
+                assert_eq!(data.expires_at, Some(1900000000));
+                assert_eq!(data.key_format, KeyFormat::Pem);
+            }
+            _ => panic!("expected SigningKey"),
+        }
+        // A zero value defaults to PEM so old clients writing the field
+        // absent still parse.
+        let bare: CipherKind = serde_json::from_str(r#"{"type":"signingKey","data":{}}"#).unwrap();
+        match bare {
+            CipherKind::SigningKey(data) => assert_eq!(data.key_format, KeyFormat::Pem),
+            _ => panic!("expected bare SigningKey"),
+        }
     }
 
     #[test]

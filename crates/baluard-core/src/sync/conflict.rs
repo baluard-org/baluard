@@ -50,6 +50,9 @@ impl Drop for ConflictInfo {
             CipherKind::SshKey(data) => {
                 data.private_key.zeroize();
             }
+            CipherKind::SigningKey(data) => {
+                data.zeroize();
+            }
             _ => {}
         }
         for cf in &mut self.merged_base.custom_fields {
@@ -318,6 +321,42 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
                 ]
             );
             merged.kind = CipherKind::Passport(merged_d);
+        }
+        (
+            CipherKind::SigningKey(base_d),
+            CipherKind::SigningKey(local_d),
+            CipherKind::SigningKey(remote_d),
+        ) => {
+            let mut merged_d = local_d.clone();
+            merge_kind_fields!(
+                base_d,
+                local_d,
+                remote_d,
+                merged_d,
+                &mut conflicts,
+                [private_key, passphrase, public_key]
+            );
+            // Certificate chains merge as atomic units: the chain is only
+            // meaningful whole. Subject, issuer, fingerprint, and expiry
+            // are derived from the chain and recomputed here rather than
+            // merged, so a merged chain can never disagree with its own
+            // metadata.
+            merge_atomic_list(
+                &base_d.certificates,
+                &mut merged_d.certificates,
+                &remote_d.certificates,
+                "certificates",
+                &mut conflicts,
+            );
+            merge_atomic_value(
+                &base_d.key_format,
+                &mut merged_d.key_format,
+                &remote_d.key_format,
+                "key_format",
+                &mut conflicts,
+            );
+            crate::vault::cipher::finalize_signing_key_metadata(&mut merged.kind);
+            merged.kind = CipherKind::SigningKey(merged_d);
         }
         // SecureNote has no kind-specific data fields; only notes (merged
         // below) and the common fields apply.
@@ -731,6 +770,54 @@ fn merge_3way_field(
     }
 }
 
+/// 3-way merge for an atomic list value (a certificate chain). One side
+/// edits it: take that side. Both edit it differently: conflict, with the
+/// JSON rendering of each side as the display value (public material).
+fn merge_atomic_list<T: PartialEq + Clone + serde::Serialize>(
+    base: &[T],
+    merged: &mut Vec<T>,
+    remote: &[T],
+    field_name: &str,
+    conflicts: &mut Vec<FieldConflict>,
+) {
+    let local_changed = *merged != base;
+    let remote_changed = remote != base;
+    match (local_changed, remote_changed) {
+        (false, true) => *merged = remote.to_vec(),
+        (true, true) if merged != remote => conflicts.push(FieldConflict {
+            field_name: field_name.to_string(),
+            local_value: serde_json::to_string(merged).unwrap_or_default(),
+            remote_value: serde_json::to_string(remote).unwrap_or_default(),
+        }),
+        _ => {}
+    }
+}
+
+/// 3-way merge for a scalar atomic value (expiry, key format).
+fn merge_atomic_value<T: PartialEq + Clone + std::fmt::Debug>(
+    base: &T,
+    merged: &mut T,
+    remote: &T,
+    field_name: &str,
+    conflicts: &mut Vec<FieldConflict>,
+) {
+    let local_changed = *merged != *base;
+    let remote_changed = remote != base;
+    match (local_changed, remote_changed) {
+        (false, true) => *merged = remote.clone(),
+        (true, true) if merged != remote => {
+            // Scalars here are non-secret (dates, formats), so the Debug
+            // rendering is safe to surface as the conflict label value.
+            conflicts.push(FieldConflict {
+                field_name: field_name.to_string(),
+                local_value: format!("{merged:?}"),
+                remote_value: format!("{remote:?}"),
+            });
+        }
+        _ => {}
+    }
+}
+
 fn merge_3way_field_opt(
     base: &Option<String>,
     local: &mut Option<String>,
@@ -942,6 +1029,68 @@ mod tests {
             reprompt: false,
             tags: vec![],
         }
+    }
+
+    #[test]
+    fn signing_key_merge_takes_each_changed_side() {
+        use crate::types::SigningKeyData;
+        let mut base_kind = SigningKeyData::default();
+        base_kind.private_key = Some("old-key".into());
+        base_kind.certificates = vec!["old-cert".into()];
+        let mut local_kind = base_kind.clone();
+        local_kind.private_key = Some("new-local-key".into());
+        let mut remote_kind = base_kind.clone();
+        remote_kind.passphrase = Some("new-remote-pass".into());
+        remote_kind.certificates = vec!["renewed-cert".into()];
+
+        let base = base_input("signer");
+        let mut base_c = base.clone();
+        base_c.kind = CipherKind::SigningKey(base_kind);
+        let mut local_c = base_c.clone();
+        local_c.kind = CipherKind::SigningKey(local_kind);
+        let mut remote_c = base.clone();
+        remote_c.kind = CipherKind::SigningKey(remote_kind);
+
+        let result = merge_ciphers(&base_c, &local_c, &remote_c);
+        let MergeResult::Merged(merged) = result else {
+            panic!("expected a field-level merge");
+        };
+        let CipherKind::SigningKey(data) = &merged.kind else {
+            panic!("expected SigningKey");
+        };
+        assert_eq!(data.private_key.as_deref(), Some("new-local-key"));
+        assert_eq!(data.passphrase.as_deref(), Some("new-remote-pass"));
+    }
+
+    #[test]
+    fn signing_key_chain_swap_from_both_sides_conflicts() {
+        use crate::types::SigningKeyData;
+        let mut base_kind = SigningKeyData::default();
+        base_kind.certificates = vec!["old-cert".into()];
+        let mut local_kind = base_kind.clone();
+        local_kind.certificates = vec!["local-cert".into()];
+        let mut remote_kind = base_kind.clone();
+        remote_kind.certificates = vec!["remote-cert".into()];
+
+        let base = base_input("signer");
+        let mut base_c = base.clone();
+        base_c.kind = CipherKind::SigningKey(base_kind);
+        let mut local_c = base_c.clone();
+        local_c.kind = CipherKind::SigningKey(local_kind);
+        let mut remote_c = base.clone();
+        remote_c.kind = CipherKind::SigningKey(remote_kind);
+
+        let result = merge_ciphers(&base_c, &local_c, &remote_c);
+        let MergeResult::Conflict(info) = result else {
+            panic!("a whole-chain swap from both sides must conflict");
+        };
+        let conflict = info
+            .conflicting_fields
+            .iter()
+            .find(|f| f.field_name == "certificates")
+            .expect("the certificates conflict to be listed");
+        assert!(conflict.local_value.contains("local-cert"));
+        assert!(conflict.remote_value.contains("remote-cert"));
     }
 
     #[test]

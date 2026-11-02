@@ -13,6 +13,7 @@ export const CATEGORY_TYPE_MAP = {
   "Bank account": "bankAccount",
   "Driver license": "driversLicense",
   "Passport & ID": "passport",
+  "Signing key": "signingKey",
 };
 
 /** Special categories that don't map 1:1 to a type */
@@ -106,6 +107,8 @@ export function searchCiphers(ciphers, query) {
     c.name?.toLowerCase().includes(q) ||
     c.username?.toLowerCase().includes(q) ||
     (c.uris && c.uris.some(u => (typeof u === "string" ? u : u.uri || "").toLowerCase().includes(q))) ||
-    c.notes?.toLowerCase().includes(q)
+    c.notes?.toLowerCase().includes(q) ||
+    c.subject?.toLowerCase().includes(q) ||
+    c.issuer?.toLowerCase().includes(q)
   );
 }
