@@ -1499,7 +1499,9 @@ impl SyncEngine {
         let new_epoch = epoch + 1;
         let abort_path = self
             .vault_path
-            .join(format!("meta/rekey/{new_epoch}.aborted"));
+            .join("meta")
+            .join("rekey")
+            .join(format!("{new_epoch}.aborted"));
         if abort_path.exists() {
             return Some(new_epoch);
         }
@@ -4898,13 +4900,17 @@ impl SyncEngine {
             // an enrolled commit must verify against its roster;
             // pre-enrollment ancestors are grandfathered in sync but
             // carry no verifiable signature, so they tell no story.
-            let signer: Option<String> = if is_root {
-                Some(String::new())
+            enum CommitSigner {
+                Root,
+                Verified(String),
+            }
+            let signer = if is_root {
+                Some(CommitSigner::Root)
             } else {
                 match Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
-                    Some(roster) => {
-                        Self::verify_commit_against_roster_static(repo, oid, &roster).ok()
-                    }
+                    Some(roster) => Self::verify_commit_against_roster_static(repo, oid, &roster)
+                        .ok()
+                        .map(CommitSigner::Verified),
                     None => None,
                 }
             };
@@ -4919,22 +4925,26 @@ impl SyncEngine {
             };
 
             let snapshot = Self::member_table_for_commit(repo, &commit, &mut snapshot_cache)?;
-            let member_id: Option<Uuid> = snapshot
-                .as_ref()
-                .and_then(|s| s.member_of.get(&signer))
-                .and_then(|m| Uuid::parse_str(m).ok());
-            let actor: String = if let Some(mid) = member_id {
-                read_blob(repo, &tree, &format!("meta/members/{mid}.json"))
-                    .as_deref()
-                    .and_then(|b| {
-                        serde_json::from_slice::<crate::vault::members::MemberFile>(b).ok()
-                    })
-                    .map(|r| r.display_name)
-                    .unwrap_or_else(|| crate::sync::timeline::short_id(&mid))
-            } else if signer.is_empty() {
-                "the space's creator".to_string()
-            } else {
-                signer.chars().take(8).collect()
+            let (member_id, actor): (Option<Uuid>, String) = match &signer {
+                CommitSigner::Root => (None, "the space's creator".to_string()),
+                CommitSigner::Verified(signer) => {
+                    let member_id: Option<Uuid> = snapshot
+                        .as_ref()
+                        .and_then(|s| s.member_of.get(signer))
+                        .and_then(|m| Uuid::parse_str(m).ok());
+                    let actor = if let Some(mid) = member_id {
+                        read_blob(repo, &tree, &format!("meta/members/{mid}.json"))
+                            .as_deref()
+                            .and_then(|b| {
+                                serde_json::from_slice::<crate::vault::members::MemberFile>(b).ok()
+                            })
+                            .map(|r| r.display_name)
+                            .unwrap_or_else(|| crate::sync::timeline::short_id(&mid))
+                    } else {
+                        signer.chars().take(8).collect()
+                    };
+                    (member_id, actor)
+                }
             };
 
             if is_root {
