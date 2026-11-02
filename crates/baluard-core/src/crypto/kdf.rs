@@ -15,6 +15,8 @@ use crate::types::{KdfParams, KdfProfile};
 /// D3: KEK is never stored. Exists in memory only for the duration of an unlock operation.
 /// Used exclusively as HKDF input for Session Key and Sync-Only Key.
 pub fn derive_kek(password: &str, params: &KdfParams) -> Result<[u8; 32], CryptoError> {
+    validate_params(params)?;
+
     if params.salt.len() != 32 {
         return Err(CryptoError::InvalidKeyLength {
             expected: 32,
@@ -40,6 +42,44 @@ pub fn derive_kek(password: &str, params: &KdfParams) -> Result<[u8; 32], Crypto
         .map_err(|e| CryptoError::KdfFailed(e.to_string()))?;
 
     Ok(kek)
+}
+
+/// Hard bounds on stored KDF params. Stored params are attacker-controlled
+/// when the git remote is hostile: an unbounded memory_kib aborts the process
+/// on allocation the moment the victim types their password. Generous over
+/// every shipped profile so legit vaults always derive; hostile params fail
+/// closed (mirrors the guest-reveal clamp in vault/reveals.rs).
+const KDF_MIN_MEMORY_KIB: u32 = 19 * 1024;
+const KDF_MAX_MEMORY_KIB: u32 = 512 * 1024;
+const KDF_MAX_TIME_COST: u32 = 10;
+const KDF_MAX_PARALLELISM: u32 = 8;
+
+fn validate_params(params: &KdfParams) -> Result<(), CryptoError> {
+    if params.memory_kib < KDF_MIN_MEMORY_KIB {
+        return Err(CryptoError::KdfParamsInvalid(format!(
+            "memory_kib {} below floor {KDF_MIN_MEMORY_KIB}",
+            params.memory_kib
+        )));
+    }
+    if params.memory_kib > KDF_MAX_MEMORY_KIB {
+        return Err(CryptoError::KdfParamsInvalid(format!(
+            "memory_kib {} above ceiling {KDF_MAX_MEMORY_KIB}",
+            params.memory_kib
+        )));
+    }
+    if params.time_cost < 1 || params.time_cost > KDF_MAX_TIME_COST {
+        return Err(CryptoError::KdfParamsInvalid(format!(
+            "time_cost {} outside 1..={KDF_MAX_TIME_COST}",
+            params.time_cost
+        )));
+    }
+    if params.parallelism < 1 || params.parallelism > KDF_MAX_PARALLELISM {
+        return Err(CryptoError::KdfParamsInvalid(format!(
+            "parallelism {} outside 1..={KDF_MAX_PARALLELISM}",
+            params.parallelism
+        )));
+    }
+    Ok(())
 }
 
 /// Generate a new random 256-bit salt for vault creation.
@@ -231,6 +271,86 @@ mod tests {
             salt: vec![0u8; 16], // too short
         };
         assert!(derive_kek("test", &params).is_err());
+    }
+
+    #[test]
+    fn rejects_memory_below_floor() {
+        let params = KdfParams {
+            profile: KdfProfile::MobileLow,
+            memory_kib: 1024,
+            time_cost: 2,
+            parallelism: 1,
+            salt: vec![0u8; 32],
+        };
+        assert!(derive_kek("test", &params).is_err());
+    }
+
+    #[test]
+    fn rejects_memory_above_ceiling() {
+        let params = KdfParams {
+            profile: KdfProfile::DesktopHigh,
+            memory_kib: 600 * 1024,
+            time_cost: 4,
+            parallelism: 4,
+            salt: vec![0u8; 32],
+        };
+        assert!(derive_kek("test", &params).is_err());
+    }
+
+    #[test]
+    fn rejects_extreme_time_cost() {
+        let params = KdfParams {
+            profile: KdfProfile::MobileLow,
+            memory_kib: 19 * 1024,
+            time_cost: 99,
+            parallelism: 1,
+            salt: vec![0u8; 32],
+        };
+        assert!(derive_kek("test", &params).is_err());
+    }
+
+    #[test]
+    fn rejects_extreme_parallelism() {
+        let params = KdfParams {
+            profile: KdfProfile::MobileLow,
+            memory_kib: 19 * 1024,
+            time_cost: 2,
+            parallelism: 99,
+            salt: vec![0u8; 32],
+        };
+        assert!(derive_kek("test", &params).is_err());
+    }
+
+    #[test]
+    fn accepts_floor_boundary_params() {
+        let params = KdfParams {
+            profile: KdfProfile::MobileLow,
+            memory_kib: 19 * 1024,
+            time_cost: 1,
+            parallelism: 1,
+            salt: vec![7u8; 32],
+        };
+        assert!(derive_kek("test", &params).is_ok());
+    }
+
+    #[test]
+    fn validate_params_ceiling_boundaries() {
+        let mut params = KdfParams {
+            profile: KdfProfile::DesktopHigh,
+            memory_kib: 512 * 1024,
+            time_cost: 10,
+            parallelism: 8,
+            salt: vec![0u8; 32],
+        };
+        assert!(validate_params(&params).is_ok());
+        params.memory_kib += 1;
+        assert!(validate_params(&params).is_err());
+        params.memory_kib = 512 * 1024;
+        params.time_cost = 11;
+        assert!(validate_params(&params).is_err());
+        params.time_cost = 10;
+        params.parallelism = 9;
+        assert!(validate_params(&params).is_err());
     }
 
     #[test]

@@ -42,6 +42,9 @@ pub enum CryptoError {
     #[error("KDF derivation failed: {0}")]
     KdfFailed(String),
 
+    #[error("KDF params out of bounds: {0}")]
+    KdfParamsInvalid(String),
+
     #[error("AEAD encryption failed: {0}")]
     EncryptFailed(String),
 
