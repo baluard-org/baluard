@@ -192,6 +192,55 @@ export const CIPHER_SCHEMAS = {
     },
   },
 
+  signingKey: {
+    typeKey: "signingKey",
+    fields: [
+      { key: "publicKey", label: "fields.publicKey", placeholder: "RWQ...", type: "textarea", mono: true },
+      { key: "privateKey", label: "fields.privateKey", placeholder: "-----BEGIN PRIVATE KEY-----", type: "textarea", mono: true, rows: 6 },
+      { key: "passphrase", label: "fields.keyPassphrase", placeholder: "entry.passwordPlaceholder", type: "password" },
+      { key: "certificates", label: "fields.certificates", placeholder: "-----BEGIN CERTIFICATE-----", type: "textarea", mono: true, rows: 6 },
+    ],
+    fromKind(kind) {
+      const d = kind.data || kind.signingKey || kind.SigningKey || {};
+      return {
+        publicKey: d.public_key || "",
+        privateKey: d.private_key || "",
+        passphrase: d.passphrase || "",
+        certificates: (d.certificates || []).join("\n"),
+        // Daemon-recomputed from the chain on save; display-only here.
+        subject: d.subject || "",
+        issuer: d.issuer || "",
+        expires_at: d.expires_at ?? null,
+        fingerprint: d.fingerprint || "",
+        key_format: d.key_format || "pem",
+      };
+    },
+    toKind(flat) {
+      return {
+        type: "signingKey",
+        data: {
+          private_key: flat.privateKey || null,
+          passphrase: flat.passphrase || null,
+          public_key: flat.publicKey || null,
+          certificates: flat.certificates
+            ? flat.certificates
+                .split(/-----END CERTIFICATE-----\s*/)
+                .map(s => s.trim())
+                .filter(s => s.startsWith("-----BEGIN CERTIFICATE-----"))
+                .map(s => s + "\n-----END CERTIFICATE-----")
+            : [],
+          key_format: flat.key_format || "pem",
+          // Derived fields: the daemon recomputes them from the chain on
+          // save; sending nulls keeps the edit from pinning stale values.
+          expires_at: null,
+          issuer: null,
+          subject: null,
+          fingerprint: null,
+        },
+      };
+    },
+  },
+
   secureNote: {
     typeKey: "secureNote",
     fields: [],

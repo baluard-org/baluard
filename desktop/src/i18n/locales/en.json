@@ -610,7 +610,8 @@
     "sshKey": "SSH Key",
     "bankAccount": "Bank Account",
     "driversLicense": "Driver License",
-    "passport": "Passport & ID"
+    "passport": "Passport & ID",
+    "signingKey": "Signing key & certificates"
   },
   "fields": {
     "username": "Username",
@@ -683,7 +684,13 @@
         "investment": "Investment",
         "other": "Other"
       }
-    }
+    },
+    "keyPassphrase": "Key passphrase",
+    "certificates": "Certificate chain",
+    "certificate": "Certificate",
+    "keySubject": "Subject",
+    "keyIssuer": "Issuer",
+    "keyExpires": "Expires"
   },
   "devices": {
     "statusUnknown": "Unknown",
@@ -1312,5 +1319,10 @@
       "yolo_enabled": "Approval prompts disabled",
       "yolo_disabled": "Approval prompts enabled"
     }
+  },
+  "signing": {
+    "expired": "Expired",
+    "expiresSoon": "Expires soon",
+    "noKey": "No key material stored yet"
   }
 }

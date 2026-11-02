@@ -27,6 +27,32 @@ pub struct CipherFile {
     pub envelope_bytes: Vec<u8>,
 }
 
+/// Signing keys: derived metadata is daemon-recomputed on save and the
+/// certificate wins (D81). The user-typed subject/issuer are only a
+/// fallback for keys stored without a parseable certificate.
+pub(crate) fn finalize_signing_key_metadata(kind: &mut crate::types::CipherKind) {
+    let crate::types::CipherKind::SigningKey(data) = kind else {
+        return;
+    };
+    if data.certificates.is_empty() {
+        return;
+    }
+    // The leaf must itself parse; deriving "subject" from an intermediate
+    // because the leaf is unreadable would mislabel the entry. When the
+    // first entry fails, the user-typed fields stand (documented fallback).
+    let Some(leaf_der) = crate::crypto::cert::pem_certificate_der(&data.certificates[0]) else {
+        return;
+    };
+    let Some(leaf) = crate::crypto::cert::parse_certificate_der(&leaf_der) else {
+        return;
+    };
+    let chain = crate::crypto::cert::parse_certificate_chain(&data.certificates);
+    data.expires_at = crate::crypto::cert::earliest_expiry(&chain);
+    data.fingerprint = Some(leaf.fingerprint_sha256.clone());
+    data.subject = Some(leaf.subject.clone());
+    data.issuer = Some(leaf.issuer.clone());
+}
+
 /// Encrypt a cipher input into a padded, encrypted envelope.
 ///
 /// Steps:

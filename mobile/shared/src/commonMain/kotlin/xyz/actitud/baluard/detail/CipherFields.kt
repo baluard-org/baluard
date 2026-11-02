@@ -24,6 +24,7 @@ internal fun normalizeTypeTag(tag: String): String = when (tag.lowercase()) {
     "securenote" -> "secureNote"
     "bankaccount" -> "bankAccount"
     "driverslicense" -> "driversLicense"
+    "signingkey" -> "signingKey"
     else -> tag
 }
 
@@ -64,6 +65,16 @@ internal fun fieldsFor(tag: String): List<FieldSpec> = when (tag) {
         FieldSpec("detail.f.publicKey", "public_key", mono = true),
         FieldSpec("detail.f.fingerprint", "key_fingerprint", mono = true),
         FieldSpec("detail.f.privateKey", "private_key", sensitive = true, mono = true),
+    )
+    "signingKey" -> listOf(
+        FieldSpec("detail.f.keySubject", "subject"),
+        FieldSpec("detail.f.keyIssuer", "issuer"),
+        FieldSpec("detail.f.keyExpires", "expires_at", mono = true),
+        FieldSpec("detail.f.fingerprint", "fingerprint", mono = true),
+        FieldSpec("detail.f.publicKey", "public_key", mono = true),
+        FieldSpec("detail.f.certificates", "certificates", mono = true),
+        FieldSpec("detail.f.privateKey", "private_key", sensitive = true, mono = true),
+        FieldSpec("detail.f.keyPassphrase", "passphrase", sensitive = true, mono = true),
     )
     "bankAccount" -> listOf(
         FieldSpec("detail.f.bankName", "bank_name"),
@@ -110,7 +121,7 @@ internal fun fieldsFor(tag: String): List<FieldSpec> = when (tag) {
 
 /** The 8 cipher types in UI order, as camelCase wire tags (daemon payload form). */
 val cipherTypeWireTags = listOf(
-    "login", "card", "identity", "secureNote", "sshKey", "bankAccount", "driversLicense", "passport",
+    "login", "card", "identity", "secureNote", "sshKey", "signingKey", "bankAccount", "driversLicense", "passport",
 )
 
 /** Debug-tag form (lowercase), as carried by MobileCipherMeta.cipherType on the FFI. */

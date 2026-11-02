@@ -96,6 +96,7 @@ export default function VaultView() {
     { id: "identity", name: "Identity", icon: <IconIdentity class="w-4 h-4 shrink-0" /> },
     { id: "secureNote", name: "Secure note", icon: <IconNote class="w-4 h-4 shrink-0" /> },
     { id: "sshKey", name: "SSH key", icon: <IconKey class="w-4 h-4 shrink-0" /> },
+    { id: "signingKey", name: "Signing key", icon: <IconLicense class="w-4 h-4 shrink-0" /> },
     { id: "bankAccount", name: "Bank account", icon: <IconBank class="w-4 h-4 shrink-0" /> },
     { id: "driversLicense", name: "Driver license", icon: <IconLicense class="w-4 h-4 shrink-0" /> },
     { id: "passport", name: "Passport & ID", icon: <IconPassport class="w-4 h-4 shrink-0" /> },
@@ -474,6 +475,7 @@ export default function VaultView() {
                   <button onClick={() => startAdd("card")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.card")}</button>
                   <button onClick={() => startAdd("identity")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.identity")}</button>
                   <button onClick={() => startAdd("sshKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.sshKey")}</button>
+                  <button onClick={() => startAdd("signingKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.signingKey")}</button>
                   <div class="border-t border-[var(--color-border)] my-1"></div>
                   <button onClick={() => startAdd("bankAccount")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.bankAccount")}</button>
                   <button onClick={() => startAdd("driversLicense")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.driversLicense")}</button>

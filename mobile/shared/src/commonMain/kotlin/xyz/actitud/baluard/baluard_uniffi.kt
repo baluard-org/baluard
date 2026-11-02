@@ -1115,8 +1115,6 @@ internal open class UniffiVTableCallbackInterfaceMobileHardwareTransport(
 
 
 
-
-
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1487,8 +1485,6 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_baluard_uniffi_fn_func_set_token_encryption_key(`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): Unit
-    fun uniffi_baluard_uniffi_fn_func_spike_async_probe(
-    ): Long
     fun uniffi_baluard_uniffi_fn_func_start_device_flow(`provider`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_web_oauth_start(`provider`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,
@@ -1650,8 +1646,6 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_func_recovery_sheet_bytes(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_set_token_encryption_key(
-    ): Short
-    fun uniffi_baluard_uniffi_checksum_func_spike_async_probe(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_start_device_flow(
     ): Short
@@ -2012,7 +2006,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_func_mobile_version() != 3142.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_func_open_shared_guest() != 11254.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_func_open_shared_guest() != 9243.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_open_vault() != 29550.toShort()) {
@@ -2028,9 +2022,6 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_set_token_encryption_key() != 11628.toShort()) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_baluard_uniffi_checksum_func_spike_async_probe() != 15649.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_start_device_flow() != 26346.toShort()) {
@@ -8233,7 +8224,6 @@ public object FfiConverterTypeEncryptedBackup: FfiConverterRustBuffer<EncryptedB
 
 
 /**
- * Options for [`generate_password`]. Mirrors `baluard_core::generator::PasswordOptions`.
  * One request-catalog entry the admin publishes: the collection id
  * plus the plaintext display name requesters see when asking.
  */
@@ -8305,7 +8295,12 @@ data class MobileCipherMeta (
     /**
      * Archived entries are hidden from the mobile list.
      */
-    var `archived`: kotlin.Boolean
+    var `archived`: kotlin.Boolean,
+    /**
+     * Signing keys: earliest expiry across the chain (unix seconds), for
+     * the read-time list badge.
+     */
+    var `expiresAt`: kotlin.ULong?
 ) {
 
     companion object
@@ -8326,6 +8321,7 @@ public object FfiConverterTypeMobileCipherMeta: FfiConverterRustBuffer<MobileCip
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterOptionalULong.read(buf),
         )
     }
 
@@ -8338,7 +8334,8 @@ public object FfiConverterTypeMobileCipherMeta: FfiConverterRustBuffer<MobileCip
             FfiConverterSequenceString.allocationSize(value.`tags`) +
             FfiConverterOptionalString.allocationSize(value.`folderId`) +
             FfiConverterOptionalString.allocationSize(value.`collectionId`) +
-            FfiConverterBoolean.allocationSize(value.`archived`)
+            FfiConverterBoolean.allocationSize(value.`archived`) +
+            FfiConverterOptionalULong.allocationSize(value.`expiresAt`)
     )
 
     override fun write(value: MobileCipherMeta, buf: ByteBuffer) {
@@ -8351,6 +8348,7 @@ public object FfiConverterTypeMobileCipherMeta: FfiConverterRustBuffer<MobileCip
             FfiConverterOptionalString.write(value.`folderId`, buf)
             FfiConverterOptionalString.write(value.`collectionId`, buf)
             FfiConverterBoolean.write(value.`archived`, buf)
+            FfiConverterOptionalULong.write(value.`expiresAt`, buf)
     }
 }
 
@@ -8698,7 +8696,6 @@ sealed class BaluardException: kotlin.Exception() {
     }
 
     /**
-     * Device is not enrolled in the target vault (requires 24-word recovery phrase entry).
      * Master password verification failed (wrong password).
      */
     class WrongPassword(
@@ -9545,7 +9542,6 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 
 
         /**
-         * Derive a 32-byte key-encryption key (KEK) from a master password + salt via
          * Open a passphrase-guest reveal (S2 IS-6, G4): the host-level,
          * vault-agnostic shared-file leg. Pure compute — bytes in, an Argon2id
          * derivation over the user-supplied passphrase, fields out; nothing on
@@ -9660,26 +9656,6 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 }
 
 
-
-        /**
-         * Trivial async fn to validate the UniFFI async -> Kotlin `suspend` bridge
-         * against the real `baluard-runtime` dependency (proves the tokio runtime +
-         * spawn_blocking path compiles and crosses the FFI boundary). Returns a
-         * fixed string; the point is the async machinery, not the value.
-         */
-    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-     suspend fun `spikeAsyncProbe`() : kotlin.String {
-        return uniffiRustCallAsync(
-        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_spike_async_probe(),
-        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
-        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
-        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
-        // lift function
-        { FfiConverterString.lift(it) },
-        // Error FFI converter
-        UniffiNullRustCallStatusErrorHandler,
-    )
-    }
 
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")

@@ -84,14 +84,16 @@ struct CertParts {
 
 /// One DER TLV element: tag, value, the raw element (tag+len+value),
 /// and the remainder of the buffer after it.
-struct Tlv<'a> {
-    tag: u8,
-    body: &'a [u8],
-    raw: &'a [u8],
-    rest: &'a [u8],
+pub(crate) struct Tlv<'a> {
+    pub tag: u8,
+    pub body: &'a [u8],
+    pub raw: &'a [u8],
+    pub rest: &'a [u8],
 }
 
-fn tlv(buf: &[u8]) -> Option<Tlv<'_>> {
+/// Total DER TLV walk: checked lengths and bounds, never panics. Shared
+/// with the signing-key certificate parser.
+pub(crate) fn tlv(buf: &[u8]) -> Option<Tlv<'_>> {
     if buf.len() < 2 {
         return None;
     }

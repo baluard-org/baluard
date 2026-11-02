@@ -310,8 +310,28 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         val data = buildJsonObject {
             originalData?.forEach { (k, v) -> put(k, v) }
             fieldsFor(f.typeTag).forEach { spec ->
+                // signingKey.certificates / expires_at are structured
+                // (array / number) and written by their branch below, not
+                // as strings here.
+                if (f.typeTag == "signingKey" &&
+                    (spec.wireKey == "certificates" || spec.wireKey == "expires_at")
+                ) {
+                    return@forEach
+                }
                 val v = f.values[spec.wireKey].orEmpty()
                 put(spec.wireKey, if (v.isBlank()) JsonNull else JsonPrimitive(v))
+            }
+            if (f.typeTag == "signingKey") {
+                // PEM chain: split into per-certificate entries exactly like
+                // the desktop schema does.
+                val chain = f.values["certificates"].orEmpty()
+                    .split(Regex("(?=-----BEGIN CERTIFICATE-----)"))
+                    .map { it.trim() }
+                    .filter { it.startsWith("-----BEGIN CERTIFICATE-----") }
+                put("certificates", JsonArray(chain.map { JsonPrimitive(it) }))
+                // Derived metadata is daemon-owned: the certificate wins on
+                // save, so the form never writes these back (desktop parity).
+                put("expires_at", JsonNull)
             }
             if (f.typeTag == "login") {
                 put("uris", JsonArray(f.uris
@@ -442,7 +462,13 @@ internal fun parseLoadedCipher(raw: String): EditForm {
         favorite = (obj["favorite"] as? JsonPrimitive)?.content == "true",
         reprompt = (obj["reprompt"] as? JsonPrimitive)?.content == "true",
         values = fieldsFor(tag).mapNotNull { spec ->
-            val v = data.str(spec.wireKey)
+            val v: String? = if (tag == "signingKey" && spec.wireKey == "certificates") {
+                (data["certificates"] as? JsonArray)?.joinToString("\n") { e ->
+                    (e as? JsonPrimitive)?.content.orEmpty()
+                }
+            } else {
+                data.str(spec.wireKey)
+            }
             if (v.isNullOrBlank()) null else spec.wireKey to v
         }.toMap(),
         uris = uris,

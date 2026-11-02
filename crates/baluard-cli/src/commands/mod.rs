@@ -904,6 +904,38 @@ pub fn handle_get(
                                     println!("  Passport:  {v}");
                                 }
                             }
+                            baluard_core::types::CipherKind::SigningKey(data) => {
+                                if let Some(ref v) = data.subject {
+                                    println!("  Subject:   {v}");
+                                }
+                                if let Some(ref v) = data.issuer {
+                                    println!("  Issuer:    {v}");
+                                }
+                                if let Some(v) = data.expires_at {
+                                    println!(
+                                        "  Expires:   {}",
+                                        baluard_core::crypto::cert::format_unix_utc(v)
+                                    );
+                                }
+                                if let Some(ref v) = data.fingerprint {
+                                    println!("  Fingerprint: {v}");
+                                }
+                                if !data.certificates.is_empty() {
+                                    println!(
+                                        "  Certificates: {} in chain",
+                                        data.certificates.len()
+                                    );
+                                }
+                                if let Some(ref v) = data.public_key {
+                                    println!("  Public:    {v}");
+                                }
+                                if let Some(ref v) = data.private_key {
+                                    println!("  Private:   {v}");
+                                }
+                                if let Some(ref v) = data.passphrase {
+                                    println!("  Passphrase: {v}");
+                                }
+                            }
                             baluard_core::types::CipherKind::SecureNote => {}
                         }
                         if let Some(ref n) = c.notes {

@@ -610,7 +610,8 @@
     "sshKey": "Chave SSH",
     "bankAccount": "Conta Bancária",
     "driversLicense": "Carteira de Habilitação",
-    "passport": "Passaporte e Documento"
+    "passport": "Passaporte e Documento",
+    "signingKey": "Chave de assinatura e certificados"
   },
   "fields": {
     "username": "Usuário",
@@ -683,7 +684,13 @@
         "investment": "Investimento",
         "other": "Outro"
       }
-    }
+    },
+    "keyPassphrase": "Frase da chave",
+    "certificates": "Cadeia de certificados",
+    "certificate": "Certificado",
+    "keySubject": "Sujeito",
+    "keyIssuer": "Emissor",
+    "keyExpires": "Expira"
   },
   "devices": {
     "statusUnknown": "Desconhecido",
@@ -1312,5 +1319,10 @@
       "yolo_enabled": "Aprovações desativadas",
       "yolo_disabled": "Aprovações ativadas"
     }
+  },
+  "signing": {
+    "expired": "Expirado",
+    "expiresSoon": "Expira em breve",
+    "noKey": "Ainda não há material de chave guardado"
   }
 }
