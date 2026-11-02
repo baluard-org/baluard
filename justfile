@@ -596,6 +596,29 @@ seed-demo: build-release
 		jq --arg fid "$1" '.folder_id = $fid' "scripts/$2" | baluard add json -
 	}
 
+	# Add a signing key entry. Fixtures live under scripts/demo-certs/. The
+	# chain is one PEM per certificate (leaf first); empty key/pass/exp args
+	# become null so one helper covers every shape. Derived metadata (subject,
+	# issuer, fingerprint, expiry) is left null on purpose: the daemon
+	# recomputes it from the certificates.
+	add_signing() {
+		local name="$1" fid="$2" tags="$3" leaf="$4" ca="$5" key="$6" pass="$7" fmt="$8" exp="$9" notes="${10}"
+		local args=(--arg name "$name" --arg fid "$fid" --argjson tags "$tags"
+			--arg fmt "$fmt" --arg pass "$pass" --argjson exp "$exp" --arg notes "$notes")
+		[ -n "$leaf" ] && args+=(--rawfile leaf "scripts/demo-certs/$leaf") || args+=(--rawfile leaf /dev/null)
+		[ -n "$ca" ] && args+=(--rawfile ca "scripts/demo-certs/$ca") || args+=(--rawfile ca /dev/null)
+		[ -n "$key" ] && args+=(--rawfile key "scripts/demo-certs/$key") || args+=(--rawfile key /dev/null)
+		jq -n "${args[@]}" '{name:$name, folder_id:$fid, tags:$tags, notes:$notes,
+			kind:{type:"signingKey", data:{
+				private_key:(if $key == "" then null else $key end),
+				passphrase:(if $pass == "" then null else $pass end),
+				public_key:null,
+				certificates:[$leaf, $ca] | map(select(length > 0)),
+				key_format:$fmt, expires_at:$exp,
+				issuer:null, subject:null, fingerprint:null}}}' \
+			| baluard add json - >/dev/null
+	}
+
 	seed_personal() {
 		VPATH="$PERSONAL_DIR"
 		echo "=== Creating PERSONAL vault at $VPATH ==="
@@ -832,6 +855,18 @@ seed-demo: build-release
 	baluard add passport --name "US Passport (Expired)" --surname "Forge" --given-name "Esteban" --date-of-birth "1990-06-15" --sex "M" --birth-place "San Francisco" --nationality "US" --passport-number "P09876543" --issuing-country "US" --issue-date "2013-02-10" --expiration-date "2023-02-09" --notes "Expired — kept for records" --tags personal,backup --folder "$TRAVEL" >/dev/null
 
 		echo ""
+		echo "[personal] Seeding signing keys & certificates ==="
+		add_signing "Baluard Release 2026" "$DEV" '["important","backup"]' \
+			release-leaf.pem release-ca.pem release-key.pem demo-release-2026 pem null \
+			"Code-signing chain (leaf + intermediate) for release artifacts."
+		add_signing "VPN Client Certificate (expired)" "$PERSONAL" '["personal"]' \
+			vpn-client.pem "" "" "" pem null \
+			"Long-expired client cert, kept to demo the red badge."
+		add_signing "Demo OpenPGP Key" "$DEV" '["personal"]' \
+			"" "" openpgp-key.asc "" openPgp 1809651200 \
+			"Fixture armor, not a real key. OpenPGP metadata is user-entered."
+
+		echo ""
 		echo "[personal] Committing seeded data to git ==="
 		baluard sync commit
 	}
@@ -904,6 +939,18 @@ seed-demo: build-release
 		baluard add ssh-key --name "Staging Deploy Key" --public-key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEstebanForgeStaging2026" --fingerprint "SHA256:qR4tY7uW0vX2zN5bA8cD6eF3gH1iJ9kL0mO3pS6wU2xT" --notes "Read-only deploy key for staging" --tags staging --folder "$INFRA"
 
 		echo ""
+		echo "[work] Seeding signing keys & certificates ==="
+		add_signing "TLS Certificate - actitud.xyz" "$INFRA" '["production","important"]' \
+			tls-leaf.pem tls-ca.pem tls-key.pem demo-release-2026 pem null \
+			"Wildcard leaf + TLS intermediate for the public site."
+		add_signing "staging.acme.test Certificate" "$INFRA" '["staging"]' \
+			staging.pem "" "" "" pem null \
+			"Expires within days; demo of the amber renewal badge."
+		add_signing "Baluard Platform Distribution 2026" "$INFRA" '["important"]' \
+			work-leaf.pem release-ca.pem work-key.pem demo-release-2026 pem null \
+			"Platform distribution signing chain (leaf + intermediate)."
+
+		echo ""
 		echo "[work] Seeding bank accounts ==="
 		baluard add bank --name "Business Account" --bank-name "Silicon Valley Bank" --name-on-account "Actitud Studio LLC" --account-type "Business Checking" --account-number "456789123" --routing-number "121000248" --swift-code "SVBKUS6S" --notes "Business operating account" --tags work --folder "$FINANCE"
 		baluard add bank --name "Banco de Chile Cuenta Corriente" --bank-name "Banco de Chile" --name-on-account "Esteban Forge Muñoz" --account-type "Cuenta Corriente" --account-number "12345678" --routing-number "0001" --swift-code "BCHICLRM" --tags work --folder "$FINANCE"
@@ -932,6 +979,7 @@ seed-demo: build-release
 	echo "    Notes:         5  (incl. 1 Carnet)"
 	echo "    Identities:    1"
 	echo "    Bank Accounts: 2"
+	echo "    Signing Keys:  3 (incl. 1 expired-badge demo)"
 	echo "    Licenses:      1"
 	echo "    Passports:     1"
 	echo "    Folders: Personal, Finance, Travel, Subscriptions"
@@ -943,6 +991,7 @@ seed-demo: build-release
 	echo "    Notes:         3"
 	echo "    Identities:    1"
 	echo "    SSH Keys:      3"
+	echo "    Signing Keys:  3 (incl. 1 renewal-badge demo)"
 	echo "    Bank Accounts: 2  (incl. 1 Chilean)"
 	echo "    Folders: Work, Infrastructure, Finance, Clients"
 	echo "    Tags:    work, team, api-key, production, staging, important, shared"
