@@ -136,5 +136,6 @@ export function UpdateProvider(props) {
     dismiss,
     clearError,
   };
-  return <UpdateContext.Provider value={store}>{props.children}</UpdateContext.Provider>;
+  // solid-js 2.0 rc: contexts render directly; the classic .Provider is gone.
+  return <UpdateContext value={store}>{props.children}</UpdateContext>;
 }
