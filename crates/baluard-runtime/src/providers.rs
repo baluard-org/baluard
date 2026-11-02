@@ -725,20 +725,48 @@ pub fn enroll_device_pre_unlock(
         .map_err(|e| VaultError::Metadata(format!("rename privkey: {e}")))?;
 
     privkey_json_str.zeroize();
-    // The Value copy and the keystore bytes carry the same hex private
-    // keys; zeroize both (zeroize on String/Vec covers the heap buffer).
+    // The hex private keys live in heap Strings that a plain remove would
+    // drop without wiping, so take and zeroize them explicitly.
     if let Some(obj) = privkey_data.as_object_mut() {
-        obj.remove("x25519_private");
-        obj.remove("ed25519_private");
+        if let Some(serde_json::Value::String(mut hex)) = obj.remove("x25519_private") {
+            hex.zeroize();
+        }
+        if let Some(serde_json::Value::String(mut hex)) = obj.remove("ed25519_private") {
+            hex.zeroize();
+        }
     }
 
     let _ = baluard_core::vault::device_privkey::write_device_id(vault_path, result.device_id);
 
     if let Some(keystore) = baluard_core::vault::creation::get_global_keystore() {
-        let mut privkey_bytes = serde_json::to_vec(&privkey_data).unwrap_or_default();
-        let _ = keystore.store_secret(&result.device_id.to_string(), &privkey_bytes);
-        let _ = keystore.store_secret(&format!("device:{}", result.device_id), &privkey_bytes);
-        zeroize::Zeroize::zeroize(&mut privkey_bytes);
+        // The escrow stores only identity metadata (the key hex is
+        // stripped above and never reaches the keystore); it is
+        // best-effort because the privkey file is already written (it
+        // reseals at the unlock below), and every failure logs instead of
+        // vanishing.
+        match serde_json::to_vec(&privkey_data) {
+            Ok(mut privkey_bytes) => {
+                if let Err(e) = keystore.store_secret(&result.device_id.to_string(), &privkey_bytes)
+                {
+                    log::warn!(
+                        "device keystore escrow failed for {}: {e}",
+                        result.device_id
+                    );
+                }
+                if let Err(e) =
+                    keystore.store_secret(&format!("device:{}", result.device_id), &privkey_bytes)
+                {
+                    log::warn!(
+                        "device keystore escrow failed for device:{}: {e}",
+                        result.device_id
+                    );
+                }
+                zeroize::Zeroize::zeroize(&mut privkey_bytes);
+            }
+            Err(e) => {
+                log::warn!("device keystore escrow skipped: privkey serialization failed: {e}");
+            }
+        }
     }
 
     let mut handle = VaultHandle::open(vault_path)?;
