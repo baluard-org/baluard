@@ -6,7 +6,7 @@ import { createContext, createSignal, useContext } from "solid-js";
 // SECURITY: pending conflicts carry NO secret values. Each field entry is a
 // label + a `sensitive` flag only. Passwords/TOTP/card numbers are masked at
 // the source (daemon side, when wired) and never cross IPC. See
-// docs/plan-conflict-resolution-panel.md (§ Security).
+// docs/adr/0093-conflict-resolution-panel.md (§ Security).
 //
 // DECISION granularity is per-entry: keep local / keep remote / keep both.
 //

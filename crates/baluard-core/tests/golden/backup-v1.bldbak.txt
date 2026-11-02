@@ -1,4 +1,4 @@
-baluard.backup v1 golden vector (docs/plan-encrypted-backup.md section 9)
+baluard.backup v1 golden vector (docs/adr/0099-encrypted-backup.md section 9)
 
 File: backup-v1.bldbak (262273 bytes, 256 KiB bucket, 4 chunks)
 Passphrase: correct horse battery staple

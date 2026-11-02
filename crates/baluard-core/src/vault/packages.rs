@@ -1,4 +1,4 @@
-//! S2 IS-3: one-shot item packages (plan-sharing §4.6).
+//! S2 IS-3: one-shot item packages (ADR 0085 §4.6).
 //!
 //! A [`SharePackage`] is a self-contained encrypted file that carries a
 //! copy of one cipher to a contact. Properties, per the plan:

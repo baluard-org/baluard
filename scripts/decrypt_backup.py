@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reference decryptor for baluard.backup v1 (.bldbak) containers.
 
-Proves a third party can implement docs/plan-encrypted-backup.md from the
+Proves a third party can implement docs/adr/0099-encrypted-backup.md from the
 spec alone — the format is only "open" if someone besides Baluard can read
 it. Run it on the committed golden vector:
 

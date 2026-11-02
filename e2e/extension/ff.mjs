@@ -1,6 +1,6 @@
 // Firefox-extension e2e: real Firefox + real NMH + real daemon.
 //
-// Ring 1 of docs/e2e-testing.md Phase 4 on Firefox. geckodriver installs the
+// Ring 1 of the E2E harness on Firefox. geckodriver installs the
 // unpacked Firefox dist as a temporary add-on; the popup page then runs as a
 // TAB (moz-extension://<uuid>/popup.html). Firefox marks extension pages in
 // tabs with sender.tab set, so background.js's B4 split classifies senders

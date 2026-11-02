@@ -1,4 +1,4 @@
-// Desktop E2E flow 8: folders and tags (docs/e2e-testing.md Phase 3 flow
+// Desktop E2E flow 8: folders and tags (the E2E harness flow
 // coverage). Create a sidebar folder, file a new entry into it, then tag
 // the entry from the edit form and exercise tag filtering and deletion.
 import { remote } from "webdriverio";

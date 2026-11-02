@@ -11,7 +11,7 @@ import { Button, Input } from "./Primitives.jsx";
 const ARMOR_BEGIN = "-----BEGIN BALUARD LEGACY KEY-----";
 
 /**
- * Legacy Contact flow (docs/plan-legacy-contact.md step 6): pick the
+ * Legacy Contact flow (docs/adr/0100-legacy-contact.md step 6): pick the
  * kit letter, type the passphrase, land in a read-only view of the
  * vault copy. The kit passphrase is the only secret collected; the
  * clone, verification, and unlock all happen daemon-side.

@@ -1,4 +1,4 @@
-// Desktop E2E flow 4: the hardware security-chip guard (docs/e2e-testing.md,
+// Desktop E2E flow 4: the hardware security-chip guard (the E2E harness,
 // hw-seal wave). Unlock the seeded vault, open Settings > Data, assert the
 // chip card renders (the probe must report capable - run the harness under
 // `sg tss` on machines whose TPM group is not in the session), toggle the

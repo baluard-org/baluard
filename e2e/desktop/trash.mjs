@@ -1,4 +1,4 @@
-// Desktop E2E flow 7: trash round-trip (docs/e2e-testing.md Phase 3 flow
+// Desktop E2E flow 7: trash round-trip (the E2E harness flow
 // coverage). Delete an entry to trash, restore it from the Trash category,
 // delete again, then Empty Trash through its confirm modal.
 import { remote } from "webdriverio";

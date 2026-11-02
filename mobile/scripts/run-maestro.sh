@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# run-maestro.sh — Android E2E flows (docs/e2e-testing.md Phase 2).
+# run-maestro.sh — Android E2E flows (Phase 2).
 #
 # Usage:
 #   ./scripts/run-maestro.sh [--pin-locale] [--flow <name.yaml>] [device-serial]

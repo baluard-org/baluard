@@ -1,4 +1,4 @@
-# Baluard E2E, flow 02 (docs/e2e-testing.md Phase 2): lock and unlock
+# Baluard E2E, flow 02 (the E2E harness): lock and unlock
 # with the master password. Runs after flow 01 on the same device.
 appId: xyz.actitud.baluard
 name: 02-lock-unlock

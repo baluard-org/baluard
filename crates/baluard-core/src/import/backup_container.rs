@@ -1,4 +1,4 @@
-//! Encrypted backup container (`.bldbak`), spec: `docs/plan-encrypted-backup.md` §5–§6.
+//! Encrypted backup container (`.bldbak`), spec: `docs/adr/0099-encrypted-backup.md` §5–§6.
 //!
 //! Nothing cryptographic is custom: AES-256-GCM, Argon2id and HKDF-SHA256 do
 //! the work. What this module owns is the FILE FORMAT — a 65-byte plaintext

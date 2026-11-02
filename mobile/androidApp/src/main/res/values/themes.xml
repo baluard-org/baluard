@@ -10,7 +10,7 @@
     </style>
 
     <!-- Autofill trampoline (AutofillActivity): translucent and windowless-looking,
-         but NOT NoDisplay: BiometricPrompt requires a visible window (plan D6). -->
+         but NOT NoDisplay: BiometricPrompt requires a visible window (ADR 0090). -->
     <style name="Theme.Baluard.Autofill" parent="@android:style/Theme.DeviceDefault.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>

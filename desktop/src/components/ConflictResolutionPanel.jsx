@@ -14,7 +14,7 @@ import { IconAlert, IconCopy, IconMonitor, IconSwitch } from "./Icon.jsx";
 // Non-technical by construction: no git jargon, decisions framed by device,
 // secrets masked (never shown). One conflict at a time (1 of N).
 //
-// See docs/plan-conflict-resolution-panel.md for the failure modes (F1–F4)
+// See docs/adr/0093-conflict-resolution-panel.md for the failure modes (F1–F4)
 // and the data contract.
 
 export default function ConflictResolutionPanel(props) {
@@ -57,7 +57,7 @@ export default function ConflictResolutionPanel(props) {
     // vault UI. Acceptable today because the route isn't wired yet (dev-only
     // mock triggers). When wiring lands, add either a max-retry fallback to a
     // safe non-destructive state or a manual escape hatch. See
-    // docs/plan-conflict-resolution-panel.md.
+    // docs/adr/0093-conflict-resolution-panel.md.
     // Mock head (dev trigger): the daemon has no matching pending_conflict
     // for a mock, so a real IPC would toast on every click. Use a no-op
     // resolver that just succeeds, draining the queue locally. Per-item flag

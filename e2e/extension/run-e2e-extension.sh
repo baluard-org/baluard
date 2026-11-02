@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Browser-extension e2e (docs/e2e-testing.md Phase 4, Ring 1): real Chromium
+# Browser-extension e2e (the E2E harness, Ring 1): real Chromium
 # (Playwright bundle) + real NMH + real daemon + the real bridge pairing
 # ceremony over the daemon socket.
 #

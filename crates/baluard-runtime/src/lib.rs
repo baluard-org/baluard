@@ -1,6 +1,6 @@
 //! Baluard runtime: vault-session orchestration shared by every host.
 //!
-//! Extracted from `baluard-daemon` (Phase 0, `docs/plan-mobile-apps.md`) so the
+//! Extracted from `baluard-daemon` (Phase 0, `docs/adr/0089-mobile-apps.md`) so the
 //! desktop daemon AND a mobile app can each host it **in-process**. The daemon
 //! hosts it as a long-lived background process (Unix-socket IPC); mobile hosts
 //! it as a foreground process (UniFFI bindings, no daemon — see plan §3.2).

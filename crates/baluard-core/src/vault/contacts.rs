@@ -1,4 +1,4 @@
-//! S1a-3: contact cards + trust dial (plan-sharing §4.1).
+//! S1a-3: contact cards + trust dial (ADR 0085 §4.1).
 //!
 //! A [`ContactCard`] is the member's self-describing credential, signed
 //! by their vault identity key. Cards travel out-of-band (embedded in

@@ -302,7 +302,7 @@ pub struct VaultSettings {
     /// Synced via settings.enc; None = no custom groups defined.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_equivalent_domains: Option<Vec<Vec<String>>>,
-    /// Family vaults (plan-family-spaces): the id of the auto-created
+    /// Family vaults (ADR 0086): the id of the auto-created
     /// `Shared` collection, recorded as a system collection so deletion
     /// is refused. `None` on every non-family vault.
     #[serde(default, skip_serializing_if = "Option::is_none")]

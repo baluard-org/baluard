@@ -1,6 +1,6 @@
 //! Hardware-backed key-store trait: the progressive-enhancement seam for
 //! the `baluard-devkey-seal-v2-hw` devkey seal (plan:
-//! `docs/plan-hardware-backed-keys.md`).
+//! `docs/adr/0097-hardware-backed-keys.md`).
 //!
 //! A device with a usable security chip (Secure Enclave, TPM 2.0) installs
 //! a [`HardwareKeyStore`] implementation at daemon startup; devices without

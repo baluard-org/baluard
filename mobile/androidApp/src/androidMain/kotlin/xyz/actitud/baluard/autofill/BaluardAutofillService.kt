@@ -37,7 +37,7 @@ import xyz.actitud.baluard.platform.platformLogE
  * over the local vault only (plan D1/D9). Picker UI is RemoteViews only, no
  * Compose in this process (plan D7).
  *
- * Unlock model (plan D6): cold session -> response-level authentication, the
+ * Unlock model (ADR 0090): cold session -> response-level authentication, the
  * OS launches [AutofillActivity] for the BiometricPrompt ceremony, real
  * datasets come back through EXTRA_AUTHENTICATION_RESULT. Unlocked session ->
  * datasets are served directly. Every request re-checks the vault's own

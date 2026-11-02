@@ -1,6 +1,6 @@
 // Browser-extension e2e: real Chromium + real NMH + real daemon.
 //
-// Ring 1 of docs/e2e-testing.md Phase 4. The orchestrator (run-e2e-extension.sh)
+// Ring 1 of the E2E harness. The orchestrator (run-e2e-extension.sh)
 // builds the dist with an injected fixed key (deterministic extension id),
 // registers the NMH manifest inside the profile (and the HOME brand paths),
 // starts a scratch daemon, seeds and unlocks a vault, and passes the desktop

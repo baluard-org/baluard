@@ -44,7 +44,7 @@ rand_core = "0.10"
 default = ["git-sync"]
 git-sync = ["baluard-core/git-sync"]
 e2e-hooks = ["baluard-core/e2e-hooks"]
-# TPM-backed devkey seal (plan-hardware-backed-keys Phase 3); the
+# TPM-backed devkey seal (ADR 0097 Phase 3); the
 # daemon installs the platform store at startup when built with it.
 hw-seal = ["baluard-core/hw-seal"]
 # FIDO2 security-key seal; installed alongside any platform chip.

@@ -1,7 +1,7 @@
 //! S4-5: the derived activity timeline. Nothing here writes anything —
 //! the timeline is synthesized from verified signed git history, so
 //! reads leave no trace and no shared event file ever exists (the
-//! resolved power-pack design; see plan-power-pack.md section 4).
+//! resolved power-pack design; see 0087-power-pack.md section 4).
 //!
 //! The split: `engine.rs` owns the walk (verification, roster lookup,
 //! and attribution are engine-private) and hands each commit's changed

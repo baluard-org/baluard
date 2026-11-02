@@ -1,6 +1,6 @@
 # Baluard Browser Extension
 
-MV3 extension (Chrome + Firefox) that bridges the browser to the Baluard native host and daemon. Companion plan: `docs/plan-browser-extension.md`.
+MV3 extension (Chrome + Firefox) that bridges the browser to the Baluard native host and daemon. Companion plan: `docs/adr/0092-browser-extension.md`.
 
 ## Origin matching policy
 

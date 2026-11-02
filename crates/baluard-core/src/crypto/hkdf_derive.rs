@@ -185,7 +185,7 @@ pub fn derive_settings_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
 /// Only holders of the Root Key can produce (or verify) the signature that
 /// authorizes a phrase-enrolled device's roster entry, so the recovery
 /// phrase remains the sole trust anchor for self-enrollment commits.
-/// Admin-only sealed records on a family vault (plan-family-spaces):
+/// Admin-only sealed records on a family vault (ADR 0086):
 /// derived from the ROOT key so flipped-vault members (no Root Key)
 /// can neither read nor write them. Deliberately a different info from
 /// every member-visible meta key.

@@ -8,7 +8,7 @@ import { daemon } from "./daemon.js";
 //
 // Both routes are slug/token-gated on the daemon side. This module is a thin
 // helper layer mirroring cloneFlow.js — maps the daemon's wire shape to the
-// frontend `PendingConflict` contract (docs/plan-conflict-resolution-panel.md).
+// frontend `PendingConflict` contract (docs/adr/0093-conflict-resolution-panel.md).
 //
 // SECURITY: the daemon never sends secret values. `fields[].sensitive` marks
 // which fields are masked server-side; the panel renders labels only.

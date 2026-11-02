@@ -338,7 +338,7 @@ impl<'a> VaultCreator<'a> {
         self
     }
 
-    /// Create the vault as a FAMILY vault (plan-family-spaces): stamps
+    /// Create the vault as a FAMILY vault (ADR 0086): stamps
     /// `purpose: family`, creates the `Shared` collection and the
     /// `Guardians` group, and flips to team shape in the same
     /// transaction. The purpose write hard-fails, so a crash never

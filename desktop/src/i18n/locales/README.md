@@ -6,7 +6,7 @@
 2. Translate only the **values** (right side of the colon). Keep all **keys** exactly as they are
 3. For plural forms, use `_plural` suffix (e.g. `entryCount` / `entryCount_plural`). The code picks based on count
 4. Variables like `{count}` are replaced at runtime. Keep them in your translation
-5. See [docs/translations.md](../../../../docs/translations.md) for full instructions and parity testing
+5. See [docs/dev/translations.md](../../../../docs/dev/translations.md) for full instructions and parity testing
 6. Submit a PR with your new file in this `locales/` directory
 
 ## Supported languages

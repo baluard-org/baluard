@@ -6,7 +6,7 @@
 //! each request to the daemon's 0600 socket (varint-prefixed protobuf), and
 //! writes the response back as length-prefixed JSON on stdout.
 //!
-//! See `docs/plan-browser-extension.md` §8 for the full design.
+//! See `docs/adr/0092-browser-extension.md` §8 for the full design.
 //!
 //! ## Defense-in-depth (review X6)
 //! - Enforces the SAME allowlist as the daemon (a daemon routing bug isn't

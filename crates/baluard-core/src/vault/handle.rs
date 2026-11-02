@@ -880,7 +880,7 @@ impl VaultHandle {
         Ok(())
     }
 
-    // ── Family: the sealed minor flag (plan-family-spaces §5) ─────────
+    // ── Family: the sealed minor flag (ADR 0086 §5) ─────────
 
     /// Set or clear the guardian-controlled minor flag on a live member
     /// row. Family vaults only: the flag is a family concept. The
@@ -1359,7 +1359,7 @@ impl VaultHandle {
         crate::vault::policies::read_policies(&self.path)
     }
 
-    /// Access review (S4-4, plan-power-pack §3): one admin-facing JSON
+    /// Access review (S4-4, ADR 0087 §3): one admin-facing JSON
     /// report answering "who can see what". Computed on demand from
     /// disk state; nothing persists. The S4-8 exposure summary rides
     /// here: a removed or reset member's grant ROWS survive the
@@ -5509,7 +5509,7 @@ impl VaultHandle {
         result
     }
 
-    /// Legacy Contact view (docs/plan-legacy-contact.md): unlock a
+    /// Legacy Contact view (docs/adr/0100-legacy-contact.md): unlock a
     /// cloned vault directly with the Root Key recovered from the kit's
     /// layer blob. The contact holds no password and no device keys —
     /// the passphrase already opened the kit — so nothing here touches

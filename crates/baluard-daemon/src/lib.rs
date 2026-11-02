@@ -1,7 +1,7 @@
 //! Baluard daemon library surface.
 //!
 //! Thin shell over [`baluard_runtime`] (Phase 0 extraction,
-//! `docs/plan-mobile-apps.md`). The vault-session orchestration — host, state,
+//! `docs/adr/0089-mobile-apps.md`). The vault-session orchestration — host, state,
 //! autosync coordinator, PIN escrow, bridge registry, rate limiting — now lives
 //! in the runtime crate so both this daemon (desktop) and a future mobile app
 //! can host it in-process. This crate re-exports those modules at the daemon's

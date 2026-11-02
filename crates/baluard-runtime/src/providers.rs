@@ -793,7 +793,7 @@ pub async fn web_oauth_start(
     // dynamic-port redirect at runtime before shipping the automatic flow.
     // If Codeberg requires an exact registered port, register a fixed port
     // here and change the bind to `127.0.0.1:<FIXED>` to match. Test
-    // end-to-end against codeberg.org. Tracked in docs/git-provider-apps-
+    // end-to-end against codeberg.org. Tracked in docs/dev/git-provider-apps-
     // and-tokens.md §9.6. Until verified, Codeberg users fall back to PAT.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

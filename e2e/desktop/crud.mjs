@@ -1,4 +1,4 @@
-// Desktop E2E flow 3: entry CRUD through the real UI (docs/e2e-testing.md
+// Desktop E2E flow 3: entry CRUD through the real UI (the E2E harness
 // Phase 3 flow coverage). Unlock the seeded vault, add a login through the
 // New-entry menu, edit its name, then delete it through the confirm modal.
 import { remote } from "webdriverio";

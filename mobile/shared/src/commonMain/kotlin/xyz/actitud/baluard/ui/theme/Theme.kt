@@ -12,7 +12,7 @@ import baluard_mobile.shared.generated.resources.morris_roman
 import org.jetbrains.compose.resources.Font
 
 // ── Baluard brand palette ────────────────────────────────────────────────────
-// Source of truth: docs/brand-guidelines.md + docs/design-language-tokens.json
+// Source of truth: docs/brand/brand-guidelines.md + docs/brand/design-language-tokens.json
 //
 // Dark: Deep Forest Teal / Lime Accent / Soft Lavender
 // Light: Clean White / Slate / Dark Teal
@@ -103,7 +103,7 @@ private val BaluardLight = lightColorScheme(
 /**
  * Baluard brand theme.
  *
- * Colors: docs/brand-guidelines.md (dark: Deep Forest Teal / Lime Accent;
+ * Colors: docs/brand/brand-guidelines.md (dark: Deep Forest Teal / Lime Accent;
  * light: Clean White / Slate / Dark Teal). Follows OS dark-mode by default.
  */
 @Composable

@@ -902,7 +902,7 @@ pub struct PassportData {
 /// On BW import the private key is not present in the export, so
 /// `private_key_missing` is `true` and the cipher is view-only; the user must
 /// re-register the passkey with the RP. See Phase 0 of
-/// `docs/plan-passkey-support.md`.
+/// `docs/adr/0095-passkey-support.md`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PasskeyData {
     /// Opaque credential ID assigned by the authenticator at registration,

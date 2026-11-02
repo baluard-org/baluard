@@ -6,8 +6,8 @@
 //! authenticator + credential store). The bridge between them is the
 //! JSON-serializable types.
 //!
-//! See `docs/plan-passkey-support.md` Phase 0 and
-//! `docs/plan-passkey-rs-evaluation.md` for the verdict.
+//! See `docs/adr/0095-passkey-support.md` Phase 0 and
+//! `docs/adr/0094-passkey-rs-evaluation.md` for the verdict.
 
 #![allow(clippy::needless_update)]
 
@@ -26,7 +26,7 @@ use webauthn_rs::prelude::*;
 
 /// Stub user-validation method. In Baluard this is replaced by the OS
 /// biometric gate (Touch ID / Windows Hello) plus, on Linux, the master
-/// password re-prompt per `docs/plan-passkey-support.md` §3.1.
+/// password re-prompt per `docs/adr/0095-passkey-support.md` §3.1.
 #[derive(Clone)]
 struct AllowUserVerification;
 
@@ -99,7 +99,7 @@ fn challenge_to_passkey_options(
         display_name: user_display_name.to_string(),
         name: user_name.to_string(),
     };
-    // Per docs/plan-passkey-support.md §4.5: always set resident+UV.
+    // Per docs/adr/0095-passkey-support.md §4.5: always set resident+UV.
     opts.authenticator_selection = Some(AuthenticatorSelectionCriteria {
         authenticator_attachment: Some(AuthenticatorAttachment::Platform),
         resident_key: Some(ResidentKeyRequirement::Required),

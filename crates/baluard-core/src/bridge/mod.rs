@@ -4,7 +4,7 @@
 //! proxy) read/write a narrow allowlist of vault actions without ever seeing
 //! the master password or the per-vault session token.
 //!
-//! See `docs/plan-browser-extension.md` for the full design (Decisions 1-25).
+//! See `docs/adr/0092-browser-extension.md` for the full design (Decisions 1-25).
 //!
 //! ## Trust model
 //!

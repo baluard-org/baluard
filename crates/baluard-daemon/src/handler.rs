@@ -318,7 +318,7 @@ fn action_requires_session_token(action: &str) -> bool {
 /// protections are the 0600 socket + same-UID peer checks and, for the
 /// bridge, its own pairing ceremony (desktop-token / approval / secret
 /// gated per route — see `handle_bridge_host_route`). `vaults.list` staying
-/// pre-token is a documented limitation (plan-sharing.md §9.8): a shared OS
+/// pre-token is a documented limitation (0085-sharing.md §9.8): a shared OS
 /// account is not a security boundary. NOTE: `vaults.detach` is an
 /// unauthenticated destructive-capable admin route (its delete-from-disk
 /// arm is protected by slug-retyping + the `.baluard` marker check, not by
@@ -1887,14 +1887,14 @@ async fn handle_bridge_host_route(
 /// Enforces: BRIDGE_ALLOWED_ACTIONS (Decision 7); vault.update field gate
 /// (no fido2_credentials, no uris — Decision 13); per-pairing read-rate cap
 /// on bridge.match / vault.get; active vault MUST be unlocked
-/// G24 (plan-merged-search §4.1): one fan-out walk over the host map,
+/// G24 (ADR 0098 §4.1): one fan-out walk over the host map,
 /// shared by every merged reader. Every vault yields a metadata row;
 /// the state is attached ONLY when the vault is merge-eligible (the
 /// device-local registry predicate: admin ceiling cache + member
 /// opt-in) and unlocked, so no merged reader can ever touch an
 /// ineligible or locked vault's data. A registry that fails to load
 /// fails closed: all rows come back metadata-only.
-/// D73 removal notice (plan-merged-search section 4.7): a Space whose local
+/// D73 removal notice (ADR 0098 section 4.7): a Space whose local
 /// member row is tombstoned is "removed", not "locked" - the chips surface
 /// offers detach wording instead of an unlock hint. Keyless filesystem read;
 /// fails open to false so a missing or damaged marker never lies.

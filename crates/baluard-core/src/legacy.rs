@@ -1,6 +1,6 @@
 //! Legacy contact: owner-silence emergency access.
 //!
-//! Design: docs/plan-legacy-contact.md. The contact holds an armored kit
+//! Design: docs/adr/0100-legacy-contact.md. The contact holds an armored kit
 //! (letter header + sealed body) and a read-only deploy key. The vault
 //! ships a Root Key layer blob sealed under an escrow key that exists only
 //! in the kit. Owner devices sign Armed/Closed records and a coarse alive

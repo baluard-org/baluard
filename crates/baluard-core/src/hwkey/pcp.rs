@@ -1,5 +1,5 @@
 //! Windows Platform Crypto Provider (PCP / TPM 2.0) key-agreement backend
-//! (plan: `docs/plan-hardware-backed-keys.md` §3.4, Phase 2).
+//! (plan: `docs/adr/0097-hardware-backed-keys.md` §3.4, Phase 2).
 //!
 //! Built on NCrypt over `Microsoft Platform Crypto Provider`: an ECDH
 //! P-256 key whose private half is TPM-resident and non-exportable by

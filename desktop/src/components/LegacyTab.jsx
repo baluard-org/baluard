@@ -12,7 +12,7 @@ import { IconCopy } from "./Icon.jsx";
 const WINDOW_PRESETS = [14, 30, 90, 365];
 
 /**
- * Legacy Contact owner tab (docs/plan-legacy-contact.md): arm a kit,
+ * Legacy Contact owner tab (docs/adr/0100-legacy-contact.md): arm a kit,
  * watch the silence window, and deny / disarm / replace. The contact
  * surface is a separate read-only flow; this tab is owner-only.
  */

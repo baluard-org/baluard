@@ -1540,7 +1540,7 @@ impl SyncEngine {
         self.state_machine.borrow().current != SyncState::Idle
     }
 
-    /// Locked background pull (mobile background sync, plan-mobile §3.5):
+    /// Locked background pull (mobile background sync, ADR 0089 §3.5):
     /// fetch remote objects ONLY — no checkout, no merge, no commit, no state
     /// transition, no decryption. Safe with a locked vault: nothing decrypts
     /// or moves HEAD/worktree. The next unlock's pull (commit→pull→push cycle)

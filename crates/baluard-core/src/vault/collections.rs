@@ -1,4 +1,4 @@
-//! Collections — the org-granularity data layer (plan-sharing §4.2/§4.6, S3).
+//! Collections — the org-granularity data layer (ADR 0085 §4.2/§4.6, S3).
 //!
 //! A collection is a named group inside a shared vault that members are
 //! granted access to: `meta/collections/<id>.json` carries the plaintext

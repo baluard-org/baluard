@@ -1,4 +1,4 @@
-//! Advisory org policies (S4-6, plan-power-pack §5).
+//! Advisory org policies (S4-6, ADR 0087 §5).
 //!
 //! A Space owner publishes RECOMMENDED settings as a plaintext
 //! `meta/policies.json` riding the meta/** Admin row (same shape logic

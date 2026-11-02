@@ -1,6 +1,6 @@
 # Security policy
 
-Baluard is a local-first password manager with no server. This file describes how to report a vulnerability and what happens after you do. The technical detail lives in the [security white paper](docs/security-white-paper.md) and the threat model it links to.
+Baluard is a local-first password manager with no server. This file describes how to report a vulnerability and what happens after you do. The technical detail lives in the [security white paper](docs/security/security-white-paper.md) and the threat model it links to.
 
 ## Supported versions
 

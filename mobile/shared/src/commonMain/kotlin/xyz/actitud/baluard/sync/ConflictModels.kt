@@ -10,7 +10,7 @@ import kotlinx.serialization.json.Json
  *
  * SECURITY: the runtime sends masked details only — field names + a coarse
  * `sensitive` flag. Secret values never cross the FFI boundary (mirrors the
- * desktop `sync.conflict` route contract, docs/plan-conflict-resolution-panel.md).
+ * desktop `sync.conflict` route contract, docs/adr/0093-conflict-resolution-panel.md).
  *
  * Shapes:
  *  - `{pending: false}` — nothing awaiting a decision.

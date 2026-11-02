@@ -204,7 +204,7 @@ class MainActivity : FragmentActivity() {
         setContent {
             // testTagsAsResourceId exposes Modifier.testTag values as
             // resource-id semantics so Maestro id: selectors resolve
-            // (docs/e2e-testing.md Phase 2). Android-only surface.
+            // (Phase 2). Android-only surface.
             Box(
                 modifier = Modifier
                     .fillMaxSize()

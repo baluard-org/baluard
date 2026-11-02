@@ -23,7 +23,7 @@ import xyz.actitud.baluard.platform.VaultRegistry
  * Trampoline + picker host for the `:autofill` process.
  *
  * Dataset mode (Phase 6 fill path): biometric ceremony, real datasets back
- * via EXTRA_AUTHENTICATION_RESULT (plan D6).
+ * via EXTRA_AUTHENTICATION_RESULT (ADR 0090).
  * A11Y picker mode (Phase 6.5 tile flow): after the same biometric unlock,
  * a plain-Views list of matching logins; the chosen id goes back through
  * [AutofillA11yBridge] and the service types it into the target app (plan
@@ -95,7 +95,7 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         }
         val status = findViewById<TextView>(R.id.autofill_status)
         // Per-vault auth datasets pin the vault; without one, the last-active
-        // vault is the unlock target (plan-merged-search §4.8).
+        // vault is the unlock target (ADR 0098 §4.8).
         val path = intent?.getStringExtra(EXTRA_VAULT_PATH)
             ?: VaultRegistry.loadActiveVault()
         if (path == null) {
