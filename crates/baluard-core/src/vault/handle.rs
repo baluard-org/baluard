@@ -8417,6 +8417,115 @@ impl VaultHandle {
         crate::vault::cipher::decrypt_cipher(self.vault_id, file.id, file, &item_key)
     }
 
+    /// Rewrap an entry whose ciphertext decrypts but whose kind this build
+    /// cannot model (a newer client wrote it). Rotation must still move the
+    /// bytes to the new epoch: a revoked device keeps the old keys, so any
+    /// entry left behind stays readable by the adversary the rotation
+    /// evicts. Stages the entry and every on-disk attachment for the
+    /// caller's atomic rename pass; the attachment listing lives inside the
+    /// unparsed cipher JSON, so it is enumerated from the entry directory.
+    #[allow(clippy::too_many_arguments)]
+    fn rewrap_unknown_kind_cipher(
+        &self,
+        file_path: &Path,
+        file: &crate::vault::cipher::CipherFile,
+        old_item_key: &crate::keys::hierarchy::ItemKey,
+        new_item_key: &crate::keys::hierarchy::ItemKey,
+        new_epoch: u64,
+        staged_renames: &mut Vec<(PathBuf, PathBuf)>,
+    ) -> Result<(), BaluardError> {
+        let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
+        let old_seq = envelope.header.update_seq;
+        let source_tier = envelope.header.tier;
+
+        // Stage locally and hand over only on success: a mid-rewrap failure
+        // (corrupt attachment, full disk) must leave nothing for the
+        // caller's rename pass to commit, or the entry would land at the
+        // new epoch while the log claims it stayed at the old one.
+        let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+        // Local staging hands over only on full success; on any failure the
+        // staged tmp files are deleted, so no half-sealed .enc.tmp survives
+        // for the next commit to sweep up.
+        let result = (|| -> Result<(), BaluardError> {
+            let json = crate::vault::cipher::decrypt_cipher_raw(
+                self.vault_id,
+                file.id,
+                file,
+                old_item_key,
+            )?;
+            let new_file = crate::vault::cipher::encrypt_cipher_raw(
+                self.vault_id,
+                file.id,
+                &json,
+                new_item_key,
+                new_epoch,
+                old_seq,
+                source_tier,
+            )?;
+            let tmp_path = file_path.with_extension("enc.tmp");
+            std::fs::write(&tmp_path, &new_file.envelope_bytes)?;
+            staged.push((tmp_path, file_path.to_path_buf()));
+
+            // Attachment blobs always live under the vault-root entries/
+            // directory, keyed by cipher id, wherever the cipher FILE sits
+            // (ciphers/<id>.enc flat, collections/<dir>/<id>.enc, trash/).
+            let attach_dir = self
+                .path
+                .join("entries")
+                .join(file.id.to_string())
+                .join("attachments");
+            let Ok(entries) = std::fs::read_dir(&attach_dir) else {
+                return Ok(());
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(stem) = name.to_str().and_then(|n| n.strip_suffix(".enc")) else {
+                    continue;
+                };
+                let Ok(attach_uuid) = stem.parse::<Uuid>() else {
+                    continue;
+                };
+                let attach_path = entry.path();
+                let enc_blob = std::fs::read(&attach_path)?;
+                let mut plaintext = crate::vault::attachment::decrypt_attachment(
+                    self.vault_id,
+                    file.id,
+                    attach_uuid,
+                    old_item_key.as_bytes(),
+                    &enc_blob,
+                )?;
+                let new_enc = crate::vault::attachment::encrypt_attachment(
+                    self.vault_id,
+                    file.id,
+                    attach_uuid,
+                    new_item_key.as_bytes(),
+                    &plaintext,
+                    new_epoch,
+                    old_seq,
+                )?;
+                plaintext.zeroize();
+                let attach_tmp = attach_path.with_extension("enc.tmp");
+                std::fs::write(&attach_tmp, &new_enc)?;
+                staged.push((attach_tmp, attach_path));
+            }
+            Ok(())
+        })();
+        if result.is_ok() {
+            staged_renames.append(&mut staged);
+        } else {
+            Self::discard_staged(&staged);
+        }
+        result
+    }
+
+    /// Remove the staged tmp files of a failed rewrap. The rotation
+    /// continues past a skipped entry, so nothing else sweeps these.
+    fn discard_staged(staged: &[(PathBuf, PathBuf)]) {
+        for (tmp, _) in staged {
+            let _ = std::fs::remove_file(tmp);
+        }
+    }
+
     /// Item key for a cipher wherever it lives (flat or collection)
     /// without requiring an SGK-holding device. Collection
     /// residents resolve through their collection key, so members
@@ -9978,10 +10087,25 @@ impl VaultHandle {
             let mut existing = match self.try_decrypt_cipher_at(unlocked, &file_path, &file) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!(
-                        "rotation: could not decrypt {} ({e}); the entry is left behind at the old key",
-                        file_path.display()
-                    );
+                    // Bytes-level rewrap for entries this build cannot
+                    // parse: a newer client's kind must still move to the
+                    // new epoch, because a revoked device keeps every old
+                    // key. True corruption still skips loudly.
+                    if let Err(rewrap_err) = self.rewrap_unknown_kind_cipher(
+                        &file_path,
+                        &file,
+                        &old_item_key,
+                        &new_item_key,
+                        new_epoch,
+                        &mut staged_renames,
+                    ) {
+                        eprintln!(
+                            "rotation: entry {} stayed at the old key: parse ({e}), rewrap ({rewrap_err})",
+                            file_path.display()
+                        );
+                    }
+                    // The rewrap staged the entry and its attachments; the
+                    // parsed-path body must not run for it either way.
                     continue;
                 }
             };
@@ -10655,10 +10779,25 @@ impl VaultHandle {
             let mut existing = match self.try_decrypt_cipher_at(unlocked, &file_path, &file) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!(
-                        "rotation: could not decrypt {} ({e}); the entry is left behind at the old key",
-                        file_path.display()
-                    );
+                    // Bytes-level rewrap for entries this build cannot
+                    // parse: a newer client's kind must still move to the
+                    // new epoch, because a revoked device keeps every old
+                    // key. True corruption still skips loudly.
+                    if let Err(rewrap_err) = self.rewrap_unknown_kind_cipher(
+                        &file_path,
+                        &file,
+                        &old_item_key,
+                        &new_item_key,
+                        new_epoch,
+                        &mut staged_renames,
+                    ) {
+                        eprintln!(
+                            "rotation: entry {} stayed at the old key: parse ({e}), rewrap ({rewrap_err})",
+                            file_path.display()
+                        );
+                    }
+                    // The rewrap staged the entry and its attachments; the
+                    // parsed-path body must not run for it either way.
                     continue;
                 }
             };

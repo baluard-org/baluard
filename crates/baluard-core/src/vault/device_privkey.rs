@@ -2358,6 +2358,179 @@ mod tests {
         (handle, password, secrets.recovery_phrase.phrase())
     }
 
+    /// C1: a cipher whose kind this build cannot parse (a newer client
+    /// wrote it) must still move to the new epoch during rotation. A
+    /// revoked device keeps the old keys, so an entry left behind stays
+    /// readable by exactly the adversary the rotation evicts.
+    #[test]
+    fn rotation_rewraps_a_future_kind_cipher() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut h, _password, _phrase) = audit_vault(dir.path());
+        let input: crate::types::CipherInput =
+            serde_json::from_value(serde_json::json!({ "name": "future entry" })).unwrap();
+        let id = h.add_cipher(&input).unwrap();
+
+        let path = h.cipher_file_path(id).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let envelope = crate::vault::envelope::deserialize(&bytes).unwrap();
+        let epoch_before = envelope.header.key_epoch;
+        let seq_before = envelope.header.update_seq;
+
+        // Rebuild the plaintext with a kind tag only a newer client models.
+        let cipher = h.decrypt_cipher_bytes(id, &bytes).unwrap();
+        let mut value = serde_json::to_value(&cipher).unwrap();
+        value["kind"]["type"] = serde_json::json!("signingKey");
+        let json = serde_json::to_vec(&value).unwrap();
+
+        let tier = crate::types::Tier::fit(json.len()).unwrap();
+        let padded = crate::vault::padding::pad(&json, tier).unwrap();
+        let item_key = h.resolve_cipher_item_key(id, epoch_before).unwrap();
+        let aad = crate::crypto::aead::build_aad(
+            h.vault_id,
+            crate::types::ObjectType::Cipher,
+            id,
+            Some(tier),
+            crate::ALG_AES_256_GCM,
+            epoch_before,
+            seq_before,
+        );
+        let header = crate::types::EnvelopeHeader {
+            version: crate::BALUARD_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
+            key_epoch: epoch_before,
+            nonce_counter: 0,
+            update_seq: seq_before,
+            tier: Some(tier),
+        };
+        let enc = crate::crypto::aead::encrypt(
+            item_key.as_bytes(),
+            &padded,
+            &aad,
+            &crate::crypto::aead::build_random_nonce(),
+            header,
+        )
+        .unwrap();
+        std::fs::write(&path, crate::vault::envelope::serialize(&enc).unwrap()).unwrap();
+
+        // The setup must read as unparseable to this build.
+        assert!(
+            h.decrypt_cipher_bytes(id, &std::fs::read(&path).unwrap())
+                .is_err(),
+            "setup failed: the future-kind entry still parses"
+        );
+
+        h.rotate_root_key().unwrap();
+
+        let envelope_after =
+            crate::vault::envelope::deserialize(&std::fs::read(&path).unwrap()).unwrap();
+        assert_ne!(
+            envelope_after.header.key_epoch, epoch_before,
+            "a future-kind entry was left behind at the old epoch by rotation"
+        );
+    }
+
+    /// C1 amendment: when the opaque rewrap fails mid-stage (a corrupt
+    /// attachment, a full disk), nothing may stay staged. The caller's
+    /// rename pass would otherwise commit the entry to the new epoch while
+    /// the log claims it was left behind at the old one, and no tmp file
+    /// may survive for the next commit to sweep up.
+    #[test]
+    fn rotation_leaves_nothing_staged_when_a_rewrap_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut h, _password, _phrase) = audit_vault(dir.path());
+        let input: crate::types::CipherInput =
+            serde_json::from_value(serde_json::json!({ "name": "future" })).unwrap();
+        let id = h.add_cipher(&input).unwrap();
+
+        let path = h.cipher_file_path(id).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let envelope = crate::vault::envelope::deserialize(&bytes).unwrap();
+        let epoch_before = envelope.header.key_epoch;
+        let seq_before = envelope.header.update_seq;
+
+        let cipher = h.decrypt_cipher_bytes(id, &bytes).unwrap();
+        let mut value = serde_json::to_value(&cipher).unwrap();
+        value["kind"]["type"] = serde_json::json!("signingKey");
+        let json = serde_json::to_vec(&value).unwrap();
+        let tier = crate::types::Tier::fit(json.len()).unwrap();
+        let padded = crate::vault::padding::pad(&json, tier).unwrap();
+        let item_key = h.resolve_cipher_item_key(id, epoch_before).unwrap();
+        let aad = crate::crypto::aead::build_aad(
+            h.vault_id,
+            crate::types::ObjectType::Cipher,
+            id,
+            Some(tier),
+            crate::ALG_AES_256_GCM,
+            epoch_before,
+            seq_before,
+        );
+        let header = crate::types::EnvelopeHeader {
+            version: crate::BALUARD_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
+            key_epoch: epoch_before,
+            nonce_counter: 0,
+            update_seq: seq_before,
+            tier: Some(tier),
+        };
+        let enc = crate::crypto::aead::encrypt(
+            item_key.as_bytes(),
+            &padded,
+            &aad,
+            &crate::crypto::aead::build_random_nonce(),
+            header,
+        )
+        .unwrap();
+        std::fs::write(&path, crate::vault::envelope::serialize(&enc).unwrap()).unwrap();
+
+        // A corrupt attachment the rewrap must choke on. Blobs live under
+        // the vault-root entries/ tree, not beside the cipher file.
+        let attach_dir = h
+            .path
+            .join("entries")
+            .join(id.to_string())
+            .join("attachments");
+        std::fs::create_dir_all(&attach_dir).unwrap();
+        std::fs::write(
+            attach_dir.join(format!("{}.enc", uuid::Uuid::new_v4())),
+            b"garbage-not-an-envelope",
+        )
+        .unwrap();
+
+        h.rotate_root_key().unwrap();
+
+        let after = crate::vault::envelope::deserialize(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            after.header.key_epoch, epoch_before,
+            "a failed rewrap staged the entry: the rename pass moved it while the log claimed otherwise"
+        );
+        let vault = h.path.to_path_buf();
+        let mut orphans = Vec::new();
+        for rel in ["ciphers", "entries"] {
+            let root = vault.join(rel);
+            if root.is_dir() {
+                collect_tmp_files(&root, &mut orphans);
+            }
+        }
+        assert!(
+            orphans.is_empty(),
+            "a failed rewrap left orphan tmp files: {orphans:?}"
+        );
+    }
+
+    fn collect_tmp_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                collect_tmp_files(&p, out);
+            } else if p.extension().is_some_and(|e| e == "tmp") {
+                out.push(p);
+            }
+        }
+    }
+
     /// H3: the chip store's typed touch outcome must reach unlock's
     /// caller. The open path used to collapse every derive failure into
     /// HardwareUnavailable, making the desktop/mobile touch copy dead.

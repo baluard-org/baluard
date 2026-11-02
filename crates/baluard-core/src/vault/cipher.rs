@@ -175,10 +175,120 @@ pub fn decrypt_cipher(
     })
 }
 
+/// Seal already-serialized cipher JSON without a typed parse. Rotation
+/// rewraps entries whose kind a newer client wrote, so the bytes must move
+/// to the new item key even when this build cannot model the kind.
+#[allow(clippy::too_many_arguments)]
+pub fn encrypt_cipher_raw(
+    vault_id: Uuid,
+    cipher_id: CipherId,
+    plaintext: &[u8],
+    item_key: &ItemKey,
+    key_epoch: u64,
+    update_seq: u64,
+    tier: Option<Tier>,
+) -> Result<CipherFile, BaluardError> {
+    // A rewrap preserves the source tier: a newer client may have chosen a
+    // larger bucket deliberately, and downsizing changes the padding
+    // leakage profile the original writer picked.
+    let tier = tier.or_else(|| Tier::fit(plaintext.len())).ok_or_else(|| {
+        VaultError::InvalidTier(format!(
+            "content too large for any tier: {} bytes",
+            plaintext.len()
+        ))
+    })?;
+
+    let padded: Zeroizing<Vec<u8>> = Zeroizing::new(padding::pad(plaintext, tier)?);
+
+    let aad = aead::build_aad(
+        vault_id,
+        ObjectType::Cipher,
+        cipher_id,
+        Some(tier),
+        ALG_AES_256_GCM,
+        key_epoch,
+        update_seq,
+    );
+
+    let nonce = aead::build_random_nonce();
+
+    let header = EnvelopeHeader {
+        version: BALUARD_VERSION,
+        alg_id: ALG_AES_256_GCM,
+        key_epoch,
+        nonce_counter: 0,
+        update_seq,
+        tier: Some(tier),
+    };
+
+    let enc_envelope = aead::encrypt(item_key.as_bytes(), &padded, &aad, &nonce, header)?;
+
+    Ok(CipherFile {
+        id: cipher_id,
+        envelope_bytes: envelope::serialize(&enc_envelope)?,
+    })
+}
+
+/// Decrypt an envelope back to raw cipher JSON (pre-parse). Used by
+/// rotation's opaque rewrap, where the typed kind must not gate the rekey;
+/// the AAD identity binding still verifies before decryption.
+pub fn decrypt_cipher_raw(
+    vault_id: Uuid,
+    cipher_id: CipherId,
+    file: &CipherFile,
+    item_key: &ItemKey,
+) -> Result<Zeroizing<Vec<u8>>, BaluardError> {
+    let enc_envelope = envelope::deserialize(&file.envelope_bytes)?;
+
+    let expected_aad = aead::build_aad(
+        vault_id,
+        ObjectType::Cipher,
+        cipher_id,
+        enc_envelope.header.tier,
+        enc_envelope.header.alg_id,
+        enc_envelope.header.key_epoch,
+        enc_envelope.header.update_seq,
+    );
+    if enc_envelope.aad != expected_aad {
+        return Err(BaluardError::Vault(VaultError::Corrupt(
+            "cipher identity mismatch: AAD does not match expected vault/cipher binding".into(),
+        )));
+    }
+
+    // H2 parity with the typed twin: the padded plaintext holds full
+    // cleartext, so it zeroizes on drop even when unpad fails.
+    let padded = Zeroizing::new(aead::decrypt(item_key.as_bytes(), &enc_envelope)?);
+    let json = padding::unpad(&padded)?;
+
+    Ok(Zeroizing::new(json))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::CipherInput;
+
+    #[test]
+    fn raw_seal_roundtrip_preserves_bytes() {
+        let vault_id = Uuid::new_v4();
+        let cipher_id = Uuid::new_v4();
+        let item_key = ItemKey::generate();
+        let json = br#"{"kind":{"type":"signingKey"}}"#.to_vec();
+
+        let file = encrypt_cipher_raw(vault_id, cipher_id, &json, &item_key, 3, 7, None).unwrap();
+        let back = decrypt_cipher_raw(vault_id, cipher_id, &file, &item_key).unwrap();
+        assert_eq!(&*back, &json);
+        // An explicit tier survives the round trip: a rewrap must not
+        // downscale the padding bucket the original writer picked.
+        let file = encrypt_cipher_raw(vault_id, cipher_id, &json, &item_key, 3, 7, Some(Tier::Xl))
+            .unwrap();
+        let envelope = envelope::deserialize(&file.envelope_bytes).unwrap();
+        assert_eq!(envelope.header.tier, Some(Tier::Xl));
+        assert!(decrypt_cipher_raw(vault_id, cipher_id, &file, &item_key).is_ok());
+
+        // The AAD binds vault and cipher identity: another id must refuse.
+        assert!(decrypt_cipher_raw(vault_id, Uuid::new_v4(), &file, &item_key).is_err());
+    }
 
     #[test]
     fn encrypt_decrypt_cipher_roundtrip() {

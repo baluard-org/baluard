@@ -2137,14 +2137,15 @@ async fn route_bridge_request(
         }
     }
 
-    // 3. vault.update field gate: reject fido2_credentials / uris mutation.
-    if req.action.as_str() == "vault.update" {
+    // 3. vault.update/add field gate: Decision 7 allowlist. H1 (D81
+    //    review): the old denylist admitted every field a future cipher
+    //    type adds, so a SigningKey private key would have crossed.
+    if matches!(req.action.as_str(), "vault.update" | "vault.add") {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) {
-            if bridge_update_touches_forbidden(&v) {
-                log::warn!(
-                    "[daemon] bridge token denied vault.update touching fido2_credentials/uris"
-                );
-                return err_response("bridge tokens may not modify fido2_credentials or uris");
+            let is_add = req.action.as_str() == "vault.add";
+            if let Some(reason) = bridge_write_outside_decision_seven(&v, is_add) {
+                log::warn!("[daemon] bridge token denied a write outside Decision 7");
+                return err_response(reason);
             }
         }
     }
@@ -2263,9 +2264,7 @@ async fn route_bridge_request(
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) {
             if let Err(reason) = bridge_update_preserves_protected(&state, &v).await {
                 log::warn!("[daemon] bridge vault.update denied: {reason}");
-                return err_response(format!(
-                    "bridge tokens may not remove fido2_credentials or uris: {reason}"
-                ));
+                return err_response(reason);
             }
         }
     }
@@ -2312,13 +2311,17 @@ async fn route_bridge_request(
     match req.action.as_str() {
         "bridge.match" => handle_bridge_match(req, host, &vault_name).await,
         "bridge.config" => handle_bridge_config(&state).await,
-        // B10 (Decision 7 minimalism): a bridge read returns only the
-        // fill fields; notes, history, custom fields, the totp seed,
-        // and passkeys stay behind the desktop.
+        // B10 + H1 (Decision 7 minimalism): a bridge read returns only the
+        // fill fields and only for Login entries; notes, history, custom
+        // fields, the totp seed, passkeys, and every other cipher kind
+        // stay behind the desktop.
         "vault.get" => {
             let mut resp = route_request(delegated, &state).await;
             if resp.success {
-                resp.payload = bridge_redact_get(&resp.payload);
+                match bridge_fill_response(&resp.payload) {
+                    Ok(payload) => resp.payload = payload,
+                    Err(msg) => return err_response(msg),
+                }
             }
             resp
         }
@@ -2328,51 +2331,62 @@ async fn route_bridge_request(
     }
 }
 
-/// B10 (Decision 7): a bridge vault.get returns the fill pair only.
-/// The extension consumes username, password, and a totp presence flag
-/// (the derived code rides cipher.totp_code); notes, history, custom
-/// fields, and passkeys never cross to the browser.
-fn bridge_redact_get(payload: &str) -> String {
-    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(payload) else {
-        return payload.to_string();
+/// Decision 7: a bridge vault.get returns the fill fields only, and only
+/// for Login entries. Built as an allowlist: a denylist silently leaks
+/// every field a future cipher type adds (the D81 review's H1 — a
+/// SigningKey private key would have ridden the same path as an SshKey
+/// private key already does). The extension consumes username, password,
+/// and a totp presence flag; the derived code rides cipher.totp_code.
+fn bridge_fill_response(payload: &str) -> Result<String, String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
+        // An allowlist fails closed: an unparseable success payload is not
+        // the fill pair, so it does not cross.
+        return Err("bridge read returned an unexpected payload".into());
     };
-    fn scrub(obj: &mut serde_json::Value) {
-        let Some(map) = obj.as_object_mut() else {
-            return;
-        };
-        for field in [
-            "notes",
-            "password_history",
-            "custom_fields",
-            "fido2_credentials",
-            "totp_uri",
-        ] {
-            map.remove(field);
-        }
-        if let Some(totp) = map.get("totp") {
-            let present = match totp {
-                serde_json::Value::String(s) => !s.is_empty(),
-                serde_json::Value::Bool(b) => *b,
-                serde_json::Value::Null => false,
-                _ => true,
-            };
-            map.insert("totp".into(), serde_json::Value::Bool(present));
-        }
+    let kind_type = v
+        .get("kind")
+        .and_then(|k| k.get("type"))
+        .and_then(|t| t.as_str())
+        .unwrap_or_default();
+    if kind_type != "login" {
+        return Err("bridge reads support logins only".into());
     }
-    scrub(&mut v);
-    if let Some(data) = v.get_mut("kind").and_then(|k| k.get_mut("data")) {
-        scrub(data);
-    }
-    v.to_string()
+    let data = v.get("kind").and_then(|k| k.get("data"));
+    // Flat fields first (the daemon wire format flattens username and
+    // password), then the nested kind.data copy for anything only the
+    // nested shape carries.
+    let field = |name: &str| {
+        v.get(name)
+            .or_else(|| data.and_then(|d| d.get(name)))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    };
+    let totp_present = match v.get("totp") {
+        Some(serde_json::Value::String(s)) => !s.is_empty(),
+        Some(serde_json::Value::Bool(b)) => *b,
+        // An empty or cleared seed is "no TOTP", not "has TOTP".
+        _ => data
+            .and_then(|d| d.get("totp_uri"))
+            .and_then(|t| t.as_str())
+            .is_some_and(|s| !s.is_empty()),
+    };
+    let out = serde_json::json!({
+        "id": field("id"),
+        "name": field("name"),
+        "type": "login",
+        "username": field("username"),
+        "password": field("password"),
+        "totp": totp_present,
+    });
+    Ok(out.to_string())
 }
 
-/// Does a vault.update payload attempt to mutate passkey or URI fields?
-/// (Decision 13: bridge tokens may edit pw/user/notes/totp but NOT these.)
-/// CipherKind serializes as {"type":"login","data":{...}} (#[serde(tag="type",
-/// content="data")]), so the forbidden fields live under `kind.data`, NOT
-/// `kind` directly. Path verified via serde round-trip.
-/// C21: does the incoming kind omit or shrink a protected list the existing
-/// cipher has? Returns the violation reason, or None when safe.
+/// C21: does the incoming kind omit, shrink, or CHANGE a protected list
+/// (uris, fido2_credentials) relative to the existing cipher? The update
+/// path replaces the whole `kind`, so an omission deletes and a content
+/// change rewrites the URI matching the browser is trusted against.
+/// CipherKind serializes as {"type":"login","data":{...}}. Returns the
+/// violation reason, or None when safe.
 fn kind_omits_or_shrinks_protected(
     existing_kind: Option<&serde_json::Value>,
     incoming_kind: Option<&serde_json::Value>,
@@ -2401,6 +2415,12 @@ fn kind_omits_or_shrinks_protected(
             Some(incoming_list) if incoming_list.len() < existing_list.len() => {
                 return Some("list shrinks (deletion is not a bridge operation)");
             }
+            // A resent list must be byte-equal: the fence permits resending
+            // (C21 demands it on logins that have the list) but not
+            // rewriting the URI matching the browser is trusted against.
+            Some(incoming_list) if incoming_list != existing_list => {
+                return Some("list content changed (resend it exactly as stored)");
+            }
             _ => {}
         }
     }
@@ -2422,9 +2442,21 @@ async fn bridge_update_preserves_protected(
     let existing: serde_json::Value =
         serde_json::from_str(&existing_json).map_err(|e| format!("existing cipher parse: {e}"))?;
     let existing_kind = existing.get("kind");
+    // The payload-level kind check cannot see the STORED kind: a payload
+    // claiming login aimed at a card would otherwise replace the card
+    // wholesale, because the update path replaces the whole kind.
+    if existing_kind
+        .and_then(|k| k.get("type"))
+        .and_then(|t| t.as_str())
+        .is_some_and(|t| t != "login")
+    {
+        return Err("bridge tokens may only edit logins, and that entry is not one".into());
+    }
     let incoming_kind = payload.get("kind");
     match kind_omits_or_shrinks_protected(existing_kind, incoming_kind) {
-        Some(reason) => Err(format!("{reason} for a cipher that has them")),
+        Some(reason) => Err(format!(
+            "bridge tokens may not remove or change fido2_credentials or uris: {reason}"
+        )),
         None => Ok(()),
     }
 }
@@ -2454,7 +2486,48 @@ async fn bridge_read_matches_page(
     }
 }
 
-fn bridge_update_touches_forbidden(payload: &serde_json::Value) -> bool {
+fn bridge_write_outside_decision_seven(
+    payload: &serde_json::Value,
+    is_add: bool,
+) -> Option<&'static str> {
+    // An absent kind cannot prove the target is a Login, and a payload
+    // that skips the kind block would skip the whole data fence with it.
+    let kind_type = payload
+        .get("kind")
+        .and_then(|k| k.get("type"))
+        .and_then(|t| t.as_str());
+    if kind_type != Some("login") {
+        return Some("bridge tokens may only create or edit logins");
+    }
+    // Root-level fields the data fence cannot see. Capture (vault.add)
+    // may carry empty fixture lists but no content outside Decision 7;
+    // edits (vault.update) replace whole root fields, so an update payload
+    // may only name the entry identity, its scope, the kind block, and the
+    // Decision 7 note field.
+    let nonempty_list = |k: &str| {
+        payload
+            .get(k)
+            .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty()))
+    };
+    if nonempty_list("custom_fields") {
+        return Some("bridge tokens may not write custom fields");
+    }
+    if nonempty_list("password_history") {
+        return Some("bridge tokens may not write password history");
+    }
+    if nonempty_list("attachments") {
+        return Some("bridge tokens may not write attachments");
+    }
+    if !is_add {
+        const UPDATE_ROOT: [&str; 5] = ["id", "vault_slug", "kind", "notes", "url"];
+        if let Some(map) = payload.as_object() {
+            for key in map.keys() {
+                if !UPDATE_ROOT.contains(&key.as_str()) {
+                    return Some("bridge tokens may not edit fields outside Decision 7");
+                }
+            }
+        }
+    }
     // Resolve the inner `data` block across the layouts the update handler
     // accepts: {kind:{type,data}}, {kind:{...fields}}, or {data:{...}}.
     let data = payload
@@ -2463,15 +2536,49 @@ fn bridge_update_touches_forbidden(payload: &serde_json::Value) -> bool {
         .or_else(|| payload.get("data"))
         .or_else(|| payload.get("kind"));
     let Some(data) = data else {
-        return false;
+        return None;
     };
-    if data.get("fido2_credentials").is_some() {
-        return true;
+    // Capture (vault.add) sends a full LoginData shape including the site
+    // URI, so add admits every legitimate LoginData field. Edits
+    // (vault.update) stay at Decision 7's strict set; uris and
+    // fido2_credentials on an edit are not refused here but checked for
+    // resend-equality against the stored lists by the C21 gate, because
+    // C21 otherwise demands them be resent on logins that have them.
+    // "type" is the discriminator of the bare-kind layout; its value was
+    // already validated as login above.
+    const ADD_WRITABLE: [&str; 8] = [
+        "username",
+        "password",
+        "uris",
+        "totp_uri",
+        "autofill_on_page_load",
+        "password_revision_date",
+        "favicon",
+        "type",
+    ];
+    const UPDATE_WRITABLE: [&str; 6] = [
+        "username",
+        "password",
+        "totp_uri",
+        "uris",
+        "fido2_credentials",
+        "type",
+    ];
+    let writable: &[&str] = if is_add {
+        &ADD_WRITABLE
+    } else {
+        &UPDATE_WRITABLE
+    };
+    if let Some(map) = data.as_object() {
+        for key in map.keys() {
+            if !writable.contains(&key.as_str()) {
+                return Some(
+                    "bridge tokens may only modify username, password, notes, or the TOTP seed",
+                );
+            }
+        }
     }
-    if data.get("uris").is_some() {
-        return true;
-    }
-    false
+    None
 }
 
 /// bridge.match: URL -> matching CipherMeta (metadata only, no passwords).
@@ -7835,38 +7942,138 @@ mod tests {
 
     // ── Browser bridge regression tests ──
 
-    use super::bridge_update_touches_forbidden;
+    use super::bridge_write_outside_decision_seven;
 
-    /// C2 regression: the field-gate MUST see fido2_credentials / uris under
-    /// kind.data (the real serialized CipherKind shape), not kind directly.
-    /// Before the fix, this payload was allowed through.
+    /// H1 (D81 review): the Decision 7 write fence is an ALLOWLIST. Every
+    /// data field the extension may write is named; anything else —
+    /// including fields a future cipher type adds — must refuse.
     #[test]
-    fn bridge_update_gate_catches_forbidden_fields_under_kind_data() {
-        // Real shape: {"kind":{"type":"login","data":{...}}}.
+    fn bridge_write_gate_refuses_fields_outside_decision_seven() {
+        // fido2_credentials/uris on an EDIT are deferred to the C21
+        // resend-equality gate, not refused here.
         let with_fido2 = serde_json::json!({
             "kind": { "type": "login", "data": { "fido2_credentials": [{"credential_id": "x"}] } }
         });
-        assert!(
-            bridge_update_touches_forbidden(&with_fido2),
-            "fido2_credentials under kind.data must be caught"
+        assert_eq!(
+            bridge_write_outside_decision_seven(&with_fido2, false),
+            None
         );
-        let with_uris = serde_json::json!({
-            "kind": { "type": "login", "data": { "uris": [{"uri": "https://evil.com"}] } }
+        let with_card_number = serde_json::json!({
+            "kind": { "type": "login", "data": { "number": "4111111111111111" } }
         });
-        assert!(
-            bridge_update_touches_forbidden(&with_uris),
-            "uris under kind.data must be caught"
+        assert!(bridge_write_outside_decision_seven(&with_card_number, false).is_some());
+    }
+
+    /// M-4: an update payload may only name identity, scope, the kind
+    /// block, and the root note field. Everything else at the root is a
+    /// whole-field replacement the data fence cannot see.
+    #[test]
+    fn bridge_update_gate_refuses_root_fields_outside_decision_seven() {
+        let reprompt_flip = serde_json::json!({
+            "id": "abc-123",
+            "reprompt": false,
+            "kind": {"type": "login", "data": {"password": "p"}}
+        });
+        assert!(bridge_write_outside_decision_seven(&reprompt_flip, false).is_some());
+        let legal = serde_json::json!({
+            "id": "abc-123",
+            "vault_slug": "personal",
+            "notes": "rotated today",
+            "kind": {"type": "login", "data": {"username": "a", "password": "p"}}
+        });
+        assert_eq!(bridge_write_outside_decision_seven(&legal, false), None);
+    }
+
+    /// H1: a non-Login kind refuses outright.
+    #[test]
+    fn bridge_write_gate_refuses_non_login_kinds() {
+        let card = serde_json::json!({
+            "kind": { "type": "card", "data": { "number": "4111111111111111" } }
+        });
+        let reason = bridge_write_outside_decision_seven(&card, false).expect("card must refuse");
+        assert!(reason.contains("logins"));
+    }
+
+    /// Decision 7 companion: the writable field set MUST pass the gate.
+    #[test]
+    fn bridge_write_gate_allows_decision_seven_fields() {
+        let benign = serde_json::json!({
+            "id": "abc-123",
+            "notes": "n",
+            "kind": { "type": "login", "data": {
+                "username": "a", "password": "newpw", "totp_uri": "otpauth://x"
+            } }
+        });
+        assert_eq!(bridge_write_outside_decision_seven(&benign, false), None);
+    }
+
+    /// H1 amendment: an absent kind cannot prove the target is a Login,
+    /// and a kind-less payload would skip the data fence entirely.
+    #[test]
+    fn bridge_write_gate_refuses_a_missing_kind() {
+        let no_kind = serde_json::json!({ "id": "abc-123", "password": "x" });
+        assert!(bridge_write_outside_decision_seven(&no_kind, false).is_some());
+    }
+
+    /// H1 amendment: root-level hazard lists are smuggling the data fence
+    /// cannot see. Empty fixture lists are no-ops and stay legal.
+    #[test]
+    fn bridge_write_gate_refuses_root_level_hazard_lists() {
+        let smuggling = serde_json::json!({
+            "id": "abc-123",
+            "kind": {"type": "login", "data": {"username": "a", "password": "p"}},
+            "custom_fields": [{"name": "api key", "value": "secret"}]
+        });
+        assert!(bridge_write_outside_decision_seven(&smuggling, true).is_some());
+        let fixture_empty = serde_json::json!({
+            "id": "abc-123",
+            "kind": {"type": "login", "data": {"username": "a", "password": "p"}},
+            "custom_fields": []
+        });
+        assert_eq!(
+            bridge_write_outside_decision_seven(&fixture_empty, true),
+            None
         );
     }
 
-    /// C2 companion: a benign update (password only) MUST pass the gate.
+    /// H1 amendment: capture admits the full legitimate LoginData shape;
+    /// the same shape on an edit keeps Decision 7's strict set.
     #[test]
-    fn bridge_update_gate_allows_benign_password_change() {
-        let benign = serde_json::json!({
-            "id": "abc-123",
-            "kind": { "type": "login", "data": { "password": "newpw" } }
+    fn bridge_write_gate_splits_add_and_update_field_sets() {
+        let capture = serde_json::json!({
+            "name": "Example",
+            "kind": {"type": "login", "data": {
+                "username": "a", "password": "p",
+                "uris": [{"uri": "https://example.com"}],
+                "autofill_on_page_load": false,
+                "password_revision_date": null,
+                "favicon": null
+            }}
         });
-        assert!(!bridge_update_touches_forbidden(&benign));
+        assert_eq!(bridge_write_outside_decision_seven(&capture, true), None);
+        assert!(bridge_write_outside_decision_seven(&capture, false).is_some());
+    }
+
+    /// H1 amendment: fill fields resolve from kind.data when the flat shape
+    /// omits them, and an empty totp seed reads as absent.
+    #[test]
+    fn bridge_fill_response_falls_back_to_nested_data() {
+        let payload = serde_json::json!({
+            "id": "abc",
+            "name": "Example",
+            "kind": {"type": "login", "data": {
+                "username": "alice",
+                "password": "pw",
+                "uris": [{"uri": "https://example.com"}],
+                "totp_uri": ""
+            }}
+        })
+        .to_string();
+        let out: serde_json::Value =
+            serde_json::from_str(&super::bridge_fill_response(&payload).unwrap()).unwrap();
+        assert_eq!(out["username"], "alice");
+        assert_eq!(out["password"], "pw");
+        assert_eq!(out["totp"], false);
     }
 
     /// C21: omitting a protected list the existing cipher HAS must trip the
