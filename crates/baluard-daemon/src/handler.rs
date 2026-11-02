@@ -7032,7 +7032,10 @@ fn sync_pull(
             " WARNING: Rotation for epoch {aborted_epoch} was aborted by another device."
         ));
         // Clean up the marker so it doesn't fire on every pull
-        let abort_path = vault_path.join(format!("meta/rekey/{aborted_epoch}.aborted"));
+        let abort_path = vault_path
+            .join("meta")
+            .join("rekey")
+            .join(format!("{aborted_epoch}.aborted"));
         let _ = std::fs::remove_file(&abort_path);
     }
     Ok(msg)

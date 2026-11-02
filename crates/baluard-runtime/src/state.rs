@@ -1683,52 +1683,142 @@ impl VaultState {
     /// read of a legacy plaintext meta/avatar.{ext}, migrates to encrypted
     /// storage and deletes the plaintext file.
     pub async fn avatar_get(&self) -> Result<String, String> {
-        let mut guard = self.inner.write().await;
-        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
-        let ext = handle
-            .load_profile()
-            .ok()
-            .and_then(|p| p.avatar_ext)
-            .unwrap_or_default();
-        if ext.is_empty() || !avatar_ext_allowed(&ext) {
-            return Ok(String::new());
+        // Resolve the read job under a short lock: the byte I/O below runs
+        // on a blocking worker, so no lock may span it. Both avatar keys
+        // are extracted here because decrypt_avatar_blob's legacy-epoch
+        // fallback needs the SGK key, not a handle.
+        enum Job {
+            Encrypted {
+                path: std::path::PathBuf,
+                key: Zeroizing<[u8; 32]>,
+                legacy_key: Option<Zeroizing<[u8; 32]>>,
+            },
+            Legacy {
+                path: std::path::PathBuf,
+                ext: String,
+                device_id: uuid::Uuid,
+            },
         }
+        let job = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            let ext = handle
+                .load_profile()
+                .ok()
+                .and_then(|p| p.avatar_ext)
+                .unwrap_or_default();
+            if ext.is_empty() || !avatar_ext_allowed(&ext) {
+                return Ok(String::new());
+            }
+            let enc_path = handle.path.join("meta").join("avatar.enc");
+            let legacy_path = handle.path.join("meta").join(format!("avatar.{ext}"));
+            if enc_path.exists() {
+                let key = Zeroizing::new(
+                    handle
+                        .derive_avatar_key()
+                        .map_err(|e| format!("avatar key: {e}"))?,
+                );
+                let legacy_key = handle
+                    .unlocked()
+                    .sgk()
+                    .ok()
+                    .map(|sgk| Zeroizing::new(sgk.derive_avatar_key(sgk.epoch())));
+                Job::Encrypted {
+                    path: enc_path,
+                    key,
+                    legacy_key,
+                }
+            } else if legacy_path.exists() {
+                Job::Legacy {
+                    path: legacy_path,
+                    ext,
+                    device_id: handle.device_id,
+                }
+            } else {
+                return Ok(String::new());
+            }
+        };
+        let managing = match &job {
+            Job::Encrypted { .. } => true,
+            Job::Legacy { device_id, .. } => {
+                Self::is_managing_device(self.vault_path.as_path(), *device_id).await
+            }
+        };
+        // The read itself is the slow part and stays off the lock; the
+        // migration write-back commits under the write lock below.
+        type AvatarRead = (String, Option<(Vec<u8>, String)>);
+        let (encoded, migration) =
+            tokio::task::spawn_blocking(move || -> Result<AvatarRead, String> {
+                use base64::Engine;
+                match job {
+                    Job::Encrypted {
+                        path,
+                        key,
+                        legacy_key,
+                    } => {
+                        let blob = std::fs::read(&path).map_err(|e| format!("read avatar: {e}"))?;
+                        let bytes = match baluard_core::vault::avatar::decrypt_avatar(&key, &blob) {
+                            Ok(bytes) => bytes,
+                            Err(_) => match legacy_key {
+                                Some(legacy_key) => {
+                                    baluard_core::vault::avatar::decrypt_avatar(&legacy_key, &blob)
+                                        .map_err(|_| "avatar could not be decrypted".to_string())?
+                                }
+                                None => return Err("avatar could not be decrypted".into()),
+                            },
+                        };
+                        Ok((
+                            base64::engine::general_purpose::STANDARD.encode(&bytes),
+                            None,
+                        ))
+                    }
+                    Job::Legacy { path, ext, .. } => {
+                        let data = std::fs::read(&path).map_err(|e| format!("read avatar: {e}"))?;
+                        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                        // The migration writes git-tracked meta; a member device
+                        // reads the legacy bytes without migrating (the admin
+                        // migrates).
+                        if managing {
+                            Ok((encoded, Some((data, ext))))
+                        } else {
+                            Ok((encoded, None))
+                        }
+                    }
+                }
+            })
+            .await
+            .map_err(|e| format!("avatar task: {e}"))??;
 
-        let enc_path = handle.path.join("meta/avatar.enc");
-        if enc_path.exists() {
-            let blob = std::fs::read(&enc_path).map_err(|e| format!("read avatar: {e}"))?;
-            let bytes = handle
-                .decrypt_avatar_blob(&blob)
-                .map_err(|e| format!("{e}"))?;
-            use base64::Engine;
-            return Ok(base64::engine::general_purpose::STANDARD.encode(&bytes));
+        if let Some((data, ext)) = migration {
+            let guard = self.inner.write().await;
+            let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+            if handle.is_unlocked() {
+                let enc_path = self.vault_path.join("meta").join("avatar.enc");
+                let legacy_path = self.vault_path.join("meta").join(format!("avatar.{ext}"));
+                // A removal or a concurrent set may have consumed the legacy
+                // file while the bytes were in flight; whichever deleted it
+                // owns the outcome, so migrate only if it still exists. The
+                // key derives here so a rotation during the read is honored.
+                if legacy_path.exists() {
+                    let fresh_key = Zeroizing::new(
+                        handle
+                            .derive_avatar_key()
+                            .map_err(|e| format!("avatar key: {e}"))?,
+                    );
+                    let blob = baluard_core::vault::avatar::encrypt_avatar(&fresh_key, &data)
+                        .map_err(|e| format!("{e}"))?;
+                    baluard_core::vault::write_vault_file(&enc_path, &blob)
+                        .map_err(|e| format!("write avatar: {e}"))?;
+                }
+                let _ = std::fs::remove_file(&legacy_path);
+            } else {
+                log::warn!("avatar migration skipped: the vault locked mid-read");
+            }
         }
-
-        // Legacy: plaintext meta/avatar.{ext} (pre-M1 fix). Migrate to
-        // encrypted storage on first read, then delete the plaintext.
-        let avatar_path = handle.path.join(format!("meta/avatar.{ext}"));
-        if !avatar_path.exists() {
-            return Ok(String::new());
-        }
-        let data = std::fs::read(&avatar_path).map_err(|e| format!("read avatar: {e}"))?;
-        // The migration writes git-tracked meta; a member device reads
-        // the legacy bytes without migrating (the admin migrates).
-        if !Self::is_managing_device(self.vault_path.as_path(), handle.device_id).await {
-            use base64::Engine;
-            return Ok(base64::engine::general_purpose::STANDARD.encode(&data));
-        }
-        // Migrate: encrypt and write to avatar.enc
-        let key = handle
-            .derive_avatar_key()
-            .map_err(|e| format!("avatar key: {e}"))?;
-        let blob =
-            baluard_core::vault::avatar::encrypt_avatar(&key, &data).map_err(|e| format!("{e}"))?;
-        baluard_core::vault::write_vault_file(&enc_path, &blob)
-            .map_err(|e| format!("write avatar: {e}"))?;
-        // Delete the plaintext legacy file
-        let _ = std::fs::remove_file(&avatar_path);
-        use base64::Engine;
-        Ok(base64::engine::general_purpose::STANDARD.encode(&data))
+        Ok(encoded)
     }
 
     /// Set avatar image from base64. Payload: JSON {"data": "<base64>", "ext": "png"}
@@ -1736,36 +1826,42 @@ impl VaultState {
     /// at meta/avatar.enc. Legacy plaintext meta/avatar.{ext} files are
     /// deleted on next set.
     pub async fn avatar_set(&self, payload: &str) -> Result<(), String> {
-        let mut guard = self.inner.write().await;
-        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
-        if !handle.is_unlocked() {
-            return Err("Vault is locked. Unlock first.".into());
-        }
-        Self::ensure_managing_device(self.vault_path.as_path(), handle.device_id).await?;
+        let (vault_path, device_id) = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            (handle.path.clone(), handle.device_id)
+        };
+        Self::ensure_managing_device(vault_path.as_path(), device_id).await?;
         let v: serde_json::Value =
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let b64 = v["data"].as_str().unwrap_or("");
         let ext_raw = v["ext"].as_str().unwrap_or("png");
 
-        // Load current profile from encrypted storage
-        let mut profile = handle.load_profile().unwrap_or_default();
-
         if b64.is_empty() {
-            // Remove avatar: delete both encrypted and any legacy plaintext
-            let enc_path = handle.path.join("meta/avatar.enc");
-            let _ = std::fs::remove_file(&enc_path);
-            if let Some(ref old_ext) = profile.avatar_ext {
-                let old_ext_clean = old_ext.trim().to_lowercase();
-                if matches!(
-                    old_ext_clean.as_str(),
-                    "png" | "jpg" | "jpeg" | "gif" | "webp"
-                ) {
-                    let old_path = handle.path.join(format!("meta/avatar.{old_ext_clean}"));
-                    let _ = std::fs::remove_file(&old_path);
+            // Removals are fast unlinks; run them inside the commit lock
+            // so a concurrent set cannot resurrect a removed file.
+            let guard = self.inner.write().await;
+            let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            let _ = std::fs::remove_file(vault_path.join("meta").join("avatar.enc"));
+            // The removal owns the final profile: clean the legacy file for
+            // whatever extension it currently records.
+            let mut fresh = handle.load_profile().map_err(|e| format!("{e}"))?;
+            if let Some(old_ext) = fresh.avatar_ext.as_ref() {
+                let clean = old_ext.trim().to_lowercase();
+                if matches!(clean.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
+                    let _ = std::fs::remove_file(
+                        vault_path.join("meta").join(format!("avatar.{clean}")),
+                    );
                 }
             }
-            profile.avatar_ext = None;
-            handle.save_profile(&profile).map_err(|e| format!("{e}"))?;
+            fresh.avatar_ext = None;
+            handle.save_profile(&fresh).map_err(|e| format!("{e}"))?;
             return Ok(());
         }
 
@@ -1785,27 +1881,33 @@ impl VaultState {
             .decode(b64)
             .map_err(|e| format!("base64 decode: {e}"))?;
 
-        // M1 fix: encrypt with avatar key derived from SGK
-        let key = handle
-            .derive_avatar_key()
-            .map_err(|e| format!("avatar key: {e}"))?;
+        // Single commit under the write lock: encrypting is milliseconds
+        // against the 256KB cap, and one section keeps the profile
+        // read-modify-write atomic with the blob swap, so a rotation or a
+        // concurrent settings write cannot land between key use and save.
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let key = Zeroizing::new(
+            handle
+                .derive_avatar_key()
+                .map_err(|e| format!("avatar key: {e}"))?,
+        );
         let blob = baluard_core::vault::avatar::encrypt_avatar(&key, &bytes)
             .map_err(|e| format!("{e}"))?;
-
-        // Atomic write with 0600 permissions
-        let enc_path = handle.path.join("meta/avatar.enc");
-        baluard_core::vault::write_vault_file(&enc_path, &blob)
+        baluard_core::vault::write_vault_file(&vault_path.join("meta").join("avatar.enc"), &blob)
             .map_err(|e| format!("write avatar: {e}"))?;
-
-        // Remove ALL whitelisted legacy plaintext avatar files.
-        // Peer review fix: previously only removed files matching the old ext,
-        // leaving stray plaintext files with the same or different extensions.
+        // Remove ALL whitelisted legacy plaintext avatar files so a stray
+        // plaintext cannot survive an extension change.
         for legacy_ext in ["png", "jpg", "jpeg", "gif", "webp"] {
-            let legacy_path = handle.path.join(format!("meta/avatar.{legacy_ext}"));
-            let _ = std::fs::remove_file(&legacy_path);
+            let _ =
+                std::fs::remove_file(vault_path.join("meta").join(format!("avatar.{legacy_ext}")));
         }
-        profile.avatar_ext = Some(ext);
-        handle.save_profile(&profile).map_err(|e| format!("{e}"))?;
+        let mut fresh = handle.load_profile().map_err(|e| format!("{e}"))?;
+        fresh.avatar_ext = Some(ext);
+        handle.save_profile(&fresh).map_err(|e| format!("{e}"))?;
         Ok(())
     }
 
@@ -10123,6 +10225,162 @@ mod prepare_update_tests {
             .await
             .expect("drains and locks once the cycle finishes");
         assert!(!state.is_unlocked().await);
+    }
+}
+
+/// The avatar byte I/O must not hold the inner vault lock: a FIFO keeps
+/// the blocking read alive for a known window and a probe taking the
+/// write lock inside that window proves nothing else holds it.
+/// Unix-only: named pipes.
+#[cfg(all(test, unix))]
+mod avatar_lock_tests {
+    use super::VaultState;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    const MASTER: &str = "avatar-lock-pass-3";
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn avatar_io_does_not_hold_the_vault_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(VaultState::new(dir.path().to_path_buf()));
+        state
+            .create_vault(
+                &serde_json::json!({"password": MASTER, "profile": "mobile_low"}).to_string(),
+            )
+            .await
+            .unwrap();
+        state.unlock(MASTER).await.unwrap();
+        {
+            let guard = state.inner.write().await;
+            let handle = guard.as_ref().expect("unlocked");
+            let mut profile = handle.load_profile().unwrap_or_default();
+            profile.avatar_ext = Some("png".into());
+            handle.save_profile(&profile).unwrap();
+        }
+
+        let fifo = dir.path().join("meta").join("avatar.png");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(status.success(), "mkfifo failed");
+
+        let (opened_tx, opened_rx) = std::sync::mpsc::channel::<()>();
+        let (closed_tx, closed_rx) = std::sync::mpsc::channel::<Instant>();
+        let writer_fifo = fifo.clone();
+        std::thread::spawn(move || {
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&writer_fifo)
+                .unwrap();
+            let _ = opened_tx.send(());
+            std::thread::sleep(Duration::from_millis(400));
+            use std::io::Write;
+            let _ = f.write_all(b"fifo probe bytes");
+            drop(f);
+            let _ = closed_tx.send(Instant::now());
+        });
+
+        let getter_state = state.clone();
+        let getter = tokio::spawn(async move { getter_state.avatar_get().await });
+
+        // The FIFO only opens once avatar_get has entered the read, so a
+        // lock acquired before the writer closes proves the lock is not
+        // held across the blocked I/O.
+        opened_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mut acquired: Option<Instant> = None;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if state.inner.try_write().is_ok() {
+                acquired = Some(Instant::now());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let closed = closed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let result = getter.await.unwrap();
+        assert!(result.is_ok(), "avatar_get should complete: {result:?}");
+        let acquired = acquired.expect("probe must acquire the lock while the avatar read blocks");
+        assert!(
+            acquired < closed,
+            "avatar I/O held the vault lock across the blocked read"
+        );
+    }
+
+    /// A removal that commits while a legacy read is in flight must win:
+    /// the migration commit must not resurrect avatar.enc from bytes it
+    /// read before the remove.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn avatar_remove_wins_over_an_inflight_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(VaultState::new(dir.path().to_path_buf()));
+        state
+            .create_vault(
+                &serde_json::json!({"password": MASTER, "profile": "mobile_low"}).to_string(),
+            )
+            .await
+            .unwrap();
+        state.unlock(MASTER).await.unwrap();
+        {
+            let guard = state.inner.write().await;
+            let handle = guard.as_ref().expect("unlocked");
+            let mut profile = handle.load_profile().unwrap_or_default();
+            profile.avatar_ext = Some("png".into());
+            handle.save_profile(&profile).unwrap();
+        }
+
+        let fifo = dir.path().join("meta").join("avatar.png");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(status.success(), "mkfifo failed");
+
+        let (opened_tx, opened_rx) = std::sync::mpsc::channel::<()>();
+        let (closed_tx, closed_rx) = std::sync::mpsc::channel::<()>();
+        let writer_fifo = fifo.clone();
+        std::thread::spawn(move || {
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&writer_fifo)
+                .unwrap();
+            let _ = opened_tx.send(());
+            std::thread::sleep(Duration::from_millis(400));
+            use std::io::Write;
+            let _ = f.write_all(b"stale bytes");
+            drop(f);
+            let _ = closed_tx.send(());
+        });
+
+        let getter_state = state.clone();
+        let getter = tokio::spawn(async move { getter_state.avatar_get().await });
+        // The remove payload commits while the legacy bytes are still in
+        // flight, so the migration commit races the removal.
+        let _ = opened_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        state
+            .avatar_set(&serde_json::json!({"data": "", "ext": "png"}).to_string())
+            .await
+            .unwrap();
+        let result = getter.await.unwrap();
+        assert!(result.is_ok(), "avatar_get should complete: {result:?}");
+        let _ = closed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let enc = dir.path().join("meta").join("avatar.enc");
+        assert!(
+            !enc.exists(),
+            "a removed avatar must not be resurrected by the in-flight migration"
+        );
+        assert!(!fifo.exists(), "the legacy plaintext must stay removed");
+        {
+            let guard = state.inner.read().await;
+            let handle = guard.as_ref().expect("unlocked");
+            let profile = handle.load_profile().unwrap_or_default();
+            assert_eq!(
+                profile.avatar_ext, None,
+                "the removal must own the final profile"
+            );
+        }
     }
 }
 
