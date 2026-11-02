@@ -268,6 +268,19 @@ jobs:
           else
             TAG="$(node -p "require('fs').readFileSync('desktop/src-tauri/Cargo.toml','utf8').match(/^version\\s*=\\s*\"([^\"]+)\"/m)[1]")"
           fi
+
+          # Unversioned asset aliases for stable /releases/latest/download/ URLs
+          mkdir -p artifacts/aliases
+          for f in $(find artifacts -type f -name "*.AppImage" ! -name "*.sig"); do
+            cp "$f" artifacts/aliases/Baluard-x86_64.AppImage
+          done
+          for f in $(find artifacts -type f -name "*.deb"); do
+            cp "$f" artifacts/aliases/baluard_amd64.deb
+          done
+          for f in $(find artifacts -type f -name "*.rpm"); do
+            cp "$f" artifacts/aliases/baluard.x86_64.rpm
+          done
+
           gh release create "$TAG" --draft --generate-notes --title "$TAG" artifacts/*/*
 
   # D79: the channel manifest is the ONLY mutable piece (fixed updates-beta /
