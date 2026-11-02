@@ -70,6 +70,9 @@ node_modules/
 !.env.example
 *.pem
 *.key
+# Demo signing-key fixtures for `just seed-demo`: generated material, not secrets.
+!scripts/demo-certs/*.pem
+!scripts/demo-certs/*.asc
 *.p12
 *.pfx
 *.jks
