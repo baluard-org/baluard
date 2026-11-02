@@ -4125,7 +4125,7 @@ public interface MobileVaultInterface {
 
     /**
      * Export the vault as an ENCRYPTED backup (.bldbak container,
-     * docs/plan-encrypted-backup.md): the full-fidelity v1 payload inside a
+     * docs/adr/0099-encrypted-backup.md): the full-fidelity v1 payload inside a
      * passphrase-protected AES-256-GCM/Argon2id container. The file key
      * derives ONLY from the passphrase — no vault key material enters the
      * file — so the bytes restore into ANY Baluard vault. Auto-verifies in
@@ -5763,7 +5763,7 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     /**
      * Export the vault as an ENCRYPTED backup (.bldbak container,
-     * docs/plan-encrypted-backup.md): the full-fidelity v1 payload inside a
+     * docs/adr/0099-encrypted-backup.md): the full-fidelity v1 payload inside a
      * passphrase-protected AES-256-GCM/Argon2id container. The file key
      * derives ONLY from the passphrase — no vault key material enters the
      * file — so the bytes restore into ANY Baluard vault. Auto-verifies in
@@ -9272,7 +9272,7 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 
 
         /**
-         * Locked background pull (mobile background sync, plan-mobile §3.5):
+         * Locked background pull (mobile background sync, ADR 0089 §3.5):
          * fetch remote git objects WITHOUT unlocking. No decryption, no checkout,
          * no state transition — the next unlock's pull consumes the fetched
          * objects. Called by the Android WorkManager job (opt-in background sync)

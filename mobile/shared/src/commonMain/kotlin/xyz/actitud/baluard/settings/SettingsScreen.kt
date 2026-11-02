@@ -2648,7 +2648,7 @@ fun SettingsScreen(
                 var exportFormat by remember { mutableStateOf("baluard") }
                 var exportBusy by remember { mutableStateOf(false) }
 
-                // Encrypted backup (docs/plan-encrypted-backup.md §7): one
+                // Encrypted backup (docs/adr/0099-encrypted-backup.md §7): one
                 // passphrase dialog serving both directions. Generated
                 // 6-word default; the master password is never offered.
                 val bakMagic = byteArrayOf(0x42, 0x4C, 0x44, 0x42, 0x41, 0x4B) // "BLDBAK"

@@ -45,8 +45,8 @@ android {
     namespace = "xyz.actitud.baluard"
     compileSdk = 35
     // BuildConfig carries the E2E gate: `-Pbaluard.e2e=true` produces a
-    // build that skips FLAG_SECURE so Maestro can screenshot (E12,
-    // docs/e2e-testing.md). Normal debug/release builds never see it.
+    // build that skips FLAG_SECURE so Maestro can screenshot (E12).
+    // Normal debug/release builds never see it.
     buildFeatures {
         buildConfig = true
     }

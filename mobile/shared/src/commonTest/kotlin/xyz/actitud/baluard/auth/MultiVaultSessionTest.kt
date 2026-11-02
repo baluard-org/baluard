@@ -9,7 +9,7 @@ import kotlinx.coroutines.test.runTest
 
 /**
  * LRU + lifecycle bookkeeping for the mobile multi-Space session
- * (plan-power-pack S4-9). Fakes the vault handles; the production adapter
+ * (ADR 0087 S4-9). Fakes the vault handles; the production adapter
  * wraps the uniffi MobileVault and is a three-line delegation.
  */
 class MultiVaultSessionTest {

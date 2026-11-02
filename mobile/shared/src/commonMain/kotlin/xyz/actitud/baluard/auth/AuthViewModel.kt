@@ -10,7 +10,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import xyz.actitud.baluard.platform.withSecurityKeyTransport
 /**
- * Drives the unlock flow over the multi-Space session (plan-power-pack S4-9):
+ * Drives the unlock flow over the multi-Space session (ADR 0087 S4-9):
  * up to [MultiVaultSession.MAX_UNLOCKED] vaults stay unlocked at once, so
  * switching Spaces does not re-run the unlock ceremony. The unlock screens own
  * the AuthState UI state machine; this class holds no UI state.

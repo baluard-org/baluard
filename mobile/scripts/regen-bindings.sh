@@ -8,7 +8,7 @@
 #
 # UniFFI 0.28 ships no standalone bindgen binary, so this builds a one-off runner
 # in a temp dir (kept out of the repo) that calls library_mode::generate_bindings.
-# See docs/mobile-dev-setup.md Step 5.
+# See docs/dev/dev-setup-mobile.md Step 5.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

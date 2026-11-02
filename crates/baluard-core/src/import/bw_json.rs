@@ -108,7 +108,7 @@ struct BwFido2Credential {
 /// The result is **view-only**: `private_key_missing` is `true` because the
 /// BW export does not include the credential's private key. The user must
 /// re-register the passkey with the relying party to obtain a usable one.
-/// Per docs/plan-passkey-support.md §4.1, `discoverable` is not stored (it's
+/// Per docs/adr/0095-passkey-support.md §4.1, `discoverable` is not stored (it's
 /// an invariant, enforced via `residentKey: "required"`).
 ///
 /// AAGUID is `Uuid::nil()` because BW does not export which authenticator

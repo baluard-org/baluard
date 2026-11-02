@@ -129,7 +129,7 @@ export default function SettingsModal() {
   const [avatarB64, setAvatarB64] = createSignal("");
   const [avatarExt, setAvatarExt] = createSignal("png");
 
-  // Encrypted backup (docs/plan-encrypted-backup.md §7): one passphrase
+  // Encrypted backup (docs/adr/0099-encrypted-backup.md §7): one passphrase
   // dialog serving both directions. The default is a generated 6-word
   // passphrase; the master password is NEVER offered (§7: a second dialog
   // asking for it is the phishing shape the product forbids).
@@ -142,7 +142,7 @@ export default function SettingsModal() {
 
   // Device security chip (progressive enhancement): the card renders
   // only when the probe reports a usable chip; devices without one see
-  // nothing (docs/plan-hardware-backed-keys.md §2).
+  // nothing (docs/adr/0097-hardware-backed-keys.md §2).
   const HW_KEY_COPY = {
     "settings.hwTitle": "settings.hwKeyTitle",
     "settings.hwOn": "settings.hwKeyOn",

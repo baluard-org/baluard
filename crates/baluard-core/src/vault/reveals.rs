@@ -1,4 +1,4 @@
-//! S2 IS-6: field-scoped item reveals (plan-sharing §4.6).
+//! S2 IS-6: field-scoped item reveals (ADR 0085 §4.6).
 //!
 //! A reveal is a self-contained encrypted file that carries a VIEW-ONLY
 //! copy of selected login fields (default URL + username + password;

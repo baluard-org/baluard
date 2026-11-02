@@ -106,7 +106,7 @@
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.NoDisplay" />
 
-        <!-- Trampoline hosting the BiometricPrompt ceremony (plan D6). Same
+        <!-- Trampoline hosting the BiometricPrompt ceremony (ADR 0090). Same
              :autofill process as the service so AutofillSession is shared;
              translucent theme (NOT NoDisplay, the prompt needs a window);
              not exported (launched only via our own PendingIntent). -->

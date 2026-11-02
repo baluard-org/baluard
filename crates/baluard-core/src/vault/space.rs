@@ -1,4 +1,4 @@
-//! S2 IS-5 pair Space (plan-sharing §4.6).
+//! S2 IS-5 pair Space (ADR 0085 §4.6).
 //!
 //! A Space is a vault: slug `baluard-space-<name>`, shape flagged in the
 //! plaintext `meta/settings-pub.json` (`"space": true`). The pair policy
@@ -18,7 +18,7 @@ use crate::vault::members::{MEMBERS_DIR, MemberFile, MemberRole};
 /// Slug prefix forced on every Space vault (plan §4.6 repo naming).
 pub const SPACE_SLUG_PREFIX: &str = "baluard-space-";
 
-/// The vault's recorded purpose (plan-family-spaces §2). Plaintext in
+/// The vault's recorded purpose (ADR 0086 §2). Plaintext in
 /// `meta/settings-pub.json` beside the legacy pair flag, because it has
 /// consumers beyond merge defaults (the pair-gate split, the flip
 /// refusal, family creation, G24 classification).
@@ -238,7 +238,7 @@ fn bound_live_member_count(vault_path: &Path) -> usize {
 pub fn pair_gate(vault_path: &Path, role: MemberRole) -> Result<(), BaluardError> {
     // The pair cap is a pair-Space rule only: a family vault holds the
     // whole household and an organization holds teams, so neither is
-    // capped at two (plan-family-spaces §2 flag split).
+    // capped at two (ADR 0086 §2 flag split).
     if !is_pair(vault_path) {
         return Ok(());
     }

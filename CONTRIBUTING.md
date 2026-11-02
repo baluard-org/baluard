@@ -13,7 +13,7 @@ just check              # Full CI parity (fmt + clippy + test + build)
 just seed-demo          # Seed demo vaults (baluard-personal + baluard-work, password: baluard99)
 ```
 
-See **[docs/dev-setup.md](docs/dev-setup.md)** for prerequisites, platform-specific setup, and all build commands.
+See **[docs/dev/dev-setup.md](docs/dev/dev-setup.md)** for prerequisites, platform-specific setup, and all build commands.
 
 ## Guidelines
 

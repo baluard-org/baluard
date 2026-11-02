@@ -1,4 +1,4 @@
-// Desktop E2E flow 2: the password health check (docs/e2e-testing.md
+// Desktop E2E flow 2: the password health check (the E2E harness
 // Phase 3, G19's desktop half). Unlock the seeded vault (the runner
 // adds one deliberately weak login), open Settings, run the check on
 // the Data tab, and assert the findings dialog names the weak entry.

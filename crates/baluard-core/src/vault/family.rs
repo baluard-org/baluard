@@ -1,4 +1,4 @@
-//! Family vaults (plan-family-spaces): the guardian-controlled minor
+//! Family vaults (ADR 0086): the guardian-controlled minor
 //! flag and the family creation transaction.
 //!
 //! The minor flag lives in an admin-written sealed record under the
@@ -104,7 +104,7 @@ pub(crate) fn read_minor_record(
 
 use crate::keys::hierarchy::RootKey as RootKeyRef;
 
-/// The family creation transaction (plan-family-spaces §13 step 1/3):
+/// The family creation transaction (ADR 0086 §13 step 1/3):
 /// on a freshly created vault, stamp the family purpose, create the
 /// `Shared` collection plus the `Guardians` group, flip to team shape,
 /// and record the Shared id as a system collection in encrypted

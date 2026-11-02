@@ -54,7 +54,7 @@ pub struct BridgeRegistry {
     /// held pair_complete unblocks and mints the token. Replaced on each
     /// new pair_start / pair_complete.
     waiter: Option<tokio::sync::oneshot::Sender<WaiterPayload>>,
-    /// Pending browser unlock request (plan-merged-search §4.7 v2): the
+    /// Pending browser unlock request (ADR 0098 §4.7 v2): the
     /// extension asked for a locked merge-eligible vault to be unlocked so
     /// its entries can fill. Single slot; a newer request supersedes.
     pending_unlock: Option<PendingUnlockRequest>,

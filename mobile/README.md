@@ -12,7 +12,7 @@ Compose Multiplatform (Android + iOS) client for Baluard.
 
 ## Build
 
-See [`docs/mobile-dev-setup.md`](../docs/mobile-dev-setup.md) for full prerequisites (Android SDK/NDK, OpenJDK 17) and environment setup.
+See [`docs/dev/dev-setup-mobile.md`](../docs/dev/dev-setup-mobile.md) for full prerequisites (Android SDK/NDK, OpenJDK 17) and environment setup.
 
 ```bash
 just android-apk          # Build release Android APK

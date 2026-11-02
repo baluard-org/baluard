@@ -56,7 +56,7 @@ async fn github_device_flow_404_means_toggle_disabled() {
                 "error should mention Device Authorization flow toggle, got: {msg}"
             );
             assert!(
-                msg.contains("docs/git-provider-apps-and-tokens.md"),
+                msg.contains("docs/dev/git-provider-apps-and-tokens.md"),
                 "error should reference the project docs, got: {msg}"
             );
         }

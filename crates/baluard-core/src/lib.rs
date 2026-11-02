@@ -1,7 +1,7 @@
 //! Baluard core library.
 //!
 //! Git-native password manager. Crypto, vault format, sync, key lifecycle.
-//! See docs/software-architecture-decisions.md for full design rationale.
+//! See docs/adr/ for full design rationale.
 
 pub mod biometric;
 pub mod bridge;

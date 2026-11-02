@@ -1,7 +1,7 @@
 package xyz.actitud.baluard.ui
 
 /**
- * Stable Maestro selectors (docs/e2e-testing.md Phase 2). Read through
+ * Stable Maestro selectors (Phase 2). Read through
  * Compose's testTagsAsResourceId (enabled on the activity root), so the
  * strings are part of the E2E contract: renaming one breaks a flow.
  * Production impact is nil - a testTag is a semantics string, not UI.

@@ -14,7 +14,7 @@ import platform.Foundation.stringByAppendingPathComponent
  * in the Files app), with the vault root excluded from backups so the
  * ciphertext stays device-local. Reads of the K/N Objective-C bridges are
  * verified against the binding surface, not compiled — K/N builds need a
- * macOS host (docs/mobile-dev-setup.md).
+ * macOS host (docs/dev/dev-setup-mobile.md).
  */
 actual object AppPaths {
 

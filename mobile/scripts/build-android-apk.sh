@@ -262,7 +262,7 @@ if [[ $DO_INSTALL -eq 1 ]]; then
   fi
   ADBS=( "$ADB" -s "$SERIAL" )
 
-  # Phase 2 (docs/e2e-testing.md): a freshly connected wireless device can
+  # Phase 2: a freshly connected wireless device can
   # still be mid-boot; installing before sys.boot_completed fails.
   BOOTED="$("${ADBS[@]}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
   WAITED=0

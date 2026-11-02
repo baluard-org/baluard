@@ -164,7 +164,7 @@ uninstall:
 # ── Release staging ──────────────────────────────────────────────────────────
 
 # Sign release artifacts (minisign sidecars + signed SHA256SUMS). The updater
-# key lives at ~/.tauri/baluard-updater.key; see docs/linux-repositories.md.
+# key lives at ~/.tauri/baluard-updater.key; see docs/dev/linux-repositories.md.
 # Defaults to ./dist, the gitignored local staging dir.
 release-sign artifacts="dist":
 	./scripts/sign-release-artifacts.sh {{ artifacts }}
@@ -206,7 +206,7 @@ test-core:
 test-cli:
 	{{ linuxbrew_env }} cargo test -p baluard-cli
 
-# E2E harness (docs/e2e-testing.md Phase 1): builds the cli + daemon binaries
+# E2E harness (Phase 1): builds the cli + daemon binaries
 # with the e2e-hooks transport relaxation, then runs the e2e integration
 # target against the real daemon. Excluded from `just test` by design:
 # `cargo test -p baluard-cli` alone leaves the daemon binary stale.
@@ -220,7 +220,7 @@ test-e2e:
 e2e-desktop *ARGS:
 	bash e2e/desktop/run-e2e-desktop.sh {{ARGS}}
 # Extension: real Chromium + real NMH + real daemon + the bridge pairing
-# ceremony (docs/e2e-testing.md Phase 4, Ring 1). Installs playwright deps
+# ceremony (Phase 4, Ring 1). Installs playwright deps
 # into e2e/extension on first run.
 e2e-extension *ARGS:
 	bash e2e/extension/run-e2e-extension.sh
@@ -1089,14 +1089,14 @@ build-signed: build-release
 # ── Mobile (Android) ────────────────────────────────────────────────────────
 # Build the Android debug APK. Runs on a macOS host: builds the Rust cdylib for
 # all 4 ABIs, writes local.properties, runs `./gradlew :androidApp:assembleDebug`.
-# Prereqs + flags: see mobile/scripts/build-android-apk.sh and docs/mobile-dev-setup.md.
+# Prereqs + flags: see mobile/scripts/build-android-apk.sh and docs/dev/dev-setup-mobile.md.
 android-apk:
 	cd mobile && ./scripts/build-android-apk.sh
 
 # Build + install the debug APK on a connected device (adb). Extra args
 # forward to the script, e.g. `just android-install --device 192.168.1.50:38507`
 
-# Android E2E (docs/e2e-testing.md Phase 2): Maestro flows on a dedicated
+# Android E2E (Phase 2): Maestro flows on a dedicated
 # test device or emulator - NEVER a device holding real vaults (flow 01
 # wipes app data). One-time Maestro install:
 #   curl -Ls "https://get.maestro.mobile.dev" | bash

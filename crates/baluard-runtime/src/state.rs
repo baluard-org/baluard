@@ -14,7 +14,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 /// UI-facing masked conflict. NO secret values; field labels + a sensitive
 /// flag only. Mirrors `PendingConflict` in the frontend contract
-/// (`docs/plan-conflict-resolution-panel.md`).
+/// (`docs/adr/0093-conflict-resolution-panel.md`).
 #[derive(serde::Serialize)]
 struct MaskedConflict {
     name: String,
@@ -1397,7 +1397,7 @@ impl VaultState {
         .map_err(|e| format!("serialization: {e}"))
     }
 
-    /// G24 (plan-merged-search §4.3): the fill-time origin check rides
+    /// G24 (ADR 0098 §4.3): the fill-time origin check rides
     /// the SAME matcher as bridge.match - UriMatchStrategy over the
     /// cipher's URIs plus the vault's custom equivalent domains - so a
     /// credential suggested for a page is exactly the credential
@@ -2569,7 +2569,7 @@ impl VaultState {
         }
     }
 
-    // ── Provider-grade passkey ceremonies (plan-mobile-passkeys §8) ──
+    // ── Provider-grade passkey ceremonies (ADR 0095 §8) ──
     //
     // The Android credential-provider surface. Pending credentials stay
     // Rust-side behind ceremony ids (SEC-1); responses are
@@ -4280,7 +4280,7 @@ impl VaultState {
     /// Collections `member_id` could open pre-removal. An Admin (or the
     /// Owner) holds the SGK, and resolve_ck unwraps ANY collection key
     /// from it, so their openable set is ALL collections regardless of
-    /// grants (plan-family-spaces section 6). Everyone else: any grant
+    /// grants (ADR 0086 section 6). Everyone else: any grant
     /// row that names them directly or through a group, EXPIRED ONES
     /// INCLUDED: an expired grant still decrypts until a sweep rotates,
     /// and the departure must prune the dead row either way.
@@ -5726,7 +5726,7 @@ impl VaultState {
             .map_err(|e| format!("{e}"))?;
         // The merge cache must not wait for the next unlock: a ceiling
         // change mid-session is visible to eligibility the moment the
-        // save lands (plan-merged-search: refreshed at every unlock
+        // save lands (ADR 0098: refreshed at every unlock
         // AND settings pull). Same best-effort contract as unlock.
         let ceiling =
             baluard_core::vault::space::effective_personal_merge(&settings, &self.vault_path);
@@ -7076,7 +7076,7 @@ impl VaultState {
         )
     }
 
-    /// Encrypted backup (docs/plan-encrypted-backup.md §7–§8): the same v1
+    /// Encrypted backup (docs/adr/0099-encrypted-backup.md §7–§8): the same v1
     /// payload inside the passphrase-protected container. The file key
     /// derives ONLY from the passphrase — no vault key material enters the
     /// file — so the result is vault-independent and any Baluard vault can
@@ -7910,7 +7910,7 @@ impl VaultState {
     // disk. See `pin::PinEscrow` for the full security model.
 
     // Hardware-backed devkey seal (progressive enhancement; plan:
-    // docs/plan-hardware-backed-keys.md). Devices without a usable chip
+    // docs/adr/0097-hardware-backed-keys.md). Devices without a usable chip
     // report capable:false and every toggle call fails closed.
 
     /// Pre-unlock safe: chip capability + the devkey file's seal kind.

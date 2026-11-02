@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Trampoline + picker host (plan D6/D10). Visible-but-empty for the
+<!-- Trampoline + picker host (ADR 0090/D10). Visible-but-empty for the
      biometric ceremony (NoDisplay would break it); the a11y picker mode
      reveals the scrollable list of matching logins. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"

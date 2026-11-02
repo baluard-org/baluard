@@ -1,5 +1,5 @@
 //! macOS Secure Enclave key-agreement backend (plan:
-//! `docs/plan-hardware-backed-keys.md` §3.3, Phase 1).
+//! `docs/adr/0097-hardware-backed-keys.md` §3.3, Phase 1).
 //!
 //! Built on the `secure-enclave-rs` crate (BSD-3-Clause): SE-resident
 //! P-256 keys whose private half is non-exportable by construction. Keys

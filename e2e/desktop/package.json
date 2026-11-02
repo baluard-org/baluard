@@ -2,7 +2,7 @@
   "name": "baluard-e2e-desktop",
   "private": true,
   "type": "module",
-  "description": "Desktop E2E harness (docs/e2e-testing.md Phase 3): webdriverio driving the real WebKitGTK webview through tauri-driver.",
+  "description": "Desktop E2E harness (the E2E harness): webdriverio driving the real WebKitGTK webview through tauri-driver.",
   "devDependencies": {
     "webdriverio": "^9.0.0"
   }

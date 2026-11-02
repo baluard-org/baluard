@@ -81,7 +81,7 @@ enum Commands {
         /// Auto-lock timeout in minutes.
         #[arg(long)]
         auto_lock: Option<u32>,
-        /// Create the vault as a FAMILY vault (plan-family-spaces):
+        /// Create the vault as a FAMILY vault (ADR 0086):
         /// purpose, Shared collection, Guardians group, team shape.
         #[arg(long)]
         family: bool,

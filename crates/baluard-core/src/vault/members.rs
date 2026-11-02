@@ -1,4 +1,4 @@
-//! S1a slice 1: membership v2 directory (plan-sharing §4.2).
+//! S1a slice 1: membership v2 directory (ADR 0085 §4.2).
 //!
 //! `meta/members/<member_id>.json` — one file per member: id, display
 //! name, role, trust. `meta/members/<member_id>/devices/<device_id>.json`
@@ -34,7 +34,7 @@ pub enum MemberRole {
     Viewer,
 }
 
-/// Trust level from the graded dial (plan-sharing §4.1).
+/// Trust level from the graded dial (ADR 0085 §4.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TrustLevel {
@@ -46,7 +46,7 @@ pub enum TrustLevel {
     AdminUnverified,
 }
 
-/// One member of the vault (plan-sharing §4.2). The planned per-provider
+/// One member of the vault (ADR 0085 §4.2). The planned per-provider
 /// handle stays deferred until a feature needs it; the optional email
 /// arrived with the member-email wave (join-time self-declared, frozen
 /// after approval — the admin's out-of-band check at the gate that

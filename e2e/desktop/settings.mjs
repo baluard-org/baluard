@@ -1,4 +1,4 @@
-// Desktop E2E flow 5: settings modals (docs/e2e-testing.md flow coverage
+// Desktop E2E flow 5: settings modals (the E2E harness flow coverage
 // beyond CRUD). Drives the encrypted-backup master-password reprompt gate
 // and the contacts tab's own verification code.
 //

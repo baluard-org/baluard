@@ -1,5 +1,5 @@
 //! Groups — a named membership list that collections can be granted to
-//! (plan-power-pack S4-2, "grant a collection to a department instead of
+//! (ADR 0087 S4-2, "grant a collection to a department instead of
 //! person by person").
 //!
 //! `meta/groups/<id>.json` carries a plaintext member list plus the
