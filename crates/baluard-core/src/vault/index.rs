@@ -290,6 +290,7 @@ mod sharding_tests {
             username: None,
             tier: Tier::S,
             key_epoch: 1,
+            expires_at: None,
             update_seq: 1,
             updated_at: i as u64,
             archived: false,

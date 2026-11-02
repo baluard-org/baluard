@@ -131,7 +131,7 @@ describe("searchCiphers", () => {
 });
 
 describe("CATEGORY_TYPE_MAP", () => {
-  it("maps all 8 cipher types", () => {
+  it("maps all 9 cipher types", () => {
     const types = Object.values(CATEGORY_TYPE_MAP);
     expect(types).toContain("login");
     expect(types).toContain("card");
@@ -141,7 +141,8 @@ describe("CATEGORY_TYPE_MAP", () => {
     expect(types).toContain("bankAccount");
     expect(types).toContain("driversLicense");
     expect(types).toContain("passport");
-    expect(Object.keys(CATEGORY_TYPE_MAP)).toHaveLength(8);
+    expect(types).toContain("signingKey");
+    expect(Object.keys(CATEGORY_TYPE_MAP)).toHaveLength(9);
   });
 });
 

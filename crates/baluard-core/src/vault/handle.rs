@@ -7972,6 +7972,10 @@ impl VaultHandle {
                 crate::types::CipherKind::Login(data) => data.username.clone(),
                 _ => None,
             };
+            let expires_at = match &c.kind {
+                crate::types::CipherKind::SigningKey(data) => data.expires_at,
+                _ => None,
+            };
 
             metas.push(crate::types::CipherMeta {
                 id: c.id,
@@ -7991,6 +7995,7 @@ impl VaultHandle {
                     .iter()
                     .find(|(name, _)| Some(name) == file_dir.as_ref())
                     .map(|(_, id)| *id),
+                expires_at,
             });
         }
 
@@ -9102,10 +9107,11 @@ impl VaultHandle {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
         let validated_tags = Self::validate_tags(&input.tags)?;
-        let input = CipherInput {
+        let mut input = CipherInput {
             tags: validated_tags,
             ..input.clone()
         };
+        cipher::finalize_signing_key_metadata(&mut input.kind);
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -9161,10 +9167,11 @@ impl VaultHandle {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
         let validated_tags = Self::validate_tags(&input.tags)?;
-        let input = CipherInput {
+        let mut input = CipherInput {
             tags: validated_tags,
             ..input.clone()
         };
+        cipher::finalize_signing_key_metadata(&mut input.kind);
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -10546,6 +10553,14 @@ impl VaultHandle {
                     k.zeroize();
                 }
             }
+            crate::types::CipherKind::SigningKey(d) => {
+                if let Some(k) = d.private_key.as_mut() {
+                    k.zeroize();
+                }
+                if let Some(k) = d.passphrase.as_mut() {
+                    k.zeroize();
+                }
+            }
             crate::types::CipherKind::Identity(d) => {
                 for secret in [
                     d.username.as_mut(),
@@ -11276,6 +11291,10 @@ impl VaultHandle {
                 crate::types::CipherKind::Login(data) => data.username.clone(),
                 _ => None,
             };
+            let expires_at = match &c.kind {
+                crate::types::CipherKind::SigningKey(data) => data.expires_at,
+                _ => None,
+            };
 
             metas.push(crate::types::CipherMeta {
                 id: c.id,
@@ -11295,6 +11314,7 @@ impl VaultHandle {
                     .iter()
                     .find(|(name, _)| Some(name) == file_dir.as_ref())
                     .map(|(_, id)| *id),
+                expires_at,
             });
         }
 
@@ -11757,6 +11777,123 @@ mod tests {
         // new key).
         h.template_delete(t.id).unwrap();
         assert!(h.templates_list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn signing_key_meta_carries_expiry_for_the_badge() {
+        let (dir, password) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        let id = h
+            .add_cipher(&crate::types::CipherInput {
+                name: "Release Key".into(),
+                kind: crate::types::CipherKind::SigningKey(crate::types::SigningKeyData {
+                    private_key: None,
+                    passphrase: None,
+                    public_key: None,
+                    certificates: Vec::new(),
+                    key_format: crate::types::KeyFormat::Pem,
+                    expires_at: Some(1900000000),
+                    issuer: None,
+                    subject: None,
+                    fingerprint: None,
+                }),
+                ..crate::types::CipherInput::default()
+            })
+            .unwrap();
+        let metas = h.list_cipher_meta().unwrap();
+        let meta = metas.iter().find(|m| m.id == id).unwrap();
+        assert_eq!(meta.cipher_type, crate::types::CipherType::SigningKey);
+        assert_eq!(meta.expires_at, Some(1900000000));
+        assert_eq!(meta.username, None);
+    }
+
+    #[test]
+    fn signing_key_save_recomputes_metadata_from_the_certificate() {
+        let (dir, password) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        let pem = crate::crypto::cert::fixture::pem_certificate(
+            "260101000000Z",
+            "300101000000Z",
+            "leaf.example",
+        );
+        let second = crate::crypto::cert::fixture::pem_certificate(
+            "260101000000Z",
+            "270101000000Z", // earlier expiry wins the badge
+            "intermediate",
+        );
+        let id = h
+            .add_cipher(&crate::types::CipherInput {
+                name: "Release Key".into(),
+                kind: crate::types::CipherKind::SigningKey(crate::types::SigningKeyData {
+                    private_key: None,
+                    passphrase: None,
+                    public_key: None,
+                    certificates: vec![pem, second],
+                    key_format: crate::types::KeyFormat::Pem,
+                    expires_at: Some(9_999_999_999),
+                    issuer: None,
+                    subject: Some("user typed this".into()),
+                    fingerprint: None,
+                }),
+                ..crate::types::CipherInput::default()
+            })
+            .unwrap();
+        let CipherRead::Decrypted(c) = h.get_cipher(id).unwrap() else {
+            panic!("expected decrypted");
+        };
+        let crate::types::CipherKind::SigningKey(data) = &c.kind else {
+            panic!("expected SigningKey");
+        };
+        assert_eq!(data.subject.as_deref(), Some("CN=leaf.example"));
+        assert_eq!(data.issuer.as_deref(), Some("CN=Test CA"));
+        // The badge uses the earliest expiry across the chain, not the
+        // leaf's and not the caller-supplied placeholder.
+        assert_eq!(data.expires_at, Some(1_798_761_600)); // 2027-01-01
+        assert_eq!(data.fingerprint.as_deref().map(str::len), Some(64));
+    }
+
+    #[test]
+    fn signing_key_with_an_unreadable_leaf_keeps_user_metadata() {
+        let (dir, password) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        // Leaf unreadable, intermediate fine. Deriving the subject from the
+        // intermediate would mislabel the entry, so the user-typed fields
+        // stand untouched.
+        let id = h
+            .add_cipher(&crate::types::CipherInput {
+                name: "Broken Chain".into(),
+                kind: crate::types::CipherKind::SigningKey(crate::types::SigningKeyData {
+                    private_key: None,
+                    passphrase: None,
+                    public_key: None,
+                    certificates: vec![
+                        "garbage-not-a-pem".into(),
+                        crate::crypto::cert::fixture::pem_certificate(
+                            "260101000000Z",
+                            "300101000000Z",
+                            "intermediate",
+                        ),
+                    ],
+                    key_format: crate::types::KeyFormat::Pem,
+                    expires_at: Some(9_999_999_999),
+                    issuer: None,
+                    subject: Some("user typed this".into()),
+                    fingerprint: None,
+                }),
+                ..crate::types::CipherInput::default()
+            })
+            .unwrap();
+        let CipherRead::Decrypted(c) = h.get_cipher(id).unwrap() else {
+            panic!("expected decrypted");
+        };
+        let crate::types::CipherKind::SigningKey(data) = &c.kind else {
+            panic!("expected SigningKey");
+        };
+        assert_eq!(data.subject.as_deref(), Some("user typed this"));
+        assert_eq!(data.expires_at, Some(9_999_999_999));
     }
 
     #[test]

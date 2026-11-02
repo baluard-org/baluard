@@ -63,6 +63,7 @@ The daemon (`baluard-runtime`) is the shared brain; CLI, desktop, and mobile are
 | Passkey ceremonies (register / assert) | None | Partial (routes live, UI arrives with extension Phase 2) | Yes (Android credential provider; iOS pending platform) |
 | SSH key entry (store) | Yes | Yes | Yes |
 | SSH key generation | Yes (`baluard ssh-keygen`, optional `--store`) | Yes | Yes |
+| Signing key & certificates (D81: store, certificate metadata auto-fill, expiry badge) | Yes (`show` renders all fields; create via JSON add) | Yes (masked editor, gated copy, expiry badges) | Yes (fields + safe edit round-trip; badge pending) |
 | Custom fields | Partial (raw JSON on `add` only, no flags) | Yes (all 4 types) | Yes (all 4 types) |
 | Import (10 formats: baluard-encrypted .bldbak, baluard.vault, 8 migration) | Yes (magic-sniff hint before read) | Yes (auto-detects Baluard backups by header) | Yes (SAF picker, header sniff, format dialog) |
 | Export (baluard.vault backup, spreadsheet logins-only CSV, encrypted .bldbak) | Yes (`--format baluard` default; `--encrypted`) | Yes (Rust-side save dialog, 0600) | Yes (SAF saver incl. encrypted) |

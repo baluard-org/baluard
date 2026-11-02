@@ -25,6 +25,14 @@ export default function CipherRow(props) {
         <div class="text-sm font-semibold text-[var(--color-text)] truncate">{props.cipher.name || t("entry.untitled")}</div>
         <div class="flex items-center gap-2 text-xs text-[var(--color-muted)] truncate">
           <span class="truncate">{props.cipher.username || props.cipher._meta?.username || ""}</span>
+          <Show when={props.cipher.type === "signingKey" && props.cipher.expires_at != null && Math.floor((props.cipher.expires_at * 1000 - Date.now()) / 86_400_000) <= 30}>
+            <span
+              data-testid="row-expiry-badge"
+              class={`shrink-0 px-1.5 py-px rounded-full text-[10px] font-semibold border ${Math.floor((props.cipher.expires_at * 1000 - Date.now()) / 86_400_000) < 0 ? "bg-red-500/15 text-red-500 border-red-500/30" : "bg-amber-500/15 text-amber-500 border-amber-500/30"}`}
+            >
+              {Math.floor((props.cipher.expires_at * 1000 - Date.now()) / 86_400_000) < 0 ? t("signing.expired") : t("signing.expiresSoon")}
+            </span>
+          </Show>
           <Show when={props.cipher._vault}>
             <span class="shrink-0 px-1.5 py-px rounded-full bg-[var(--color-sidebar)] text-[10px] text-[var(--color-muted)] border border-[var(--color-border)]">
               {props.cipher._vault.name}

@@ -108,4 +108,47 @@ describe("login fields the edit form does not render", () => {
     expect(kind.data.password_revision_date).toBe("2026-01-02T03:04:05Z");
     expect(kind.data.autofill_on_page_load).toBe(true);
   });
+
+  describe("signingKey", () => {
+    it("round-trips key material and splits the certificate chain", () => {
+      const s = CIPHER_SCHEMAS.signingKey;
+      const cert = "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----";
+      const cert2 = "-----BEGIN CERTIFICATE-----\nDEF\n-----END CERTIFICATE-----";
+      const flat = s.fromKind({
+        data: {
+          private_key: "KEY", passphrase: "PASS", public_key: "RWQ",
+          certificates: [cert, cert2],
+          subject: "CN=leaf", issuer: "CN=CA", expires_at: 1900000000,
+          fingerprint: "aa", key_format: "pem",
+        },
+      });
+      expect(flat.privateKey).toBe("KEY");
+      expect(flat.passphrase).toBe("PASS");
+      expect(flat.certificates).toBe(cert + "\n" + cert2);
+      const kind = s.toKind(flat);
+      expect(kind.type).toBe("signingKey");
+      expect(kind.data.private_key).toBe("KEY");
+      expect(kind.data.passphrase).toBe("PASS");
+      expect(kind.data.certificates).toEqual([cert, cert2]);
+      // Derived fields are daemon-recomputed on save; an edit must not
+      // pin the displayed copies back into the entry.
+      expect(kind.data.subject).toBeNull();
+      expect(kind.data.fingerprint).toBeNull();
+    });
+
+    it("stores an empty chain as an empty list", () => {
+      const kind = CIPHER_SCHEMAS.signingKey.toKind({ certificates: "" });
+      expect(kind.data.certificates).toEqual([]);
+    });
+  });
+
+  describe("signingKey chain hygiene", () => {
+    it("drops pasted non-certificate blocks instead of storing them", () => {
+      const s = CIPHER_SCHEMAS.signingKey;
+      const cert = "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----";
+      const pasted = "-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----\ntrailing junk";
+      const kind = s.toKind({ certificates: cert + "\n" + pasted });
+      expect(kind.data.certificates).toEqual([cert]);
+    });
+  });
 });

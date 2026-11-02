@@ -1,6 +1,7 @@
 package xyz.actitud.baluard.ui.components
 
 import androidx.compose.foundation.text.KeyboardOptions
+import xyz.actitud.baluard.platform.Clock
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -821,6 +822,23 @@ fun CipherRowCard(
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(14.dp),
+                        )
+                    }
+                    // Read-time expiry badge for signing keys: the whole
+                    // feature is one date comparison, so no timer exists.
+                    val expiryDays: Long? = meta.expiresAt?.toLong()?.let { ms ->
+                        (ms * 1000L - Clock.currentTimeMillis()) / 86_400_000L
+                    }
+                    if (expiryDays != null && expiryDays <= 30) {
+                        Text(
+                            text = if (expiryDays < 0) t("signing.expired") else t("signing.expiresSoon"),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = if (expiryDays < 0) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.tertiary
+                            },
+                            maxLines = 1,
                         )
                     }
                 }

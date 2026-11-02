@@ -414,6 +414,9 @@ pub struct MobileCipherMeta {
     pub collection_id: Option<String>,
     /// Archived entries are hidden from the mobile list.
     pub archived: bool,
+    /// Signing keys: earliest expiry across the chain (unix seconds), for
+    /// the read-time list badge.
+    pub expires_at: Option<u64>,
 }
 
 impl From<baluard_core::types::CipherMeta> for MobileCipherMeta {
@@ -428,6 +431,7 @@ impl From<baluard_core::types::CipherMeta> for MobileCipherMeta {
             folder_id: m.folder_id.map(|u| u.to_string()),
             collection_id: m.collection_id.map(|u| u.to_string()),
             archived: m.archived,
+            expires_at: m.expires_at,
         }
     }
 }

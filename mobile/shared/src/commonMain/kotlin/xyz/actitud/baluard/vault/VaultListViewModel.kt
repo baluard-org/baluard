@@ -299,6 +299,8 @@ internal val SEARCH_SKIP_KEYS = setOf(
     "ssn",
     "password_revision_date",
     "private_key",
+    "passphrase",
+    "certificates",
     "prf_key",
     "totp_uri",
     "favicon",

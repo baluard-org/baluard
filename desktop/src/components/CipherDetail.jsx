@@ -623,6 +623,67 @@ export default function CipherDetail(props) {
           </div>
         </Show>
 
+        {/* Signing key & certificates */}
+        <Show when={cipher()?.type === "signingKey"}>
+          <div class="space-y-4">
+            <h4 class={SECTION_LABEL}>{t("types.signingKey")}</h4>
+            <Show when={cipher()?.expires_at}>
+              {(exp) => {
+                const days = () => Math.floor((exp() * 1000 - Date.now()) / 86_400_000);
+                const state = () => (days() < 0 ? "expired" : days() <= 30 ? "expiresSoon" : null);
+                return (
+                  <Show when={state()}>
+                    <div
+                      data-testid="signing-expiry-badge"
+                      class={`text-xs font-semibold px-2.5 py-1 rounded-full w-fit ${state() === "expired" ? "bg-red-500/15 text-red-500" : "bg-amber-500/15 text-amber-500"}`}
+                    >
+                      {state() === "expired" ? t("signing.expired") : t("signing.expiresSoon")}
+                    </div>
+                  </Show>
+                );
+              }}
+            </Show>
+            <CopyableField label={t("fields.keySubject")} value={cipher()?.subject} />
+            <CopyableField label={t("fields.keyIssuer")} value={cipher()?.issuer} />
+            <Show when={cipher()?.expires_at}>
+              <CopyableField
+                label={t("fields.keyExpires")}
+                value={new Date(cipher().expires_at * 1000).toISOString().slice(0, 10)}
+              />
+            </Show>
+            <CopyableField label={t("fields.fingerprint")} value={cipher()?.fingerprint} />
+            <CopyableField label={t("fields.publicKey")} value={cipher()?.public_key} />
+            <Show when={(cipher()?.certificates || []).length > 0}>
+              <For each={cipher()?.certificates || []}>
+                {(cert, i) => (
+                  <CopyableField
+                    label={`${t("fields.certificate")} ${i() + 1}`}
+                    value={cert}
+                  />
+                )}
+              </For>
+            </Show>
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.privateKey")}
+              value={cipher()?.private_key}
+              isPassword={true}
+              showPassword={revealPass()}
+              onToggleShow={() => setRevealPass(!revealPass())}
+            />
+            <GatedField
+              locked={repromptLocked()}
+              onUnlock={openReprompt}
+              label={t("fields.keyPassphrase")}
+              value={cipher()?.passphrase}
+              isPassword={true}
+              showPassword={revealPass()}
+              onToggleShow={() => setRevealPass(!revealPass())}
+            />
+          </div>
+        </Show>
+
         {/* Bank Account fields */}
         <Show when={cipher()?.type === "bankAccount"}>
           <div class="space-y-4">
