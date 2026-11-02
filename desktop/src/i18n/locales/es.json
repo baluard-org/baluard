@@ -568,7 +568,8 @@
     "driversLicense": "Licencia de conducir",
     "passport": "Pasaporte e ID",
     "archive": "Archivo",
-    "trash": "Papelera"
+    "trash": "Papelera",
+    "signingKey": "Clave de firma"
   },
   "types": {
     "login": "Inicio de sesión",

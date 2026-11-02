@@ -600,7 +600,8 @@
     "driversLicense": "Carteiras de habilitação",
     "passport": "Passaportes e documentos",
     "archive": "Arquivo",
-    "trash": "Lixeira"
+    "trash": "Lixeira",
+    "signingKey": "Chave de assinatura"
   },
   "types": {
     "login": "Login",
