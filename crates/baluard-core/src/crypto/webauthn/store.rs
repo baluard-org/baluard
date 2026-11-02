@@ -128,13 +128,19 @@ pub(crate) fn passkey_data_to_passkey(data: &PasskeyData) -> Option<Passkey> {
 }
 
 /// Convert a `passkey_types::Passkey` (from ceremony result) to `PasskeyData`
-/// for vault storage. The COSE key pair is serialized to CBOR bytes.
+/// for vault storage. The private COSE key stays in private_key; key_value
+/// carries the public COSE key without its private scalar.
 pub fn passkey_to_passkey_data(pk: &Passkey, rp_name: Option<&str>) -> Option<PasskeyData> {
     let private_key = pk.key.clone().to_vec().ok()?;
     let credential_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*pk.credential_id);
-    // key_value stores the full COSE key (CBOR-encoded, same bytes as private_key).
-    // In Phase 2, extract just the public key (x || y coordinates) for interop.
-    let key_value = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&private_key);
+    // IPC and exports carry the public COSE key only; the private scalar stays
+    // encrypted in the vault and is used solely by the ceremony path.
+    let mut public_key = coset::CoseKey::from_slice(&private_key).ok()?;
+    public_key
+        .params
+        .retain(|(label, _)| !matches!(label, coset::Label::Int(-4)));
+    let public_key = public_key.to_vec().ok()?;
+    let key_value = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(public_key);
 
     Some(PasskeyData {
         rp_id: pk.rp_id.clone(),
@@ -384,6 +390,50 @@ mod tests {
             }]);
         }
         c
+    }
+
+    #[test]
+    fn stored_key_value_contains_only_public_cose_material() {
+        let key = coset::CoseKeyBuilder::new_ec2_priv_key(
+            coset::iana::EllipticCurve::P_256,
+            vec![1; 32],
+            vec![2; 32],
+            vec![3; 32],
+        )
+        .build();
+        let passkey = Passkey {
+            key,
+            credential_id: vec![1, 2, 3, 4].into(),
+            rp_id: "example.com".into(),
+            user_handle: None,
+            username: None,
+            user_display_name: None,
+            counter: Some(0),
+            extensions: Default::default(),
+        };
+
+        let data = passkey_to_passkey_data(&passkey, None).unwrap();
+        let private = data.private_key.clone().unwrap();
+        let public = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&data.key_value)
+            .unwrap();
+        assert_ne!(public, private, "key_value leaked the private COSE key");
+        let cose = coset::CoseKey::from_slice(&public).unwrap();
+        assert!(
+            !cose
+                .params
+                .iter()
+                .any(|(label, _)| matches!(label, coset::Label::Int(-4))),
+            "key_value retained the private scalar"
+        );
+        for coordinate in [-2, -3] {
+            assert!(
+                cose.params.iter().any(
+                    |(label, _)| matches!(label, coset::Label::Int(value) if *value == coordinate)
+                ),
+                "public coordinate {coordinate} is missing"
+            );
+        }
     }
 
     #[test]
