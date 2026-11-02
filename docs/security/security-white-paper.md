@@ -1,8 +1,8 @@
 # Baluard security white paper
 
-This paper describes how Baluard protects your data, in enough detail to check my claims against the source code. It covers the 0.1.0 release. Every mechanism named here exists in the repository you can read; where a claim depends on deeper detail, I link the document that carries it.
+This paper describes how Baluard protects your data, in enough detail to check our claims against the source code. It covers the 0.1.0 release. Every mechanism named here exists in the repository you can read; where a claim depends on deeper detail, we link the document that carries it.
 
-Baluard is a local-first password manager: your vault lives on your devices as encrypted files, and nothing in the product's normal operation talks to a Baluard server, because there is no Baluard server. Sync, when you enable it, rides any ordinary git host, and that host stores only ciphertext. Baluard is free software under GPL-3.0 and I built it as an independent developer; section 12 covers assurance: what I have verified, what I still owe, and how to report a vulnerability.
+Baluard is a local-first password manager: your vault lives on your devices as encrypted files, and nothing in the product's normal operation talks to a Baluard server, because there is no Baluard server. Sync, when you enable it, rides any ordinary git host, and that host stores only ciphertext. Baluard is free software under GPL-3.0 and we built it as an independent project; section 12 covers assurance: what we have verified, what we still owe, and how to report a vulnerability.
 
 ## 1. Why the architecture is the security model
 
@@ -10,13 +10,13 @@ Hosted password managers concentrate risk: one vendor runs databases full of eve
 
 Baluard removes that class of risk instead of managing it. The entire product runs on your devices: a core library for cryptography and storage, a background daemon that holds unlocked sessions, and clients (desktop, CLI, browser extension, mobile) that talk to the daemon over a local socket. Sync is optional and pushes opaque encrypted blobs to a git repository you own. A hostile or breached git host sees the padded, encrypted files under opaque hashed names, the commit history, and a set of deliberately plaintext bookkeeping files: keys that are public by construction, timestamps, vault parameters, and structure metadata. Entry contents, names, and URLs stay sealed, and sizes sit in fixed buckets. The complete inventory, including what a shared vault reveals, is in section 8, and it is shorter than most people expect.
 
-This choice has honest costs, and the paper names them where they exist. Sync conflict handling is more work to build without a server. Recovery of a lost phrase is impossible for me to help with, by design. The trade is deliberate: I removed the failure modes I could remove, and documented the ones I kept.
+This choice has honest costs, and the paper names them where they exist. Sync conflict handling is more work to build without a server. Recovery of a lost phrase is impossible for us to help with, by design. The trade is deliberate: we removed the failure modes we could remove, and documented the ones we kept.
 
 ## 2. Security principles
 
 The principles below decide every design dispute in the codebase. The [architecture decision records](../adr/index.md) carry the reasoning per decision when you want the history.
 
-- Zero-server, zero-knowledge. Keys are generated, used, and destroyed on your devices. No ciphertext ever passes through infrastructure I control, because no such infrastructure exists.
+- Zero-server, zero-knowledge. Keys are generated, used, and destroyed on your devices. No ciphertext ever passes through infrastructure we control, because no such infrastructure exists.
 - Least trust in the remote. The sync backend is treated as hostile at every layer: it stores only padded ciphertext, and on enrolled vaults every commit carries a device signature that the receiving side verifies before accepting.
 - Least privilege at every boundary. Unlocked sessions hold capability tokens, not key material. The browser extension holds a narrower token than the desktop app. Local automation tools hold narrower grants still, and none of them can receive key material.
 - Fail closed. Missing keys, unknown formats, mismatched hardware, expired grants, and torn writes all refuse the operation. Every unlock path verifies the master password before any optional work runs.
@@ -177,13 +177,13 @@ Named residuals: trust on first use at the first clone; the passphrase identity 
 
 This is the section hosted vendors fill with certification logos, and honesty is worth more than logos. Baluard 0.1.0 has no third-party security audit, no formal certification, and no bug bounty. It has a single maintainer, public source under GPL-3.0, a recorded architecture-decision history, and a development process that treated adversarial review (of the whole repository, of every security-critical wave, with fixes landed red-first and re-reviewed) as part of the work rather than a launch checkbox. That process found and fixed real defects; it is not a substitute for outside eyes.
 
-What I owe the project next, in order: enforcing the dependency audit in CI, a Windows Authenticode certificate and a macOS Developer ID, and an independent code audit before I call 1.0 security-hardened. The disclosure policy itself is written down in SECURITY.md at the repository root, with the acknowledgement and coordination commitments beside it. If you find a vulnerability, please report it privately through GitHub security advisories on the repository; I will credit every reporter who wants credit, and none who does not.
+What we owe the project next, in order: enforcing the dependency audit in CI, a Windows Authenticode certificate and a macOS Developer ID, and an independent code audit before we call 1.0 security-hardened. The disclosure policy itself is written down in SECURITY.md at the repository root, with the acknowledgement and coordination commitments beside it. If you find a vulnerability, please report it privately through GitHub security advisories on the repository; we will credit every reporter who wants credit, and none who does not.
 
 ## 13. Conclusion
 
 A password manager's security paper usually ends with the vendor's promise: certified processes, monitored infrastructure, trained employees. Baluard has no infrastructure to monitor and no employees to train, so the promise reduces to artifacts you can hold: keys generated and kept on your devices, ciphertext that means nothing to anyone but you, signatures that make the history auditable, and a physical key option that makes file theft worthless. Please read the source; that is the point of building it this way.
 
-Thanks for reading, and to everyone who reviews it harder than I did.
+Thanks for reading, and to everyone who reviews it harder than we did.
 
 ### Document changelog
 
