@@ -42,7 +42,7 @@ Everything that signs lives outside the repository. Losing any of these orphans 
 | Release GPG key | `~/.baluard/release-gnupg` | apt and dnf repository metadata; fingerprint `223310EA BF1A B6FE E6BD DF3E 2A53 1D54 E6D7 4804` |
 | F-Droid repo key + APK keystore | `~/.baluard/fdroid/` (`config.yml`, `keystore.p12`, `allowed-apk-signing-key`) | APK and F-Droid indexes; repo fingerprint `C5A690013893C46F208A506AEA9217D37FF007C0A2B0A2514039FE28DD58C7A8` |
 | Chrome Web Store OAuth | Bitwarden (`CHROME_CLIENT_ID`, `CHROME_CLIENT_SECRET`, `CHROME_REFRESH_TOKEN`) | Store API uploads; export into the environment only when running `just ext-submit` |
-| AMO JWT keys | Bitwarden (`AMO_JWT_KEY`, `AMO_JWT_SECRET`) | `web-ext sign` submissions |
+| AMO JWT keys | Bitwarden (`BALUARD_AMO_JWT_KEY`, `BALUARD_AMO_JWT_SECRET`) | `web-ext sign` submissions |
 
 Non-secret store identifiers live on the release box in `~/.config/environment.d/baluard.conf` (mode 600, read at login):
 
