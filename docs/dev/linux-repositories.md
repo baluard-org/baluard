@@ -7,8 +7,8 @@ Baluard ships Linux packages through its own apt and dnf repository, signed with
 Run these commands as yourself; only the two write steps need sudo, and you run them:
 
 ```sh
-curl -fsSL https://baluard-org.github.io/repo/baluard-release.asc | sudo gpg --dearmor -o /usr/share/keyrings/baluard-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/baluard-archive-keyring.gpg] https://baluard-org.github.io/repo stable main" | sudo tee /etc/apt/sources.list.d/baluard.list
+curl -fsSL https://baluard.app/repo/baluard-release.asc | sudo gpg --dearmor -o /usr/share/keyrings/baluard-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/baluard-archive-keyring.gpg] https://baluard.app/repo stable main" | sudo tee /etc/apt/sources.list.d/baluard.list
 sudo apt update && sudo apt install baluard
 ```
 
@@ -20,11 +20,11 @@ The key fingerprint is `223310EA BF1A B6FE E6BD DF3E 2A53 1D54 E6D7 4804` (Balua
 sudo tee /etc/yum.repos.d/baluard.repo <<'EOF'
 [baluard]
 name=Baluard
-baseurl=https://baluard-org.github.io/repo/rpms
+baseurl=https://baluard.app/repo/rpms
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
-gpgkey=https://baluard-org.github.io/repo/baluard-release.asc
+gpgkey=https://baluard.app/repo/baluard-release.asc
 EOF
 sudo dnf install baluard
 ```
@@ -45,9 +45,14 @@ sha256sum --check --ignore-missing SHA256SUMS
 
 The signing keys live outside the repository and are Esteban's to hold and back up. The release flow from locally built artifacts (default staging dir `./dist`, gitignored):
 
+Build the desktop and Android release artifacts first, then run:
+
 ```sh
-just release-sign              # minisign sidecars + signed SHA256SUMS into ./dist
-just repo-stage dist repo-out  # apt + dnf fragments + key + .nojekyll into ./repo-out
+just release-repositories
 ```
 
-`repo-out` is pushed as the `repo/` subtree of the `baluard-org/baluard-org` site repository (served at baluard.app, which 301s from the github.io URL); the URLs above resolve against it.
+This command verifies the APK first, signs `./dist`, regenerates the apt, dnf, and F-Droid trees in `./repo-out`, and mirrors them into `../baluard-org`. Each step stops the pipeline on failure. Synchronization removes stale generated files, preserves the repository directory guards, and does not touch other website files. Linux package history persists in `~/.baluard/linux-repo-history/`, so deleting `repo-out` does not remove older packages from the next build. Already-signed RPMs are not signed again.
+
+Review the resulting diff in `baluard-org`, then commit and push it to publish. The pipeline never commits or pushes automatically. The Linux trees map to `repo/`; the F-Droid tree maps to the site root at `fdroid/`. See `docs/dev/fdroid-repository.md`.
+
+The individual steps remain available as `just release-sign`, `just repo-stage`, and `just repo-sync`.
