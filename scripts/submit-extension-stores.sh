@@ -85,8 +85,8 @@ submit_amo() {
 }
 
 submit_chrome() {
-  local need=(CHROME_CLIENT_ID CHROME_CLIENT_SECRET CHROME_REFRESH_TOKEN
-    CHROME_EXTENSION_ID CHROME_PUBLISHER_ID)
+  local need=(BALUARD_CHROME_CLIENT_ID BALUARD_CHROME_CLIENT_SECRET BALUARD_CHROME_REFRESH_TOKEN
+    BALUARD_CHROME_EXTENSION_ID BALUARD_CHROME_PUBLISHER_ID)
   local var missing=()
   for var in "${need[@]}"; do
     [[ -n "${!var:-}" ]] || missing+=("$var")
@@ -105,11 +105,11 @@ submit_chrome() {
 
   local token_json token
   printf 'grant_type=refresh_token&client_id=%s&client_secret=%s&refresh_token=%s' \
-    "$CHROME_CLIENT_ID" "$CHROME_CLIENT_SECRET" "$CHROME_REFRESH_TOKEN" > "$SEC/token-request"
+    "$BALUARD_CHROME_CLIENT_ID" "$BALUARD_CHROME_CLIENT_SECRET" "$BALUARD_CHROME_REFRESH_TOKEN" > "$SEC/token-request"
   # name@ takes the value from stdin; it never touches argv.
-  token_json="$(printf '%s' "$CHROME_CLIENT_SECRET" | curl -fsS \
+  token_json="$(printf '%s' "$BALUARD_CHROME_CLIENT_SECRET" | curl -fsS \
     --data-urlencode grant_type=refresh_token \
-    --data-urlencode client_id="$CHROME_CLIENT_ID" \
+    --data-urlencode client_id="$BALUARD_CHROME_CLIENT_ID" \
     --data-urlencode client_secret@ \
     --data-urlencode refresh_token@ \
     https://oauth2.googleapis.com/token)" \
@@ -120,7 +120,7 @@ submit_chrome() {
 
   local upload_response
   upload_response="$(curl -fsS --fail-with-body -X POST -T "$zip" --header @"$SEC/bearer" \
-    "https://chromewebstore.googleapis.com/upload/v2/publishers/$CHROME_PUBLISHER_ID/items/$CHROME_EXTENSION_ID:upload")" \
+    "https://chromewebstore.googleapis.com/upload/v2/publishers/$BALUARD_CHROME_PUBLISHER_ID/items/$BALUARD_CHROME_EXTENSION_ID:upload")" \
     || { echo "chrome/store: upload failed" >&2; return 1; }
   # The v2 enum spells the good state both ways.
   jq -e 'select(.uploadState == "SUCCESS" or .uploadState == "SUCCEEDED")' >/dev/null <<< "$upload_response" \
@@ -129,7 +129,7 @@ submit_chrome() {
   local publish_response=""
   # The publish POST needs a body, or the gateway rejects it with 411.
   if ! publish_response="$(curl -fsS --fail-with-body -X POST -d '' --header @"$SEC/bearer" \
-    "https://chromewebstore.googleapis.com/v2/publishers/$CHROME_PUBLISHER_ID/items/$CHROME_EXTENSION_ID:publish")"; then
+    "https://chromewebstore.googleapis.com/v2/publishers/$BALUARD_CHROME_PUBLISHER_ID/items/$BALUARD_CHROME_EXTENSION_ID:publish")"; then
     echo "chrome/store: publish failed: $publish_response" >&2
     return 1
   fi
@@ -143,8 +143,8 @@ if ((amo_rc == 3 && chrome_rc == 3)); then
   cat >&2 <<'EOF'
 No store is configured, nothing was submitted.
 Firefox AMO: set BALUARD_AMO_JWT_KEY and BALUARD_AMO_JWT_SECRET (API keys from addons.mozilla.org).
-Chrome Web Store: set CHROME_CLIENT_ID, CHROME_CLIENT_SECRET, CHROME_REFRESH_TOKEN,
-CHROME_EXTENSION_ID, and CHROME_PUBLISHER_ID (OAuth client per the Web Store API guide).
+Chrome Web Store: set BALUARD_CHROME_CLIENT_ID, BALUARD_CHROME_CLIENT_SECRET, BALUARD_CHROME_REFRESH_TOKEN,
+BALUARD_CHROME_EXTENSION_ID, and BALUARD_CHROME_PUBLISHER_ID (OAuth client per the Web Store API guide).
 Store credentials stay in Bitwarden, never in the repo.
 EOF
   exit 1
