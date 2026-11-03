@@ -156,7 +156,7 @@ impl KdfProfile {
     /// Memory in KiB for this profile.
     pub const fn memory_kib(&self) -> u32 {
         match self {
-            KdfProfile::MobileLow => 19 * 1024,    // 19 MB
+            KdfProfile::MobileLow => 32 * 1024,    // 32 MB
             KdfProfile::DesktopStd => 64 * 1024,   // 64 MB
             KdfProfile::DesktopHigh => 256 * 1024, // 256 MB
         }
@@ -165,7 +165,7 @@ impl KdfProfile {
     /// Time cost (iterations).
     pub const fn time_cost(&self) -> u32 {
         match self {
-            KdfProfile::MobileLow => 2,
+            KdfProfile::MobileLow => 6,
             KdfProfile::DesktopStd => 3,
             KdfProfile::DesktopHigh => 4,
         }
@@ -174,7 +174,7 @@ impl KdfProfile {
     /// Parallelism (lanes).
     pub const fn parallelism(&self) -> u32 {
         match self {
-            KdfProfile::MobileLow => 1,
+            KdfProfile::MobileLow => 4,
             KdfProfile::DesktopStd => 2,
             KdfProfile::DesktopHigh => 4,
         }

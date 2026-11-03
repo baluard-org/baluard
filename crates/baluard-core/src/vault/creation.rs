@@ -585,6 +585,7 @@ impl<'a> VaultCreator<'a> {
                         adapter.fill_bytes(&mut salt);
                         let mut params = kdf::create_params(KdfProfile::MobileLow);
                         params.salt = salt.to_vec();
+                        params.parallelism = 1; // identity-meta contract: reader reconstructs p=1
                         let wrap_key = kdf::derive_kek(&self.password, &params)?;
                         (wrap_key, "passphrase", Some(hex::encode(salt)))
                     }
@@ -927,10 +928,13 @@ impl<'a> VaultCreator<'a> {
                         adapter.fill_bytes(&mut salt);
                         let mut params = kdf::create_params(KdfProfile::MobileLow);
                         params.salt = salt.to_vec();
+                        params.parallelism = 1; // identity-meta contract: reader reconstructs p=1
                         let wrap_key = kdf::derive_kek(&self.password, &params)?;
                         (wrap_key, "passphrase", Some(hex::encode(salt)))
                     }
                 };
+
+                // P1a: identity — same generation/seal/escrow as the other
                 let identity_sealed =
                     crate::vault::identity::seal_identity(&identity_wrap_key, &identity_keys)?;
                 super::write_vault_file(&path.join("meta/identity.enc"), &identity_sealed)?;
