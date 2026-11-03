@@ -1,29 +1,27 @@
 //! AEAD envelope binary serialization.
 //!
-//! D3: {version: u8, alg_id: u16, key_epoch: u64, nonce: [u8;12], aad_len: u16, aad, ciphertext, tag: [u8;16]}
-//!
-//! All fields are little-endian. Header fields are plaintext for key selection
+//! D3: {version: u8, alg_id: u16, key_epoch: u64, update_seq: u64, tier: u8, nonce: [u8;12], aad_len: u16, aad, tag: [u8;16], ciphertext}
+//! All fields little-endian. Header fields are plaintext for key selection
 //! before decryption (no circular dependency).
 
 use crate::error::VaultError;
 use crate::types::{CipherEnvelope, EnvelopeHeader};
 
 // Binary envelope layout:
-//   [0]       version: u8
-//   [1..3]    alg_id: u16 LE
-//   [3..11]   key_epoch: u64 LE
-//   [11..19]  nonce_counter: u64 LE
-//   [19..27]  update_seq: u64 LE
-//   [27]      tier: u8 (0=none, 1=xs, 2=s, 3=m, 4=l, 5=xl)
-//   [27..39]  nonce: [u8; 12]
-//   [39..41]  aad_len: u16 LE
-//   [41..41+aad_len]  aad
-//   [41+aad_len..41+aad_len+tag_len]  tag: [u8; 16]
-//   [rest]    ciphertext
+//   [0]      version: u8
+//   [1..3]   alg_id: u16 LE
+//   [3..11]  key_epoch: u64 LE
+//   [11..19] update_seq: u64 LE
+//   [19]     tier: u8 (0=none, 1=xs, 2=s, 3=m, 4=l, 5=xl)
+//   [20..32] nonce: [u8; 12]
+//   [32..34] aad_len: u16 LE
+//   [34..34+aad_len]  aad
+//   [34+aad_len..34+aad_len+16]  tag: [u8; 16]
+//   [rest]   ciphertext
 
-// Header: version(1) + alg_id(2) + key_epoch(8) + nonce_counter(8)
-// + update_seq(8) + tier(1) = 28 bytes.
-const HEADER_SIZE: usize = 28;
+// Header: version(1) + alg_id(2) + key_epoch(8) + update_seq(8) + tier(1)
+// = 20 bytes.
+const HEADER_SIZE: usize = 20;
 const NONCE_SIZE: usize = 12;
 const TAG_SIZE: usize = 16;
 const AAD_LEN_SIZE: usize = 2;
@@ -61,7 +59,6 @@ pub fn serialize(envelope: &CipherEnvelope) -> Result<Vec<u8>, VaultError> {
     buf.push(envelope.header.version);
     buf.extend_from_slice(&envelope.header.alg_id.to_le_bytes());
     buf.extend_from_slice(&envelope.header.key_epoch.to_le_bytes());
-    buf.extend_from_slice(&envelope.header.nonce_counter.to_le_bytes());
     buf.extend_from_slice(&envelope.header.update_seq.to_le_bytes());
     buf.push(tier_byte);
 
@@ -104,8 +101,6 @@ pub fn deserialize(data: &[u8]) -> Result<CipherEnvelope, VaultError> {
         )));
     }
     let key_epoch = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
-    pos += 8;
-    let nonce_counter = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
     pos += 8;
     let update_seq = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
     pos += 8;
@@ -153,7 +148,6 @@ pub fn deserialize(data: &[u8]) -> Result<CipherEnvelope, VaultError> {
             version,
             alg_id,
             key_epoch,
-            nonce_counter,
             update_seq,
             tier,
         },
@@ -176,7 +170,6 @@ mod tests {
                 version: BALUARD_VERSION,
                 alg_id: ALG_AES_256_GCM,
                 key_epoch: 1,
-                nonce_counter: 0,
                 update_seq: 5,
                 tier: Some(Tier::Xs),
             },
@@ -196,7 +189,6 @@ mod tests {
         assert_eq!(envelope.header.version, restored.header.version);
         assert_eq!(envelope.header.alg_id, restored.header.alg_id);
         assert_eq!(envelope.header.key_epoch, restored.header.key_epoch);
-        assert_eq!(envelope.header.nonce_counter, restored.header.nonce_counter);
         assert_eq!(envelope.header.update_seq, restored.header.update_seq);
         assert_eq!(envelope.header.tier, restored.header.tier);
         assert_eq!(envelope.nonce, restored.nonce);
@@ -212,6 +204,24 @@ mod tests {
         let bytes = serialize(&envelope).unwrap();
         let restored = deserialize(&bytes).unwrap();
         assert_eq!(restored.header.tier, None);
+    }
+
+    #[test]
+    fn layout_pin_header_20_bytes_fixed_offsets() {
+        let envelope = test_envelope();
+        let bytes = serialize(&envelope).unwrap();
+        // 20 header + 12 nonce + 2 aad_len + 4 aad + 16 tag + 100 ciphertext
+        assert_eq!(bytes.len(), 154);
+        assert_eq!(bytes[0], BALUARD_VERSION);
+        assert_eq!(&bytes[1..3], &ALG_AES_256_GCM.to_le_bytes());
+        assert_eq!(&bytes[3..11], &1u64.to_le_bytes(), "key_epoch");
+        assert_eq!(&bytes[11..19], &5u64.to_le_bytes(), "update_seq");
+        assert_eq!(bytes[19], 1, "tier: Xs");
+        assert_eq!(&bytes[20..32], &[42u8; 12], "nonce");
+        assert_eq!(&bytes[32..34], &4u16.to_le_bytes(), "aad_len");
+        assert_eq!(&bytes[34..38], &[1, 2, 3, 4], "aad");
+        assert_eq!(&bytes[38..54], &[0xCD; 16], "tag before ciphertext");
+        assert_eq!(&bytes[54..], &vec![0xAB; 100], "ciphertext is the rest");
     }
 
     #[test]

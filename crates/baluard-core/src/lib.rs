@@ -31,7 +31,7 @@ pub mod types;
 pub use error::BaluardError;
 
 /// Library version, embedded in vault format headers.
-pub const BALUARD_VERSION: u8 = 1;
+pub const BALUARD_VERSION: u8 = 2;
 
 /// True when OS-keyring access must be skipped: in-process unit tests
 /// (`cfg(test)`) and any process carrying `BALUARD_DISABLE_KEYRING=1`

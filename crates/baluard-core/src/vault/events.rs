@@ -125,7 +125,6 @@ pub(crate) fn save(
     let json = serde_json::to_vec(events)
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("events serialize: {e}"))))?;
     let nonce = crate::crypto::aead::build_random_nonce();
-    let nonce_counter = u64::from_le_bytes(nonce[..8].try_into().unwrap());
     let aad = crate::crypto::aead::build_aad(
         vault_id,
         crate::types::ObjectType::Meta,
@@ -139,7 +138,6 @@ pub(crate) fn save(
         version: crate::BALUARD_VERSION,
         alg_id: crate::ALG_AES_256_GCM,
         key_epoch: epoch,
-        nonce_counter,
         update_seq: 1,
         tier: None,
     };

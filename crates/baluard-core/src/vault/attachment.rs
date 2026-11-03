@@ -84,7 +84,6 @@ pub fn encrypt_attachment(
         version: BALUARD_VERSION,
         alg_id: ALG_AES_256_GCM,
         key_epoch,
-        nonce_counter: 0,
         update_seq,
         tier: Some(tier),
     };

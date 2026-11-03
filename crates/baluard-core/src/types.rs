@@ -106,14 +106,12 @@ impl ObjectType {
 /// before opening the envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvelopeHeader {
-    /// Envelope format version (currently 1).
+    /// Envelope format version (currently 2).
     pub version: u8,
     /// AEAD algorithm identifier (0x0001 = AES-256-GCM).
     pub alg_id: u16,
     /// Root Key epoch that encrypted this payload.
     pub key_epoch: u64,
-    /// Per-object nonce counter.
-    pub nonce_counter: u64,
     /// Monotonic update sequence number (for rollback detection).
     pub update_seq: u64,
     /// Size tier (for cipher objects) or None for non-cipher objects.
@@ -124,7 +122,7 @@ pub struct EnvelopeHeader {
 #[derive(Debug, Clone)]
 pub struct CipherEnvelope {
     pub header: EnvelopeHeader,
-    /// 12-byte nonce (constructed from nonce_counter + object shard).
+    /// 12-byte random nonce (fresh per write; see aead::build_random_nonce).
     pub nonce: [u8; 12],
     /// AAD bytes (SHA256 hash of context-binding fields).
     pub aad: Vec<u8>,
