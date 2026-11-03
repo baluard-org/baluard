@@ -471,6 +471,10 @@ pub fn seal_kit(letter: &str, body: &KitBody, passphrase: &str) -> Result<String
     let sealed = serde_json::json!({
         "format": 1,
         "kdf": {
+            // Kits are printed and stored for years: the algorithm must be
+            // named so a future KDF's kits fail as "update Baluard", not
+            // as a wrong passphrase.
+            "algorithm": "argon2id",
             "memory_kib": params.memory_kib,
             "time_cost": params.time_cost,
             "parallelism": params.parallelism,
@@ -531,6 +535,12 @@ pub fn open_kit(armor: &str, passphrase: &str) -> Result<KitBody, BaluardError> 
     let kdf_json = sealed
         .get("kdf")
         .ok_or_else(|| VaultError::Corrupt("wrong passphrase or damaged file".into()))?;
+    // Absent algorithm means a kit from before the field existed.
+    if let Some(alg) = kdf_json.get("algorithm").and_then(|v| v.as_str()) {
+        if alg != "argon2id" {
+            return Err(VaultError::KdfKindUnknown(alg.to_string()).into());
+        }
+    }
     let salt = hex::decode(kdf_json.get("salt").and_then(|v| v.as_str()).unwrap_or(""))
         .map_err(|_| VaultError::Corrupt("wrong passphrase or damaged file".into()))?;
     let params = KdfParams {
@@ -1583,6 +1593,66 @@ mod tests {
         assert_eq!(opened.kit_id, test_body().kit_id);
         assert_eq!(opened.owner_name, "Ana");
         assert_eq!(opened.window_days, 30);
+    }
+
+    #[test]
+    fn kit_names_algorithm_and_refuses_foreign_one() {
+        let armor = seal_kit(LETTER, &test_body(), "pw").unwrap();
+        // The sealed JSON is base64 inside the armor; decode it out.
+        let sealed_json = {
+            let mut in_armor = false;
+            let mut b64 = String::new();
+            for line in armor.lines() {
+                if line.contains(ARMOR_BEGIN) {
+                    in_armor = true;
+                    continue;
+                }
+                if line.contains(ARMOR_END) {
+                    break;
+                }
+                if in_armor {
+                    b64.push_str(line.trim());
+                }
+            }
+            String::from_utf8(
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).unwrap(),
+            )
+            .unwrap()
+        };
+        let mut sealed: serde_json::Value = serde_json::from_str(&sealed_json).unwrap();
+        // The kit must carry the algorithm: kits are stored for years and
+        // a future KDF's kits must fail as "update Baluard", not as a
+        // wrong passphrase.
+        assert_eq!(sealed["kdf"]["algorithm"], "argon2id");
+        let re_armor = |v: &serde_json::Value| -> String {
+            let json = serde_json::to_string(v).unwrap();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+            // Keep the original armor's letter prefix byte-for-byte: the
+            // seal AAD binds it, so any re-derivation breaks the letter.
+            let (prefix, _) = armor.split_once(ARMOR_BEGIN).unwrap();
+            let mut out = String::from(prefix);
+            out.push_str(ARMOR_BEGIN);
+            out.push('\n');
+            for chunk in b64.as_bytes().chunks(76) {
+                out.push_str(std::str::from_utf8(chunk).unwrap());
+                out.push('\n');
+            }
+            out.push_str(ARMOR_END);
+            out.push('\n');
+            out
+        };
+        // A pre-field kit (no algorithm) still opens.
+        let mut stripped = sealed.clone();
+        stripped["kdf"].as_object_mut().unwrap().remove("algorithm");
+        assert!(open_kit(&re_armor(&stripped), "pw").is_ok());
+        // A foreign algorithm is its own error, never a wrong-passphrase.
+        let mut foreign = sealed.clone();
+        foreign["kdf"]["algorithm"] = "scrypt".into();
+        let err = open_kit(&re_armor(&foreign), "pw").unwrap_err();
+        assert!(matches!(
+            err,
+            BaluardError::Vault(VaultError::KdfKindUnknown(_))
+        ));
     }
 
     #[test]

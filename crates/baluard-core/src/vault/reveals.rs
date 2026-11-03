@@ -772,6 +772,21 @@ mod tests {
     }
 
     #[test]
+    fn guest_reveal_legacy_package_without_kdf_field_opens() {
+        let expires = now_unix() + DAY;
+        let (bytes, passphrase) = seal_guest_reveal("Wifi", &fields(), expires).unwrap();
+        // A reveal link sealed before the kdf field existed must still
+        // open: serde default carries it as argon2id.
+        let mut pkg: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mut pkg: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        // wrap is flattened: the passphrase wrap's params sit at the top level.
+        pkg["kdf"].as_object_mut().unwrap().remove("kdf");
+        let stripped = serde_json::to_vec(&pkg).unwrap();
+        let opened = open_guest_reveal(&stripped, &passphrase, now_unix()).unwrap();
+        assert_eq!(opened.item_name, "Wifi");
+    }
+
+    #[test]
     fn guest_reveal_roundtrip() {
         let expires = now_unix() + DAY;
         let (bytes, passphrase) = seal_guest_reveal("Wifi", &fields(), expires).unwrap();
