@@ -6,6 +6,10 @@ package baluard.auth;
 message GatewayRequest {
   string action = 1;
   string payload = 2;
+  // Field 3 was used briefly during development and removed; reserved so
+  // no future field reuses the number with a different type against
+  // shipped binaries.
+  reserved 3;
   string session_token = 4;  // R7-2: per-session auth token (set after unlock)
   string slug = 5;            // Phase 6: target vault slug (per-request routing; empty = active vault)
 }
