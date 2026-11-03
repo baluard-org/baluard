@@ -274,7 +274,7 @@ impl VaultHandle {
 
         // Derive vault_id deterministically from KDF salt (stable, unique per vault).
         // No meta file needed: same salt always produces the same UUID.
-        let vault_id = Self::derive_vault_id(&kdf_params);
+        let vault_id = Self::resolve_vault_id(&kdf_params);
 
         // MISS-2: Load DeviceManager from vault directory
         let mut device_manager = if DeviceManager::vault_files_exist(path) {
@@ -4939,6 +4939,7 @@ impl VaultHandle {
                         .and_then(|s| hex::decode(s).ok())
                         .unwrap_or_default();
                     let params = crate::types::KdfParams {
+                        vault_id: None,
                         kdf: crate::types::KdfKind::Argon2id,
                         profile: crate::types::KdfProfile::MobileLow,
                         memory_kib: meta["memory_kib"].as_u64().unwrap_or(8192) as u32,
@@ -9968,8 +9969,13 @@ impl VaultHandle {
         Err(VaultError::NotFound("matching device keywrap not found for this device".into()).into())
     }
 
-    pub fn derive_vault_id(kdf_params: &KdfParams) -> Uuid {
-        // Derive a stable UUID from the KDF salt
+    pub fn resolve_vault_id(kdf_params: &KdfParams) -> Uuid {
+        // A stored random id survives salt rotation; deriving from the salt
+        // would invalidate every AAD in the vault when only the salt moved.
+        if let Some(id) = kdf_params.vault_id {
+            return id;
+        }
+        // Derive a stable UUID from the KDF salt (pre-field vaults)
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"baluard-vault-id-v1");
@@ -9987,7 +9993,7 @@ impl VaultHandle {
         let kdf_json = std::fs::read_to_string(&kdf_path)
             .map_err(|e| VaultError::Metadata(format!("reading kdf params: {e}")))?;
         let kdf_params = kdf::parse_kdf_params(&kdf_json)?;
-        Ok(Self::derive_vault_id(&kdf_params))
+        Ok(Self::resolve_vault_id(&kdf_params))
     }
 
     // ── Rate limiting ──
@@ -14328,6 +14334,47 @@ mod tests {
             cipher::stored_item_schema(&opened).unwrap(),
             crate::types::ITEM_SCHEMA_VERSION + 1
         );
+    }
+
+    #[test]
+    fn legacy_params_without_stored_id_still_derive_from_salt() {
+        // Pre-field vaults have no stored vault id: the salt-derived id
+        // must keep working (and stay salt-unique) or old vaults re-key.
+        let mut a = crate::types::KdfParams::from_profile(crate::types::KdfProfile::DesktopStd);
+        a.salt = vec![1u8; 32];
+        let mut b = a.clone();
+        b.salt = vec![2u8; 32];
+        let id_a1 = VaultHandle::resolve_vault_id(&a);
+        let id_a2 = VaultHandle::resolve_vault_id(&a);
+        assert_eq!(id_a1, id_a2);
+        assert_ne!(id_a1, VaultHandle::resolve_vault_id(&b));
+    }
+
+    #[test]
+    fn vault_id_survives_salt_rotation() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // The stored params must name the vault: a future salt rotation
+        // keeps the id, because every AAD in the vault binds it.
+        let id_before = handle.vault_id;
+        let json = std::fs::read_to_string(dir.path().join("meta/kdf-params.json")).unwrap();
+        let mut params: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            params["vault_id"].as_str(),
+            Some(id_before.to_string().as_str()),
+            "kdf-params.json must carry the vault id"
+        );
+        // Rotate the salt by hand, keeping the stored id.
+        params["salt"] = serde_json::Value::String("ff".repeat(32));
+        std::fs::write(
+            dir.path().join("meta/kdf-params.json"),
+            serde_json::to_string(&params).unwrap(),
+        )
+        .unwrap();
+        let id_after = VaultHandle::vault_id_for_path(dir.path()).unwrap();
+        assert_eq!(id_after, id_before, "vault id must not follow the salt");
     }
 
     #[test]

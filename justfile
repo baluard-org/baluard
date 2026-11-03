@@ -224,6 +224,7 @@ test-release-scripts:
 	./scripts/tests/test-sync-site-repos.sh
 	./scripts/tests/test-build-extension-packages.sh
 	./scripts/tests/test-submit-extension-stores.sh
+	./scripts/tests/test-build-windows-installer.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
@@ -522,6 +523,13 @@ desktop-build: _sysdeps-desktop _sidecar desktop-deps
 		export NO_STRIP=true
 	fi
 	{{ linuxbrew_env }} cd desktop && npm run tauri build
+
+# Build the Windows desktop installer (NSIS setup.exe) on a Linux/macOS host.
+# Cross-compiles the daemon and CLI sidecars with cargo-xwin, then runs tauri
+# build with the NSIS bundle. MSI stays a Windows-only build (WiX). Requires
+# cargo-xwin, clang, lld, llvm-rc, and makensis; see scripts/build-windows-installer.sh.
+desktop-windows: desktop-deps
+	./scripts/build-windows-installer.sh
 
 # D79: print (do not run) the updater signing-key generation command.
 # The private key never leaves your machine; the PUBLIC key from that

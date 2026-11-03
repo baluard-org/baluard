@@ -3949,6 +3949,7 @@ mod tests {
         let passphrase_key = || {
             let salt = hex::decode(meta["salt_hex"].as_str().unwrap()).unwrap();
             let params = crate::types::KdfParams {
+                vault_id: None,
                 kdf: crate::types::KdfKind::Argon2id,
                 profile: crate::types::KdfProfile::MobileLow,
                 memory_kib: meta["memory_kib"].as_u64().unwrap() as u32,
