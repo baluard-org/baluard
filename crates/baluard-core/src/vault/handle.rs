@@ -4925,27 +4925,8 @@ impl VaultHandle {
                     let Some(pw) = master_password else {
                         return; // quick-unlock path: identity stays sealed
                     };
-                    // Absent kdf means a pre-field identity (argon2id).
-                    if let Some(alg) = meta["kdf"].as_str() {
-                        if alg != "argon2id" {
-                            eprintln!(
-                                "warning: identity sealed under key derivation not supported by this app version ({alg})"
-                            );
-                            return;
-                        }
-                    }
-                    let salt = meta["salt_hex"]
-                        .as_str()
-                        .and_then(|s| hex::decode(s).ok())
-                        .unwrap_or_default();
-                    let params = crate::types::KdfParams {
-                        vault_id: None,
-                        kdf: crate::types::KdfKind::Argon2id,
-                        profile: crate::types::KdfProfile::MobileLow,
-                        memory_kib: meta["memory_kib"].as_u64().unwrap_or(8192) as u32,
-                        time_cost: meta["time_cost"].as_u64().unwrap_or(3) as u32,
-                        parallelism: 1,
-                        salt,
+                    let Some(params) = Self::identity_passphrase_params(&meta) else {
+                        return;
                     };
                     kdf::derive_kek(pw, &params)
                         .ok()
@@ -9969,6 +9950,37 @@ impl VaultHandle {
         Err(VaultError::NotFound("matching device keywrap not found for this device".into()).into())
     }
 
+    /// Reconstruct the passphrase-mode identity derivation params from
+    /// meta/identity-meta.json. The contract with the writer (creation.rs)
+    /// is pinned by a round-trip test: memory_kib/time_cost from the row,
+    /// salt from salt_hex, parallelism always 1, argon2id only.
+    pub(crate) fn identity_passphrase_params(
+        meta: &serde_json::Value,
+    ) -> Option<crate::types::KdfParams> {
+        // Absent kdf means a pre-field identity (argon2id).
+        if let Some(alg) = meta["kdf"].as_str() {
+            if alg != "argon2id" {
+                eprintln!(
+                    "warning: identity sealed under key derivation not supported by this app version ({alg})"
+                );
+                return None;
+            }
+        }
+        let salt = meta["salt_hex"]
+            .as_str()
+            .and_then(|s| hex::decode(s).ok())
+            .unwrap_or_default();
+        Some(crate::types::KdfParams {
+            vault_id: None,
+            kdf: crate::types::KdfKind::Argon2id,
+            profile: crate::types::KdfProfile::MobileLow,
+            memory_kib: meta["memory_kib"].as_u64().unwrap_or(8192) as u32,
+            time_cost: meta["time_cost"].as_u64().unwrap_or(3) as u32,
+            parallelism: 1,
+            salt,
+        })
+    }
+
     pub fn resolve_vault_id(kdf_params: &KdfParams) -> Uuid {
         // A stored random id survives salt rotation; deriving from the salt
         // would invalidate every AAD in the vault when only the salt moved.
@@ -14348,6 +14360,35 @@ mod tests {
         let id_a2 = VaultHandle::resolve_vault_id(&a);
         assert_eq!(id_a1, id_a2);
         assert_ne!(id_a1, VaultHandle::resolve_vault_id(&b));
+    }
+
+    #[test]
+    fn identity_meta_writer_reader_contract_pins() {
+        // Mirrors creation.rs's identity-meta writer keys exactly: if the
+        // writer renames a key or the reader drifts (the parallelism=1
+        // bug class), this pin goes red.
+        let meta = serde_json::json!({
+            "mode": "passphrase",
+            "kdf": "argon2id",
+            "salt_hex": "aabb",
+            "memory_kib": 65536,
+            "time_cost": 3,
+            "parallelism": 1,
+        });
+        let params = VaultHandle::identity_passphrase_params(&meta).unwrap();
+        assert_eq!(params.memory_kib, 65536);
+        assert_eq!(params.time_cost, 3);
+        // The contract pins parallelism to 1 regardless of the profile's
+        // lanes: the writer never derives with profile parallelism here.
+        assert_eq!(params.parallelism, 1);
+        assert_eq!(params.salt, vec![0xaa, 0xbb]);
+        assert_eq!(params.kdf, crate::types::KdfKind::Argon2id);
+        // Unknown algorithm refuses instead of deriving.
+        let foreign = serde_json::json!({ "kdf": "scrypt", "salt_hex": "aabb", "memory_kib": 65536, "time_cost": 3, "parallelism": 1 });
+        assert!(VaultHandle::identity_passphrase_params(&foreign).is_none());
+        // A pre-field row (no kdf) still reconstructs.
+        let legacy = serde_json::json!({ "salt_hex": "aabb", "memory_kib": 65536, "time_cost": 3, "parallelism": 1 });
+        assert!(VaultHandle::identity_passphrase_params(&legacy).is_some());
     }
 
     #[test]
