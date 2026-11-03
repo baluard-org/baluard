@@ -30,7 +30,7 @@ import xyz.actitud.baluard.platform.platformLogE
  * process (`:autofill`, enforced in the manifest and asserted by
  * AutofillProcessIsolationTest) with strict memory limits. It MUST unlock via
  * [AutofillSession.unlock], fed by the biometric-gated KEK from
- * [AutofillActivity]. The master-password Argon2id KDF (64-256 MB) never runs
+ * [AutofillActivity]. The master-password Argon2id KDF (32-256 MiB) never runs
  * here; it would OOM the process before completing.
  *
  * No network on the fill hot path: matching is `VaultState::autofill_query`
