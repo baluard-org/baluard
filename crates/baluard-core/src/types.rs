@@ -210,7 +210,7 @@ mod hex_bytes {
 }
 
 impl KdfParams {
-    /// Create params from a profile with default (lower-bound) values.
+    /// Create params from a profile.
     pub fn from_profile(profile: KdfProfile) -> Self {
         Self {
             memory_kib: profile.memory_kib(),
