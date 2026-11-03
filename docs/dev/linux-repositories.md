@@ -51,7 +51,7 @@ Build the desktop and Android release artifacts first, then run:
 just release-repositories
 ```
 
-This command verifies the APK first, signs `./dist`, regenerates the apt, dnf, and F-Droid trees in `./repo-out`, and mirrors them into `../baluard-org`. Each step stops the pipeline on failure. Synchronization removes stale generated files, preserves the repository directory guards, and does not touch other website files. Linux package history persists in `~/.baluard/linux-repo-history/`, so deleting `repo-out` does not remove older packages from the next build. Already-signed RPMs are not signed again.
+This command first rebuilds the browser extension bundles and packages the store zips into `./dist` (`baluard-extension-<version>-chrome.zip` / `-firefox.zip`), failing if the rebuild drifts from the committed dists. It then verifies the APK, signs `./dist`, regenerates the apt, dnf, and F-Droid trees in `./repo-out`, and mirrors them into `../baluard-org`. Each step stops the pipeline on failure. Synchronization removes stale generated files, preserves the repository directory guards, and does not touch other website files. Linux package history persists in `~/.baluard/linux-repo-history/`, so deleting `repo-out` does not remove older packages from the next build. Already-signed RPMs are not signed again.
 
 Review the resulting diff in `baluard-org`, then commit and push it to publish. The pipeline never commits or pushes automatically. The Linux trees map to `repo/`; the F-Droid tree maps to the site root at `fdroid/`. See `docs/dev/fdroid-repository.md`.
 

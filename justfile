@@ -163,6 +163,12 @@ uninstall:
 
 # ── Release staging ──────────────────────────────────────────────────────────
 
+# Build the browser extension store zips into the staging dir. Rebuilds both
+# dists from browser/shared and refuses to package when the rebuild differs
+# from the committed dists (the drift gate extension.yml enforces in CI).
+ext-package artifacts="dist":
+	./scripts/build-extension-packages.sh {{ artifacts }}
+
 # Sign release artifacts (minisign sidecars + signed SHA256SUMS). The updater
 # key lives at ~/.tauri/baluard-updater.key; see docs/dev/linux-repositories.md.
 # Defaults to ./dist, the gitignored local staging dir.
@@ -195,6 +201,7 @@ repo-sync out="repo-out" site="../baluard-org":
 # Sign existing release artifacts, regenerate all repository metadata, and
 # synchronize the website worktree in one fail-fast pipeline.
 release-repositories artifacts="dist" out="repo-out" site="../baluard-org":
+	just ext-package {{ artifacts }}
 	just fdroid-stage mobile/androidApp/build/outputs/apk/release/androidApp-release.apk {{ out }}
 	just release-sign {{ artifacts }}
 	just repo-stage {{ artifacts }} {{ out }}
@@ -206,6 +213,7 @@ release-repositories artifacts="dist" out="repo-out" site="../baluard-org":
 test-release-scripts:
 	./scripts/tests/test-build-fdroid-repo.sh
 	./scripts/tests/test-sync-site-repos.sh
+	./scripts/tests/test-build-extension-packages.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
