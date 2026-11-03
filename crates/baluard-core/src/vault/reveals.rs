@@ -60,11 +60,17 @@ pub const REVEAL_SIGNATURE_DOMAIN: &[u8] = b"baluard-item-reveal-v1\n";
 /// generator option).
 pub const GUEST_PASSPHRASE_WORDS: usize = 7;
 
+/// Frozen KDF shape for reveal seals; decoupled from KdfProfile so a
+/// DesktopStd change can never silently re-key existing reveal links.
+const REVEAL_KDF_MEMORY_KIB: u32 = 64 * 1024;
+const REVEAL_KDF_TIME_COST: u32 = 3;
+const REVEAL_KDF_PARALLELISM: u32 = 2;
+
 /// Ceilings for the UNTRUSTED KDF params on the guest open path. The
 /// envelope's Argon2id block is attacker-controlled: without a clamp a
 /// hostile file could set memory_kib to terabytes and abort the daemon
 /// with an allocation failure the moment the victim types a passphrase.
-/// Generous over the seal path (DesktopStd: 64 MiB / 3 / 2) so legit
+/// Generous over the frozen seal constants (64 MiB / 3 / 2) so legit
 /// files always verify; hostile params just collapse to a normal-cost
 /// derivation and fail the GCM tag.
 const GUEST_KDF_MAX_MEMORY_KIB: u32 = 128 * 1024;
@@ -299,7 +305,13 @@ pub fn seal_guest_reveal(
     })
     .map_err(|e| VaultError::Metadata(format!("generate passphrase: {e}")))?;
 
-    let params = kdf::create_params(KdfProfile::DesktopStd);
+    let params = KdfParams {
+        profile: KdfProfile::DesktopStd,
+        memory_kib: REVEAL_KDF_MEMORY_KIB,
+        time_cost: REVEAL_KDF_TIME_COST,
+        parallelism: REVEAL_KDF_PARALLELISM,
+        salt: kdf::generate_salt().to_vec(),
+    };
     let key = Zeroizing::new(kdf::derive_kek(&passphrase, &params)?);
 
     let sealed = sealed_doc(&payload_bytes, expires_at, &key)?;
@@ -729,6 +741,30 @@ mod tests {
         );
         let err = open_guest_reveal(&hostile.into_bytes(), "whatever", now_unix()).unwrap_err();
         let _ = err; // any error is fine; the point is returning, not aborting
+    }
+
+    #[test]
+    fn guest_reveal_seal_kdf_is_frozen_shape() {
+        let expires = now_unix() + DAY;
+        let (bytes, _passphrase) = seal_guest_reveal("Wifi", &fields(), expires).unwrap();
+        let pkg: RevealPackage = serde_json::from_slice(&bytes).unwrap();
+        match pkg.wrap {
+            RevealWrap::Passphrase { kdf } => {
+                assert_eq!(
+                    kdf.memory_kib, REVEAL_KDF_MEMORY_KIB,
+                    "frozen reveal memory"
+                );
+                assert_eq!(
+                    kdf.time_cost, REVEAL_KDF_TIME_COST,
+                    "frozen reveal time_cost"
+                );
+                assert_eq!(
+                    kdf.parallelism, REVEAL_KDF_PARALLELISM,
+                    "frozen reveal parallelism"
+                );
+            }
+            _ => panic!("guest reveal must use the passphrase wrap"),
+        }
     }
 
     #[test]
