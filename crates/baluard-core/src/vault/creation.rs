@@ -934,7 +934,6 @@ impl<'a> VaultCreator<'a> {
                     }
                 };
 
-                // P1a: identity — same generation/seal/escrow as the other
                 let identity_sealed =
                     crate::vault::identity::seal_identity(&identity_wrap_key, &identity_keys)?;
                 super::write_vault_file(&path.join("meta/identity.enc"), &identity_sealed)?;
