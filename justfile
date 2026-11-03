@@ -225,6 +225,7 @@ test-release-scripts:
 	./scripts/tests/test-build-extension-packages.sh
 	./scripts/tests/test-submit-extension-stores.sh
 	./scripts/tests/test-build-windows-installer.sh
+	./scripts/tests/test-build-nmh-manifests.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
@@ -378,6 +379,7 @@ _sidecar-force:
 	{{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh --features baluard-daemon/fido2
 	cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
 	cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
+	cp target/release/baluard-nmh "desktop/src-tauri/binaries/baluard-nmh-$TRIPLE"
 	# Force-refresh sidecar in tauri target/debug
 	mkdir -p desktop/src-tauri/target/debug
 	cp "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE" "desktop/src-tauri/target/debug/baluard-daemon"
@@ -397,25 +399,27 @@ _sidecar:
 	# a change to EITHER crate triggers a rebuild (NMH sources can change
 	# without touching daemon sources, and vice versa).
 	SIDECAR="desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
-	NMH_BIN="target/release/baluard-nmh"
-	NEWEST_REFERENCE="$SIDECAR"
-	if [ -f "$NMH_BIN" ] && [ "$NMH_BIN" -nt "$NEWEST_REFERENCE" ]; then
-	  NEWEST_REFERENCE="$NMH_BIN"
+	NMH_BIN="desktop/src-tauri/binaries/baluard-nmh-$TRIPLE"
+	OLDEST_REFERENCE="$SIDECAR"
+	if [ -f "$NMH_BIN" ] && [ "$NMH_BIN" -ot "$OLDEST_REFERENCE" ]; then
+	  OLDEST_REFERENCE="$NMH_BIN"
 	fi
 	if [ -f "$SIDECAR" ] && [ -f "$NMH_BIN" ]; then
-	  NEWEST_SRC=$(find crates -name '*.rs' -newer "$NEWEST_REFERENCE" -print -quit 2>/dev/null || true)
+	  NEWEST_SRC=$(find crates -name '*.rs' -newer "$OLDEST_REFERENCE" -print -quit 2>/dev/null || true)
 	  if [ -z "$NEWEST_SRC" ]; then
 	    echo "Sidecars up-to-date (no Rust changes detected)"
 	  else
 	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh --features baluard-daemon/fido2
 	    cp target/release/baluard-daemon "$SIDECAR"
 	    cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
+	    cp target/release/baluard-nmh "desktop/src-tauri/binaries/baluard-nmh-$TRIPLE"
 	    echo "Sidecars rebuilt (stale): $SIDECAR, $NMH_BIN"
 	  fi
 	else
 	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh --features baluard-daemon/fido2
 	    cp target/release/baluard-daemon "$SIDECAR"
 	    cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
+	    cp target/release/baluard-nmh "desktop/src-tauri/binaries/baluard-nmh-$TRIPLE"
 	    echo "Sidecars rebuilt (missing): $SIDECAR, $NMH_BIN"
 	fi
 
@@ -511,7 +515,7 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 	BALUARD_DEBUG=1 BALUARD_LOG_DIR="$LOG_DIR" cd desktop && npm run tauri dev
 
 # Build desktop app (production bundle)
-desktop-build: _sysdeps-desktop _sidecar desktop-deps
+desktop-build: _sysdeps-desktop _sidecar desktop-deps _nmh-manifests
 	#!/usr/bin/env bash
 	set -euo pipefail
 	if [[ "$(uname -s)" == "Linux" ]]; then
@@ -530,6 +534,12 @@ desktop-build: _sysdeps-desktop _sidecar desktop-deps
 # cargo-xwin, clang, lld, llvm-rc, and makensis; see scripts/build-windows-installer.sh.
 desktop-windows: desktop-deps
 	./scripts/build-windows-installer.sh
+
+# Generate the NMH host manifests the deb/rpm bundles register with each
+# browser. BALUARD_CHROME_EXTENSION_ID bakes the real Chrome Web Store origin
+# in; without it the chrome manifests get a placeholder (loud stderr warning).
+_nmh-manifests:
+	./scripts/build-nmh-manifests.sh
 
 # D79: print (do not run) the updater signing-key generation command.
 # The private key never leaves your machine; the PUBLIC key from that
