@@ -7563,17 +7563,30 @@ impl VaultState {
             ("local", &local_bytes),
             ("remote", &remote_bytes),
         ] {
-            if let Ok(schema) = handle.stored_item_schema_bytes(cipher_id, bytes)
-                && schema > baluard_core::types::ITEM_SCHEMA_VERSION
-            {
-                drop(guard);
-                return Ok(serde_json::json!({
-                    "pending": true,
-                    "newer_schema": true,
-                    "unreachable_side": which,
-                    "count": count,
-                })
-                .to_string());
+            match handle.stored_item_schema_bytes(cipher_id, bytes) {
+                Ok(schema) if schema > baluard_core::types::ITEM_SCHEMA_VERSION => {
+                    drop(guard);
+                    return Ok(serde_json::json!({
+                        "pending": true,
+                        "newer_schema": true,
+                        "unreachable_side": which,
+                        "count": count,
+                    })
+                    .to_string());
+                }
+                Err(baluard_core::BaluardError::Vault(
+                    baluard_core::error::VaultError::ItemSchemaTooNew(_),
+                )) => {
+                    drop(guard);
+                    return Ok(serde_json::json!({
+                        "pending": true,
+                        "newer_schema": true,
+                        "unreachable_side": which,
+                        "count": count,
+                    })
+                    .to_string());
+                }
+                _ => {}
             }
         }
 
@@ -7780,13 +7793,22 @@ impl VaultState {
         // Only the raw-blob verdicts apply (same restriction as the merge
         // gate's newer_schema response).
         for bytes in [&local_bytes, &remote_bytes] {
-            if let Ok(schema) = handle.stored_item_schema_bytes(cipher_id, bytes)
-                && schema > baluard_core::types::ITEM_SCHEMA_VERSION
-            {
-                return Err(
-                    "keep_both is unavailable for entries written by a newer app version; use keep local or keep remote"
-                        .to_string(),
-                );
+            match handle.stored_item_schema_bytes(cipher_id, bytes) {
+                Ok(schema) if schema > baluard_core::types::ITEM_SCHEMA_VERSION => {
+                    return Err(
+                        "keep_both is unavailable for entries written by a newer app version; use keep local or keep remote"
+                            .to_string(),
+                    );
+                }
+                Err(baluard_core::BaluardError::Vault(
+                    baluard_core::error::VaultError::ItemSchemaTooNew(_),
+                )) => {
+                    return Err(
+                        "keep_both is unavailable for entries written by a newer app version; use keep local or keep remote"
+                            .to_string(),
+                    );
+                }
+                _ => {}
             }
         }
         let remote_cipher = match handle.decrypt_cipher_bytes(cipher_id, &remote_bytes) {

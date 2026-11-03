@@ -2734,7 +2734,7 @@ impl VaultHandle {
                     )
                     .into());
                 };
-                self.reencrypt_after_sweep(&rotation);
+                self.reencrypt_after_sweep(&rotation)?;
                 crate::vault::collections::clear_sweep_pending(&self.path);
             }
             crate::vault::collections::GrantTarget::Group { .. } => {
@@ -2759,6 +2759,7 @@ impl VaultHandle {
         if pending_rotations.is_empty() {
             return;
         }
+        let mut carried_all = true;
         for rot in &pending_rotations {
             let flipped =
                 crate::vault::collections::open_collection(&self.path, sgk, &rot.collection_id)
@@ -2770,10 +2771,14 @@ impl VaultHandle {
                     })
                     .unwrap_or(false);
             if flipped {
-                self.reencrypt_after_sweep(rot);
+                if self.reencrypt_after_sweep(rot).is_err() {
+                    carried_all = false;
+                }
             }
         }
-        crate::vault::collections::clear_sweep_pending(&self.path);
+        if carried_all {
+            crate::vault::collections::clear_sweep_pending(&self.path);
+        }
     }
 
     pub fn collections_sweep(
@@ -2791,7 +2796,7 @@ impl VaultHandle {
         // derive from the CK (S3-7c path-derived domains), so a rotated CK
         // without this pass destroys every entry in the collection.
         for rot in &swept.rotations {
-            self.reencrypt_after_sweep(rot);
+            self.reencrypt_after_sweep(rot)?;
         }
         crate::vault::collections::clear_sweep_pending(&self.path);
         Ok(swept.removed)
@@ -2827,7 +2832,7 @@ impl VaultHandle {
         else {
             return Ok(false);
         };
-        self.reencrypt_after_sweep(&rotation);
+        self.reencrypt_after_sweep(&rotation)?;
         crate::vault::collections::clear_sweep_pending(&self.path);
         Ok(true)
     }
@@ -2837,10 +2842,14 @@ impl VaultHandle {
     /// envelope's own epoch and seq (content unchanged). Per-file
     /// best-effort: one corrupt entry must not wedge the sweep — it is
     /// named loudly and left behind instead.
-    fn reencrypt_after_sweep(&self, rot: &crate::vault::collections::SweptRotation) {
+    fn reencrypt_after_sweep(
+        &self,
+        rot: &crate::vault::collections::SweptRotation,
+    ) -> Result<(), BaluardError> {
         let Some(dir) = &rot.dir else {
-            return;
+            return Ok(());
         };
+        let mut carried_all = true;
         for sub in ["ciphers", "trash"] {
             let dir_path = self.path.join(sub).join(dir);
             let Ok(entries) = std::fs::read_dir(&dir_path) else {
@@ -2857,8 +2866,20 @@ impl VaultHandle {
                         "sweep: could not carry {} into the collection's new key ({e}); the entry is left behind",
                         path.display()
                     );
+                    carried_all = false;
                 }
             }
+        }
+        if carried_all {
+            Ok(())
+        } else {
+            // Keep the pending marker so converge_pending_sweeps retries;
+            // clearing it here would strand every uncarried entry under
+            // the destroyed old collection key.
+            Err(VaultError::Metadata(
+                "sweep carry incomplete; the pending marker stays for retry".into(),
+            )
+            .into())
         }
     }
 
@@ -2877,6 +2898,28 @@ impl VaultHandle {
         let envelope_bytes = std::fs::read(path)?;
         let envelope = crate::vault::envelope::deserialize(&envelope_bytes)?;
         let key_epoch = envelope.header.key_epoch;
+        let new_item_probe = crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
+            &rot.new_ck,
+            cipher_id,
+            key_epoch,
+        );
+        // Idempotency: converge retries a kept marker, and an already
+        // carried entry only opens under the NEW key. Re-carrying it
+        // would fail the old-key decrypt below and wedge the marker
+        // forever.
+        if crate::vault::cipher::decrypt_cipher_raw(
+            self.vault_id,
+            cipher_id,
+            &crate::vault::cipher::CipherFile {
+                id: cipher_id,
+                envelope_bytes: envelope_bytes.clone(),
+            },
+            &new_item_probe,
+        )
+        .is_ok()
+        {
+            return Ok(());
+        }
         let old_item = crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
             &rot.old_ck,
             cipher_id,
@@ -7950,6 +7993,9 @@ impl VaultHandle {
 
         for id in ids {
             let Some(file_path) = self.cipher_file_path(id) else {
+                // An id the dir map cannot place counts as unreadable: skipping it
+                // silently would permanently diverge the index from disk.
+                skipped.push(id);
                 continue;
             };
             let file_dir = file_path
@@ -9805,13 +9851,14 @@ impl VaultHandle {
                     archived: cipher.archived,
                     tags: updated_tags,
                 };
-                if matches!(
-                    self.update_cipher(meta.id, &input),
-                    Err(BaluardError::Vault(VaultError::ItemSchemaTooNew(_)))
-                ) {
-                    // A newer-schema entry stays untouched rather than aborting the
-                    // bulk operation half-applied.
-                    continue;
+                match self.update_cipher(meta.id, &input) {
+                    Ok(()) => {}
+                    Err(BaluardError::Vault(VaultError::ItemSchemaTooNew(_))) => {
+                        // A newer-schema entry stays untouched rather than aborting the
+                        // bulk operation half-applied.
+                        continue;
+                    }
+                    Err(e) => return Err(e),
                 }
                 affected += 1;
             }
@@ -9861,13 +9908,14 @@ impl VaultHandle {
                     archived: cipher.archived,
                     tags: updated_tags,
                 };
-                if matches!(
-                    self.update_cipher(meta.id, &input),
-                    Err(BaluardError::Vault(VaultError::ItemSchemaTooNew(_)))
-                ) {
-                    // A newer-schema entry stays untouched rather than aborting the
-                    // bulk operation half-applied.
-                    continue;
+                match self.update_cipher(meta.id, &input) {
+                    Ok(()) => {}
+                    Err(BaluardError::Vault(VaultError::ItemSchemaTooNew(_))) => {
+                        // A newer-schema entry stays untouched rather than aborting the
+                        // bulk operation half-applied.
+                        continue;
+                    }
+                    Err(e) => return Err(e),
                 }
                 affected += 1;
             }
@@ -11392,6 +11440,9 @@ impl VaultHandle {
 
         for id in ids {
             let Some(file_path) = self.cipher_file_path(id) else {
+                // An id the dir map cannot place counts as unreadable: skipping it
+                // silently would permanently diverge the index from disk.
+                skipped.push(id);
                 continue;
             };
             let file_dir = file_path
@@ -14338,7 +14389,7 @@ mod tests {
             dir: Some(hex_dir),
             failed_groups: vec![],
         };
-        handle.reencrypt_after_sweep(&rot);
+        handle.reencrypt_after_sweep(&rot).unwrap();
 
         // The entry must now open under the NEW CK's item key, with the
         // newer schema intact: the sweep must carry it, not destroy it.
@@ -14426,6 +14477,62 @@ mod tests {
         .unwrap();
         let id_after = VaultHandle::vault_id_for_path(dir.path()).unwrap();
         assert_eq!(id_after, id_before, "vault id must not follow the salt");
+    }
+
+    #[test]
+    fn rename_tag_propagates_non_schema_errors() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let input = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec!["oldtag".into()],
+            reprompt: false,
+        };
+        let id = handle.add_cipher(&input).unwrap();
+        // Reads keep working (the index lists the entry, get_cipher
+        // decrypts it) but the update's write must fail: a write error
+        // has to surface, not count the entry as renamed.
+        let p = handle.cipher_file_path(id).unwrap();
+        let dir = p.parent().unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(dir).unwrap().permissions();
+        perms.set_mode(0o500);
+        std::fs::set_permissions(dir, perms).unwrap();
+        let res = handle.rename_tag("oldtag", "newtag");
+        let mut perms = std::fs::metadata(dir).unwrap().permissions();
+        perms.set_mode(0o700);
+        std::fs::set_permissions(dir, perms).unwrap();
+        assert!(res.is_err(), "write error must propagate, got {res:?}");
+    }
+
+    #[test]
+    fn unmapped_collection_dir_counts_as_unreadable() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        // A stray .enc file in an unmapped ciphers subdirectory: the disk
+        // scan sees the id, but no dir map entry resolves its path.
+        let stray = uuid::Uuid::new_v4();
+        let unknown_dir = dir.path().join("ciphers/dead00beefdead00beefdead00beef00");
+        std::fs::create_dir_all(&unknown_dir).unwrap();
+        std::fs::write(unknown_dir.join(format!("{stray}.enc")), b"x").unwrap();
+        let (metas, skipped) = handle.list_cipher_meta_full_with_skipped().unwrap();
+        assert_eq!(metas.len(), 0);
+        assert_eq!(skipped, 1, "unmapped dir entry must count as unreadable");
+        // The index must not permanently diverge from disk on it.
+        let (_, skipped) = handle.list_cipher_meta_full_with_skipped().unwrap();
+        assert_eq!(skipped, 1);
     }
 
     #[test]
