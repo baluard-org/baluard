@@ -156,6 +156,21 @@ impl Drop for VaultState {
     }
 }
 
+/// True when a conflict side's stored schema cannot be modeled by this
+/// build: a known-newer schema number, or an out-of-range integer the
+/// strict reader clamps into ItemSchemaTooNew (e.g. 5000000000). The
+/// merge and keep_both gates refuse typed work on this signal so newer
+/// fields are never stripped into a merge commit.
+fn schema_blocks_typed_merge(result: &Result<u32, baluard_core::BaluardError>) -> bool {
+    match result {
+        Ok(schema) if *schema > baluard_core::types::ITEM_SCHEMA_VERSION => true,
+        Err(baluard_core::BaluardError::Vault(
+            baluard_core::error::VaultError::ItemSchemaTooNew(_),
+        )) => true,
+        _ => false,
+    }
+}
+
 impl VaultState {
     /// Create a new empty state pointing at a vault directory.
     pub fn new(vault_path: PathBuf) -> Self {
@@ -7470,7 +7485,6 @@ impl VaultState {
         use baluard_core::sync::conflict::{MergeResult, merge_ciphers};
         use baluard_core::sync::engine::SyncEngine;
         use baluard_core::types::CipherInput;
-
         // Phase 2b review fix #2: serialize against the sync cycle's cycle_lock
         // so two overlapping sync.conflict polls (10s + focus/visibility) can't
         // race finalize_conflicts' HEAD-tip guard. Held across the spawn_blocking
@@ -7563,30 +7577,15 @@ impl VaultState {
             ("local", &local_bytes),
             ("remote", &remote_bytes),
         ] {
-            match handle.stored_item_schema_bytes(cipher_id, bytes) {
-                Ok(schema) if schema > baluard_core::types::ITEM_SCHEMA_VERSION => {
-                    drop(guard);
-                    return Ok(serde_json::json!({
-                        "pending": true,
-                        "newer_schema": true,
-                        "unreachable_side": which,
-                        "count": count,
-                    })
-                    .to_string());
-                }
-                Err(baluard_core::BaluardError::Vault(
-                    baluard_core::error::VaultError::ItemSchemaTooNew(_),
-                )) => {
-                    drop(guard);
-                    return Ok(serde_json::json!({
-                        "pending": true,
-                        "newer_schema": true,
-                        "unreachable_side": which,
-                        "count": count,
-                    })
-                    .to_string());
-                }
-                _ => {}
+            if schema_blocks_typed_merge(&handle.stored_item_schema_bytes(cipher_id, bytes)) {
+                drop(guard);
+                return Ok(serde_json::json!({
+                    "pending": true,
+                    "newer_schema": true,
+                    "unreachable_side": which,
+                    "count": count,
+                })
+                .to_string());
             }
         }
 
@@ -7793,22 +7792,11 @@ impl VaultState {
         // Only the raw-blob verdicts apply (same restriction as the merge
         // gate's newer_schema response).
         for bytes in [&local_bytes, &remote_bytes] {
-            match handle.stored_item_schema_bytes(cipher_id, bytes) {
-                Ok(schema) if schema > baluard_core::types::ITEM_SCHEMA_VERSION => {
-                    return Err(
-                        "keep_both is unavailable for entries written by a newer app version; use keep local or keep remote"
-                            .to_string(),
-                    );
-                }
-                Err(baluard_core::BaluardError::Vault(
-                    baluard_core::error::VaultError::ItemSchemaTooNew(_),
-                )) => {
-                    return Err(
-                        "keep_both is unavailable for entries written by a newer app version; use keep local or keep remote"
-                            .to_string(),
-                    );
-                }
-                _ => {}
+            if schema_blocks_typed_merge(&handle.stored_item_schema_bytes(cipher_id, bytes)) {
+                return Err(
+                    "keep_both is unavailable for entries written by a newer app version; use keep local or keep remote"
+                        .to_string(),
+                );
             }
         }
         let remote_cipher = match handle.decrypt_cipher_bytes(cipher_id, &remote_bytes) {
@@ -9781,6 +9769,34 @@ struct AppMatchContext {
 #[cfg(test)]
 mod favicon_tests {
     use super::VaultState;
+
+    /// Pins the conflict-gate predicate: an out-of-range schema integer
+    /// (the strict reader clamps 5000000000 into ItemSchemaTooNew) must
+    /// refuse typed merge work exactly like a plain newer schema, not
+    /// fall through to the decrypt path and surface as a decode error.
+    #[test]
+    fn schema_gate_blocks_out_of_range_integers() {
+        use super::schema_blocks_typed_merge;
+        use baluard_core::BaluardError;
+        use baluard_core::error::VaultError;
+
+        let current = Ok::<u32, BaluardError>(baluard_core::types::ITEM_SCHEMA_VERSION);
+        assert!(!schema_blocks_typed_merge(&current));
+
+        let newer = Ok::<u32, BaluardError>(baluard_core::types::ITEM_SCHEMA_VERSION + 1);
+        assert!(schema_blocks_typed_merge(&newer));
+
+        let clamped =
+            Err::<u32, BaluardError>(BaluardError::Vault(VaultError::ItemSchemaTooNew(u32::MAX)));
+        assert!(
+            schema_blocks_typed_merge(&clamped),
+            "out-of-range schema must refuse typed merge, not decode-error"
+        );
+
+        let other =
+            Err::<u32, BaluardError>(BaluardError::Vault(VaultError::Corrupt("damaged".into())));
+        assert!(!schema_blocks_typed_merge(&other));
+    }
 
     /// Audit C20: a domain containing '&' must not inject extra query
     /// parameters into the favicon-service URL.

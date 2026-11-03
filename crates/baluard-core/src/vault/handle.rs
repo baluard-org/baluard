@@ -2804,11 +2804,9 @@ impl VaultHandle {
                     continue;
                 }
             };
-            if flipped {
-                if self.reencrypt_after_sweep(rot).is_err() {
-                    carried_all = false;
-                    stuck.push(rot.collection_id);
-                }
+            if flipped && self.reencrypt_after_sweep(rot).is_err() {
+                carried_all = false;
+                stuck.push(rot.collection_id);
             }
         }
         if carried_all {
@@ -14555,6 +14553,48 @@ mod tests {
     fn running_as_root() -> bool {
         let euid = unsafe { libc::geteuid() };
         euid == 0
+    }
+
+    #[test]
+    fn delete_tag_propagates_non_schema_errors() {
+        if running_as_root() {
+            eprintln!(
+                "skipping: root ignores write permissions, so the chmod-denial premise is false"
+            );
+            return;
+        }
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let input = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec!["oldtag".into()],
+            reprompt: false,
+        };
+        let id = handle.add_cipher(&input).unwrap();
+        // Same write-error contract as rename_tag: the delete must
+        // surface the failure, not count the entry as removed.
+        let p = handle.cipher_file_path(id).unwrap();
+        let dir = p.parent().unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(dir).unwrap().permissions();
+        perms.set_mode(0o500);
+        std::fs::set_permissions(dir, perms).unwrap();
+        let res = handle.delete_tag("oldtag");
+        let mut perms = std::fs::metadata(dir).unwrap().permissions();
+        perms.set_mode(0o700);
+        std::fs::set_permissions(dir, perms).unwrap();
+        assert!(res.is_err(), "write error must propagate, got {res:?}");
     }
 
     #[test]
