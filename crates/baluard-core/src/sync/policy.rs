@@ -366,7 +366,14 @@ pub fn authorize_scoped(
             };
         }
     }
-    Err(deny())
+    // No row matched: every legitimate path of the current format is
+    // covered by the table, so this is a directory a newer client
+    // introduced. Still denied (deny-by-default is the security
+    // property), but the error class must tell the user to update the
+    // app instead of reporting a policy violation.
+    Err(SyncError::UnsupportedVaultPath {
+        path: path.to_string(),
+    })
 }
 
 /// Personal-flat convenience wrapper (no collections in scope).
@@ -434,6 +441,40 @@ mod tests {
     // deletion variant of the policy check.
     fn allowed(path: &str, role: CommitRole, scope: &CollectionScope) -> Result<(), SyncError> {
         authorize_scoped(DA, Some(MA), role, path, scope, false)
+    }
+
+    // Version-skew contract: a path the table does not know at all is
+    // a newer client's new top-level directory, not a role refusal. It
+    // stays denied, but the error must say "update the app" instead of
+    // a policy violation so old clients surface a clean message.
+    #[test]
+    fn unknown_top_level_dir_is_update_error_not_policy() {
+        let err = allowed(
+            "widgets/x/y.json",
+            CommitRole::Owner,
+            &CollectionScope::none(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, SyncError::UnsupportedVaultPath { .. }),
+            "got {err:?}"
+        );
+        // New meta files by an Admin keep passing (newer file types
+        // under meta/** must not wedge old clients).
+        allowed(
+            "meta/newthing-v2.json",
+            CommitRole::Admin,
+            &CollectionScope::none(),
+        )
+        .unwrap();
+        // A role refusal on a KNOWN path keeps the policy class.
+        let err = allowed(
+            "meta/space.json",
+            CommitRole::Editor,
+            &CollectionScope::none(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, SyncError::PolicyViolation { .. }));
     }
 
     fn allowed_del(path: &str, role: CommitRole, scope: &CollectionScope) -> Result<(), SyncError> {
