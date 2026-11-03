@@ -130,7 +130,8 @@
     "folderNamePlaceholder": "Nombre de la carpeta",
     "newButton": "+ Nuevo",
     "searchPlaceholder": "Buscar en la bóveda...",
-    "headerName": "Nombre"
+    "headerName": "Nombre",
+    "unreadableEntries": "{{count}} entradas necesitan una versión más reciente de la app y quedan ocultas hasta que actualices Baluard."
   },
   "entry": {
     "nameRequired": "El nombre de la entrada es obligatorio",

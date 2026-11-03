@@ -45,6 +45,7 @@ impl DaemonHandle {
             payload: payload.to_string(),
             session_token: String::new(), // no token — for token-gated tests
             slug: String::new(),
+            ipc_version: 1,
         };
         let body = req.encode_to_vec();
 
@@ -378,6 +379,7 @@ impl VaultedDaemon {
             payload: payload.to_string(),
             session_token: self.token.clone().unwrap_or_default(),
             slug: "spawn-test".into(),
+            ipc_version: 1,
         };
         let body = req.encode_to_vec();
         let mut stream = UnixStream::connect(&self.daemon.socket_path).expect("connect");
@@ -501,6 +503,7 @@ fn end_to_end_unauth_list_fails() {
         payload: String::new(),
         session_token: "wrong-token-12345".into(),
         slug: "spawn-test".into(),
+        ipc_version: 1,
     };
     let body = req.encode_to_vec();
     let mut stream = UnixStream::connect(&v.daemon.socket_path).expect("connect");

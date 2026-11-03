@@ -81,6 +81,7 @@ fn request(
         payload: payload.to_string(),
         session_token: token.to_string(),
         slug: slug.to_string(),
+        ipc_version: 1,
     };
     let body = req.encode_to_vec();
     let mut stream = UnixStream::connect(socket).expect("connect");

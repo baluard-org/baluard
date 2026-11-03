@@ -162,7 +162,8 @@
       "stateUnlocked": "Desbloqueado",
       "stateLocked": "Bloqueado",
       "stateClosed": "Fechado"
-    }
+    },
+    "unreadableEntries": "{{count}} entradas precisam de uma versão mais recente da app e ficam ocultas até atualizar o Baluard."
   },
   "entry": {
     "nameRequired": "O nome da entrada é obrigatório",

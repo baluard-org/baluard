@@ -1214,8 +1214,13 @@ impl VaultState {
         // Folders
         let folders = handle.list_folders().map_err(|e| format!("{e}"))?;
 
-        // Main ciphers (excludes archived)
-        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        // Main ciphers (excludes archived). The unreadable count covers
+        // entries this build cannot decrypt (newer kind, foreign epoch,
+        // damage) so the UI can tell the user to update instead of
+        // silently hiding them.
+        let (metas, unreadable) = handle
+            .list_cipher_meta_full_with_skipped()
+            .map_err(|e| format!("{e}"))?;
         let mut ciphers = Vec::with_capacity(metas.len());
         for meta in &metas {
             match handle.get_cipher(meta.id) {
@@ -1291,6 +1296,7 @@ impl VaultState {
             "trash": trash,
             "archived": archived,
             "tags": tags,
+            "unreadable": unreadable,
         }))
     }
 

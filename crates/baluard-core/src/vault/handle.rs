@@ -7874,7 +7874,13 @@ impl VaultHandle {
     }
 
     /// List ALL cipher metadata (including archived). Exposed for export, health, and sync.
-    pub fn list_cipher_meta_full(&self) -> Result<Vec<crate::types::CipherMeta>, BaluardError> {
+    /// Metas plus the count of on-disk entries this build cannot decrypt
+    /// (foreign epoch, unknown kind, corrupt envelope). The count rides
+    /// `vault.list_full` so old clients can tell the user an update is
+    /// needed instead of silently hiding entries.
+    pub fn list_cipher_meta_full_with_skipped(
+        &self,
+    ) -> Result<(Vec<crate::types::CipherMeta>, usize), BaluardError> {
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -7919,14 +7925,14 @@ impl VaultHandle {
                         if disk_ids == indexed {
                             let mut metas = ciphers;
                             self.fill_collection_ids(&mut metas);
-                            return Ok(metas);
+                            return Ok((metas, skipped.len()));
                         }
                     }
                     // Cannot scan — trust the index rather than showing nothing.
                     Err(_) => {
                         let mut metas = ciphers;
                         self.fill_collection_ids(&mut metas);
-                        return Ok(metas);
+                        return Ok((metas, skipped.len()));
                     }
                 }
             }
@@ -8026,7 +8032,11 @@ impl VaultHandle {
             );
         }
 
-        Ok(metas)
+        Ok((metas, skipped.len()))
+    }
+
+    pub fn list_cipher_meta_full(&self) -> Result<Vec<crate::types::CipherMeta>, BaluardError> {
+        self.list_cipher_meta_full_with_skipped().map(|(m, _)| m)
     }
 
     /// P3: adopt this device's fresh Root Key wrap from the committed rekey
@@ -14416,6 +14426,64 @@ mod tests {
         .unwrap();
         let id_after = VaultHandle::vault_id_for_path(dir.path()).unwrap();
         assert_eq!(id_after, id_before, "vault id must not follow the salt");
+    }
+
+    #[test]
+    fn list_reports_unreadable_count() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let input = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user@example.com".into()),
+                password: None,
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+                fido2_credentials: None,
+                favicon: None,
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+        let ok_id = handle.add_cipher(&input).unwrap();
+        let bad_id = handle.add_cipher(&input).unwrap();
+        assert_ne!(ok_id, bad_id);
+
+        // Damage one envelope and drop the index so the list takes the
+        // scan path and hits the skip.
+        let bad_path = handle.cipher_file_path(bad_id).unwrap();
+        std::fs::write(&bad_path, b"not-an-envelope").unwrap();
+        for entry in std::fs::read_dir(dir.path().join("meta"))
+            .unwrap()
+            .flatten()
+        {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("index") {
+                std::fs::remove_file(entry.path()).unwrap();
+            }
+        }
+
+        let (metas, skipped) = handle.list_cipher_meta_full_with_skipped().unwrap();
+        assert_eq!(metas.len(), 1, "damaged entry must not render");
+        assert_eq!(skipped, 1, "damaged entry must be counted");
+
+        // The skip persists into the rebuilt index: the fast path must
+        // report the same count without rescanning.
+        let (metas, skipped) = handle.list_cipher_meta_full_with_skipped().unwrap();
+        assert_eq!(metas.len(), 1);
+        assert_eq!(skipped, 1);
     }
 
     #[test]
