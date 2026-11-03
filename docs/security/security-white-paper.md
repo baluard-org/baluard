@@ -42,7 +42,7 @@ Baluard uses Argon2id, the memory-hard key derivation function, exclusively. You
 | Desktop standard | 64 MiB | 3 | 2 |
 | Desktop high | 256 MiB | 4 | 4 |
 
-The parameters travel in plaintext inside the vault, so an observer of a sync remote can read your profile from the numbers. That is deliberate: unlocking requires them, and the profile label itself is not stored. Every derivation refuses parameters outside hard bounds (19 to 512 MiB of memory, 1 to 10 iterations, 1 to 8 lanes), so a tampered remote cannot make the app allocate itself to death the moment you type your password.
+The parameters travel in plaintext inside the vault, so an observer of a sync remote can read your profile from the numbers. That is deliberate: unlocking requires them, and the profile label itself is not stored. Vault and reveal derivations bound attacker-controlled parameters to hard limits (19 to 256 MiB of memory, 1 to 10 iterations, 1 to 8 lanes), so a tampered remote cannot make the app allocate itself to death the moment you type your password.
 
 ### Quick unlock
 
