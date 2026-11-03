@@ -22,5 +22,6 @@ MV3 extension (Chrome + Firefox) that bridges the browser to the Baluard native 
 - `just ext-build`: build both Chrome and Firefox extension bundles
 - `just ext-build-chrome`: build Chrome extension bundle
 - `just ext-build-firefox`: build Firefox extension bundle
+- `just ext-package`: rebuild both dists, fail on drift from the committed dists, and zip each store dist into `./dist` as `baluard-extension-<version>-<store>.zip` for store upload
 - `just test-browser`: run extension test suite via Vitest
 - `just install-nmh-manifest <browser> <ext_id>`: link native messaging host manifest for the specified browser
