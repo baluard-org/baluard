@@ -42,7 +42,8 @@ See [the ADR index](adr/index.md) for the full numbered list.
 | [Dev Setup & Workflow](dev/dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing, troubleshooting |
 | [Mobile Dev Setup](dev/dev-setup-mobile.md) | Android SDK, NDK, OpenJDK 17, and Gradle setup for mobile development |
 | [Translations & Localization](dev/translations.md) | Guide for adding and maintaining desktop and mobile language translations |
-| [Linux Repositories](dev/linux-repositories.md) | GPG-verified apt and dnf package repositories: user setup, key fingerprint, direct-download verification, and the maintainer release flow |
+| [Linux Repositories](dev/linux-repositories.md) | GPG-verified apt and dnf package repositories: user setup, key fingerprint, direct-download verification |
+| [Release Protocol](dev/release-protocol.md) | Shipping runbook for every variant: version bump, signing keys and store credentials, build matrix (Linux/macOS/Windows/extension/Android), the release pipeline, store publishing, update channels |
 | [Git Provider Apps & Tokens](dev/git-provider-apps-and-tokens.md) | App registration credentials and token management for GitHub, GitLab, and Codeberg |
 
 ## Design

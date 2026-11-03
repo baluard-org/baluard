@@ -43,6 +43,8 @@ sha256sum --check --ignore-missing SHA256SUMS
 
 ## Maintainer release flow
 
+The full shipping runbook lives in `docs/dev/release-protocol.md` (version bump, keys, build matrix, store publishing, update channels). The Linux-specific summary:
+
 The signing keys live outside the repository and are Esteban's to hold and back up. The release flow from locally built artifacts (default staging dir `./dist`, gitignored):
 
 Build the desktop and Android release artifacts first, then run:
