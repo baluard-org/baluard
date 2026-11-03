@@ -12,6 +12,7 @@ message GatewayRequest {
   reserved 3;
   string session_token = 4;  // R7-2: per-session auth token (set after unlock)
   string slug = 5;            // Phase 6: target vault slug (per-request routing; empty = active vault)
+  uint32 ipc_version = 6;     // client's IPC protocol version; absent (0) = 1
 }
 
 message GatewayResponse {
@@ -19,4 +20,7 @@ message GatewayResponse {
   string error_message = 2;
   string payload = 3;
   string session_token = 4;  // R7-2: returned on unlock, must be sent back with every subsequent request
+  uint32 ipc_version = 5;      // daemon's current IPC protocol version
+  uint32 ipc_min_version = 6;  // oldest client version the daemon accepts
+  uint32 ipc_max_version = 7;  // newest client version the daemon accepts
 }

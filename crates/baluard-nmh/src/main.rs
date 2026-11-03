@@ -502,6 +502,7 @@ fn forward_with_reauth(
                 payload: String::new(),
                 error_message: e.to_string(),
                 session_token: String::new(),
+                ..Default::default()
             };
             return (resp, "no-daemon");
         }
@@ -526,6 +527,7 @@ fn forward_with_reauth(
                             payload: String::new(),
                             error_message: e.to_string(),
                             session_token: String::new(),
+                            ..Default::default()
                         };
                         return (r, "no-daemon");
                     }
@@ -543,6 +545,7 @@ fn forward_with_reauth(
                     payload: String::new(),
                     error_message: code.to_string(),
                     session_token: String::new(),
+                    ..Default::default()
                 };
                 return (r, code.as_str());
             }
@@ -593,6 +596,7 @@ fn forward(action: &str, payload: &str, token: &str) -> anyhow::Result<GatewayRe
         payload: payload.to_string(),
         session_token: token.to_string(),
         slug: String::new(), // bridge tokens are slug-agnostic (Decision 10)
+        ipc_version: baluard_core::IPC_PROTOCOL_VERSION,
     };
     let body = req.encode_to_vec();
 
@@ -615,7 +619,22 @@ fn forward(action: &str, payload: &str, token: &str) -> anyhow::Result<GatewayRe
         anyhow::bail!("response frame truncated");
     }
     let resp = GatewayResponse::decode(&buf[offset..end])?;
+    check_daemon_ipc_range(resp.ipc_version, resp.ipc_min_version, resp.ipc_max_version)?;
     Ok(resp)
+}
+
+/// Reverse IPC gate: refuse when the daemon's range excludes this
+/// relay. All-zero fields mean a pre-field daemon (version 1).
+fn check_daemon_ipc_range(cur: u32, min: u32, max: u32) -> anyhow::Result<()> {
+    let (cur, min, max) = if cur == 0 && min == 0 && max == 0 {
+        (1, 1, 1)
+    } else {
+        (cur, min, max)
+    };
+    if !(min..=max).contains(&baluard_core::IPC_PROTOCOL_VERSION) {
+        anyhow::bail!("daemon speaks IPC protocol {cur} (supports {min}-{max}); update Baluard");
+    }
+    Ok(())
 }
 
 fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
@@ -867,8 +886,14 @@ mod tests {
     fn handle_message_bootstrap_action_skips_token_but_still_forwards() {
         // bridge.pair_complete is bootstrap: no pairing needed yet, but the
         // daemon still has to be reached. With no daemon running, the forward
-        // path returns code "no-daemon".
+        // path returns code "no-daemon". A live daemon on the shared
+        // runtime socket (a dev machine running the app) answers instead and
+        // invalidates the premise, so guard on socket presence.
         nmh_test_env();
+        if baluard_core::paths::socket_path().exists() {
+            eprintln!("skipped: a daemon is listening on the runtime socket");
+            return;
+        }
         let resp = handle_message(serde_json::json!({
             "id": "x",
             "action": "bridge.pair_complete",
@@ -916,6 +941,7 @@ mod tests {
             payload: String::new(),
             error_message: String::new(),
             session_token: String::new(),
+            ..Default::default()
         };
         assert_eq!(code_for(&resp), "ok");
     }
@@ -930,6 +956,7 @@ mod tests {
                 payload: String::new(),
                 error_message: msg.to_string(),
                 session_token: String::new(),
+                ..Default::default()
             };
             assert_eq!(code_for(&resp), "locked", "msg={msg}");
         }
@@ -944,6 +971,7 @@ mod tests {
             payload: String::new(),
             error_message: baluard_core::bridge::STALE_TOKEN_ERROR.to_string(),
             session_token: String::new(),
+            ..Default::default()
         };
         assert_eq!(code_for(&resp), "denied");
     }

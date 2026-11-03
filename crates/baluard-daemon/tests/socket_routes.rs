@@ -65,6 +65,7 @@ fn request(
         payload: payload.to_string(),
         session_token: token.to_string(),
         slug: slug.to_string(),
+        ipc_version: 1,
     };
     let body = req.encode_to_vec();
     let mut stream = UnixStream::connect(socket).expect("connect");
@@ -736,6 +737,7 @@ fn attach_upload_rejects_oversized_file() {
         payload: upload,
         session_token: v.token.clone(),
         slug: "spawn-test".to_string(),
+        ipc_version: 1,
     };
     let body = req.encode_to_vec();
     let mut stream = std::os::unix::net::UnixStream::connect(&v.socket).expect("connect");
