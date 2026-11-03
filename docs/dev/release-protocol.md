@@ -42,15 +42,15 @@ Everything that signs lives outside the repository. Losing any of these orphans 
 | Release GPG key | `~/.baluard/release-gnupg` | apt and dnf repository metadata; fingerprint `223310EA BF1A B6FE E6BD DF3E 2A53 1D54 E6D7 4804` |
 | F-Droid repo key + APK keystore | `~/.baluard/fdroid/` (`config.yml`, `keystore.p12`, `allowed-apk-signing-key`) | APK and F-Droid indexes; repo fingerprint `C5A690013893C46F208A506AEA9217D37FF007C0A2B0A2514039FE28DD58C7A8` |
 | Android upload keystore | `~/.baluard/baluard-android-upload.keystore` (mode 600, RSA 4096, alias `baluard-upload`; keystore and passwords backed up in Bitwarden) | Release APKs and the Play AAB via the `baluardRelease` signing config |
-| Chrome Web Store OAuth | Bitwarden (`CHROME_CLIENT_ID`, `CHROME_CLIENT_SECRET`, `CHROME_REFRESH_TOKEN`) | Store API uploads; export into the environment only when running `just ext-submit` |
+| Chrome Web Store OAuth | Bitwarden (`BALUARD_CHROME_CLIENT_ID`, `BALUARD_CHROME_CLIENT_SECRET`, `BALUARD_CHROME_REFRESH_TOKEN`) | Store API uploads; export into the environment only when running `just ext-submit` |
 | AMO JWT keys | Bitwarden (`BALUARD_AMO_JWT_KEY`, `BALUARD_AMO_JWT_SECRET`) | `web-ext sign` submissions |
 
 Non-secret store identifiers live on the release box in `~/.config/environment.d/baluard.conf` (mode 600, read at login):
 
 ```sh
 BALUARD_CHROME_EXTENSION_ID=nmkmfkmdhbifkjdhioejeoegcjpaiijl
-CHROME_EXTENSION_ID=nmkmfkmdhbifkjdhioejeoegcjpaiijl
-CHROME_PUBLISHER_ID=d6e3a68c-a6f3-4359-9769-9fd105198720
+BALUARD_CHROME_EXTENSION_ID=nmkmfkmdhbifkjdhioejeoegcjpaiijl
+BALUARD_CHROME_PUBLISHER_ID=d6e3a68c-a6f3-4359-9769-9fd105198720
 ```
 
 `BALUARD_CHROME_EXTENSION_ID` is consumed at desktop build time: `scripts/build-nmh-manifests.sh` bakes `chrome-extension://<id>/` into the chrome, chromium, and edge host manifests that the deb and rpm install system-wide (`/etc/opt/chrome`, `/etc/chromium`, `/etc/opt/edge`, and `/usr/lib` or `/usr/lib64/mozilla` for Firefox). Unset, it falls back to a `baluard-unconfigured` placeholder origin that can never match a real extension; never ship packages built without the real ID. A terminal opened before the environment changed needs a re-login, or prefix the variable for one-off runs.

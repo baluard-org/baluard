@@ -73,9 +73,9 @@ export PATH="$TMP/bin:$PATH"
 export SUB_TEST_CURL_LOG="$CURL_LOG" SUB_TEST_NPX_LOG="$NPX_LOG"
 
 AMO_ENV=(BALUARD_AMO_JWT_KEY=user:123 BALUARD_AMO_JWT_SECRET=amo-secret)
-CHROME_ENV=(CHROME_CLIENT_ID=cid CHROME_CLIENT_SECRET=chrome-secret
-  CHROME_REFRESH_TOKEN=chrome-refresh CHROME_EXTENSION_ID=extid
-  CHROME_PUBLISHER_ID=pubid)
+CHROME_ENV=(BALUARD_CHROME_CLIENT_ID=cid BALUARD_CHROME_CLIENT_SECRET=chrome-secret
+  BALUARD_CHROME_REFRESH_TOKEN=chrome-refresh BALUARD_CHROME_EXTENSION_ID=extid
+  BALUARD_CHROME_PUBLISHER_ID=pubid)
 
 # Always invoke the sandbox script by path: env is an external command and
 # cannot run a bash function.
@@ -158,7 +158,7 @@ if "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > /dev/null 2> "$TMP/non
   exit 1
 fi
 grep -qi 'BALUARD_AMO_JWT_KEY' "$TMP/none.err"
-grep -qi 'CHROME_CLIENT_ID' "$TMP/none.err"
+grep -qi 'BALUARD_CHROME_CLIENT_ID' "$TMP/none.err"
 if [[ -s "$CURL_LOG" ]]; then echo "curl shim was invoked unexpectedly" >&2; exit 1; fi
 if [[ -s "$NPX_LOG" ]]; then echo "npx shim was invoked unexpectedly" >&2; exit 1; fi
 
