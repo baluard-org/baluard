@@ -17,21 +17,31 @@ EMAIL="baluard@actitud.xyz"
 gpg --homedir "$GNUPGHOME" --list-secret-keys "$EMAIL" >/dev/null 2>&1 \
   || { echo "release GPG key missing; run scripts/gen-release-signing-key.sh" >&2; exit 1; }
 
-mkdir -p "$OUT/rpms"
-cp -f "$ART"/*.rpm "$OUT/rpms/"
+HISTORY="${BALUARD_LINUX_REPO_HISTORY:-$HOME/.baluard/linux-repo-history}"
+mkdir -p "$OUT/rpms" "$HISTORY/rpm"
+for package in "$ART"/*.rpm; do
+  [[ -f "$HISTORY/rpm/$(basename "$package")" ]] || cp "$package" "$HISTORY/rpm/"
+done
+cp -f "$HISTORY/rpm"/*.rpm "$OUT/rpms/"
 
 # Sign the packages BEFORE building metadata: rpmsign rewrites the file, so
 # the repodata hashes must be taken over the signed bytes. dnf's gpgcheck=1
 # refuses an unsigned package even when the repo metadata verifies.
-if command -v rpmsign >/dev/null 2>&1; then
-  rpmsign --define "_gpg_name $EMAIL" --define "_gpg_path $GNUPGHOME" \
-    --addsign "$OUT"/rpms/*.rpm
+if command -v rpmsign >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
+  for package in "$OUT"/rpms/*.rpm; do
+    signature_check="$(rpm -Kv "$package" 2>&1 || true)"
+    if ! grep -q 'Header .*signature' <<< "$signature_check"; then
+      rpmsign --define "_gpg_name $EMAIL" --define "_gpg_path $GNUPGHOME" \
+        --addsign "$package"
+    fi
+  done
 else
   podman run --rm -v "$OUT/rpms":/rpms:Z -v "$GNUPGHOME":/gnupg:Z -e GNUPGHOME=/gnupg \
     registry.fedoraproject.org/fedora:latest \
     sh -c "dnf install -y rpm-sign >/dev/null 2>&1 && cd /rpms && \
       rpmsign --define '_gpg_name $EMAIL' --define '_gpg_path /gnupg' --addsign *.rpm"
 fi
+cp -f "$OUT"/rpms/*.rpm "$HISTORY/rpm/"
 
 if command -v createrepo_c >/dev/null 2>&1; then
   (cd "$OUT/rpms" && createrepo_c .)

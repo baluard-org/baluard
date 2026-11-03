@@ -1,0 +1,11 @@
+Categories:
+  - Security
+License: GPL-3.0-only
+WebSite: https://baluard.app
+SourceCode: https://github.com/baluard-org/baluard
+IssueTracker: https://github.com/baluard-org/baluard/issues
+Summary: Git-native password manager with encrypted, device-controlled sync
+Description: |
+  Baluard stores passwords, passkeys, cards, identities, secure notes, and SSH
+  keys in an encrypted local vault. Optional synchronization uses a git
+  repository that you control. No Baluard account or central server is needed.

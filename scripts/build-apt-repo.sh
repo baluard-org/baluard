@@ -19,8 +19,10 @@ gpg --homedir "$GNUPGHOME" --list-secret-keys "$EMAIL" >/dev/null 2>&1 \
 
 POOL="$OUT/pool/main/b/baluard"
 DIST="$OUT/dists/stable/main/binary-amd64"
-mkdir -p "$POOL" "$DIST"
-cp -f "$ART"/*.deb "$POOL/"
+HISTORY="${BALUARD_LINUX_REPO_HISTORY:-$HOME/.baluard/linux-repo-history}"
+mkdir -p "$POOL" "$DIST" "$HISTORY/deb"
+cp -f "$ART"/*.deb "$HISTORY/deb/"
+cp -f "$HISTORY/deb"/*.deb "$POOL/"
 
 # One stanza per deb: fields from the deb's control file plus the repo-added
 # location, size, and hashes apt needs.

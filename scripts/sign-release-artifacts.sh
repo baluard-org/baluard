@@ -13,6 +13,8 @@ KEY="${BALUARD_UPDATER_KEY:-$HOME/.tauri/baluard-updater.key}"
 export TAURI_SIGNING_PRIVATE_KEY
 TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY")"
 
+TAURI_CLI="@tauri-apps/cli@2.12.4"
+
 cd "$DIR"
 shopt -s nullglob
 files=()
@@ -24,12 +26,12 @@ done
 
 for f in "${files[@]}"; do
   echo "signing $f"
-  npx --yes @tauri-apps/cli signer sign "$f"
+  npx --yes "$TAURI_CLI" signer sign "$f"
 done
 
 sha256sum "${files[@]}" > SHA256SUMS
 echo "signing SHA256SUMS"
-npx --yes @tauri-apps/cli signer sign SHA256SUMS
+npx --yes "$TAURI_CLI" signer sign SHA256SUMS
 
 echo
 cat SHA256SUMS
