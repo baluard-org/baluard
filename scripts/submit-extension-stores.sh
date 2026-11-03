@@ -60,12 +60,12 @@ chmod 700 "$SEC"
 # human review. `|| return 1` matters: the caller runs submit_amo through
 # `|| amo_rc=$?`, which disables set -e inside this function.
 submit_amo() {
-  if [[ -z "${AMO_JWT_KEY:-}" || -z "${AMO_JWT_SECRET:-}" ]]; then
-    if [[ -z "${AMO_JWT_KEY:-}${AMO_JWT_SECRET:-}" ]]; then
-      echo "firefox/AMO: skipped (set AMO_JWT_KEY and AMO_JWT_SECRET to enable)"
+  if [[ -z "${BALUARD_AMO_JWT_KEY:-}" || -z "${BALUARD_AMO_JWT_SECRET:-}" ]]; then
+    if [[ -z "${BALUARD_AMO_JWT_KEY:-}${BALUARD_AMO_JWT_SECRET:-}" ]]; then
+      echo "firefox/AMO: skipped (set BALUARD_AMO_JWT_KEY and BALUARD_AMO_JWT_SECRET to enable)"
       return 3
     fi
-    echo "firefox/AMO: AMO_JWT_KEY and AMO_JWT_SECRET must be set together" >&2
+    echo "firefox/AMO: BALUARD_AMO_JWT_KEY and BALUARD_AMO_JWT_SECRET must be set together" >&2
     return 1
   fi
   local args=(sign --channel listed --approval-timeout 0 --no-input
@@ -73,12 +73,12 @@ submit_amo() {
   [[ -n "${AMO_METADATA:-}" ]] && args+=(--amo-metadata "$AMO_METADATA")
   [[ -n "${AMO_UPLOAD_SOURCE:-}" ]] && args+=(--upload-source-code "$AMO_UPLOAD_SOURCE")
   if command -v web-ext >/dev/null 2>&1; then
-    WEB_EXT_API_KEY="$AMO_JWT_KEY" WEB_EXT_API_SECRET="$AMO_JWT_SECRET" \
+    WEB_EXT_API_KEY="$BALUARD_AMO_JWT_KEY" WEB_EXT_API_SECRET="$BALUARD_AMO_JWT_SECRET" \
       web-ext "${args[@]}" || return 1
   else
     command -v npx >/dev/null 2>&1 \
       || { echo "firefox/AMO: neither web-ext nor npx found" >&2; return 1; }
-    WEB_EXT_API_KEY="$AMO_JWT_KEY" WEB_EXT_API_SECRET="$AMO_JWT_SECRET" \
+    WEB_EXT_API_KEY="$BALUARD_AMO_JWT_KEY" WEB_EXT_API_SECRET="$BALUARD_AMO_JWT_SECRET" \
       npx --yes web-ext@10.8.0 "${args[@]}" || return 1
   fi
   echo "firefox/AMO: submitted for listing (review happens on addons.mozilla.org)"
@@ -142,7 +142,7 @@ chrome_rc=0; submit_chrome || chrome_rc=$?
 if ((amo_rc == 3 && chrome_rc == 3)); then
   cat >&2 <<'EOF'
 No store is configured, nothing was submitted.
-Firefox AMO: set AMO_JWT_KEY and AMO_JWT_SECRET (API keys from addons.mozilla.org).
+Firefox AMO: set BALUARD_AMO_JWT_KEY and BALUARD_AMO_JWT_SECRET (API keys from addons.mozilla.org).
 Chrome Web Store: set CHROME_CLIENT_ID, CHROME_CLIENT_SECRET, CHROME_REFRESH_TOKEN,
 CHROME_EXTENSION_ID, and CHROME_PUBLISHER_ID (OAuth client per the Web Store API guide).
 Store credentials stay in Bitwarden, never in the repo.
