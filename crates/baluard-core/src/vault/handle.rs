@@ -2766,26 +2766,48 @@ impl VaultHandle {
             return Ok(());
         }
         let mut carried_all = true;
+        let mut stuck: Vec<Uuid> = Vec::new();
         for rot in &pending_rotations {
+            if !crate::vault::collections::collections_file_path(&self.path, &rot.collection_id)
+                .exists()
+            {
+                // Definitively gone: the collection was deleted after the
+                // marker was written, so nothing holds the new CK and the
+                // row is stale. Keeping it would wedge every rotation
+                // forever on a def that can never come back.
+                continue;
+            }
             let flipped = match crate::vault::collections::open_collection(
                 &self.path,
                 sgk,
                 &rot.collection_id,
             ) {
-                Ok((def, _)) => crate::vault::collections::unwrap_ck(&def, sgk)
-                    .map(|ck| ck.as_ref() == rot.new_ck.as_ref())
-                    .unwrap_or(false),
+                Ok((def, _)) => {
+                    match crate::vault::collections::unwrap_ck(&def, sgk) {
+                        Ok(ck) => ck.as_ref() == rot.new_ck.as_ref(),
+                        // The def exists but will not open (damage, wrong
+                        // epoch): indeterminate, keep the marker rather
+                        // than clear it on a guess.
+                        Err(_) => {
+                            carried_all = false;
+                            stuck.push(rot.collection_id);
+                            continue;
+                        }
+                    }
+                }
                 // A def that cannot be read is indeterminate, not
                 // unflipped: clearing the marker on a guess can
                 // strand entries under a destroyed key.
                 Err(_) => {
                     carried_all = false;
+                    stuck.push(rot.collection_id);
                     continue;
                 }
             };
             if flipped {
                 if self.reencrypt_after_sweep(rot).is_err() {
                     carried_all = false;
+                    stuck.push(rot.collection_id);
                 }
             }
         }
@@ -2793,10 +2815,14 @@ impl VaultHandle {
             crate::vault::collections::clear_sweep_pending(&self.path);
             Ok(())
         } else {
-            Err(VaultError::Metadata(
-                "an earlier collection sweep did not finish; resolve it (free disk space, fix permissions) before rotating again"
-                    .into(),
-            )
+            let names = stuck
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(VaultError::Metadata(format!(
+                "an earlier collection sweep did not finish (collections {names}); it must converge before another rotation"
+            ))
             .into())
         }
     }
@@ -14888,6 +14914,59 @@ mod tests {
             r#"{"id":"00000000-0000-0000-0000-000000000000","display_name":"x","role":"viewer","trust":"channel"}"#,
         )
         .unwrap()
+    }
+
+    /// A marker row whose collection def no longer exists is stale, not
+    /// stuck: the def cannot come back, so converge must discard the row
+    /// instead of refusing every rotation forever.
+    #[test]
+    fn deleted_collection_pending_row_does_not_wedge() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let live = handle.collection_create("Live").unwrap();
+        let mk = |name: &str| CipherInput {
+            name: name.into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::SecureNote,
+            favorite: false,
+            notes: Some(name.into()),
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+        let entry = handle
+            .add_cipher_in_collection(&mk("L1"), Some(live))
+            .unwrap();
+
+        // Hand-plant a pending rotation whose collection was deleted after
+        // the marker write (crash between marker and def deletion).
+        let gone = Uuid::new_v4();
+        crate::vault::collections::write_sweep_pending(
+            dir.path(),
+            &[crate::vault::collections::SweptRotation {
+                collection_id: gone,
+                old_ck: zeroize::Zeroizing::new([1u8; 32]),
+                new_ck: zeroize::Zeroizing::new([2u8; 32]),
+                dir: None,
+                failed_groups: vec![],
+            }],
+        )
+        .unwrap();
+
+        // The stale row must not block a healthy rotation.
+        assert!(handle.collection_rotate_key(live, None).unwrap());
+        assert!(crate::vault::collections::read_sweep_pending(dir.path()).is_empty());
+        match handle.get_cipher(entry).unwrap() {
+            CipherRead::Decrypted(c) => assert_eq!(c.name, "L1"),
+            CipherRead::Locked(_) => panic!("entry must stay readable"),
+        }
     }
 
     /// A kept sweep marker is a promise: the old CK stays recoverable
