@@ -34,7 +34,7 @@ MV3 extension (Chrome + Firefox) that bridges the browser to the Baluard native 
 Credentials live in the environment only (Bitwarden keeps them, never the repo):
 
 - Firefox AMO: `BALUARD_AMO_JWT_KEY` and `BALUARD_AMO_JWT_SECRET` from the AMO API keys page. The submission uses the pinned `web-ext` release (`sign --channel listed --approval-timeout 0`); a system `web-ext` is used when installed, otherwise `npx` fetches the pinned one.
-- Chrome Web Store: `CHROME_CLIENT_ID`, `CHROME_CLIENT_SECRET`, `CHROME_REFRESH_TOKEN`, `CHROME_EXTENSION_ID`, and `CHROME_PUBLISHER_ID`. The refresh token comes from the OAuth 2.0 Playground flow in the Chrome Web Store API guide (scope `https://www.googleapis.com/auth/chromewebstore`). The script exchanges it for an access token, uploads the zip, and publishes through the v2 API.
+- Chrome Web Store: `BALUARD_CHROME_CLIENT_ID`, `BALUARD_CHROME_CLIENT_SECRET`, `BALUARD_CHROME_REFRESH_TOKEN`, `BALUARD_CHROME_EXTENSION_ID`, and `BALUARD_CHROME_PUBLISHER_ID`. The refresh token comes from the OAuth 2.0 Playground flow in the Chrome Web Store API guide (scope `https://www.googleapis.com/auth/chromewebstore`). The script exchanges it for an access token, uploads the zip, and publishes through the v2 API.
 
 A store without credentials is skipped with a message; the run fails only when a configured store fails or no store is configured.
 
