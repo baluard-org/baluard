@@ -37,7 +37,7 @@
 //! Per-vault scoping (QU fix):
 //! - The keychain account name is `quick-unlock:<vault_id>`, where `vault_id`
 //!   is the deterministic UUID derived from the vault's KDF salt (see
-//!   `VaultHandle::derive_vault_id`). It is stable, unique per vault, and
+//!   `VaultHandle::resolve_vault_id`). It is stable, unique per vault, and
 //!   computable without unlocking. Enabling Quick Unlock on vault A therefore
 //!   has no effect on the status or unlock path of vault B.
 //!
@@ -445,7 +445,7 @@ pub fn read_gated() -> bool {
 
 /// Enable biometric unlock by storing the master password in OS keychain,
 /// scoped to `vault_id`. The `vault_id` MUST be the vault's deterministic
-/// UUID (`VaultHandle::derive_vault_id`) so the entry is stable across
+/// UUID (`VaultHandle::resolve_vault_id`) so the entry is stable across
 /// restarts and unique per vault.
 pub fn enable(vault_id: &str, master_password: &str) -> Result<(), String> {
     platform::enable(&account_for(vault_id), master_password)

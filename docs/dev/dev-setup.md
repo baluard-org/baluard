@@ -227,12 +227,17 @@ The Maestro transport and flow-authoring playbook lives in [mobile/AGENTS.md](..
 
 ```bash
 just desktop-dev       # Starts Tauri dev server with hot reload
-just desktop-build     # Production bundle (dmg/msi/deb)
+just desktop-build     # Production bundle (dmg / deb / rpm / AppImage)
+just desktop-windows   # Windows NSIS setup.exe (cross-compiled on Linux/macOS)
 ```
 
 The desktop app:
 1. Spawns `baluard-daemon` as a sidecar on startup
 2. Communicates via the same Protobuf-over-Unix-socket as the CLI
+
+### Windows packaging
+
+`just desktop-windows` builds the Windows installer on a Linux or macOS host. It cross-compiles the daemon and CLI sidecars for the Windows MSVC target with `cargo-xwin`, then runs `tauri build --bundles nsis`. It needs `cargo-xwin`, `clang`, `lld`, `llvm-rc`, and `makensis` (the script prints per-distro install hints when any is missing). The MSI bundle is Windows-only and is not built here; WiX cannot run off-Windows.
 3. Sends SIGTERM on quit (daemon zeroizes keys before exit)
 4. SolidJS frontend in `desktop/src/`, Rust backend in `desktop/src-tauri/src/lib.rs`
 
