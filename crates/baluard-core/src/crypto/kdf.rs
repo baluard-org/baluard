@@ -46,9 +46,11 @@ pub fn derive_kek(password: &str, params: &KdfParams) -> Result<[u8; 32], Crypto
 /// when the git remote is hostile: an unbounded memory_kib aborts the process
 /// on allocation the moment the victim types their password. Generous over
 /// every shipped profile so legit vaults always derive; hostile params fail
-/// closed (mirrors the guest-reveal clamp in vault/reveals.rs).
+/// closed (mirrors the guest-reveal clamp in vault/reveals.rs). The memory
+/// ceiling doubles as the mobile crash guard: an overcommitted allocation
+/// dies uncatchable on first touch (ADR 0099).
 const KDF_MIN_MEMORY_KIB: u32 = 19 * 1024;
-const KDF_MAX_MEMORY_KIB: u32 = 512 * 1024;
+const KDF_MAX_MEMORY_KIB: u32 = 256 * 1024;
 const KDF_MAX_TIME_COST: u32 = 10;
 const KDF_MAX_PARALLELISM: u32 = 8;
 
@@ -213,7 +215,7 @@ mod tests {
     fn validate_params_ceiling_boundaries() {
         let mut params = KdfParams {
             profile: KdfProfile::DesktopHigh,
-            memory_kib: 512 * 1024,
+            memory_kib: 256 * 1024,
             time_cost: 10,
             parallelism: 8,
             salt: vec![0u8; 32],
@@ -221,7 +223,7 @@ mod tests {
         assert!(validate_params(&params).is_ok());
         params.memory_kib += 1;
         assert!(validate_params(&params).is_err());
-        params.memory_kib = 512 * 1024;
+        params.memory_kib = 256 * 1024;
         params.time_cost = 11;
         assert!(validate_params(&params).is_err());
         params.time_cost = 10;
