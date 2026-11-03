@@ -4932,6 +4932,7 @@ impl VaultHandle {
                         .and_then(|s| hex::decode(s).ok())
                         .unwrap_or_default();
                     let params = crate::types::KdfParams {
+                        kdf: crate::types::KdfKind::Argon2id,
                         profile: crate::types::KdfProfile::MobileLow,
                         memory_kib: meta["memory_kib"].as_u64().unwrap_or(8192) as u32,
                         time_cost: meta["time_cost"].as_u64().unwrap_or(3) as u32,
