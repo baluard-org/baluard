@@ -126,6 +126,23 @@ pub fn create_params(profile: KdfProfile) -> KdfParams {
     }
 }
 
+/// Cheapest parameters the derive bounds accept (19 MiB, single pass, one
+/// lane). Vault creation in test builds uses this so the suite does not pay
+/// the production KDF cost on every fixture.
+#[cfg(test)]
+pub(crate) fn test_params() -> KdfParams {
+    let salt = generate_salt();
+    KdfParams {
+        kdf: KdfKind::Argon2id,
+        vault_id: Some(uuid::Uuid::new_v4()),
+        memory_kib: KDF_MIN_MEMORY_KIB as u32,
+        time_cost: 1,
+        parallelism: 1,
+        profile: KdfProfile::MobileLow,
+        salt: salt.to_vec(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
