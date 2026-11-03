@@ -113,6 +113,7 @@ All commands run from the project root. `just` reads the `justfile`.
 | `just desktop-deps` | `npm install` in `desktop/` |
 | `just desktop-dev` | Run Tauri dev server (hot reload) |
 | `just desktop-build` | Production desktop bundle |
+| `just bump-version X.Y.Z` | Bump every version source at once (Rust workspace, desktop package, Android, extension, mobile about-string), rebuild dists |
 | `just desktop-debug` | Tauri dev with `BALUARD_DEBUG=1` (logs to `./logs/`) |
 | `just codesign` | Codesign the Tauri debug binary (run after first desktop-debug or when Rust changes; macOS) |
 | `just ext-build` | Build both Chrome and Firefox extension bundles (Vite) |
