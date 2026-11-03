@@ -18,7 +18,7 @@ TAURI_CLI="@tauri-apps/cli@2.12.4"
 cd "$DIR"
 shopt -s nullglob
 files=()
-for f in *.AppImage *.deb *.rpm *.tar.gz; do
+for f in *.AppImage *.deb *.rpm *.tar.gz *.zip; do
   [[ -f "$f" ]] || continue
   files+=("$f")
 done
