@@ -342,10 +342,7 @@ pub async fn derive_kek_for_vault(
                 detail: format!("reading kdf params: {e}"),
             }
         })?;
-        let params: baluard_core::types::KdfParams =
-            serde_json::from_str(&kdf_json).map_err(|e| BaluardError::InvalidInput {
-                detail: format!("corrupt kdf params: {e}"),
-            })?;
+        let params = baluard_core::crypto::kdf::parse_kdf_params(&kdf_json)?;
         let key = baluard_core::crypto::kdf::derive_kek(&password, &params)?;
         Ok(key.to_vec())
     })

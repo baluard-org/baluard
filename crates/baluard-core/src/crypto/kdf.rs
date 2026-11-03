@@ -22,24 +22,47 @@ pub fn derive_kek(password: &str, params: &KdfParams) -> Result<[u8; 32], Crypto
         });
     }
 
-    let argon2 = Argon2::new(
-        Algorithm::Argon2id,
-        Version::V0x13,
-        Params::new(
-            params.memory_kib,
-            params.time_cost,
-            params.parallelism,
-            Some(32),
-        )
-        .map_err(|e| CryptoError::KdfFailed(e.to_string()))?,
-    );
+    // Derivation lives inside the match: a new KdfKind variant fails
+    // compilation until it has a real implementation, not an empty arm.
+    match params.kdf {
+        crate::types::KdfKind::Argon2id => {
+            let argon2 = Argon2::new(
+                Algorithm::Argon2id,
+                Version::V0x13,
+                Params::new(
+                    params.memory_kib,
+                    params.time_cost,
+                    params.parallelism,
+                    Some(32),
+                )
+                .map_err(|e| CryptoError::KdfFailed(e.to_string()))?,
+            );
+            let mut kek = [0u8; 32];
+            argon2
+                .hash_password_into(password.as_bytes(), &params.salt, &mut kek)
+                .map_err(|e| CryptoError::KdfFailed(e.to_string()))?;
+            Ok(kek)
+        }
+    }
+}
 
-    let mut kek = [0u8; 32];
-    argon2
-        .hash_password_into(password.as_bytes(), &params.salt, &mut kek)
-        .map_err(|e| CryptoError::KdfFailed(e.to_string()))?;
-
-    Ok(kek)
+/// Parse stored KDF params (kdf-params.json, member-unlock rows, reveal
+/// packages) with one shared fail-closed policy: a `kdf` field naming an
+/// algorithm this build does not ship is a "newer app" error, not a
+/// corrupt-vault or wrong-password error, and never a silent skip.
+pub fn parse_kdf_params(json: &str) -> Result<KdfParams, crate::error::BaluardError> {
+    use crate::error::{BaluardError, VaultError};
+    let v: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| BaluardError::Vault(VaultError::Corrupt(format!("kdf params: {e}"))))?;
+    if let Some(kind) = v.get("kdf") {
+        if kind.as_str() != Some("argon2id") {
+            return Err(BaluardError::Vault(VaultError::KdfKindUnknown(
+                kind.as_str().unwrap_or("invalid").to_string(),
+            )));
+        }
+    }
+    serde_json::from_value(v)
+        .map_err(|e| BaluardError::Vault(VaultError::Corrupt(format!("kdf params: {e}"))))
 }
 
 /// Hard bounds on stored KDF params. Stored params are attacker-controlled
@@ -55,12 +78,6 @@ const KDF_MAX_TIME_COST: u32 = 10;
 const KDF_MAX_PARALLELISM: u32 = 8;
 
 fn validate_params(params: &KdfParams) -> Result<(), CryptoError> {
-    // Exhaustive dispatch: adding a KdfKind variant forces an arm here.
-    // Parsing already rejects unknown variants; this covers in-memory
-    // construction.
-    match params.kdf {
-        crate::types::KdfKind::Argon2id => {}
-    }
     if params.memory_kib < KDF_MIN_MEMORY_KIB {
         return Err(CryptoError::KdfParamsInvalid(format!(
             "memory_kib {} below floor {KDF_MIN_MEMORY_KIB}",
@@ -118,6 +135,26 @@ mod tests {
         // must fail at parse, not derive garbage with the wrong algorithm.
         let json = r#"{"memory_kib":32768,"time_cost":6,"parallelism":4,"salt":"a1b2c3d4","kdf":"scrypt"}"#;
         assert!(serde_json::from_str::<crate::types::KdfParams>(json).is_err());
+        // Non-string and wrong-case values are errors too, not coercion.
+        let num = r#"{"memory_kib":32768,"time_cost":6,"parallelism":4,"salt":"a1b2c3d4","kdf":2}"#;
+        assert!(serde_json::from_str::<crate::types::KdfParams>(num).is_err());
+        let cased = r#"{"memory_kib":32768,"time_cost":6,"parallelism":4,"salt":"a1b2c3d4","kdf":"Argon2id"}"#;
+        assert!(serde_json::from_str::<crate::types::KdfParams>(cased).is_err());
+    }
+
+    #[test]
+    fn parse_kdf_params_defaults_absent_and_names_foreign_kind() {
+        // Pre-field files parse as argon2id.
+        let legacy = r#"{"memory_kib":19456,"time_cost":2,"parallelism":1,"salt":"a1b2c3d4"}"#;
+        let params = parse_kdf_params(legacy).unwrap();
+        assert_eq!(params.kdf, KdfKind::Argon2id);
+        // A foreign kind surfaces as the update-app error, not corrupt.
+        let foreign = r#"{"memory_kib":32768,"time_cost":6,"parallelism":4,"salt":"a1b2c3d4","kdf":"scrypt"}"#;
+        let err = parse_kdf_params(foreign).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::BaluardError::Vault(crate::error::VaultError::KdfKindUnknown(k)) if k == "scrypt"
+        ));
     }
 
     #[test]

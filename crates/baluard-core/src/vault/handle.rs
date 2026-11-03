@@ -257,8 +257,7 @@ impl VaultHandle {
 
         let kdf_json = std::fs::read_to_string(&kdf_path)
             .map_err(|e| VaultError::Metadata(format!("reading kdf params: {e}")))?;
-        let kdf_params: KdfParams = serde_json::from_str(&kdf_json)
-            .map_err(|e| VaultError::Corrupt(format!("kdf params: {e}")))?;
+        let kdf_params = kdf::parse_kdf_params(&kdf_json)?;
 
         let registry_path = path.join("meta/devices.json");
         let registry = if registry_path.exists() {
@@ -1168,8 +1167,7 @@ impl VaultHandle {
 
         let kdf_raw = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))
             .map_err(|e| VaultError::Metadata(format!("kdf params: {e}")))?;
-        let kdf_params: crate::types::KdfParams = serde_json::from_str(&kdf_raw)
-            .map_err(|e| VaultError::Metadata(format!("kdf params: {e}")))?;
+        let kdf_params = crate::crypto::kdf::parse_kdf_params(&kdf_raw)?;
         // The supplied password is the recoverer's OWN new master
         // password: it seeds this device's member unlock (per-device
         // canary), never the founding credential. Phrase-only by design.
@@ -4927,6 +4925,15 @@ impl VaultHandle {
                     let Some(pw) = master_password else {
                         return; // quick-unlock path: identity stays sealed
                     };
+                    // Absent kdf means a pre-field identity (argon2id).
+                    if let Some(alg) = meta["kdf"].as_str() {
+                        if alg != "argon2id" {
+                            eprintln!(
+                                "warning: identity sealed under key derivation not supported by this app version ({alg})"
+                            );
+                            return;
+                        }
+                    }
                     let salt = meta["salt_hex"]
                         .as_str()
                         .and_then(|s| hex::decode(s).ok())
@@ -9979,8 +9986,7 @@ impl VaultHandle {
         let kdf_path = path.join("meta/kdf-params.json");
         let kdf_json = std::fs::read_to_string(&kdf_path)
             .map_err(|e| VaultError::Metadata(format!("reading kdf params: {e}")))?;
-        let kdf_params: KdfParams = serde_json::from_str(&kdf_json)
-            .map_err(|e| VaultError::Corrupt(format!("kdf params: {e}")))?;
+        let kdf_params = kdf::parse_kdf_params(&kdf_json)?;
         Ok(Self::derive_vault_id(&kdf_params))
     }
 

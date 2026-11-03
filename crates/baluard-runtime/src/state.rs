@@ -8317,8 +8317,8 @@ impl VaultState {
         tokio::task::spawn_blocking(move || {
             let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))
                 .map_err(|e| format!("reading kdf params: {e}"))?;
-            let kdf_params: baluard_core::types::KdfParams =
-                serde_json::from_str(&kdf_json).map_err(|e| format!("corrupt kdf params: {e}"))?;
+            let kdf_params = baluard_core::crypto::kdf::parse_kdf_params(&kdf_json)
+                .map_err(|e| format!("kdf params: {e}"))?;
             let kek = zeroize::Zeroizing::new(
                 baluard_core::crypto::kdf::derive_kek(&password, &kdf_params)
                     .map_err(|e| format!("kdf: {e}"))?,
@@ -9225,8 +9225,8 @@ impl VaultState {
         // enroll and the next unlock.
         let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))
             .map_err(|e| format!("reading kdf params: {e}"))?;
-        let kdf_params: baluard_core::types::KdfParams =
-            serde_json::from_str(&kdf_json).map_err(|e| format!("corrupt kdf params: {e}"))?;
+        let kdf_params = baluard_core::crypto::kdf::parse_kdf_params(&kdf_json)
+            .map_err(|e| format!("kdf params: {e}"))?;
         let kek = zeroize::Zeroizing::new(
             baluard_core::crypto::kdf::derive_kek(master_password, &kdf_params)
                 .map_err(|e| format!("kdf: {e}"))?,

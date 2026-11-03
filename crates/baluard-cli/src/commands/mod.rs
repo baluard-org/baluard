@@ -3430,7 +3430,7 @@ pub fn handle_enroll_with_phrase(
             // canary-proven first: a mistyped password must not mint a
             // ghost device (same guard as the daemon route).
             let kdf_json = std::fs::read_to_string(path.join("meta/kdf-params.json"))?;
-            let kdf_params: baluard_core::types::KdfParams = serde_json::from_str(&kdf_json)?;
+            let kdf_params = baluard_core::crypto::kdf::parse_kdf_params(&kdf_json)?;
             let kek = zeroize::Zeroizing::new(baluard_core::crypto::kdf::derive_kek(
                 &master_password,
                 &kdf_params,
