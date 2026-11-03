@@ -171,7 +171,7 @@ ext-package artifacts="dist":
 
 # Submit the packaged store zips to Firefox AMO and the Chrome Web Store.
 # Explicit publishing recipe, never part of release-repositories. Credentials
-# come from the environment only: AMO_JWT_KEY + AMO_JWT_SECRET, and
+# come from the environment only: BALUARD_AMO_JWT_KEY + BALUARD_AMO_JWT_SECRET, and
 # CHROME_CLIENT_ID + CHROME_CLIENT_SECRET + CHROME_REFRESH_TOKEN +
 # CHROME_EXTENSION_ID + CHROME_PUBLISHER_ID. Optional: AMO_METADATA (first
 # listed submission) and AMO_UPLOAD_SOURCE (minified-source review).

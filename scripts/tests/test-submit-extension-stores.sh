@@ -72,7 +72,7 @@ chmod +x "$TMP/bin/curl" "$TMP/bin/npx"
 export PATH="$TMP/bin:$PATH"
 export SUB_TEST_CURL_LOG="$CURL_LOG" SUB_TEST_NPX_LOG="$NPX_LOG"
 
-AMO_ENV=(AMO_JWT_KEY=user:123 AMO_JWT_SECRET=amo-secret)
+AMO_ENV=(BALUARD_AMO_JWT_KEY=user:123 BALUARD_AMO_JWT_SECRET=amo-secret)
 CHROME_ENV=(CHROME_CLIENT_ID=cid CHROME_CLIENT_SECRET=chrome-secret
   CHROME_REFRESH_TOKEN=chrome-refresh CHROME_EXTENSION_ID=extid
   CHROME_PUBLISHER_ID=pubid)
@@ -123,12 +123,12 @@ if [[ -s "$CURL_LOG" ]]; then echo "curl shim was invoked unexpectedly" >&2; exi
 
 # ── Partial store credentials are an error, not a skip ─────────────────────
 rm -f "$CURL_LOG" "$NPX_LOG"
-if env AMO_JWT_KEY=only-one "${CHROME_ENV[@]}" \
+if env BALUARD_AMO_JWT_KEY=only-one "${CHROME_ENV[@]}" \
   "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/partial.out" 2> "$TMP/partial.err"; then
   echo 'expected partial AMO credentials to fail the run' >&2
   exit 1
 fi
-grep -q 'AMO_JWT_KEY and AMO_JWT_SECRET must be set together' "$TMP/partial.err"
+grep -q 'BALUARD_AMO_JWT_KEY and BALUARD_AMO_JWT_SECRET must be set together' "$TMP/partial.err"
 grep -q 'chrome/store: uploaded and submitted' "$TMP/partial.out"
 if [[ -s "$NPX_LOG" ]]; then echo "npx shim was invoked unexpectedly" >&2; exit 1; fi
 
@@ -157,7 +157,7 @@ if "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > /dev/null 2> "$TMP/non
   echo 'expected unconfigured stores to fail the run' >&2
   exit 1
 fi
-grep -qi 'AMO_JWT_KEY' "$TMP/none.err"
+grep -qi 'BALUARD_AMO_JWT_KEY' "$TMP/none.err"
 grep -qi 'CHROME_CLIENT_ID' "$TMP/none.err"
 if [[ -s "$CURL_LOG" ]]; then echo "curl shim was invoked unexpectedly" >&2; exit 1; fi
 if [[ -s "$NPX_LOG" ]]; then echo "npx shim was invoked unexpectedly" >&2; exit 1; fi
