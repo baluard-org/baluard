@@ -286,6 +286,32 @@ pub fn decrypt_cipher_raw(
     Ok(Zeroizing::new(json))
 }
 
+/// Read the schema version out of a decrypted cipher JSON without a typed
+/// parse. Absent means 1 (the first schema had no field).
+pub fn stored_item_schema(json: &[u8]) -> Result<u32, BaluardError> {
+    let v: serde_json::Value = serde_json::from_slice(json)
+        .map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
+    Ok(v.get("schema").and_then(|s| s.as_u64()).unwrap_or(1) as u32)
+}
+
+/// Refuse a typed re-encrypt of an item whose stored schema this build
+/// cannot fully model: decrypt-edit-encrypt would silently strip the
+/// newer build's fields. Callers that hold the raw bytes instead (rotation
+/// rewrap) may keep moving them.
+pub fn ensure_schema_writable_raw(
+    vault_id: Uuid,
+    cipher_id: CipherId,
+    file: &CipherFile,
+    item_key: &ItemKey,
+) -> Result<(), BaluardError> {
+    let json = decrypt_cipher_raw(vault_id, cipher_id, file, item_key)?;
+    let schema = stored_item_schema(&json)?;
+    if schema > crate::types::ITEM_SCHEMA_VERSION {
+        return Err(BaluardError::Vault(VaultError::ItemSchemaTooNew(schema)));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,6 +337,52 @@ mod tests {
 
         // The AAD binds vault and cipher identity: another id must refuse.
         assert!(decrypt_cipher_raw(vault_id, Uuid::new_v4(), &file, &item_key).is_err());
+    }
+
+    #[test]
+    fn encrypt_stamps_current_schema() {
+        let vault_id = Uuid::new_v4();
+        let cipher_id = CipherId::new_v4();
+        let input = CipherInput {
+            name: "n".into(),
+            kind: crate::types::CipherKind::Login(Default::default()),
+            folder_id: None,
+            collection_id: None,
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            reprompt: false,
+            archived: false,
+            tags: vec![],
+        };
+        let item_key = ItemKey::generate();
+        let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1).unwrap();
+        let json = decrypt_cipher_raw(vault_id, cipher_id, &file, &item_key).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&json).unwrap();
+        assert_eq!(
+            v["schema"].as_u64(),
+            Some(crate::types::ITEM_SCHEMA_VERSION as u64),
+            "every write must stamp the item schema version"
+        );
+    }
+
+    #[test]
+    fn decrypt_displays_newer_schema_item() {
+        let vault_id = Uuid::new_v4();
+        let cipher_id = CipherId::new_v4();
+        let item_key = ItemKey::generate();
+        let json = format!(
+            r#"{{"name":"n","created_at":1,"updated_at":1,"schema":{}}}"#,
+            crate::types::ITEM_SCHEMA_VERSION + 1
+        );
+        let file = encrypt_cipher_raw(vault_id, cipher_id, json.as_bytes(), &item_key, 1, 1, None)
+            .unwrap();
+        // Read-only display keeps working for known fields.
+        let cipher = decrypt_cipher(vault_id, cipher_id, &file, &item_key).unwrap();
+        assert_eq!(cipher.name, "n");
     }
 
     #[test]

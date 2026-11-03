@@ -94,6 +94,9 @@ pub enum VaultError {
     #[error("invalid envelope version: {0}")]
     InvalidEnvelopeVersion(u8),
 
+    #[error("entry was written by a newer app version (schema {0}); update Baluard to edit it")]
+    ItemSchemaTooNew(u32),
+
     #[error("invalid algorithm ID: 0x{0:04x}")]
     InvalidAlgorithmId(u16),
 
