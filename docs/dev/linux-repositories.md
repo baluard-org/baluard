@@ -55,6 +55,8 @@ This command first rebuilds the browser extension bundles and packages the store
 
 Review the resulting diff in `baluard-org`, then commit and push it to publish. The pipeline never commits or pushes automatically. The Linux trees map to `repo/`; the F-Droid tree maps to the site root at `fdroid/`. See `docs/dev/fdroid-repository.md`.
 
+Before running the pipeline for a new release, bump the version with `just bump-version X.Y.Z`. It moves every version source together (Cargo workspace, desktop Cargo/package, Android `versionName`/`versionCode`, the extension manifest and package, the mobile about-string), then rebuilds the committed extension dists so the bump commit carries fresh dists. It refuses non-semver and non-increasing versions.
+
 Store upload is a separate deliberate step after this pipeline: `just ext-submit` publishes the extension, building the Firefox AMO submission from `browser/firefox/dist` and uploading the packaged Chrome zip to the Chrome Web Store. See `browser/README.md` for the credential setup.
 
 The individual steps remain available as `just release-sign`, `just repo-stage`, and `just repo-sync`.

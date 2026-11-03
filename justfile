@@ -226,6 +226,7 @@ test-release-scripts:
 	./scripts/tests/test-submit-extension-stores.sh
 	./scripts/tests/test-build-windows-installer.sh
 	./scripts/tests/test-build-nmh-manifests.sh
+	./scripts/tests/test-bump-version.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
@@ -534,6 +535,12 @@ desktop-build: _sysdeps-desktop _sidecar desktop-deps _nmh-manifests
 # cargo-xwin, clang, lld, llvm-rc, and makensis; see scripts/build-windows-installer.sh.
 desktop-windows: desktop-deps
 	./scripts/build-windows-installer.sh
+
+# Bump the product version everywhere it lives (Cargo workspace, Android
+# versionName/versionCode, extension manifest) and rebuild the committed
+# extension dists. Refuses non-semver and non-increasing versions.
+bump-version new_version:
+	./scripts/bump-version.sh {{new_version}}
 
 # Generate the NMH host manifests the deb/rpm bundles register with each
 # browser. BALUARD_CHROME_EXTENSION_ID bakes the real Chrome Web Store origin
