@@ -384,7 +384,9 @@ _sidecar-force:
 	cp target/release/baluard-nmh "desktop/src-tauri/binaries/baluard-nmh-$TRIPLE"
 	# Force-refresh sidecar in tauri target/debug
 	mkdir -p desktop/src-tauri/target/debug
+	rm -f "desktop/src-tauri/target/debug/baluard-daemon"
 	cp "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE" "desktop/src-tauri/target/debug/baluard-daemon"
+	rm -f "desktop/src-tauri/target/debug/baluard"
 	cp "desktop/src-tauri/binaries/baluard-$TRIPLE" "desktop/src-tauri/target/debug/baluard"
 	echo "Sidecar rebuilt (forced): baluard-daemon-$TRIPLE"
 	just _sign-sidecar
@@ -429,7 +431,9 @@ _sidecar:
 	# to target/debug/ during compilation, but a stale cross-platform binary from
 	# another host's cargo build can cause "cannot execute binary file" on exec).
 	mkdir -p desktop/src-tauri/target/debug
+	rm -f "desktop/src-tauri/target/debug/baluard-daemon"
 	cp "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE" "desktop/src-tauri/target/debug/baluard-daemon"
+	rm -f "desktop/src-tauri/target/debug/baluard"
 	cp "desktop/src-tauri/binaries/baluard-$TRIPLE" "desktop/src-tauri/target/debug/baluard"
 	just _sign-sidecar
 
@@ -1133,9 +1137,9 @@ release: build-release
 	ARCHIVE="{{ binary }}-{{ version }}-{{ os }}-{{ arch }}.tar.gz"
 	tar -czf "{{ dist_dir }}/$ARCHIVE" \
 	-C target/release {{ binary }} {{ daemon }}
-	cd {{ dist_dir }} && shasum -a 256 "$ARCHIVE" > checksums.txt
+	cd {{ dist_dir }} && (command -v shasum >/dev/null 2>&1 && shasum -a 256 "$ARCHIVE" || sha256sum "$ARCHIVE") > checksums.txt
 	echo "Release {{ version }}: {{ dist_dir }}/$ARCHIVE"
-	cat {{ dist_dir }}/checksums.txt
+	cat "$PWD/checksums.txt"
 
 # Build release + ad-hoc codesign (macOS; no-op on Linux)
 build-signed: build-release
