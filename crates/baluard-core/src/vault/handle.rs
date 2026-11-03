@@ -14550,8 +14550,21 @@ mod tests {
         assert_eq!(id_after, id_before, "vault id must not follow the salt");
     }
 
+    /// Root bypasses file permission bits, so any test whose premise is
+    /// "a chmod-denied write fails" is false under a root-run suite.
+    fn running_as_root() -> bool {
+        let euid = unsafe { libc::geteuid() };
+        euid == 0
+    }
+
     #[test]
     fn rename_tag_propagates_non_schema_errors() {
+        if running_as_root() {
+            eprintln!(
+                "skipping: root ignores write permissions, so the chmod-denial premise is false"
+            );
+            return;
+        }
         let (dir, password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         handle.unlock(&password).unwrap();
@@ -14975,6 +14988,12 @@ mod tests {
     /// instead of silently destroying the old key.
     #[test]
     fn stuck_sweep_marker_blocks_later_rotation() {
+        if running_as_root() {
+            eprintln!(
+                "skipping: root ignores write permissions, so the chmod-denial premise is false"
+            );
+            return;
+        }
         let (dir, password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         handle.unlock(&password).unwrap();
