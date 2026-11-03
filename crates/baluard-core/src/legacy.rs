@@ -332,7 +332,7 @@ pub fn seal_layer(
         &aad,
         &build_random_nonce(),
         EnvelopeHeader {
-            version: 1,
+            version: crate::BALUARD_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
             key_epoch: epoch,
             update_seq: 0,
@@ -395,7 +395,7 @@ pub fn open_layer(
     aad.extend_from_slice(&epoch.to_be_bytes());
     let envelope = CipherEnvelope {
         header: EnvelopeHeader {
-            version: 1,
+            version: crate::BALUARD_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
             key_epoch: epoch,
             update_seq: 0,
@@ -459,7 +459,7 @@ pub fn seal_kit(letter: &str, body: &KitBody, passphrase: &str) -> Result<String
         aad_letter.as_bytes(),
         &nonce,
         EnvelopeHeader {
-            version: 1,
+            version: crate::BALUARD_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
             key_epoch: 0,
             update_seq: 0,
@@ -569,7 +569,7 @@ pub fn open_kit(armor: &str, passphrase: &str) -> Result<KitBody, BaluardError> 
 
     let envelope = CipherEnvelope {
         header: EnvelopeHeader {
-            version: 1,
+            version: crate::BALUARD_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
             key_epoch: 0,
             update_seq: 0,
@@ -712,7 +712,7 @@ pub fn seal_store(root_key: &[u8; 64], store: &LegacyStore) -> Result<String, Ba
         STORE_INFO,
         &build_random_nonce(),
         EnvelopeHeader {
-            version: 1,
+            version: crate::BALUARD_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
             key_epoch: 0,
             update_seq: 0,
@@ -754,7 +754,7 @@ pub fn open_store(root_key: &[u8; 64], packed: &str) -> Result<LegacyStore, Balu
     tag.copy_from_slice(&tag_vec);
     let envelope = CipherEnvelope {
         header: EnvelopeHeader {
-            version: 1,
+            version: crate::BALUARD_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
             key_epoch: 0,
             update_seq: 0,

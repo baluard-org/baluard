@@ -22,6 +22,15 @@ use crate::types::{CipherEnvelope, EnvelopeHeader};
 // Header: version(1) + alg_id(2) + key_epoch(8) + update_seq(8) + tier(1)
 // = 20 bytes.
 const HEADER_SIZE: usize = 20;
+
+/// Version policy for every persisted envelope: flag day, current version
+/// only. This single fn is the decision point for the next bump — at that
+/// point decide deliberately whether outstanding secret blobs (reveals,
+/// share packages, synced collection wraps: no rewrap path) may keep
+/// reading under the old version, and widen this check if so.
+fn accepts_version(v: u8) -> bool {
+    v == crate::BALUARD_VERSION
+}
 const NONCE_SIZE: usize = 12;
 const TAG_SIZE: usize = 16;
 const AAD_LEN_SIZE: usize = 2;
@@ -89,7 +98,7 @@ pub fn deserialize(data: &[u8]) -> Result<CipherEnvelope, VaultError> {
     // Header
     let version = data[pos];
     pos += 1;
-    if version != crate::BALUARD_VERSION {
+    if !accepts_version(version) {
         return Err(VaultError::InvalidEnvelopeVersion(version));
     }
 
@@ -208,6 +217,9 @@ mod tests {
 
     #[test]
     fn layout_pin_header_20_bytes_fixed_offsets() {
+        // Frozen wire format: a deliberate version bump must update this
+        // literal consciously, not ride the constant.
+        assert_eq!(BALUARD_VERSION, 2);
         let envelope = test_envelope();
         let bytes = serialize(&envelope).unwrap();
         // 20 header + 12 nonce + 2 aad_len + 4 aad + 16 tag + 100 ciphertext
