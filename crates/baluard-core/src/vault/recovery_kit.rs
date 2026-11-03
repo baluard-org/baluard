@@ -146,8 +146,8 @@ fn seal_root_check(
         KIT_CONTEXT.as_bytes(),
         &crate::crypto::aead::build_random_nonce(),
         crate::types::EnvelopeHeader {
-            version: 1,
-            alg_id: 1,
+            version: crate::BALUARD_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
             key_epoch: 0,
             update_seq: 0,
             tier: None,
@@ -190,8 +190,8 @@ pub fn verify_root_check(root_key: &RootKey, kit: &RecoveryKitFile) -> Result<()
     };
     let envelope = crate::types::CipherEnvelope {
         header: crate::types::EnvelopeHeader {
-            version: 1,
-            alg_id: 1,
+            version: crate::BALUARD_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
             key_epoch: 0,
             update_seq: 0,
             tier: None,

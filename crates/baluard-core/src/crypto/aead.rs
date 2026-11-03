@@ -109,10 +109,10 @@ pub fn build_attachment_aad(
 /// deterministic nonce is safe there. Everything else uses
 /// `build_random_nonce()`.
 ///
-/// nonce = nonce_counter (8 bytes LE) || object_shard_id (4 bytes)
-pub fn build_nonce(nonce_counter: u64, object_id: Uuid) -> [u8; 12] {
+/// nonce = counter (8 bytes LE) || object_shard_id (4 bytes)
+pub fn build_nonce(counter: u64, object_id: Uuid) -> [u8; 12] {
     let mut nonce = [0u8; 12];
-    nonce[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+    nonce[..8].copy_from_slice(&counter.to_le_bytes());
     // First 4 bytes of UUID as shard ID for namespace separation
     nonce[8..].copy_from_slice(&object_id.as_bytes()[..4]);
     nonce
@@ -247,7 +247,9 @@ mod tests {
         let mut h = Sha256::new();
         h.update(b"baluard-aad-v3");
         h.update((1u64).to_le_bytes());
-        h.update([crate::BALUARD_VERSION]);
+        // Literal 2: pins the frozen version into the recipe; a bump must
+        // consciously touch this test.
+        h.update([2u8]);
         h.update((16u64).to_le_bytes());
         h.update(vault_id.as_bytes());
         h.update((6u64).to_le_bytes());
