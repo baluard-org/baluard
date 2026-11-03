@@ -61,6 +61,7 @@ pub struct VaultCreationResult {
     since = "0.2.0",
     note = "Use VaultCreator builder instead. This function will be removed in a future release."
 )]
+#[allow(unused_variables)]
 pub fn create_vault_ceremony(
     master_password: &str,
     profile: KdfProfile,
