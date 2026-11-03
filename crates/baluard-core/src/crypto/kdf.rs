@@ -141,6 +141,15 @@ mod tests {
     }
 
     #[test]
+    fn mobile_low_profile_shape() {
+        // Bitwarden-default shape, chosen over single-lane for unlock latency.
+        let params = create_params(KdfProfile::MobileLow);
+        assert_eq!(params.memory_kib, 32 * 1024);
+        assert_eq!(params.time_cost, 6);
+        assert_eq!(params.parallelism, 4);
+    }
+
+    #[test]
     fn rejects_memory_below_floor() {
         let params = KdfParams {
             profile: KdfProfile::MobileLow,
