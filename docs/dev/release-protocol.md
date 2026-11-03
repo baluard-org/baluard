@@ -41,6 +41,7 @@ Everything that signs lives outside the repository. Losing any of these orphans 
 | Updater minisign key | `~/.tauri/baluard-updater.key` | Release artifacts (`.sig` sidecars, `SHA256SUMS`) and desktop updater bundles; public key pinned in `tauri.conf.json` |
 | Release GPG key | `~/.baluard/release-gnupg` | apt and dnf repository metadata; fingerprint `223310EA BF1A B6FE E6BD DF3E 2A53 1D54 E6D7 4804` |
 | F-Droid repo key + APK keystore | `~/.baluard/fdroid/` (`config.yml`, `keystore.p12`, `allowed-apk-signing-key`) | APK and F-Droid indexes; repo fingerprint `C5A690013893C46F208A506AEA9217D37FF007C0A2B0A2514039FE28DD58C7A8` |
+| Android upload keystore | `~/.baluard/baluard-android-upload.keystore` (mode 600, RSA 4096, alias `baluard-upload`; keystore and passwords backed up in Bitwarden) | Release APKs and the Play AAB via the `baluardRelease` signing config |
 | Chrome Web Store OAuth | Bitwarden (`CHROME_CLIENT_ID`, `CHROME_CLIENT_SECRET`, `CHROME_REFRESH_TOKEN`) | Store API uploads; export into the environment only when running `just ext-submit` |
 | AMO JWT keys | Bitwarden (`BALUARD_AMO_JWT_KEY`, `BALUARD_AMO_JWT_SECRET`) | `web-ext sign` submissions |
 
@@ -63,7 +64,7 @@ CHROME_PUBLISHER_ID=d6e3a68c-a6f3-4359-9769-9fd105198720
 | Desktop macOS | `just desktop-build` on a macOS host, then `just build-signed` | targets `dmg` and `app`; ad-hoc signing only |
 | Desktop Windows | `just desktop-windows` | cargo-xwin cross-compile of the sidecars plus NSIS bundling |
 | Extension zips | `just ext-package` | rebuilds both dists, enforces the drift gate, zips each store |
-| Android APK | `just android-apk` | `mobile/scripts/build-android-apk.sh --release`; verify `versionCode` increased |
+| Android APK | `just android-apk-release` | `mobile/scripts/build-android-apk.sh --release` with the upload keystore; verify `versionCode` increased; the build verifies the APK signature with `apksigner` before reporting success |
 | CLI archives | `just release` | `tar.gz` + checksums into `./dist` |
 
 ## Release pipeline
