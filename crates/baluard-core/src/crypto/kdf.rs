@@ -136,7 +136,7 @@ pub(crate) fn test_params() -> KdfParams {
     KdfParams {
         kdf: KdfKind::Argon2id,
         vault_id: Some(uuid::Uuid::new_v4()),
-        memory_kib: KDF_MIN_MEMORY_KIB as u32,
+        memory_kib: KDF_MIN_MEMORY_KIB,
         time_cost: 1,
         parallelism: 1,
         profile: KdfProfile::MobileLow,

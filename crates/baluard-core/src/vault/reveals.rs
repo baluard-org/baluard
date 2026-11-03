@@ -779,7 +779,6 @@ mod tests {
         // A reveal link sealed before the kdf field existed must still
         // open: serde default carries it as argon2id.
         let mut pkg: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        let mut pkg: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         // wrap is flattened: the passphrase wrap's params sit at the top level.
         pkg["kdf"].as_object_mut().unwrap().remove("kdf");
         let stripped = serde_json::to_vec(&pkg).unwrap();
