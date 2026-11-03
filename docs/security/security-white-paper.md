@@ -38,7 +38,7 @@ Baluard uses Argon2id, the memory-hard key derivation function, exclusively. You
 
 | Profile | Memory | Iterations | Parallelism |
 |---|---|---|---|
-| Mobile low | 19 MiB | 2 | 1 |
+| Mobile low | 32 MiB | 6 | 4 |
 | Desktop standard | 64 MiB | 3 | 2 |
 | Desktop high | 256 MiB | 4 | 4 |
 
