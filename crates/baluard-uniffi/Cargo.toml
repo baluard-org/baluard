@@ -34,3 +34,6 @@ uniffi_bindgen = "0.28"
 tokio = { workspace = true, features = ["macros", "rt"] }
 tempfile = "3"
 serde_json = { workspace = true }
+# Test-only: cheap vault-fixture KDF (see baluard-core's feature docs);
+# applies to this crate's test targets, never to shipped binaries.
+baluard-core = { path = "../baluard-core", features = ["test-cheap-kdf"] }
