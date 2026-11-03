@@ -612,6 +612,7 @@ impl<'a> VaultCreator<'a> {
                 let identity_meta = serde_json::json!({
                     "mode": seal_mode,
                     "salt_hex": salt_hex,
+                    "kdf": "argon2id",
                     "memory_kib": kdf::create_params(KdfProfile::MobileLow).memory_kib,
                     "time_cost": kdf::create_params(KdfProfile::MobileLow).time_cost,
                     "parallelism": 1,
@@ -764,9 +765,7 @@ impl<'a> VaultCreator<'a> {
                 let kdf_json = std::fs::read_to_string(&kdf_path).map_err(|e| {
                     BaluardError::from(VaultError::Metadata(format!("reading kdf params: {e}")))
                 })?;
-                let kdf_params: KdfParams = serde_json::from_str(&kdf_json).map_err(|e| {
-                    BaluardError::from(VaultError::Corrupt(format!("kdf params: {e}")))
-                })?;
+                let kdf_params = kdf::parse_kdf_params(&kdf_json)?;
 
                 let mut kek = kdf::derive_kek(&self.password, &kdf_params)?;
                 let session_key = hkdf_derive::derive_session_key(&kek)?;
@@ -956,6 +955,7 @@ impl<'a> VaultCreator<'a> {
                 let identity_meta = serde_json::json!({
                     "mode": seal_mode,
                     "salt_hex": salt_hex,
+                    "kdf": "argon2id",
                     // The passphrase reader derives from these; omitting
                     // them defaults to 8192 KiB/t=3, which can never
                     // unseal a MobileLow-sealed identity.

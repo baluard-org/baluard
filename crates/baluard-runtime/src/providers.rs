@@ -641,8 +641,7 @@ pub fn enroll_device_pre_unlock(
 
     let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))
         .map_err(|e| VaultError::Metadata(format!("reading kdf params: {e}")))?;
-    let _kdf_params: baluard_core::types::KdfParams = serde_json::from_str(&kdf_json)
-        .map_err(|e| VaultError::Corrupt(format!("kdf params: {e}")))?;
+    let _kdf_params = baluard_core::crypto::kdf::parse_kdf_params(&kdf_json)?;
 
     // Policy is NOT read here: settings.enc is unreadable pre-unlock and
     // settings-pub.json does not carry it. Core derives the real policy

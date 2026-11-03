@@ -97,6 +97,9 @@ pub enum VaultError {
     #[error("entry was written by a newer app version; update Baluard to edit it")]
     ItemSchemaTooNew(u32),
 
+    #[error("key derivation \"{0}\" is not supported by this app version; update Baluard")]
+    KdfKindUnknown(String),
+
     #[error("invalid algorithm ID: 0x{0:04x}")]
     InvalidAlgorithmId(u16),
 
