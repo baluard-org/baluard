@@ -2105,20 +2105,22 @@ mod tests {
         // Fresh clone, nothing done yet.
         assert_eq!(join_status(vault), (false, false));
 
-        // Introduction done: unlock material with a device id.
+        // Introduction done: unlock material with a device id. Built via
+        // the real struct so the fixture cannot drift from the writer's
+        // shape (hand-typed JSON rots when MemberUnlock gains a field).
         let device_id = uuid::Uuid::new_v4();
-        let unlock = serde_json::json!({
-            "device_id": device_id.to_string(),
-            "kdf_params": {
-                "memory_kib": 19456,
-                "time_cost": 2,
-                "parallelism": 1,
-                "salt": "aabb",
-            },
-            "kek_canary": "deadbeef",
-        });
+        let unlock = MemberUnlock {
+            device_id,
+            kdf_params: crate::types::KdfParams::from_profile(crate::types::KdfProfile::MobileLow),
+            kek_canary: "deadbeef".into(),
+            identity_seed_sealed: None,
+        };
         std::fs::create_dir_all(vault.join("meta")).unwrap();
-        std::fs::write(vault.join("meta/member-unlock.json"), unlock.to_string()).unwrap();
+        std::fs::write(
+            vault.join("meta/member-unlock.json"),
+            serde_json::to_string(&unlock).unwrap(),
+        )
+        .unwrap();
         assert_eq!(join_status(vault), (true, false));
 
         // Approval artifacts arrive via sync: the device keywrap AND the
