@@ -34,6 +34,7 @@ if [[ "$tool" == "cargo-xwin" ]]; then
   mkdir -p "\$SANDBOX/target/x86_64-pc-windows-msvc/release"
   : > "\$SANDBOX/target/x86_64-pc-windows-msvc/release/baluard-daemon.exe"
   : > "\$SANDBOX/target/x86_64-pc-windows-msvc/release/baluard.exe"
+  : > "\$SANDBOX/target/x86_64-pc-windows-msvc/release/baluard-nmh.exe"
 fi
 exit 0
 EOF
@@ -66,7 +67,7 @@ run_build > "$TMP/happy.out"
 grep -q 'windows installer:' "$TMP/happy.out"
 
 # sidecars land at the target-triple names Tauri looks for.
-for bin in baluard-daemon baluard; do
+for bin in baluard-daemon baluard baluard-nmh; do
   test -f "$SANDBOX/desktop/src-tauri/binaries/$bin-x86_64-pc-windows-msvc.exe"
 done
 
@@ -77,6 +78,7 @@ grep -q '^xwin build' "$TMP/cargo.log"
 grep -q -- '--target x86_64-pc-windows-msvc' "$TMP/cargo-xwin.log"
 grep -q -- '-p baluard-daemon' "$TMP/cargo-xwin.log"
 grep -q -- '-p baluard-cli' "$TMP/cargo-xwin.log"
+grep -q -- '-p baluard-nmh' "$TMP/cargo-xwin.log"
 
 # tauri build ran with the nsis bundle, the windows target, and the xwin runner.
 grep -q 'tauri build' "$TMP/npm.log"

@@ -40,7 +40,8 @@
     ],
     "externalBin": [
       "binaries/baluard-daemon",
-      "binaries/baluard"
+      "binaries/baluard",
+      "binaries/baluard-nmh"
     ],
     "macOS": {
       "entitlements": "baluard.entitlements"
@@ -55,7 +56,13 @@
           "libssl3t64",
           "libssh2-1"
         ],
-        "recommends": ["gnome-keyring", "libu2f-udev"]
+        "recommends": ["gnome-keyring", "libu2f-udev"],
+        "files": {
+          "/usr/lib/mozilla/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/firefox.json",
+          "/etc/opt/chrome/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chrome.json",
+          "/etc/chromium/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chromium.json",
+          "/etc/opt/edge/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/edge.json"
+        }
       },
       "rpm": {
         "depends": [
@@ -66,7 +73,13 @@
           "openssl-libs",
           "libssh2"
         ],
-        "recommends": ["gnome-keyring"]
+        "recommends": ["gnome-keyring"],
+        "files": {
+          "/usr/lib64/mozilla/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/firefox.json",
+          "/etc/opt/chrome/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chrome.json",
+          "/etc/chromium/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chromium.json",
+          "/etc/opt/edge/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/edge.json"
+        }
       }
     },
     "android": {

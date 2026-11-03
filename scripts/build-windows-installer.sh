@@ -44,12 +44,13 @@ mkdir -p "$BIN_DIR"
 
 echo "Cross-compiling Windows sidecars ($TRIPLE)..."
 if ! cargo xwin build --release --target "$TARGET" \
-  -p baluard-daemon -p baluard-cli --features baluard-daemon/fido2; then
+  -p baluard-daemon -p baluard-cli -p baluard-nmh --features baluard-daemon/fido2; then
   echo "cargo-xwin cross-compile failed for $TARGET" >&2
   exit 1
 fi
 cp "target/$TARGET/release/baluard-daemon.exe" "$BIN_DIR/baluard-daemon-$TRIPLE.exe"
 cp "target/$TARGET/release/baluard.exe" "$BIN_DIR/baluard-$TRIPLE.exe"
+cp "target/$TARGET/release/baluard-nmh.exe" "$BIN_DIR/baluard-nmh-$TRIPLE.exe"
 
 echo "Building NSIS installer..."
 cd desktop
