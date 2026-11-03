@@ -117,6 +117,7 @@ pub fn create_params(profile: KdfProfile) -> KdfParams {
     let salt = generate_salt();
     KdfParams {
         kdf: KdfKind::Argon2id,
+        vault_id: Some(uuid::Uuid::new_v4()),
         memory_kib: profile.memory_kib(),
         time_cost: profile.time_cost(),
         parallelism: profile.parallelism(),
@@ -195,6 +196,7 @@ mod tests {
     #[test]
     fn rejects_invalid_salt() {
         let params = KdfParams {
+            vault_id: None,
             kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 19 * 1024,
@@ -217,6 +219,7 @@ mod tests {
     #[test]
     fn rejects_memory_below_floor() {
         let params = KdfParams {
+            vault_id: None,
             kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 1024,
@@ -230,6 +233,7 @@ mod tests {
     #[test]
     fn rejects_memory_above_ceiling() {
         let params = KdfParams {
+            vault_id: None,
             kdf: KdfKind::Argon2id,
             profile: KdfProfile::DesktopHigh,
             memory_kib: 600 * 1024,
@@ -243,6 +247,7 @@ mod tests {
     #[test]
     fn rejects_extreme_time_cost() {
         let params = KdfParams {
+            vault_id: None,
             kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 19 * 1024,
@@ -256,6 +261,7 @@ mod tests {
     #[test]
     fn rejects_extreme_parallelism() {
         let params = KdfParams {
+            vault_id: None,
             kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 19 * 1024,
@@ -269,6 +275,7 @@ mod tests {
     #[test]
     fn accepts_floor_boundary_params() {
         let params = KdfParams {
+            vault_id: None,
             kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 19 * 1024,
@@ -282,6 +289,7 @@ mod tests {
     #[test]
     fn validate_params_ceiling_boundaries() {
         let mut params = KdfParams {
+            vault_id: None,
             kdf: KdfKind::Argon2id,
             profile: KdfProfile::DesktopHigh,
             memory_kib: 256 * 1024,

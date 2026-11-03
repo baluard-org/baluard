@@ -206,6 +206,11 @@ pub struct KdfParams {
     /// 256-bit random salt (stored in plaintext vault header).
     #[serde(with = "hex_bytes")]
     pub salt: Vec<u8>,
+    /// Random vault identity. Stored so a future salt rotation keeps the
+    /// vault id (every AAD binds it); absent on pre-existing vaults, which
+    /// keep deriving it from the salt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_id: Option<Uuid>,
 }
 
 mod hex_bytes {
@@ -225,6 +230,7 @@ impl KdfParams {
     /// Create params from a profile.
     pub fn from_profile(profile: KdfProfile) -> Self {
         Self {
+            vault_id: None,
             kdf: KdfKind::Argon2id,
             memory_kib: profile.memory_kib(),
             time_cost: profile.time_cost(),

@@ -306,6 +306,7 @@ pub fn seal_guest_reveal(
     .map_err(|e| VaultError::Metadata(format!("generate passphrase: {e}")))?;
 
     let params = KdfParams {
+        vault_id: None,
         kdf: crate::types::KdfKind::Argon2id,
         profile: KdfProfile::DesktopStd,
         memory_kib: REVEAL_KDF_MEMORY_KIB,

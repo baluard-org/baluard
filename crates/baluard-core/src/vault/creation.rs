@@ -398,7 +398,7 @@ impl<'a> VaultCreator<'a> {
                 })?;
 
                 let kdf_params = kdf::create_params(self.kdf_profile.clone());
-                let vault_id = VaultHandle::derive_vault_id(&kdf_params);
+                let vault_id = VaultHandle::resolve_vault_id(&kdf_params);
                 let mut kek = kdf::derive_kek(&self.password, &kdf_params)?;
 
                 let mut root_key_bytes = [0u8; 64];
@@ -910,7 +910,7 @@ impl<'a> VaultCreator<'a> {
                 hasher.update(root_key.as_bytes());
                 let trust_fingerprint: [u8; 32] = hasher.finalize().into();
 
-                let vault_id = VaultHandle::derive_vault_id(&kdf_params);
+                let vault_id = VaultHandle::resolve_vault_id(&kdf_params);
 
                 // P1a: identity — same generation/seal/escrow as the other
                 // ceremony path.
