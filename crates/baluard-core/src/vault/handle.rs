@@ -2716,7 +2716,7 @@ impl VaultHandle {
                 }
                 // A pending crash-recovery marker must converge first: the
                 // rotation below overwrites it.
-                self.converge_pending_sweeps(&sgk);
+                self.converge_pending_sweeps(&sgk)?;
                 // Revoke-by-rotation (plan line 153 hardening): the removed
                 // member already holds the old key, so deleting the wrap is
                 // not enough — the key itself dies and every stored entry
@@ -2753,23 +2753,36 @@ impl VaultHandle {
     /// same pending marker. Rotations recorded on the marker are carried
     /// only when the live def actually holds the new CK (a rotation whose
     /// def never flipped is dropped — its files are still old-keyed and a
-    /// fresh sweep rotates again). The marker clears after the carry pass.
-    fn converge_pending_sweeps(&self, sgk: &crate::keys::hierarchy::SpaceGroupKey) {
+    /// fresh sweep rotates again). The marker clears only after every
+    /// carry succeeded; an unreadable def keeps the marker, because
+    /// overwriting it with the next rotation would destroy the old CK
+    /// the uncarried entries still need.
+    fn converge_pending_sweeps(
+        &self,
+        sgk: &crate::keys::hierarchy::SpaceGroupKey,
+    ) -> Result<(), BaluardError> {
         let pending_rotations = crate::vault::collections::read_sweep_pending(&self.path);
         if pending_rotations.is_empty() {
-            return;
+            return Ok(());
         }
         let mut carried_all = true;
         for rot in &pending_rotations {
-            let flipped =
-                crate::vault::collections::open_collection(&self.path, sgk, &rot.collection_id)
-                    .ok()
-                    .and_then(|(def, _)| {
-                        crate::vault::collections::unwrap_ck(&def, sgk)
-                            .ok()
-                            .map(|ck| ck.as_ref() == rot.new_ck.as_ref())
-                    })
-                    .unwrap_or(false);
+            let flipped = match crate::vault::collections::open_collection(
+                &self.path,
+                sgk,
+                &rot.collection_id,
+            ) {
+                Ok((def, _)) => crate::vault::collections::unwrap_ck(&def, sgk)
+                    .map(|ck| ck.as_ref() == rot.new_ck.as_ref())
+                    .unwrap_or(false),
+                // A def that cannot be read is indeterminate, not
+                // unflipped: clearing the marker on a guess can
+                // strand entries under a destroyed key.
+                Err(_) => {
+                    carried_all = false;
+                    continue;
+                }
+            };
             if flipped {
                 if self.reencrypt_after_sweep(rot).is_err() {
                     carried_all = false;
@@ -2778,6 +2791,13 @@ impl VaultHandle {
         }
         if carried_all {
             crate::vault::collections::clear_sweep_pending(&self.path);
+            Ok(())
+        } else {
+            Err(VaultError::Metadata(
+                "an earlier collection sweep did not finish; resolve it (free disk space, fix permissions) before rotating again"
+                    .into(),
+            )
+            .into())
         }
     }
 
@@ -2790,7 +2810,7 @@ impl VaultHandle {
         self.assert_can_manage_members()?;
         let sgk = self.unlocked().sgk()?.clone();
         // Converge a crash-interrupted sweep before the fresh sweep below.
-        self.converge_pending_sweeps(&sgk);
+        self.converge_pending_sweeps(&sgk)?;
         let swept = crate::vault::collections::sweep_expired_grants(&self.path, &sgk)?;
         // Carry each key rotation into the entry files. Their item keys
         // derive from the CK (S3-7c path-derived domains), so a rotated CK
@@ -2822,7 +2842,7 @@ impl VaultHandle {
         let sgk = self.unlocked().sgk()?.clone();
         // Converge a crash-interrupted sweep first — this op rewrites
         // the same pending marker.
-        self.converge_pending_sweeps(&sgk);
+        self.converge_pending_sweeps(&sgk)?;
         let Some(rotation) = crate::vault::collections::rotate_key_for_removal(
             &self.path,
             &sgk,
@@ -2999,6 +3019,20 @@ impl VaultHandle {
                 .parse()
                 .map_err(|e| VaultError::Corrupt(format!("attachment id not a uuid: {e}")))?;
             let enc_blob = std::fs::read(&attach_path)?;
+            // Same idempotency probe as the entry: a crash between
+            // attachment carries leaves some blobs on the new key, and
+            // re-carrying one must skip instead of failing the retry
+            // forever (the old-key decrypt below can never open it).
+            if let Ok(mut probe) = crate::vault::attachment::decrypt_attachment(
+                self.vault_id,
+                cipher_id,
+                attach_uuid,
+                new_item.as_bytes(),
+                &enc_blob,
+            ) {
+                probe.zeroize();
+                continue;
+            }
             let mut plaintext = crate::vault::attachment::decrypt_attachment(
                 self.vault_id,
                 cipher_id,
@@ -5918,6 +5952,17 @@ impl VaultHandle {
             // meta; both then re-seal under the live key).
             self.heal_smk_pending_after_unlock();
             self.converge_meta_after_flip();
+        }
+
+        // Best-effort converge of an interrupted collection sweep: the
+        // retry also runs before every rotation op, but unlocking is the
+        // natural moment a transient cause (full disk, permissions) has
+        // been fixed. Failure is logged, not fatal — rotation ops still
+        // refuse loudly while the marker survives.
+        if let Err(e) = self.converge_pending_sweeps(
+            &crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(&root_key, current_epoch),
+        ) {
+            eprintln!("unlock: pending collection sweep did not converge: {e}");
         }
 
         // P1a: cache the identity when its sealing key is device-local (OS
@@ -14843,6 +14888,91 @@ mod tests {
             r#"{"id":"00000000-0000-0000-0000-000000000000","display_name":"x","role":"viewer","trust":"channel"}"#,
         )
         .unwrap()
+    }
+
+    /// A kept sweep marker is a promise: the old CK stays recoverable
+    /// until its entries are carried. The next rotation rewrites the
+    /// marker file, so an unconverged marker must BLOCK that rotation
+    /// instead of silently destroying the old key.
+    #[test]
+    fn stuck_sweep_marker_blocks_later_rotation() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let mk = |name: &str| CipherInput {
+            name: name.into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::SecureNote,
+            favorite: false,
+            notes: Some(name.into()),
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+
+        let a = handle.collection_create("Alpha").unwrap();
+        let entry_a = handle.add_cipher_in_collection(&mk("A1"), Some(a)).unwrap();
+        let b = handle.collection_create("Beta").unwrap();
+        let entry_b = handle.add_cipher_in_collection(&mk("B1"), Some(b)).unwrap();
+
+        // Make Alpha's carry fail: the dir stays readable, writes are
+        // denied, so the definition flips but the entry cannot re-key.
+        let dir_a = handle
+            .cipher_file_path(entry_a)
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        use std::os::unix::fs::PermissionsExt;
+        let orig_mode = std::fs::metadata(&dir_a).unwrap().permissions().mode();
+        let mut denied = std::fs::metadata(&dir_a).unwrap().permissions();
+        denied.set_mode(0o500);
+        std::fs::set_permissions(&dir_a, denied).unwrap();
+
+        // First rotation on Alpha: carry fails, the marker must survive.
+        assert!(handle.collection_rotate_key(a, None).is_err());
+        let pending = crate::vault::collections::read_sweep_pending(dir.path());
+        assert_eq!(pending.len(), 1, "marker kept after failed carry");
+        assert_eq!(pending[0].collection_id, a);
+
+        // A rotation on Beta must REFUSE while Alpha's marker is stuck;
+        // proceeding would overwrite the marker and destroy Alpha's old
+        // CK with its entry still sealed under it.
+        assert!(
+            handle.collection_rotate_key(b, None).is_err(),
+            "rotation must refuse while a sweep marker is stuck"
+        );
+        let pending = crate::vault::collections::read_sweep_pending(dir.path());
+        assert_eq!(
+            pending.len(),
+            1,
+            "marker must not be overwritten by a refused rotation"
+        );
+        assert_eq!(pending[0].collection_id, a);
+
+        // Heal the transient cause: the next rotation converges Alpha
+        // first, then rotates Beta. Both collections end readable and the
+        // marker is gone.
+        let mut healed = std::fs::metadata(&dir_a).unwrap().permissions();
+        healed.set_mode(orig_mode);
+        std::fs::set_permissions(&dir_a, healed).unwrap();
+
+        assert!(handle.collection_rotate_key(b, None).unwrap());
+        assert!(crate::vault::collections::read_sweep_pending(dir.path()).is_empty());
+        match handle.get_cipher(entry_a).unwrap() {
+            CipherRead::Decrypted(c) => assert_eq!(c.name, "A1"),
+            CipherRead::Locked(_) => panic!("Alpha entry must stay readable"),
+        }
+        match handle.get_cipher(entry_b).unwrap() {
+            CipherRead::Decrypted(c) => assert_eq!(c.name, "B1"),
+            CipherRead::Locked(_) => panic!("Beta entry must be readable"),
+        }
     }
 
     /// 2026-10-01 review: one corrupt entry must not abort a rotation
