@@ -160,7 +160,6 @@ pub fn seal_bytes(
         version: BALUARD_VERSION,
         alg_id: ALG_AES_256_GCM,
         key_epoch: 0,
-        nonce_counter: 0,
         update_seq: 0,
         tier: None,
     };
@@ -453,7 +452,6 @@ pub fn seal_bytes_hw(
         version: BALUARD_VERSION,
         alg_id: ALG_AES_256_GCM,
         key_epoch: 0,
-        nonce_counter: 0,
         update_seq: 0,
         tier: None,
     };
@@ -2400,7 +2398,6 @@ mod tests {
             version: crate::BALUARD_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
             key_epoch: epoch_before,
-            nonce_counter: 0,
             update_seq: seq_before,
             tier: Some(tier),
         };
@@ -2472,7 +2469,6 @@ mod tests {
             version: crate::BALUARD_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
             key_epoch: epoch_before,
-            nonce_counter: 0,
             update_seq: seq_before,
             tier: Some(tier),
         };

@@ -1,7 +1,9 @@
 //! AEAD encryption: AES-256-GCM envelope construction.
 //!
 //! D3: versioned envelope with AAD binding.
-//! AAD = SHA256(vault_id || object_type || object_id || tier || alg_id || key_epoch || update_seq)
+//! AAD = SHA256(version || vault_id || object_type || object_id || tier || alg_id || key_epoch || update_seq)
+//! under a domain separator; the envelope format version is hashed so an
+//! envelope rewritten under a different format version cannot authenticate.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -13,8 +15,8 @@ use uuid::Uuid;
 
 /// Construct the AAD hash from context-binding fields.
 ///
-/// Binds ciphertext to: vault, object identity, size tier, algorithm, epoch, version.
-/// Prevents cut-and-paste and rollback attacks.
+/// Binds ciphertext to: format version, vault, object identity, size tier,
+/// algorithm, epoch. Prevents cut-and-paste and rollback attacks.
 ///
 /// Each field is length-prefixed (u64 LE) to prevent collision attacks
 /// where different (object_type, object_id) pairs produce identical byte strings.
@@ -29,7 +31,12 @@ pub fn build_aad(
 ) -> Vec<u8> {
     let mut hasher = Sha256::new();
     // Domain separation prefix
-    hasher.update(b"baluard-aad-v2");
+    hasher.update(b"baluard-aad-v3");
+    // The writing build's envelope format version: an envelope migrated to
+    // a different format version gets a fresh AAD and cannot authenticate
+    // against a reader deriving with its own version.
+    hasher.update((1u64).to_le_bytes());
+    hasher.update([crate::BALUARD_VERSION]);
     // Length-prefixed fields to prevent collision
     let vault_bytes = vault_id.as_bytes();
     hasher.update((vault_bytes.len() as u64).to_le_bytes());
@@ -68,7 +75,9 @@ pub fn build_attachment_aad(
     update_seq: u64,
 ) -> Vec<u8> {
     let mut hasher = Sha256::new();
-    hasher.update(b"baluard-att-aad-v1");
+    hasher.update(b"baluard-att-aad-v2");
+    hasher.update((1u64).to_le_bytes());
+    hasher.update([crate::BALUARD_VERSION]);
     let vault_bytes = vault_id.as_bytes();
     hasher.update((vault_bytes.len() as u64).to_le_bytes());
     hasher.update(vault_bytes);
@@ -96,9 +105,9 @@ pub fn build_attachment_aad(
 
 /// Build a 12-byte nonce from a per-object counter and object shard ID.
 ///
-/// **LEGACY for cipher path.** New cipher writes use `build_random_nonce()`.
-/// Still used for meta/index/canary writes where multi-device concurrency
-/// is not a concern (these paths use a random counter, not a sequential one).
+/// Canary-only today: canaries are single-shot per vault epoch, so a
+/// deterministic nonce is safe there. Everything else uses
+/// `build_random_nonce()`.
 ///
 /// nonce = nonce_counter (8 bytes LE) || object_shard_id (4 bytes)
 pub fn build_nonce(nonce_counter: u64, object_id: Uuid) -> [u8; 12] {
@@ -210,7 +219,6 @@ mod tests {
             version: BALUARD_VERSION,
             alg_id: ALG_AES_256_GCM,
             key_epoch: 1,
-            nonce_counter: 0,
             update_seq: 1,
             tier: Some(Tier::Xs),
         };
@@ -218,6 +226,43 @@ mod tests {
         let envelope = encrypt(&key, plaintext, &aad, &nonce, header).unwrap();
         let decrypted = decrypt(&key, &envelope).unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn aad_recipe_pins_envelope_version() {
+        // Executable spec of the AAD hash recipe, including the envelope
+        // format version as the first hashed field: remove the version from
+        // build_aad (or change any field order) and this pin fails.
+        let vault_id = Uuid::new_v4();
+        let object_id = Uuid::new_v4();
+        let real = build_aad(
+            vault_id,
+            ObjectType::Cipher,
+            object_id,
+            Some(Tier::Xs),
+            ALG_AES_256_GCM,
+            7,
+            9,
+        );
+        let mut h = Sha256::new();
+        h.update(b"baluard-aad-v3");
+        h.update((1u64).to_le_bytes());
+        h.update([crate::BALUARD_VERSION]);
+        h.update((16u64).to_le_bytes());
+        h.update(vault_id.as_bytes());
+        h.update((6u64).to_le_bytes());
+        h.update(ObjectType::Cipher.as_str().as_bytes());
+        h.update((16u64).to_le_bytes());
+        h.update(object_id.as_bytes());
+        h.update((2u64).to_le_bytes());
+        h.update(b"xs");
+        h.update((2u64).to_le_bytes());
+        h.update(ALG_AES_256_GCM.to_le_bytes());
+        h.update((8u64).to_le_bytes());
+        h.update(7u64.to_le_bytes());
+        h.update((8u64).to_le_bytes());
+        h.update(9u64.to_le_bytes());
+        assert_eq!(real, h.finalize().to_vec());
     }
 
     #[test]
@@ -241,7 +286,6 @@ mod tests {
             version: BALUARD_VERSION,
             alg_id: ALG_AES_256_GCM,
             key_epoch: 1,
-            nonce_counter: 0,
             update_seq: 1,
             tier: Some(Tier::S),
         };
@@ -279,7 +323,6 @@ mod tests {
             version: BALUARD_VERSION,
             alg_id: ALG_AES_256_GCM,
             key_epoch: 1,
-            nonce_counter: 0,
             update_seq: 1,
             tier: Some(Tier::Xs),
         };

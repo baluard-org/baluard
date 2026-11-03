@@ -2721,7 +2721,7 @@ mod tests {
     // work from their new home.
     #[tokio::test]
     async fn consolidated_ffi_surface_works() {
-        assert_eq!(mobile_version(), 1);
+        assert_eq!(mobile_version(), 2);
         let phrase = generate_recovery_phrase().unwrap().phrase;
         assert_eq!(
             phrase.split_whitespace().count(),
