@@ -8,7 +8,7 @@
 #   BALUARD_E2E_PAT       THIS phone's GitHub account token
 #   BALUARD_E2E_REPO      repo name for the backup
 #   GH_USER2              invited joiner's GitHub username
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 appLaunchDelay: 3000
 ---
 - launchApp:

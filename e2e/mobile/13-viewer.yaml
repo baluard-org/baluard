@@ -2,7 +2,7 @@
 # Assumes: the family vault is the active vault on this device, the
 # app cold-starts to the unlock screen, and the box has just set this
 # device's member to viewer and pushed.
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 ---
 - launchApp
 - tapOn:

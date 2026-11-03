@@ -29,7 +29,7 @@ printf 'Signer #1 certificate SHA-256 digest: 9CDF3DF5EF4A228D51CC5BFABAA303D65B
 EOF
 cat > "$TMP/bin/aapt" <<'EOF'
 #!/usr/bin/env bash
-printf "package: name='%s' versionCode='%s' versionName='0.1.0'\n" "${FAKE_PACKAGE:-xyz.actitud.baluard}" "${FAKE_VERSION_CODE:-1}"
+printf "package: name='%s' versionCode='%s' versionName='0.1.0'\n" "${FAKE_PACKAGE:-app.baluard.mobile}" "${FAKE_VERSION_CODE:-1}"
 EOF
 chmod +x "$TMP/bin/fdroid" "$TMP/bin/apksigner" "$TMP/bin/aapt"
 
@@ -46,7 +46,7 @@ mkdir -p "$ANDROID_HOME"
 
 "$ROOT/scripts/build-fdroid-repo.sh" "$TMP/androidApp-release.apk" "$TMP/out"
 
-grep -q "AllowedAPKSigningKeys: '9cdf3df5ef4a228d51cc5bfabaa303d65bd534c306c12aa0a8857cea223130ff'" "$TMP/work/metadata/xyz.actitud.baluard.yml"
+grep -q "AllowedAPKSigningKeys: '9cdf3df5ef4a228d51cc5bfabaa303d65bd534c306c12aa0a8857cea223130ff'" "$TMP/work/metadata/app.baluard.mobile.yml"
 grep -q 'https://baluard.app/fdroid/repo' "$TMP/work/config.yml"
 grep -q 'keystorepass: secret' "$TMP/work/config.yml"
 grep -q 'repo_url: old' "$TMP/work/config.yml.backup"
@@ -54,8 +54,8 @@ test "$(stat -c %a "$TMP/work/config.yml")" = 600
 test "$(stat -c %a "$TMP/work/config.yml.backup")" = 600
 test "$(stat -c %a "$TMP/work/keystore.p12")" = 600
 test "$(stat -c %a "$TMP/work/allowed-apk-signing-key")" = 600
-test -f "$TMP/work/repo/xyz.actitud.baluard_1.apk"
-test -f "$TMP/work/repo/xyz.actitud.baluard/en-US/icon.png"
+test -f "$TMP/work/repo/app.baluard.mobile_1.apk"
+test -f "$TMP/work/repo/app.baluard.mobile/en-US/icon.png"
 test ! -e "$TMP/work/repo/androidApp-release.apk"
 test -f "$TMP/out/index-v2.json"
 test ! -e "$TMP/out/config.yml"
@@ -72,15 +72,15 @@ printf 'replacement\n' > "$TMP/androidApp-release.apk"
 "$ROOT/scripts/build-fdroid-repo.sh" "$TMP/androidApp-release.apk" "$TMP/out" 2> "$TMP/replacement.err"
 grep -q 'same versionCode' "$TMP/replacement.err"
 test "$(find "$TMP/work/repo" -maxdepth 1 -name '*.apk' | wc -l)" = 1
-test "$(cat "$TMP/work/repo/xyz.actitud.baluard_1.apk")" = replacement
+test "$(cat "$TMP/work/repo/app.baluard.mobile_1.apk")" = replacement
 
 for version in 2 3 4; do
   printf 'version-%s\n' "$version" > "$TMP/androidApp-release.apk"
   FAKE_VERSION_CODE="$version" "$ROOT/scripts/build-fdroid-repo.sh" "$TMP/androidApp-release.apk" "$TMP/out"
 done
 test "$(find "$TMP/work/repo" -maxdepth 1 -name '*.apk' | wc -l)" = 3
-test ! -e "$TMP/work/repo/xyz.actitud.baluard_1.apk"
-test -f "$TMP/work/repo/xyz.actitud.baluard_4.apk"
+test ! -e "$TMP/work/repo/app.baluard.mobile_1.apk"
+test -f "$TMP/work/repo/app.baluard.mobile_4.apk"
 
 printf 'different\n' > "$TMP/expected-key"
 if "$ROOT/scripts/build-fdroid-repo.sh" "$TMP/androidApp-release.apk" "$TMP/out" 2> "$TMP/mismatch.err"; then

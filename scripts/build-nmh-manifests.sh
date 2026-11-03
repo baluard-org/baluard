@@ -12,7 +12,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/desktop/src-tauri/nmh-manifests"
-HOST_NAME="xyz.actitud.baluard"
+HOST_NAME="app.baluard.browser"
+LEGACY_NAME="xyz.actitud.baluard"
 NMH_PATH="/usr/bin/baluard-nmh"
 
 CHROME_ID="${BALUARD_CHROME_EXTENSION_ID:-}"
@@ -31,12 +32,19 @@ fi
 
 mkdir -p "$OUT"
 
+# Browsers key a host manifest by its filename matching the `name` field.
+# The -legacy files carry the pre-rename name so the in-review 0.1.0 store
+# bundles keep pairing with freshly installed packages until extension
+# 0.1.1 flips NMH_HOST to the new name.
 write_chrome_family() {
   local browser="$1"
   cat > "$OUT/$browser.json" <<EOF
 {"name":"$HOST_NAME","description":"Baluard bridge","path":"$NMH_PATH","type":"stdio","allowed_origins":["chrome-extension://$CHROME_ID/"]}
 EOF
-  echo "wrote $browser.json"
+  cat > "$OUT/$browser-legacy.json" <<EOF
+{"name":"$LEGACY_NAME","description":"Baluard bridge","path":"$NMH_PATH","type":"stdio","allowed_origins":["chrome-extension://$CHROME_ID/"]}
+EOF
+  echo "wrote $browser.json + $browser-legacy.json"
 }
 
 write_chrome_family chrome
@@ -46,4 +54,7 @@ write_chrome_family edge
 cat > "$OUT/firefox.json" <<EOF
 {"name":"$HOST_NAME","description":"Baluard bridge","path":"$NMH_PATH","type":"stdio","allowed_extensions":["$FF_ID"]}
 EOF
-echo "wrote firefox.json"
+cat > "$OUT/firefox-legacy.json" <<EOF
+{"name":"$LEGACY_NAME","description":"Baluard bridge","path":"$NMH_PATH","type":"stdio","allowed_extensions":["$FF_ID"]}
+EOF
+echo "wrote firefox.json + firefox-legacy.json"

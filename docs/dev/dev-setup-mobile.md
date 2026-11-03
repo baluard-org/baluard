@@ -188,7 +188,7 @@ The generated Kotlin would call `System.loadLibrary("baluard")` and hit an
 
 ```toml
 [bindings.kotlin]
-package_name = "xyz.actitud.baluard"
+package_name = "app.baluard.mobile"
 cdylib_name  = "baluard_uniffi"
 ```
 
@@ -268,7 +268,7 @@ fn main() -> Result<()> {
 ```
 
 Build and run against the **host** `.dylib` (Step 5 of Gotcha 5). Output goes under
-the package path so imports like `import xyz.actitud.baluard.MobileVault` resolve:
+the package path so imports like `import app.baluard.mobile.MobileVault` resolve:
 
 ```sh
 cd /tmp/uniffi-bindgen-runner && cargo build --release
@@ -371,7 +371,7 @@ Every `./gradlew` invocation needs `JAVA_HOME` set to JDK 17 (Gotcha 6).
 
    ```sh
    adb install mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk
-   adb shell am start -n xyz.actitud.baluard/.MainActivity
+   adb shell am start -n app.baluard.mobile/.MainActivity
    ```
 
    Or via Gradle (installs + launches in one step):
@@ -523,7 +523,7 @@ cd mobile && gradle wrapper --gradle-version 8.10   # first time only
 
 # --- device ---
 adb install androidApp/build/outputs/apk/debug/androidApp-debug.apk
-adb shell am start -n xyz.actitud.baluard/.MainActivity
+adb shell am start -n app.baluard.mobile/.MainActivity
 adb logcat -v time | grep -iE "baluard|uniffi|FATAL|AndroidRuntime"
 
 # --- tests ---

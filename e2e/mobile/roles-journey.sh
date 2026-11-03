@@ -87,9 +87,9 @@ echo "vault unlocked; mapping the probe phone's member row"
 
 # Map the phone's member id: its vault's device id names a binding file
 # under exactly one member's devices/ directory.
-DEVDIR="$(adb -s "$SERIAL" shell run-as xyz.actitud.baluard ls files/vaults 2>/dev/null | tr -d '\r' | grep -v '^$' | head -1)"
+DEVDIR="$(adb -s "$SERIAL" shell run-as app.baluard.mobile ls files/vaults 2>/dev/null | tr -d '\r' | grep -v '^$' | head -1)"
 [[ -n "$DEVDIR" ]] || { echo "FAIL: no vault dir on $SERIAL"; exit 1; }
-PHONE_DEV="$(timeout 8 adb -s "$SERIAL" shell run-as xyz.actitud.baluard cat "files/vaults/$DEVDIR/meta/device-id" 2>/dev/null | tr -d '\r')"
+PHONE_DEV="$(timeout 8 adb -s "$SERIAL" shell run-as app.baluard.mobile cat "files/vaults/$DEVDIR/meta/device-id" 2>/dev/null | tr -d '\r')"
 if [[ ! "$PHONE_DEV" =~ ^[0-9a-f-]{36}$ ]]; then
   echo "FAIL: no device id from $SERIAL (dir=$DEVDIR, got: $PHONE_DEV)"
   exit 1

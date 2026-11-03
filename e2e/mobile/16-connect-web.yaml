@@ -4,7 +4,7 @@
 # Params: BALUARD_E2E_REPO (repo the test account can see), optional
 # BALUARD_E2E_GH_USER (expected signed-in account).
 # Dedicated device only: launchApp clearState wipes all app data.
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 ---
 - launchApp:
     clearState: true
