@@ -169,6 +169,15 @@ uninstall:
 ext-package artifacts="dist":
 	./scripts/build-extension-packages.sh {{ artifacts }}
 
+# Submit the packaged store zips to Firefox AMO and the Chrome Web Store.
+# Explicit publishing recipe, never part of release-repositories. Credentials
+# come from the environment only: AMO_JWT_KEY + AMO_JWT_SECRET, and
+# CHROME_CLIENT_ID + CHROME_CLIENT_SECRET + CHROME_REFRESH_TOKEN +
+# CHROME_EXTENSION_ID + CHROME_PUBLISHER_ID. Optional: AMO_METADATA (first
+# listed submission) and AMO_UPLOAD_SOURCE (minified-source review).
+ext-submit artifacts="dist":
+	./scripts/submit-extension-stores.sh {{ artifacts }}
+
 # Sign release artifacts (minisign sidecars + signed SHA256SUMS). The updater
 # key lives at ~/.tauri/baluard-updater.key; see docs/dev/linux-repositories.md.
 # Defaults to ./dist, the gitignored local staging dir.
@@ -214,6 +223,7 @@ test-release-scripts:
 	./scripts/tests/test-build-fdroid-repo.sh
 	./scripts/tests/test-sync-site-repos.sh
 	./scripts/tests/test-build-extension-packages.sh
+	./scripts/tests/test-submit-extension-stores.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
