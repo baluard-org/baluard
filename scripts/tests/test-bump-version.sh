@@ -10,7 +10,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 SANDBOX="$TMP/repo"
 mkdir -p "$SANDBOX/scripts" "$SANDBOX/browser/shared" "$SANDBOX/desktop/src-tauri" \
-  "$SANDBOX/mobile/androidApp" "$SANDBOX/mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n" \
+  "$SANDBOX/mobile/androidApp" "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n" \
   "$TMP/bin"
 cp "$ROOT/scripts/bump-version.sh" "$SANDBOX/scripts/"
 chmod +x "$SANDBOX/scripts/bump-version.sh"
@@ -18,10 +18,10 @@ cp "$ROOT/Cargo.toml" "$SANDBOX/Cargo.toml"
 cp "$ROOT/desktop/src-tauri/Cargo.toml" "$SANDBOX/desktop/src-tauri/Cargo.toml"
 cp "$ROOT/desktop/package.json" "$SANDBOX/desktop/package.json"
 cp "$ROOT/mobile/androidApp/build.gradle.kts" "$SANDBOX/mobile/androidApp/"
-cp "$ROOT/mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/StringsEn.kt" \
-  "$SANDBOX/mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/"
-cp "$ROOT/mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/StringsEs.kt" \
-  "$SANDBOX/mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/"
+cp "$ROOT/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.kt" \
+  "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/"
+cp "$ROOT/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEs.kt" \
+  "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/"
 cp "$ROOT/browser/shared/package.json" "$SANDBOX/browser/shared/package.json"
 cp "$ROOT/browser/shared/manifest.base.json" "$SANDBOX/browser/shared/"
 
@@ -57,8 +57,8 @@ expect_new browser/shared/manifest.base.json '"version": "0.2.0"'
 expect_new mobile/androidApp/build.gradle.kts 'versionName = "0.2.0"'
 # versionCode derives from semver, 3 digits per component: 0.2.0 -> 2000.
 expect_new mobile/androidApp/build.gradle.kts 'versionCode = 2000'
-expect_new mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/StringsEn.kt 'Baluard Mobile v0.2.0'
-expect_new mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/StringsEs.kt 'Baluard Mobile v0.2.0'
+expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.kt 'Baluard Mobile v0.2.0'
+expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEs.kt 'Baluard Mobile v0.2.0'
 
 # The bump rebuilds the committed extension dists (B11).
 if [[ ! -s "$TMP/npm.log" ]]; then

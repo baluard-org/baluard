@@ -10,7 +10,7 @@
 import { normalizeClearSeconds } from "./settings.js";
 import { originOf } from "./url.js";
 
-const NMH_HOST = "xyz.actitud.baluard"; // matches the host manifest `name`
+const NMH_HOST = "xyz.actitud.baluard"; // legacy pairing name; packages ship app.baluard.browser too; flip here in 0.1.1
 const MIN_NMH_VERSION = "0.1.0";
 
 let port = null;

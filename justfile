@@ -462,7 +462,7 @@ _sign-sidecar:
 	fi
 	for BIN in "$SIDECAR" "$TARGET_DEBUG"; do
 		[ -f "$BIN" ] || continue
-		codesign --force --sign "$IDENTITY" --identifier xyz.actitud.baluard.daemon "$BIN"
+		codesign --force --sign "$IDENTITY" --identifier app.baluard.desktop.daemon "$BIN"
 		echo "Signed: $BIN"
 	done
 
@@ -1273,16 +1273,20 @@ install-nmh-manifest browser ext_id:
 	  *) echo "Unsupported OS/browser combo: {{ os }}/{{ browser }}"; exit 1 ;;
 	esac
 	mkdir -p "$DIR"
+	# Two names until extension 0.1.1 flips NMH_HOST: the new name plus the
+	# legacy alias the in-review 0.1.0 store bundles still call.
+	for NAME in app.baluard.browser xyz.actitud.baluard; do
 	if [ "{{ browser }}" = "firefox" ]; then
-	  cat > "$DIR/xyz.actitud.baluard.json" <<EOF
-	{"name":"xyz.actitud.baluard","description":"Baluard bridge","path":"$BIN","type":"stdio","allowed_extensions":["{{ ext_id }}"]}
+	  cat > "$DIR/$NAME.json" <<EOF
+	{"name":"$NAME","description":"Baluard bridge","path":"$BIN","type":"stdio","allowed_extensions":["{{ ext_id }}"]}
 	EOF
 	else
-	  cat > "$DIR/xyz.actitud.baluard.json" <<EOF
-	{"name":"xyz.actitud.baluard","description":"Baluard bridge","path":"$BIN","type":"stdio","allowed_origins":["chrome-extension://{{ ext_id }}/"]}
+	  cat > "$DIR/$NAME.json" <<EOF
+	{"name":"$NAME","description":"Baluard bridge","path":"$BIN","type":"stdio","allowed_origins":["chrome-extension://{{ ext_id }}/"]}
 	EOF
 	fi
-	echo "Installed NMH manifest -> $DIR/xyz.actitud.baluard.json"
+	  echo "Installed NMH manifest -> $DIR/$NAME.json"
+	done
 	echo "Pointed at: $BIN"
 	echo "Next: load browser/chrome/dist or browser/firefox/dist as unpacked/temporary."
 

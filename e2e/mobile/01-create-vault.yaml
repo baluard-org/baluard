@@ -2,7 +2,7 @@
 # wizard on a DEDICATED test device or emulator. clearState wipes every
 # vault in the app - never run against a device holding real vaults.
 # Password comes from the runner: maestro test -e MASTER_PW=...
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 name: 01-create-vault
 ---
 - launchApp:

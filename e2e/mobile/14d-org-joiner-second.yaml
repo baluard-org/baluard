@@ -6,7 +6,7 @@
 #
 #   MASTER_PW_2           the joiner's PERSONAL vault password (unused
 #                         since the second-vault leg was trimmed)
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 appLaunchDelay: 3000
 ---
 - launchApp:

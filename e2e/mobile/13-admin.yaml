@@ -1,7 +1,7 @@
 # Roles matrix — admin leg. The box verified this member's contact
 # (Level 2 code check) and promoted it to admin before this flow runs.
 # Asserts the admin surfaces a phone-side admin actually sees.
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 ---
 - launchApp:
     clearState: false

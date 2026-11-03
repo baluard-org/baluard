@@ -6,7 +6,7 @@ OUT="${2:?usage: build-fdroid-repo.sh <repo-out-dir>}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="${BALUARD_FDROID_HOME:-$HOME/.baluard/fdroid}"
 EXPECTED_KEY_FILE="${BALUARD_FDROID_EXPECTED_SIGNING_KEY:-$ROOT/fdroid/allowed-signing-key.sha256}"
-PACKAGE="xyz.actitud.baluard"
+PACKAGE="app.baluard.mobile"
 RETENTION="${BALUARD_FDROID_APK_RETENTION:-3}"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }

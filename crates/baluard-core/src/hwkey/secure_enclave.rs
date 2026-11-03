@@ -12,7 +12,7 @@
 //! Development identity, a keychain-access-groups entitlement, and an
 //! embedded provisioning profile - without them SecItemAdd returns
 //! errSecMissingEntitlement. The daemon already carries the stable
-//! Development signing identity (`xyz.actitud.baluard.daemon`, the P2
+//! Development signing identity (`app.baluard.desktop.daemon`, the P2
 //! gotcha); the entitlement + profile are an Esteban-side packaging step.
 //!
 //! Silence: the chip key's access flags carry only PRIVATE_KEY_USAGE, so

@@ -5,7 +5,7 @@
 # never merge-eligible).
 #
 #   MASTER_PW_2   the founder's PERSONAL vault password
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 appLaunchDelay: 3000
 ---
 - launchApp:

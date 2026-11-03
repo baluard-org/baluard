@@ -1,6 +1,6 @@
 # Baluard E2E, flow 02 (the E2E harness): lock and unlock
 # with the master password. Runs after flow 01 on the same device.
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 name: 02-lock-unlock
 ---
 - launchApp

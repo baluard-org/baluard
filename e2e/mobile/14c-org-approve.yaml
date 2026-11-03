@@ -4,7 +4,7 @@
 #
 #   MASTER_PW            founder's master password
 #   BALUARD_E2E_INTRO    the joiner's one-time reply (from their logcat)
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 appLaunchDelay: 3000
 ---
 - launchApp:
