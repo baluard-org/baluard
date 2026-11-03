@@ -69,6 +69,9 @@ pub fn create_vault_ceremony(
     let vault_id = Uuid::new_v4();
 
     // Step 2: KDF params with fresh salt, derive KEK
+    #[cfg(test)]
+    let kdf_params = kdf::test_params();
+    #[cfg(not(test))]
     let kdf_params = kdf::create_params(profile);
     let mut kek = kdf::derive_kek(master_password, &kdf_params)?;
 
@@ -397,6 +400,11 @@ impl<'a> VaultCreator<'a> {
                     BaluardError::from(VaultError::Corrupt(format!("mkdir trash: {e}")))
                 })?;
 
+                // Test builds derive with the cheapest legal parameters; the
+                // suite pays the production KDF cost on every fixture otherwise.
+                #[cfg(test)]
+                let kdf_params = kdf::test_params();
+                #[cfg(not(test))]
                 let kdf_params = kdf::create_params(self.kdf_profile.clone());
                 let vault_id = VaultHandle::resolve_vault_id(&kdf_params);
                 let mut kek = kdf::derive_kek(&self.password, &kdf_params)?;
@@ -569,6 +577,13 @@ impl<'a> VaultCreator<'a> {
                 // systems), and HPKE-escrowed to the recovery pubkey so
                 // phrase recovery restores the identity.
                 let identity_keys = crate::vault::identity::IdentityKeys::generate()?;
+                // Test builds derive with the cheapest legal parameters;
+                // meta numbers come from the same template so the reader
+                // always reconstructs the writer's key.
+                #[cfg(test)]
+                let identity_kdf_template = kdf::test_params();
+                #[cfg(not(test))]
+                let identity_kdf_template = kdf::create_params(KdfProfile::MobileLow);
                 let (identity_wrap_key, seal_mode, salt_hex) = match self.keystore {
                     Some(keystore) => {
                         let mut wrap_key = [0u8; 32];
@@ -583,7 +598,7 @@ impl<'a> VaultCreator<'a> {
                         // meta/identity-meta.json.
                         let mut salt = [0u8; 32];
                         adapter.fill_bytes(&mut salt);
-                        let mut params = kdf::create_params(KdfProfile::MobileLow);
+                        let mut params = identity_kdf_template.clone();
                         params.salt = salt.to_vec();
                         params.parallelism = 1; // identity-meta contract: reader reconstructs p=1
                         let wrap_key = kdf::derive_kek(&self.password, &params)?;
@@ -613,8 +628,8 @@ impl<'a> VaultCreator<'a> {
                     "mode": seal_mode,
                     "salt_hex": salt_hex,
                     "kdf": "argon2id",
-                    "memory_kib": kdf::create_params(KdfProfile::MobileLow).memory_kib,
-                    "time_cost": kdf::create_params(KdfProfile::MobileLow).time_cost,
+                    "memory_kib": identity_kdf_template.memory_kib,
+                    "time_cost": identity_kdf_template.time_cost,
                     "parallelism": 1,
                     "keystore_key": format!("identity:{vault_id}"),
                     "recovery_pubkey_hex": hex::encode(recovery_x25519_public.as_bytes()),
@@ -915,6 +930,12 @@ impl<'a> VaultCreator<'a> {
                 // P1a: identity — same generation/seal/escrow as the other
                 // ceremony path.
                 let identity_keys = crate::vault::identity::IdentityKeys::generate()?;
+                // Same test-build cheap derivation as the other ceremony
+                // path; meta numbers come from the same template.
+                #[cfg(test)]
+                let identity_kdf_template = kdf::test_params();
+                #[cfg(not(test))]
+                let identity_kdf_template = kdf::create_params(KdfProfile::MobileLow);
                 let (identity_wrap_key, seal_mode, salt_hex) = match self.keystore {
                     Some(keystore) => {
                         let mut wrap_key = [0u8; 32];
@@ -925,7 +946,7 @@ impl<'a> VaultCreator<'a> {
                     None => {
                         let mut salt = [0u8; 32];
                         adapter.fill_bytes(&mut salt);
-                        let mut params = kdf::create_params(KdfProfile::MobileLow);
+                        let mut params = identity_kdf_template.clone();
                         params.salt = salt.to_vec();
                         params.parallelism = 1; // identity-meta contract: reader reconstructs p=1
                         let wrap_key = kdf::derive_kek(&self.password, &params)?;
@@ -956,11 +977,11 @@ impl<'a> VaultCreator<'a> {
                     "mode": seal_mode,
                     "salt_hex": salt_hex,
                     "kdf": "argon2id",
-                    // The passphrase reader derives from these; omitting
-                    // them defaults to 8192 KiB/t=3, which can never
-                    // unseal a MobileLow-sealed identity.
-                    "memory_kib": kdf::create_params(KdfProfile::MobileLow).memory_kib,
-                    "time_cost": kdf::create_params(KdfProfile::MobileLow).time_cost,
+                    // The passphrase reader derives from these; the numbers
+                    // must match the writer's template or the identity can
+                    // never be unsealed.
+                    "memory_kib": identity_kdf_template.memory_kib,
+                    "time_cost": identity_kdf_template.time_cost,
                     "parallelism": 1,
                     "keystore_key": format!("identity:{vault_id}"),
                     "recovery_pubkey_hex": hex::encode(recovery_x25519_public.as_bytes()),
