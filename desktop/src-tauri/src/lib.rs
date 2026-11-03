@@ -126,6 +126,7 @@ fn send_request_with_token(action: &str, payload: &str, token: &str, slug: &str)
         payload: payload.to_string(),
         session_token: token.to_string(),
         slug: slug.to_string(),
+        ipc_version: baluard_core::IPC_PROTOCOL_VERSION,
     };
     let body = req.encode_to_vec();
 
