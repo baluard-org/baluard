@@ -7547,6 +7547,30 @@ impl VaultState {
             .to_string()
         };
 
+        // A side written by a newer app (item schema this build cannot
+        // model) must not go through the typed merge: merge and keep_both
+        // re-encrypt typed and would strip the newer fields into a merge
+        // commit. Same restriction as cross_epoch: only the raw-blob
+        // verdicts (keep_local / keep_remote) are offered.
+        for (which, bytes) in [
+            ("base", &base_bytes),
+            ("local", &local_bytes),
+            ("remote", &remote_bytes),
+        ] {
+            if let Ok(schema) = handle.stored_item_schema_bytes(cipher_id, bytes)
+                && schema > baluard_core::types::ITEM_SCHEMA_VERSION
+            {
+                drop(guard);
+                return Ok(serde_json::json!({
+                    "pending": true,
+                    "newer_schema": true,
+                    "unreachable_side": which,
+                    "count": count,
+                })
+                .to_string());
+            }
+        }
+
         let base_cipher = match handle.decrypt_cipher_bytes(cipher_id, &base_bytes) {
             Ok(c) => c,
             Err(e) => {
@@ -7745,6 +7769,20 @@ impl VaultState {
         // Phase 2 (inline): decrypt remote, re-encrypt under a new UUID.
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        // keep_both clones the remote side typed: refuse when this build
+        // cannot model it, or the clone silently drops the newer fields.
+        // Only the raw-blob verdicts apply (same restriction as the merge
+        // gate's newer_schema response).
+        for bytes in [&local_bytes, &remote_bytes] {
+            if let Ok(schema) = handle.stored_item_schema_bytes(cipher_id, bytes)
+                && schema > baluard_core::types::ITEM_SCHEMA_VERSION
+            {
+                return Err(
+                    "keep_both is unavailable for entries written by a newer app version; use keep local or keep remote"
+                        .to_string(),
+                );
+            }
+        }
         let remote_cipher = match handle.decrypt_cipher_bytes(cipher_id, &remote_bytes) {
             Ok(c) => c,
             Err(e) => {
