@@ -24,9 +24,9 @@
 
 # ── UniFFI generated FFI surface ────────────────────────────────────────
 # UniffiLib binds by method name through Native.load.
--keep interface xyz.actitud.baluard.UniffiLib { *; }
+-keep interface app.baluard.mobile.UniffiLib { *; }
 # Keep UniFFI callback interface implementations registered toward Rust.
--keep class xyz.actitud.baluard.UniffiCallbackInterface* { *; }
+-keep class app.baluard.mobile.UniffiCallbackInterface* { *; }
 
 # ── WorkManager: app Worker is instantiated reflectively by the runtime ──
 -keep class * extends androidx.work.ListenableWorker {
@@ -37,10 +37,10 @@
 -keepattributes *Annotation*, InnerClasses, Signature, EnclosingMethod
 -dontnote kotlinx.serialization.**
 -dontwarn kotlinx.serialization.**
--keep,includedescriptorclasses class xyz.actitud.baluard.**$$serializer { *; }
--keepclassmembers class xyz.actitud.baluard.** {
+-keep,includedescriptorclasses class app.baluard.mobile.**$$serializer { *; }
+-keepclassmembers class app.baluard.mobile.** {
     *** Companion;
 }
--keepclasseswithmembers class xyz.actitud.baluard.** {
+-keepclasseswithmembers class app.baluard.mobile.** {
     kotlinx.serialization.KSerializer serializer(...);
 }

@@ -4,7 +4,7 @@
 <dict>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>NGH8MYM5F5.xyz.actitud.baluard</string>
+		<string>NGH8MYM5F5.app.baluard.desktop</string>
 	</array>
 </dict>
 </plist>

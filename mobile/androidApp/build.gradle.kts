@@ -42,7 +42,7 @@ android {
     val releaseKeyPassword = System.getenv("BALUARD_ANDROID_KEY_PASSWORD") ?: releaseStorePassword
     val releaseStoreFile = file(releaseStorePath)
 
-    namespace = "xyz.actitud.baluard"
+    namespace = "app.baluard.mobile"
     compileSdk = 35
     // BuildConfig carries the E2E gate: `-Pbaluard.e2e=true` produces a
     // build that skips FLAG_SECURE so Maestro can screenshot (E12).
@@ -55,7 +55,7 @@ android {
 
 
     defaultConfig {
-        applicationId = "xyz.actitud.baluard"
+        applicationId = "app.baluard.mobile"
         minSdk = 32
         targetSdk = 35
         versionCode = 1

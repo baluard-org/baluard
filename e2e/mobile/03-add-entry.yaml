@@ -1,7 +1,7 @@
 # Baluard E2E, flow 03 (the E2E harness): add an entry and
 # find it in the list. Runs after flow 01 on the same device; the vault
 # starts locked (every flow launch begins from the unlock screen).
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 name: 03-add-entry
 ---
 - launchApp

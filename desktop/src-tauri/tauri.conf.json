@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Baluard",
-  "identifier": "xyz.actitud.baluard",
+  "identifier": "app.baluard.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -58,10 +58,14 @@
         ],
         "recommends": ["gnome-keyring", "libu2f-udev"],
         "files": {
-          "/usr/lib/mozilla/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/firefox.json",
-          "/etc/opt/chrome/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chrome.json",
-          "/etc/chromium/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chromium.json",
-          "/etc/opt/edge/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/edge.json"
+          "/usr/lib/mozilla/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/firefox.json",
+          "/usr/lib/mozilla/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/firefox-legacy.json",
+          "/etc/opt/chrome/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/chrome.json",
+          "/etc/opt/chrome/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chrome-legacy.json",
+          "/etc/chromium/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/chromium.json",
+          "/etc/chromium/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chromium-legacy.json",
+          "/etc/opt/edge/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/edge.json",
+          "/etc/opt/edge/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/edge-legacy.json"
         }
       },
       "rpm": {
@@ -75,10 +79,14 @@
         ],
         "recommends": ["gnome-keyring"],
         "files": {
-          "/usr/lib64/mozilla/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/firefox.json",
-          "/etc/opt/chrome/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chrome.json",
-          "/etc/chromium/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chromium.json",
-          "/etc/opt/edge/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/edge.json"
+          "/usr/lib64/mozilla/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/firefox.json",
+          "/usr/lib64/mozilla/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/firefox-legacy.json",
+          "/etc/opt/chrome/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/chrome.json",
+          "/etc/opt/chrome/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chrome-legacy.json",
+          "/etc/chromium/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/chromium.json",
+          "/etc/chromium/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/chromium-legacy.json",
+          "/etc/opt/edge/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/edge.json",
+          "/etc/opt/edge/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/edge-legacy.json"
         }
       }
     },

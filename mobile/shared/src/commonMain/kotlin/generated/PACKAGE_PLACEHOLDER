@@ -6,7 +6,7 @@
 //                  --language kotlin \
 //                  --out-dir mobile/shared/src/commonMain/kotlin/generated/
 //
-// The generated file (baluard.kt) defines package `xyz.actitud.baluard` with:
+// The generated file (baluard.kt) defines package `app.baluard.mobile` with:
 //   - `fun generateRecoveryPhrase(): MobileRecoveryPhrase`
 //   - `fun deriveKek(password: String, salt: ByteArray): ByteArray`
 //   - `fun mobileVersion(): UInt`

@@ -8,7 +8,7 @@
 #
 # PRE-LAUNCH (before this flow; Maestro cannot start non-exported
 # activities): `adb root` then `adb shell am start -n
-# xyz.actitud.baluard/.passkeys.PasskeyClientActivity`. The client activity
+# app.baluard.mobile/.passkeys.PasskeyClientActivity`. The client activity
 # is E2E-only (BALUARD_E2E builds). Boundary: this flow drives 16 steps
 # through the full create ceremony (sheet, trampoline, unlock,
 # fulfillment, UV gate) but its final result asserts hit a Maestro
@@ -20,7 +20,7 @@
 # credential_service/credential_service_primary` points at
 # BaluardCredentialProviderService. Force-stop the app first so the vault
 # session is locked and the unlock-first journey shape is deterministic.
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 ---
 - tapOn:
     text: "Close sheet"

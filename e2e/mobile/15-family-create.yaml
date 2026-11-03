@@ -4,7 +4,7 @@
 # hub (which always renders its SHARED folder). DEDICATED-DEVICE-ONLY:
 # clearState wipes every vault in the app.
 # Params: maestro test -e BALUARD_E2E_MASTER_PW=...
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 name: 15-family-create
 ---
 - launchApp:

@@ -199,7 +199,7 @@ The NMH is a confused deputy that parses untrusted JSON while holding an authent
 
 ### Host manifest and install locations
 
-Host name `xyz.actitud.baluard`. Chromium manifest: `{ "name", "description": "Baluard bridge", "path": "<abs path to baluard-nmh>", "type": "stdio", "allowed_origins": ["chrome-extension://<EXT_ID>/"] }`. Firefox uses `allowed_extensions: ["baluard@actitud.xyz"]`, matching the gecko add-on ID in the Firefox manifest (`strict_min_version` 115.0). Pinning to the extension ID means a random extension cannot talk to the NMH. Store IDs are fixed on upload and the host manifest must use the final published ID; the development flow uses a key-pinned fixed development ID.
+Host name `app.baluard.mobile`. Chromium manifest: `{ "name", "description": "Baluard bridge", "path": "<abs path to baluard-nmh>", "type": "stdio", "allowed_origins": ["chrome-extension://<EXT_ID>/"] }`. Firefox uses `allowed_extensions: ["baluard@actitud.xyz"]`, matching the gecko add-on ID in the Firefox manifest (`strict_min_version` 115.0). Pinning to the extension ID means a random extension cannot talk to the NMH. Store IDs are fixed on upload and the host manifest must use the final published ID; the development flow uses a key-pinned fixed development ID.
 
 User-level locations:
 
@@ -239,14 +239,14 @@ A sandboxed browser cannot reach the host NMH binary or the 0600 socket: manifes
 
 Flatpak (primary and primary test target):
 
-1. The installer writes the host manifest into the browser's data directory inside its sandbox view, for example `~/.var/app/org.mozilla.firefox/.mozilla/native-messaging-hosts/xyz.actitud.baluard.json` for Firefox, or `~/.var/app/<chromium-app-id>/config/<browser>/NativeMessagingHosts/` for Chromium-family browsers.
+1. The installer writes the host manifest into the browser's data directory inside its sandbox view, for example `~/.var/app/org.mozilla.firefox/.mozilla/native-messaging-hosts/app.baluard.mobile.json` for Firefox, or `~/.var/app/<chromium-app-id>/config/<browser>/NativeMessagingHosts/` for Chromium-family browsers.
 2. The manifest `path` points to a `flatpak-spawn` wrapper, not the NMH, because the sandboxed browser cannot execute a host binary by path: `exec flatpak-spawn --host --watch-bus /usr/local/bin/baluard-nmh "$@"`. `--host` runs the NMH outside the sandbox where it can reach the socket; `--watch-bus` ties its lifetime to the caller.
 3. The browser needs permission to talk to the portal: `flatpak override --user --talk-name=org.freedesktop.Flatpak org.mozilla.firefox`.
 4. No socket proxying is needed. The NMH runs on the host and connects to the real `$XDG_RUNTIME_DIR/baluard/baluard.sock`.
 
 The desktop installer was to detect installed Flatpak browsers and perform steps 1 to 3 automatically. A systemd path unit that re-creates the manifest when the browser overwrites it on update (KeePassXC's "mangler") is the robustness fallback, deferred.
 
-Snap (secondary, best effort): Ubuntu's Firefox snap uses the `webextensions` permission table, set with `flatpak permission-set webextensions xyz.actitud.baluard snap.firefox yes` and verified with `flatpak permissions webextensions`. The NMH binary must sit on a path the snap can execute, and the snap's host manifest lives in the snap's confined view.
+Snap (secondary, best effort): Ubuntu's Firefox snap uses the `webextensions` permission table, set with `flatpak permission-set webextensions app.baluard.mobile snap.firefox yes` and verified with `flatpak permissions webextensions`. The NMH binary must sit on a path the snap can execute, and the snap's host manifest lives in the snap's confined view.
 
 Non-goals for sandbox support: custom or fork browsers' sandboxes (for example Librewolf Flatpak) beyond the documented paths (users can copy the manifest by hand), and shipping a Firejail profile (document the path, as KeePassXC does).
 

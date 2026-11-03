@@ -26,17 +26,23 @@ BALUARD_CHROME_EXTENSION_ID="$CHROME_ID" "$SCRIPT" > "$TMP/happy.out" 2> "$TMP/h
 
 for f in firefox chrome chromium edge; do
   [[ -f "$MAN/$f.json" ]] || { echo "missing manifest: $f.json" >&2; exit 1; }
+  [[ -f "$MAN/$f-legacy.json" ]] || { echo "missing legacy manifest: $f-legacy.json" >&2; exit 1; }
 done
 
-# Every manifest names the packaged NMH binary and the stdio channel.
+# New-name manifests pair with future bundles; legacy ones keep the
+# pre-rename name so in-review 0.1.0 store bundles still connect.
 for f in firefox chrome chromium edge; do
-  jq -er '.path == "/usr/bin/baluard-nmh" and .type == "stdio" and .name == "xyz.actitud.baluard"' \
+  jq -er '.path == "/usr/bin/baluard-nmh" and .type == "stdio" and .name == "app.baluard.browser"' \
     "$MAN/$f.json" > /dev/null || { echo "$f.json: bad path/type/name" >&2; exit 1; }
+  jq -er '.path == "/usr/bin/baluard-nmh" and .type == "stdio" and .name == "xyz.actitud.baluard"' \
+    "$MAN/$f-legacy.json" > /dev/null || { echo "$f-legacy.json: bad path/type/name" >&2; exit 1; }
 done
 
 # Firefox authorizes the AMO id; chrome-family authorizes the store id.
 jq -er --arg id "$FF_ID" '.allowed_extensions == [$id]' "$MAN/firefox.json" > /dev/null \
   || { echo "firefox.json: wrong allowed_extensions" >&2; exit 1; }
+jq -er --arg id "$FF_ID" '.allowed_extensions == [$id]' "$MAN/firefox-legacy.json" > /dev/null \
+  || { echo "firefox-legacy.json: wrong allowed_extensions" >&2; exit 1; }
 for f in chrome chromium edge; do
   jq -er --arg origin "chrome-extension://$CHROME_ID/" '.allowed_origins == [$origin]' \
     "$MAN/$f.json" > /dev/null || { echo "$f.json: wrong allowed_origins" >&2; exit 1; }

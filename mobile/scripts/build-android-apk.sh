@@ -282,6 +282,6 @@ if [[ $DO_INSTALL -eq 1 ]]; then
   echo
   echo "==> ${ADBS[*]} install -r $APK"
   "${ADBS[@]}" install -r "$APK"
-  echo "==> Launch: ${ADBS[*]} shell am start -n xyz.actitud.baluard/.MainActivity"
-  "${ADBS[@]}" shell am start -n xyz.actitud.baluard/.MainActivity
+  echo "==> Launch: ${ADBS[*]} shell am start -n app.baluard.mobile/.MainActivity"
+  "${ADBS[@]}" shell am start -n app.baluard.mobile/.MainActivity
 fi

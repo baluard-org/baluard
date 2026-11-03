@@ -1,7 +1,7 @@
 # Roles matrix — editor leg (roles journey).
 # Assumes: the box has set this device's member to editor and granted
 # Write on a dedicated collection, so an unfiled add routes there.
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 ---
 - launchApp
 - tapOn:

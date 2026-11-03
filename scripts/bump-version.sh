@@ -36,8 +36,8 @@ DESKTOP_PKG="desktop/package.json"
 EXT_PKG="browser/shared/package.json"
 MANIFEST="browser/shared/manifest.base.json"
 GRADLE="mobile/androidApp/build.gradle.kts"
-STRINGS_EN="mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/StringsEn.kt"
-STRINGS_ES="mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/StringsEs.kt"
+STRINGS_EN="mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.kt"
+STRINGS_ES="mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEs.kt"
 
 CURRENT=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$CARGO_TOML" | head -1)
 if [[ -z "$CURRENT" ]]; then

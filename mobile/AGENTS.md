@@ -58,7 +58,7 @@ sockets, so the first API call after resuming can fail with
 device whitelist fixes it:
 
 ```bash
-adb -s <serial> shell dumpsys deviceidle whitelist +xyz.actitud.baluard
+adb -s <serial> shell dumpsys deviceidle whitelist +app.baluard.mobile
 ```
 
 The app side still carries a bounded retry on the post-OAuth repo fetch (5

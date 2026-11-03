@@ -12,7 +12,7 @@
 # Connect rides the access-token UI. The invited joiner's token sees the
 # shared repo only through the read-only collaborator seat granted at
 # invite time - the real-world joiner path.
-appId: xyz.actitud.baluard
+appId: app.baluard.mobile
 appLaunchDelay: 3000
 ---
 - launchApp:
