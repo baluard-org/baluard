@@ -216,6 +216,8 @@ User-level locations:
 
 The development recipe `just install-nmh-manifest <browser> <ext_id>` writes the manifest for Linux and macOS and also knows Brave and Edge (and Brave Origin on macOS). It does not handle Windows registry keys or sandboxed browsers; those remain design only (see "Open items").
 
+The Linux deb/rpm packages register the native host system-wide. `scripts/build-nmh-manifests.sh` (run automatically by `just desktop-build`) generates the host manifests under `desktop/src-tauri/nmh-manifests/`, and the Tauri `deb.files`/`rpm.files` config installs them: Firefox at `/usr/lib/mozilla/native-messaging-hosts/` (deb) and `/usr/lib64/mozilla/native-messaging-hosts/` (64-bit rpm), Chrome at `/etc/opt/chrome/native-messaging-hosts/`, Chromium at `/etc/chromium/native-messaging-hosts/`, and Edge at `/etc/opt/edge/native-messaging-hosts/`. Each manifest points at the packaged `/usr/bin/baluard-nmh`. The Firefox manifest authorizes the AMO id (`baluard@actitud.xyz`); the chrome-family manifests authorize the Chrome Web Store id via `BALUARD_CHROME_EXTENSION_ID` at build time. That id does not exist until the first store upload, so without the env var the chrome manifests ship a placeholder origin (loud build warning) and the store bridge stays dev-only. Windows (registry keys) and macOS (user-level `~/Library`) registration remain manual.
+
 ### Extension component
 
 One Vite build produces two bundles (`browser/chrome`, `browser/firefox`), distinguished only by manifest and extension ID, from the shared codebase in `browser/shared/`. JavaScript is browser-agnostic through the `chrome` and `browser` namespace shim. Firefox has no `chrome.offscreen`, so the clipboard copy runs in the popup there.
