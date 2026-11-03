@@ -227,6 +227,7 @@ test-release-scripts:
 	./scripts/tests/test-build-windows-installer.sh
 	./scripts/tests/test-build-nmh-manifests.sh
 	./scripts/tests/test-bump-version.sh
+	./scripts/tests/test-generate-updates-manifest.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
