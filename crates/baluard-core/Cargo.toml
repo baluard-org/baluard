@@ -101,6 +101,12 @@ public-suffix = "0.1"
 
 [features]
 hw-seal = ["dep:secure-enclave-rs", "dep:tss-esapi", "dep:windows-sys"]
+# Test-only: vault fixtures derive at the cheapest legal KDF cost
+# (19 MiB / 1 pass / 1 lane) instead of the profile constants. Enabled
+# through dev-dependencies by dependent crates' test suites; additionally
+# gated on debug_assertions at the use sites, so a release build with the
+# feature forced on still derives at production cost. Never ship this.
+test-cheap-kdf = []
 # FIDO2 security-key seal (the hmac-secret design in
 # docs/adr/0096-yubikey-seal.md). Non-default until the daemon wiring and
 # packaging land; MSRV for a build WITH this feature is 1.89 (the crate

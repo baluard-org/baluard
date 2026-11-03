@@ -68,10 +68,12 @@ pub fn create_vault_ceremony(
     // Step 1: Vault ID
     let vault_id = Uuid::new_v4();
 
-    // Step 2: KDF params with fresh salt, derive KEK
-    #[cfg(test)]
+    // Step 2: KDF params with fresh salt, derive KEK. Test builds (and
+    // dependent crates' test builds via test-cheap-kdf) use the cheapest
+    // legal parameters.
+    #[cfg(any(test, all(feature = "test-cheap-kdf", debug_assertions)))]
     let kdf_params = kdf::test_params();
-    #[cfg(not(test))]
+    #[cfg(not(any(test, all(feature = "test-cheap-kdf", debug_assertions))))]
     let kdf_params = kdf::create_params(profile);
     let mut kek = kdf::derive_kek(master_password, &kdf_params)?;
 
@@ -402,9 +404,9 @@ impl<'a> VaultCreator<'a> {
 
                 // Test builds derive with the cheapest legal parameters; the
                 // suite pays the production KDF cost on every fixture otherwise.
-                #[cfg(test)]
+                #[cfg(any(test, all(feature = "test-cheap-kdf", debug_assertions)))]
                 let kdf_params = kdf::test_params();
-                #[cfg(not(test))]
+                #[cfg(not(any(test, all(feature = "test-cheap-kdf", debug_assertions))))]
                 let kdf_params = kdf::create_params(self.kdf_profile.clone());
                 let vault_id = VaultHandle::resolve_vault_id(&kdf_params);
                 let mut kek = kdf::derive_kek(&self.password, &kdf_params)?;
@@ -580,9 +582,9 @@ impl<'a> VaultCreator<'a> {
                 // Test builds derive with the cheapest legal parameters;
                 // meta numbers come from the same template so the reader
                 // always reconstructs the writer's key.
-                #[cfg(test)]
+                #[cfg(any(test, all(feature = "test-cheap-kdf", debug_assertions)))]
                 let identity_kdf_template = kdf::test_params();
-                #[cfg(not(test))]
+                #[cfg(not(any(test, all(feature = "test-cheap-kdf", debug_assertions))))]
                 let identity_kdf_template = kdf::create_params(KdfProfile::MobileLow);
                 let (identity_wrap_key, seal_mode, salt_hex) = match self.keystore {
                     Some(keystore) => {
@@ -932,9 +934,9 @@ impl<'a> VaultCreator<'a> {
                 let identity_keys = crate::vault::identity::IdentityKeys::generate()?;
                 // Same test-build cheap derivation as the other ceremony
                 // path; meta numbers come from the same template.
-                #[cfg(test)]
+                #[cfg(any(test, all(feature = "test-cheap-kdf", debug_assertions)))]
                 let identity_kdf_template = kdf::test_params();
-                #[cfg(not(test))]
+                #[cfg(not(any(test, all(feature = "test-cheap-kdf", debug_assertions))))]
                 let identity_kdf_template = kdf::create_params(KdfProfile::MobileLow);
                 let (identity_wrap_key, seal_mode, salt_hex) = match self.keystore {
                     Some(keystore) => {

@@ -53,3 +53,6 @@ fido2 = ["baluard-core/fido2"]
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"
+# Test-only: cheap vault-fixture KDF (see baluard-core's feature docs);
+# applies to this crate's test targets, never to shipped binaries.
+baluard-core = { path = "../baluard-core", features = ["test-cheap-kdf"] }

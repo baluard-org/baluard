@@ -127,9 +127,10 @@ pub fn create_params(profile: KdfProfile) -> KdfParams {
 }
 
 /// Cheapest parameters the derive bounds accept (19 MiB, single pass, one
-/// lane). Vault creation in test builds uses this so the suite does not pay
+/// lane). Vault creation in test builds — and in dependent crates' test
+/// builds via the test-cheap-kdf feature — uses this so suites do not pay
 /// the production KDF cost on every fixture.
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-cheap-kdf", debug_assertions)))]
 pub(crate) fn test_params() -> KdfParams {
     let salt = generate_salt();
     KdfParams {
