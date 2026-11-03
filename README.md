@@ -71,3 +71,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Start with `just check` b
 ## License
 
 [GPL-3.0](LICENSE)
+
+The Baluard name, logo, and brand assets are not covered by the GPL-3.0 license; all rights are reserved. Use requires prior written authorization and consent from the project owner.
