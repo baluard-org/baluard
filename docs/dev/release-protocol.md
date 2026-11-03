@@ -97,22 +97,28 @@ just ext-submit
 - Chrome: pure curl flow against the v2 publisher API (token exchange, `-T` upload of the packaged zip, publish with an empty body).
 - First listed AMO submission needs `AMO_METADATA` (summary, categories, license); minified-source review may need `AMO_UPLOAD_SOURCE`.
 - Partial credentials are a hard error, not a skip. A configured store failing aborts the run after the other store submitted.
-- The Chrome item exists since 2026-11-03 (first upload). The AMO listing is not yet submitted.
+- The Chrome item exists since 2026-11-03 (first upload). Both store listings (Chrome, AMO) were submitted 2026-11-03 and are pending review at first upload.
 
 ## Update channels
 
 | Variant | How users get updates |
 |---|---|
-| Desktop Linux | apt/dnf repository metadata regenerated every pipeline run; in-app updater artifacts are built but no feed endpoint is configured yet |
-| Desktop macOS / Windows | New download from GitHub Releases; updater artifacts are produced (signature required, no downgrades) but no feed endpoint is configured yet |
+| Desktop Linux (AppImage) | In-app updater: the `publish-updates` dispatch (release.yml) writes `latest.json` to the fixed `updates-stable` / `updates-beta` GitHub release the app polls; deb/rpm stay repository-managed |
+| Desktop macOS / Windows | In-app updater via the same channel manifest once Windows joins the platform matrix; until then new download from GitHub Releases |
 | Browser extension | Store-managed auto-update after `just ext-submit` (Chrome) / AMO approval (Firefox) |
 | Mobile Android via F-Droid | Index regeneration in `fdroid-stage`; requires a higher `versionCode`; the repo keeps the latest three APKs |
 | Direct downloads | New GitHub release with minisign sidecars and signed `SHA256SUMS` |
 
+The channel feed goes live on the FIRST `publish-updates` dispatch after the
+versioned release is published from draft (the dispatch creates the
+`updates-*` release if absent). Until that first dispatch runs, installed
+apps have no feed to poll: that is expected before 0.1.0 ships, a release-day
+step after it.
+
 ## Pre-release checklist
 
 1. `just check` green (fmt, clippy, audit, tests, build).
-2. `just test-release-scripts` green (seven hermetic suites: fdroid, sync-site-repos, build-extension-packages, submit-extension-stores, build-windows-installer, build-nmh-manifests, bump-version).
+2. `just test-release-scripts` green (eight hermetic suites: fdroid, sync-site-repos, build-extension-packages, submit-extension-stores, build-windows-installer, build-nmh-manifests, bump-version, generate-updates-manifest).
 3. `just smoke-pkg` for the deb, and the relevant `e2e` recipes for changed surfaces (`e2e-desktop`, `e2e-android` with `just emulator`, `e2e-extension`, `e2e-extension-firefox`).
 4. After `just desktop-build`, confirm the NMH manifests carry the real origin: `grep -r baluard-unconfigured desktop/src-tauri/nmh-manifests/` must find nothing.
 5. Confirm the newest store zips carry the bumped version (`just ext-package` already refuses a mismatch).
@@ -122,5 +128,5 @@ just ext-submit
 - macOS: ad-hoc signing only; no Developer ID certificate or notarization.
 - iOS: no build or store pipeline.
 - Windows: no MSI (WiX is Windows-only); no Authenticode signing.
-- Desktop updater: artifacts and key pinning exist, feed endpoint not configured.
-- Chrome Web Store listing: pending review at first upload; AMO listing not yet created.
+- Desktop updater: the feed endpoint and publish job exist (release.yml `publish-updates`); the residual gap is publish-side signature re-verification and manifest expiry (deferred M5/M9).
+- Chrome Web Store and AMO listings: both submitted 2026-11-03, pending review at first upload; automated ext-submit still needs the store API credentials in Bitwarden.

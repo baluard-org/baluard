@@ -26,7 +26,8 @@ import { join, relative, basename } from "node:path";
 
 const REPO = "baluard-org/baluard";
 
-const KNOWN_FLAGS = new Set(["tag", "artifacts-dir", "out"]);
+const KNOWN_FLAGS = new Set(["tag", "artifacts-dir", "out", "notes-file", "pub-date"]);
+const REQUIRED_FLAGS = ["tag", "artifacts-dir", "out"];
 
 function parseArgs(argv) {
   const out = {};
@@ -44,7 +45,7 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv);
-for (const required of ["tag", "artifacts-dir", "out"]) {
+for (const required of REQUIRED_FLAGS) {
   if (!args[required]) {
     console.error(`missing --${required}`);
     process.exit(2);
@@ -144,7 +145,7 @@ if (Object.keys(platforms).length === 0) {
 const strays = all.filter(
   (f) =>
     !claimed.has(f) &&
-    (/\.(AppImage|app\.tar\.gz|nsis\.zip|msi)(\.sig)?$/.test(f) || f.endsWith(".exe.sig")),
+    (/\.(AppImage|app\.tar\.gz|nsis\.zip|msi|exe)(\.sig)?$/.test(f) || f.endsWith(".exe.sig")),
 );
 if (strays.length > 0) {
   console.error("unclaimed updater-shaped artifacts (extend the matrix or remove them):");
