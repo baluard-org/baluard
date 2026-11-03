@@ -223,6 +223,12 @@ if [[ $DO_RELEASE -eq 1 ]]; then
   APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/release" -name '*.apk' 2>/dev/null | head -1 || true)"
   AAB="$(find "$MOBILE_DIR/androidApp/build/outputs/bundle/release" -name '*.aab' 2>/dev/null | head -1 || true)"
   [[ -n "$APK" && -n "$AAB" ]] || fail "Gradle reported success but the release APK or AAB is missing"
+  # A release APK with a broken signature must not reach fdroid-stage or
+  # Play. build-tools ships apksigner; verify before reporting success.
+  APKSIGNER="$(find "$SDK_ROOT/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -1 || true)"
+  [[ -n "$APKSIGNER" ]] || fail "apksigner not found under $SDK_ROOT/build-tools; cannot verify the release signature"
+  echo "==> apksigner verify (release APK)"
+  "$APKSIGNER" verify --print-certs "$APK" | sed -n '1,2p'
   echo "==> Release APK ready: $APK"
   echo "==> Play AAB ready:    $AAB"
 else

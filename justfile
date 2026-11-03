@@ -1160,6 +1160,13 @@ build-signed: build-release
 android-apk:
 	cd mobile && ./scripts/build-android-apk.sh
 
+# Build the signed release APK + Play AAB with the real upload keystore
+# (~/.baluard/baluard-android-upload.keystore). Set BALUARD_ANDROID_STORE_PASSWORD
+# and BALUARD_ANDROID_KEY_PASSWORD in the environment; the script verifies the
+# signature with apksigner before reporting success.
+android-apk-release:
+	cd mobile && ./scripts/build-android-apk.sh --release
+
 # Build + install the debug APK on a connected device (adb). Extra args
 # forward to the script, e.g. `just android-install --device 192.168.1.50:38507`
 
