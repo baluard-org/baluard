@@ -179,6 +179,18 @@ impl KdfProfile {
     }
 }
 
+/// Key-derivation algorithm a vault's stored parameters select. Stored in
+/// kdf-params.json; an unknown variant fails deserialization closed, so a
+/// vault written for an algorithm this build does not ship refuses to
+/// derive instead of running Argon2id on foreign numbers and reporting a
+/// wrong password.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum KdfKind {
+    #[default]
+    Argon2id,
+}
+
 /// Full KDF parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KdfParams {
@@ -186,6 +198,8 @@ pub struct KdfParams {
     /// Deserialized from old vaults for backward compat, then ignored.
     #[serde(default = "KdfProfile::default_value", skip_serializing)]
     pub profile: KdfProfile,
+    #[serde(default)]
+    pub kdf: KdfKind,
     pub memory_kib: u32,
     pub time_cost: u32,
     pub parallelism: u32,
@@ -211,6 +225,7 @@ impl KdfParams {
     /// Create params from a profile.
     pub fn from_profile(profile: KdfProfile) -> Self {
         Self {
+            kdf: KdfKind::Argon2id,
             memory_kib: profile.memory_kib(),
             time_cost: profile.time_cost(),
             parallelism: profile.parallelism(),

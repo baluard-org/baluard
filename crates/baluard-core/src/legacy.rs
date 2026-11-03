@@ -534,6 +534,7 @@ pub fn open_kit(armor: &str, passphrase: &str) -> Result<KitBody, BaluardError> 
     let salt = hex::decode(kdf_json.get("salt").and_then(|v| v.as_str()).unwrap_or(""))
         .map_err(|_| VaultError::Corrupt("wrong passphrase or damaged file".into()))?;
     let params = KdfParams {
+        kdf: crate::types::KdfKind::Argon2id,
         profile: KdfProfile::DesktopStd,
         memory_kib: kdf_json
             .get("memory_kib")

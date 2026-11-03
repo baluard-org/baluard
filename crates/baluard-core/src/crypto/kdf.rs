@@ -6,7 +6,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use rand::RngCore;
 
 use crate::error::CryptoError;
-use crate::types::{KdfParams, KdfProfile};
+use crate::types::{KdfKind, KdfParams, KdfProfile};
 
 /// Derive a 32-byte KEK (Key Encryption Key) from master password.
 ///
@@ -55,6 +55,12 @@ const KDF_MAX_TIME_COST: u32 = 10;
 const KDF_MAX_PARALLELISM: u32 = 8;
 
 fn validate_params(params: &KdfParams) -> Result<(), CryptoError> {
+    // Exhaustive dispatch: adding a KdfKind variant forces an arm here.
+    // Parsing already rejects unknown variants; this covers in-memory
+    // construction.
+    match params.kdf {
+        crate::types::KdfKind::Argon2id => {}
+    }
     if params.memory_kib < KDF_MIN_MEMORY_KIB {
         return Err(CryptoError::KdfParamsInvalid(format!(
             "memory_kib {} below floor {KDF_MIN_MEMORY_KIB}",
@@ -93,6 +99,7 @@ pub fn generate_salt() -> [u8; 32] {
 pub fn create_params(profile: KdfProfile) -> KdfParams {
     let salt = generate_salt();
     KdfParams {
+        kdf: KdfKind::Argon2id,
         memory_kib: profile.memory_kib(),
         time_cost: profile.time_cost(),
         parallelism: profile.parallelism(),
@@ -104,6 +111,24 @@ pub fn create_params(profile: KdfProfile) -> KdfParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kdf_params_reject_unknown_kind() {
+        // A vault header written for an algorithm this build does not know
+        // must fail at parse, not derive garbage with the wrong algorithm.
+        let json = r#"{"memory_kib":32768,"time_cost":6,"parallelism":4,"salt":"a1b2c3d4","kdf":"scrypt"}"#;
+        assert!(serde_json::from_str::<crate::types::KdfParams>(json).is_err());
+    }
+
+    #[test]
+    fn kdf_params_stamps_and_roundtrips_kind() {
+        let params = create_params(KdfProfile::DesktopStd);
+        assert_eq!(params.kdf, crate::types::KdfKind::Argon2id);
+        let json = serde_json::to_string(&params).unwrap();
+        assert!(json.contains("\"kdf\":\"argon2id\""));
+        let back: crate::types::KdfParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.kdf, crate::types::KdfKind::Argon2id);
+    }
 
     #[test]
     fn derive_kek_roundtrip() {
@@ -133,6 +158,7 @@ mod tests {
     #[test]
     fn rejects_invalid_salt() {
         let params = KdfParams {
+            kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 19 * 1024,
             time_cost: 2,
@@ -154,6 +180,7 @@ mod tests {
     #[test]
     fn rejects_memory_below_floor() {
         let params = KdfParams {
+            kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 1024,
             time_cost: 2,
@@ -166,6 +193,7 @@ mod tests {
     #[test]
     fn rejects_memory_above_ceiling() {
         let params = KdfParams {
+            kdf: KdfKind::Argon2id,
             profile: KdfProfile::DesktopHigh,
             memory_kib: 600 * 1024,
             time_cost: 4,
@@ -178,6 +206,7 @@ mod tests {
     #[test]
     fn rejects_extreme_time_cost() {
         let params = KdfParams {
+            kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 19 * 1024,
             time_cost: 99,
@@ -190,6 +219,7 @@ mod tests {
     #[test]
     fn rejects_extreme_parallelism() {
         let params = KdfParams {
+            kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 19 * 1024,
             time_cost: 2,
@@ -202,6 +232,7 @@ mod tests {
     #[test]
     fn accepts_floor_boundary_params() {
         let params = KdfParams {
+            kdf: KdfKind::Argon2id,
             profile: KdfProfile::MobileLow,
             memory_kib: 19 * 1024,
             time_cost: 1,
@@ -214,6 +245,7 @@ mod tests {
     #[test]
     fn validate_params_ceiling_boundaries() {
         let mut params = KdfParams {
+            kdf: KdfKind::Argon2id,
             profile: KdfProfile::DesktopHigh,
             memory_kib: 256 * 1024,
             time_cost: 10,
