@@ -180,6 +180,9 @@ fn error_response(msg: impl Into<String>) -> Vec<u8> {
         error_message: msg.into(),
         payload: String::new(),
         session_token: String::new(),
+        ipc_version: baluard_core::IPC_PROTOCOL_VERSION,
+        ipc_min_version: baluard_core::IPC_PROTOCOL_MIN,
+        ipc_max_version: baluard_core::IPC_PROTOCOL_MAX,
     }
     .encode_to_vec()
 }
@@ -190,6 +193,29 @@ pub(crate) fn err_response(msg: impl Into<String>) -> GatewayResponse {
         error_message: msg.into(),
         payload: String::new(),
         session_token: String::new(),
+        ipc_version: baluard_core::IPC_PROTOCOL_VERSION,
+        ipc_min_version: baluard_core::IPC_PROTOCOL_MIN,
+        ipc_max_version: baluard_core::IPC_PROTOCOL_MAX,
+    }
+}
+
+/// IPC handshake gate: refuse clients whose protocol version falls
+/// outside the daemon's supported range. Absent (0) means a pre-field
+/// client, which speaks version 1. Returns the refusal message.
+fn ipc_version_refusal(client: u32) -> Option<String> {
+    let v = if client == 0 {
+        baluard_core::IPC_PROTOCOL_MIN.max(1)
+    } else {
+        client
+    };
+    if !(baluard_core::IPC_PROTOCOL_MIN..=baluard_core::IPC_PROTOCOL_MAX).contains(&v) {
+        Some(format!(
+            "client speaks IPC protocol {v}; this daemon supports {}-{}; update Baluard",
+            baluard_core::IPC_PROTOCOL_MIN,
+            baluard_core::IPC_PROTOCOL_MAX
+        ))
+    } else {
+        None
     }
 }
 
@@ -499,6 +525,9 @@ pub(crate) fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> Gatewa
         error_message: String::new(),
         payload: payload.into(),
         session_token: token.unwrap_or("").to_string(),
+        ipc_version: baluard_core::IPC_PROTOCOL_VERSION,
+        ipc_min_version: baluard_core::IPC_PROTOCOL_MIN,
+        ipc_max_version: baluard_core::IPC_PROTOCOL_MAX,
     }
 }
 
@@ -751,6 +780,21 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
 }
 
 pub async fn route_host_request_with_peer(
+    req: GatewayRequest,
+    host: &SharedVaultHost,
+    peer: Option<&baluard_runtime::agents::PeerBinding>,
+) -> GatewayResponse {
+    if let Some(msg) = ipc_version_refusal(req.ipc_version) {
+        return err_response(msg);
+    }
+    let mut resp = route_host_request_inner(req, host, peer).await;
+    resp.ipc_version = baluard_core::IPC_PROTOCOL_VERSION;
+    resp.ipc_min_version = baluard_core::IPC_PROTOCOL_MIN;
+    resp.ipc_max_version = baluard_core::IPC_PROTOCOL_MAX;
+    resp
+}
+
+async fn route_host_request_inner(
     req: GatewayRequest,
     host: &SharedVaultHost,
     peer: Option<&baluard_runtime::agents::PeerBinding>,
@@ -7614,6 +7658,24 @@ mod tests {
         assert!(action_requires_session_token("vault.notes"));
         assert!(action_requires_session_token("not.an.action"));
         assert!(action_requires_session_token(""));
+    }
+
+    /// IPC handshake: pre-field (0) and current clients pass; a client
+    /// newer or older than the supported range gets an update message,
+    /// never a silent protocol mismatch.
+    #[test]
+    fn ipc_version_gate_ranges() {
+        use super::ipc_version_refusal;
+        assert!(ipc_version_refusal(0).is_none(), "absent = pre-field = 1");
+        assert!(ipc_version_refusal(baluard_core::IPC_PROTOCOL_VERSION).is_none());
+        for foreign in [
+            baluard_core::IPC_PROTOCOL_MIN.saturating_sub(1).max(2),
+            baluard_core::IPC_PROTOCOL_MAX + 1,
+            99,
+        ] {
+            let msg = ipc_version_refusal(foreign).unwrap();
+            assert!(msg.contains("update"), "refusal must name the fix: {msg}");
+        }
     }
 
     /// P6: every exempt action skips the gate; a pinned set of destructive

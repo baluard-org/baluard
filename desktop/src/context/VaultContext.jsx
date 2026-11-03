@@ -111,6 +111,11 @@ function VaultProvider(props) {
       setTags(Array.isArray(data.tags) ? data.tags : []);
       setTrashCiphers(data.trash || []);
       setArchivedCiphers(data.archived || []);
+      // Entries this build cannot decrypt stay hidden from the list; the
+      // count says they exist and an app update is needed.
+      if (Number(data.unreadable) > 0) {
+        toastWarning(t("vault.unreadableEntries", { count: Number(data.unreadable) }));
+      }
       await refreshOtherVaults();
       refreshCollections();
       // Profile loads alongside cipher data

@@ -439,6 +439,7 @@ mod real_vault {
             payload: String::new(),
             session_token: token_a.clone(),
             slug: "beta".into(),
+            ipc_version: 1,
         };
         let cross_resp = route_host_request(cross_req, &host).await;
         assert!(
@@ -457,6 +458,7 @@ mod real_vault {
             payload: String::new(),
             session_token: String::new(),
             slug: "beta".into(),
+            ipc_version: 1,
         };
         let notoken_resp = route_host_request(notoken_req, &host).await;
         assert!(!notoken_resp.success, "missing token must be rejected");
@@ -467,6 +469,7 @@ mod real_vault {
             payload: String::new(),
             session_token: token_b.clone(),
             slug: "beta".into(),
+            ipc_version: 1,
         };
         let ok_resp = route_host_request(ok_req, &host).await;
         assert!(
@@ -519,6 +522,7 @@ mod real_vault {
             payload: "wrong-password-123".into(),
             session_token: String::new(),
             slug: "alpha".into(),
+            ipc_version: 1,
         };
 
         let start = std::time::Instant::now();
@@ -572,6 +576,7 @@ mod real_vault {
             payload: String::new(),
             session_token: String::new(),
             slug: "alpha".into(),
+            ipc_version: 1,
         };
         let resp = route_host_request(req, &host).await;
         assert!(
@@ -652,6 +657,7 @@ mod real_vault {
             payload: String::new(),
             session_token: String::new(),
             slug: "alpha".into(),
+            ipc_version: 1,
         };
         let resp = route_host_request(req, &host).await;
         assert!(

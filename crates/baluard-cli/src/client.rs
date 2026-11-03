@@ -259,6 +259,7 @@ fn request_with_session(
         payload: payload.to_string(),
         session_token,
         slug: slug.to_string(),
+        ipc_version: baluard_core::IPC_PROTOCOL_VERSION,
     };
     let mut body = req.encode_to_vec();
 
@@ -300,12 +301,39 @@ fn request_with_session(
     let response =
         GatewayResponse::decode(resp_data).context("Failed to decode daemon response")?;
 
+    // Reverse handshake gate: a daemon whose IPC range excludes this
+    // client would misparse every payload, so refuse up front with a
+    // clean message. All-zero means a pre-field daemon (version 1).
+    check_daemon_ipc_range(
+        response.ipc_version,
+        response.ipc_min_version,
+        response.ipc_max_version,
+    )?;
+
     // R7-2: Store session token from daemon if present
     if persist_response_token && !response.session_token.is_empty() {
         set_session_token(&response.session_token, socket_path);
     }
 
     Ok(response)
+}
+
+/// Reverse IPC gate: refuse when the daemon's supported range excludes
+/// this client's protocol version. All-zero fields mean a pre-field
+/// daemon, which speaks version 1.
+fn check_daemon_ipc_range(cur: u32, min: u32, max: u32) -> Result<()> {
+    let (cur, min, max) = if cur == 0 && min == 0 && max == 0 {
+        (1, 1, 1)
+    } else {
+        (cur, min, max)
+    };
+    if !(min..=max).contains(&baluard_core::IPC_PROTOCOL_VERSION) {
+        bail!(
+            "daemon speaks IPC protocol {cur} (supports {min}-{max}); this client speaks {}; update Baluard",
+            baluard_core::IPC_PROTOCOL_VERSION
+        );
+    }
+    Ok(())
 }
 
 fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {

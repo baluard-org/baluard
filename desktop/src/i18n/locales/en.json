@@ -162,7 +162,8 @@
     "folderNamePlaceholder": "Folder name",
     "newButton": "+ New",
     "searchPlaceholder": "Search vault...",
-    "headerName": "Name"
+    "headerName": "Name",
+    "unreadableEntries": "{{count}} entries need a newer app version and stay hidden until you update Baluard."
   },
   "entry": {
     "nameRequired": "An entry name is required",

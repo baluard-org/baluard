@@ -402,6 +402,7 @@ fn make_request(action: &str, payload: serde_json::Value) -> GatewayRequest {
         payload: payload.to_string(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     }
 }
 

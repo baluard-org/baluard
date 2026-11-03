@@ -33,6 +33,16 @@ pub use error::BaluardError;
 /// Library version, embedded in vault format headers.
 pub const BALUARD_VERSION: u8 = 2;
 
+/// The daemon IPC wire contract version. Independent of
+/// [`BALUARD_VERSION`] (the on-disk envelope format): the IPC protocol
+/// breaks on its own schedule. Both sides enforce the [min, max] range
+/// and refuse with an update-the-app message outside it. A wire break
+/// bumps CURRENT and MAX together; raise MIN only once every shipped
+/// client speaks the new floor.
+pub const IPC_PROTOCOL_VERSION: u32 = 1;
+pub const IPC_PROTOCOL_MIN: u32 = 1;
+pub const IPC_PROTOCOL_MAX: u32 = 1;
+
 /// True when OS-keyring access must be skipped: in-process unit tests
 /// (`cfg(test)`) and any process carrying `BALUARD_DISABLE_KEYRING=1`
 /// (integration tests that spawn the real daemon binary). On macOS an

@@ -477,6 +477,7 @@ async fn vaults_list_full_all_merges_and_gates_on_active_token() {
         payload: String::new(),
         session_token: token_a.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "err: {}", resp.error_message);
@@ -510,6 +511,7 @@ async fn vaults_list_full_all_merges_and_gates_on_active_token() {
         payload: String::new(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success, "empty token must be refused");
@@ -522,6 +524,7 @@ async fn vaults_list_full_all_merges_and_gates_on_active_token() {
         payload: String::new(),
         session_token: token_b,
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success, "sibling token must be refused");
@@ -801,6 +804,7 @@ async fn malformed_payloads_do_not_reset_the_failure_budget() {
                 payload,
                 session_token: token.to_string(),
                 slug: String::new(),
+                ipc_version: 1,
             },
             &host,
         )
@@ -869,6 +873,7 @@ async fn unlock_on_an_open_vault_refuses_and_charges_a_garbage_password() {
                 payload,
                 session_token: String::new(),
                 slug: "unlock-proof".to_string(),
+                ipc_version: 1,
             },
             &host,
         )
@@ -2436,6 +2441,7 @@ async fn vaults_copy_items_founds_a_family_vault() {
         .to_string(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "copy failed: {}", resp.error_message);
@@ -2462,6 +2468,7 @@ async fn vaults_copy_items_founds_a_family_vault() {
             .to_string(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success);
@@ -2481,6 +2488,7 @@ async fn vaults_copy_items_founds_a_family_vault() {
         .to_string(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success);
@@ -4077,6 +4085,7 @@ async fn bridge_match_merges_across_eligible_vaults() {
         payload: r#"{"url":"https://login.mybank.com/signin"}"#.into(),
         session_token: token_hex,
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "err: {}", resp.error_message);
@@ -4150,6 +4159,7 @@ async fn bridge_match_gate_passes_on_sibling_unlocked() {
         payload: r#"{"url":"https://example.com"}"#.into(),
         session_token: token.to_string(),
         slug: String::new(),
+        ipc_version: 1,
     };
 
     // Active personal locked, family open: the merged read passes.
@@ -4218,6 +4228,7 @@ async fn bridge_vault_get_returns_only_fill_fields() {
         .to_string(),
         session_token: token_hex,
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "err: {}", resp.error_message);
@@ -4297,6 +4308,7 @@ async fn bridge_vault_get_refuses_non_login_kinds() {
         payload: serde_json::json!({ "id": id, "decrypt": true }).to_string(),
         session_token: token_hex,
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(
@@ -4355,6 +4367,7 @@ async fn bridge_writes_stay_inside_decision_seven() {
             .to_string(),
             session_token: token_hex.clone(),
             slug: String::new(),
+            ipc_version: 1,
         },
         &host,
     )
@@ -4377,6 +4390,7 @@ async fn bridge_writes_stay_inside_decision_seven() {
             .to_string(),
             session_token: token_hex.clone(),
             slug: String::new(),
+            ipc_version: 1,
         },
         &host,
     )
@@ -4402,6 +4416,7 @@ async fn bridge_writes_stay_inside_decision_seven() {
             .to_string(),
             session_token: token_hex,
             slug: String::new(),
+            ipc_version: 1,
         },
         &host,
     )
@@ -4505,6 +4520,7 @@ async fn bridge_update_refuses_when_the_target_is_not_a_login() {
             .to_string(),
             session_token: token_hex,
             slug: String::new(),
+            ipc_version: 1,
         },
         &host,
     )
@@ -4765,6 +4781,7 @@ async fn bridge_slug_scoped_reads_fail_closed() {
         .to_string(),
         session_token: token_hex.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
 
     // Happy path: the family credential resolves through the slug and
@@ -4807,6 +4824,7 @@ async fn bridge_slug_scoped_reads_fail_closed() {
         .to_string(),
         session_token: token_hex.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "scoped totp: {}", resp.error_message);
@@ -4877,6 +4895,7 @@ async fn list_full_all_gates_ineligible_spaces() {
         payload: String::new(),
         session_token: token,
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "err: {}", resp.error_message);
@@ -4935,6 +4954,7 @@ async fn bridge_route_enforces_write_gate() {
         payload: serde_json::to_string(&login_input("X", "u")).unwrap(),
         session_token: token_hex.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success, "viewer bridge write must be refused");
@@ -4951,6 +4971,7 @@ async fn bridge_route_enforces_write_gate() {
         payload: r#"{"url":"https://example.com/login"}"#.into(),
         session_token: token_hex,
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(
@@ -5063,6 +5084,7 @@ fn join_request(action: &str, payload: serde_json::Value) -> GatewayRequest {
         payload: payload.to_string(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     }
 }
 
@@ -5253,6 +5275,7 @@ async fn reveal_open_guest_route_roundtrip_and_refusal() {
         payload: serde_json::json!({ "reveal": reveal_b64, "passphrase": passphrase }).to_string(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "{}", resp.error_message);
@@ -5271,6 +5294,7 @@ async fn reveal_open_guest_route_roundtrip_and_refusal() {
         .to_string(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success, "wrong passphrase must refuse");
@@ -5296,6 +5320,7 @@ async fn space_create_route_prefixes_slug_marks_flag_and_lists() {
         .to_string(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "{}", resp.error_message);
@@ -5321,6 +5346,7 @@ async fn space_create_route_prefixes_slug_marks_flag_and_lists() {
         payload: String::new(),
         session_token: String::new(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "{}", resp.error_message);
@@ -5388,6 +5414,7 @@ async fn vault_search_fans_out_and_skips_locked_and_ineligible() {
         payload: payload.to_string(),
         session_token: token.to_string(),
         slug: String::new(),
+        ipc_version: 1,
     };
 
     // all=true: both personal vaults contribute, tagged; the org Space is
@@ -5641,6 +5668,7 @@ async fn hw_disable_and_consent_downgrade_demand_the_master_password() {
                 payload,
                 session_token: token.to_string(),
                 slug: String::new(),
+                ipc_version: 1,
             },
             &host,
         )
@@ -5716,6 +5744,7 @@ async fn hw_disable_and_consent_downgrade_demand_the_master_password() {
                 payload,
                 session_token: token.to_string(),
                 slug: String::new(),
+                ipc_version: 1,
             },
             &host2,
         )
@@ -5788,6 +5817,7 @@ async fn hw_routes_select_a_tap_backend_and_report_every_probe() {
             payload: serde_json::json!({"consent": false, "backend": "tap-mock"}).to_string(),
             session_token: token,
             slug: String::new(),
+            ipc_version: 1,
         },
         &host,
     )
@@ -5866,6 +5896,7 @@ async fn vault_search_explicit_slug_includes_org_space() {
         payload: serde_json::json!({"query": "Org Secret", "vault_slug": "svp-org"}).to_string(),
         session_token: token,
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success, "err: {}", resp.error_message);
@@ -5881,6 +5912,7 @@ async fn vault_search_explicit_slug_includes_org_space() {
         payload: serde_json::json!({"query": "x", "vault_slug": "nope"}).to_string(),
         session_token: state_p.get_session_token().await.unwrap(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success);
@@ -5946,6 +5978,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
         payload: v.to_string(),
         session_token: token_hex.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(
@@ -5976,6 +6009,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
         payload: v2.to_string(),
         session_token: token_hex.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success, "ineligible write must refuse");
@@ -5987,6 +6021,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
         payload: serde_json::json!({"slug": "g24w-f"}).to_string(),
         session_token: token_hex.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(
@@ -5999,6 +6034,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
         payload: String::new(),
         session_token: token.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success);
@@ -6009,6 +6045,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
         payload: serde_json::json!({"slug": "g24w-org"}).to_string(),
         session_token: token_hex.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success, "org Space unlock request must refuse");
@@ -6017,6 +6054,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
         payload: String::new(),
         session_token: token.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     assert!(resp.success);
@@ -6028,6 +6066,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
         payload: String::new(),
         session_token: token.clone(),
         slug: String::new(),
+        ipc_version: 1,
     };
     let resp = route_host_request(req, &host).await;
     let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
@@ -6061,6 +6100,7 @@ async fn hardware_unlock_failures_do_not_lock_out_the_route() {
             payload: serde_json::json!({"consent": false, "backend": "tap-mock"}).to_string(),
             session_token: token,
             slug: String::new(),
+            ipc_version: 1,
         },
         &host,
     )
@@ -6081,6 +6121,7 @@ async fn hardware_unlock_failures_do_not_lock_out_the_route() {
                 payload: serde_json::json!({"password": MASTER}).to_string(),
                 session_token: String::new(),
                 slug: "hw-rate-route".into(),
+                ipc_version: 1,
             },
             &host,
         )
