@@ -169,11 +169,11 @@ uninstall:
 release-sign artifacts="dist":
 	./scripts/sign-release-artifacts.sh {{ artifacts }}
 
-# Stage the apt + dnf repositories from signed artifacts (repo key: the GPG
-# key in ~/.baluard/release-gnupg; scripts/gen-release-signing-key.sh creates it).
-# The output is the root of the baluard-org/repo GitHub Pages site; .nojekyll
-# keeps Pages serving the raw tree.
+# Stage the apt, dnf, and F-Droid repositories from signed artifacts (repo keys:
+# ~/.baluard/release-gnupg and ~/.baluard/fdroid). The output is the root of
+# the baluard-org/repo GitHub Pages site; .nojekyll keeps Pages serving raw files.
 repo-stage artifacts="dist" out="repo-out":
+	just fdroid-stage mobile/androidApp/build/outputs/apk/release/androidApp-release.apk {{ out }}
 	./scripts/build-apt-repo.sh {{ artifacts }} {{ out }}
 	./scripts/build-rpm-repo.sh {{ artifacts }} {{ out }}
 	cp {{ artifacts }}/SHA256SUMS {{ out }}/SHA256SUMS
@@ -182,7 +182,30 @@ repo-stage artifacts="dist" out="repo-out":
 	touch {{ out }}/.nojekyll
 	@echo "staged repository at {{ out }}"
 
+# Stage the signed Android APK and signed F-Droid indexes. The repository
+# signing key stays outside the public output tree.
+fdroid-stage apk="mobile/androidApp/build/outputs/apk/release/androidApp-release.apk" out="repo-out":
+	./scripts/build-fdroid-repo.sh {{ apk }} {{ out }}/fdroid/repo
+
+# Mirror staged repositories into the website worktree. This never commits
+# or pushes; unrelated website changes stay untouched.
+repo-sync out="repo-out" site="../baluard-org":
+	./scripts/sync-site-repos.sh {{ out }} {{ site }}
+
+# Sign existing release artifacts, regenerate all repository metadata, and
+# synchronize the website worktree in one fail-fast pipeline.
+release-repositories artifacts="dist" out="repo-out" site="../baluard-org":
+	just fdroid-stage mobile/androidApp/build/outputs/apk/release/androidApp-release.apk {{ out }}
+	just release-sign {{ artifacts }}
+	just repo-stage {{ artifacts }} {{ out }}
+	just repo-sync {{ out }} {{ site }}
+
 # ── Test ────────────────────────────────────────────────────────────────────
+
+# Test release repository generation and website synchronization.
+test-release-scripts:
+	./scripts/tests/test-build-fdroid-repo.sh
+	./scripts/tests/test-sync-site-repos.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
@@ -280,8 +303,8 @@ audit:
 
 # ── Full Check ──────────────────────────────────────────────────────────────
 
-# Run all checks: fmt + clippy + audit + test + build
-check: fmt-check lint audit test build
+# Run all checks: fmt + clippy + audit + tests + build
+check: fmt-check lint audit test test-release-scripts build
 	@echo "All checks passed."
 
 # ── Desktop (Tauri) ────────────────────────────────────────────────────────
