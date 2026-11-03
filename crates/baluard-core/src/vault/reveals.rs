@@ -748,22 +748,25 @@ mod tests {
         let expires = now_unix() + DAY;
         let (bytes, _passphrase) = seal_guest_reveal("Wifi", &fields(), expires).unwrap();
         let pkg: RevealPackage = serde_json::from_slice(&bytes).unwrap();
+        // Literal expectations, not the constants: comparing against
+        // REVEAL_KDF_* would pass even if the seal reverted to profile-driven
+        // params or the constants themselves drifted.
         match pkg.wrap {
             RevealWrap::Passphrase { kdf } => {
-                assert_eq!(
-                    kdf.memory_kib, REVEAL_KDF_MEMORY_KIB,
-                    "frozen reveal memory"
-                );
-                assert_eq!(
-                    kdf.time_cost, REVEAL_KDF_TIME_COST,
-                    "frozen reveal time_cost"
-                );
-                assert_eq!(
-                    kdf.parallelism, REVEAL_KDF_PARALLELISM,
-                    "frozen reveal parallelism"
-                );
+                assert_eq!(kdf.memory_kib, 64 * 1024, "frozen reveal memory");
+                assert_eq!(kdf.time_cost, 3, "frozen reveal time_cost");
+                assert_eq!(kdf.parallelism, 2, "frozen reveal parallelism");
             }
             _ => panic!("guest reveal must use the passphrase wrap"),
+        }
+        // Compile-time: the frozen seal shape must stay inside the open-path clamp.
+        const {
+            assert!(
+                REVEAL_KDF_MEMORY_KIB <= GUEST_KDF_MAX_MEMORY_KIB
+                    && REVEAL_KDF_TIME_COST <= GUEST_KDF_MAX_TIME_COST
+                    && REVEAL_KDF_PARALLELISM <= GUEST_KDF_MAX_PARALLELISM,
+                "frozen seal shape must stay inside the open-path clamp"
+            );
         }
     }
 
