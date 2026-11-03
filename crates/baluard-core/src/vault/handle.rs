@@ -2888,6 +2888,7 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes,
         };
+        cipher::ensure_schema_writable_raw(self.vault_id, cipher_id, &file, &old_item)?;
         let mut existing =
             crate::vault::cipher::decrypt_cipher(self.vault_id, cipher_id, &file, &old_item)?;
         let input = CipherInput {
@@ -7698,6 +7699,7 @@ impl VaultHandle {
         };
         let existing = self.try_decrypt_cipher_at(unlocked, &current, &existing_file)?;
         let existing_envelope = crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
+        self.ensure_item_schema_writable(unlocked, &current, &existing_file)?;
         let input = CipherInput {
             name: existing.name,
             folder_id: existing.folder_id,
@@ -8413,6 +8415,23 @@ impl VaultHandle {
         let item_key =
             self.resolve_item_key(unlocked, file_path, file.id, envelope.header.key_epoch)?;
         crate::vault::cipher::decrypt_cipher(self.vault_id, file.id, file, &item_key)
+    }
+
+    /// Refuse to replace an item whose stored schema this build cannot
+    /// fully model: a typed re-encrypt would silently strip the newer
+    /// build's fields. Read-only display stays allowed (decrypt_cipher
+    /// keeps parsing known fields). Rotation callers route this error into
+    /// the bytes-level rewrap instead of aborting.
+    fn ensure_item_schema_writable(
+        &self,
+        unlocked: &UnlockedState,
+        file_path: &Path,
+        file: &cipher::CipherFile,
+    ) -> Result<(), BaluardError> {
+        let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
+        let item_key =
+            self.resolve_item_key(unlocked, file_path, file.id, envelope.header.key_epoch)?;
+        cipher::ensure_schema_writable_raw(self.vault_id, file.id, file, &item_key)
     }
 
     /// Rewrap an entry whose ciphertext decrypts but whose kind this build
@@ -9196,6 +9215,8 @@ impl VaultHandle {
         let existing_envelope = crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
         let new_update_seq = existing_envelope.header.update_seq + 1;
         let key_epoch = existing_envelope.header.key_epoch;
+
+        self.ensure_item_schema_writable(unlocked, &file_path, &existing_file)?;
 
         // Read existing cipher to preserve created_at (S3-7c: domain-aware)
         let existing_cipher = self.try_decrypt_cipher_at(unlocked, &file_path, &existing_file)?;
@@ -10084,7 +10105,10 @@ impl VaultHandle {
             // A corrupt entry must not abort the rotation mid-offboarding:
             // after the tombstone there is no retry, so the damaged file is
             // named loudly and left behind instead (2026-10-01 review).
-            let mut existing = match self.try_decrypt_cipher_at(unlocked, &file_path, &file) {
+            let mut existing = match self
+                .ensure_item_schema_writable(unlocked, &file_path, &file)
+                .and_then(|()| self.try_decrypt_cipher_at(unlocked, &file_path, &file))
+            {
                 Ok(c) => c,
                 Err(e) => {
                     // Bytes-level rewrap for entries this build cannot
@@ -10784,7 +10808,10 @@ impl VaultHandle {
             )?;
             // Same corrupt-entry skip as the twin loop above: one garbage
             // file must not brick a removal's rotation.
-            let mut existing = match self.try_decrypt_cipher_at(unlocked, &file_path, &file) {
+            let mut existing = match self
+                .ensure_item_schema_writable(unlocked, &file_path, &file)
+                .and_then(|()| self.try_decrypt_cipher_at(unlocked, &file_path, &file))
+            {
                 Ok(c) => c,
                 Err(e) => {
                     // Bytes-level rewrap for entries this build cannot
@@ -14142,6 +14169,79 @@ mod tests {
         let wrong_kek = [0u8; 32];
         assert!(handle.unlock_with_kek(&wrong_kek).is_err());
         assert!(!handle.is_unlocked());
+    }
+
+    #[test]
+    fn update_refuses_item_from_newer_schema() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let input = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user@example.com".into()),
+                password: Some("s3cret!".into()),
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+                fido2_credentials: None,
+                favicon: None,
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+        let cipher_id = handle.add_cipher(&input).unwrap();
+
+        // Simulate a newer client having written the item: bump the stored
+        // schema past what this build knows.
+        let file_path = handle.cipher_file_path(cipher_id).unwrap();
+        let bytes = std::fs::read(&file_path).unwrap();
+        let file = cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes: bytes,
+        };
+        let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes).unwrap();
+        let unlocked = match &handle.state {
+            VaultState::Unlocked(u) => u,
+            _ => panic!("vault should be unlocked"),
+        };
+        let item_key = handle
+            .resolve_item_key(unlocked, &file_path, cipher_id, envelope.header.key_epoch)
+            .unwrap();
+        let json =
+            crate::vault::cipher::decrypt_cipher_raw(handle.vault_id, cipher_id, &file, &item_key)
+                .unwrap();
+        let mut v: serde_json::Value = serde_json::from_slice(&json).unwrap();
+        v["schema"] = serde_json::json!(crate::types::ITEM_SCHEMA_VERSION + 1);
+        let sealed = crate::vault::cipher::encrypt_cipher_raw(
+            handle.vault_id,
+            cipher_id,
+            &serde_json::to_vec(&v).unwrap(),
+            &item_key,
+            envelope.header.key_epoch,
+            envelope.header.update_seq,
+            envelope.header.tier,
+        )
+        .unwrap();
+        std::fs::write(&file_path, sealed.envelope_bytes).unwrap();
+
+        // The edit must fail loudly instead of silently stripping the
+        // newer client's fields on re-encrypt.
+        let err = handle.update_cipher(cipher_id, &input).unwrap_err();
+        assert!(
+            matches!(err, BaluardError::Vault(VaultError::ItemSchemaTooNew(_))),
+            "expected ItemSchemaTooNew, got: {err}"
+        );
     }
 
     #[test]
