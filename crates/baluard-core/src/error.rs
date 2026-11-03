@@ -273,6 +273,9 @@ pub enum SyncError {
     #[error("policy violation: device {device} may not write {path}")]
     PolicyViolation { device: String, path: String },
 
+    #[error("vault contains a path this app version does not manage ({path}); update Baluard")]
+    UnsupportedVaultPath { path: String },
+
     #[error("state machine error: {0}")]
     StateMachine(String),
 

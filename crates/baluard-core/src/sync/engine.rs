@@ -7275,7 +7275,7 @@ mod tests {
         assert!(
             matches!(
                 &verified,
-                Err(BaluardError::Sync(SyncError::PolicyViolation { .. }))
+                Err(BaluardError::Sync(SyncError::UnsupportedVaultPath { .. }))
             ),
             "smuggled merge residue must be refused, got {verified:?}"
         );
@@ -7319,7 +7319,7 @@ mod tests {
         assert!(
             matches!(
                 &verified2,
-                Err(BaluardError::Sync(SyncError::PolicyViolation { .. }))
+                Err(BaluardError::Sync(SyncError::UnsupportedVaultPath { .. }))
             ),
             "smuggled content on a conflicted merge must refuse, got {verified2:?}"
         );
@@ -7468,9 +7468,9 @@ mod tests {
         assert!(
             matches!(
                 &result,
-                Err(BaluardError::Sync(SyncError::PolicyViolation { .. }))
+                Err(BaluardError::Sync(SyncError::UnsupportedVaultPath { .. }))
             ),
-            "expected policy violation, got {result:?}"
+            "expected refusal on uncovered path, got {result:?}"
         );
         let head_after = cloned.head().unwrap().peel_to_commit().unwrap().id();
         assert_eq!(head_after, head_before, "refused pull must not move HEAD");
