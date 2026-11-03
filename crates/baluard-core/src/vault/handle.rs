@@ -2888,7 +2888,36 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes,
         };
-        cipher::ensure_schema_writable_raw(self.vault_id, cipher_id, &file, &old_item)?;
+        let schema_guard =
+            cipher::ensure_schema_writable_raw(self.vault_id, cipher_id, &file, &old_item);
+        if matches!(
+            schema_guard,
+            Err(BaluardError::Vault(VaultError::ItemSchemaTooNew(_)))
+        ) {
+            // Newer-schema entry: move the bytes to the new CK untouched,
+            // the same escape hatch rotation uses. Skipping it would
+            // destroy it — the CK is already rotated and item keys derive
+            // from it.
+            let new_item = crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
+                &rot.new_ck,
+                cipher_id,
+                key_epoch,
+            );
+            let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+            self.rewrap_unknown_kind_cipher(
+                path,
+                &file,
+                &old_item,
+                &new_item,
+                key_epoch,
+                &mut staged,
+            )?;
+            for (tmp, dest) in staged {
+                std::fs::rename(&tmp, &dest)?;
+            }
+            return Ok(());
+        }
+        schema_guard?;
         let mut existing =
             crate::vault::cipher::decrypt_cipher(self.vault_id, cipher_id, &file, &old_item)?;
         let input = CipherInput {
@@ -8644,6 +8673,48 @@ impl VaultHandle {
         }
     }
 
+    /// Schema probe for raw envelope bytes (git blob sides of a conflict):
+    /// same epoch/key resolution as [`decrypt_cipher_bytes`], but returns
+    /// the stored item schema instead of a typed cipher, without the typed
+    /// parse that drops unknown-to-this-build fields.
+    pub fn stored_item_schema_bytes(
+        &self,
+        cipher_id: Uuid,
+        envelope_bytes: &[u8],
+    ) -> Result<u32, BaluardError> {
+        let envelope = crate::vault::envelope::deserialize(envelope_bytes)?;
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => {
+                return Err(VaultError::Corrupt(
+                    "stored_item_schema_bytes called on locked vault".into(),
+                )
+                .into());
+            }
+        };
+        let file = crate::vault::cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes: envelope_bytes.to_vec(),
+        };
+        let item_key = match self.cipher_file_path(cipher_id) {
+            Some(path) => {
+                self.resolve_item_key(unlocked, &path, cipher_id, envelope.header.key_epoch)?
+            }
+            None => {
+                let sgk = unlocked.sgk()?;
+                sgk.try_derive_item_key(cipher_id, envelope.header.key_epoch)
+                    .ok_or_else(|| {
+                        BaluardError::Vault(VaultError::Corrupt(
+                            "no item key for cipher epoch".into(),
+                        ))
+                    })?
+            }
+        };
+        let json =
+            crate::vault::cipher::decrypt_cipher_raw(self.vault_id, cipher_id, &file, &item_key)?;
+        crate::vault::cipher::stored_item_schema(&json)
+    }
+
     /// Decrypt a cipher from raw envelope bytes (e.g. read from a specific git
     /// commit via `SyncEngine::read_blob_from_commit`), rather than from the
     /// working tree. Used by Phase 2b field-level conflict merge to decrypt
@@ -9331,6 +9402,9 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes: std::fs::read(&file_path)?,
         };
+        // A clone re-encrypts typed: refuse when this build cannot model
+        // the source, or the copy silently drops the newer fields.
+        self.ensure_item_schema_writable(unlocked, &file_path, &existing_file)?;
         let existing = self.try_decrypt_cipher_at(unlocked, &file_path, &existing_file)?;
 
         let input = CipherInput {
@@ -9731,7 +9805,14 @@ impl VaultHandle {
                     archived: cipher.archived,
                     tags: updated_tags,
                 };
-                self.update_cipher(meta.id, &input)?;
+                if matches!(
+                    self.update_cipher(meta.id, &input),
+                    Err(BaluardError::Vault(VaultError::ItemSchemaTooNew(_)))
+                ) {
+                    // A newer-schema entry stays untouched rather than aborting the
+                    // bulk operation half-applied.
+                    continue;
+                }
                 affected += 1;
             }
         }
@@ -9780,7 +9861,14 @@ impl VaultHandle {
                     archived: cipher.archived,
                     tags: updated_tags,
                 };
-                self.update_cipher(meta.id, &input)?;
+                if matches!(
+                    self.update_cipher(meta.id, &input),
+                    Err(BaluardError::Vault(VaultError::ItemSchemaTooNew(_)))
+                ) {
+                    // A newer-schema entry stays untouched rather than aborting the
+                    // bulk operation half-applied.
+                    continue;
+                }
                 affected += 1;
             }
         }
@@ -14169,6 +14257,70 @@ mod tests {
         let wrong_kek = [0u8; 32];
         assert!(handle.unlock_with_kek(&wrong_kek).is_err());
         assert!(!handle.is_unlocked());
+    }
+
+    #[test]
+    fn sweep_carries_newer_schema_entry_to_new_ck() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Fabricate a collection entry a newer client wrote: sealed under a
+        // key derived from the outgoing CK, schema past this build.
+        let cipher_id = Uuid::new_v4();
+        let dir_salt: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let hex_dir = dir_salt
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let entry_dir = dir.path().join("ciphers").join(&hex_dir);
+        std::fs::create_dir_all(&entry_dir).unwrap();
+        let old_ck = Zeroizing::new([0xA5u8; 32]);
+        let new_ck = Zeroizing::new([0x5Au8; 32]);
+        let old_item =
+            crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(&old_ck, cipher_id, 1);
+        let json = format!(
+            r#"{{"name":"future","created_at":1,"updated_at":1,"schema":{}}}"#,
+            crate::types::ITEM_SCHEMA_VERSION + 1
+        );
+        let sealed = crate::vault::cipher::encrypt_cipher_raw(
+            handle.vault_id,
+            cipher_id,
+            json.as_bytes(),
+            &old_item,
+            1,
+            1,
+            None,
+        )
+        .unwrap();
+        let entry_path = entry_dir.join(format!("{cipher_id}.enc"));
+        std::fs::write(&entry_path, sealed.envelope_bytes).unwrap();
+
+        let rot = crate::vault::collections::SweptRotation {
+            collection_id: Uuid::new_v4(),
+            old_ck,
+            new_ck: new_ck.clone(),
+            dir: Some(hex_dir),
+            failed_groups: vec![],
+        };
+        handle.reencrypt_after_sweep(&rot);
+
+        // The entry must now open under the NEW CK's item key, with the
+        // newer schema intact: the sweep must carry it, not destroy it.
+        let bytes = std::fs::read(&entry_path).unwrap();
+        let file = cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes: bytes,
+        };
+        let new_item =
+            crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(&new_ck, cipher_id, 1);
+        let opened =
+            crate::vault::cipher::decrypt_cipher_raw(handle.vault_id, cipher_id, &file, &new_item)
+                .unwrap();
+        assert_eq!(
+            cipher::stored_item_schema(&opened).unwrap(),
+            crate::types::ITEM_SCHEMA_VERSION + 1
+        );
     }
 
     #[test]

@@ -287,11 +287,20 @@ pub fn decrypt_cipher_raw(
 }
 
 /// Read the schema version out of a decrypted cipher JSON without a typed
-/// parse. Absent means 1 (the first schema had no field).
+/// parse. Absent means 1 (the first schema had no field). A present but
+/// non-integer value is corruption; an integer beyond u32 is a newer
+/// schema by construction.
 pub fn stored_item_schema(json: &[u8]) -> Result<u32, BaluardError> {
     let v: serde_json::Value = serde_json::from_slice(json)
         .map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
-    Ok(v.get("schema").and_then(|s| s.as_u64()).unwrap_or(1) as u32)
+    match v.get("schema") {
+        None => Ok(1),
+        Some(s) => match s.as_u64() {
+            Some(n) => u32::try_from(n)
+                .map_err(|_| BaluardError::Vault(VaultError::ItemSchemaTooNew(u32::MAX))),
+            None => Err(VaultError::Corrupt("cipher schema field is not an integer".into()).into()),
+        },
+    }
 }
 
 /// Refuse a typed re-encrypt of an item whose stored schema this build
@@ -337,6 +346,22 @@ mod tests {
 
         // The AAD binds vault and cipher identity: another id must refuse.
         assert!(decrypt_cipher_raw(vault_id, Uuid::new_v4(), &file, &item_key).is_err());
+    }
+
+    #[test]
+    fn stored_item_schema_strictness() {
+        assert_eq!(stored_item_schema(br#"{"name":"n"}"#).unwrap(), 1);
+        assert_eq!(stored_item_schema(br#"{"schema":1}"#).unwrap(), 1);
+        assert_eq!(stored_item_schema(br#"{"schema":3}"#).unwrap(), 3);
+        // A string or float schema is corruption, not a pass-through.
+        assert!(stored_item_schema(br#"{"schema":"2"}"#).is_err());
+        assert!(stored_item_schema(br#"{"schema":2.5}"#).is_err());
+        // Integer beyond u32 cannot wrap down to a small schema.
+        let err = stored_item_schema(br#"{"schema":4294967297}"#).unwrap_err();
+        assert!(matches!(
+            err,
+            BaluardError::Vault(VaultError::ItemSchemaTooNew(u32::MAX))
+        ));
     }
 
     #[test]
