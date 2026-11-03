@@ -1266,7 +1266,17 @@ pub struct CipherEnvelopeData {
     pub archived: bool,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Item schema version this build wrote. Forward-compatibility gate:
+    /// a build that reads a schema newer than its own
+    /// [`ITEM_SCHEMA_VERSION`] must refuse to re-encrypt the item (read-only
+    /// display is fine), or the typed decrypt-edit-encrypt cycle silently
+    /// strips fields added by the newer build.
+    #[serde(default)]
+    pub schema: u32,
 }
+
+/// Item schema version understood (and written) by this build.
+pub const ITEM_SCHEMA_VERSION: u32 = 1;
 
 impl CipherEnvelopeData {
     /// Migrate from flat format to typed CipherKind after deserialization.
@@ -1339,6 +1349,7 @@ impl CipherEnvelopeData {
             username,
             password,
             uris,
+            schema: ITEM_SCHEMA_VERSION,
             created_at,
             updated_at: now,
             password_history: input.password_history.clone(),
