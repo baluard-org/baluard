@@ -361,7 +361,7 @@ pub async fn derive_kek_for_vault(
 // Concurrency model: the runtime's methods are async (tokio RwLock). These FFI
 // methods are `async` too (UniFFI async -> Kotlin `suspend` / Swift `async`,
 // driven off the UI thread per plan §3.3). The Argon2id KDF inside
-// `VaultState::unlock` is CPU-heavy (64-256 MB, ~1-3s); the parked shared
+// `VaultState::unlock` is CPU-heavy (32-256 MiB depending on profile); the parked shared
 // tokio Runtime absorbs it. Mirrors the daemon's pattern (no extra
 // spawn_blocking) — see `state.rs::unlock` comment.
 
@@ -468,7 +468,7 @@ impl MobileVault {
     /// pre-derived KEK, SKIPPING the Argon2id KDF. The caller retrieves the
     /// biometric-gated KEK from the platform keychain (StrongBox / Secure
     /// Enclave) and passes it here. The master-password KDF never runs in the
-    /// memory-capped autofill process (OOM guard — a 64-256 MB KDF would OOM
+    /// memory-capped autofill process (OOM guard — a 32-256 MiB KDF would OOM
     /// an Android AutofillService or iOS credential extension).
     ///
     /// SECURITY: the [kek] is the Argon2id output over the master password
