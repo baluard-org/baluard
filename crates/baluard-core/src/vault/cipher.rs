@@ -103,12 +103,10 @@ pub fn encrypt_cipher(
     // Build random nonce (C1 fix: prevents nonce reuse across devices)
     let nonce = aead::build_random_nonce();
 
-    // Build header (nonce_counter is vestigial; actual nonce is in CipherEnvelope.nonce)
     let header = EnvelopeHeader {
         version: BALUARD_VERSION,
         alg_id: ALG_AES_256_GCM,
         key_epoch,
-        nonce_counter: 0,
         update_seq,
         tier: Some(tier),
     };
@@ -242,7 +240,6 @@ pub fn encrypt_cipher_raw(
         version: BALUARD_VERSION,
         alg_id: ALG_AES_256_GCM,
         key_epoch,
-        nonce_counter: 0,
         update_seq,
         tier: Some(tier),
     };

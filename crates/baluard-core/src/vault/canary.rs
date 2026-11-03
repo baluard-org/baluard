@@ -47,7 +47,6 @@ pub fn create_rk_canary(
         version: BALUARD_VERSION,
         alg_id: ALG_AES_256_GCM,
         key_epoch: epoch,
-        nonce_counter: 0,
         update_seq: 0,
         tier: None,
     };
@@ -96,7 +95,6 @@ pub fn create_kek_canary(session_key: &[u8; 32], vault_id: Uuid) -> Result<Vec<u
         version: BALUARD_VERSION,
         alg_id: ALG_AES_256_GCM,
         key_epoch: 0,
-        nonce_counter: 0,
         update_seq: 0,
         tier: None,
     };

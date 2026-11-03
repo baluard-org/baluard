@@ -2819,7 +2819,6 @@ mod tests {
             version: crate::BALUARD_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
             key_epoch: 1,
-            nonce_counter: u64::from_le_bytes(nonce[..8].try_into().unwrap()),
             update_seq: 1,
             tier: None,
         };

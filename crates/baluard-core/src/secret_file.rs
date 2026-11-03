@@ -92,7 +92,6 @@ pub fn seal_secret_blob(
         version: crate::BALUARD_VERSION,
         alg_id: crate::ALG_AES_256_GCM,
         key_epoch: 0,
-        nonce_counter: 0,
         update_seq: 0,
         tier: None,
     };
