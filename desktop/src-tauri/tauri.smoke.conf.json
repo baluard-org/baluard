@@ -4,7 +4,19 @@
   },
   "app": {
     "security": {
-      "capabilities": ["default", "smoke"]
+      "capabilities": [
+        "default",
+        {
+          "identifier": "smoke",
+          "description": "test-only capabilities for the e2e smoke build",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "wdio-webdriver:default"
+          ]
+        }
+      ]
     },
     "windows": [
       {
