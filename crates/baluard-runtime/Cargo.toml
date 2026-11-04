@@ -22,11 +22,13 @@ rand = { workspace = true }
 uuid = { workspace = true }
 url = { workspace = true }
 reqwest = { workspace = true }
+ssh-key = { version = "0.7.0-rc.10", features = ["ed25519", "ecdsa"] }
+# ssh_generate_key and git_remote_url run on every platform; git2 itself
+# already cross-compiles (baluard-core's git-sync feature uses it).
+git2 = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-ssh-key = { version = "0.7.0-rc.10", features = ["ed25519", "ecdsa"] }
-git2 = { workspace = true }
 
 [features]
 default = ["git-sync"]

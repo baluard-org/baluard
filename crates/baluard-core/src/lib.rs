@@ -13,6 +13,7 @@ pub mod health;
 pub mod hwkey;
 pub mod import;
 pub mod integrity;
+pub mod ipc;
 pub mod keys;
 pub mod legacy;
 pub mod orgs;

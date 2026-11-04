@@ -105,20 +105,14 @@ pub(crate) fn send_request(action: &str, payload: &str) -> Result<String, String
 
 /// Send a Protobuf request with session token + slug. Returns (payload, optional_new_token).
 /// `slug` (Phase 6 / M2): target vault; empty = active vault.
-#[cfg(unix)]
 fn send_request_with_token(action: &str, payload: &str, token: &str, slug: &str) -> Result<(String, Option<String>), String> {
-    use std::os::unix::net::UnixStream;
-
     let socket = default_socket_path();
-    let mut stream = UnixStream::connect(&socket)
+    let mut stream = baluard_core::ipc::IpcStream::connect(&socket)
         .map_err(|e| format!("Cannot connect to daemon at {}: {}", socket.display(), e))?;
 
     // I/O timeouts to prevent UI freeze
     stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .map_err(|e| format!("Set timeout: {e}"))?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
+        .set_timeouts(Duration::from_secs(30), Duration::from_secs(5))
         .map_err(|e| format!("Set timeout: {e}"))?;
 
     let req = GatewayRequest {
@@ -172,11 +166,6 @@ fn send_request_with_token(action: &str, payload: &str, token: &str, slug: &str)
         log::warn!("daemon error: action={} error={}", action, resp.error_message);
         Err(resp.error_message)
     }
-}
-
-#[cfg(not(unix))]
-fn send_request_with_token(_action: &str, _payload: &str, _token: &str, _slug: &str) -> Result<(String, Option<String>), String> {
-    Err("IPC not yet implemented on this platform".into())
 }
 
 // ── Tauri commands ──
@@ -1424,8 +1413,13 @@ fn notify_agent_request(app: tauri::AppHandle, title: String, body: String) -> R
             let log_dir = if let Ok(dir) = std::env::var("BALUARD_LOG_DIR") {
                 std::path::PathBuf::from(dir)
             } else {
-                default_socket_path().parent()
-                    .expect("socket path has parent").to_path_buf()
+                // A named pipe has no filesystem parent to log next to.
+                #[cfg(windows)]
+                let fallback = baluard_core::paths::log_dir();
+                #[cfg(not(windows))]
+                let fallback = default_socket_path().parent()
+                    .expect("socket path has parent").to_path_buf();
+                fallback
             };
             let _ = std::fs::create_dir_all(&log_dir);
 

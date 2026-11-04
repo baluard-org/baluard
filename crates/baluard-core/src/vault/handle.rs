@@ -5,8 +5,22 @@
 //! Unlocked: can decrypt ciphers, add/update/delete with proper key material.
 
 use std::collections::{HashMap, HashSet};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+
+/// Owner-only file mode on unix. Windows has no mode bits: the vault lives
+/// under the user profile, whose inherited ACLs already exclude other
+/// accounts, so the hardening is a no-op there.
+#[cfg(unix)]
+fn set_owner_only(path: &Path) -> std::io::Result<()> {
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(windows)]
+fn set_owner_only(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
 
 use uuid::Uuid;
 
@@ -10200,7 +10214,7 @@ impl VaultHandle {
                 .map_err(|e| VaultError::Corrupt(format!("attempts serialize: {e}")))?
                 .as_bytes(),
         )?;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        set_owner_only(&path)?;
         Ok(())
     }
 
@@ -10302,7 +10316,7 @@ impl VaultHandle {
             &pending_marker,
             serde_json::to_string_pretty(&pending_data).unwrap(),
         )?;
-        let _ = std::fs::set_permissions(&pending_marker, std::fs::Permissions::from_mode(0o600));
+        let _ = set_owner_only(&pending_marker);
         // B-1 fix: arm the RAII guard so a panic or early-return mid-rotation
         // sweeps staged .tmp files (ciphers, canary, keywrap) and leaves the
         // marker in place for VaultHandle::open to reconcile. Without this, a
@@ -10923,7 +10937,7 @@ impl VaultHandle {
         let tmp = recovery_path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_string_pretty(&json).unwrap())?;
         // H4 fix: enforce 0600 on file holding HPKE-wrapped Root Key
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        let _ = set_owner_only(&tmp);
         std::fs::rename(&tmp, &recovery_path)?;
 
         Ok(())
@@ -10986,7 +11000,7 @@ impl VaultHandle {
             &pending_marker,
             serde_json::to_string_pretty(&pending_data).unwrap(),
         )?;
-        let _ = std::fs::set_permissions(&pending_marker, std::fs::Permissions::from_mode(0o600));
+        let _ = set_owner_only(&pending_marker);
         let mut _guard = RotationGuard::new(&self.path);
 
         // ── Commit: revoke in registry and get new root key ──
@@ -14555,6 +14569,8 @@ mod tests {
         euid == 0
     }
 
+    // Relies on unix directory mode bits for the write-denial premise.
+    #[cfg(unix)]
     #[test]
     fn delete_tag_propagates_non_schema_errors() {
         if running_as_root() {
@@ -14597,6 +14613,8 @@ mod tests {
         assert!(res.is_err(), "write error must propagate, got {res:?}");
     }
 
+    // Relies on unix directory mode bits for the write-denial premise.
+    #[cfg(unix)]
     #[test]
     fn rename_tag_propagates_non_schema_errors() {
         if running_as_root() {
@@ -15026,6 +15044,8 @@ mod tests {
     /// until its entries are carried. The next rotation rewrites the
     /// marker file, so an unconverged marker must BLOCK that rotation
     /// instead of silently destroying the old key.
+    // Relies on unix directory mode bits for the write-denial premise.
+    #[cfg(unix)]
     #[test]
     fn stuck_sweep_marker_blocks_later_rotation() {
         if running_as_root() {

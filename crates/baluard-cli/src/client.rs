@@ -5,9 +5,9 @@
 //! matching the daemon's handler.
 
 use anyhow::{Context, Result, bail};
+use baluard_core::ipc::IpcStream;
 use prost::Message;
 use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use zeroize::Zeroize;
 
@@ -251,7 +251,7 @@ fn request_with_session(
     let socket = socket_path
         .map(PathBuf::from)
         .unwrap_or_else(default_socket_path);
-    let mut stream = UnixStream::connect(&socket)
+    let mut stream = IpcStream::connect(&socket)
         .with_context(|| format!("Cannot connect to daemon at {}", socket.display()))?;
 
     let mut req = GatewayRequest {
@@ -271,7 +271,7 @@ fn request_with_session(
     stream.flush()?;
 
     // Shutdown write side so daemon sees EOF on its read
-    stream.shutdown(std::net::Shutdown::Write)?;
+    stream.shutdown()?;
 
     // Zeroize wire bytes and request payload (password may be in payload)
     body.zeroize();
