@@ -178,11 +178,14 @@ pub async fn setup_sync_remote(
     provider: Provider,
     repo_name: &str,
     clone_url: Option<String>,
+    device_id: &str,
 ) -> Result<String, String> {
     let (info, tok) = ensure_valid_token(provider)
         .await
         .map_err(|e| e.to_string())?;
     let prov = provider_for(provider, info.config()).map_err(|e| format!("provider init: {e}"))?;
+    // Own the id: the git work runs in a 'static spawn_blocking closure.
+    let device_id = device_id.to_string();
 
     // Default the repo name from the .baluard marker slug, then the
     // directory name — the same ladder the daemon arm uses.
@@ -244,7 +247,7 @@ pub async fn setup_sync_remote(
     let provider_str = provider.to_string();
     let remote_for_block = remote_url.clone();
     let _ = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let engine = SyncEngine::new(&git_path, "baluard-mobile", devkey_seal.as_ref());
+        let engine = SyncEngine::new(&git_path, &device_id, devkey_seal.as_ref());
         let git_repo = match engine.open_repo() {
             Ok(r) => r,
             Err(open_err) => {
@@ -264,6 +267,7 @@ pub async fn setup_sync_remote(
                     .map_err(|e| format!("Git init failed: {e}"))?
             }
         };
+        let mut added_origin = false;
         if let Ok(existing) = engine.get_remote_url(&git_repo, "origin") {
             if existing != remote_for_block {
                 return Err(format!(
@@ -274,66 +278,85 @@ pub async fn setup_sync_remote(
             engine
                 .add_remote(&git_repo, "origin", &remote_for_block)
                 .map_err(|e| format!("Failed to add remote: {e}"))?;
+            added_origin = true;
         }
-        let status = engine
-            .status(&git_repo)
-            .map_err(|e| format!("Status check failed: {e}"))?;
-        if status.is_dirty() {
-            engine
-                .commit_all(&git_repo, "")
-                .map_err(|e| format!("Commit failed: {e}"))?;
-        }
-        // A just-created forge repo can serve phantom or stale refs to the
-        // push's own negotiation: the pack lands (or lands on retry) while
-        // the call reports non-fast-forward, and the ref view converges
-        // seconds later. Retry with a delay, then trust the remote tip over
-        // the error — org-journey evidence: every "failed" backup repo was
-        // fully populated and converged within a minute.
-        let mut push_err: Option<BaluardError> = None;
-        for attempt in 0..3u8 {
-            if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_secs(5));
+        let git_result: Result<(), String> = (|| {
+            let status = engine
+                .status(&git_repo)
+                .map_err(|e| format!("Status check failed: {e}"))?;
+            if status.is_dirty() {
+                engine
+                    .commit_all(&git_repo, "")
+                    .map_err(|e| format!("Commit failed: {e}"))?;
             }
-            match engine.push(&git_repo, "origin") {
-                Ok(()) => {
-                    push_err = None;
-                    break;
+            // A just-created forge repo can serve phantom or stale refs to the
+            // push's own negotiation: the pack lands (or lands on retry) while
+            // the call reports non-fast-forward, and the ref view converges
+            // seconds later. Retry with a delay, then trust the remote tip over
+            // the error — org-journey evidence: every "failed" backup repo was
+            // fully populated and converged within a minute.
+            let mut push_err: Option<BaluardError> = None;
+            for attempt in 0..3u8 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
                 }
-                Err(e) => {
-                    if engine.remote_head_matches_local(&git_repo, "origin") {
-                        eprintln!(
-                            "warning: push reported {e} but the remote tip already carries our head; treating the backup as pushed"
-                        );
+                match engine.push(&git_repo, "origin") {
+                    Ok(()) => {
                         push_err = None;
                         break;
                     }
-                    push_err = Some(e);
+                    Err(e) => {
+                        if engine.remote_head_matches_local(&git_repo, "origin") {
+                            eprintln!(
+                                "warning: push reported {e} but the remote tip already carries our head; treating the backup as pushed"
+                            );
+                            push_err = None;
+                            break;
+                        }
+                        push_err = Some(e);
+                    }
                 }
             }
-        }
-        if let Some(e) = push_err {
-            return Err(format!("First push failed: {e}"));
+            if let Some(e) = push_err {
+                return Err(format!("First push failed: {e}"));
+            }
+            Ok(())
+        })();
+        if let Err(e) = git_result {
+            // A stale origin with no registry entry offers no disconnect,
+            // trapping the corrected retry behind "already set"; unwind it
+            // on any failure past add_remote.
+            if added_origin {
+                let _ = engine.remove_remote(&git_repo, "origin");
+            }
+            return Err(e);
         }
         Ok(remote_for_block)
     })
     .await
     .map_err(|e| format!("Task join: {e}"))??;
 
-    // Record sync info in the device-local registry.
-    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
-        if let Some(slug) = marker_slug {
-            if let Some(entry) = reg.get_mut(&slug) {
-                entry.provider = Some(provider_str.clone());
-                entry.remote_url = Some(remote_url.clone());
-                entry.last_synced = Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                );
-            }
-            let _ = reg.save_locked();
+    // Record sync info in the vault registry. A failure must fail the
+    // call: without provider and remote_url recorded, autosync and the
+    // disconnect UI silently break. Retrying setup is self-healing (origin
+    // already matches; the push is up to date).
+    if let Some(slug) = marker_slug {
+        let mut reg = baluard_core::vault::registry::VaultRegistry::load_locked().map_err(|e| {
+            format!("Sync completed but the vault registry could not be loaded: {e}")
+        })?;
+        if let Some(entry) = reg.get_mut(&slug) {
+            entry.provider = Some(provider_str.clone());
+            entry.remote_url = Some(remote_url.clone());
+            entry.last_synced = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
         }
+        reg.save_locked().map_err(|e| {
+            format!("Sync completed but the vault registry could not be updated: {e}")
+        })?;
     }
 
     Ok(serde_json::json!({
@@ -528,11 +551,14 @@ pub async fn setup_sync_remote_custom(
     vault_path: &Path,
     devkey_seal: Option<[u8; 32]>,
     clone_url: String,
+    device_id: &str,
 ) -> Result<String, String> {
     let git_path = vault_path.to_path_buf();
     let seal = devkey_seal;
+    let device_id = device_id.to_string();
     let remote_url = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let engine = SyncEngine::new(&git_path, "baluard-mobile", seal.as_ref());
+        let mut added_origin = false;
+        let engine = SyncEngine::new(&git_path, &device_id, seal.as_ref());
         let git_repo = match engine.open_repo() {
             Ok(r) => r,
             Err(open_err) => {
@@ -556,63 +582,77 @@ pub async fn setup_sync_remote_custom(
             engine
                 .add_remote(&git_repo, "origin", &clone_url)
                 .map_err(|e| format!("Failed to add remote: {e}"))?;
+            added_origin = true;
         }
-        let status = engine
-            .status(&git_repo)
-            .map_err(|e| format!("Status check failed: {e}"))?;
-        if status.is_dirty() {
-            engine
-                .commit_all(&git_repo, "")
-                .map_err(|e| format!("Commit failed: {e}"))?;
-        }
-        // The same raced-first-push tolerance as the provider path.
-        let mut push_err: Option<BaluardError> = None;
-        for attempt in 0..3u8 {
-            if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_secs(5));
+        let git_result: Result<(), String> = (|| {
+            let status = engine
+                .status(&git_repo)
+                .map_err(|e| format!("Status check failed: {e}"))?;
+            if status.is_dirty() {
+                engine
+                    .commit_all(&git_repo, "")
+                    .map_err(|e| format!("Commit failed: {e}"))?;
             }
-            match engine.push(&git_repo, "origin") {
-                Ok(()) => {
-                    push_err = None;
-                    break;
+            // The same raced-first-push tolerance as the provider path.
+            let mut push_err: Option<BaluardError> = None;
+            for attempt in 0..3u8 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
                 }
-                Err(e) => {
-                    if engine.remote_head_matches_local(&git_repo, "origin") {
+                match engine.push(&git_repo, "origin") {
+                    Ok(()) => {
                         push_err = None;
                         break;
                     }
-                    push_err = Some(e);
+                    Err(e) => {
+                        if engine.remote_head_matches_local(&git_repo, "origin") {
+                            push_err = None;
+                            break;
+                        }
+                        push_err = Some(e);
+                    }
                 }
             }
-        }
-        if let Some(e) = push_err {
-            return Err(format!("First push failed: {e}"));
+            if let Some(e) = push_err {
+                return Err(format!("First push failed: {e}"));
+            }
+            Ok(())
+        })();
+        if let Err(e) = git_result {
+            // Same stale-origin trap as the provider path.
+            if added_origin {
+                let _ = engine.remove_remote(&git_repo, "origin");
+            }
+            return Err(e);
         }
         Ok(clone_url)
     })
     .await
     .map_err(|e| format!("Task join: {e}"))??;
 
-    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
-        let slug = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
-            .ok()
-            .flatten()
-            .map(|m| m.slug);
-        if let Some(slug) = slug {
-            if let Some(entry) = reg.get_mut(&slug) {
-                // Custom remotes carry no provider: seat grants and repo
-                // listing are manual by design.
-                entry.provider = None;
-                entry.remote_url = Some(remote_url.clone());
-                entry.last_synced = Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                );
-            }
-            let _ = reg.save_locked();
+    let slug = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
+        .ok()
+        .flatten()
+        .map(|m| m.slug);
+    if let Some(slug) = slug {
+        let mut reg = baluard_core::vault::registry::VaultRegistry::load_locked().map_err(|e| {
+            format!("Sync completed but the vault registry could not be loaded: {e}")
+        })?;
+        if let Some(entry) = reg.get_mut(&slug) {
+            // Custom remotes carry no provider: seat grants and repo
+            // listing are manual by design.
+            entry.provider = None;
+            entry.remote_url = Some(remote_url.clone());
+            entry.last_synced = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
         }
+        reg.save_locked().map_err(|e| {
+            format!("Sync completed but the vault registry could not be updated: {e}")
+        })?;
     }
     Ok(remote_url)
 }
