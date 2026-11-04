@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">Permet à Baluard de remplir les champs de connexion dans les applications où la saisie automatique standard ne fonctionne pas. Baluard lit les champs uniquement lorsque vous utilisez la vignette dans vos paramètres rapides, et ne stocke ni ne transmet jamais ce qu\'il voit.</string>
+    <string name="a11y_service_label">Remplissage par accessibilité de Baluard</string>
+    <string name="a11y_tile_label">Remplir avec Baluard</string>
+</resources>

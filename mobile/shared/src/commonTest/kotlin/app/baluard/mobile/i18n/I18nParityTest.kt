@@ -21,6 +21,14 @@ class I18nParityTest {
         assertTrue(missingInEn.isEmpty(), "Keys missing in EN: $missingInEn")
     }
 
+    @Test
+    fun enAndFrHaveExactSameKeys() {
+        val missingInFr = EN.keys - FR.keys
+        val missingInEn = FR.keys - EN.keys
+        assertTrue(missingInFr.isEmpty(), "Keys missing in FR: $missingInFr")
+        assertTrue(missingInEn.isEmpty(), "Keys missing in EN: $missingInEn")
+    }
+
     /**
      * Every t("...") literal in the Kotlin sources must exist in EN: key
      * parity alone misses rendered keys that no locale ships (the raw

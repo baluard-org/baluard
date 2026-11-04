@@ -529,7 +529,7 @@
       "desc": "La versión de {remote}. Se descartan los cambios de este dispositivo."
     },
     "keepBoth": {
-      "title": "Conservar ambas como elementos separados",
+      "title": "Conservar ambos como elementos separados",
       "desc": "No se pierde nada. Tendrás dos copias para revisar luego."
     },
     "resolveFailed": "No pudimos guardar esa decisión. Inténtalo de nuevo o elige otra opción.",
@@ -541,7 +541,7 @@
     "timeout": "El tiempo de espera de la solicitud ha expirado",
     "responseTooLarge": "La respuesta es demasiado grande",
     "sessionExpired": "La sesión ha expirado. Por favor, desbloquea de nuevo.",
-    "integrityFailed": "La comprobación de integridad de los datos falló",
+    "integrityFailed": "Falló la verificación de integridad de los datos",
     "deviceUnpaired": "Este dispositivo perdió la conexión con la bóveda. Reconéctalo desde tu dispositivo principal o usa la frase de recuperación.",
     "corrupted": "Los datos de la bóveda están dañados",
     "invalidPassword": "Contraseña maestra incorrecta",
