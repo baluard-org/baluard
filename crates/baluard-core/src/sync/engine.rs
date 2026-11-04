@@ -307,12 +307,14 @@ impl SyncEngine {
         // ambient insteadOf rewrites cannot swap the transport later.
         if let Ok(remotes) = repo.remotes() {
             for name in remotes.iter().flatten() {
-                if let Some(url) = repo
-                    .find_remote(name)
-                    .ok()
-                    .and_then(|r| r.url().map(|u| u.to_string()))
-                {
-                    let _ = Self::pin_remote_url(&repo, &url);
+                // Read the RAW stored URL: find_remote applies ambient
+                // insteadOf at lookup, so pinning r.url() would pin the
+                // rewritten address and leave the stored one unpinned.
+                let Some(url) = Self::raw_remote_url(&repo, name) else {
+                    continue;
+                };
+                if let Err(e) = Self::pin_remote_url(&repo, &url) {
+                    eprintln!("baluard: failed to pin remote {name}: {e}");
                 }
             }
         }
@@ -1154,10 +1156,13 @@ impl SyncEngine {
         new_url: &str,
     ) -> Result<RemoteMigrateReport, BaluardError> {
         validate_git_url(new_url)?;
-        let old_url = repo
-            .find_remote("origin")
-            .ok()
-            .and_then(|r| r.url().map(|s| s.to_string()));
+        // Raw config value: a lookup-rewritten URL would corrupt the
+        // stored remote when rolled back below.
+        let old_url = Self::raw_remote_url(repo, "origin").or_else(|| {
+            repo.find_remote("origin")
+                .ok()
+                .and_then(|r| r.url().map(|s| s.to_string()))
+        });
         let Some(old_url) = old_url else {
             return Err(SyncError::Git("this vault has no sync address to move".into()).into());
         };
@@ -1220,12 +1225,33 @@ impl SyncEngine {
         })
     }
 
-    /// Add a remote URL.
+    /// The raw, unrewritten `remote.<name>.url` from repo-local config.
+    /// `find_remote(..).url()` returns the insteadOf-rewritten value, so
+    /// anything that must observe what is STORED reads through here.
+    fn raw_remote_url(repo: &Repository, name: &str) -> Option<String> {
+        repo.config()
+            .ok()?
+            .get_string(&format!("remote.{name}.url"))
+            .ok()
+    }
+
+    /// Drop a URL's identity pin. Best-effort: a stale pin cannot change
+    /// transport (it maps a URL to itself), it only accumulates entries.
+    fn unpin_remote_url(repo: &Repository, url: &str) {
+        if let Ok(mut cfg) = repo.config() {
+            for suffix in ["insteadOf", "pushInsteadOf"] {
+                let _ = cfg.remove(&format!("url.{url}.{suffix}"));
+            }
+        }
+    }
+
     /// libgit2 re-applies `url.*.insteadOf` / `pushInsteadOf` from every
     /// config level on each remote lookup. An identity entry for the exact
     /// URL wins longest-prefix matching, so ambient rewrites (e.g. a global
     /// pushInsteadOf mapping https:// to git@) can never swap the vault's
-    /// transport for one whose credentials Baluard does not hold.
+    /// transport for one whose credentials Baluard does not hold. Note this
+    /// also intentionally overrides user mirror/proxy rewrite rules for
+    /// vault remotes.
     pub fn pin_remote_url(repo: &Repository, url: &str) -> Result<(), SyncError> {
         let mut cfg = repo
             .config()
@@ -1238,37 +1264,55 @@ impl SyncEngine {
             cfg.set_str(&key, url)
                 .map_err(|e| SyncError::Git(format!("pin remote: {e}")))?;
         }
-        // Tamper signal: an ambient rewrite that would have changed this
-        // URL's transport. Reported only; the pin keeps the transport
-        // correct.
-        if let Ok(entries) = cfg.entries(None) {
-            let _ = entries.for_each(|entry| {
-                let Some(name) = entry.name() else { return };
-                for suffix in ["insteadOf", "pushInsteadOf"] {
-                    let Some(base) = name
-                        .strip_prefix("url.")
-                        .and_then(|n| n.strip_suffix(&format!(".{suffix}")))
-                    else {
-                        continue;
-                    };
-                    if base != url && url.starts_with(base) {
-                        eprintln!(
-                            "baluard: ambient git URL rewrite would change the sync transport; pinned to the vault's own URL"
-                        );
+        // One-shot note when an ambient rewrite targets this URL's
+        // transport. Reported only; the pin keeps the transport correct.
+        // The matching rule is `url.<replacement>.insteadOf = <prefix>`:
+        // the PREFIX lives in the entry value, the replacement in the
+        // subsection, so compare against entry.value() — and skip the
+        // identity pin itself (value == url).
+        static REWRITE_NOTED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if !REWRITE_NOTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            if let Ok(entries) = cfg.entries(None) {
+                let _ = entries.for_each(|entry| {
+                    let Some(name) = entry.name() else { return };
+                    for suffix in ["insteadOf", "pushInsteadOf"] {
+                        let Some(subsection) = name
+                            .strip_prefix("url.")
+                            .and_then(|n| n.strip_suffix(&format!(".{suffix}")))
+                        else {
+                            continue;
+                        };
+                        let Some(prefix) = entry.value() else { continue };
+                        if prefix != url
+                            && !prefix.is_empty()
+                            && subsection != url
+                            && url.starts_with(prefix)
+                        {
+                            eprintln!(
+                                "baluard: ambient git URL rewrite targets this vault's remote URL; the vault's own transport pin takes precedence"
+                            );
+                        }
                     }
-                }
-            });
+                });
+            }
         }
         Ok(())
     }
 
     /// Set a remote URL with the transport pin applied first.
     pub fn set_remote_url(repo: &Repository, name: &str, url: &str) -> Result<(), SyncError> {
+        let old = Self::raw_remote_url(repo, name);
         Self::pin_remote_url(repo, url)?;
         repo.remote_set_url(name, url)
-            .map_err(|e| SyncError::Git(format!("remote set-url: {e}")))
+            .map_err(|e| SyncError::Git(format!("remote set-url: {e}")))?;
+        if let Some(old) = old.filter(|o| o != url) {
+            Self::unpin_remote_url(repo, &old);
+        }
+        Ok(())
     }
 
+    /// Add a remote URL.
     pub fn add_remote(&self, repo: &Repository, name: &str, url: &str) -> Result<(), BaluardError> {
         validate_git_url(url)?;
         Self::pin_remote_url(repo, url)?;
@@ -1588,8 +1632,12 @@ impl SyncEngine {
 
     /// Remove a remote by name.
     pub fn remove_remote(&self, repo: &Repository, name: &str) -> Result<(), BaluardError> {
+        let old = Self::raw_remote_url(repo, name);
         repo.remote_delete(name)
             .map_err(|e| SyncError::Git(format!("remote delete '{name}': {e}")))?;
+        if let Some(old) = old {
+            Self::unpin_remote_url(repo, &old);
+        }
         Ok(())
     }
 
@@ -3779,7 +3827,23 @@ impl SyncEngine {
                 crate::sync::credentials::build_callbacks(&empty_cfg)
             }
         };
-        let mut remote = git2::Remote::create_detached(url)
+        // A detached remote still picks up ambient insteadOf rewrites from
+        // the default config, so probe through a throwaway pinned repo.
+        let probe_dir = std::env::temp_dir().join(format!(
+            "baluard-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&probe_dir)
+            .map_err(|e| SyncError::Git(format!("probe dir: {e}")))?;
+        let probe_repo = git2::Repository::init(&probe_dir)
+            .map_err(|e| SyncError::Git(format!("probe init: {e}")))?;
+        Self::pin_remote_url(&probe_repo, url)?;
+        let mut remote = probe_repo
+            .remote("probe", url)
             .map_err(|e| SyncError::Git(format!("remote: {e}")))?;
         remote
             .connect_auth(git2::Direction::Fetch, Some(callbacks), None)
@@ -3790,6 +3854,9 @@ impl SyncEngine {
         if heads.is_empty() {
             return Err(SyncError::Git("the remote is empty (no branches)".into()).into());
         }
+        drop(remote);
+        drop(probe_repo);
+        let _ = std::fs::remove_dir_all(&probe_dir);
         Ok(())
     }
 
@@ -7745,7 +7812,11 @@ mod tests {
         let clone_dir = tempfile::tempdir().unwrap();
         setup_signing_keys_with(clone_dir.path(), &signing_key);
         let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device", None);
-        let cloned = Repository::init(clone_dir.path()).unwrap();
+        let cloned = Repository::init_opts(
+            clone_dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         clone_engine
             .add_remote(&cloned, "origin", &remote_url)
             .unwrap();
@@ -7838,7 +7909,11 @@ mod tests {
 
         let clone_dir = tempfile::tempdir().unwrap();
         let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device", None);
-        let cloned = Repository::init(clone_dir.path()).unwrap();
+        let cloned = Repository::init_opts(
+            clone_dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         clone_engine
             .add_remote(&cloned, "origin", &remote_url)
             .unwrap();
@@ -8370,7 +8445,11 @@ mod tests {
     fn build_linear_repo(
         dir: &std::path::Path,
     ) -> (git2::Repository, git2::Oid, git2::Oid, git2::Oid) {
-        let repo = git2::Repository::init(dir).unwrap();
+        let repo = git2::Repository::init_opts(
+            dir,
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         let sig = git2::Signature::now("Test", "test@example.com").unwrap();
 
         // Commit A
@@ -8432,7 +8511,11 @@ mod tests {
     fn build_diamond_repo(
         dir: &std::path::Path,
     ) -> (git2::Repository, git2::Oid, git2::Oid, git2::Oid, git2::Oid) {
-        let repo = git2::Repository::init(dir).unwrap();
+        let repo = git2::Repository::init_opts(
+            dir,
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         let sig = git2::Signature::now("Test", "test@example.com").unwrap();
 
         // Commit A (root, updates HEAD)
@@ -8554,7 +8637,11 @@ mod tests {
         // A -> B, A -> C, A -> E, then octopus merge D with parents B, C, E.
         // Walk must enumerate all three parent lineages.
         let dir = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(dir.path()).unwrap();
+        let repo = git2::Repository::init_opts(
+            dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         let sig = git2::Signature::now("Test", "test@example.com").unwrap();
 
         let commit_on_head = |repo: &git2::Repository,
@@ -8648,7 +8735,11 @@ mod tests {
         // IS exercised by the diamond and octopus reconvergence tests above.
         // Renamed to be honest about what it tests.
         let dir = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(dir.path()).unwrap();
+        let repo = git2::Repository::init_opts(
+            dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         let sig = git2::Signature::now("Test", "test@example.com").unwrap();
 
         // Build A (root)
@@ -8709,7 +8800,11 @@ mod tests {
         // stops at M (M is its own ancestor trivially). Result: {D, M}.
         // C is NOT in result because M (= local_oid) is its ancestor.
         let dir = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(dir.path()).unwrap();
+        let repo = git2::Repository::init_opts(
+            dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         let sig = git2::Signature::now("Test", "test@example.com").unwrap();
 
         // A (root)
@@ -8867,7 +8962,11 @@ mod tests {
         let dir_b = tempfile::tempdir().unwrap();
         setup_signing_keys_with(dir_b.path(), &signing_key);
         let engine_b = SyncEngine::new(dir_b.path(), "clone-device", None);
-        let repo_b = Repository::init(dir_b.path()).unwrap();
+        let repo_b = Repository::init_opts(
+            dir_b.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         engine_b.add_remote(&repo_b, "origin", &remote_url).unwrap();
         let mut remote_b = repo_b.find_remote("origin").unwrap();
         remote_b
@@ -9021,7 +9120,11 @@ mod tests {
         let dir_b = tempfile::tempdir().unwrap();
         setup_signing_keys_with(dir_b.path(), &signing_key);
         let engine_b = SyncEngine::new(dir_b.path(), "clone-device", None);
-        let repo_b = Repository::init(dir_b.path()).unwrap();
+        let repo_b = Repository::init_opts(
+            dir_b.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         engine_b.add_remote(&repo_b, "origin", &remote_url).unwrap();
         let mut remote_b = repo_b.find_remote("origin").unwrap();
         remote_b
@@ -9114,7 +9217,11 @@ mod tests {
         let dir_c = tempfile::tempdir().unwrap();
         setup_signing_keys_with(dir_c.path(), &signing_key);
         let engine_c = SyncEngine::new(dir_c.path(), "clone-device", None);
-        let repo_c = Repository::init(dir_c.path()).unwrap();
+        let repo_c = Repository::init_opts(
+            dir_c.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         engine_c
             .add_remote(&repo_c, "origin", &remote_url2)
             .unwrap();
@@ -9267,7 +9374,11 @@ mod tests {
             &crate::crypto::signature::generate_ed25519_keypair().0,
         );
         let clone_engine = SyncEngine::new(clone_dir.path(), TEST_DEVICE, None);
-        let cloned = Repository::init(clone_dir.path()).unwrap();
+        let cloned = Repository::init_opts(
+            clone_dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         clone_engine
             .add_remote(&cloned, "origin", &remote_url)
             .unwrap();
@@ -9391,7 +9502,11 @@ mod tests {
             &crate::crypto::signature::generate_ed25519_keypair().0,
         );
         let clone_engine = SyncEngine::new(clone_dir.path(), TEST_DEVICE, None);
-        let cloned = Repository::init(clone_dir.path()).unwrap();
+        let cloned = Repository::init_opts(
+            clone_dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         clone_engine
             .add_remote(&cloned, "origin", &remote_url)
             .unwrap();
@@ -9490,7 +9605,11 @@ mod tests {
             &crate::crypto::signature::generate_ed25519_keypair().0,
         );
         let clone_engine = SyncEngine::new(clone_dir.path(), TEST_DEVICE, None);
-        let cloned = Repository::init(clone_dir.path()).unwrap();
+        let cloned = Repository::init_opts(
+            clone_dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         clone_engine
             .add_remote(&cloned, "origin", &remote_url)
             .unwrap();
@@ -9924,5 +10043,110 @@ mod tests {
         repo.remote("explicit-ssh", ssh).unwrap();
         let r = repo.find_remote("explicit-ssh").unwrap();
         assert_eq!(r.url(), Some(ssh));
+    }
+
+    // Claude review blocker 1: the open_repo heal must pin the RAW stored
+    // URL. A lookup-rewritten pin leaves the stored URL unpinned, so a
+    // plain (not push-only) insteadOf rule would still swap the transport.
+    #[test]
+    fn open_repo_heal_pins_the_stored_url_not_the_rewritten_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init_opts(
+            dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
+        let url = "https://example.com/x/y.git";
+        {
+            let mut cfg = repo.config().unwrap();
+            cfg.set_str("remote.origin.url", url).unwrap();
+            cfg.set_str("url.git@rewritten:.insteadOf", "https://example.com/")
+                .unwrap();
+        }
+        // Control: the stored URL is rewritten at lookup before any pin.
+        assert_eq!(
+            repo.find_remote("origin").unwrap().url().unwrap(),
+            "git@rewritten:x/y.git"
+        );
+
+        let engine = SyncEngine::new(dir.path(), "heal-test-device", None);
+        engine.open_repo().unwrap();
+
+        let r = repo.find_remote("origin").unwrap();
+        assert_eq!(r.url(), Some(url), "heal must keep the stored transport");
+        let raw = repo
+            .config()
+            .unwrap()
+            .get_string("remote.origin.url")
+            .unwrap();
+        assert_eq!(raw, url, "the stored URL itself must stay untouched");
+        assert_eq!(
+            repo.config()
+                .unwrap()
+                .get_string(&format!("url.{url}.insteadOf"))
+                .as_deref(),
+            Ok(url)
+        );
+    }
+
+    // Claude review blocker 1 (migrate half): rollback must restore the RAW
+    // stored URL, not a rewritten one.
+    #[test]
+    fn migrate_rollback_restores_the_raw_stored_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init_opts(
+            dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
+        let url = "https://example.com/a/b.git";
+        {
+            let mut cfg = repo.config().unwrap();
+            cfg.set_str("url.git@rewritten:.insteadOf", "https://example.com/")
+                .unwrap();
+        }
+        let engine = SyncEngine::new(dir.path(), "migrate-test-device", None);
+        engine.add_remote(&repo, "origin", url).unwrap();
+
+        let bad = "https://127.0.0.1:1/x.git";
+        assert!(engine.migrate_remote(&repo, bad).is_err());
+
+        let raw = repo
+            .config()
+            .unwrap()
+            .get_string("remote.origin.url")
+            .unwrap();
+        assert_eq!(raw, url, "rollback must write back the raw stored URL");
+    }
+
+    // Claude review finding 8: an ambient rule targeting the ssh form must
+    // not swap a pinned ssh remote either.
+    #[test]
+    fn ambient_ssh_form_rewrite_cannot_swap_a_pinned_remote() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init_opts(
+            dir.path(),
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
+        let ssh = "git@github.com:x/y.git";
+        repo.config()
+            .unwrap()
+            .set_str("url.https://github.com/.insteadOf", "git@github.com:")
+            .unwrap();
+        // Control: unpinned ssh remotes get rewritten to https.
+        repo.remote("control", ssh).unwrap();
+        assert!(
+            repo.find_remote("control")
+                .unwrap()
+                .url()
+                .unwrap()
+                .starts_with("https://"),
+            "control remote was not rewritten; the harness lost its teeth"
+        );
+
+        let engine = SyncEngine::new(dir.path(), "ssh-pin-test-device", None);
+        engine.add_remote(&repo, "origin", ssh).unwrap();
+        assert_eq!(repo.find_remote("origin").unwrap().url(), Some(ssh));
     }
 }
