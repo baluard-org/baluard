@@ -60,7 +60,6 @@ impl Drop for Daemon {
 
 // ── Socket path ──
 
-#[cfg(unix)]
 pub(crate) fn default_socket_path() -> PathBuf {
     baluard_core::paths::socket_path()
 }
@@ -98,7 +97,6 @@ fn decode_varint(data: &[u8]) -> Result<(u64, usize), String> {
     Err("Incomplete varint".into())
 }
 
-#[cfg(unix)]
 pub(crate) fn send_request(action: &str, payload: &str) -> Result<String, String> {
     send_request_with_token(action, payload, "", "").map(|(data, _)| data)
 }
@@ -129,9 +127,7 @@ fn send_request_with_token(action: &str, payload: &str, token: &str, slug: &str)
     stream.write_all(&header).map_err(|e| format!("Write: {e}"))?;
     stream.write_all(&body).map_err(|e| format!("Write: {e}"))?;
     stream.flush().map_err(|e| format!("Flush: {e}"))?;
-    stream
-        .shutdown(std::net::Shutdown::Write)
-        .map_err(|e| format!("Shutdown: {e}"))?;
+    stream.shutdown().map_err(|e| format!("Shutdown: {e}"))?;
 
     // Bounded read to prevent memory exhaustion
     let mut buf = Vec::with_capacity(4096);
