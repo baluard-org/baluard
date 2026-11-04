@@ -23,7 +23,10 @@ git -C "$SITE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "site is 
 [[ ! -e "$SITE/repo/fdroid" ]] || fail "unexpected nested F-Droid tree: $SITE/repo/fdroid"
 
 mkdir -p "$SITE/repo" "$SITE/fdroid/repo"
-rsync -a --delete --exclude=/fdroid/ --exclude=index.html "$SRC/" "$SITE/repo/"
+# baluard.repo and baluard.sources are site-authored repo definitions the
+# install instructions fetch; staging never produces them.
+rsync -a --delete --exclude=/fdroid/ --exclude=index.html \
+  --exclude=/baluard.repo --exclude=/baluard.sources "$SRC/" "$SITE/repo/"
 rsync -a --delete "$SRC/fdroid/repo/" "$SITE/fdroid/repo/"
 touch "$SITE/.nojekyll"
 

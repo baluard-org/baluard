@@ -19,6 +19,8 @@ touch "$SRC/.nojekyll"
 printf 'stale\n' > "$SITE/repo/dists/stale"
 printf 'stale\n' > "$SITE/fdroid/repo/stale.apk"
 printf 'guard\n' > "$SITE/repo/dists/index.html"
+printf '[baluard]\n' > "$SITE/repo/baluard.repo"
+printf 'Types: deb\n' > "$SITE/repo/baluard.sources"
 printf 'landing\n' > "$SITE/fdroid/index.html"
 printf 'keep\n' > "$SITE/index.html"
 printf 'baluard.app\n' > "$SITE/CNAME"
@@ -29,6 +31,8 @@ git -C "$SITE" init -q
 test ! -e "$SITE/repo/dists/stale"
 test ! -e "$SITE/fdroid/repo/stale.apk"
 test "$(cat "$SITE/repo/dists/index.html")" = guard
+test "$(cat "$SITE/repo/baluard.repo")" = "[baluard]"
+test "$(cat "$SITE/repo/baluard.sources")" = "Types: deb"
 test "$(cat "$SITE/fdroid/index.html")" = landing
 test "$(cat "$SITE/index.html")" = keep
 test -f "$SITE/.nojekyll"
