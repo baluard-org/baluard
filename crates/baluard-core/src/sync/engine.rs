@@ -3802,7 +3802,7 @@ impl SyncEngine {
         Ok(Some(key))
     }
 
-    /// Load Ed25519 signing key from OS keyring or meta/device-privkey.json.
+    /// Load Ed25519 signing key from meta/device-privkey.json.
     /// Returns None if no key found. Returns error if key is corrupt.
     fn load_signing_key(
         vault_path: &Path,
@@ -3816,47 +3816,7 @@ impl SyncEngine {
                 return Ok(Some(key));
             }
         }
-        // Try OS keyring for THIS clone's device only (skipped in tests:
-        // unsigned binaries trigger keychain prompts; see
-        // `crate::keyring_disabled`). A per-vault keyring service is
-        // shared by every clone under the OS user, so scanning the roster
-        // could sign with another clone's identity.
-        if !crate::keyring_disabled() {
-            if let Some(device_id) = device_id {
-                let service = Self::keyring_service_for_vault(vault_path);
-                let from_keyring =
-                    Self::load_signing_key_from_keyring(vault_path, &service, device_id)?;
-                if from_keyring.is_some() {
-                    return Ok(from_keyring);
-                }
-                // No keyring entry (nothing writes signing keys there
-                // anymore): fall through to the sealed file.
-            }
-        }
         Self::load_signing_key_from_file(vault_path, devkey_seal)
-    }
-
-    fn load_signing_key_from_keyring(
-        vault_path: &Path,
-        service: &str,
-        device_id: &str,
-    ) -> Result<Option<ed25519_dalek::SigningKey>, BaluardError> {
-        let _ = vault_path;
-        if let Ok(entry) = keyring::Entry::new(service, device_id) {
-            if let Ok(json) = entry.get_password() {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
-                    if let Some(hex_str) = v["ed25519_private"].as_str() {
-                        if let Ok(bytes_vec) = hex::decode(hex_str) {
-                            let bytes: [u8; 32] = bytes_vec
-                                .try_into()
-                                .map_err(|_| SyncError::Git("privkey wrong length".into()))?;
-                            return Ok(Some(ed25519_dalek::SigningKey::from_bytes(&bytes)));
-                        }
-                    }
-                }
-            }
-        }
-        Ok(None)
     }
 
     fn load_signing_key_from_file(
@@ -3928,25 +3888,6 @@ impl SyncEngine {
         let mut out = lines.join("\n");
         out.push('\n');
         let _ = std::fs::write(&path, out);
-    }
-
-    /// Build keyring service name for a vault path (salt fingerprint; the
-    /// handle's unlock path no longer touches the keyring).
-    fn keyring_service_for_vault(vault_path: &Path) -> String {
-        let kdf_path = vault_path.join("meta/kdf-params.json");
-        if let Ok(data) = std::fs::read_to_string(&kdf_path) {
-            if let Ok(params) = serde_json::from_str::<serde_json::Value>(&data) {
-                if let Some(salt_hex) = params["salt"].as_str() {
-                    if salt_hex.len() >= 16 {
-                        return format!("baluard-{}", &salt_hex[..16]);
-                    }
-                }
-            }
-        }
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        vault_path.hash(&mut hasher);
-        format!("baluard-fallback-{:016x}", hasher.finish())
     }
 
     /// Verify signatures for new commits pulled from remote.
