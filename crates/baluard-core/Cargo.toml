@@ -140,6 +140,10 @@ foreign-types = "0.3"
 
 [target.'cfg(all(target_os = "macos"))'.dependencies]
 secure-enclave-rs = { version = "1", optional = true }
+# Force the vendored libgit2 build on macOS: without this, libgit2-sys probes
+# the host via pkg-config and links a foreign-arch system libgit2 on cross
+# builds (CI runners carry an unpinned Homebrew libgit2).
+libgit2-sys = { version = "0.18", features = ["vendored"] }
 
 [target.'cfg(all(target_os = "linux"))'.dependencies]
 # TPM 2.0 backend over the TCG ESYS stack; links libtss2-esys/mu/rc
