@@ -43,7 +43,9 @@ pub fn vaults_dir() -> PathBuf {
 ///
 /// Linux: `$XDG_RUNTIME_DIR/baluard/baluard.sock` (falls back to data dir)
 /// macOS: `~/Library/Application Support/baluard/baluard.sock`
-/// Windows: `\\.\pipe\baluard` (Named Pipe, no filesystem path)
+/// Windows: `\\.\pipe\baluard-<USERNAME>` (Named Pipe, no filesystem path;
+/// per-user suffix because pipe names are machine-global and a second
+/// Windows session must not collide with or squat this one)
 pub fn socket_path() -> PathBuf {
     // Test escape hatch: an explicit socket beats platform defaults
     // (same trust class as BALUARD_DATA_DIR / BALUARD_LOG_DIR; the NMH
@@ -65,7 +67,13 @@ pub fn socket_path() -> PathBuf {
     }
     #[cfg(windows)]
     {
-        PathBuf::from(r"\\.\pipe\baluard")
+        let user = std::env::var("USERNAME").unwrap_or_default();
+        let safe: String = user
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            .collect();
+        let suffix = if safe.is_empty() { "default" } else { &safe };
+        PathBuf::from(format!(r"\\.\pipe\baluard-{suffix}"))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {

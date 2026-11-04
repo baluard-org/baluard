@@ -576,20 +576,20 @@ fn code_for(resp: &GatewayResponse) -> &'static str {
 fn forward(action: &str, payload: &str, token: &str) -> anyhow::Result<GatewayResponse> {
     use prost::Message;
     use std::io::Read;
-    use std::os::unix::net::UnixStream;
 
     let socket = baluard_core::paths::socket_path();
-    let mut stream = UnixStream::connect(&socket).map_err(|e| anyhow::anyhow!("socket: {e}"))?;
+    let mut stream = baluard_core::ipc::IpcStream::connect(&socket)
+        .map_err(|e| anyhow::anyhow!("socket: {e}"))?;
     // Bounded I/O so a stalled daemon can't wedge this worker thread
     // forever (mirrors the desktop client's timeouts). Without this, every
     // browser-triggered forward that hits a starved daemon blocks
     // indefinitely, leaking threads.
     stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
-        .map_err(|e| anyhow::anyhow!("set_read_timeout: {e}"))?;
-    stream
-        .set_write_timeout(Some(std::time::Duration::from_secs(5)))
-        .map_err(|e| anyhow::anyhow!("set_write_timeout: {e}"))?;
+        .set_timeouts(
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(5),
+        )
+        .map_err(|e| anyhow::anyhow!("set_timeouts: {e}"))?;
 
     let req = GatewayRequest {
         action: action.to_string(),
@@ -605,7 +605,7 @@ fn forward(action: &str, payload: &str, token: &str) -> anyhow::Result<GatewayRe
     stream.write_all(&header)?;
     stream.write_all(&body)?;
     stream.flush()?;
-    stream.shutdown(std::net::Shutdown::Write)?;
+    stream.shutdown()?;
 
     let mut buf = Vec::with_capacity(4096);
     stream.read_to_end(&mut buf)?;

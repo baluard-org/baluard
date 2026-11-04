@@ -100,7 +100,7 @@ url = "2"
 public-suffix = "0.1"
 
 [features]
-hw-seal = ["dep:secure-enclave-rs", "dep:tss-esapi", "dep:windows-sys"]
+hw-seal = ["dep:secure-enclave-rs", "dep:tss-esapi"]
 # Test-only: vault fixtures derive at the cheapest legal KDF cost
 # (19 MiB / 1 pass / 1 lane) instead of the profile constants. Enabled
 # through dev-dependencies by dependent crates' test suites; additionally
@@ -148,10 +148,14 @@ secure-enclave-rs = { version = "1", optional = true }
 tss-esapi = { version = "7.6", optional = true }
 
 [target.'cfg(all(target_os = "windows"))'.dependencies]
-# PCP (TPM 2.0 over CNG) backend for the hw seal; compiles only on
-# windows targets, optional everywhere else.
-windows-sys = { version = "0.59", optional = true, features = [
+# The hw-seal PCP (TPM 2.0 over CNG) backend and the daemon IPC named-pipe
+# client; compiles only on windows targets.
+windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Security",
     "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
 ] }
 

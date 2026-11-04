@@ -15,6 +15,7 @@ use baluard_core::vault::registry::VaultSource;
 use clap::parser::ValueSource;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(unix)]
 use tokio::net::UnixListener;
 
 #[cfg(unix)]
@@ -298,7 +299,8 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     // every 30s and applies each vault's own vault_timeout policy.
     host.spawn_auto_lock_checker();
 
-    // Ensure socket parent directory exists.
+    // Ensure socket parent directory exists (named pipes have none).
+    #[cfg(unix)]
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -306,8 +308,10 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     // Clean stale socket — but never steal a live daemon's socket: probe
     // with a connect first (a connectable path means another daemon owns
     // it and startup must fail loudly instead of silently taking over).
+    // Named pipes have no filesystem residue, so this is unix-only.
+    #[cfg(unix)]
     if std::path::Path::new(socket_path).exists() {
-        if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+        if baluard_core::ipc::IpcStream::connect(std::path::Path::new(socket_path)).is_ok() {
             anyhow::bail!("another daemon is already listening on this socket");
         }
         std::fs::remove_file(socket_path)?;
@@ -315,23 +319,31 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
 
     // Set restrictive umask BEFORE bind so socket is born with 0600,
     // then restore original umask so subsequent mkdir calls keep the execute bit.
+    #[cfg(unix)]
     let listener = {
-        #[cfg(unix)]
-        {
-            let prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
-            let l = UnixListener::bind(socket_path)?;
-            unsafe {
-                libc::umask(prev);
-            }
-            l
+        let prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
+        let l = UnixListener::bind(socket_path)?;
+        unsafe {
+            libc::umask(prev);
         }
-        #[cfg(not(unix))]
-        {
-            UnixListener::bind(socket_path)?
-        }
+        l
     };
 
-    log::info!("baluard-daemon listening on {socket_path} (0600)");
+    // first_pipe_instance makes startup fail loudly when another daemon
+    // already owns the pipe name (the unix stale-socket probe equivalent).
+    #[cfg(windows)]
+    let listener = {
+        use anyhow::Context as _;
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let pipe_name: &str = socket_path;
+        ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(pipe_name)
+            .context("failed to create the daemon named pipe (another daemon may own it)")?
+    };
+
+    log::info!("baluard-daemon listening on {socket_path}");
     log::info!("Vault path: {vault_path}");
     let _ = vault_path; // kept for log line; host is source of truth
 
@@ -354,8 +366,14 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
         Result::<(), anyhow::Error>::Ok(())
     };
 
+    #[cfg(unix)]
     tokio::select! {
-        result = accept_loop(&listener, host.clone()) => result?,
+        result = accept_task(&listener, host.clone()) => result?,
+        result = shutdown => result?,
+    }
+    #[cfg(windows)]
+    tokio::select! {
+        result = accept_task(listener, host.clone()) => result?,
         result = shutdown => result?,
     }
 
@@ -364,10 +382,59 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     if locked > 0 {
         log::info!("Locked {locked} vault(s) on shutdown.");
     }
+    #[cfg(unix)]
     let _ = std::fs::remove_file(socket_path);
     Ok(())
 }
 
+/// Accept a client. Unix: the blocking socket listener. Windows: keep one
+/// named-pipe instance listening at all times — each instance serves one
+/// connection, so the replacement instance is created before spawning the
+/// handler for the current client.
+#[cfg(unix)]
+async fn accept_task(listener: &UnixListener, host: SharedVaultHost) -> Result<()> {
+    accept_loop(listener, host).await
+}
+
+#[cfg(windows)]
+async fn accept_task(
+    first_server: tokio::net::windows::named_pipe::NamedPipeServer,
+    host: SharedVaultHost,
+) -> Result<()> {
+    use anyhow::Context as _;
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    let pipe_path = baluard_core::paths::socket_path();
+    let pipe_name = pipe_path
+        .to_str()
+        .context("pipe path must be valid unicode")?;
+    let mut server = first_server;
+    loop {
+        // A transient connect error must not kill the daemon and lock out
+        // every vault: log, back off, continue (mirror of the unix accept
+        // back-off).
+        if let Err(e) = server.connect().await {
+            log::warn!("[daemon] pipe connect failed: {e}");
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            continue;
+        }
+        let client = server;
+        server = ServerOptions::new().create(pipe_name)?;
+        let host = host.clone();
+        tokio::spawn(async move {
+            if let Err(e) = baluard_daemon::handler::handle_connection(
+                baluard_daemon::handler::IpcStream::Pipe(client),
+                host,
+            )
+            .await
+            {
+                log::error!("Connection error: {e}");
+            }
+        });
+    }
+}
+
+#[cfg(unix)]
 async fn accept_loop(listener: &UnixListener, host: SharedVaultHost) -> Result<()> {
     loop {
         // A transient accept error (EMFILE, ECONNABORTED) must not kill
@@ -382,7 +449,12 @@ async fn accept_loop(listener: &UnixListener, host: SharedVaultHost) -> Result<(
         };
         let host = host.clone();
         tokio::spawn(async move {
-            if let Err(e) = baluard_daemon::handler::handle_connection(stream, host).await {
+            if let Err(e) = baluard_daemon::handler::handle_connection(
+                baluard_daemon::handler::IpcStream::Unix(stream),
+                host,
+            )
+            .await
+            {
                 log::error!("Connection error: {e}");
             }
         });
