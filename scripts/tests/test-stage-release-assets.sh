@@ -22,6 +22,13 @@ exit 0
 EOF
 chmod +x "$BIN/npx"
 
+# Hermetic key: never touch the real ~/.tauri key, and never let an inherited
+# TAURI_SIGNING_PRIVATE_KEY (checked first by the script) leak into the run
+: > "$TMP/fake-updater-key"
+export BALUARD_UPDATER_KEY="$TMP/fake-updater-key"
+export BALUARD_TAURI_BIN="npx --yes @tauri-apps/cli@fake-signer"
+unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+
 ART="$TMP/artifacts"
 OUT="$TMP/release-upload"
 VER=0.1.0
@@ -84,11 +91,12 @@ PATH="$BIN:$PATH" "$STAGE" \
 
 check_set "${EXPECT[@]}"
 
-# Hardlink, not copy: inode must match the source artifact
+# Copy semantics: the staged file must be an independent inode (a later
+# in-place rewrite of dist/ must not mutate the staged copy)
 src_inode="$(stat -c %i "$ART/Baluard_${VER}_amd64.AppImage")"
 dst_inode="$(stat -c %i "$OUT/Baluard-amd64.AppImage")"
-if [[ "$src_inode" != "$dst_inode" ]]; then
-  echo "FAIL: staged AppImage is not a hardlink of the source" >&2
+if [[ "$src_inode" == "$dst_inode" ]]; then
+  echo "FAIL: staged AppImage aliases the source artifact (hardlink)" >&2
   exit 1
 fi
 
@@ -167,6 +175,46 @@ fi
 if ! grep -q "Baluard_0.0.9_amd64.deb" "$TMP/out5.log"; then
   echo "FAIL: unmapped error must name the stray file" >&2
   cat "$TMP/out5.log" >&2
+  exit 1
+fi
+if [[ -d "$OUT" ]]; then
+  echo "FAIL: a failed staging must leave no partial output dir" >&2
+  exit 1
+fi
+
+# --- Case 5b: wrong arch or stale version must NOT pass the pinned rows ---
+rm -rf "$ART" "$OUT"
+mkdir -p "$ART"
+: > "$ART/baluard-cli-linux-x86_64.tar.gz"
+: > "$ART/Baluard_${VER}-1.aarch64.rpm"
+: > "$ART/Baluard_0.0.9_aarch64.app.tar.gz"
+: > "$ART/Baluard_${VER}_x64.dmg"
+if PATH="$BIN:$PATH" "$STAGE" \
+  --version "$VER" --output "$OUT" "$ART" > "$TMP/out5b.log" 2>&1; then
+  echo "FAIL: wrong-arch/stale-version artifacts must exit nonzero" >&2
+  exit 1
+fi
+for stray in "aarch64.rpm" "0.0.9_aarch64.app.tar.gz" "x64.dmg"; do
+  if ! grep -q "$stray" "$TMP/out5b.log"; then
+    echo "FAIL: unmapped error must name the $stray stray" >&2
+    cat "$TMP/out5b.log" >&2
+    exit 1
+  fi
+done
+
+# --- Case 5c: --require refuses an incomplete staged set ---
+rm -rf "$ART" "$OUT"
+mkdir -p "$ART"
+: > "$ART/baluard-cli-linux-x86_64.tar.gz"
+if PATH="$BIN:$PATH" "$STAGE" \
+  --version "$VER" --require "Baluard-amd64.deb,Baluard-amd64.AppImage" \
+  --output "$OUT" "$ART" > "$TMP/out5c.log" 2>&1; then
+  echo "FAIL: --require must fail when a required artifact is missing" >&2
+  exit 1
+fi
+if ! grep -q "required artifacts missing" "$TMP/out5c.log"; then
+  echo "FAIL: --require error must name the missing set" >&2
+  cat "$TMP/out5c.log" >&2
   exit 1
 fi
 
