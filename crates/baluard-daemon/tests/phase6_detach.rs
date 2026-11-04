@@ -563,3 +563,98 @@ async fn route_detach_mismatch_with_force_refuses_unconditionally() {
         "stale registry pointer should be cleared even on mismatch refusal"
     );
 }
+
+// ── macOS 0.1.0 field bug regression: the FIRST provider.oauth_status_web
+// poll, sent while the callback listener is still waiting for the browser,
+// hung forever in the real daemon and the desktop timed out after 30s with
+// a generic error. The full wire path (gates + token check + session map)
+// must answer "pending" — never deadlock.
+#[tokio::test]
+async fn web_oauth_poll_answers_pending_through_real_handler() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    let (_dir, path, vault_id) = make_real_vault("oauth");
+    let entry = make_entry("dev-oauth", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("dev-oauth"));
+    }
+    let host = std::sync::Arc::new(baluard_runtime::host::VaultHost::new());
+
+    let unlock_req = make_request(
+        "vault.unlock",
+        serde_json::json!({"slug": "dev-oauth", "password": "test-master-password-123"}),
+    );
+    let resp = route_host_request(unlock_req, &host).await;
+    assert!(resp.success, "unlock failed: {}", resp.error_message);
+    let token = resp.session_token.clone();
+    assert!(!token.is_empty(), "unlock must return a session token");
+
+    let mut start_req = make_request(
+        "provider.oauth_start_web",
+        serde_json::json!({"provider": "github"}),
+    );
+    start_req.session_token = token.clone();
+    let resp = route_host_request(start_req, &host).await;
+    assert!(resp.success, "oauth start failed: {}", resp.error_message);
+
+    let mut poll_req = make_request(
+        "provider.oauth_status_web",
+        serde_json::json!({"provider": "github"}),
+    );
+    poll_req.session_token = token;
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        route_host_request(poll_req, &host),
+    )
+    .await
+    .expect("oauth_status_web must not hang before the callback arrives");
+    assert!(resp.success, "poll failed: {}", resp.error_message);
+    assert_eq!(response_payload(&resp)["status"], "pending");
+}
+
+// Regression shape for the macOS 0.1.0 GitHub-connect failure: the desktop
+// sent this poll with an EMPTY payload, which the daemon rejects instantly
+// ("Invalid payload: ...") via an early return that skips the "->" log line —
+// the missing log made it read as a hang. Contract: empty payload fails fast;
+// a proper {"provider":...} payload answers pending (covered by the sibling
+// test below).
+#[tokio::test]
+async fn web_oauth_poll_with_empty_payload_fails_fast_not_hang() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    let (_dir, path, vault_id) = make_real_vault("oauth-empty");
+    let entry = make_entry("dev-oauth-empty", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("dev-oauth-empty"));
+    }
+    let host = std::sync::Arc::new(baluard_runtime::host::VaultHost::new());
+
+    let unlock_req = make_request(
+        "vault.unlock",
+        serde_json::json!({"slug": "dev-oauth-empty", "password": "test-master-password-123"}),
+    );
+    let resp = route_host_request(unlock_req, &host).await;
+    assert!(resp.success, "unlock failed: {}", resp.error_message);
+    let token = resp.session_token.clone();
+    assert!(!token.is_empty(), "unlock must return a session token");
+
+    let poll_req = GatewayRequest {
+        action: "provider.oauth_status_web".to_string(),
+        payload: String::new(),
+        session_token: token,
+        slug: String::new(),
+        ipc_version: 1,
+    };
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        route_host_request(poll_req, &host),
+    )
+    .await
+    .expect("empty-payload poll must fail fast, never hang");
+    assert!(!resp.success, "empty payload must be rejected");
+    assert!(
+        resp.error_message.contains("Invalid payload"),
+        "unexpected error: {}",
+        resp.error_message
+    );
+}
