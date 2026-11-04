@@ -8,7 +8,7 @@ One runbook for shipping a Baluard release across every variant. All commands ru
 |---|---|---|
 | Core, daemon, CLI (Rust workspace) | `baluard`, `baluard-daemon` binaries | Inside every desktop package; standalone `tar.gz` archives via `just release` |
 | Desktop Linux | `.deb`, `.rpm`, `.AppImage` | apt and dnf repositories at `https://baluard.app/repo`, GitHub Releases |
-| Desktop macOS | `.app`, `.dmg` | GitHub Releases; ad-hoc signed only (Developer ID and notarization are a known gap) |
+| Desktop macOS | `.app`, `.dmg` | GitHub Releases; ad-hoc signed only (Developer ID and notarization are a known gap). Dev-smoke cross-builds from Linux are possible: see the macOS cross-build note in the build matrix |
 | Desktop Windows | NSIS `setup.exe` | GitHub Releases; cross-built on Linux with cargo-xwin (`just desktop-windows`); MSI stays Windows-only (WiX) |
 | Browser extension (Chrome) | `dist/baluard-extension-<version>-chrome.zip` | Chrome Web Store, extension ID `nmkmfkmdhbifkjdhioejeoegcjpaiijl` |
 | Browser extension (Firefox) | `dist/baluard-extension-<version>-firefox.zip` | Firefox AMO, gecko ID `baluard@actitud.xyz` |
@@ -61,7 +61,7 @@ BALUARD_CHROME_PUBLISHER_ID=d6e3a68c-a6f3-4359-9769-9fd105198720
 |---|---|---|
 | Core + CLI + daemon | `just build-release` | daemon and CLI carry the `fido2` feature |
 | Desktop Linux | `just desktop-build` | sidecars, deb/rpm/AppImage, and NMH manifest regeneration in one recipe |
-| Desktop macOS | `just desktop-build` on a macOS host, then `just build-signed` | targets `dmg` and `app`; ad-hoc signing only |
+| Desktop macOS | `just desktop-build` on a macOS host, then `just build-signed` | targets `dmg` and `app`; ad-hoc signing only. Dev-smoke only, no release: a Linux box can cross-build the app with zig + a locally staged macOS SDK and rcodesign ad-hoc signing (zigcc-link driver, tapi-v4 tbd shims for the SDK's arm64e-only v5 tbds, vendored libgit2, `-framework ColorSync`, `--features tauri/custom-protocol`). Not reproducible end to end yet: the SDK location, tbd shims, and linker driver live outside the repo |
 | Desktop Windows | `just desktop-windows` | cargo-xwin cross-compile of the sidecars plus NSIS bundling |
 | Extension zips | `just ext-package` | rebuilds both dists, enforces the drift gate, zips each store |
 | Android APK | `just android-apk-release` | `mobile/scripts/build-android-apk.sh --release` with the upload keystore; verify `versionCode` increased; the build verifies the APK signature with `apksigner` before reporting success |
