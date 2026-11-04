@@ -5456,7 +5456,7 @@ fn vaults_repoint(slug: &str, url: &str) -> Result<(), Box<dyn std::error::Error
     }
     let engine = baluard_core::sync::engine::SyncEngine::new(&vault_path, "cli", None);
     let repo = engine.open_repo()?;
-    repo.remote_set_url("origin", url)
+    baluard_core::sync::engine::SyncEngine::set_remote_url(&repo, "origin", url)
         .map_err(|e| format!("repoint failed: {e}"))?;
     if let Ok(mut cfg) = repo.config() {
         let _ = cfg.set_str("baluard.adopted-remote", url);

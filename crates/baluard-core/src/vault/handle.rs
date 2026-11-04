@@ -13592,7 +13592,13 @@ mod tests {
         // Bare remote; owner pushes.
         let remote_dir = tempfile::tempdir().unwrap();
         let remote_path = remote_dir.path().join("remote.git");
-        git2::Repository::init_bare(&remote_path).unwrap();
+        git2::Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
         repo_o
             .remote("origin", remote_path.to_str().unwrap())
             .unwrap();
@@ -16584,7 +16590,13 @@ mod tests {
 
         // Origin = bare A; ship the initial state.
         let bare_a = tempfile::tempdir().unwrap();
-        git2::Repository::init_bare(bare_a.path()).unwrap();
+        git2::Repository::init_opts(
+            bare_a.path(),
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
         repo_o
             .remote("origin", bare_a.path().to_str().unwrap())
             .unwrap();
@@ -16599,7 +16611,13 @@ mod tests {
 
         // Destination: bare B.
         let bare_b = tempfile::tempdir().unwrap();
-        git2::Repository::init_bare(bare_b.path()).unwrap();
+        git2::Repository::init_opts(
+            bare_b.path(),
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
         let to_url = bare_b.path().to_str().unwrap().to_string();
 
         // Refusals first: same address, unsupported scheme, no origin.
@@ -16714,7 +16732,13 @@ mod tests {
 
         // Manual repoint override: setting origin does not get reverted by apply_remote_announcement.
         let bare_c = tempfile::tempdir().unwrap();
-        git2::Repository::init_bare(bare_c.path()).unwrap();
+        git2::Repository::init_opts(
+            bare_c.path(),
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
         let c_url = bare_c.path().to_str().unwrap().to_string();
         repo_f.remote_set_url("origin", &c_url).unwrap();
         assert!(!engine_f.apply_remote_announcement(&repo_f).unwrap());
