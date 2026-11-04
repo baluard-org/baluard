@@ -141,7 +141,7 @@ export function createProviderConnect({ t, onUpdate }) {
 				if (disposed) return;
 				webTimer = null;
 				try {
-					const raw = await daemon("provider.oauth_status_web");
+					const raw = await daemon("provider.oauth_status_web", JSON.stringify({ provider }));
 					const result = JSON.parse(raw);
 					if (result.status === "pending") {
 						schedulePoll();
