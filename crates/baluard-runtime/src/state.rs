@@ -5645,8 +5645,11 @@ impl VaultState {
         let vault_path = self.vault_path.clone();
         let (origin, announced) = tokio::task::spawn_blocking(
             move || -> Result<(Option<String>, Option<String>), String> {
-                let engine =
-                    baluard_core::sync::engine::SyncEngine::new(&vault_path, "status", None);
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id.to_string(),
+                    None,
+                );
                 let origin = engine.open_repo().ok().and_then(|repo| {
                     repo.find_remote("origin")
                         .ok()
@@ -7525,13 +7528,18 @@ impl VaultState {
             let g = self.inner.read().await;
             g.as_ref().and_then(|h| h.devkey_seal())
         };
+        let device_id = {
+            let g = self.inner.read().await;
+            g.as_ref()
+                .map(|h| h.device_id.to_string())
+                .unwrap_or_default()
+        };
         let (base_bytes, local_bytes, remote_bytes) = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(
                 #[allow(clippy::type_complexity)]
                 move || -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
-                    let engine =
-                        SyncEngine::new(&vault_path, "conflict-merge", devkey_seal.as_ref());
+                    let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
                     let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                     let merge_base = repo
                         .merge_base(local_oid, remote_oid)
@@ -7767,11 +7775,16 @@ impl VaultState {
             let g = self.inner.read().await;
             g.as_ref().and_then(|h| h.devkey_seal())
         };
+        let device_id = {
+            let g = self.inner.read().await;
+            g.as_ref()
+                .map(|h| h.device_id.to_string())
+                .unwrap_or_default()
+        };
         let (local_bytes, remote_bytes) = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
-                let engine =
-                    SyncEngine::new(&vault_path, "conflict-keep-both", devkey_seal.as_ref());
+                let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
                 let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                 let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
                     .map_err(|e| format!("read local: {e}"))?;

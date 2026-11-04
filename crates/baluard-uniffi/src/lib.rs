@@ -712,12 +712,14 @@ impl MobileVault {
             });
         }
         let seal = self.state.devkey_seal().await;
+        let device_id = self.state.device_id().await;
         let new = baluard_runtime::providers::setup_sync_remote(
             &self.state.vault_path,
             seal,
             baluard_core::providers::Provider::from(provider),
             &repo_name,
             clone_url,
+            &device_id,
         )
         .await
         .map_err(|e| BaluardError::Vault { detail: e })?;
@@ -740,10 +742,12 @@ impl MobileVault {
             });
         }
         let seal = self.state.devkey_seal().await;
+        let device_id = self.state.device_id().await;
         let new = baluard_runtime::providers::setup_sync_remote_custom(
             &self.state.vault_path,
             seal,
             clone_url,
+            &device_id,
         )
         .await
         .map_err(|e| BaluardError::Vault { detail: e })?;
