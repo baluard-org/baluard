@@ -24,9 +24,13 @@ GLYPH_SVG="assets/baluard-lock-only.svg"
 OUT_DIR="assets/app-icons"
 RES_DIR="mobile/androidApp/src/main/res"
 
-# Adaptive foreground: glyph height in px on a 1024 canvas. 625 = 61%, the
-# largest fill that stays inside the 66dp safe zone on every launcher mask.
-FG_H=625
+# Adaptive foreground: glyph height in px on a 1024 canvas.
+# Reduced ~15% from 625 to 531 so the lock stays well inside the squircle mask
+# forced by Android launchers (matching Bitwarden proportions without touching edges).
+FG_H=531
+# Mobile tile lock glyph height in px on a 1024 canvas (iOS + Android legacy).
+# Original lock in baluard-lock-l4.svg was 744px (72.65%); reduced ~15% to 632px.
+MOBILE_GLYPH_H=632
 
 command -v rsvg-convert >/dev/null || { echo "ERROR: rsvg-convert not found"; exit 1; }
 command -v magick >/dev/null || { echo "ERROR: magick not found"; exit 1; }
@@ -40,8 +44,45 @@ TILE="$TMP/tile-1024.png"
 FG="$TMP/foreground-1024.png"
 rsvg-convert -w 1024 -h 1024 "$TILE_SVG" -o "$TILE"
 rsvg-convert -w 1024 -h 1024 "$GLYPH_SVG" -o "$TMP/glyph-1024.png"
-# Trim to the padlock bbox, scale glyph to FG_H, center on transparent canvas.
+# Trim to the padlock bbox, scale glyph to FG_H, center on transparent canvas for Android adaptive foreground.
 magick "$TMP/glyph-1024.png" -trim +repage -resize x${FG_H} -gravity center -background none -extent 1024x1024 "$FG"
+
+# Render mobile base backgrounds (full-bleed for iOS, squircle for Android legacy).
+cat > "$TMP/bg-full-1024.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg-grad-l4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0e1b1e" />
+      <stop offset="100%" stop-color="#091315" />
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg-grad-l4)" />
+</svg>
+SVG
+cat > "$TMP/bg-squircle-1024.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg-grad-l4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0e1b1e" />
+      <stop offset="100%" stop-color="#091315" />
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="200" fill="url(#bg-grad-l4)" />
+</svg>
+SVG
+rsvg-convert -w 1024 -h 1024 "$TMP/bg-full-1024.svg" -o "$TMP/bg-full-1024.png"
+rsvg-convert -w 1024 -h 1024 "$TMP/bg-squircle-1024.svg" -o "$TMP/bg-squircle-1024.png"
+
+# Trimmed glyph sized for mobile tiles
+magick "$TMP/glyph-1024.png" -trim +repage -resize x${MOBILE_GLYPH_H} "$TMP/mobile-glyph-trimmed.png"
+
+# iOS tile: full-bleed square with 15% smaller centered lock (no transparent corners, HIG compliant)
+IOS_TILE="$TMP/ios-tile-1024.png"
+magick "$TMP/bg-full-1024.png" "$TMP/mobile-glyph-trimmed.png" -gravity center -composite "$IOS_TILE"
+
+# Android legacy tile: squircle with 15% smaller centered lock
+ANDROID_LEGACY_TILE="$TMP/android-legacy-tile-1024.png"
+magick "$TMP/bg-squircle-1024.png" "$TMP/mobile-glyph-trimmed.png" -gravity center -composite "$ANDROID_LEGACY_TILE"
 
 mkdir -p "$OUT_DIR"/{windows,macos,linux,tauri-desktop,android,ios}
 mkdir -p "$OUT_DIR"/android/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}
@@ -88,7 +129,7 @@ echo "5/6 Android launcher icons..."
 # Legacy full-tile rasters (system-UI fallbacks; launchers use the adaptive XML).
 for pair in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
   d=${pair%%:*}; s=${pair##*:}
-  magick "$TILE" -resize ${s}x${s} "$OUT_DIR/android/mipmap-$d/ic_launcher.png"
+  magick "$ANDROID_LEGACY_TILE" -resize ${s}x${s} "$OUT_DIR/android/mipmap-$d/ic_launcher.png"
 done
 # Adaptive foreground layers (108dp base x density).
 for pair in mdpi:108 hdpi:162 xhdpi:216 xxhdpi:324 xxxhdpi:432; do
@@ -119,7 +160,7 @@ XML
 echo "6/6 iOS icons..."
 for pair in 40:AppIcon-20x20@2x 60:AppIcon-20x20@3x 29:AppIcon-29x29@1x 58:AppIcon-29x29@2x 87:AppIcon-29x29@3x 40:AppIcon-40x40@1x 80:AppIcon-40x40@2x 120:AppIcon-40x40@3x 120:AppIcon-60x60@2x 180:AppIcon-60x60@3x 76:AppIcon-76x76@1x 152:AppIcon-76x76@2x 167:AppIcon-83x83@2x 1024:AppIcon-1024x1024; do
   s=${pair%%:*}; n=${pair##*:}
-  magick "$TILE" -resize ${s}x${s} "$OUT_DIR/ios/${n}.png"
+  magick "$IOS_TILE" -resize ${s}x${s} "$OUT_DIR/ios/${n}.png"
 done
 
 echo "Deploying to desktop (Tauri)..."
