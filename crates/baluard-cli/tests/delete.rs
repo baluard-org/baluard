@@ -33,13 +33,13 @@ fn delete_removes_cipher_from_list() {
         .arg(&id)
         .assert()
         .success()
-        .stdout(predicate::str::contains("Cipher deleted"));
+        .stdout(predicate::str::contains("Entry deleted"));
 
     baluard(tmp.path())
         .arg("list")
         .assert()
         .success()
-        .stdout(predicate::str::contains("No ciphers found."));
+        .stdout(predicate::str::contains("No entries found."));
 }
 
 #[test]
