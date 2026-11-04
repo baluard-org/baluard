@@ -52,6 +52,18 @@ fn error_chain(e: &(dyn std::error::Error + 'static)) -> String {
     msg.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// HTTP statuses providers use to signal a repo-name conflict.
+fn conflict_code(code: u16) -> bool {
+    matches!(code, 409 | 422)
+}
+
+fn is_conflict(e: &octocrab::Error) -> bool {
+    matches!(
+        e,
+        octocrab::Error::GitHub { source, .. } if conflict_code(source.status_code.as_u16())
+    )
+}
+
 /// Format an octocrab error with the real GitHub API message.
 ///
 /// `octocrab::Error::GitHub`'s default `Display` renders only the variant
@@ -681,7 +693,7 @@ impl ForgeProvider for GitHubProvider {
             auto_init: bool,
         }
 
-        let repo: Repository = client
+        let repo: Repository = match client
             .post(
                 "/user/repos",
                 Some(&CreateRepoBody {
@@ -691,7 +703,31 @@ impl ForgeProvider for GitHubProvider {
                 }),
             )
             .await
-            .map_err(api_error)?;
+        {
+            Ok(repo) => repo,
+            Err(e) => {
+                // GitHub reports a name collision as 422 whose top-level
+                // message is only "Repository creation failed." — the
+                // "already exists" detail sits in errors[] and never
+                // reaches upstream string matchers. Probe the repo
+                // directly and adopt it when it already exists, private,
+                // and owned by the token's user; anything else
+                // propagates as the original error.
+                if !is_conflict(&e) {
+                    return Err(api_error(e));
+                }
+                let user = client.current().user().await.map_err(api_error)?;
+                let probe = client.repos(&user.login, name).get().await;
+                let adoptable = probe.as_ref().is_ok_and(|r| {
+                    r.private.unwrap_or(false)
+                        && r.owner.as_ref().is_some_and(|o| o.login == user.login)
+                });
+                if !adoptable {
+                    return Err(api_error(e));
+                }
+                probe.map_err(|_| api_error(e))?
+            }
+        };
 
         // Safety: verify repo is private after creation
         if !repo.private.unwrap_or(false) {
@@ -1081,6 +1117,15 @@ fn parse_deploy_keys(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn repo_name_conflicts_are_409_and_422() {
+        assert!(super::conflict_code(422));
+        assert!(super::conflict_code(409));
+        assert!(!super::conflict_code(404));
+        assert!(!super::conflict_code(403));
+        assert!(!super::conflict_code(401));
+    }
+
     use super::*;
     use crate::providers::types::ProviderConfig;
     use crate::providers::types::http_mock::MockApi;
@@ -1299,6 +1344,67 @@ mod tests {
         assert_eq!(path, "/api/v3/repos/o/r/keys/77");
         api.push(404, r#"{"message":"Not Found"}"#);
         gh.remove_deploy_key(&tok, "o", "r", 77).await.unwrap();
+    }
+
+    const MOCK_USER: &str = r#"{"login":"octocat","id":1,"node_id":"n1","avatar_url":"https://example.com/a.png","gravatar_id":"","url":"https://api.github.com/users/octocat","html_url":"https://github.com/octocat","followers_url":"https://api.github.com/users/octocat/followers","following_url":"https://api.github.com/users/octocat/following","gists_url":"https://api.github.com/users/octocat/gists","starred_url":"https://api.github.com/users/octocat/starred","subscriptions_url":"https://api.github.com/users/octocat/subscriptions","organizations_url":"https://api.github.com/users/octocat/orgs","repos_url":"https://api.github.com/users/octocat/repos","events_url":"https://api.github.com/users/octocat/events","received_events_url":"https://api.github.com/users/octocat/received_events","type":"User","site_admin":false}"#;
+
+    #[tokio::test]
+    async fn create_repo_adopts_existing_private_repo_on_name_conflict() {
+        let api = MockApi::start();
+        let gh = gh_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "repo");
+
+        // GitHub's name-collision 422: the "already exists" detail sits in
+        // errors[], so the top-level message upstream code matches on never
+        // contains it. The create call must probe and adopt the repo.
+        api.push(422, r#"{"message":"Repository creation failed.","errors":[{"resource":"Repository","code":"custom","field":"name","message":"name already exists on this account"}]}"#);
+        api.push(200, MOCK_USER);
+        // owner must deserialize as a full octocrab Author.
+        api.push(
+            200,
+            &format!(
+                r#"{{"id":9,"node_id":"r1","name":"baluard-vault","full_name":"octocat/baluard-vault","private":true,"owner":{MOCK_USER},"clone_url":"https://github.com/octocat/baluard-vault.git","url":"https://api.github.com/repos/octocat/baluard-vault","html_url":"https://github.com/octocat/baluard-vault"}}"#
+            ),
+        );
+
+        let repo = gh.create_private_repo(&tok, "baluard-vault").await.unwrap();
+        assert_eq!(repo.full_name, "octocat/baluard-vault");
+        assert!(repo.private);
+        assert_eq!(
+            repo.clone_url,
+            "https://github.com/octocat/baluard-vault.git"
+        );
+        let (method, path, _) = &api.requests()[1];
+        assert_eq!(method, "GET");
+        assert!(path.ends_with("/user"), "path: {path}");
+        let (method, path, _) = &api.requests()[2];
+        assert_eq!(method, "GET");
+        assert!(
+            path.ends_with("/repos/octocat/baluard-vault"),
+            "path: {path}"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_repo_name_conflict_without_existing_repo_propagates() {
+        let api = MockApi::start();
+        let gh = gh_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "repo");
+
+        // A 422 whose probe misses (invalid name, quota) must surface the
+        // original provider error, not be swallowed as "adopted".
+        api.push(
+            422,
+            r#"{"message":"Validation Failed","errors":[{"field":"name","code":"invalid"}]}"#,
+        );
+        api.push(200, MOCK_USER);
+        api.push(404, r#"{"message":"Not Found"}"#);
+
+        let err = gh
+            .create_private_repo(&tok, "baluard-vault")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Validation Failed"), "err: {err}");
     }
 
     #[tokio::test]
