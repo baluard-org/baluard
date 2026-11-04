@@ -6791,225 +6791,61 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 None => return err_response("Missing provider"),
             };
             let repo_name = payload["repo_name"].as_str().unwrap_or("").to_string();
-            // Optional: clone_url passed when the repo was already created via
-            // `provider.create_repo`. If present, skip redundant creation (which
-            // would 422 on the already-existing name) and use this URL directly.
             let existing_clone_url = payload["clone_url"].as_str().map(|s| s.to_string());
 
-            // Custom remote: the repository URL is user-supplied and
-            // required — there is no forge API to create the repo and no
-            // provider token. Credentials live in meta/git-credentials.json
-            // (stored via vault.git_credentials_set) and are read by the
-            // sync engine's credential chain at transport time.
             let is_custom = provider == "custom";
             if is_custom && existing_clone_url.is_none() {
                 return err_response("A custom remote needs the full repository URL (clone URL)");
             }
 
-            // Resolve provider (skipped for custom remotes).
-            let prov_type = if is_custom {
-                None
+            // C5: the device UUID keys commit signing and roster roles.
+            let device_id = state.device_id().await;
+            let devkey_seal = state.devkey_seal().await;
+            let vault_path = state.vault_path.clone();
+
+            #[cfg(feature = "git-sync")]
+            let sync_result = if is_custom {
+                baluard_runtime::providers::setup_sync_remote_custom(
+                    &vault_path,
+                    devkey_seal,
+                    existing_clone_url.expect("checked above"),
+                    &device_id,
+                )
+                .await
             } else {
-                match baluard_core::providers::types::Provider::all()
+                let prov_type = baluard_core::providers::types::Provider::all()
                     .iter()
                     .find(|p| p.to_string() == provider)
-                {
-                    Some(p) => Some(*p),
-                    None => return err_response(format!("Unknown provider: {provider}")),
-                }
-            };
-
-            // Load token from keyring (skipped for custom remotes).
-            let token = if is_custom {
-                None
-            } else {
-                let prov = prov_type.expect("checked above");
-                let state_file =
-                    baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
-                let info = match state_file.get(prov) {
-                    Some(i) => i,
-                    None => return err_response(format!("{provider} not connected")),
+                    .copied();
+                let Some(prov_type) = prov_type else {
+                    return err_response(format!("Unknown provider: {provider}"));
                 };
-                match ensure_valid_token(prov, info).await {
-                    Ok(t) => Some(t),
-                    Err(e) => return e,
-                }
+                baluard_runtime::providers::setup_sync_remote(
+                    &vault_path,
+                    devkey_seal,
+                    prov_type,
+                    &repo_name,
+                    existing_clone_url,
+                    &device_id,
+                )
+                .await
             };
-
-            // Default repo name to vault slug if not provided
-            let vault_path = state.vault_path.clone();
-            let effective_name = if repo_name.is_empty() {
-                // Try reading slug from .baluard marker
-                match baluard_core::vault::registry::BaluardMarker::read_from_vault(&vault_path) {
-                    Ok(Some(m)) => m.slug.clone(),
-                    _ => {
-                        // Fallback to directory name
-                        vault_path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("vault")
-                            .to_string()
-                    }
-                }
-            } else {
-                repo_name
-            };
-            let effective_name = baluard_core::vault::slug::normalize_slug(&effective_name);
-
-            // Resolve the remote URL: either reuse an already-created repo
-            // (passed in the payload) or create a new private repo now.
-            #[cfg(feature = "git-sync")]
-            let remote_url: String = if let Some(url) = existing_clone_url {
-                url
-            } else {
-                let prov_type = prov_type.expect("repo creation implies a forge provider");
-                let token = token.as_ref().expect("repo creation implies a token");
-                let state_file =
-                    baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
-                let info = match state_file.get(prov_type) {
-                    Some(i) => i,
-                    None => return err_response(format!("{provider} not connected")),
-                };
-                let prov = match baluard_core::providers::provider_for(prov_type, info.config()) {
-                    Ok(p) => p,
-                    Err(e) => return err_response(e.to_string()),
-                };
-                match prov.create_private_repo(token, &effective_name).await {
-                    Ok(r) => r.clone_url,
-                    Err(e) => return err_response(format!("Failed to create repo: {e}")),
-                }
-            };
+            #[cfg(not(feature = "git-sync"))]
+            let sync_result = Err(String::from("git sync is not available in this build"));
             #[cfg(not(feature = "git-sync"))]
             let _ = (
+                &repo_name,
                 existing_clone_url,
-                effective_name.as_str(),
-                prov_type,
-                token,
+                &provider,
+                &device_id,
+                devkey_seal,
+                &vault_path,
             );
 
-            // Init git repo + add remote + push (blocking git ops)
-            #[cfg(feature = "git-sync")]
-            {
-                let slug_for_reg =
-                    match baluard_core::vault::registry::BaluardMarker::read_from_vault(&vault_path)
-                    {
-                        Ok(Some(m)) => m.slug.clone(),
-                        _ => vault_path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    };
-                let provider_for_reg = provider.clone();
-                let provider_clone = provider.clone();
-                // C1: seal subkey for init/commit signing (vault unlocked at
-                // setup).
-                let devkey_seal = state.devkey_seal().await;
-                let handle = tokio::task::spawn_blocking(move || -> Result<String, String> {
-                    use baluard_core::sync::engine::SyncEngine;
-                    let engine =
-                        SyncEngine::new(&vault_path, "baluard-daemon", devkey_seal.as_ref());
-
-                    // Init repo if not already a git repo. A .git directory
-                    // means an existing vault repo: an open failure there is
-                    // transient and re-initializing would silently wipe the
-                    // vault's history (a second genesis can never push over
-                    // the first incarnation's remote line).
-                    let git_repo = match engine.open_repo() {
-                        Ok(r) => r,
-                        Err(open_err) => {
-                            if vault_path.join(".git").exists() {
-                                return Err(format!(
-                                    "Git open failed (vault repo already initialized): {open_err}"
-                                ));
-                            }
-                            engine
-                                .init_repo()
-                                .map_err(|e| format!("Git init failed: {e}"))?
-                        }
-                    };
-
-                    // Add origin remote (idempotent check)
-                    let mut added_origin = false;
-                    if let Ok(existing) = engine.get_remote_url(&git_repo, "origin") {
-                        if existing != remote_url {
-                            return Err(format!(
-                                "Remote 'origin' already set to {existing}; disconnect sync first"
-                            ));
-                        }
-                        // Same URL, skip
-                    } else {
-                        engine
-                            .add_remote(&git_repo, "origin", &remote_url)
-                            .map_err(|e| format!("Failed to add remote: {e}"))?;
-                        added_origin = true;
-                    }
-
-                    // Stage + commit any pending changes, then push
-                    let status = engine
-                        .status(&git_repo)
-                        .map_err(|e| format!("Status check failed: {e}"))?;
-                    if status.is_dirty() {
-                        engine
-                            .commit_all(&git_repo, "")
-                            .map_err(|e| format!("Commit failed: {e}"))?;
-                    }
-                    if let Err(e) = engine.push(&git_repo, "origin") {
-                        // Without a registry entry the UI offers no
-                        // disconnect, so the stale origin would trap the
-                        // corrected retry behind "already set".
-                        if added_origin {
-                            let _ = engine.remove_remote(&git_repo, "origin");
-                        }
-                        return Err(format!("First push failed: {e}"));
-                    }
-
-                    Ok(remote_url)
-                });
-
-                let remote_url = match handle.await {
-                    Ok(Ok(url)) => url,
-                    Ok(Err(e)) => return err_response(e),
-                    Err(e) => return err_response(format!("Task join: {e}")),
-                };
-
-                // Update registry with sync info
-                if !slug_for_reg.is_empty() {
-                    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked()
-                    {
-                        if let Some(entry) = reg.get_mut(&slug_for_reg) {
-                            // Custom remotes carry no provider: forge
-                            // automation (seat grants, repo listing) is
-                            // manual by design.
-                            entry.provider = if is_custom {
-                                None
-                            } else {
-                                Some(provider_clone)
-                            };
-                            entry.remote_url = Some(remote_url.clone());
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs();
-                            entry.last_synced = Some(now);
-                        }
-                        let _ = reg.save_locked();
-                    }
-                }
-
-                ok_resp(
-                    serde_json::json!({
-                        "status": "synced",
-                        "repo": remote_url,
-                        "provider": provider_for_reg
-                    })
-                    .to_string(),
-                    token_str,
-                )
+            match sync_result {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
             }
-
-            #[cfg(not(feature = "git-sync"))]
-            err_response("Git sync not available (compiled without git-sync feature)")
         }
 
         _ => err_response(format!("Unknown action: {}", req.action)),
