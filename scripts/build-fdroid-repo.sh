@@ -62,16 +62,32 @@ FINGERPRINT="${FINGERPRINT,,}"
 EXPECTED="$(<"$EXPECTED_KEY_FILE")"
 [[ "$FINGERPRINT" == "$EXPECTED" ]] || fail "APK signing certificate changed; refusing to publish an incompatible update"
 
+REPO_KEY_DN='CN=Baluard, O=Baluard Org, C=CL'
+REPO_KEY_ALIAS=baluard
 mkdir -p "$WORK"
 if [[ ! -e "$WORK/config.yml" && ! -e "$WORK/keystore.p12" ]]; then
   (
     umask 077
     cd "$WORK"
-    "$FDROID" init --no-prompt -d "CN=Baluard, O=Baluard Org, C=CL"
+    "$FDROID" init --no-prompt -d "$REPO_KEY_DN" --repo-keyalias "$REPO_KEY_ALIAS"
   )
+  # fdroidserver 2.4.5 ignores init --dname and generates CN=<alias>, OU=F-Droid.
+  if [[ "$(awk -F': ' '$1 == "keydname" {print $2; exit}' "$WORK/config.yml")" != "$REPO_KEY_DN" ]]; then
+    KEYTOOL_BIN="${KEYTOOL:-$(command -v keytool || true)}"
+    [[ -n "$KEYTOOL_BIN" ]] || fail "keytool not found; cannot set the repo key identity"
+    repo_pw="$(awk -F': ' '$1 == "keypass" {print $2; exit}' "$WORK/config.yml")"
+    [[ -n "$repo_pw" ]] || fail "keypass missing from config.yml"
+    "$KEYTOOL_BIN" -delete -keystore "$WORK/keystore.p12" -storetype PKCS12 -alias "$REPO_KEY_ALIAS" -storepass "$repo_pw"
+    "$KEYTOOL_BIN" -genkeypair -keystore "$WORK/keystore.p12" -storetype PKCS12 -alias "$REPO_KEY_ALIAS" \
+      -keyalg RSA -keysize 3072 -validity 10000 -dname "$REPO_KEY_DN" \
+      -storepass "$repo_pw" -keypass "$repo_pw"
+    sed -i "s|^keydname:.*|keydname: $REPO_KEY_DN|" "$WORK/config.yml"
+  fi
 elif [[ ! -s "$WORK/config.yml" || ! -s "$WORK/keystore.p12" ]]; then
   fail "incomplete F-Droid initialization; restore config.yml and keystore.p12 from backup"
 fi
+[[ "$(awk -F': ' '$1 == "keydname" {print $2; exit}' "$WORK/config.yml")" == "$REPO_KEY_DN" ]] \
+  || fail "repo key identity is not $REPO_KEY_DN; regenerate the repo signing key"
 chmod 600 "$WORK/config.yml" "$WORK/keystore.p12"
 
 FDROID_PYTHON="${FDROID_PYTHON:-$(dirname "$FDROID")/python}"
