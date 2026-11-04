@@ -40,4 +40,5 @@ private val DICTS: Map<String, Map<String, String>> = mapOf(
     "en" to EN,
     "es" to ES,
     "pt" to PT,
+    "fr" to FR,
 )

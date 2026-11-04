@@ -13,6 +13,7 @@ Baluard supports multi-language localization on both Desktop (SolidJS) and Mobil
 | `en` | English (Source of truth) | `desktop/src/i18n/locales/en.json` | `mobile/.../i18n/StringsEn.kt` | `values/strings.xml` |
 | `es` | Spanish | `desktop/src/i18n/locales/es.json` | `mobile/.../i18n/StringsEs.kt` | `values-es/strings.xml` |
 | `pt` | Portuguese (Brazil focus) | `desktop/src/i18n/locales/pt.json` | `mobile/.../i18n/StringsPt.kt` | `values-pt/strings.xml` |
+| `fr` | French | `desktop/src/i18n/locales/fr.json` | `mobile/.../i18n/StringsFr.kt` | `values-fr/strings.xml` |
 
 ## Architecture
 
