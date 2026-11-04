@@ -328,8 +328,8 @@ const [customError, setCustomError] = createSignal(null);
         // (and now-conflicting) repo creation step.
         try { cloneUrl = JSON.parse(createRaw)?.clone_url ?? null; } catch { /* keep null */ }
       } catch (createErr) {
-        const msg = sanitizeError(createErr, t).toLowerCase();
-        if (msg.includes("already exists") || msg.includes("already") || msg.includes("422")) {
+        const rawMsg = String(createErr?.message ?? createErr ?? "");
+        if (rawMsg.includes("already exists") || rawMsg.includes("422")) {
           // Repo exists from a prior partial attempt — proceed to setup_sync
           // (setup_sync will create-or-reuse by name)
         } else {
