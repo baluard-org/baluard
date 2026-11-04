@@ -331,16 +331,25 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
 
     // first_pipe_instance makes startup fail loudly when another daemon
     // already owns the pipe name (the unix stale-socket probe equivalent).
+    // The explicit user DACL replaces the default one, whose Everyone
+    // read ACE would let any local account hold instances open.
     #[cfg(windows)]
     let listener = {
         use anyhow::Context as _;
         use tokio::net::windows::named_pipe::ServerOptions;
 
         let pipe_name: &str = socket_path;
-        ServerOptions::new()
-            .first_pipe_instance(true)
-            .create(pipe_name)
-            .context("failed to create the daemon named pipe (another daemon may own it)")?
+        let mut attrs = baluard_core::ipc::user_dacl_security_attributes()
+            .context("failed to build the pipe security descriptor")?;
+        unsafe {
+            ServerOptions::new()
+                .first_pipe_instance(true)
+                .create_with_security_attributes_raw(
+                    pipe_name,
+                    attrs.as_ptr() as *mut std::ffi::c_void,
+                )
+                .context("failed to create the daemon named pipe (another daemon may own it)")
+        }?
     };
 
     log::info!("baluard-daemon listening on {socket_path}");
@@ -373,7 +382,7 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     }
     #[cfg(windows)]
     tokio::select! {
-        result = accept_task(listener, host.clone()) => result?,
+        result = accept_task(listener, socket_path, host.clone()) => result?,
         result = shutdown => result?,
     }
 
@@ -398,28 +407,22 @@ async fn accept_task(listener: &UnixListener, host: SharedVaultHost) -> Result<(
 
 #[cfg(windows)]
 async fn accept_task(
-    first_server: tokio::net::windows::named_pipe::NamedPipeServer,
+    mut server: tokio::net::windows::named_pipe::NamedPipeServer,
+    pipe_name: &'_ str,
     host: SharedVaultHost,
 ) -> Result<()> {
-    use anyhow::Context as _;
-    use tokio::net::windows::named_pipe::ServerOptions;
-
-    let pipe_path = baluard_core::paths::socket_path();
-    let pipe_name = pipe_path
-        .to_str()
-        .context("pipe path must be valid unicode")?;
-    let mut server = first_server;
     loop {
         // A transient connect error must not kill the daemon and lock out
-        // every vault: log, back off, continue (mirror of the unix accept
-        // back-off).
+        // every vault: log, back off, and start from a fresh instance — a
+        // client that vanished leaves the old one permanently unusable.
         if let Err(e) = server.connect().await {
             log::warn!("[daemon] pipe connect failed: {e}");
+            server = spawn_next_pipe_instance(pipe_name).await;
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             continue;
         }
         let client = server;
-        server = ServerOptions::new().create(pipe_name)?;
+        server = spawn_next_pipe_instance(pipe_name).await;
         let host = host.clone();
         tokio::spawn(async move {
             if let Err(e) = baluard_daemon::handler::handle_connection(
@@ -431,6 +434,26 @@ async fn accept_task(
                 log::error!("Connection error: {e}");
             }
         });
+    }
+}
+
+/// Keep exactly one listening instance alive. create() is sync; a
+/// persistent failure retries rather than killing a daemon that may hold
+/// unlocked vaults.
+#[cfg(windows)]
+async fn spawn_next_pipe_instance(
+    pipe_name: &str,
+) -> tokio::net::windows::named_pipe::NamedPipeServer {
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    loop {
+        match ServerOptions::new().create(pipe_name) {
+            Ok(server) => return server,
+            Err(e) => {
+                log::warn!("[daemon] pipe instance create failed: {e}");
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
     }
 }
 

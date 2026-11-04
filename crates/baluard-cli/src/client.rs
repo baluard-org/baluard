@@ -6,9 +6,13 @@
 
 use anyhow::{Context, Result, bail};
 use baluard_core::ipc::IpcStream;
+
+/// Matches the daemon's MAX_FRAME_SIZE.
+const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 use prost::Message;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 use zeroize::Zeroize;
 
 /// Get the default socket path for this platform.
@@ -253,6 +257,9 @@ fn request_with_session(
         .unwrap_or_else(default_socket_path);
     let mut stream = IpcStream::connect(&socket)
         .with_context(|| format!("Cannot connect to daemon at {}", socket.display()))?;
+    // Bounded like every other client: without this, a daemon that dies
+    // mid-response would hang the CLI forever on the frame read.
+    stream.set_timeouts(Duration::from_secs(30), Duration::from_secs(5))?;
 
     let mut req = GatewayRequest {
         action: action.to_string(),
@@ -277,13 +284,9 @@ fn request_with_session(
     body.zeroize();
     req.payload.zeroize();
 
-    // Read full response
-    let mut buf = Vec::with_capacity(4096);
-    stream.read_to_end(&mut buf)?;
-
-    if buf.is_empty() {
-        bail!("Daemon closed connection without response");
-    }
+    // Read exactly one length-prefixed response frame; read_to_end would
+    // hang on Windows, where the client cannot half-close the pipe.
+    let buf = stream.read_frame(MAX_RESPONSE)?;
 
     // Decode varint length with bounds checking
     let (resp_len, offset) = decode_varint_checked(&buf).context("Invalid response varint")?;

@@ -7654,10 +7654,12 @@ fn verify_peer_uid(stream: &IpcStream) -> Result<()> {
     }
     #[cfg(not(unix))]
     {
-        // The named pipe's default DACL restricts it to the creating user
-        // plus SYSTEM/Administrators, and first_pipe_instance blocks name
-        // squatting, so the platform gate replaces the SO_PEERCRED check;
-        // there is no per-credential equivalent to re-verify beyond it.
+        // Gate stack on Windows: every instance is created with a DACL
+        // granting GENERIC_ALL only to the daemon user's SID (the default
+        // descriptor would hand Everyone a read ACE), and each client
+        // re-verifies the server's process SID before writing. That makes
+        // the platform equivalent of the SO_PEERCRED same-uid check; no
+        // per-credential token check is wired beyond it.
         let _ = stream;
         Ok(())
     }
