@@ -16,7 +16,7 @@
   </defs>
 
   <rect width="1024" height="1024" rx="200" fill="url(#bg-grad-app)" />
-  <rect x="8" y="8" width="1008" height="1008" rx="192" fill="none" stroke="#e8eef1" stroke-width="14" opacity="0.85" />
+  <rect x="5" y="5" width="1014" height="1014" rx="195" fill="none" stroke="#425155" stroke-width="10" opacity="0.35" />
 
   <g transform="translate(-82,-72.6) scale(2.32)">
     <path d="M 172 205 V 150 C 172 103 209 66 256 66 C 303 66 340 103 340 150 V 205 H 294 V 150 C 294 128 277 111 256 111 C 235 111 218 128 218 150 V 205 Z" fill="url(#shackle-grad-app)" />
