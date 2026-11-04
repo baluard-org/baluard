@@ -3,7 +3,21 @@
 # macOS host. Cross-compiles the daemon and CLI sidecars for the Windows MSVC
 # target with cargo-xwin, then drives `tauri build` with the NSIS bundle.
 # MSI stays a Windows-only build: WiX cannot run on this host.
+#
+# Pass --smoke to bake --remote-debugging-port=9222 into the webview via
+# desktop/src-tauri/tauri.smoke.conf.json (see docs/dev/release-smoke-testing.md).
+# The smoke build exists only for UI smoke tests; the shipped artifact is the
+# build WITHOUT the flag. The output is copied to *_smoke-setup.exe so the
+# two artifacts do not overwrite each other.
 set -euo pipefail
+
+SMOKE=0
+for arg in "$@"; do
+  case "$arg" in
+    --smoke) SMOKE=1 ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="x86_64-pc-windows-msvc"
@@ -54,6 +68,17 @@ cp "target/$TARGET/release/baluard-nmh.exe" "$BIN_DIR/baluard-nmh-$TRIPLE.exe"
 
 echo "Building NSIS installer..."
 cd desktop
-npm run tauri build -- --bundles nsis --target "$TARGET" --runner cargo-xwin
+CONFIG_ARGS=()
+if [[ "$SMOKE" == "1" ]]; then
+  CONFIG_ARGS=(--config src-tauri/tauri.smoke.conf.json)
+fi
+npm run tauri build -- --bundles nsis --target "$TARGET" --runner cargo-xwin "${CONFIG_ARGS[@]}"
 
-echo "windows installer: desktop/src-tauri/target/$TARGET/release/bundle/nsis/"
+BUNDLE_DIR="src-tauri/target/$TARGET/release/bundle/nsis"
+if [[ "$SMOKE" == "1" ]]; then
+  SETUP="$(ls "$BUNDLE_DIR"/*-setup.exe 2>/dev/null | head -1)"
+  [[ -n "$SETUP" ]] && cp "$SETUP" "${SETUP/%-setup.exe/-smoke-setup.exe}"
+  echo "windows SMOKE installer: $BUNDLE_DIR/*-smoke-setup.exe"
+else
+  echo "windows installer: $BUNDLE_DIR/"
+fi

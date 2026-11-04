@@ -265,6 +265,12 @@ test-e2e:
 # desktop build; see e2e/desktop/run-e2e-desktop.sh.
 e2e-desktop *ARGS:
 	bash e2e/desktop/run-e2e-desktop.sh {{ARGS}}
+
+# Windows desktop smoke: drives the quickemu guest's release app over its
+# WebView2 CDP port (SSH-tunneled). Needs the VM running, sshd reachable,
+# app installed, seed vault present; see docs/dev/release-smoke-testing.md.
+e2e-windows *ARGS:
+	bash e2e/windows/run-smoke-windows.sh {{ARGS}}
 # Extension: real Chromium + real NMH + real daemon + the bridge pairing
 # ceremony (Phase 4, Ring 1). Installs playwright deps
 # into e2e/extension on first run.
