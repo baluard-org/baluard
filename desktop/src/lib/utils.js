@@ -7,6 +7,13 @@ export const ERROR_PATTERNS = [
   { pattern: /Invalid session token/i, key: "errors.sessionExpired" },
   { pattern: /no longer paired with this vault/i, key: "errors.deviceUnpaired" },
   { pattern: /identity mismatch/i, key: "errors.integrityFailed" },
+  // Sync setup outcomes (daemon strings: "First push failed", "Commit
+  // failed", "Git open/init failed", registry failures). Git terms stay
+  // out of the user-visible copy.
+  { pattern: /First push failed|Failed to add remote|Remote 'origin' already set/i, key: "errors.syncPush" },
+  { pattern: /Commit failed|UnsignedCommitRefused/i, key: "errors.syncCommit" },
+  { pattern: /Git open failed|Git init failed|Status check failed/i, key: "errors.syncLocal" },
+  { pattern: /vault registry could not be (loaded|updated)/i, key: "errors.syncRegistry" },
   // Hardware-seal failures are NOT wrong passwords; they must match
   // before the password patterns so the unlock screen can tell them apart.
   // Security-key (FIDO) touch outcomes carry their own honest copy; the
