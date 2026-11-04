@@ -56,6 +56,7 @@ test "$(stat -c %a "$TMP/work/keystore.p12")" = 600
 test "$(stat -c %a "$TMP/work/allowed-apk-signing-key")" = 600
 test -f "$TMP/work/repo/app.baluard.mobile_1.apk"
 test -f "$TMP/work/repo/app.baluard.mobile/en-US/icon.png"
+test -f "$TMP/work/repo/fdroid-icon.png"
 test ! -e "$TMP/work/repo/androidApp-release.apk"
 test -f "$TMP/out/index-v2.json"
 test ! -e "$TMP/out/config.yml"

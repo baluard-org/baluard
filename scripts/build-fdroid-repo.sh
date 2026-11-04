@@ -116,6 +116,9 @@ cp "$ROOT/fdroid/metadata/$PACKAGE.yml" "$WORK/metadata/$PACKAGE.yml"
 printf "\nAllowedAPKSigningKeys: '%s'\n" "$FINGERPRINT" >> "$WORK/metadata/$PACKAGE.yml"
 cp "$ROOT/assets/baluard-lock-only-512.png" "$WORK/fdroid-icon.png"
 cp "$ROOT/assets/baluard-lock-only-512.png" "$WORK/repo/$PACKAGE/en-US/icon.png"
+# The index advertises icon="fdroid-icon.png" relative to the repo base, but
+# fdroidserver never copies the repo icon into the served tree itself.
+cp "$WORK/fdroid-icon.png" "$WORK/repo/fdroid-icon.png"
 TARGET="$WORK/repo/${PACKAGE}_${VERSION_CODE}.apk"
 if [[ -f "$TARGET" ]] && ! cmp -s "$APK" "$TARGET"; then
   echo "WARNING: replacing an APK with the same versionCode ($VERSION_CODE); installed clients will not update" >&2
