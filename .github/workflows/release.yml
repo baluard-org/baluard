@@ -274,11 +274,23 @@ jobs:
             TAG="$(node -p "require('fs').readFileSync('desktop/src-tauri/Cargo.toml','utf8').match(/^version\\s*=\\s*\"([^\"]+)\"/m)[1]")"
           fi
 
+          # The updater private key is about to enter this step's env; keep it
+          # away from the registry-resolving npx path by requiring the
+          # lockfile-backed CLI (npm ci below) and overriding the resolution.
+          npm ci --prefix desktop
+
           # Stable-name release set: the stage script maps versioned
           # artifact names to their unversioned download names (the same
-          # mapping the local pipeline uses) and signs SHA256SUMS.
-          scripts/stage-release-assets.sh --version "$TAG" artifacts
-          gh release create "$TAG" --draft --generate-notes --title "$TAG" release-upload/*
+          # mapping the local pipeline uses) and signs SHA256SUMS. The
+          # require list covers exactly what CI can build; the setup exe,
+          # extension zips, and apk come from the local pipeline.
+          PRFLAG=""
+          case "$TAG" in *-*) PRFLAG="--prerelease" ;; esac
+          BALUARD_TAURI_BIN="$PWD/desktop/node_modules/.bin/tauri" \
+            scripts/stage-release-assets.sh --version "$TAG" \
+            --require "Baluard-amd64.AppImage,Baluard-amd64.AppImage.sig,Baluard-amd64.deb,Baluard-amd64.rpm,Baluard-cli-amd64.tar.gz,Baluard-cli-darwin-arm64.tar.gz,Baluard-arm64.dmg,Baluard-arm64.app.tar.gz,Baluard-arm64.app.tar.gz.sig" \
+            artifacts
+          gh release create "$TAG" $PRFLAG --draft --generate-notes --title "$TAG" release-upload/*
 
   # D79: the channel manifest is the ONLY mutable piece (fixed updates-beta /
   # updates-stable tags hold it; versioned releases hold immutable artifacts)

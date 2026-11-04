@@ -1131,7 +1131,7 @@ cross-compile:
 # The Android APK is not part of dist/: pass it via a direct call, e.g.
 # scripts/stage-release-assets.sh --version 0.1.0 --apk ~/.baluard/fdroid/repo/<apk>.apk dist
 release-stage dist-dir="dist":
-	scripts/stage-release-assets.sh --version "{{ version }}" "{{ dist-dir }}"
+	scripts/stage-release-assets.sh --version "{{ version }}" --require "Baluard-amd64.AppImage,Baluard-amd64.AppImage.sig,Baluard-amd64.deb,Baluard-amd64.rpm,Baluard-cli-amd64.tar.gz,Baluard-extension-chrome.zip,Baluard-extension-firefox.zip,Baluard-amd64-setup.exe,Baluard-amd64-setup.exe.sig" "{{ dist-dir }}"
 
 # Build release archives (tar.gz + checksums)
 release: build-release
