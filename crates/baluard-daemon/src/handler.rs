@@ -1250,6 +1250,11 @@ async fn route_host_request_inner(
 
             let mut deleted_from_disk = false;
             if delete_from_disk {
+                // Best-effort: the Quick Unlock entry holds the vault's
+                // master password and must not outlive the vault. Failure
+                // (locked keychain) leaves an orphaned secret rather than
+                // blocking a detach the registry already committed.
+                let _ = baluard_core::biometric::disable(&entry_vault_id.to_string());
                 let path = &entry_path;
                 if path.exists() {
                     let marker_state =
