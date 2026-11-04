@@ -85,6 +85,18 @@ Stage order, fail-fast (any failure stops the pipeline):
 
 Publishing is a manual review, commit, and push of the `baluard-org` diff. The pipeline never commits or pushes. The Linux trees map to `repo/`, the F-Droid tree to the site root `fdroid/`; a push of `baluard-org` main is what updates `baluard.app` and both Linux repositories.
 
+## GitHub release staging
+
+The published release carries ONLY stable, unversioned asset names, so the site's `releases/latest/download/<name>` links always track the newest release and no file exists twice on the release. Stage the upload set after `release-repositories`:
+
+```sh
+just release-stage
+# Android APK ride-along (not part of dist/):
+scripts/stage-release-assets.sh --version <X.Y.Z> --apk ~/.baluard/fdroid/repo/<app.baluard.mobile_N>.apk dist
+```
+
+`scripts/stage-release-assets.sh` hardlinks `./dist` artifacts into `release-upload/` under the stable mapping (Baluard-amd64.AppImage, Baluard-amd64.deb, Baluard-amd64.rpm, Baluard-amd64-setup.exe, Baluard-cli-amd64.tar.gz, Baluard-android.apk, Baluard-extension-chrome.zip, Baluard-extension-firefox.zip), signs `SHA256SUMS` with the updater minisign key, and fails loudly on target collisions or unmapped files. Only the updater payloads keep per-asset `.sig` files (AppImage, setup exe); everything else is covered by the signed `SHA256SUMS`. Upload with `gh release upload <tag> --clobber release-upload/*` and keep versioned names out of the release. The versioned names stay required locally: the apt/dnf pools, the extension submit flow, and the CI artifacts all consume them.
+
 ## Store publishing
 
 Explicit and manual only, never part of `release-repositories`:
@@ -108,7 +120,7 @@ just ext-submit
 | Desktop macOS / Windows | In-app updater via the same channel manifest once Windows joins the platform matrix; until then new download from GitHub Releases |
 | Browser extension | Store-managed auto-update after `just ext-submit` (Chrome) / AMO approval (Firefox) |
 | Mobile Android via F-Droid | Index regeneration in `fdroid-stage`; requires a higher `versionCode`; the repo keeps the latest three APKs |
-| Direct downloads | New GitHub release with minisign sidecars and signed `SHA256SUMS` |
+| Direct downloads | New GitHub release with stable asset names, per-asset `.sig` only for the updater payloads (AppImage, setup exe), and signed `SHA256SUMS` |
 
 The channel feed goes live on the FIRST `publish-updates` dispatch after the
 versioned release is published from draft (the dispatch creates the
