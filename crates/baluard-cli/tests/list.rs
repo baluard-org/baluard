@@ -15,7 +15,7 @@ fn list_empty_vault_says_no_ciphers() {
         .arg("list")
         .assert()
         .success()
-        .stdout(predicate::str::contains("No ciphers found."));
+        .stdout(predicate::str::contains("No entries found."));
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn list_on_locked_vault_returns_ids_only() {
     cmd.arg("list")
         .assert()
         .success()
-        .stdout(predicate::str::contains("No ciphers found."));
+        .stdout(predicate::str::contains("No entries found."));
 }
 
 #[test]

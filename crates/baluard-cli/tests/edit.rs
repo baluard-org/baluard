@@ -35,7 +35,7 @@ fn edit_renames_cipher() {
         .arg("new name")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Cipher updated."));
+        .stdout(predicate::str::contains("Entry updated."));
 
     baluard(tmp.path())
         .arg("list")
@@ -79,7 +79,7 @@ fn edit_assigns_tags() {
         .arg("work,important")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Cipher updated."));
+        .stdout(predicate::str::contains("Entry updated."));
 
     // Cross-check via `tags delete` which reports how many ciphers it
     // updated — if the edit worked, deleting one tag removes exactly 1.

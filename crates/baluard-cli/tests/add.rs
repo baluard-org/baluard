@@ -26,7 +26,7 @@ fn add_login_cipher_returns_uuid() {
         .arg("https://github.com")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Cipher added:"));
+        .stdout(predicate::str::contains("Entry added:"));
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn add_from_json_file() {
         .arg(json_path.to_string_lossy().to_string())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Cipher added:"));
+        .stdout(predicate::str::contains("Entry added:"));
 
     // Verify it surfaces in `list`.
     baluard(tmp.path())
