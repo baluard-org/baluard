@@ -250,7 +250,12 @@ fn main() -> anyhow::Result<()> {
         });
 
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async { run(&sock, &vault, &resolved.slug).await })
+    let result = rt.block_on(async { run(&sock, &vault, &resolved.slug).await });
+    // A stuck spawn_blocking task (e.g. the FIDO probe wedging in HID when no
+    // device is attached) would otherwise make the implicit Runtime drop wait
+    // forever and leave a daemon that ignores SIGTERM.
+    rt.shutdown_timeout(std::time::Duration::from_secs(2));
+    result
 }
 
 async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) -> Result<()> {
