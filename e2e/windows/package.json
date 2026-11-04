@@ -1,0 +1,9 @@
+{
+  "name": "baluard-e2e-windows",
+  "private": true,
+  "type": "module",
+  "description": "Windows desktop smoke: Playwright over the WebView2 CDP port baked into the smoke installer, SSH-tunneled from the quickemu guest.",
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

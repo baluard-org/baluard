@@ -1,0 +1,22 @@
+{
+  "bundle": {
+    "createUpdaterArtifacts": false
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Baluard",
+        "width": 1200,
+        "height": 700,
+        "minWidth": 900,
+        "minHeight": 400,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "additionalBrowserArgs": "--remote-debugging-port=9222 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
+      }
+    ]
+  }
+}
