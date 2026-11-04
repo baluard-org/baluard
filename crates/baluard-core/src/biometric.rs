@@ -47,10 +47,6 @@
 //! are independent; both buttons can appear for a vault that has both.
 
 const SERVICE_NAME: &str = "com.baluard.desktop";
-/// Legacy pre-QU account name: a single global entry shared across all
-/// vaults. Kept only so `disable_legacy_global()` can wipe orphaned
-/// secrets written by older daemon versions.
-const LEGACY_ACCOUNT_NAME: &str = "quick-unlock";
 
 /// Build the per-vault keychain account name.
 fn account_for(vault_id: &str) -> String {
@@ -469,14 +465,6 @@ pub fn is_enabled(vault_id: &str) -> bool {
 /// Returns the raw master password for vault unlock (daemon-internal only).
 pub fn unlock(vault_id: &str) -> Result<String, String> {
     platform::unlock(&account_for(vault_id))
-}
-
-/// Best-effort wipe of the legacy global `quick-unlock` keychain entry
-/// written by pre-QU daemon versions (which stored one shared secret for
-/// all vaults). Safe to call repeatedly; returns Ok when no entry remains.
-/// Call once at daemon startup so old per-app secrets do not linger.
-pub fn disable_legacy_global() -> Result<(), String> {
-    platform::disable(LEGACY_ACCOUNT_NAME)
 }
 
 #[cfg(test)]
