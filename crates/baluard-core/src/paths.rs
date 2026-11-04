@@ -67,12 +67,10 @@ pub fn socket_path() -> PathBuf {
     }
     #[cfg(windows)]
     {
-        let user = std::env::var("USERNAME").unwrap_or_default();
-        let safe: String = user
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-            .collect();
-        let suffix = if safe.is_empty() { "default" } else { &safe };
+        // Segment by SID, not USERNAME: the env var is spoofable per
+        // process and non-ASCII names collide after sanitizing. SID
+        // strings are pure "S-1-5-..." so they need no escaping.
+        let suffix = crate::ipc::windows_pipe_user_suffix();
         PathBuf::from(format!(r"\\.\pipe\baluard-{suffix}"))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]

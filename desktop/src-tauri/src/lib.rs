@@ -6,7 +6,7 @@
 
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
+use std::io::{Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -129,11 +129,10 @@ fn send_request_with_token(action: &str, payload: &str, token: &str, slug: &str)
     stream.flush().map_err(|e| format!("Flush: {e}"))?;
     stream.shutdown().map_err(|e| format!("Shutdown: {e}"))?;
 
-    // Bounded read to prevent memory exhaustion
-    let mut buf = Vec::with_capacity(4096);
-    stream
-        .take(MAX_RESPONSE_SIZE)
-        .read_to_end(&mut buf)
+    // One length-prefixed response frame; read_to_end would hang on
+    // Windows, where the client cannot half-close the pipe.
+    let buf = stream
+        .read_frame(MAX_RESPONSE_SIZE as usize)
         .map_err(|e| format!("Read: {e}"))?;
     if buf.is_empty() {
         return Err("Daemon closed connection".into());
@@ -607,7 +606,6 @@ async fn daemon_version() -> serde_json::Value {
 }
 
 /// Ping the daemon and return its raw payload (helper for the handshake).
-#[cfg(unix)]
 fn send_ping_payload() -> Option<String> {
     send_request("ping", "").ok()
 }

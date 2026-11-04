@@ -607,8 +607,7 @@ fn forward(action: &str, payload: &str, token: &str) -> anyhow::Result<GatewayRe
     stream.flush()?;
     stream.shutdown()?;
 
-    let mut buf = Vec::with_capacity(4096);
-    stream.read_to_end(&mut buf)?;
+    let buf = stream.read_frame(4 * 1024 * 1024)?;
     if buf.is_empty() {
         anyhow::bail!("daemon closed connection without response");
     }
