@@ -3,6 +3,9 @@
     "createUpdaterArtifacts": false
   },
   "app": {
+    "security": {
+      "capabilities": ["default", "smoke"]
+    },
     "windows": [
       {
         "title": "Baluard",

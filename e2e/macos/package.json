@@ -1,0 +1,9 @@
+{
+  "name": "baluard-e2e-macos",
+  "private": true,
+  "type": "module",
+  "description": "macOS smoke harness: webdriverio driving the real WKWebView webview through the embedded WebDriver server (Baluard-smoke.app).",
+  "devDependencies": {
+    "webdriverio": "^9.0.0"
+  }
+}

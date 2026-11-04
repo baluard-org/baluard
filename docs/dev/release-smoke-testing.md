@@ -12,6 +12,7 @@ Purpose: prove each platform build actually runs before a release, driven by an 
 | Android | `just emulator` then `just e2e-emu`, or `just e2e-android` on a device | Maestro flows in `e2e/mobile/*.yaml` via `mobile/scripts/run-maestro.sh` | Compose UI markers and text asserts on a real APK |
 | Browser extension | `just e2e-extension` / `just e2e-extension-firefox` | Playwright over Chromium CDP / geckodriver + real NMH + real daemon | popup DOM and the desktop bridge pairing ceremony |
 | Desktop (Windows) | `just e2e-windows` | Playwright over the WebView2 CDP port baked into the SMOKE installer build, SSH-tunneled from the guest VM | same `data-testid` selectors as the Linux desktop flows |
+| Desktop (macOS) | `just e2e-macos` | webdriverio over the embedded WebDriver server inside the SMOKE app bundle (WKWebView native driving), SSH-tunneled from the quickemu Sequoia guest | same `data-testid` selectors as the Linux desktop flows |
 
 All desktop flows share one selector vocabulary (`desktop/src` `data-testid` attributes), so a flow written for Linux webview drives the Windows webview unchanged. That is the whole reason the Windows harness is thin.
 
@@ -46,6 +47,18 @@ Why the SMOKE build exists (2026 reality, verified against wry 0.57 / tauri-runt
 
 **Never ship the debug port or the `devtools` feature in release artifacts.** Both hand a local attacker JS execution inside a password manager's webview. The flag lives only in the smoke config, applied only to smoke builds; keep it that way in review.
 
+### macOS guest (the quickemu VM)
+
+The macOS smoke drives the SMOKE app bundle inside the Sequoia 15 VM from the Linux host. macOS has no WKWebView driver tool, so the bundle embeds the WebDriver server (`tauri-plugin-wdio-webdriver`, the `smoke` cargo feature); `tauri-driver` and msedgedriver are Windows/Linux-only.
+
+1. VM runs quickemu with Remote Login enabled and the smoke key authorized in the guest's `~/.ssh/authorized_keys` (host port 22221, user `smoketests`; key at `~/.local/share/baluard-smoke/mac-guest-key`). No administrators_authorized_keys split exists on macOS. The console session must be logged in (auto-login on): GUI windows only render in the Aqua session, and `open -a` from SSH still needs a live console session to attach to.
+2. Build the SMOKE bundle: `scripts/build-macos-app.sh --smoke`. This is the Linux-to-macOS cross-build recipe made reproducible: cargo-zigbuild + the staged SDK at `~/.local/opt/macos-sdk/MacOSX.sdk` + a cross-built OpenSSL 3.6.3 staged at `/tmp/ossl-x86` (the repo's `OPENSSL_DIR=/usr` pins Linux headers into the C graph, so darwin targets need their own OpenSSL). Two SDK quirks are handled by the script: the SDK's tbds list `arm64e` targets that zig rejects (the `shim-tbd.py` step strips them into `framework-shims/`, and the SDK's `usr/lib` tbds are stripped in place, originals kept in `/tmp/sdk-tbd-backup`), and zig prefixes every `-L`/`-F` with the sysroot (root-relative `home/` and `tmp/` symlinks inside the SDK make the prefixed paths resolve). The tauri-cli bundler cannot emit macOS bundles on Linux, so the script assembles `Baluard-smoke.app` by hand (Info.plist, sidecars, icons).
+3. Install it in the guest: `tar cf - -C desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos Baluard-smoke.app | ssh -p 22221 smoketests@127.0.0.1 'tar xf - -C /tmp'`, then `sudo mv /tmp/Baluard-smoke.app /Applications/`. The bundle is not codesigned; tar over SSH carries no quarantine attribute, so Gatekeeper never blocks it.
+4. Seed the smoke vault once: launch the app in the guest, create the vault with the master password in `BALUARD_SMOKE_PW`, add one login entry. The CLI built alongside works too: `BALUARD_PASSWORD=<pw> ./baluard init --slug baluard-smoke --name smoke --json` then `baluard --direct add login ...` in the guest.
+5. `npm install` inside `e2e/macos` (webdriverio only, no browser download).
+
+**Never ship the `smoke` feature or `tauri-plugin-wdio-webdriver` in release artifacts.** The embedded WebDriver server accepts JS execution and command mocking from any process that can reach its port. It is an optional dependency behind the opt-in `smoke` feature; shipped builds never enable it.
+
 ## How to run
 
 ```bash
@@ -64,9 +77,30 @@ BALUARD_E2E_MASTER_PW=e2e-mobile-pw1 just e2e-android
 
 # Windows app in the guest VM
 BALUARD_SMOKE_PW=smoke-vault-pw1 just e2e-windows
+
+# macOS app in the guest VM
+BALUARD_SMOKE_PW=smoke-vault-pw1 just e2e-macos
 ```
 
 Windows env knobs (all optional): `BALUARD_SMOKE_WIN_SSH` (default `ssh -o BatchMode=yes -p 22220 Quickemu@127.0.0.1`), `BALUARD_SMOKE_WIN_PORT` (default 22220), `BALUARD_SMOKE_CDP` (default 9222), `BALUARD_SMOKE_ARTIFACTS` (default a temp dir), `BALUARD_SMOKE_WIN_RESET=1` wipes `%LOCALAPPDATA%\baluard` first (destructive: that directory holds the install AND the app data; reinstall the smoke build and re-seed afterwards).
+
+macOS env knobs (all optional): `BALUARD_SMOKE_MAC_PORT` (default 22221), `BALUARD_SMOKE_MAC_USER` (default `smoketests`), `BALUARD_SMOKE_MAC_APP` (default `/Applications/Baluard-smoke.app`), `BALUARD_SMOKE_WEBDRIVER_PORT` (default 4445), `BALUARD_SMOKE_ARTIFACTS`, `BALUARD_SMOKE_MAC_RESET=1` wipes `~/Library/Application Support/baluard` in the guest (destructive: removes the seeded vault; the install survives; re-seed afterwards).
+
+## macOS harness internals (`e2e/macos/`)
+
+Sequence, all from the host:
+
+1. Probe SSH reachability (`sw_vers -productVersion`).
+2. On `BALUARD_SMOKE_MAC_RESET=1`, wipe the app-data directory and exit.
+3. Locate the app bundle, kill leftovers (`pkill -f Baluard-smoke`, `pkill -x baluard-daemon`).
+4. Launch with `open -a`, which lands the app in the console (Aqua) session. Plain SSH-spawned GUI apps are the macOS Session 0: they do not attach to the window server. No scheduled-task equivalent is needed; `open` routes through launchd.
+5. Forward the embedded WebDriver port: `ssh -N -L 4445:127.0.0.1:4445`. The server is a W3C WebDriver endpoint inside the app (`tauri-plugin-wdio-webdriver`, port from `TAURI_WEBDRIVER_PORT`, default 4445).
+6. Wait for `GET /status` through the tunnel (40 x 1 s).
+7. webdriverio `remote()` attaches to the forwarded port with empty capabilities; the embedded server binds the session to the app's own window. Drive the five smoke steps with the shared `data-testid` selectors, exactly like the Windows flow: `login-password` -> `login-unlock` -> wait `vault-view` (30 s) -> `cipher-row` -> `detail-edit` -> edit `form-username` -> `form-save` -> reopen and assert persisted -> restore. Two idempotent rounds, so reruns need no reset.
+8. Screenshots land in the artifacts dir at each stage plus `99-failed.png` on failure; pass/fail comes from DOM asserts.
+9. Cleanup kills the app, the daemon, and the tunnel, success or failure.
+
+Diagnostics learned in the 0.1.0 VM round: qemu's e1000 corrupts every slirp-to-guest frame on this qemu build (pcap-proven growing-garbage frames, silent drops, `!` rejected routes), so the guest stays on virtio-net; the OpenCore picker is patched (`DefaultVolume=macOS`, `Timeout=5`) and the recovery image detached, so every boot lands straight in macOS; the VNC password is runtime-only and must be re-applied after each relaunch (`set_password vnc` over the monitor socket, display started with `password=on`).
 
 ## Windows harness internals (`e2e/windows/`)
 
