@@ -52,7 +52,7 @@ export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-F$SHIM_DIR -C li
 export CFLAGS_x86_64_apple_darwin="-isysroot $MAC_SDK -F$MAC_SDK/System/Library/Frameworks"
 # Cross-built OpenSSL 3.6.3 (zig cc, no-asm): the repo's OPENSSL_DIR=/usr pins
 # Linux headers into the C graph and breaks libssh2-sys on darwin targets.
-export OPENSSL_DIR="${OPENSSL_DIR:-/tmp/ossl-x86}"
+export OPENSSL_DIR="${OPENSSL_DIR:-$HOME/.local/opt/macos-openssl/ossl-x86}"  # rescue copy + rebuild recipe live beside it (README.md)
 
 cd "$ROOT"
 
