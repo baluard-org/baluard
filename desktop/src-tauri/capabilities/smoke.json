@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "smoke",
+  "description": "test-only capabilities for the e2e smoke build",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "wdio-webdriver:default"
+  ]
+}

@@ -1384,7 +1384,10 @@ fn notify_agent_request(app: tauri::AppHandle, title: String, body: String) -> R
         .map_err(|e| e.to_string())
 }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "smoke")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_biometry::init())
