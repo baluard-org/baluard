@@ -1114,6 +1114,26 @@ fn urldecode(s: &str) -> String {
 mod tests {
     use super::*;
 
+    // The macOS 0.1.0 field bug: the FIRST oauth_status_web poll, sent while
+    // the callback listener is still waiting for the browser, hung forever and
+    // the desktop timed out after 30s with a generic error. The poll must
+    // always answer "pending" — never deadlock on the session map.
+    #[tokio::test]
+    async fn web_oauth_status_answers_pending_before_callback() {
+        let url = web_oauth_start(Provider::GitHub, ProviderConfig::defaults())
+            .await
+            .expect("oauth start");
+        assert!(url.starts_with("https://github.com/login/oauth"), "{url}");
+        let status = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            web_oauth_status(Provider::GitHub),
+        )
+        .await
+        .expect("status poll must not hang before the callback arrives");
+        let status = status.expect("status poll should not error");
+        assert_eq!(status, "{\"status\":\"pending\"}");
+    }
+
     #[tokio::test]
     async fn test_provider_manager_locks() {
         let mgr = global_provider_manager();
