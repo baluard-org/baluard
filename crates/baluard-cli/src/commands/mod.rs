@@ -4202,7 +4202,7 @@ pub fn handle_edit(
             if !resp.success {
                 return Err(resp.error_message.into());
             }
-            println!("Cipher updated.");
+            println!("Entry updated.");
             Ok(())
         }
         ConnectMode::Direct => {
@@ -4241,7 +4241,7 @@ pub fn handle_edit(
             };
 
             handle.update_cipher(cipher_id, &input)?;
-            println!("Cipher updated.");
+            println!("Entry updated.");
             Ok(())
         }
     }
