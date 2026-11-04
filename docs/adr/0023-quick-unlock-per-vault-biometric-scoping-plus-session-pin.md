@@ -16,7 +16,7 @@ Quick unlock is split into two mechanisms, and both are per vault.
 - macOS uses `security-framework` v3. The secret is stored with `SecAccessControl(BIOMETRY_ANY)`, so Touch ID or the passcode is required on every read.
 - Linux uses the `keyring` crate with the `linux-native-sync-persistent` backend and `crypto-rust`, a pure-Rust Secret Service client. No libsecret build dependency exists; a Secret Service provider must be available at runtime.
 - Windows uses the `keyring` crate with the `windows-native` backend (Credential Manager and DPAPI). Credential Manager is not biometric-gated per read, which is why the session PIN fallback exists.
-- The legacy global `quick-unlock` entry is wiped once at daemon startup through `disable_legacy_global()`.
+- The legacy global `quick-unlock` entry predates per-vault scoping; no supported build writes it and no startup wipe exists. Per-vault entries are deleted when the vault's data directory is removed (`vaults.detach --delete-from-disk`, CLI `vaults prune`), unless another registration shares the `vault_id`.
 - Routes: `vault.biometric_status` (not token-gated), `vault.biometric_enable` and `vault.biometric_disable` (token-gated), and `vault.biometric_unlock` (host-level, not token-gated).
 
 **B) Session PIN (fallback for Linux and for Windows without Hello)**

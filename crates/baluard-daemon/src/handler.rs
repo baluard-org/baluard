@@ -1195,6 +1195,10 @@ async fn route_host_request_inner(
         //   3. **A missing directory is treated as already-deleted**
         //      (idempotent stale-registry cleanup), not an error.
         //
+        // The destructive arm also deletes the vault's Quick Unlock
+        // keychain entry (it holds the master password) — only when this
+        // is the last registration sharing the vault_id.
+        //
         // Returns { slug, deleted_from_disk, path }.
         "vaults.detach" => {
             let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
@@ -1249,12 +1253,21 @@ async fn route_host_request_inner(
             let _ = host.close(slug).await;
 
             let mut deleted_from_disk = false;
+            // The Quick Unlock entry holds the vault's master password; it
+            // must not outlive the vault's data directory. Purge only when
+            // this detach removes the last registration of the vault_id —
+            // the same vault registered twice shares one key.
+            let purge_qu = |reg: &baluard_core::vault::registry::VaultRegistry| {
+                if baluard_core::keyring_disabled()
+                    || reg.vaults.values().any(|e| e.vault_id == entry_vault_id)
+                {
+                    return;
+                }
+                if let Err(e) = baluard_core::biometric::disable(&entry_vault_id.to_string()) {
+                    log::warn!("quick-unlock entry for {entry_vault_id} left in the keychain: {e}");
+                }
+            };
             if delete_from_disk {
-                // Best-effort: the Quick Unlock entry holds the vault's
-                // master password and must not outlive the vault. Failure
-                // (locked keychain) leaves an orphaned secret rather than
-                // blocking a detach the registry already committed.
-                let _ = baluard_core::biometric::disable(&entry_vault_id.to_string());
                 let path = &entry_path;
                 if path.exists() {
                     let marker_state =
@@ -1345,6 +1358,7 @@ async fn route_host_request_inner(
                             );
                         }
                     }
+                    purge_qu(&reg);
                     if let Err(e) = std::fs::remove_dir_all(path) {
                         return err_response(format!(
                             "Detached '{slug}' from Baluard, but disk delete failed: {e}"
@@ -1357,7 +1371,9 @@ async fn route_host_request_inner(
                     );
                 } else {
                     // Already gone: treat as success so stale-entry cleanup
-                    // stays idempotent.
+                    // stays idempotent. The directory is dead, so the Quick
+                    // Unlock entry is orphaned the same way.
+                    purge_qu(&reg);
                     deleted_from_disk = true;
                     log::info!(
                         "[daemon] vaults.detach: directory {} already absent (slug={slug})",

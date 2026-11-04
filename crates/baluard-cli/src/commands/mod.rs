@@ -5810,8 +5810,26 @@ fn vaults_prune(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    let pruned_vault_ids: Vec<String> = stale
+        .iter()
+        .filter_map(|slug| reg.vaults.get(slug).map(|e| e.vault_id.to_string()))
+        .collect();
     for slug in &stale {
         reg.remove(slug); // also clears active_vault if it was this slug
+    }
+
+    // The pruned entries point at directories that are already gone, so
+    // their Quick Unlock entries hold master passwords with no vault left.
+    // Purge unless another registration shares the vault_id.
+    if !baluard_core::keyring_disabled() {
+        for vid in &pruned_vault_ids {
+            if reg.vaults.values().any(|e| e.vault_id.to_string() == *vid) {
+                continue;
+            }
+            if let Err(e) = baluard_core::biometric::disable(vid) {
+                eprintln!("warning: quick-unlock entry for {vid} left in the keychain: {e}");
+            }
+        }
     }
 
     // Promote a successor if pruning nulled the active pointer.
