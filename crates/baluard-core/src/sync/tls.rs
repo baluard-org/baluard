@@ -292,6 +292,3 @@ mod split_blocks_tests {
         );
     }
 }
-
-#[cfg(test)]
-mod config_isolation_tests {}

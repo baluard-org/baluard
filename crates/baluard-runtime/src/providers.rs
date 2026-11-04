@@ -1222,7 +1222,11 @@ mod tests {
 
         // Clone non-vault local git repo (no .baluard marker)
         let source_dir = temp_dir.path().join("source_repo");
-        let git_repo = git2::Repository::init(&source_dir).unwrap();
+        let git_repo = git2::Repository::init_opts(
+            &source_dir,
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
 
         // Create an initial commit in source_repo
         let mut index = git_repo.index().unwrap();

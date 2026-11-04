@@ -2988,7 +2988,11 @@ mod tests {
         let privkey_before = std::fs::read(&devkey).unwrap();
 
         // Committed history: the pre-rotation roster at HEAD.
-        let repo = git2::Repository::init(&vault).unwrap();
+        let repo = git2::Repository::init_opts(
+            &vault,
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
         let mut index = repo.index().unwrap();
         index
             .add_path(std::path::Path::new("meta/devices.json"))
