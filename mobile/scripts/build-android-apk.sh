@@ -11,6 +11,7 @@
 #   ./scripts/build-android-apk.sh --install --device 192.168.1.50:38507  # pick one of several
 #   ./scripts/build-android-apk.sh --regen-bindings  # also regenerate UniFFI Kotlin bindings
 #   ./scripts/build-android-apk.sh --skip-native     # skip cargo-ndk (use committed .so)
+#   ./scripts/build-android-apk.sh --abis arm64-v8a  # build+pack only these ABIs
 #
 # Prereqs (the script checks and tells you the exact install command):
 #   JDK 17            macOS: brew install --cask temurin@17 | Debian/Ubuntu: apt install openjdk-17-jdk
@@ -32,6 +33,7 @@ DO_REGEN_BINDINGS=0
 SKIP_NATIVE=0
 DO_E2E=0
 DO_RELEASE=0
+ABIS="${ABIS:-arm64-v8a,armeabi-v7a,x86_64,x86}"
 DEVICE="${ANDROID_DEVICE:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -160,7 +162,10 @@ echo
 if [[ $SKIP_NATIVE -eq 1 ]]; then
   echo "==> [skip-native] using committed .so under androidApp/src/main/jniLibs/"
 else
-  echo "==> Building Rust cdylib for arm64-v8a armeabi-v7a x86_64 x86..."
+  # cargo-ndk accepts the ABI names directly; the gradle abiFilters below
+  # pack only the ABIs listed here, so gating both on one list keeps the
+  # jniLibs tree and the APK in sync.
+  echo "==> Building Rust cdylib for $ABIS..."
   (
     cd "$REPO_ROOT"
     # If Homebrew's `rust` shadows rustup, force the toolchain rustc (Gotcha 1).
@@ -169,8 +174,12 @@ else
       source "$HOME/.cargo/env"
     fi
     export RUSTC="${RUSTC:-$(rustup which rustc 2>/dev/null || command -v rustc)}"
-    cargo ndk \
-      -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 \
+    ndk_targets=()
+    IFS=',' read -r -a abi_list <<< "$ABIS"
+    for abi in "${abi_list[@]}"; do
+      ndk_targets+=(-t "$(echo "$abi" | tr -d '[:space:]')")
+    done
+    cargo ndk "${ndk_targets[@]}" \
       -o "$MOBILE_DIR/androidApp/src/main/jniLibs" \
       build -p baluard-uniffi --release
   )
