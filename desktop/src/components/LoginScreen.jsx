@@ -455,19 +455,19 @@ export default function LoginScreen() {
           </button>
           <button
             onClick={() => auth.setStatus("welcome")}
-            class="login-screen__create-btn text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+            class="login-screen__create-btn block w-full text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
           >
             {t("login.useDifferent")}
           </button>
           <button
             onClick={() => setShowOpenShared(true)}
-            class="login-screen__create-btn text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+            class="login-screen__create-btn block w-full text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
           >
             {t("share.guestLink")}
           </button>
           <button
             onClick={() => setShowLegacyOpen(true)}
-            class="login-screen__create-btn text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+            class="login-screen__create-btn block w-full text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
             data-testid="login-legacy-open"
           >
             {t("legacy.openKit")}
