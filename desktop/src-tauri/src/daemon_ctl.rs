@@ -43,7 +43,6 @@ fn expected_daemon_version() -> &'static str {
 /// Ping the socket and return the daemon's build version, if one answers
 /// with the D79 handshake shape. `Ok(None)`-shaped: no daemon, or a
 /// pre-handshake daemon (older than the handshake).
-#[cfg(unix)]
 fn live_daemon_version() -> Option<String> {
     let payload = send_request("ping", "").ok()?;
     let v: serde_json::Value = serde_json::from_str(&payload).ok()?;
@@ -51,7 +50,6 @@ fn live_daemon_version() -> Option<String> {
 }
 
 /// Parse the payload the desktop's ping returns into a version string.
-#[cfg(unix)]
 pub(crate) fn version_from_ping_payload(payload: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(payload).ok()?;
     v.get("version")?.as_str().map(str::to_string)
@@ -158,17 +156,61 @@ pub(crate) fn stop_daemon_and_wait(
     }
 }
 
+/// Windows has no SIGTERM: lock vaults over IPC first (the graceful half),
+/// then TerminateProcess via CommandChild::kill and poll the pid to death.
 #[cfg(not(unix))]
 pub(crate) fn stop_daemon_and_wait(
-    _state: &std::sync::Mutex<Option<crate::Daemon>>,
+    state: &std::sync::Mutex<Option<crate::Daemon>>,
 ) -> Result<(), String> {
-    Ok(())
+    let mut guard = state.lock().map_err(|e| e.to_string())?;
+    let Some(mut daemon) = guard.take() else {
+        return Ok(()); // nothing we spawned is running (adopted or absent)
+    };
+    let Some(child) = daemon.0.take() else {
+        return Ok(());
+    };
+    let pid = child.pid();
+    let _ = send_request("vaults.lock_all", "");
+    child.kill().map_err(|e| format!("daemon kill: {e}"))?;
+    if wait_for_pid_exit(pid, Duration::from_secs(5)) {
+        log::info!("daemon exited after kill");
+        Ok(())
+    } else {
+        Err("daemon did not exit after kill".into())
+    }
+}
+
+#[cfg(not(unix))]
+fn wait_for_pid_exit(pid: u32, timeout: Duration) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, WaitForSingleObject,
+    };
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        unsafe {
+            // SYNCHRONIZE (in FILE_ACCESS_RIGHTS) lets us wait on the process.
+            let handle =
+                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | 0x00100000, 0, pid);
+            if handle.is_null() {
+                return true; // gone: no process object left to wait on
+            }
+            let r = WaitForSingleObject(handle, 200);
+            CloseHandle(handle);
+            if r == WAIT_OBJECT_0 {
+                return true;
+            }
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+    }
 }
 
 /// D79 exit path: an adopted daemon is not ours to kill — lock its vaults
 /// over the socket so no keys outlive the app, and leave the process for
 /// whoever started it. Our own daemon goes through the full wait-stop.
-#[cfg(unix)]
 pub(crate) fn on_app_exit(state: &std::sync::Mutex<Option<crate::Daemon>>) {
     if ADOPTED.load(Ordering::SeqCst) {
         let _ = send_request("vaults.lock_all", "");
@@ -179,12 +221,8 @@ pub(crate) fn on_app_exit(state: &std::sync::Mutex<Option<crate::Daemon>>) {
     }
 }
 
-#[cfg(not(unix))]
-pub(crate) fn on_app_exit(_state: &std::sync::Mutex<Option<crate::Daemon>>) {}
-
 /// Start (or adopt) the daemon. Shared by app setup and the update-install
 /// rollback path.
-#[cfg(unix)]
 pub(crate) fn start_daemon(app: &AppHandle) -> Result<(), String> {
     if respawn_suppressed() {
         return Err("daemon respawn is suppressed (update in progress)".into());
@@ -202,22 +240,29 @@ pub(crate) fn start_daemon(app: &AppHandle) -> Result<(), String> {
                 "Running daemon reports version {v}, expected {}: replacing it",
                 expected_daemon_version()
             );
+            // Unix kills the stale process; Windows cannot kill a process
+            // it may not have spawned, and the pipe dies with its owner —
+            // the new daemon's create failure names the conflict instead.
+            #[cfg(unix)]
             terminate_stale_daemon();
+            #[cfg(not(unix))]
+            log::warn!("quit the running Baluard daemon before updating");
         }
         None => {
             // No answer: either nothing is running or a hung daemon is
             // squatting on the socket path. Clear both possibilities.
+            #[cfg(unix)]
             terminate_stale_daemon();
         }
     }
     ADOPTED.store(false, Ordering::SeqCst);
+    #[cfg(unix)]
     let _ = std::fs::remove_file(&socket);
 
     spawn_sidecar(app, &socket)?;
     wait_for_ready()
 }
 
-#[cfg(unix)]
 fn spawn_sidecar(app: &AppHandle, socket: &std::path::Path) -> Result<(), String> {
     log::info!("Starting daemon with --socket {}", socket.display());
     let sidecar_command = app
@@ -225,7 +270,7 @@ fn spawn_sidecar(app: &AppHandle, socket: &std::path::Path) -> Result<(), String
         .sidecar("baluard-daemon")
         .map_err(|e| format!("Sidecar not found: {e}"))?;
     let sidecar_command =
-        sidecar_command.args(["--socket", socket.to_str().unwrap_or("/tmp/baluard.sock")]);
+        sidecar_command.args(["--socket", socket.to_string_lossy().as_ref()]);
 
     // We MUST keep the stdout/stderr receiver alive — dropping it closes the
     // pipe and we lose the daemon's startup error output.
@@ -266,7 +311,6 @@ fn spawn_sidecar(app: &AppHandle, socket: &std::path::Path) -> Result<(), String
 /// Wait for daemon readiness AND the version handshake: a daemon that
 /// answers with the wrong version is stale sidecar code from before an
 /// update and must fail loudly, not serve old protocol behavior.
-#[cfg(unix)]
 fn wait_for_ready() -> Result<(), String> {
     for attempt in 0..50 {
         match send_request("ping", "") {
@@ -299,14 +343,8 @@ fn wait_for_ready() -> Result<(), String> {
     unreachable!("loop returns on every branch")
 }
 
-#[cfg(not(unix))]
-pub(crate) fn start_daemon(_app: &AppHandle) -> Result<(), String> {
-    Ok(())
-}
-
 /// Update-rollback: bring a daemon back after a failed install. Clears the
 /// suppression flag first — start_daemon refuses while it is set.
-#[cfg(unix)]
 pub(crate) fn restart_daemon(app: &AppHandle) -> Result<(), String> {
     RESPAWN_SUPPRESSED.store(false, Ordering::SeqCst);
     start_daemon(app)
@@ -316,11 +354,6 @@ pub(crate) fn restart_daemon(app: &AppHandle) -> Result<(), String> {
 /// fails before the daemon is gone, so normal lifecycle rules keep applying.
 pub(crate) fn clear_respawn_suppression() {
     RESPAWN_SUPPRESSED.store(false, Ordering::SeqCst);
-}
-
-#[cfg(not(unix))]
-pub(crate) fn restart_daemon(_app: &AppHandle) -> Result<(), String> {
-    Ok(())
 }
 
 /// Suppress daemon respawn ahead of stopping it for an install. Cleared by
