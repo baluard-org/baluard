@@ -13,7 +13,7 @@ cat > "$TMP/bin/fdroid" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >> "$FDROID_TEST_LOG"
 if [[ "$1" == init ]]; then
-  printf 'keystorepass: secret\nkeypass: secret\nrepo_url: old\n' > config.yml
+  printf 'keystorepass: secret\nkeypass: secret\nkeydname: CN=baluard, OU=F-Droid\nrepo_url: old\n' > config.yml
   printf 'key\n' > keystore.p12
 elif [[ "$1" == update ]]; then
   mkdir -p repo/status repo/diff
@@ -21,6 +21,14 @@ elif [[ "$1" == update ]]; then
   printf 'entry\n' > repo/entry.jar
   printf 'private paths\n' > repo/status/update.json
   printf 'diff\n' > "repo/diff/$(date +%s%N).json"
+fi
+EOF
+cat > "$TMP/bin/keytool" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$KEYTOOL_TEST_LOG"
+if [[ "$1" == -genkeypair ]]; then
+  printf 'regenerated\n' > "$KEYTOOL_FAKE_STORE"
 fi
 EOF
 cat > "$TMP/bin/apksigner" <<'EOF'
@@ -31,11 +39,13 @@ cat > "$TMP/bin/aapt" <<'EOF'
 #!/usr/bin/env bash
 printf "package: name='%s' versionCode='%s' versionName='0.1.0'\n" "${FAKE_PACKAGE:-app.baluard.mobile}" "${FAKE_VERSION_CODE:-1}"
 EOF
-chmod +x "$TMP/bin/fdroid" "$TMP/bin/apksigner" "$TMP/bin/aapt"
+chmod +x "$TMP/bin/fdroid" "$TMP/bin/apksigner" "$TMP/bin/aapt" "$TMP/bin/keytool"
 
 export HOME="$TMP/home"
 export PATH="$TMP/bin:$PATH"
 export FDROID_TEST_LOG="$TMP/fdroid.log"
+export KEYTOOL_TEST_LOG="$TMP/keytool.log"
+export KEYTOOL_FAKE_STORE="$TMP/work/keystore.p12"
 export BALUARD_FDROID_HOME="$TMP/work"
 export BALUARD_FDROID_EXPECTED_SIGNING_KEY="$TMP/expected-key"
 export ANDROID_HOME="$TMP/sdk"
@@ -50,6 +60,10 @@ grep -q "AllowedAPKSigningKeys: '9cdf3df5ef4a228d51cc5bfabaa303d65bd534c306c12aa
 grep -q 'https://baluard.app/fdroid/repo' "$TMP/work/config.yml"
 grep -q 'keystorepass: secret' "$TMP/work/config.yml"
 grep -q 'repo_url: old' "$TMP/work/config.yml.backup"
+grep -q 'keydname: CN=Baluard, O=Baluard Org, C=CL' "$TMP/work/config.yml"
+grep -q -- '-dname CN=Baluard, O=Baluard Org, C=CL' "$TMP/keytool.log"
+grep -q -- '-alias baluard' "$TMP/keytool.log"
+grep -q 'regenerated' "$TMP/work/keystore.p12"
 test "$(stat -c %a "$TMP/work/config.yml")" = 600
 test "$(stat -c %a "$TMP/work/config.yml.backup")" = 600
 test "$(stat -c %a "$TMP/work/keystore.p12")" = 600

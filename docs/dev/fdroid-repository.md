@@ -2,7 +2,9 @@
 
 Baluard operates a simple binary F-Droid repository at `https://baluard.app/fdroid/repo/`. Users can add that URL in F-Droid under Settings, Repositories, or open it on a device with F-Droid installed.
 
-The repository signing-key SHA-256 fingerprint is `C5A690013893C46F208A506AEA9217D37FF007C0A2B0A2514039FE28DD58C7A8`. Confirm this fingerprint when adding the repository.
+The repository signing-key SHA-256 fingerprint is `1CE90DCFE0FB1003F2F66999257B5E6F074E46EE453FB0D44F8CF8E13E6EEAAB`. Confirm this fingerprint when adding the repository.
+
+The signing key identifies as `CN=Baluard, O=Baluard Org, C=CL` with alias `baluard`. `fdroidserver` 2.4.5 ignores `fdroid init -d`, so the build script regenerates the keypair with `keytool` after init to enforce that identity; changing the fingerprint again requires regenerating the key and updating every published copy of it.
 
 ## Local setup
 
