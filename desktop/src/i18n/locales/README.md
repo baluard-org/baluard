@@ -16,6 +16,7 @@
 | `en.json` | English (default) |
 | `es.json` | Spanish |
 | `pt.json` | Portuguese |
+| `fr.json` | French |
 
 ## Guidelines
 

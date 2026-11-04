@@ -10,12 +10,13 @@ const AVAILABLE_LOCALES = [
   { code: "en", label: "English" },
   { code: "es", label: "Español" },
   { code: "pt", label: "Português" },
+  { code: "fr", label: "Français" },
 ];
 
 function detectOsLocale() {
   try {
     const lang = navigator.language?.split("-")[0];
-    if (lang === "en" || lang === "es" || lang === "pt") return lang;
+    if (lang === "en" || lang === "es" || lang === "pt" || lang === "fr") return lang;
   } catch {}
   return "en";
 }
