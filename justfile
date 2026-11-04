@@ -228,6 +228,7 @@ test-release-scripts:
 	./scripts/tests/test-build-nmh-manifests.sh
 	./scripts/tests/test-bump-version.sh
 	./scripts/tests/test-generate-updates-manifest.sh
+	./scripts/tests/test-stage-release-assets.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
@@ -1125,6 +1126,12 @@ cross-compile:
 	{{ linuxbrew_env }} cargo build --release --target "$target" || echo "SKIP: $target (add rustup target)"
 	done
 	echo "Done."
+
+# Stage the stable-name release set into release-upload/ (GitHub upload dir).
+# The Android APK is not part of dist/: pass it via a direct call, e.g.
+# scripts/stage-release-assets.sh --version 0.1.0 --apk ~/.baluard/fdroid/repo/<apk>.apk dist
+release-stage dist-dir="dist":
+	scripts/stage-release-assets.sh --version "{{ version }}" "{{ dist-dir }}"
 
 # Build release archives (tar.gz + checksums)
 release: build-release

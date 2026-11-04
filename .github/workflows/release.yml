@@ -228,10 +228,10 @@ jobs:
           cp target/release/baluard-daemon.exe "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE.exe"
           cp target/release/baluard.exe "desktop/src-tauri/binaries/baluard-$TRIPLE.exe"
 
-      # Desktop installers are deliberately NOT built: the desktop app's
-      # daemon IPC is a cfg(not(unix)) stub (Known Limitations #6), so a
-      # Windows installer would ship an app that cannot reach its daemon.
-      # Restore the msi/nsis bundle step when named-pipe IPC lands.
+      # Desktop installers are deliberately NOT built here: the NSIS
+      # installer is produced by the local pipeline
+      # (scripts/build-windows-installer.sh, named-pipe IPC shipped);
+      # CI installer parity is pending.
       - name: Collect CLI + daemon archive
         shell: bash
         run: |
@@ -256,6 +256,8 @@ jobs:
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         # Draft, never auto-published: the artifacts wait for human review
         # (signing state, version pin, smoke status) before going live.
         # On a tag push the tag names the release; on a manual dispatch the
@@ -269,19 +271,11 @@ jobs:
             TAG="$(node -p "require('fs').readFileSync('desktop/src-tauri/Cargo.toml','utf8').match(/^version\\s*=\\s*\"([^\"]+)\"/m)[1]")"
           fi
 
-          # Unversioned asset aliases for stable /releases/latest/download/ URLs
-          mkdir -p artifacts/aliases
-          for f in $(find artifacts -type f -name "*.AppImage" ! -name "*.sig"); do
-            cp "$f" artifacts/aliases/Baluard-x86_64.AppImage
-          done
-          for f in $(find artifacts -type f -name "*.deb"); do
-            cp "$f" artifacts/aliases/baluard_amd64.deb
-          done
-          for f in $(find artifacts -type f -name "*.rpm"); do
-            cp "$f" artifacts/aliases/baluard.x86_64.rpm
-          done
-
-          gh release create "$TAG" --draft --generate-notes --title "$TAG" artifacts/*/*
+          # Stable-name release set: the stage script maps versioned
+          # artifact names to their unversioned download names (the same
+          # mapping the local pipeline uses) and signs SHA256SUMS.
+          scripts/stage-release-assets.sh --version "$TAG" artifacts
+          gh release create "$TAG" --draft --generate-notes --title "$TAG" release-upload/*
 
   # D79: the channel manifest is the ONLY mutable piece (fixed updates-beta /
   # updates-stable tags hold it; versioned releases hold immutable artifacts)
@@ -337,6 +331,7 @@ jobs:
           esac
           gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
               --title "$CHANNEL" \
               --notes "Moving manifest for the $CHANNEL updater channel. Do not delete: installed apps poll this release for updates."
           gh release upload "$CHANNEL" --repo "$GITHUB_REPOSITORY" latest.json --clobber
