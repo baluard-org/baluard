@@ -271,6 +271,13 @@ e2e-desktop *ARGS:
 # app installed, seed vault present; see docs/dev/release-smoke-testing.md.
 e2e-windows *ARGS:
 	bash e2e/windows/run-smoke-windows.sh {{ARGS}}
+
+# macOS release smoke in the quickemu Sequoia guest over the embedded
+# WebDriver port (SSH-tunneled). Same prerequisites shape as e2e-windows:
+# VM running, Remote Login reachable with the smoke key, Baluard-smoke.app
+# installed, seed vault present; see docs/dev/release-smoke-testing.md.
+e2e-macos *ARGS:
+	bash e2e/macos/run-smoke-macos.sh {{ARGS}}
 # Extension: real Chromium + real NMH + real daemon + the bridge pairing
 # ceremony (Phase 4, Ring 1). Installs playwright deps
 # into e2e/extension on first run.
