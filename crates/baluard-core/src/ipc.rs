@@ -422,6 +422,17 @@ pub struct UserSecurityAttributes {
 #[cfg(windows)]
 impl UserSecurityAttributes {
     pub fn as_ptr(&mut self) -> *mut SECURITY_ATTRIBUTES {
+        // Re-point the SD's DACL after the move: the stored Dacl still
+        // references the buffer's pre-move stack slot.
+        use windows_sys::Win32::Security::SetSecurityDescriptorDacl;
+        unsafe {
+            SetSecurityDescriptorDacl(
+                &mut self.sd as *mut _ as *mut _,
+                1,
+                self.acl.as_ptr() as *const _,
+                0,
+            );
+        }
         self.sa.lpSecurityDescriptor = &mut self.sd as *mut _ as *mut _;
         &mut self.sa
     }
@@ -450,9 +461,13 @@ fn own_sid() -> Option<Vec<u8>> {
             return None;
         }
         let user = &*(buf.as_ptr() as *const TOKEN_USER);
-        let psid = &user.User.Sid as *const _ as *mut _;
+        let psid = user.User.Sid;
+        // TokenUser.User.Sid points into `buf`; copy from the pointer's
+        // target, not from the buffer start (which holds the header).
         let n = GetLengthSid(psid) as usize;
-        Some(buf[..n.min(buf.len())].to_vec())
+        let mut out = vec![0u8; n];
+        std::ptr::copy_nonoverlapping(psid as *const u8, out.as_mut_ptr(), n);
+        Some(out)
     }
 }
 
@@ -515,7 +530,7 @@ fn server_is_same_user(pid: u32) -> bool {
             return false;
         }
         let user = &*(buf.as_ptr() as *const TOKEN_USER);
-        let theirs = &user.User.Sid as *const _ as *mut _;
+        let theirs = user.User.Sid;
         EqualSid(own.as_ptr() as *mut _, theirs) != 0
     }
 }
