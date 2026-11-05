@@ -11,16 +11,11 @@ Absolute primary focuses: security, privacy, and easy to use for non-technical u
 **Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell. Browser: Chrome + Firefox (MV3). Mobile: Android, iOS.
 
 ## STATUS
-Baluard is pre-1.0 Work In Progress. **Breakage is expected and OK.** Move things forward; do not preserve backwards compatibility at the cost of progress. The vault format, IPC routes/JSON payloads, CLI flags, protobuf schema, and config shapes may all change without notice, deprecation period, shim, or migration path. No stable API/ABI contract exists yet.
+Baluard is public beta 0.1.x, bug fixing releases. **No breaking changes.** Asume users already are operating with Baluard.
 
 Implications for contributors (human + agent):
-* Prefer the cleaner design over the compatible one.
-* Breaking a route, flag, field, or format? Just do it, and update every call site in the same change.
-* No deprecation periods, compat layers, or feature flags to keep old behavior alive (yet).
-* **Breakage is not UX debt.** Wire-format, vault-format, and data breaks (old files undecryptable, size caps changed, storage reshaped) are acceptable any time and need no migration or shim. Do not weigh them as user-experience regressions when evaluating a change. The only evaluation axis is *ongoing ease of use* for non-technical users (flows, friction, confusion in the current experience).
-* **Security can push format breaks.** If a security fix requires breaking a format, route, or storage layout, do it: during alpha/beta, security outranks format stability. It never outranks ease of use: prefer designs that keep flows simple (warn instead of block, confirm instead of deny) and surface the tradeoff when they conflict.
-* **Still load-bearing (NOT "breakage"):** the crypto/security invariants in CODING STANDARDS (AES-256-GCM, Argon2id, X25519/Ed25519, HPKE, zeroize-on-drop, 0600 socket, token-gating). Those must not regress.
-* **Sharing (multi-user): COMPLETE** — every planned phase shipped, including the full S4 power pack and the post-pack hardening rounds (signed approvals, role-aware flipped keys, the admin marker, the removed-device notice, recovery-phrase rotation). `docs/adr/0085-sharing.md` and `docs/adr/0087-power-pack.md` are the closed design records; the D-records in `docs/adr/` (ADR 0062-0077) carry the per-slice history. Build S1a+ features on these foundations, not on pre-P assumptions.
+* **Security can push format breaks, with a migration path.** If a security fix requires breaking a format, route, or storage layout, do it, with a migration path for existing users.
+* **DONT break:** the crypto/security invariants in CODING STANDARDS (AES-256-GCM, Argon2id, X25519/Ed25519, HPKE, zeroize-on-drop, 0600 socket, token-gating). Those must not regress.
 
 ## STRUCTURE
 ```
