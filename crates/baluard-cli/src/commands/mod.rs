@@ -5264,11 +5264,10 @@ pub fn handle_passkey_delete(
                         return handle.delete_cipher(uuid).map_err(|e| e.into());
                     }
                     let updated_data = baluard_core::types::LoginData {
-                        fido2_credentials: if fido2_list.is_empty() {
-                            None
-                        } else {
-                            Some(fido2_list)
-                        },
+                        // None means "don't touch" to update_cipher's merge;
+                        // an explicit empty list is the only way to remove
+                        // the last passkey (same trap as the daemon route).
+                        fido2_credentials: Some(fido2_list),
                         ..data.clone()
                     };
                     let input = baluard_core::types::CipherInput {
