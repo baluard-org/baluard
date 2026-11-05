@@ -135,6 +135,18 @@ fn main() -> anyhow::Result<()> {
     #[cfg(feature = "fido2")]
     baluard_core::hwkey::install(baluard_core::hwkey::fido::store());
 
+    // Self-register the browser-bridge manifests: macOS has no installer
+    // step to drop them, and on Windows the installer registry keys point
+    // at a manifest file only the daemon can write with correct path
+    // escaping (crates/baluard-core/src/nmh_register.rs). Best effort: a
+    // denied write must not block the daemon.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    match baluard_core::nmh_register::register_for_current_exec() {
+        Ok(n) if n > 0 => log::debug!("registered {n} native messaging host manifests"),
+        Ok(_) => {}
+        Err(e) => log::warn!("native messaging host registration failed: {e}"),
+    }
+
     // Test-fixture kill switch: when the spawning parent goes away
     // (SIGKILLed test runner, OOM kill, crash), no Drop guard can run,
     // so the daemon would sit orphaned forever — 1816 of them once
