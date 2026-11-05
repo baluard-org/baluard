@@ -48,6 +48,7 @@ make_artifacts() {
   : > "$ART/baluard-extension-${VER}-chrome.zip"
   : > "$ART/baluard-extension-${VER}-firefox.zip"
   : > "$ART/baluard-extension-${VER}-chrome.zip.sig"
+  : > "$ART/baluard-${VER}-macos-aarch64-non-notarized.zip"
   : > "$ART/SHA256SUMS"
   : > "$ART/SHA256SUMS.sig"
   : > "$ART/checksums.txt"
@@ -59,6 +60,7 @@ EXPECT=(
   Baluard-cli-amd64.tar.gz
   Baluard-amd64-setup.exe Baluard-amd64-setup.exe.sig
   Baluard-android.apk
+  Baluard-macos-aarch64-non-notarized.zip
   Baluard-extension-chrome.zip Baluard-extension-firefox.zip
   SHA256SUMS SHA256SUMS.sig
 )
