@@ -25,12 +25,21 @@
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost",
-      "capabilities": ["default"]
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm", "appimage", "dmg", "app", "nsis"],
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage",
+      "dmg",
+      "app",
+      "nsis"
+    ],
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
@@ -57,7 +66,10 @@
           "libssl3t64",
           "libssh2-1"
         ],
-        "recommends": ["gnome-keyring", "libu2f-udev"],
+        "recommends": [
+          "gnome-keyring",
+          "libu2f-udev"
+        ],
         "files": {
           "/usr/lib/mozilla/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/firefox.json",
           "/usr/lib/mozilla/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/firefox-legacy.json",
@@ -78,7 +90,9 @@
           "openssl-libs",
           "libssh2"
         ],
-        "recommends": ["gnome-keyring"],
+        "recommends": [
+          "gnome-keyring"
+        ],
         "files": {
           "/usr/lib64/mozilla/native-messaging-hosts/app.baluard.browser.json": "nmh-manifests/firefox.json",
           "/usr/lib64/mozilla/native-messaging-hosts/xyz.actitud.baluard.json": "nmh-manifests/firefox-legacy.json",
@@ -98,8 +112,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUwNzA3OTA4MTFFNTQ1NDAKUldSQVJlVVJDSGx3NEdZN2ZOczE0YjFwMzl3dG5TaW9WbWNxQm1XUXc1SzJMRG82SGhXTFp6OEsK",
-      "requireSignedVersion": true,
-      "allowDowngrades": false,
+      "requireSignedVersion": false,
       "windows": {
         "installMode": "passive"
       }
