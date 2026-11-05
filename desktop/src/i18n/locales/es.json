@@ -233,7 +233,8 @@
     "sshShowPrivate": "Mostrar clave privada",
     "collectionLabel": "Carpeta compartida",
     "noCollection": "Sin carpeta compartida",
-    "movedToast": "Entrada movida"
+    "movedToast": "Entrada movida",
+    "reorderUri": "Arrastra para reordenar"
   },
   "settings": {
     "faviconLabel": "Mostrar iconos de sitios web",

@@ -265,7 +265,8 @@
     "sshShowPrivate": "Mostrar chave privada",
     "collectionLabel": "Pasta compartilhada",
     "noCollection": "Sem pasta compartilhada",
-    "movedToast": "Entrada movida"
+    "movedToast": "Entrada movida",
+    "reorderUri": "Arraste para reordenar"
   },
   "settings": {
     "faviconLabel": "Exibir ícones de sites",
