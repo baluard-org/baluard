@@ -6,6 +6,7 @@ Notable user-facing changes per release.
 
 - The desktop app now brings the daemon back automatically after a crash, instead of showing "Daemon is not running" until a manual restart.
 - A security-key enumeration crash or hang can no longer take the daemon down: the HID probe runs in a short-lived child process, and a hung probe is killed after five seconds instead of stalling shutdown.
+- macOS builds are now published on the releases page as a zip named non-notarized: the app inside is ad-hoc signed, so Gatekeeper's quarantine marker must be removed once before first launch (development builds on Apple Silicon; an x86_64 build exists for local VM debugging only and is not published).
 - The in-app "What is git?" explainer pages are gone on desktop and mobile. The link now opens <https://baluard.app/what-the-git/> in the system browser, so the explainer can be corrected without shipping an app release.
 
 ## 0.1.1 - 2026-11-04
