@@ -71,27 +71,8 @@ internal val EN: Map<String, String> = mapOf(
     "onboarding.featureKeysTitle" to "Your keys, your data",
     "onboarding.featureKeysDesc" to "One master password, one recovery phrase. Your vault stays yours.",
 
-    // "what is git?" explainer (shown in onboarding + settings, both platforms)
+    // git explainer moved to the website; only the link label stays local
     "gitWhat.link" to "What is git?",
-    "gitWhat.title" to "What is git, in plain words?",
-    "gitWhat.p1" to
-        "Baluard keeps your vault in a git repository. Git is a time-tested tool (born in 2005, " +
-            "running millions of projects) whose whole job is keeping copies of your files in sync " +
-            "across devices and remembering every change.",
-    "gitWhat.p2" to
-        "Think of the version history in Google Docs, or save points in a video game: every change " +
-            "gets its own entry, nothing is ever silently overwritten, and any device can catch up " +
-            "with the latest version at any time.",
-    "gitWhat.p3" to
-        "The copies live in an account that you own, like GitHub, GitLab, or Codeberg. Baluard " +
-            "encrypts everything on your device first, so your account only ever stores scrambled " +
-            "data that only you can open.",
-    "gitWhat.p4" to
-        "There is no Baluard server. Your vault never passes through computers we run.",
-    "gitWhat.diagramDevice" to "This device",
-    "gitWhat.diagramAccount" to "Your git account",
-    "gitWhat.diagramOther" to "Your other devices",
-    "gitWhat.diagramEncrypted" to "encrypted",
 
     // create vault
     "onboarding.createButton" to "Create vault",

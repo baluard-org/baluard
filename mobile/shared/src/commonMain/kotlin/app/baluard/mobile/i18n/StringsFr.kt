@@ -70,17 +70,8 @@ internal val FR: Map<String, String> = mapOf(
     "onboarding.featureKeysTitle" to "Passkeys et clés de sécurité",
     "onboarding.featureKeysDesc" to "Connectez-vous sans mot de passe grâce aux clés FIDO2/WebAuthn et clés de sécurité matérielles (YubiKey).",
 
-    // "what is git?" explainer (shown in onboarding + settings, both platforms)
+    // git explainer moved to the website; only the link label stays local
     "gitWhat.link" to "En savoir plus sur l'architecture de Baluard",
-    "gitWhat.title" to "Comment fonctionne la synchronisation ?",
-    "gitWhat.p1" to "Baluard n'a aucun serveur centralisé. Votre coffre est un dépôt Git ordinaire que vous hébergez sur GitHub, GitLab, Codeberg ou n'importe quel serveur Git.",
-    "gitWhat.p2" to "Chaque mot de passe, note et clé d'accès est chiffré individuellement sur cet appareil avant de quitter votre téléphone. Le serveur Git ne voit que des données chiffrées méconnaissables.",
-    "gitWhat.p3" to "Lorsque vous apportez une modification, Baluard l'enregistre dans Git comme un commit chiffré. Vos autres appareils téléchargent ces commits et fusionnent les changements.",
-    "gitWhat.p4" to "Pour démarrer la synchronisation, configurez un dépôt distant dans les paramètres du coffre. Si vous ne configurez aucun dépôt distant, votre coffre reste strictement local sur cet appareil.",
-    "gitWhat.diagramDevice" to "Cet appareil",
-    "gitWhat.diagramAccount" to "Votre compte Git",
-    "gitWhat.diagramOther" to "Vos autres appareils",
-    "gitWhat.diagramEncrypted" to "Secrets chiffrés",
 
     // create vault
     "onboarding.createButton" to "Créer le coffre",

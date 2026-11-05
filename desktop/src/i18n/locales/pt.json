@@ -788,16 +788,7 @@
     "pairedOn": "Conectada em"
   },
   "gitWhat": {
-    "link": "O que é git?",
-    "title": "O que é git, em palavras simples?",
-    "p1": "O Baluard armazena seu cofre em um repositório git. Git é uma ferramenta consagrada (criada em 2005 e utilizada por milhões de projetos) cuja única função é manter cópias dos seus arquivos sincronizadas entre dispositivos e registrar cada alteração.",
-    "p2": "Pense no histórico de versões de um documento ou nos pontos de salvamento de um jogo: cada alteração ganha seu próprio registro, nada é substituído silenciosamente e qualquer dispositivo pode se atualizar com a versão mais recente a qualquer momento.",
-    "p3": "As cópias ficam em uma conta que pertence a você, como GitHub, GitLab ou Codeberg. O Baluard criptografa tudo primeiro no seu dispositivo, de modo que sua conta só armazena dados codificados que apenas você pode abrir.",
-    "p4": "Não há nenhum servidor do Baluard. Seu cofre nunca passa por computadores administrados por nós.",
-    "diagramDevice": "Este dispositivo",
-    "diagramAccount": "Sua conta git",
-    "diagramOther": "Seus outros dispositivos",
-    "diagramEncrypted": "criptografado"
+    "link": "O que é git?"
   },
   "people": {
     "inviteTitle": "Convidar alguém",

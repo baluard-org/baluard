@@ -2,6 +2,7 @@ package app.baluard.mobile.onboarding
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import app.baluard.mobile.platform.openUrl
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.baluard.mobile.i18n.t
@@ -51,11 +53,12 @@ import app.baluard.mobile.ui.components.BaluardCard
 import app.baluard.mobile.ui.components.BaluardLogoBadge
 import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
-import app.baluard.mobile.ui.components.GitExplainerDialog
-import app.baluard.mobile.ui.components.GitWhatLink
 import app.baluard.mobile.ui.components.rememberShareOpenFlow
 import app.baluard.mobile.ui.E2eTags
 import androidx.compose.ui.platform.testTag
+/** The plain-words git explainer lives on the website, not in the app. */
+private const val GIT_WHAT_URL = "https://baluard.app/what-the-git/"
+
 /**
  * First-launch root styled with Baluard brand cards and feature highlights.
  */
@@ -65,7 +68,6 @@ fun OnboardingScreen(
     onOpenProvider: () -> Unit = {},
     onRecovered: (path: String) -> Unit = {},
 ) {
-    var gitHelpOpen by remember { mutableStateOf(false) }
     BaluardAmbientBackground {
         Column(
             modifier = Modifier
@@ -128,7 +130,16 @@ fun OnboardingScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            GitWhatLink(onOpen = { gitHelpOpen = true })
+            // Explainer lives on the website; git stays invisible in-app.
+            Text(
+                text = t("gitWhat.link"),
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { openUrl(GIT_WHAT_URL) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
 
             Spacer(Modifier.height(12.dp))
 
@@ -160,9 +171,6 @@ fun OnboardingScreen(
                 )
             }
         }
-    }
-    if (gitHelpOpen) {
-        GitExplainerDialog(onDismiss = { gitHelpOpen = false })
     }
 }
 
