@@ -29,6 +29,7 @@ pub mod vault;
 
 pub mod error;
 pub mod types;
+pub mod wire;
 
 pub use error::BaluardError;
 

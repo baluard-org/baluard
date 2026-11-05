@@ -76,6 +76,109 @@ fn get_json_mode_emits_valid_json() {
     assert_eq!(parsed["name"], "GitHub");
     assert_eq!(parsed["username"], "octocat");
     assert_eq!(parsed["password"], "supersecret");
+    // Wire contract: nested kind object alongside the flat fields.
+    assert_eq!(parsed["kind"]["data"]["username"], "octocat");
+}
+
+#[test]
+fn get_json_redacts_passkey_key_material() {
+    // The nested kind must not leak passkey private_key/prf_key through
+    // direct-mode JSON; flat fields keep their values by wire contract.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    init_vault(tmp.path(), "Redact", "redact-get-vault");
+    let cipher = serde_json::json!({
+        "name": "GitHub",
+        "kind": {
+            "type": "login",
+            "data": {
+                "username": "u@example.com",
+                "password": "hunter2",
+                "uris": [],
+                "totp_uri": null,
+                "autofill_on_page_load": false,
+                "password_revision_date": null,
+                "favicon": null,
+                "fido2_credentials": [{
+                    "credential_id": "cred-redact",
+                    "key_type": "public-key",
+                    "key_algorithm": "ECDSA_SHA256",
+                    "key_curve": "P256",
+                    "key_value": "AAAA",
+                    "rp_id": "github.com",
+                    "rp_name": "GitHub",
+                    "user_handle": [104u8, 97, 110, 100, 108, 101],
+                    "user_name": "u@example.com",
+                    "user_display_name": "U",
+                    "counter": 0u32,
+                    "aaguid": "00000000-0000-0000-0000-000000000000",
+                    "prf_key": [1u8, 2, 3],
+                    "private_key": [7u8, 8, 9],
+                    "private_key_missing": false,
+                    "creation_date": 1735689600u64,
+                    "name": "YubiKey"
+                }]
+            }
+        },
+        "folder_id": null,
+        "favorite": false,
+        "notes": null,
+        "custom_fields": [],
+        "created_at": null,
+        "password_history": [],
+        "attachments": [],
+        "archived": false,
+        "reprompt": false,
+        "tags": []
+    });
+    let json_path = tmp.path().join("cipher.json");
+    std::fs::write(&json_path, serde_json::to_string_pretty(&cipher).unwrap()).expect("write json");
+
+    let assert = baluard(tmp.path())
+        .arg("add")
+        .arg("json")
+        .arg(json_path.to_string_lossy().to_string())
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8 stdout");
+    let re = regex::Regex::new(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+        .expect("compile uuid regex");
+    let id = re.find(&out).expect("cipher id").as_str().to_string();
+
+    let assert = baluard(tmp.path())
+        .arg("get")
+        .arg(&id)
+        .arg("--output")
+        .arg("json")
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8 stdout");
+    let parsed: serde_json::Value = serde_json::from_str(out.trim()).expect("json output");
+
+    let nested_cred = &parsed["kind"]["data"]["fido2_credentials"][0];
+    assert!(
+        nested_cred.get("private_key").is_none(),
+        "nested private_key leaked"
+    );
+    assert!(
+        nested_cred.get("prf_key").is_none(),
+        "nested prf_key leaked"
+    );
+    assert_eq!(nested_cred["credential_id"], "cred-redact");
+    assert_eq!(nested_cred["private_key_missing"], false);
+
+    let flat_summary = &parsed["fido2_credentials"][0];
+    assert!(
+        flat_summary.get("private_key").is_none(),
+        "flat summary leaked private_key"
+    );
+    assert!(
+        flat_summary.get("prf_key").is_none(),
+        "flat summary leaked prf_key"
+    );
+
+    // Flat fields keep their values; redaction is nested-kind-only.
+    assert_eq!(parsed["password"], "hunter2");
+    assert_eq!(parsed["kind"]["data"]["password"], "hunter2");
 }
 
 #[test]

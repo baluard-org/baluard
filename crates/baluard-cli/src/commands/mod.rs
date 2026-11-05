@@ -790,31 +790,9 @@ pub fn handle_get(
 
             match handle.get_cipher(cipher_id)? {
                 CipherRead::Decrypted(c) => match output {
-                    "json" => {
-                        // Full serialization: parity with the daemon's
-                        // vault.get — hand-picked projections silently
-                        // dropped fields (SshKey, Card code, IBAN, ...).
-                        // Daemon parity: flat top-level fields AND the
-                        // nested kind (scripts and the desktop read both).
-                        let mut json_obj = serde_json::json!({
-                            "id": c.id.to_string(),
-                            "name": c.name,
-                            "type": serde_json::to_value(c.kind.cipher_type()).unwrap_or(serde_json::Value::Null),
-                            "notes": c.notes,
-                            "tier": format!("{:?}", c.tier),
-                            "epoch": c.key_epoch,
-                            "seq": c.update_seq,
-                            "kind": serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null),
-                        });
-                        let flat = json_obj["kind"]
-                            .as_object()
-                            .map(|m| m.clone())
-                            .unwrap_or_default();
-                        for (k, v) in flat {
-                            json_obj[k] = v;
-                        }
-                        println!("{json_obj}");
-                    }
+                    // Shared serializer: identical JSON to the daemon's
+                    // vault.get (flat top-level fields AND the nested kind).
+                    "json" => println!("{}", baluard_core::wire::cipher_to_json(&c)),
                     "text" => {
                         println!("Cipher: {}", c.id);
                         println!("  Name:      {}", c.name);
