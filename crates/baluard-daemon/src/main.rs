@@ -135,18 +135,6 @@ fn main() -> anyhow::Result<()> {
     #[cfg(feature = "fido2")]
     baluard_core::hwkey::install(baluard_core::hwkey::fido::store());
 
-    // Self-register the browser-bridge manifests: macOS has no installer
-    // step to drop them, and on Windows the installer registry keys point
-    // at a manifest file only the daemon can write with correct path
-    // escaping (crates/baluard-core/src/nmh_register.rs). Best effort: a
-    // denied write must not block the daemon.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    match baluard_core::nmh_register::register_for_current_exec() {
-        Ok(n) if n > 0 => log::debug!("registered {n} native messaging host manifests"),
-        Ok(_) => {}
-        Err(e) => log::warn!("native messaging host registration failed: {e}"),
-    }
-
     // Test-fixture kill switch: when the spawning parent goes away
     // (SIGKILLed test runner, OOM kill, crash), no Drop guard can run,
     // so the daemon would sit orphaned forever — 1816 of them once
@@ -195,6 +183,26 @@ fn main() -> anyhow::Result<()> {
                     .help("Unix socket path (default: platform-specific)"),
             )
             .get_matches();
+
+    // Self-register the browser-bridge manifests: macOS has no installer
+    // step to drop them, and on Windows the installer registry keys point
+    // at a manifest file only the daemon can write with correct path
+    // escaping (crates/baluard-core/src/nmh_register.rs). Runs in the
+    // serve path only, after clap; best effort, and failures log at error
+    // because release builds drop warn-level output.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let report = baluard_core::nmh_register::register_for_current_exec();
+        for e in &report.errors {
+            log::error!("browser bridge registration: {e}");
+        }
+        if report.written > 0 {
+            log::debug!(
+                "registered {} native messaging host manifests",
+                report.written
+            );
+        }
+    }
 
     // Resolve which vault to serve. Priority: --vault-slug, --vault-path, registry active_vault, default.
     let explicit_slug = matches.get_one::<String>("vault-slug").map(|s| s.as_str());
