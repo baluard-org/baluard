@@ -21,16 +21,18 @@ function fieldCls(f) {
 }
 
 /** Flatten nested folder tree into a list with depth for indentation.
+ *  Alphabetical at every level (numeric-aware, case-insensitive).
  *  Guards against cycles via a seen Set. */
 function flatFolderTree(folders) {
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
   const result = [];
-  const roots = folders.filter(f => !f.parent_id);
+  const roots = folders.filter(f => !f.parent_id).sort(byName);
   function walk(list, depth, seen) {
     for (const folder of list) {
       if (seen.has(folder.id)) continue;
       seen.add(folder.id);
       result.push({ id: folder.id, name: folder.name, depth });
-      const children = folders.filter(f => f.parent_id === folder.id);
+      const children = folders.filter(f => f.parent_id === folder.id).sort(byName);
       if (children.length) walk(children, depth + 1, seen);
     }
   }
