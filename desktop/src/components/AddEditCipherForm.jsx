@@ -1,10 +1,10 @@
-import { createSignal, Show, For, onSettled } from "solid-js";
+import { createSignal, Show, For, onSettled, onCleanup } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, formatCardNumber } from "../lib/utils.js";
 import { FIELD_LABEL, handleCardInput } from "../lib/helpers.js";
 import { getSchema, optionLabel } from "../lib/cipherSchema.js";
 import { daemon } from "../lib/daemon.js";
-import { IconX, IconStar, IconEye, IconEyeOff, IconPlus } from "./Icon.jsx";
+import { IconX, IconStar, IconEye, IconEyeOff, IconPlus, IconGrip } from "./Icon.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 import SshKeyGenerator from "./SshKeyGenerator.jsx";
 
@@ -148,6 +148,21 @@ export default function AddEditCipherForm(props) {
     urisRef = urisRef.filter((_, i) => i !== index);
     setUris([...urisRef]);
   }
+
+  function moveUri(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= urisRef.length || to >= urisRef.length) return;
+    const [row] = urisRef.splice(from, 1);
+    urisRef.splice(to, 0, row);
+    setUris([...urisRef]);
+  }
+
+  // Rows are only draggable while the grip is pressed, so text selection
+  // inside the URI input keeps working. window mouseup disarms a press
+  // that never became a drag.
+  const [dragUri, setDragUri] = createSignal(null);
+  const [armDrag, setArmDrag] = createSignal(null);
+  onCleanup(() => window.removeEventListener("mouseup", disarmDrag));
+  function disarmDrag() { setArmDrag(null); setDragUri(null); }
 
   function updateUri(index, field, value) {
     Object.assign(urisRef[index], { [field]: value });
@@ -299,7 +314,23 @@ export default function AddEditCipherForm(props) {
           </div>
           <For each={uris()}>
             {(uriObj, index) => (
-              <div class="flex gap-2 mb-2">
+              <div
+                class={`flex gap-2 mb-2 ${dragUri() === index() ? "opacity-40" : ""}`}
+                draggable={armDrag() === index()}
+                onDragStart={e => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(index())); setDragUri(index()); }}
+                onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+                onDrop={e => { e.preventDefault(); const from = Number(e.dataTransfer.getData("text/plain")); if (!Number.isNaN(from)) moveUri(from, index()); disarmDrag(); }}
+                onDragEnd={disarmDrag}
+              >
+                <button
+                  type="button"
+                  title={t("entry.reorderUri")}
+                  aria-label={t("entry.reorderUri")}
+                  onPointerDown={() => setArmDrag(index())}
+                  class="pl-1 pr-0.5 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-grab active:cursor-grabbing transition-colors shrink-0 flex items-center touch-none"
+                >
+                  <IconGrip class="w-4 h-4" />
+                </button>
                 <input placeholder={t("entry.uriPlaceholder")} class={INPUT_CLS + " flex-1"} value={uriObj.uri || ""} onInput={e => updateUri(index(), "uri", e.target.value)} {...SECURE_INPUT} />
                 <select class="px-2 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-muted)] outline-none" value={uriObj.match_strategy || ""} onChange={e => updateUri(index(), "match_strategy", e.target.value || null)}>
                   <option value="">{t("entry.matchDefault")}</option>

@@ -303,6 +303,7 @@ internal val EN: Map<String, String> = mapOf(
     "edit.uriPlaceholder" to "https://example.com",
     "edit.addUri" to "Add website",
     "edit.removeUri" to "Remove website",
+    "edit.reorderUri" to "Drag to reorder",
     "edit.match" to "Match detection",
     "edit.match.default" to "Default",
     "edit.match.domain" to "Domain",

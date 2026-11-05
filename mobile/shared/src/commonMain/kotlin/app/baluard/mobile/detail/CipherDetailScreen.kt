@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
@@ -47,6 +48,7 @@ import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.platform.rememberRecoverySheetSaver
 import app.baluard.mobile.ui.toast.Toast
+import app.baluard.mobile.platform.copyToClipboard
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -530,6 +532,20 @@ fun CipherDetailScreen(
                                     imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                                     contentDescription = t("detail.openInBrowser"),
                                     tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    copyToClipboard(uri)
+                                    Toast.success(t("common.copied"))
+                                },
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = t("common.copy"),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp),
                                 )
                             }

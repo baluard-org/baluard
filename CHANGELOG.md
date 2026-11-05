@@ -9,6 +9,7 @@ Notable user-facing changes per release.
 - One-time codes now work when an entry carries just the secret instead of a full otpauth:// URI, so imports from other password managers show codes without editing every entry.
 - Desktop folders are listed alphabetically at every level instead of in creation order.
 - Password history dates now read YYYY-MM-DD instead of an ambiguous locale date.
+- Entries with several websites now list them all in the entry view, each with open and copy buttons, and the order can be changed by dragging (first one is the primary).
 
 ## 0.1.3 - 2026-11-05
 
