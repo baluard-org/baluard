@@ -665,6 +665,34 @@ pub async fn disconnect(provider: Provider) -> Result<(), BaluardError> {
 }
 
 /// Enroll a device into an existing vault pre-unlock using the 24-word recovery phrase.
+/// Commit every artifact a phrase enrollment just wrote (roster extension,
+/// proof, keywrap, member binding) in ONE signed commit before the caller's
+/// unlock can trigger the pull tail. A pull over these uncommitted writes
+/// silently discarded the roster extension and poisoned the vault for every
+/// peer (2026-11-05 cross-device outage). Best-effort: on failure the
+/// enrollment stands and the next commit_all sweeps the files; the
+/// dirty-worktree pull guard closes the loss window.
+pub fn commit_enrollment_bundle(
+    vault_path: &Path,
+    device_id: uuid::Uuid,
+    devkey_seal: Option<&[u8; 32]>,
+) {
+    if !vault_path.join(".git").exists() {
+        return;
+    }
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        vault_path,
+        &device_id.to_string(),
+        devkey_seal,
+    );
+    let outcome = engine
+        .open_repo()
+        .and_then(|repo| engine.commit_all(&repo, "vault update").map(|_| ()));
+    if let Err(e) = outcome {
+        log::warn!("enrollment commit failed (the next sync will carry it): {e}");
+    }
+}
+
 pub fn enroll_device_pre_unlock(
     vault_path: &Path,
     master_password: &str,
@@ -807,6 +835,10 @@ pub fn enroll_device_pre_unlock(
             }
         }
     }
+
+    // The device-privkey file is on disk now, so the enrollment commit can
+    // sign. Must land BEFORE the caller's unlock spawns the pull tail.
+    commit_enrollment_bundle(vault_path, result.device_id, None);
 
     let mut handle = VaultHandle::open(vault_path)?;
     handle.unlock(master_password)?;
@@ -1213,6 +1245,63 @@ mod tests {
 
         sweep_partial_clones(&target_dir);
         assert!(!partial_dir.exists());
+    }
+
+    /// S1a regression (2026-11-05 outage): the phrase enrollment wrote the
+    /// roster extension as an uncommitted worktree edit, and the unlock
+    /// tail's fast-forward pull wiped it — the phone then shipped an
+    /// enrollment proof without its roster entry and every peer refused
+    /// the batch. The enrollment must land as one signed commit before it
+    /// returns.
+    #[test]
+    fn enroll_pre_unlock_commits_the_roster_extension() {
+        use baluard_core::sync::engine::SyncEngine;
+        use baluard_core::vault::creation::VaultCreator;
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("v");
+        let (_handle, secrets) = VaultCreator::new(&vault, "founder-pw-123", "Founder")
+            .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
+            .execute()
+            .unwrap();
+        let phrase = secrets.recovery_phrase.phrase();
+
+        let new_device_id = {
+            let handle =
+                enroll_device_pre_unlock(&vault, "founder-pw-123", &phrase, "Phone").unwrap();
+            handle.device_id
+        };
+
+        let engine = SyncEngine::new(&vault, &new_device_id.to_string(), None);
+        let repo = engine.open_repo().unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let tree = head.tree().unwrap();
+        let devices_entry = tree
+            .get_path(std::path::Path::new("meta/devices.json"))
+            .unwrap();
+        let blob = repo.find_blob(devices_entry.id()).unwrap();
+        let roster: serde_json::Value = serde_json::from_slice(blob.content()).unwrap();
+        let ids: Vec<String> = roster["devices"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert!(
+            ids.contains(&new_device_id.to_string()),
+            "roster extension missing from HEAD commit: {ids:?}"
+        );
+        assert!(
+            tree.get_path(std::path::Path::new("meta/enrollments"))
+                .is_ok(),
+            "no enrollment proof in the HEAD commit"
+        );
+        let worktree = std::fs::read(vault.join("meta/devices.json")).unwrap();
+        assert_eq!(
+            worktree,
+            blob.content(),
+            "devices.json differs from HEAD after enroll"
+        );
     }
 
     #[test]
