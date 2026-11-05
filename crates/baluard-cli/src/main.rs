@@ -2,6 +2,7 @@
 
 mod client;
 mod commands;
+mod update;
 
 use baluard_core::types::{CipherInput, CipherKind, LoginData};
 use clap::{Parser, Subcommand};
@@ -426,6 +427,9 @@ enum Commands {
 
     /// Ping the daemon to check connectivity.
     Ping,
+
+    /// Update the CLI + daemon binaries in place from the latest release.
+    SelfUpdate,
 
     /// Manage vaults (list, switch, prune stale).
     Vaults {
@@ -1820,6 +1824,12 @@ fn main() {
 
     let cli = Cli::parse();
 
+    // Daily update check + notice; skipped for self-update (it fetches on
+    // its own) and run (D80 agents parse output, no noise).
+    if !matches!(cli.command, Commands::SelfUpdate | Commands::Run { .. }) {
+        update::startup_notice();
+    }
+
     // Resolve --vault flag.
     //
     // Phase 6 / M2: under the keep-unlocked / switch-pointer model the daemon
@@ -2279,6 +2289,10 @@ fn main() {
 
         Commands::AttachList { cipher_id } => {
             commands::handle_attach_list(cli.socket.as_deref(), &cipher_id)
+        }
+
+        Commands::SelfUpdate => {
+            update::self_update().map_err(|e| Box::<dyn std::error::Error>::from(e))
         }
 
         Commands::Ping => {
