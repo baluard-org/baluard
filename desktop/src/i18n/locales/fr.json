@@ -265,7 +265,8 @@
     "sshShowPrivate": "Afficher la clé privée",
     "collectionLabel": "Dossier partagé",
     "noCollection": "Aucun dossier partagé",
-    "movedToast": "Élément déplacé"
+    "movedToast": "Élément déplacé",
+    "reorderUri": "Glisser pour réordonner"
   },
   "autosync": {
     "upToDate": "Toutes les modifications sont synchronisées",

@@ -298,6 +298,7 @@ internal val ES: Map<String, String> = mapOf(
     "edit.uriPlaceholder" to "https://example.com",
     "edit.addUri" to "Añadir sitio",
     "edit.removeUri" to "Quitar sitio",
+    "edit.reorderUri" to "Arrastra para reordenar",
     "edit.match" to "Detección de coincidencia",
     "edit.match.default" to "Predeterminada",
     "edit.match.domain" to "Dominio",

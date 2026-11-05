@@ -107,6 +107,13 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     fun removeUri(index: Int) {
         _form.value = _form.value.copy(uris = _form.value.uris.filterIndexed { i, _ -> i != index })
     }
+
+    fun moveUri(from: Int, to: Int) {
+        val list = _form.value.uris.toMutableList()
+        if (from == to || from !in list.indices || to !in list.indices) return
+        list.add(to, list.removeAt(from))
+        _form.value = _form.value.copy(uris = list)
+    }
     fun setUri(index: Int, uri: String) = mutateUri(index) { it.copy(uri = uri) }
     fun setUriMatch(index: Int, match: String?) = mutateUri(index) { it.copy(matchStrategy = match) }
 

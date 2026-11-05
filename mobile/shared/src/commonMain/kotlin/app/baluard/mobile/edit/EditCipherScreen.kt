@@ -3,6 +3,7 @@ package app.baluard.mobile.edit
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Checkbox
@@ -50,6 +52,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,9 +62,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import app.baluard.mobile.data.MobileCollectionInfo
 import app.baluard.mobile.data.MobileFolderInfo
@@ -286,14 +297,70 @@ fun EditCipherScreen(
 
             // Login-only: multi-URI list with match strategy + TOTP seed
             if (form.typeTag == "login") {
+                // Drag-to-reorder: grab a row's handle, drag past a row's
+                // midpoint, the list swaps live and the final order is what
+                // save persists (first URI is the primary).
+                val density = LocalDensity.current
+                val uriSlotGapPx = with(density) { 12.dp.toPx() }
+                var draggingIndex by remember { mutableIntStateOf(-1) }
+                var dragOffsetPx by remember { mutableFloatStateOf(0f) }
+                val rowHeights = remember { mutableStateListOf<Int>() }
+
+                fun endUriDrag() { draggingIndex = -1; dragOffsetPx = 0f }
+
                 SectionCard(title = t("edit.uris")) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         form.uris.forEachIndexed { index, row ->
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(
+                                modifier = Modifier
+                                    .zIndex(if (index == draggingIndex) 1f else 0f)
+                                    .graphicsLayer { translationY = if (index == draggingIndex) dragOffsetPx else 0f }
+                                    .onSizeChanged { size ->
+                                        if (index < rowHeights.size) rowHeights[index] = size.height else rowHeights.add(size.height)
+                                    },
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .pointerInput("uri-reorder") {
+                                                detectDragGestures(
+                                                    onDragStart = {
+                                                        draggingIndex = index
+                                                        dragOffsetPx = 0f
+                                                    },
+                                                    onDrag = { change, drag ->
+                                                        change.consume()
+                                                        val current = draggingIndex
+                                                        if (current == -1) return@detectDragGestures
+                                                        dragOffsetPx += drag.y
+                                                        val step = (rowHeights.getOrNull(current) ?: 0) + uriSlotGapPx
+                                                        if (step <= 0f) return@detectDragGestures
+                                                        val target = (current + (dragOffsetPx / step).roundToInt())
+                                                            .coerceIn(0, form.uris.size - 1)
+                                                        if (target != current) {
+                                                            viewModel.moveUri(current, target)
+                                                            dragOffsetPx -= (target - current) * step
+                                                            draggingIndex = target
+                                                        }
+                                                    },
+                                                    onDragEnd = { endUriDrag() },
+                                                    onDragCancel = { endUriDrag() },
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DragHandle,
+                                            contentDescription = t("edit.reorderUri"),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(22.dp),
+                                        )
+                                    }
                                     BaluardTextField(
                                         value = row.uri,
                                         onValueChange = { viewModel.setUri(index, it) },

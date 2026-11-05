@@ -274,6 +274,7 @@ internal val PT: Map<String, String> = mapOf(
     "edit.uriPlaceholder" to "https://exemplo.com",
     "edit.addUri" to "Adicionar endereço",
     "edit.removeUri" to "Remover endereço",
+    "edit.reorderUri" to "Arraste para reordenar",
     "edit.match" to "Correspondência",
     "edit.match.default" to "Padrão",
     "edit.match.domain" to "Domínio base",

@@ -265,7 +265,8 @@
     "sshShowPrivate": "Show private key",
     "collectionLabel": "Shared folder",
     "noCollection": "No shared folder",
-    "movedToast": "Entry moved"
+    "movedToast": "Entry moved",
+    "reorderUri": "Drag to reorder"
   },
   "settings": {
     "faviconLabel": "Show website icons",

@@ -153,6 +153,7 @@ export default function CipherDetail(props) {
   const [showHistory, setShowHistory] = createSignal(false);
   const [revealedHistory, setRevealedHistory] = createSignal(null); // row index
   const [copiedHistoryIdx, setCopiedHistoryIdx] = createSignal(null);
+  const [copiedUriIdx, setCopiedUriIdx] = createSignal(null);
   const [showShare, setShowShare] = createSignal(false);
   const [showNotesModal, setShowNotesModal] = createSignal(false);
 
@@ -772,16 +773,14 @@ export default function CipherDetail(props) {
         {/* Website URI group */}
         <Show when={cipher()?.uris?.length}>
           {(() => {
-            const uri = () => uriStr(cipher()?.uris?.[0]);
             // L4 fix: only treat http(s) as already-prefixed URIs. mailto
             // has no // so it needs special handling. The previous regex
             // `/^(https?|mailto):\/\//` broke `mailto:user@example.com` by
             // prepending https://. The new check:
             //   - mailto:user@host   -> keep as-is (no https:// prefix)
             //   - http(s)://...      -> keep as-is
-            //   - anything else       -> prepend https://
-            const launchHref = () => {
-              const u = uri();
+            //   - anything else      -> prepend https://
+            const launchHref = (u) => {
               if (!u) return "";
               if (u.startsWith("mailto:")) return u;
               if (/^https?:\/\//i.test(u)) return u;
@@ -790,24 +789,37 @@ export default function CipherDetail(props) {
             return (
               <div class="space-y-4 pt-2">
                 <h4 class={SECTION_LABEL}>{t("entry.uri")}</h4>
-                <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] flex items-center justify-between group hover:border-[var(--color-primary)] transition-all">
-                  <div class="min-w-0 flex-1">
-                    <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block">{t("entry.uri")}</label>
-                    <ExternalLink
-                      href={launchHref()}
-                      class="text-sm text-[var(--color-accent)] hover:underline font-semibold mt-0.5 inline-block"
-                    >
-                      {uri()}
-                    </ExternalLink>
-                  </div>
-                  <ExternalLink
-                    href={launchHref()}
-                    class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
-                    title={t("entry.launchWebsite")}
-                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-                  </ExternalLink>
-                </div>
+                <For each={cipher()?.uris || []}>
+                  {(u, idx) => {
+                    const uri = () => uriStr(u);
+                    return (
+                      <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] flex items-center justify-between group hover:border-[var(--color-primary)] transition-all">
+                        <ExternalLink
+                          href={launchHref(uri())}
+                          class="min-w-0 flex-1 text-sm text-[var(--color-accent)] hover:underline font-semibold truncate"
+                        >
+                          {uri()}
+                        </ExternalLink>
+                        <button
+                          onClick={async () => { await copyToClipboard(uri()); setCopiedUriIdx(idx()); setTimeout(() => setCopiedUriIdx((v) => (v === idx() ? null : v)), 1800); }}
+                          class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
+                          title={t("entry.copyValue")}
+                        >
+                          <Show when={copiedUriIdx() === idx()} fallback={<IconCopy class="w-4 h-4" />}>
+                            <span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>
+                          </Show>
+                        </button>
+                        <ExternalLink
+                          href={launchHref(uri())}
+                          class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
+                          title={t("entry.launchWebsite")}
+                        >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                        </ExternalLink>
+                      </div>
+                    );
+                  }}
+                </For>
               </div>
             );
           })()}
