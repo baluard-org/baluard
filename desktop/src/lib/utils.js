@@ -164,6 +164,17 @@ export function detectCardBrand(number) {
   return null;
 }
 
+/// Unix seconds -> local calendar date as YYYY-MM-DD (ISO 8601).
+/// Local, not UTC: a password used late in the evening must not show
+/// the next day's date. Null for missing/zero timestamps.
+export function formatDateIso(unixSeconds) {
+  if (!unixSeconds) return null;
+  const d = new Date(unixSeconds * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
 /// True when the error is a hardware-seal failure rather than a bad
 /// password: the unlock screen must not show "wrong password" for it.
 export function isHardwareError(raw) {
