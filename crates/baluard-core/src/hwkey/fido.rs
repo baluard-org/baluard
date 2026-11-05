@@ -24,7 +24,6 @@ use super::attest::{self, PackedAttestation};
 use crate::error::{BaluardError, VaultError};
 use base64::Engine as _;
 use uuid::Uuid;
-use zeroize::Zeroizing;
 
 pub const BINDING_PREFIX: &str = "fido:";
 /// Token-side namespace only: CTAP matches the rp id at assertion time
@@ -258,13 +257,13 @@ mod real {
     //! needs the Yubico udev rules for non-root HID access.
 
     use super::{PackedAttestation, Token, TokenError, TokenInfo};
+    use ctap_hid_fido2::HidParam;
     use ctap_hid_fido2::fidokey::{
         AssertionExtension as Gext, CredentialExtension as Mext, GetAssertionArgsBuilder,
         MakeCredentialArgsBuilder,
     };
     use ctap_hid_fido2::public_key_credential_user_entity::PublicKeyCredentialUserEntity;
     use ctap_hid_fido2::{Cfg, FidoKeyHidFactory};
-    use ctap_hid_fido2::{HidInfo, HidParam};
     use uuid::Uuid;
 
     pub struct CtapToken;
@@ -285,11 +284,123 @@ mod real {
         }
     }
 
-    /// Every plugged FIDO HID, keyed by its unique path. The library's
-    /// single-device factory refuses multiples outright; the seal instead
-    /// tries each token for a derivation and asks for one at enrollment.
-    fn devices() -> Vec<HidInfo> {
-        ctap_hid_fido2::get_fidokey_devices()
+    /// Every plugged FIDO HID, as openable params. Enumerate runs in a
+    /// bare child process (the daemon binary with
+    /// [`Self::ENUMERATE_FLAG`]): the macOS IOKit device-arrival path
+    /// crashed the daemon inside hid_enumerate (EXC_BREAKPOINT in
+    /// IOHIDManagerSetDeviceMatching, field report 2026-11-04), and a
+    /// child confines that to one failed probe instead of killing every
+    /// open vault.
+    fn devices_result() -> Result<Vec<ctap_hid_fido2::HidParam>, TokenError> {
+        let exe = std::env::current_exe()
+            .map_err(|e| TokenError::Device(format!("hid enumeration exe unavailable: {e}")))?;
+        enumerate_via_child(&exe, std::time::Duration::from_secs(5))
+    }
+
+    /// The child protocol: a JSON array of `{"path":...}` /
+    /// `{"vid":...,"pid":...}` rows, exactly the two HidParam shapes
+    /// downstream open calls accept.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[serde(untagged)]
+    enum ParamJson {
+        Path { path: String },
+        VidPid { vid: u16, pid: u16 },
+    }
+
+    pub(crate) fn params_to_json(params: &[ctap_hid_fido2::HidParam]) -> String {
+        let rows: Vec<ParamJson> = params
+            .iter()
+            .map(|p| match p {
+                ctap_hid_fido2::HidParam::Path(path) => ParamJson::Path { path: path.clone() },
+                ctap_hid_fido2::HidParam::VidPid { vid, pid } => ParamJson::VidPid {
+                    vid: *vid,
+                    pid: *pid,
+                },
+            })
+            .collect();
+        serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into())
+    }
+
+    pub(crate) fn params_from_json(
+        text: &str,
+    ) -> Result<Vec<ctap_hid_fido2::HidParam>, TokenError> {
+        let rows: Vec<ParamJson> = serde_json::from_str(text.trim())
+            .map_err(|_| TokenError::Device("hid enumeration returned unreadable output".into()))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| match row {
+                ParamJson::Path { path } => ctap_hid_fido2::HidParam::Path(path),
+                ParamJson::VidPid { vid, pid } => ctap_hid_fido2::HidParam::VidPid { vid, pid },
+            })
+            .collect())
+    }
+
+    /// The daemon binary carries this hidden flag; it must be handled
+    /// before any daemon state (dotenvy, logging, socket) exists.
+    pub const ENUMERATE_FLAG: &str = "--fido-enumerate";
+
+    pub(crate) fn enumerate_via_child(
+        exe: &std::path::Path,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<ctap_hid_fido2::HidParam>, TokenError> {
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new(exe)
+            .arg(ENUMERATE_FLAG)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                TokenError::Device(format!("hid enumeration child failed to spawn: {e}"))
+            })?;
+        let deadline = std::time::Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(TokenError::Device(format!(
+                        "hid enumeration timed out after {}s (child killed)",
+                        timeout.as_secs().max(1)
+                    )));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(TokenError::Device(format!(
+                        "hid enumeration wait failed: {e}"
+                    )));
+                }
+            }
+        };
+        // The child prints one small JSON line, far below the pipe
+        // buffer, so reading after exit cannot deadlock.
+        let mut stdout = String::new();
+        if let Some(mut out) = child.stdout.take() {
+            let _ = out.read_to_string(&mut stdout);
+        }
+        if !status.success() {
+            return Err(TokenError::Device(format!(
+                "hid enumeration child crashed: {status}"
+            )));
+        }
+        params_from_json(&stdout)
+    }
+
+    /// Child entry point: enumerate and print, nothing else. A crash in
+    /// IOKit here costs one probe on the parent, not the daemon.
+    pub fn run_enumerate_child() -> ! {
+        let params: Vec<ctap_hid_fido2::HidParam> = ctap_hid_fido2::get_fidokey_devices()
+            .into_iter()
+            .map(|info| info.param)
+            .collect();
+        println!("{}", params_to_json(&params));
+        std::process::exit(0);
     }
 
     fn open_param(param: &HidParam) -> Result<ctap_hid_fido2::FidoKeyHid, TokenError> {
@@ -298,10 +409,10 @@ mod real {
     }
 
     fn open_single() -> Result<ctap_hid_fido2::FidoKeyHid, TokenError> {
-        let found = devices();
+        let found = devices_result()?;
         match found.len() {
             0 => Err(TokenError::KeyMissing),
-            1 => open_param(&found[0].param),
+            1 => open_param(&found[0]),
             _ => Err(TokenError::Device(
                 "multiple security keys are plugged in; keep only the key you want to use".into(),
             )),
@@ -317,13 +428,13 @@ mod real {
 
     impl Token for CtapToken {
         fn info(&self) -> Result<TokenInfo, TokenError> {
-            let found = devices();
+            let found = devices_result()?;
             if found.is_empty() {
                 return Err(TokenError::KeyMissing);
             }
             let mut last_error = TokenError::KeyMissing;
             for device in found {
-                let info = match open_param(&device.param)
+                let info = match open_param(&device)
                     .and_then(|dev| dev.get_info().map_err(|e| classify_message(&e.to_string())))
                 {
                     Ok(info) => info,
@@ -378,13 +489,13 @@ mod real {
             credential_id: &[u8],
             salt: &[u8; 32],
         ) -> Result<zeroize::Zeroizing<[u8; 32]>, TokenError> {
-            let found = devices();
+            let found = devices_result()?;
             if found.is_empty() {
                 return Err(TokenError::KeyMissing);
             }
             let mut last_error = TokenError::UnknownCredential;
             for device in found {
-                let result = open_param(&device.param).and_then(|dev| {
+                let result = open_param(&device).and_then(|dev| {
                     let args = GetAssertionArgsBuilder::new(super::RP_ID, salt)
                         .without_pin_and_uv()
                         .credential_id(credential_id)
@@ -424,7 +535,7 @@ mod real {
 }
 
 #[cfg(feature = "fido2")]
-pub use real::store;
+pub use real::{ENUMERATE_FLAG, run_enumerate_child, store};
 
 #[cfg(all(test, feature = "fido2"))]
 mod tests {
@@ -446,6 +557,103 @@ mod tests {
         ] {
             assert!(!super::real::try_next_device(&err));
         }
+    }
+
+    #[cfg(unix)]
+    fn stub_exe(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn stub_dir(name: &str) -> std::path::PathBuf {
+        // Unique per test: the child-transport tests run in parallel and
+        // clean up at different times; a shared dir races the spawn.
+        let dir =
+            std::env::temp_dir().join(format!("baluard-fido-test-{}-{}", std::process::id(), name));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn child_transport_round_trips_params() {
+        let params = vec![
+            ctap_hid_fido2::HidParam::Path("/dev/hidraw7".into()),
+            ctap_hid_fido2::HidParam::VidPid {
+                vid: 0x18d1,
+                pid: 0x483,
+            },
+        ];
+        let text = super::real::params_to_json(&params);
+        let back = super::real::params_from_json(&text).unwrap();
+        assert_eq!(super::real::params_to_json(&back), text);
+        assert!(super::real::params_from_json("[]").unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_transport_parses_the_enumeration_output() {
+        let dir = stub_dir("parses");
+        let exe = stub_exe(
+            &dir,
+            "enum-ok",
+            r#"printf '[{"path":"/dev/hidraw1"},{"vid":6353,"pid":1155}]'"#,
+        );
+        let params =
+            super::real::enumerate_via_child(&exe, std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(params.len(), 2);
+        let text = super::real::params_to_json(&params);
+        assert!(text.contains("/dev/hidraw1"));
+        assert!(text.contains("6353"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_transport_kills_a_hung_enumeration() {
+        let dir = stub_dir("hang");
+        let exe = stub_exe(&dir, "enum-hang", "sleep 30");
+        let start = std::time::Instant::now();
+        let err =
+            match super::real::enumerate_via_child(&exe, std::time::Duration::from_millis(300)) {
+                Ok(p) => panic!("expected timeout, got {} params", p.len()),
+                Err(e) => e,
+            };
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "kill must not wait the sleep out"
+        );
+        assert!(matches!(err, super::TokenError::Device(ref d) if d.contains("timed out")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_transport_surfaces_a_crashed_enumeration() {
+        let dir = stub_dir("crash");
+        let exe = stub_exe(&dir, "enum-crash", "exit 7");
+        let err = match super::real::enumerate_via_child(&exe, std::time::Duration::from_secs(5)) {
+            Ok(p) => panic!("expected crash error, got {} params", p.len()),
+            Err(e) => e,
+        };
+        assert!(matches!(err, super::TokenError::Device(ref d) if d.contains("crashed")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_transport_refuses_garbage_output() {
+        let dir = stub_dir("junk");
+        let exe = stub_exe(&dir, "enum-junk", "echo not-json");
+        let err = match super::real::enumerate_via_child(&exe, std::time::Duration::from_secs(5)) {
+            Ok(p) => panic!("expected unreadable-output error, got {} params", p.len()),
+            Err(e) => e,
+        };
+        assert!(matches!(err, super::TokenError::Device(ref d) if d.contains("unreadable")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

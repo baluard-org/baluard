@@ -24,6 +24,70 @@ use crate::{default_socket_path, send_request};
 /// path clears it before bringing the daemon back.
 static RESPAWN_SUPPRESSED: AtomicBool = AtomicBool::new(false);
 
+/// After a daemon crash mid-session the app degraded into permanent
+/// "Daemon is not running" until a manual restart (2026-11-04 field
+/// report): launch was the only spawn site. The request error path now
+/// brings the daemon back, gated by a cooldown so the ~3s pollers
+/// cannot spawn-storm while the daemon is genuinely gone.
+const RESPAWN_COOLDOWN: Duration = Duration::from_secs(15);
+static RESPAWN_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static LAST_RESPAWN_ATTEMPT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+fn respawn_permitted(
+    now: Instant,
+    last_attempt: Option<Instant>,
+    in_flight: bool,
+    cooldown: Duration,
+) -> bool {
+    if in_flight {
+        return false;
+    }
+    match last_attempt {
+        Some(at) => now.duration_since(at) >= cooldown,
+        None => true,
+    }
+}
+
+/// Called from the daemon_request error path on a socket-level connect
+/// failure. Fire-and-forget: the failed request returns immediately and
+/// the next poll rides the fresh daemon (whose session tokens are new,
+/// so unlocked vaults surface as locked and re-unlock normally).
+pub(crate) fn ensure_daemon_running(app: &AppHandle) -> bool {
+    if respawn_suppressed() {
+        return false;
+    }
+    let now = Instant::now();
+    {
+        let mut guard = match LAST_RESPAWN_ATTEMPT.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        let in_flight = RESPAWN_IN_FLIGHT.load(Ordering::SeqCst);
+        if !respawn_permitted(now, *guard, in_flight, RESPAWN_COOLDOWN) {
+            return false;
+        }
+        if RESPAWN_IN_FLIGHT
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return false;
+        }
+        *guard = Some(now);
+    }
+    let outcome = start_daemon(app);
+    RESPAWN_IN_FLIGHT.store(false, Ordering::SeqCst);
+    match outcome {
+        Ok(()) => {
+            log::info!("daemon respawned after connect failure");
+            true
+        }
+        Err(e) => {
+            log::warn!("daemon respawn failed: {e}");
+            false
+        }
+    }
+}
+
 /// True when startup adopted an already-running daemon instead of spawning
 /// one. The adopted daemon is not our child, so exit only locks its vaults
 /// (via `vaults.lock_all`) and leaves the process for its original owner.
@@ -401,5 +465,35 @@ mod tests {
         );
         assert_eq!(version_from_ping_payload("pong"), None);
         assert_eq!(version_from_ping_payload("not json"), None);
+    }
+
+    #[test]
+    fn first_respawn_failure_is_permitted() {
+        assert!(respawn_permitted(Instant::now(), None, false, RESPAWN_COOLDOWN));
+    }
+
+    #[test]
+    fn a_recent_attempt_blocks_the_next() {
+        assert!(!respawn_permitted(
+            Instant::now(),
+            Some(Instant::now() - Duration::from_secs(1)),
+            false,
+            RESPAWN_COOLDOWN
+        ));
+    }
+
+    #[test]
+    fn the_cooldown_expires() {
+        assert!(respawn_permitted(
+            Instant::now(),
+            Some(Instant::now() - Duration::from_secs(RESPAWN_COOLDOWN.as_secs() + 1)),
+            false,
+            RESPAWN_COOLDOWN
+        ));
+    }
+
+    #[test]
+    fn an_in_flight_attempt_blocks_new_ones_even_when_cold() {
+        assert!(!respawn_permitted(Instant::now(), None, true, RESPAWN_COOLDOWN));
     }
 }
