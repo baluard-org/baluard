@@ -188,13 +188,12 @@ async fn install_inner(
     // three OSes drain the same way. A restart here only makes sense for
     // our own (replaced) sidecar: an adopted daemon belongs to a CLI
     // session and must be left running.
-    crate::send_request("system.prepare_update", "")
-        .map_err(|e| {
-            if !crate::daemon_ctl::daemon_is_adopted() {
-                let _ = crate::daemon_ctl::restart_daemon(&app);
-            }
-            format!("Cannot prepare for the update: {e}")
-        })?;
+    crate::send_request("system.prepare_update", "").map_err(|e| {
+        if !crate::daemon_ctl::daemon_is_adopted() {
+            let _ = crate::daemon_ctl::restart_daemon(&app);
+        }
+        format!("Cannot prepare for the update: {e}")
+    })?;
 
     // 3. Stop the daemon and hold the door: nothing respawns it until the
     // new version starts (or this rollback path does). A daemon that will
