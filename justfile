@@ -228,6 +228,7 @@ test-release-scripts:
 	./scripts/tests/test-build-nmh-manifests.sh
 	./scripts/tests/test-bump-version.sh
 	./scripts/tests/test-generate-updates-manifest.sh
+	./scripts/tests/test-sign-updater-sigs.sh
 	./scripts/tests/test-stage-release-assets.sh
 
 # Run all tests
@@ -1144,7 +1145,17 @@ cross-compile:
 # The Android APK is not part of dist/: pass it via a direct call, e.g.
 # scripts/stage-release-assets.sh --version 0.1.0 --apk ~/.baluard/fdroid/repo/<apk>.apk dist
 release-stage dist-dir="dist":
-	scripts/stage-release-assets.sh --version "{{ version }}" --apk "$HOME/.baluard/fdroid/repo/app.baluard.mobile_$(echo {{ version }} | awk -F. '{print $1*1000000+$2*1000+$3}').apk --require "Baluard-amd64.AppImage,Baluard-amd64.AppImage.sig,Baluard-amd64.deb,Baluard-amd64.rpm,Baluard-cli-amd64.tar.gz,Baluard-extension-chrome.zip,Baluard-extension-firefox.zip,Baluard-amd64-setup.exe,Baluard-amd64-setup.exe.sig,Baluard-macos-aarch64-non-notarized.zip,Baluard-android.apk" "{{ dist-dir }}"
+	#!/usr/bin/env bash
+	set -euo pipefail
+	version="$(grep -A1 '^\[workspace.package\]' Cargo.toml | grep '^version' | sed 's/.*= *"\(.*\)".*$/\1/')"
+	code="$(printf %s "$version" | awk -F. '{print $1*1000000+$2*1000+$3}')"
+	scripts/stage-release-assets.sh --version "$version" \
+		--apk "$HOME/.baluard/fdroid/repo/app.baluard.mobile_${code}.apk" \
+		--require "Baluard-amd64.AppImage,Baluard-amd64.AppImage.sig,Baluard-amd64.deb,Baluard-amd64.rpm,Baluard-cli-amd64.tar.gz,Baluard-extension-chrome.zip,Baluard-extension-firefox.zip,Baluard-amd64-setup.exe,Baluard-amd64-setup.exe.sig,Baluard-macos-aarch64-non-notarized.zip,Baluard-arm64.app.tar.gz,Baluard-arm64.app.tar.gz.sig,Baluard-android.apk" \
+		"{{ dist-dir }}"
+	# Version-stamped updater signatures: requireSignedVersion clients
+	# refuse signatures without a version comment.
+	scripts/sign-updater-sigs.sh --version "$version" release-upload
 
 # Build release archives (tar.gz + checksums)
 release: build-release
