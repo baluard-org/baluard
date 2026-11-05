@@ -2,7 +2,7 @@
 
 Notable user-facing changes per release.
 
-## [UNRELEASED]
+## 0.1.4 - 2026-11-05
 
 - The desktop sidebar has a TOTP filter showing every entry that carries a one-time code seed, with a count, like on mobile.
 - Long unbroken strings in secure notes now scroll horizontally inside the notes card instead of running past its edge.
@@ -11,8 +11,13 @@ Notable user-facing changes per release.
 - Password history dates now read YYYY-MM-DD instead of an ambiguous locale date.
 - Entries with several websites now list them all in the entry view, each with open and copy buttons, and the order can be changed by dragging (first one is the primary).
 - The browser extension gains a view button on every match: it opens that entry in the desktop app, asking to unlock first when the vault is locked.
+- The sync dot in the desktop title bar is clickable: clicking it syncs immediately, with a short cooldown.
+- The CLI can update itself, notices when a newer release is available, and installs through a mise path too.
+- CLI fixes: vaults list honors --direct on machines with a running daemon, removing an entry's last passkey now sticks, and --output json in direct mode matches the daemon format (it also no longer exposes passkey private keys).
 
-## 0.1.3 - 2026-11-05
+## [UNRELEASED]
+
+No user-facing changes yet.
 
 - The browser extension now pairs through the canonical host name (app.baluard.browser). Older 0.1.0 extensions keep working: every installer and app registration also carries the previous name.
 - The macOS and Windows desktop apps now register the browser-extension bridge themselves: the app writes and refreshes the native-messaging manifests on startup (macOS) or the installer registers them with the app manifest beside it (Windows), so the extension works right after installing the app, with no extra setup.
