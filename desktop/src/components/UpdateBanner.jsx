@@ -49,6 +49,37 @@ export default function UpdateBanner() {
             </div>
           </Match>
 
+          {/* Failure FIRST: during an install attempt the offer stays set,
+              and a later Match would otherwise swallow the error (the 0.1.x
+              signature-refusal failure surfaced as a silent loop). */}
+          <Match when={u.error()}>
+            <div class="flex items-start gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="text-xs font-bold text-[var(--color-text)]">{t("update.installFailed")}</div>
+                <p class="text-[10px] text-[var(--color-muted)] mt-0.5 break-words">{u.error()}</p>
+                <div class="mt-2 flex items-center gap-2">
+                  <Show when={u.available()}>
+                    <button
+                      data-testid="update-retry"
+                      onClick={u.install}
+                      class="px-3 py-1.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      {t("update.retry")}
+                    </button>
+                  </Show>
+                </div>
+              </div>
+              <button
+                data-testid="update-error-dismiss"
+                aria-label={t("update.dismiss")}
+                onClick={() => u.clearError()}
+                class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer"
+              >
+                <IconClose class="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </Match>
+
           {/* Update available: version, notes, install + dismiss. */}
           <Match when={u.available() && u.available().version !== u.dismissedVersion()}>
             <div class="flex items-start gap-3">
@@ -83,8 +114,8 @@ export default function UpdateBanner() {
             </div>
           </Match>
 
-          {/* Manual-check failure. Background checks never land here. */}
-          <Match when={u.error()}>
+          {/* Manual-check failure (no pending offer). */}
+          <Match when={u.error() && !u.available()}>
             <div class="flex items-start gap-3">
               <div class="flex-1 min-w-0">
                 <div class="text-xs font-bold text-[var(--color-text)]">{t("update.checkFailed")}</div>

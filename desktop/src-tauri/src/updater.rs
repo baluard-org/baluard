@@ -6,7 +6,9 @@
 //! running version (a prerelease follows `updates-beta`, a stable release
 //! follows `updates-stable`), and the plugin's target fallback
 //! (`{os}-{arch}-{installer}` then bare `{os}-{arch}`) is why the manifest
-//! publishes only installer-suffixed keys — never a bare `linux-x86_64`.
+//! publishes only installer-suffixed keys for Linux — never a bare
+//! `linux-x86_64`. macOS and Windows use the bare keys `darwin-aarch64`
+//! and `windows-x86_64`.
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State, Url};
@@ -182,12 +184,17 @@ async fn install_inner(
     };
 
     // 2. Drain + lock. A sync that will not finish refuses the update.
-    // (Windows has no daemon IPC yet: nothing to prepare there.)
-    #[cfg(unix)]
-    crate::send_request("system.prepare_update", "").map_err(|e| {
-        let _ = crate::daemon_ctl::restart_daemon(&app);
-        format!("Cannot prepare for the update: {e}")
-    })?;
+    // Named-pipe IPC covers Windows since the transport port, so all
+    // three OSes drain the same way. A restart here only makes sense for
+    // our own (replaced) sidecar: an adopted daemon belongs to a CLI
+    // session and must be left running.
+    crate::send_request("system.prepare_update", "")
+        .map_err(|e| {
+            if !crate::daemon_ctl::daemon_is_adopted() {
+                let _ = crate::daemon_ctl::restart_daemon(&app);
+            }
+            format!("Cannot prepare for the update: {e}")
+        })?;
 
     // 3. Stop the daemon and hold the door: nothing respawns it until the
     // new version starts (or this rollback path does). A daemon that will
@@ -203,8 +210,20 @@ async fn install_inner(
     let installed = tauri::async_runtime::spawn_blocking(move || {
         update.install(&bytes).map_err(|e| e.to_string())
     })
-    .await
-    .map_err(|e| format!("Installer task failed: {e}"))?;
+    .await;
+    let installed = match installed {
+        Ok(r) => r,
+        Err(join_err) => {
+            // The suppression gate must never outlive a failed update, or
+            // the app stays daemon-less until relaunch.
+            crate::daemon_ctl::clear_respawn_suppression();
+            if !crate::daemon_ctl::daemon_is_adopted() {
+                let _ = crate::daemon_ctl::restart_daemon(&app);
+            }
+            log::error!("update to {version_for_log}: installer task panicked: {join_err}");
+            return Err("Installation failed.".into());
+        }
+    };
 
     if let Err(e) = installed {
         log::error!("update to {version_for_log} failed after download: {e}");

@@ -1274,6 +1274,8 @@
     "installing": "Installation de la version {version}…",
     "dismiss": "Ignorer",
     "checkFailed": "Impossible de vérifier les mises à jour.",
+    "installFailed": "Impossible d'installer la mise à jour.",
+    "retry": "Réessayer",
     "upToDate": "Vous disposez de la dernière version.",
     "checkNow": "Rechercher des mises à jour",
     "checking": "Vérification en cours…",
