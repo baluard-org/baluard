@@ -86,6 +86,10 @@ pub enum PullOutcome {
     Fresh,
     Offline,
     AccessDenied,
+    /// The pull refused to overwrite uncommitted local content; the
+    /// debounced commit will clear it and the next tick retries. Not a
+    /// failure: no state change, no last_sync advance.
+    Skipped,
 }
 
 /// Snapshot of coordinator status, returned by the `sync.autosync_status` route.
@@ -956,6 +960,18 @@ fn run_pull_only(
         // Access-denied before network: same shadowing rule as above.
         Err(ref e) if is_access_denied_error(e) => Ok(PullOutcome::AccessDenied),
         Err(ref e) if is_network_error(e) => Ok(PullOutcome::Offline),
+        // A dirty-worktree refusal is transient: the debounced commit
+        // clears it and the next tick retries. Not a sync failure.
+        Err(ref e)
+            if matches!(
+                e,
+                baluard_core::error::BaluardError::Sync(
+                    baluard_core::error::SyncError::DirtyWorktree
+                )
+            ) =>
+        {
+            Ok(PullOutcome::Skipped)
+        }
         Err(e) => Err(format_sync_err(&e)),
     }
 }
