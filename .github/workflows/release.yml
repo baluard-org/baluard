@@ -288,8 +288,11 @@ jobs:
           case "$TAG" in *-*) PRFLAG="--prerelease" ;; esac
           BALUARD_TAURI_BIN="$PWD/desktop/node_modules/.bin/tauri" \
             scripts/stage-release-assets.sh --version "$TAG" \
-            --require "Baluard-amd64.AppImage,Baluard-amd64.AppImage.sig,Baluard-amd64.deb,Baluard-amd64.rpm,Baluard-cli-amd64.tar.gz,Baluard-cli-darwin-arm64.tar.gz,Baluard-arm64.dmg,Baluard-arm64.app.tar.gz,Baluard-arm64.app.tar.gz.sig" \
+            --require "Baluard-amd64.AppImage,Baluard-amd64.AppImage.sig,Baluard-amd64.deb,Baluard-amd64.rpm,Baluard-cli-amd64.tar.gz,Baluard-cli-darwin-arm64.tar.gz,Baluard-cli-windows-x86_64.tar.gz,Baluard-arm64.dmg,Baluard-arm64.app.tar.gz,Baluard-arm64.app.tar.gz.sig" \
             artifacts
+          # The updater trust anchor ships with each release so manual
+          # minisign verification needs no repo checkout.
+          cp updater.pub release-upload/
           gh release create "$TAG" $PRFLAG --draft --generate-notes --title "$TAG" release-upload/*
 
   # D79: the channel manifest is the ONLY mutable piece (fixed updates-beta /

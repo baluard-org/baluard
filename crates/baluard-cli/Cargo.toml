@@ -26,6 +26,13 @@ base64 = { workspace = true }
 getrandom = "0.2"
 dotenvy.workspace = true
 keyring.workspace = true
+serde.workspace = true
+sha2.workspace = true
+flate2.workspace = true
+minisign-verify.workspace = true
+semver.workspace = true
+tar.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
 
 [build-dependencies]
 prost-build = "0.13"
@@ -36,6 +43,7 @@ predicates = { workspace = true }
 tempfile = "3"
 regex = "1"
 uuid = { workspace = true }
+ed25519-dalek.workspace = true
 
 # The e2e harness lives in tests/e2e/main.rs and is excluded from plain
 # `cargo test` / `just test`: it only builds when the e2e-hooks feature is

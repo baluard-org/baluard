@@ -41,6 +41,12 @@ serde_bytes = "0.11"
 # Git
 git2 = { version = "0.20", features = ["ssh", "https"] }
 
+# CLI update check / self-update (crates/baluard-cli/src/update.rs)
+flate2 = "1"
+minisign-verify = "0.2"
+semver = "1"
+tar = "0.4"
+
 # Error handling
 thiserror = "2"
 anyhow = "1"

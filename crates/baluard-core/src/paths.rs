@@ -3,6 +3,7 @@
 //! | Data type    | Linux                              | macOS                                    | Windows                  |
 //! |--------------|------------------------------------|------------------------------------------|--------------------------|
 //! | Data (vault) | `$XDG_DATA_HOME/baluard/`            | `~/Library/Application Support/baluard/`   | `%LOCALAPPDATA%\baluard\`  |
+//! | Cache        | `$XDG_CACHE_HOME/baluard/`           | `~/Library/Caches/baluard/`                | `%LOCALAPPDATA%\baluard\`  |
 //! | Socket       | `$XDG_RUNTIME_DIR/baluard/baluard.sock`| data_dir `/baluard.sock`                   | Named Pipe               |
 //! | Logs         | `$XDG_STATE_HOME/baluard/`           | `~/Library/Logs/baluard/`                  | `%LOCALAPPDATA%\baluard\logs\` |
 
@@ -101,6 +102,8 @@ pub fn token_path() -> PathBuf {
 /// Windows: `%LOCALAPPDATA%\baluard\logs\`
 ///
 /// Respects `BALUARD_LOG_DIR` env override.
+///
+/// Use this for daemon and desktop logs.
 pub fn log_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("BALUARD_LOG_DIR") {
         return PathBuf::from(dir);
@@ -134,6 +137,29 @@ pub fn log_dir() -> PathBuf {
 /// Debug log file path (`daemon.log` inside log_dir).
 pub fn debug_log_path() -> PathBuf {
     log_dir().join("daemon.log")
+}
+
+/// Cache directory for disposable client state (update checks).
+///
+/// Linux: `$XDG_CACHE_HOME/baluard/` or `~/.cache/baluard/`
+/// macOS: `~/Library/Caches/baluard/`
+/// Windows: `%LOCALAPPDATA%\baluard\`
+///
+/// Respects `BALUARD_CACHE_DIR` env override (same test escape-hatch class
+/// as `BALUARD_DATA_DIR` / `BALUARD_LOG_DIR`). Safe to delete at any time;
+/// callers must tolerate absence.
+pub fn cache_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("BALUARD_CACHE_DIR") {
+        return PathBuf::from(dir);
+    }
+    dirs::cache_dir()
+        .map(|d| d.join(APP_NAME))
+        .unwrap_or_else(data_dir)
+}
+
+/// Update-check state file (last check time + latest seen version).
+pub fn update_state_path() -> PathBuf {
+    cache_dir().join("update-check.json")
 }
 
 #[cfg(test)]
@@ -216,6 +242,23 @@ mod tests {
         // expects. The lock is harmless when no env is set (read-only access).
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(debug_log_path(), log_dir().join("daemon.log"));
+    }
+
+    #[test]
+    fn cache_dir_respects_env_override() {
+        let _g = EnvGuard::set("BALUARD_CACHE_DIR", "/tmp/baluard-test-cache");
+        assert_eq!(cache_dir(), PathBuf::from("/tmp/baluard-test-cache"));
+        assert_eq!(
+            update_state_path(),
+            PathBuf::from("/tmp/baluard-test-cache/update-check.json")
+        );
+    }
+
+    #[test]
+    fn update_state_path_is_inside_cache_dir() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(update_state_path().starts_with(&cache_dir()));
+        assert!(update_state_path().to_string_lossy().contains("baluard"));
     }
 
     #[cfg(not(windows))]

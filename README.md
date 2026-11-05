@@ -26,6 +26,41 @@ mobile/        -> Kotlin Multiplatform / Compose app (Android shipped; iOS pendi
 - **Quick unlock** - Touch ID / Windows Hello keychain, Android biometric, session PIN (Linux)
 - **Clients** - desktop (Tauri), Android app with system autofill, browser extension, and a first-class CLI
 
+## Install the CLI
+
+### mise
+
+```bash
+mise use -g github:baluard-org/baluard    # install, keeps baluard + baluard-daemon on PATH
+mise upgrade github:baluard-org/baluard   # update
+mise uninstall github:baluard-org/baluard
+```
+
+mise resolves the `Baluard-cli-<os>-<arch>.tar.gz` release asset and installs both `baluard` and `baluard-daemon`. Pinning an explicit version with `@x.y.z` does not resolve: mise prepends `v` to tags and Baluard release tags carry no prefix. Use `mise upgrade` to move between releases. Newly published releases stay hidden behind mise's supply-chain freshness window for a while before `mise upgrade` offers them.
+
+### Manual tarball
+
+```bash
+# Linux; darwin arm64 and windows x86_64 archives carry the same layout
+curl -LO https://github.com/baluard-org/baluard/releases/latest/download/Baluard-cli-amd64.tar.gz
+# Verify the signed checksums (updater.pub is on the same release page)
+curl -LO https://github.com/baluard-org/baluard/releases/latest/download/updater.pub
+curl -LO https://github.com/baluard-org/baluard/releases/latest/download/SHA256SUMS
+curl -LO https://github.com/baluard-org/baluard/releases/latest/download/SHA256SUMS.sig
+base64 -d SHA256SUMS.sig > SHA256SUMS.minisig
+minisign -V -p updater.pub -x SHA256SUMS.minisig -m SHA256SUMS
+sha256sum -c SHA256SUMS
+# Extract; both binaries go next to each other
+tar xzf Baluard-cli-amd64.tar.gz
+sudo mv baluard baluard-daemon /usr/local/bin/
+```
+
+### In-app updates
+
+`baluard self-update` downloads the latest release, verifies the signed `SHA256SUMS`, and replaces the `baluard` + `baluard-daemon` binaries in place. It never downgrades and refuses mise-managed installs (use `mise upgrade` there).
+
+Every command also checks for a new release at most once per 24 hours and prints a notice on stderr until the CLI is current. Scripts, CI, and agents are exempt; set `BALUARD_NO_UPDATE_CHECK=1` to opt out.
+
 ## Quick Start
 
 ```bash
