@@ -10,7 +10,7 @@
 import { normalizeClearSeconds } from "./settings.js";
 import { originOf } from "./url.js";
 
-const NMH_HOST = "xyz.actitud.baluard"; // legacy pairing name; packages ship app.baluard.browser too; flip here in 0.1.1
+const NMH_HOST = "app.baluard.browser"; // packages ship the legacy xyz.actitud.baluard alias too, so 0.1.0 store installs keep pairing
 const MIN_NMH_VERSION = "0.1.0";
 
 let port = null;
