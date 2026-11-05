@@ -426,6 +426,12 @@ pub(crate) fn suppress_respawn() {
     RESPAWN_SUPPRESSED.store(true, Ordering::SeqCst);
 }
 
+/// Whether startup adopted an already-running daemon instead of spawning
+/// one; update rollback must not kill a daemon owned by a CLI session.
+pub(crate) fn daemon_is_adopted() -> bool {
+    ADOPTED.load(Ordering::SeqCst)
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

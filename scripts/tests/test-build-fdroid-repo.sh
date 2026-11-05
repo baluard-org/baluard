@@ -37,11 +37,15 @@ printf 'Signer #1 certificate SHA-256 digest: 9CDF3DF5EF4A228D51CC5BFABAA303D65B
 EOF
 cat > "$TMP/bin/aapt" <<'EOF'
 #!/usr/bin/env bash
-printf "package: name='%s' versionCode='%s' versionName='0.1.0'\n" "${FAKE_PACKAGE:-app.baluard.mobile}" "${FAKE_VERSION_CODE:-1}"
+# versionName must equal the workspace version: build-fdroid-repo.sh
+# cross-checks the APK badging against Cargo.toml.
+version="$(awk -F'"' '/^\[workspace.package\]/{section=1; next} section && /^version =/{print $2; exit}' "$ROOT/Cargo.toml")"
+printf "package: name='%s' versionCode='%s' versionName='%s'\n" "${FAKE_PACKAGE:-app.baluard.mobile}" "${FAKE_VERSION_CODE:-1}" "$version"
 EOF
 chmod +x "$TMP/bin/fdroid" "$TMP/bin/apksigner" "$TMP/bin/aapt" "$TMP/bin/keytool"
 
 export HOME="$TMP/home"
+export ROOT
 export PATH="$TMP/bin:$PATH"
 export FDROID_TEST_LOG="$TMP/fdroid.log"
 export KEYTOOL_TEST_LOG="$TMP/keytool.log"

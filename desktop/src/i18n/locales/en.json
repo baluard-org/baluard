@@ -1274,6 +1274,8 @@
     "installing": "Installing version {version}…",
     "dismiss": "Dismiss",
     "checkFailed": "Could not check for updates.",
+    "installFailed": "The update could not be installed.",
+    "retry": "Try again",
     "upToDate": "You're up to date.",
     "checkNow": "Check for updates",
     "checking": "Checking…",
