@@ -6,15 +6,18 @@ import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 
 export function FolderTree(props) {
+  // Alphabetical at every level, case-insensitive, digits ordered
+  // numerically (0x5443 before Notes, 10 after 2).
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
   // Build tree from flat list
   const tree = () => {
     const folders = props.folders || [];
-    const roots = folders.filter(f => !f.parent_id);
+    const roots = folders.filter(f => !f.parent_id).sort(byName);
     return roots.map(r => buildNode(r, folders));
   };
 
   function buildNode(folder, allFolders) {
-    const children = allFolders.filter(f => f.parent_id === folder.id);
+    const children = allFolders.filter(f => f.parent_id === folder.id).sort(byName);
     return { ...folder, children: children.map(c => buildNode(c, allFolders)) };
   }
 
