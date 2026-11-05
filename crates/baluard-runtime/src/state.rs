@@ -6882,8 +6882,8 @@ impl VaultState {
         }
         .ok_or("No TOTP URI found for this cipher")?;
 
-        let params = baluard_core::crypto::totp::parse_totp_uri(totp_uri)
-            .map_err(|e| format!("Invalid TOTP URI: {e}"))?;
+        let params = baluard_core::crypto::totp::parse_totp(totp_uri)
+            .map_err(|e| format!("Invalid TOTP secret or URI: {e}"))?;
 
         let (code, period_seconds, expires_at) = baluard_core::crypto::totp::generate_totp(&params);
 
