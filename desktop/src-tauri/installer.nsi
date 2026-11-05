@@ -1,4 +1,4 @@
-; Verbatim tauri-bundler 2.11.2 installer.nsi (tag tauri-cli-v2.11.2) carries two divergences: the currentUser default install dir moved to $LOCALAPPDATA\Programs (the default collides with the app data dir %LOCALAPPDATA%\baluard on case-insensitive NTFS, putting vaults inside the uninstallable app folder), and the reinstall/uninstall page is dropped (manual upgrades overwrite in place like the updater flow). Re-sync against upstream whenever the bundler version changes.
+; Forked from tauri-bundler 2.11.2 installer.nsi (tag tauri-cli-v2.11.2) to separate the app from the vault data dir on Windows: the currentUser default install dir moved to %LOCALAPPDATA%\Programs (the stock default collides with the data dir %LOCALAPPDATA%\baluard on case-insensitive NTFS), legacy colocated installs are migrated on their next install, and the reinstall/uninstall page is dropped (manual upgrades overwrite in place like the updater flow). Re-sync against upstream whenever the bundler version changes.
 Unicode true
 ManifestDPIAware true
 ; Add in `dpiAwareness` `PerMonitorV2` to manifest for Windows 10 1607+ (note this should not affect lower versions since they should be able to ignore this and pick up `dpiAware` `true` set by `ManifestDPIAware true`)
@@ -178,6 +178,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 
 ; 4. Reinstall/uninstall page deliberately dropped (second fork divergence): manual upgrades overwrite in place, matching the /UPDATE flow the updater already takes. The page handlers stay (makensis compiles them) with their Var declared so the script still parses.
 Var ReinstallPageCheck
+Var LegacyInstDir
 Function PageReinstall
   ; Uninstall previous WiX installation if exists.
   ;
@@ -508,6 +509,12 @@ Function .onInit
     !endif
 
     Call RestorePreviousInstallLocation
+    ; Pre-Programs installs sat inside the data dir (case-insensitive NTFS
+    ; collision). Send their next install or update to Programs; data stays.
+    ${If} $INSTDIR == "$LOCALAPPDATA\baluard"
+      StrCpy $LegacyInstDir "$INSTDIR"
+      StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${PRODUCTNAME}"
+    ${EndIf}
   ${EndIf}
 
 
@@ -726,6 +733,35 @@ Section Install
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
+    ${If} $LegacyInstDir != ""
+      ; Retire the legacy colocated dir: repoint shortcuts (update mode and
+      ; /NS skip shortcut creation), remove the old app files, keep the data.
+      !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$LegacyInstDir\${MAINBINARYNAME}.exe"
+      Pop $0
+      ${If} $0 = 1
+        !insertmacro SetShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      ${EndIf}
+      !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$LegacyInstDir\${MAINBINARYNAME}.exe"
+      Pop $0
+      ${If} $0 = 1
+        !insertmacro SetShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      ${EndIf}
+      !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$LegacyInstDir\${MAINBINARYNAME}.exe"
+      Pop $0
+      ${If} $0 = 1
+        !insertmacro SetShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      ${EndIf}
+      Delete "$LegacyInstDir\${MAINBINARYNAME}.exe"
+      Delete "$LegacyInstDir\baluard.exe"
+      Delete "$LegacyInstDir\baluard-daemon.exe"
+      Delete "$LegacyInstDir\baluard-nmh.exe"
+      Delete "$LegacyInstDir\uninstall.exe"
+      Delete "$LegacyInstDir\app.baluard.browser.json"
+      Delete "$LegacyInstDir\xyz.actitud.baluard.json"
+      Delete "$LegacyInstDir\app.baluard.browser.firefox.json"
+      Delete "$LegacyInstDir\xyz.actitud.baluard.firefox.json"
+      RMDir "$LegacyInstDir"
+    ${EndIf}
 
   ; Auto close this page for passive mode
   ${If} $PassiveMode = 1
