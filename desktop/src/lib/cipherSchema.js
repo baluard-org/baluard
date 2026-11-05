@@ -16,7 +16,7 @@ export const CIPHER_SCHEMAS = {
     fields: [
       { key: "username", label: "entry.user", placeholder: "entry.usernamePlaceholder" },
       { key: "password", label: "entry.pass", placeholder: "entry.passwordPlaceholder", type: "password" },
-      { key: "totp_uri", label: "fields.totpUri", placeholder: "otpauth://totp/...", mono: true },
+      { key: "totp_uri", label: "fields.totpUri", placeholder: "otpauth://totp/... or secret", mono: true },
     ],
     fromKind(kind) {
       const d = kind.data || kind.login || kind.Login || {};
