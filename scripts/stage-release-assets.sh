@@ -101,9 +101,9 @@ while IFS= read -r f; do
     *"${VER}"*aarch64.dmg)                    target="Baluard-arm64.dmg" ;;
     # produced and consumed inside the repo trees; never uploaded
     *.deb.sig | *.rpm.sig | *.tar.gz.sig | *.zip.sig) ;;
-    # Windows CLI tarball stays out of the release set: the NSIS installer
-    # bundles the CLI and daemon; revisit when CI builds the installer
-    baluard-cli-windows-*.tar.gz) ;;
+    # CLI/daemon archive consumed by `baluard self-update` and the mise
+    # github backend; named with os+arch tokens so both matchers resolve it
+    "baluard-cli-windows-x86_64.tar.gz")          target="Baluard-cli-windows-x86_64.tar.gz" ;;
     SHA256SUMS | SHA256SUMS.sig | checksums.txt) ;;
     *) unmapped+=("$b") ;;
   esac
