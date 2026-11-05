@@ -2,6 +2,7 @@ import { Show, createSignal, createEffect, onSettled, onCleanup } from "solid-js
 import { Transition } from "../lib/transition";
 import { useAutoSync } from "../context/AutoSyncContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
+import { daemon } from "../lib/daemon.js";
 
 // Subtle top-right sync indicator. Sits in the macOS titlebar drag padding
 // band (top-right corner, free of the traffic lights). Pure glance: no border,
@@ -106,6 +107,31 @@ export default function AutoSyncIndicator() {
 
   const phase = () => localPhase();
 
+  // Click = the same bidirectional sync the settings Sync button runs.
+  // 30s cooldown: pushes are unthrottled over HTTPS and focus/idle pulls
+  // already run, so this only guards UI spam. A running cycle also swallows
+  // clicks. The polled-state effect reconciles waiting -> syncing -> synced.
+  let lastManualSync = 0;
+  const MANUAL_SYNC_COOLDOWN_MS = 30_000;
+  const canManualSync = () =>
+    Date.now() - lastManualSync >= MANUAL_SYNC_COOLDOWN_MS &&
+    !(phase() === "waiting" || phase() === "syncing");
+
+  async function manualSync() {
+    if (!canManualSync()) return;
+    lastManualSync = Date.now();
+    armed = true;
+    clearHide();
+    setLocalPhase("waiting");
+    try {
+      await daemon("sync.pull");
+      await daemon("sync.push");
+    } catch {
+      // The next status poll surfaces offline/failure through the dot; the
+      // armed flag resets there so the cycle does not stick.
+    }
+  }
+
   // Dot color: phase-driven while a cycle is active, else idle emerald.
   const dotClass = () => {
     const p = phase();
@@ -128,13 +154,21 @@ export default function AutoSyncIndicator() {
             </span>
           </Show>
         </Transition>
-        <span class="relative flex h-2 w-2">
-          {/* soft expanding halo (visible only while syncing) */}
-          <Show when={dotClass().pulse}>
-            <span class={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${dotClass().halo}`} />
-          </Show>
-          <span class={`relative inline-flex rounded-full h-2 w-2 ${dotClass().dot}`} />
-        </span>
+        <button
+          type="button"
+          onClick={manualSync}
+          title={t("sync.syncNow")}
+          aria-label={t("sync.syncNow")}
+          class="pointer-events-auto cursor-pointer rounded-full p-1 -m-1 hover:bg-[var(--color-card)] transition-colors"
+        >
+          <span class="relative flex h-2 w-2">
+            {/* soft expanding halo (visible only while syncing) */}
+            <Show when={dotClass().pulse}>
+              <span class={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${dotClass().halo}`} />
+            </Show>
+            <span class={`relative inline-flex rounded-full h-2 w-2 ${dotClass().dot}`} />
+          </span>
+        </button>
       </div>
     </Show>
   );
