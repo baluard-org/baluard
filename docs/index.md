@@ -1,6 +1,6 @@
 # Baluard Documentation
 
-> Architecture, security, and development documentation. Implementation history lives in git; the docs below describe the system as it ships.
+> Architecture, security, and development documentation. Implementation history lives in git; the docs below describe the system as it ships. User-facing changes per release are listed in the root [CHANGELOG.md](../CHANGELOG.md).
 
 ## Architecture Decision Records
 
