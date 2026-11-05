@@ -7,6 +7,7 @@ import {
   getCuratedColor,
   getDomainInitials,
   detectCardBrand,
+  formatDateIso,
   ERROR_PATTERNS,
 } from "../lib/utils.js";
 
@@ -246,5 +247,26 @@ describe("ERROR_PATTERNS", () => {
       expect(typeof key).toBe("string");
       expect(key.startsWith("errors.")).toBe(true);
     }
+  });
+});
+
+// ── formatDateIso ──
+
+describe("formatDateIso", () => {
+  // Built from a local-noon Date so the expectation holds in any TZ.
+  test("renders the local calendar date as YYYY-MM-DD", () => {
+    const d = new Date(2021, 11, 3, 12, 0, 0);
+    expect(formatDateIso(Math.floor(d.getTime() / 1000))).toBe("2021-12-03");
+  });
+
+  test("stays on the local date for times near midnight", () => {
+    const d = new Date(2021, 8, 11, 23, 30, 0);
+    expect(formatDateIso(Math.floor(d.getTime() / 1000))).toBe("2021-09-11");
+  });
+
+  test("returns null for missing timestamps", () => {
+    expect(formatDateIso(null)).toBeNull();
+    expect(formatDateIso(undefined)).toBeNull();
+    expect(formatDateIso(0)).toBeNull();
   });
 });
