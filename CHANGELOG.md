@@ -4,6 +4,12 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- The desktop sidebar has a TOTP filter showing every entry that carries a one-time code seed, with a count, like on mobile.
+- Long unbroken strings in secure notes now scroll horizontally inside the notes card instead of running past its edge.
+- One-time codes now work when an entry carries just the secret instead of a full otpauth:// URI, so imports from other password managers show codes without editing every entry.
+- Desktop folders are listed alphabetically at every level instead of in creation order.
+- Password history dates now read YYYY-MM-DD instead of an ambiguous locale date.
+
 ## 0.1.3 - 2026-11-05
 
 - The browser extension now pairs through the canonical host name (app.baluard.browser). Older 0.1.0 extensions keep working: every installer and app registration also carries the previous name.
