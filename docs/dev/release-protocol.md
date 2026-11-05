@@ -140,6 +140,7 @@ step after it.
 
 - macOS: ad-hoc signing only; no Developer ID certificate or notarization.
 - iOS: no build or store pipeline.
-- Windows: no MSI (WiX is Windows-only); no Authenticode signing.
+- Windows: no MSI (WiX is Windows-only); no Authenticode signing, so SmartScreen warns. Clean Windows machines need the VC++ redistributable (`VC_redist.x64.exe`) before the bundled exes run; the release notes carry this prerequisite and bundling it into NSIS is still open.
+- Windows installer: verified interactively on the Windows 11 smoke VM (uninstall old version, clean install, app launch over WebView2). A non-interactive start (ssh, scheduled task) exits with code 123 before any UI; that is a launch-context artifact, not an installer bug. Manual reinstalls show the stock NSIS "Already Installed" page (one click, app data preserved); in-app updater installs run silently and skip it.
 - Desktop updater: the feed endpoint and publish job exist (release.yml `publish-updates`); the residual gap is publish-side signature re-verification and manifest expiry (deferred M5/M9).
 - Chrome Web Store and AMO listings: both submitted 2026-11-03, pending review at first upload; automated ext-submit still needs the store API credentials in Bitwarden.
