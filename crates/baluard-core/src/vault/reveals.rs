@@ -381,7 +381,7 @@ fn payload_from_doc(pkg: &RevealPackage, key: &[u8; 32]) -> Result<RevealPayload
 
 fn opened_from_payload(payload: RevealPayload) -> OpenedReveal {
     let (totp_code, totp_valid_until) = match payload.fields.totp_uri.as_deref() {
-        Some(uri) => match totp::parse_totp_uri(uri) {
+        Some(uri) => match totp::parse_totp(uri) {
             Ok(params) => {
                 let (code, _, valid_until) = totp::generate_totp(&params);
                 (Some(code), Some(valid_until))

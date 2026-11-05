@@ -99,6 +99,26 @@ pub fn parse_totp_uri(uri: &str) -> Result<TotpParams, String> {
     })
 }
 
+/// Parse either an `otpauth://` URI or a bare base32 secret.
+///
+/// Imports from other managers carry either form, so accept both: a
+/// string starting with `otpauth://` goes through the URI parser,
+/// anything else is a raw secret with the RFC defaults (SHA-1, 6
+/// digits, 30s period).
+pub fn parse_totp(input: &str) -> Result<TotpParams, String> {
+    if input.trim_start().starts_with("otpauth://") {
+        parse_totp_uri(input)
+    } else {
+        Ok(TotpParams {
+            secret: decode_base32(input)?,
+            algorithm: TotpAlgorithm::Sha1,
+            period: 30,
+            digits: 6,
+            issuer: None,
+        })
+    }
+}
+
 /// Generate a TOTP code for the given parameters at the current time.
 /// Returns (code, period_seconds, expires_at_timestamp).
 pub fn generate_totp(params: &TotpParams) -> (String, u64, u64) {
@@ -410,5 +430,41 @@ mod tests {
         let secret = decode_base32("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ").unwrap();
         assert_eq!(secret.len(), 20);
         assert_eq!(String::from_utf8_lossy(&secret), "12345678901234567890");
+    }
+
+    #[test]
+    fn bare_secret_parses_with_defaults_and_matches_uri_form() {
+        let bare = parse_totp("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ").unwrap();
+        let uri =
+            parse_totp("otpauth://totp/Test?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ").unwrap();
+        assert_eq!(bare.algorithm, TotpAlgorithm::Sha1);
+        assert_eq!(bare.period, 30);
+        assert_eq!(bare.digits, 6);
+        assert_eq!(bare.secret, uri.secret);
+        assert_eq!(generate_totp_at(&bare, 59), generate_totp_at(&uri, 59));
+    }
+
+    #[test]
+    fn bare_secret_tolerates_case_spaces_and_padding() {
+        let params = parse_totp(" gezd gnbv gy3t qojq gezd gnbv gy3t qojq ==").unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&params.secret),
+            "12345678901234567890"
+        );
+    }
+
+    #[test]
+    fn bare_secret_rejects_garbage() {
+        assert!(parse_totp("").is_err());
+        assert!(parse_totp("   ").is_err());
+        assert!(parse_totp("not-a-totp-secret!").is_err());
+    }
+
+    #[test]
+    fn parse_totp_dispatches_like_parse_totp_uri() {
+        assert!(parse_totp("https://example.com").is_err());
+        assert!(parse_totp("otpauth://hotp/Test?secret=AAA").is_err());
+        let params = parse_totp("otpauth://totp/T?secret=MZXW6===&digits=8").unwrap();
+        assert_eq!(params.digits, 8);
     }
 }
