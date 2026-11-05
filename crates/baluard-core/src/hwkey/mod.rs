@@ -305,6 +305,12 @@ pub fn probe_status() -> HwCapability {
     }
 }
 
+/// The BALUARD_DISABLE_HWKEY kill switch, exposed for status surfaces
+/// that need the flag itself rather than a probe.
+pub fn kill_switch_active() -> bool {
+    hw_disabled()
+}
+
 /// Shared-secret derivation used by the v2-hw seal:
 /// `HKDF-SHA256(ikm = hw_secret || kek_subkey, info = seal-type bytes)`.
 /// Public so the seal layer and its tests share one construction.

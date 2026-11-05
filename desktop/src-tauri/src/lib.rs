@@ -539,6 +539,16 @@ async fn daemon_request(
         }
         Err(e) => {
             log::warn!("[desktop] <- action={action} error={e}");
+            // A daemon crash mid-session used to leave the app dead until a
+            // manual restart (2026-11-04 field report). Fire-and-forget the
+            // bring-back: this request already failed and the next poll rides
+            // the fresh daemon.
+            if e.starts_with("Cannot connect to daemon") {
+                let app_for_respawn = app.clone();
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    crate::daemon_ctl::ensure_daemon_running(&app_for_respawn);
+                });
+            }
             // M1: only drop the TARGETED slug's token on a token/lock error.
             // Clearing the whole map on a slug-less error caused a re-unlock
             // storm across every open vault. For slug-less errors we leave
