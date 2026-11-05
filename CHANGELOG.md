@@ -4,6 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Fixed a cross-device sync failure: joining a vault from a second device could push an incomplete enrollment that every other device then refused, breaking sync for all of them. Enrollments now land as one complete signed commit, and a sync that would overwrite your unsaved local edits stops with a clear message instead of silently discarding them.
 - Desktop apps can now update themselves: the app checks for new signed releases, asks before downloading anything, and restarts into the new version. The check runs in the background on a slow jittered schedule and can be turned off in Settings; a manual "Check for updates" button lives there too. Linux updates work from the AppImage; deb and rpm users keep updating through the package repositories.
 
 ## 0.1.2 - 2026-11-05

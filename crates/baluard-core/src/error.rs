@@ -259,6 +259,9 @@ pub enum SyncError {
     #[error("commit signature verification failed")]
     InvalidCommitSignature,
 
+    #[error("pull refused: uncommitted local changes would be overwritten; commit or sync first")]
+    DirtyWorktree,
+
     #[error(
         "signing key unavailable: unsigned commits are refused; unlock Baluard on this device to restore sync"
     )]

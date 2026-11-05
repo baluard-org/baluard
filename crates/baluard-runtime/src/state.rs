@@ -9340,6 +9340,15 @@ impl VaultState {
         )
         .map_err(|e| format!("seal privkey: {e}"))?;
 
+        // The sealed privkey is on disk now, so the enrollment commit can
+        // sign. Must land before any unlock tail pull can run (see the
+        // commit_enrollment_bundle doc for the outage it closes).
+        crate::providers::commit_enrollment_bundle(
+            &vault_path,
+            result.device_id,
+            Some(&devkey_seal),
+        );
+
         // F3 fix: update self.inner under write lock so in-process state holds the new device_id
         {
             let mut guard = self.inner.write().await;
