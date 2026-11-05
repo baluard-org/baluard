@@ -8,8 +8,8 @@ One runbook for shipping a Baluard release across every variant. All commands ru
 |---|---|---|
 | Core, daemon, CLI (Rust workspace) | `baluard`, `baluard-daemon` binaries | Inside every desktop package; standalone `tar.gz` archives via `just release` |
 | Desktop Linux | `.deb`, `.rpm`, `.AppImage` | apt and dnf repositories at `https://baluard.app/repo`, GitHub Releases |
-| Desktop macOS | `.app` in a zip (`Baluard-macos-aarch64-non-notarized.zip`) | GitHub Releases; ad-hoc signed, not notarized (Developer ID and notarization are a known gap) — Gatekeeper strips the quarantine xattr before first launch. Linux cross-builds it through the aarch64 pipeline |
-| Desktop Windows | NSIS `setup.exe` | GitHub Releases; cross-built on Linux with cargo-xwin (`just desktop-windows`); MSI stays Windows-only (WiX) |
+| Desktop macOS | `.app` in a zip (`Baluard-macos-aarch64-non-notarized.zip`) | GitHub Releases; ad-hoc signed, not notarized (Developer ID and notarization are a known gap) — Gatekeeper strips the quarantine xattr before first launch. Linux cross-builds it through the aarch64 pipeline. The daemon self-registers the browser-bridge manifests into every installed browser at startup (`BALUARD_CHROME_EXTENSION_ID` must be set at build time or the Chrome-family manifests are skipped) |
+| Desktop Windows | NSIS `setup.exe` | GitHub Releases; cross-built on Linux with cargo-xwin (`just desktop-windows`); MSI stays Windows-only (WiX). The installer writes the per-browser native-messaging registry keys (`installer-hooks.nsh`) pointing at the manifest the daemon writes beside itself on first startup |
 | Browser extension (Chrome) | `dist/baluard-extension-<version>-chrome.zip` | Chrome Web Store, extension ID `nmkmfkmdhbifkjdhioejeoegcjpaiijl` |
 | Browser extension (Firefox) | `dist/baluard-extension-<version>-firefox.zip` | Firefox AMO, gecko ID `baluard@actitud.xyz` |
 | Native messaging host | `baluard-nmh` + four host manifests | Shipped inside the deb and rpm with system-wide manifests (see below); dev installs use `just install-nmh-manifest` |
