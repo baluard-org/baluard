@@ -6,7 +6,7 @@
 
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use std::io::{Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -16,6 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use zeroize::Zeroize;
 
 mod daemon_ctl;
+mod deep_link;
 mod updater;
 use updater::{updater_check, updater_install, updater_status};
 
@@ -103,7 +104,12 @@ pub(crate) fn send_request(action: &str, payload: &str) -> Result<String, String
 
 /// Send a Protobuf request with session token + slug. Returns (payload, optional_new_token).
 /// `slug` (Phase 6 / M2): target vault; empty = active vault.
-fn send_request_with_token(action: &str, payload: &str, token: &str, slug: &str) -> Result<(String, Option<String>), String> {
+fn send_request_with_token(
+    action: &str,
+    payload: &str,
+    token: &str,
+    slug: &str,
+) -> Result<(String, Option<String>), String> {
     let socket = default_socket_path();
     let mut stream = baluard_core::ipc::IpcStream::connect(&socket)
         .map_err(|e| format!("Cannot connect to daemon at {}: {}", socket.display(), e))?;
@@ -124,7 +130,9 @@ fn send_request_with_token(action: &str, payload: &str, token: &str, slug: &str)
 
     let mut header = Vec::with_capacity(10);
     encode_varint(body.len() as u64, &mut header);
-    stream.write_all(&header).map_err(|e| format!("Write: {e}"))?;
+    stream
+        .write_all(&header)
+        .map_err(|e| format!("Write: {e}"))?;
     stream.write_all(&body).map_err(|e| format!("Write: {e}"))?;
     stream.flush().map_err(|e| format!("Flush: {e}"))?;
     stream.shutdown().map_err(|e| format!("Shutdown: {e}"))?;
@@ -158,7 +166,11 @@ fn send_request_with_token(action: &str, payload: &str, token: &str, slug: &str)
         };
         Ok((resp.payload, new_token))
     } else {
-        log::warn!("daemon error: action={} error={}", action, resp.error_message);
+        log::warn!(
+            "daemon error: action={} error={}",
+            action,
+            resp.error_message
+        );
         Err(resp.error_message)
     }
 }
@@ -237,102 +249,102 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vaults.detach",
     "vaults.list",
     "vaults.list_full_all",
-        "cipher.set_collection",
-        "collections.create",
-        "templates.create",
-        "templates.list",
-        "templates.delete",
-        "collections.sweep",
-        "collections.list",
-        "collections.rename",
-        "collections.delete",
-        "collections.grant",
-        "collections.revoke",
-        // S4-2: group management.
-        "groups.list",
-        "groups.create",
-        "groups.rename",
-        "groups.delete",
-        "groups.member_add",
-        "groups.member_remove",
-        // S3-7a: space meta key groundwork.
-        "space.prepare",
-        "space.status",
-        "space.flip",
-        "space.rotate_root",
-        "space.migrate",
-        "space.remote",
-        "space.settings",
-        "space.settings_set",
-        // S4-1: sensitive-op approvals (quorum knob).
-        "approvals.list",
-        "access.review",
-        "activity.timeline",
-        "policies.set",
-        "policies.list",
-        // S4-7: Space Recovery Kit (admin surfaces).
-        "space.kit_enable",
-        "space.kit_disable",
-        "space.kit_status",
-        // S2: item-sharing send/receive surfaces.
-        "reveals.export_guest",
-        "packages.import",
-        "reveals.open_contact",
-        "reveals.open_guest",
-        // S2 UI: address book + contact-flavor send.
-        "contacts.list",
-        "contacts.my_card",
-        "contacts.import_card",
-        "contacts.mark_verified",
-        "contacts.remove",
-        "outbox.publish",
-        "outbox.unpublish",
-        "outbox.revoke",
-        "outbox.list",
-        "outbox.link",
-        "outbox.links",
-        "outbox.forget",
-        "outbox.read",
-        "outbox.entries",
-        "outbox.resync",
-        "reveals.export_contact",
-        "packages.export",
-        // S3-6: request-access JIT surfaces.
-        "collections.request_access",
-        "collections.requests_mine",
-        "collections.requests_withdraw",
-        "collections.requests_list",
-        "collections.requests_approve",
-        "collections.requests_deny",
-        "collections.catalog_set",
-        "collections.catalog_list",
-        // People surface: members, join queue, notices, activity.
-        "members.list",
-        "members.invite",
-        "members.remove",
-        "members.reset",
-        "members.transfer",
-        "members.claim",
-        "members.set_email",
-        "members.set_role",
-        "members.contest_status",
-        "members.contest_cancel",
-        "requests.list",
-        "requests.stage",
-        "requests.approve",
-        "requests.deny",
-        "notices.list",
-        "activity.events",
-        "activity.refusals",
-        // D80: only human administration routes. Agent request, poll, and
-        // credential execution stay unavailable to the webview.
-        "agents.pending",
-        "agents.approve",
-        "agents.deny",
-        "agents.revoke",
-        "agents.list",
-        "agents.set_yolo",
-        "agents.audit",
+    "cipher.set_collection",
+    "collections.create",
+    "templates.create",
+    "templates.list",
+    "templates.delete",
+    "collections.sweep",
+    "collections.list",
+    "collections.rename",
+    "collections.delete",
+    "collections.grant",
+    "collections.revoke",
+    // S4-2: group management.
+    "groups.list",
+    "groups.create",
+    "groups.rename",
+    "groups.delete",
+    "groups.member_add",
+    "groups.member_remove",
+    // S3-7a: space meta key groundwork.
+    "space.prepare",
+    "space.status",
+    "space.flip",
+    "space.rotate_root",
+    "space.migrate",
+    "space.remote",
+    "space.settings",
+    "space.settings_set",
+    // S4-1: sensitive-op approvals (quorum knob).
+    "approvals.list",
+    "access.review",
+    "activity.timeline",
+    "policies.set",
+    "policies.list",
+    // S4-7: Space Recovery Kit (admin surfaces).
+    "space.kit_enable",
+    "space.kit_disable",
+    "space.kit_status",
+    // S2: item-sharing send/receive surfaces.
+    "reveals.export_guest",
+    "packages.import",
+    "reveals.open_contact",
+    "reveals.open_guest",
+    // S2 UI: address book + contact-flavor send.
+    "contacts.list",
+    "contacts.my_card",
+    "contacts.import_card",
+    "contacts.mark_verified",
+    "contacts.remove",
+    "outbox.publish",
+    "outbox.unpublish",
+    "outbox.revoke",
+    "outbox.list",
+    "outbox.link",
+    "outbox.links",
+    "outbox.forget",
+    "outbox.read",
+    "outbox.entries",
+    "outbox.resync",
+    "reveals.export_contact",
+    "packages.export",
+    // S3-6: request-access JIT surfaces.
+    "collections.request_access",
+    "collections.requests_mine",
+    "collections.requests_withdraw",
+    "collections.requests_list",
+    "collections.requests_approve",
+    "collections.requests_deny",
+    "collections.catalog_set",
+    "collections.catalog_list",
+    // People surface: members, join queue, notices, activity.
+    "members.list",
+    "members.invite",
+    "members.remove",
+    "members.reset",
+    "members.transfer",
+    "members.claim",
+    "members.set_email",
+    "members.set_role",
+    "members.contest_status",
+    "members.contest_cancel",
+    "requests.list",
+    "requests.stage",
+    "requests.approve",
+    "requests.deny",
+    "notices.list",
+    "activity.events",
+    "activity.refusals",
+    // D80: only human administration routes. Agent request, poll, and
+    // credential execution stay unavailable to the webview.
+    "agents.pending",
+    "agents.approve",
+    "agents.deny",
+    "agents.revoke",
+    "agents.list",
+    "agents.set_yolo",
+    "agents.audit",
     "vaults.register_local",
     "vaults.switch",
     // clone from provider
@@ -453,7 +465,10 @@ async fn daemon_request(
     }
 
     let store = app.state::<Mutex<SessionStore>>();
-    log::debug!("[desktop] -> action={action} slug={slug:?} payload_len={}", payload.len());
+    log::debug!(
+        "[desktop] -> action={action} slug={slug:?} payload_len={}",
+        payload.len()
+    );
 
     // Resolve the effective slug for THIS request. When the caller omits it,
     // the daemon targets the active vault — but the token check is still
@@ -464,7 +479,14 @@ async fn daemon_request(
     let effective_slug = slug.clone().or(active_slug.clone());
     let stored_token = effective_slug
         .as_ref()
-        .and_then(|s| store.lock().unwrap().tokens.get(s).map(|z| z.as_str().to_owned()))
+        .and_then(|s| {
+            store
+                .lock()
+                .unwrap()
+                .tokens
+                .get(s)
+                .map(|z| z.as_str().to_owned())
+        })
         .unwrap_or_default();
 
     // The socket read/write is blocking (up to the 30s read timeout). Running
@@ -489,7 +511,10 @@ async fn daemon_request(
 
     match socket_result {
         Ok((data, new_token)) => {
-            log::debug!("[desktop] <- action={action} success=true payload_len={}", data.len());
+            log::debug!(
+                "[desktop] <- action={action} success=true payload_len={}",
+                data.len()
+            );
             let mut st = store.lock().unwrap();
             // On lock for a slug, drop that slug's token. On unlock/create,
             // store the returned token under the slug.
@@ -556,8 +581,7 @@ async fn daemon_request(
             // the backstop. Match the specific daemon error strings, not a
             // bare "locked" substring (too broad — "locked" appears in many
             // unrelated messages).
-            let is_token_or_lock_err = e.contains("session token")
-                || e.contains("Vault is locked");
+            let is_token_or_lock_err = e.contains("session token") || e.contains("Vault is locked");
             if is_token_or_lock_err {
                 let target = slug.as_ref().or(active_slug.as_ref());
                 if let Some(s) = target {
@@ -573,7 +597,7 @@ async fn daemon_request(
                 payload: String::new(),
                 error: e,
             }
-        },
+        }
     }
 }
 
@@ -948,7 +972,11 @@ async fn export_save_plain(app: AppHandle, format: String) -> Result<ExportSaveR
             .dialog()
             .file()
             .add_filter(
-                if is_csv { "Spreadsheet (logins only)" } else { "Baluard backup" },
+                if is_csv {
+                    "Spreadsheet (logins only)"
+                } else {
+                    "Baluard backup"
+                },
                 if is_csv { &["csv"] } else { &["json"] },
             )
             .set_file_name(&default_name)
@@ -958,7 +986,7 @@ async fn export_save_plain(app: AppHandle, format: String) -> Result<ExportSaveR
                 return Ok(ExportSaveResult {
                     saved: false,
                     written_bytes: 0,
-                })
+                });
             }
             Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
             Some(_) => return Err("Unsupported save location".to_string()),
@@ -1009,7 +1037,7 @@ async fn backup_save_encrypted(
                     saved: false,
                     written_bytes: 0,
                     entries: 0,
-                })
+                });
             }
             Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
             Some(_) => return Err("Unsupported save location".to_string()),
@@ -1026,8 +1054,8 @@ async fn backup_save_encrypted(
         let (data, _) = send_request_with_token("vault.export", &payload, &token, &slug)?;
         let mut payload = payload;
         payload.zeroize();
-        let v: serde_json::Value = serde_json::from_str(&data)
-            .map_err(|e| format!("Unexpected export response: {e}"))?;
+        let v: serde_json::Value =
+            serde_json::from_str(&data).map_err(|e| format!("Unexpected export response: {e}"))?;
         Ok(BackupSaveResult {
             saved: true,
             written_bytes: v["written_bytes"].as_u64().unwrap_or(0),
@@ -1057,8 +1085,8 @@ async fn legacy_read_letter(app: AppHandle) -> Result<Option<String>, String> {
             Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
             Some(_) => return Err("Unsupported file location".to_string()),
         };
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("Could not read the kit: {e}"))?;
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("Could not read the kit: {e}"))?;
         Ok(Some(text))
     })
     .await
@@ -1070,7 +1098,10 @@ async fn legacy_read_letter(app: AppHandle) -> Result<Option<String>, String> {
 /// the daemon import summary JSON. Errors carry the daemon message — the
 /// generic "wrong password or damaged file" among them.
 #[tauri::command]
-async fn backup_import_encrypted(app: AppHandle, passphrase: String) -> Result<Option<String>, String> {
+async fn backup_import_encrypted(
+    app: AppHandle,
+    passphrase: String,
+) -> Result<Option<String>, String> {
     let (token, slug) = active_session(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         use tauri_plugin_dialog::DialogExt;
@@ -1161,7 +1192,9 @@ fn load_desktop_prefs() -> DesktopPrefs {
 /// the in-memory apply still takes effect for this session.
 fn save_desktop_prefs(prefs: &DesktopPrefs) {
     let path = desktop_prefs_path();
-    if let Err(e) = std::fs::create_dir_all(path.parent().unwrap_or_else(|| std::path::Path::new("."))) {
+    if let Err(e) =
+        std::fs::create_dir_all(path.parent().unwrap_or_else(|| std::path::Path::new(".")))
+    {
         log::warn!("[desktop] prefs dir create failed: {e}");
         return;
     }
@@ -1383,21 +1416,36 @@ pub fn run() {
         render::write_marker();
     }
 
-#[tauri::command]
-fn notify_agent_request(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-    app.notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show()
-        .map_err(|e| e.to_string())
-}
+    #[tauri::command]
+    fn notify_agent_request(
+        app: tauri::AppHandle,
+        title: String,
+        body: String,
+    ) -> Result<(), String> {
+        use tauri_plugin_notification::NotificationExt;
+        app.notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+            .map_err(|e| e.to_string())
+    }
 
     let builder = tauri::Builder::default();
     #[cfg(feature = "smoke")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder
+        // Single instance must register first: on Windows and Linux a deep
+        // link relaunches the app and this plugin hands the URL to the
+        // running window (macOS delivers it as an event instead).
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            for arg in argv {
+                if arg.starts_with("baluard://") {
+                    deep_link::emit_entry(app, &arg);
+                }
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_biometry::init())
@@ -1414,6 +1462,23 @@ fn notify_agent_request(app: tauri::AppHandle, title: String, body: String) -> R
             pending: std::sync::Mutex::new(None),
         })
         .setup(|app| {
+            // Deep links: macOS (and mobile) deliver scheme opens as events on
+            // the running instance; the single-instance hook above covers the
+            // relaunch path on Windows and Linux. Windows needs the per-user
+            // scheme registration done once from the installed app.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                #[cfg(windows)]
+                if let Err(e) = app.deep_link().register("baluard") {
+                    log::warn!("deep link scheme registration failed: {e}");
+                }
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        deep_link::emit_entry(&handle, url.as_str());
+                    }
+                });
+            }
             // Always log to file for debuggability.
             // BALUARD_LOG_DIR overrides log directory; defaults to socket dir.
             // BALUARD_DEBUG=1 enables Debug level; otherwise Warn.
@@ -1760,7 +1825,12 @@ mod tests {
     #[test]
     fn d2_allowlist_blocks_unlisted_actions() {
         // Everything the UI calls is allowed…
-        for a in ["vault.unlock", "vaults.detach", "sync.pull", "bridge.pair_start"] {
+        for a in [
+            "vault.unlock",
+            "vaults.detach",
+            "sync.pull",
+            "bridge.pair_start",
+        ] {
             assert!(desktop_action_allowed(a), "{a} should be allowed");
         }
         // …and host-level routes the UI never calls are not. `ping` goes

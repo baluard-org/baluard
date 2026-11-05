@@ -255,8 +255,7 @@ fn wait_for_pid_exit(pid: u32, timeout: Duration) -> bool {
     loop {
         unsafe {
             // SYNCHRONIZE (in FILE_ACCESS_RIGHTS) lets us wait on the process.
-            let handle =
-                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | 0x00100000, 0, pid);
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | 0x00100000, 0, pid);
             if handle.is_null() {
                 return true; // gone: no process object left to wait on
             }
@@ -333,8 +332,7 @@ fn spawn_sidecar(app: &AppHandle, socket: &std::path::Path) -> Result<(), String
         .shell()
         .sidecar("baluard-daemon")
         .map_err(|e| format!("Sidecar not found: {e}"))?;
-    let sidecar_command =
-        sidecar_command.args(["--socket", socket.to_string_lossy().as_ref()]);
+    let sidecar_command = sidecar_command.args(["--socket", socket.to_string_lossy().as_ref()]);
 
     // We MUST keep the stdout/stderr receiver alive — dropping it closes the
     // pipe and we lose the daemon's startup error output.
@@ -475,7 +473,12 @@ mod tests {
 
     #[test]
     fn first_respawn_failure_is_permitted() {
-        assert!(respawn_permitted(Instant::now(), None, false, RESPAWN_COOLDOWN));
+        assert!(respawn_permitted(
+            Instant::now(),
+            None,
+            false,
+            RESPAWN_COOLDOWN
+        ));
     }
 
     #[test]
@@ -500,6 +503,11 @@ mod tests {
 
     #[test]
     fn an_in_flight_attempt_blocks_new_ones_even_when_cold() {
-        assert!(!respawn_permitted(Instant::now(), None, true, RESPAWN_COOLDOWN));
+        assert!(!respawn_permitted(
+            Instant::now(),
+            None,
+            true,
+            RESPAWN_COOLDOWN
+        ));
     }
 }

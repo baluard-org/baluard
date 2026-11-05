@@ -1,5 +1,6 @@
-import { onSettled, Show, createSignal } from "solid-js";
+import { onSettled, Show, createSignal, createEffect } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { initDeepLink, flushPendingEntry } from "./lib/deepLink.js";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon, showWindow } from "./lib/daemon.js";
 import { disableAutofill } from "./lib/disableAutofill.js";
@@ -60,6 +61,24 @@ export default function App() {
       );
     }
   });
+  // baluard:// deep links (extension eye icon). Validated in Rust, routed
+  // to VaultView through a window event; stashed here while locked and
+  // flushed the moment auth reaches unlocked, so nothing is revealed first.
+  onSettled(() => {
+    void initDeepLink(
+      (entry) => window.dispatchEvent(new CustomEvent("baluard:open-entry", { detail: entry })),
+      () => auth.status() === "unlocked",
+    );
+  });
+  createEffect(
+    () => auth.status(),
+    (status) => {
+      if (status !== "unlocked") return;
+      flushPendingEntry((entry) =>
+        window.dispatchEvent(new CustomEvent("baluard:open-entry", { detail: entry })),
+      );
+    },
+  );
   onSettled(() => {
     (async () => {
       try {
