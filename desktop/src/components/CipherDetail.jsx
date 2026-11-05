@@ -7,7 +7,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { daemon } from "../lib/daemon.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
-import { uriStr, formatCardNumber, sanitizeError } from "../lib/utils.js";
+import { uriStr, formatCardNumber, sanitizeError, formatDateIso } from "../lib/utils.js";
 import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
 import { looksLikeMarkdown } from "../lib/markdown.js";
@@ -342,7 +342,7 @@ export default function CipherDetail(props) {
                   <For each={cipher()?.password_history || []}>
                     {(h, i) => (
                       <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)]">
-                        <span class="text-[10px] text-[var(--color-muted)] shrink-0 w-20">{h.last_used_date ? new Date(h.last_used_date * 1000).toLocaleDateString() : "—"}</span>
+                        <span class="text-[10px] text-[var(--color-muted)] shrink-0 w-20">{formatDateIso(h.last_used_date) ?? "—"}</span>
                         <span class="flex-1 font-mono text-xs text-[var(--color-text)] truncate select-all">
                           {revealedHistory() === i() ? h.password : "••••••••"}
                         </span>
