@@ -8087,14 +8087,11 @@ impl VaultState {
         use baluard_core::vault::device_privkey::PrivkeyFileKind;
         let vault_path = self.vault_path.clone();
         tokio::task::spawn_blocking(move || {
-            let global = baluard_core::hwkey::probe_status();
-            let disabled = matches!(
-                &global,
-                baluard_core::hwkey::HwCapability::Unavailable { reason } if reason == "disabled"
-            );
+            let disabled = baluard_core::hwkey::kill_switch_active();
             let stores = baluard_core::hwkey::installed_all();
             let mut backends = Vec::with_capacity(stores.len());
             let mut first_available = None;
+            let mut first_capability: Option<baluard_core::hwkey::HwCapability> = None;
             for store in &stores {
                 let capability = if disabled {
                     baluard_core::hwkey::HwCapability::Unavailable {
@@ -8103,6 +8100,11 @@ impl VaultState {
                 } else {
                     store.probe()
                 };
+                // The loop owns the only probe: the old probe_status()
+                // call re-enumerated the first backend a second time.
+                if first_capability.is_none() {
+                    first_capability = Some(capability.clone());
+                }
                 let (capable, reason) = match capability {
                     baluard_core::hwkey::HwCapability::Available { .. } => {
                         first_available.get_or_insert_with(|| store.backend_id().to_string());
@@ -8152,6 +8154,10 @@ impl VaultState {
             let reason = if first_available.is_some() {
                 serde_json::Value::Null
             } else {
+                let global =
+                    first_capability.unwrap_or(baluard_core::hwkey::HwCapability::Unavailable {
+                        reason: "no-backend".into(),
+                    });
                 match global {
                     baluard_core::hwkey::HwCapability::Unavailable { reason } => {
                         serde_json::Value::String(reason)

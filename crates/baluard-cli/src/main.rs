@@ -1793,6 +1793,14 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
 }
 
 fn main() {
+    // HID-enumerate child mode (hwkey::fido): must run before any CLI
+    // state exists; a parent spawns us to keep IOKit crashes out of the
+    // calling process.
+    #[cfg(feature = "fido2")]
+    if std::env::args_os().any(|a| a == baluard_core::hwkey::fido::ENUMERATE_FLAG) {
+        baluard_core::hwkey::fido::run_enumerate_child();
+    }
+
     // Load `.env` from cwd (and parents) into process env at startup.
     // `dotenvy` returns `Err` if no `.env` is present — the expected case
     // in CI / production installs. Real env vars take precedence over the
