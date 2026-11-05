@@ -96,6 +96,7 @@ const all = walk(args["artifacts-dir"]);
 const MATRIX = [
   ["linux-x86_64-appimage", ".AppImage", 1],
   ["darwin-aarch64", ".app.tar.gz", 1],
+  ["windows-x86_64", "-setup.exe", 1],
 ];
 
 const platforms = {};
@@ -119,12 +120,21 @@ for (const [key, suffix, expected] of MATRIX) {
     process.exit(1);
   }
   const signedVersion = signedVersionOf(sig);
-  if (signedVersion !== version) {
+  // The shipped CLI does not stamp version:X into the trusted comment yet
+  // (2.12.4 confirmed), so a missing version only warns; a PRESENT version
+  // that disagrees with the tag is a real mix-up and still fails.
+  if (signedVersion != null && signedVersion !== version) {
     console.error(
-      `signature for ${basename(artifact)} is signed for version ${signedVersion ?? "<none>"}, expected ${version}. ` +
+      `signature for ${basename(artifact)} is signed for version ${signedVersion}, expected ${version}. ` +
         "Re-sign with the current Tauri CLI before publishing.",
     );
     process.exit(1);
+  }
+  if (signedVersion == null) {
+    console.warn(
+      `note: ${basename(artifact)} signature carries no version comment; ` +
+        "clients must run with requireSignedVersion disabled",
+    );
   }
   platforms[key] = {
     signature: sigText,

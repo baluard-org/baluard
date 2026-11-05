@@ -116,17 +116,24 @@ just ext-submit
 
 | Variant | How users get updates |
 |---|---|
-| Desktop Linux (AppImage) | In-app updater: the `publish-updates` dispatch (release.yml) writes `latest.json` to the fixed `updates-stable` / `updates-beta` GitHub release the app polls; deb/rpm stay repository-managed |
-| Desktop macOS / Windows | In-app updater via the same channel manifest once Windows joins the platform matrix; until then new download from GitHub Releases |
+| Desktop Linux (AppImage) | In-app updater: the app polls `updates-stable` / `updates-beta` channel manifests (`latest.json` assets on those fixed GitHub releases); deb/rpm stay repository-managed |
+| Desktop macOS | In-app updater through the `darwin-aarch64` manifest key (the signed `.app.tar.gz`); the non-notarized zip is for first installs |
+| Desktop Windows | In-app updater through the `windows-x86_64` manifest key (the signed setup exe) |
 | Browser extension | Store-managed auto-update after `just ext-submit` (Chrome) / AMO approval (Firefox) |
 | Mobile Android via F-Droid | Index regeneration in `fdroid-stage`; requires a higher `versionCode`; the repo keeps the latest three APKs |
-| Direct downloads | New GitHub release with stable asset names, per-asset `.sig` only for the updater payloads (AppImage, setup exe), and signed `SHA256SUMS` |
+| Direct downloads | New GitHub release with stable asset names, per-asset `.sig` only for the updater payloads (AppImage, setup exe, app tar.gz), and signed `SHA256SUMS` |
 
-The channel feed goes live on the FIRST `publish-updates` dispatch after the
-versioned release is published from draft (the dispatch creates the
-`updates-*` release if absent). Until that first dispatch runs, installed
-apps have no feed to poll: that is expected before 0.1.0 ships, a release-day
-step after it.
+## Update channel publication (local-first pipeline)
+
+Every published version ships its channel manifest the same day, from the local pipeline (CI's `publish-updates` dispatch is the mirror, not the primary):
+
+1. Stage the stable set: `just release-stage dist` (the recipe carries the Android APK and the full `--require` list).
+2. Generate the manifest: `node scripts/generate-updates-manifest.mjs --tag <X.Y.Z> --artifacts-dir release-upload --notes-file <notes.md> --out /tmp/latest.json`. The matrix publishes `linux-x86_64-appimage`, `darwin-aarch64`, and `windows-x86_64`; a signature carrying a version comment that disagrees with the tag fails the run, while the versionless signatures the current CLI produces only warn (see the `requireSignedVersion` note below).
+3. Upload it onto the fixed channel release: `gh release upload updates-stable --clobber /tmp/latest.json` (create the release with `--prerelease` the first time so it can never hijack `releases/latest`; beta versions publish onto `updates-beta` the same way). The channel release is the only mutable piece — versioned releases and their artifacts are immutable once published.
+
+`requireSignedVersion` stays `false` in `tauri.conf.json` because the shipped Tauri CLI (2.12.4) writes no `version:` trusted comment into signatures; enabling it would make every install fail `MissingSignedVersion`. The plugin version-checks any signature that DOES carry the comment regardless of the flag, so flipping it on the day the CLI stamps versions needs no migration.
+
+The desktop confirm-first flow: the Rust command surface (`desktop/src-tauri/src/updater.rs`) downloads only after the user accepts the UpdateBanner dialog, drains and locks vaults over IPC (`system.prepare_update`), stops the daemon, installs, and relaunches; on Windows the NSIS install step exits the app itself. The check cadence (jittered startup probe, 6h background interval, opt-out in Settings) and the pure scheduling pieces live in `desktop/src/lib/update.js`.
 
 ## Pre-release checklist
 

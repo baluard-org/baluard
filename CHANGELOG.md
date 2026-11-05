@@ -4,6 +4,10 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Desktop apps can now update themselves: the app checks for new signed releases, asks before downloading anything, and restarts into the new version. The check runs in the background on a slow jittered schedule and can be turned off in Settings; a manual "Check for updates" button lives there too. Linux updates work from the AppImage; deb and rpm users keep updating through the package repositories.
+
+## 0.1.2 - 2026-11-05
+
 - The desktop app now brings the daemon back automatically after a crash, instead of showing "Daemon is not running" until a manual restart.
 - A security-key enumeration crash or hang can no longer take the daemon down: the HID probe runs in a short-lived child process, and a hung probe is killed after five seconds instead of stalling shutdown.
 - macOS builds are now published on the releases page as a zip named non-notarized: the app inside is ad-hoc signed, so Gatekeeper's quarantine marker must be removed once before first launch (development builds on Apple Silicon; an x86_64 build exists for local VM debugging only and is not published).
