@@ -135,6 +135,14 @@ cat > "$APP_ROOT/Contents/Info.plist" <<PLIST
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>$VERSION</string>
 	<key>CFBundleVersion</key><string>$VERSION</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key><string>app.baluard.desktop</string>
+			<key>CFBundleURLSchemes</key>
+			<array><string>baluard</string></array>
+		</dict>
+	</array>
 	<key>LSMinimumSystemVersion</key><string>15.0</string>
 	<key>NSHighResolutionCapable</key><true/>
 </dict>

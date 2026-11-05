@@ -58,6 +58,35 @@ export default function VaultView() {
     void vault.refreshCiphers(t);
   });
 
+  // baluard:// deep links: App validated the target and dispatches here once
+  // unlocked. Switching vaults first is safe: the slug-change effect resets
+  // navigation synchronously during switchTo, before this continuation runs.
+  async function onDeepLinkEntry(e) {
+    const slug = e.detail?.slug;
+    const id = e.detail?.id;
+    if (!slug || !id) return;
+    try {
+      const pool = () => [...(vault.ciphers() || []), ...(vault.otherVaultCiphers() || [])];
+      let c = pool().find((x) => x.id === id && (x._vault?.slug || switcher.activeSlug()) === slug);
+      if (!c && slug !== switcher.activeSlug()) {
+        await switcher.switchTo(slug);
+        await vault.refreshCiphers(t);
+        c = pool().find((x) => x.id === id);
+      }
+      if (c) {
+        setViewCipher(c);
+        vault.setActivePane("detail");
+      }
+    } catch {
+      // Dead target (vault detached, entry gone): nothing to show.
+    }
+  }
+  onSettled(() => {
+    const handler = (e) => void onDeepLinkEntry(e);
+    window.addEventListener("baluard:open-entry", handler);
+    return () => window.removeEventListener("baluard:open-entry", handler);
+  });
+
   const [switching, setSwitching] = createSignal(false);
   let lastSwitchSlug = switcher.activeSlug();
   createEffect(

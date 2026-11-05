@@ -63,6 +63,9 @@ globalThis.chrome.runtime.sendMessage = (msg, cb) => {
 
 globalThis.chrome.tabs.query = (_opts, cb) => cb([{ id: 1, url: TAB_URL }]);
 
+const createdTabs = [];
+globalThis.chrome.tabs.create = (opts) => { createdTabs.push(opts); };
+
 // Must exist before popup.jsx's import-time mount probes the daemon.
 await import("../src/popup.jsx");
 
@@ -134,11 +137,21 @@ describe("popup merged surfaces (G24 step 5)", () => {
   it("totp read carries the tab URL and the entry's vault_slug", async () => {
     const card = [...document.querySelectorAll(".match-card")][1];
     const btns = card.querySelectorAll(".match-secondary-actions .btn-icon");
-    const totpBtn = btns[btns.length - 1];
+    const totpBtn = btns[btns.length - 2]; // last button is view-in-app
     totpBtn.click();
     await flush(2);
     const codes = sendsFor("cipher.totp_code");
     const last = codes[codes.length - 1].payload;
     expect(last).toEqual({ id: "f1", url: TAB_URL, vault_slug: "family" });
+  });
+
+  it("the view button opens the entry deep link for its vault", async () => {
+    createdTabs.length = 0;
+    const card = [...document.querySelectorAll(".match-card")][0];
+    const btns = card.querySelectorAll(".match-secondary-actions .btn-icon");
+    btns[btns.length - 1].click();
+    await flush(2);
+    expect(createdTabs).toHaveLength(1);
+    expect(createdTabs[0].url).toBe("baluard://entry/personal/u1");
   });
 });

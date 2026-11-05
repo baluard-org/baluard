@@ -70,6 +70,7 @@ const STRINGS = {
     copyUsername: "Copy username",
     copyPassword: "Copy password",
     copyTotp: "Copy code",
+    viewInApp: "View in Baluard app",
     copied: "Copied",
     refresh: "Refresh",
     // G24 merged surfaces
@@ -132,6 +133,7 @@ const STRINGS = {
     copyUsername: "Copiar usuario",
     copyPassword: "Copiar contraseña",
     copyTotp: "Copiar código",
+    viewInApp: "Ver en la app de Baluard",
     copied: "Copiado",
     refresh: "Actualizar",
     lockedChip: "está bloqueada. Abre Baluard.",
@@ -193,6 +195,7 @@ const STRINGS = {
     copyUsername: "Copiar usuário",
     copyPassword: "Copiar senha",
     copyTotp: "Copiar código",
+    viewInApp: "Ver en la app de Baluard",
     copied: "Copiado",
     refresh: "Atualizar",
     // G24 merged surfaces
@@ -518,6 +521,13 @@ async function fill(entry) {
       setError(e.message);
     }
   }
+}
+
+function viewInApp(entry) {
+  // Opens baluard://entry/<slug>/<id>; the OS hands it to the desktop app,
+  // which navigates to the entry (asking for unlock first when locked).
+  if (!entry?.id || !entry?.vault_slug) return;
+  chrome.tabs.create({ url: `baluard://entry/${entry.vault_slug}/${entry.id}` });
 }
 
 async function copyField(entry, field) {
@@ -933,6 +943,12 @@ function App() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="10" />
                         <polyline points="12 6 12 12 16 14" />
+                      </svg>
+                    </button>
+                    <button class="btn-icon" onClick={() => viewInApp(m)} title={t("viewInApp")}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
