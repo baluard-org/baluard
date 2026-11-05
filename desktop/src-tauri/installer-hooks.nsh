@@ -6,6 +6,25 @@
 ; exist yet; the extension needs the running app anyway. Two host names:
 ; 0.1.0 store extensions pair through the legacy name, 0.1.3+ through
 ; the canonical one. Firefox reads the same keys under Software\Mozilla.
+!macro NSIS_HOOK_PREINSTALL
+  ; CheckIfAppIsRunning only covers the main exe; the detached daemon and
+  ; the browser-held bridge lock exes in $INSTDIR. The desktop dies first
+  ; or its daemon auto-respawn resurrects a locked exe.
+  nsis_tauri_utils::KillProcessCurrentUser "baluard-desktop.exe"
+  Pop $0
+  nsis_tauri_utils::KillProcessCurrentUser "baluard-daemon.exe"
+  Pop $0
+  nsis_tauri_utils::KillProcessCurrentUser "baluard-nmh.exe"
+  Pop $0
+!macroend
+!macro NSIS_HOOK_PREUNINSTALL
+  nsis_tauri_utils::KillProcessCurrentUser "baluard-desktop.exe"
+  Pop $0
+  nsis_tauri_utils::KillProcessCurrentUser "baluard-daemon.exe"
+  Pop $0
+  nsis_tauri_utils::KillProcessCurrentUser "baluard-nmh.exe"
+  Pop $0
+!macroend
 !macro NSIS_HOOK_POSTINSTALL
   WriteRegStr HKCU "Software\Google\Chrome\NativeMessagingHosts\app.baluard.browser" "" "$INSTDIR\app.baluard.browser.json"
   WriteRegStr HKCU "Software\Google\Chrome\NativeMessagingHosts\xyz.actitud.baluard" "" "$INSTDIR\xyz.actitud.baluard.json"

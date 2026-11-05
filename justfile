@@ -556,6 +556,15 @@ desktop-build: _sysdeps-desktop _sidecar desktop-deps _nmh-manifests
 desktop-windows: desktop-deps
 	./scripts/build-windows-installer.sh
 
+# Diff the NSIS installer fork against the upstream template for the
+# installed CLI version; expect exactly the two documented divergences.
+nsis-fork-diff:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	ver="$(node -p "require('./desktop/node_modules/@tauri-apps/cli/package.json').version")"
+	url="https://raw.githubusercontent.com/tauri-apps/tauri/tauri-cli-v${ver}/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi"
+	curl -sfL "$url" | diff - desktop/src-tauri/installer.nsi || true
+
 # Bump the product version everywhere it lives (Cargo workspace, Android
 # versionName/versionCode, extension manifest) and rebuild the committed
 # extension dists. Refuses non-semver and non-increasing versions.
