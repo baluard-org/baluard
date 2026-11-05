@@ -879,7 +879,7 @@ export default function CipherDetail(props) {
             <Show
               when={notesIsMarkdown()}
               fallback={
-                <div class="p-4 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] leading-relaxed font-semibold whitespace-pre-wrap select-text">
+                <div class="p-4 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] leading-relaxed font-semibold whitespace-pre-wrap overflow-x-auto select-text">
                   {cipher()?.notes}
                 </div>
               }
@@ -1085,7 +1085,7 @@ export default function CipherDetail(props) {
                 <IconX class="w-5 h-5" />
               </button>
             </div>
-            <div class="flex-1 overflow-y-auto px-6 py-4">
+            <div class="flex-1 overflow-y-auto overflow-x-auto px-6 py-4">
               <Show
                 when={notesIsMarkdown()}
                 fallback={
