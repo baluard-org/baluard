@@ -64,6 +64,20 @@ describe("filterByCategory", () => {
     expect(filterByCategory(ciphers, "Favorites")).toHaveLength(2);
   });
 
+  it("filters entries that carry a TOTP seed", () => {
+    const withTotp = [
+      makeCipher({ type: "login", totp_uri: "otpauth://totp/x?secret=ABC" }),
+      makeCipher({ type: "login", totp_uri: "" }),
+      makeCipher({ type: "login", totp_uri: null }),
+      makeCipher({ type: "login" }),
+      makeCipher({ type: "secureNote", kind: { data: { totp_uri: "otpauth://totp/y?secret=DEF" } } }),
+    ];
+    const got = filterByCategory(withTotp, "TOTP");
+    expect(got).toHaveLength(2);
+    expect(got[0].totp_uri).toContain("secret=ABC");
+    expect(got[1].kind.data.totp_uri).toContain("secret=DEF");
+  });
+
   it("returns all for unknown category", () => {
     expect(filterByCategory(ciphers, "Unknown")).toHaveLength(4);
   });

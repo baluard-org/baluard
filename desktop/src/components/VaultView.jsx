@@ -12,7 +12,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
 import AskAccessModal from "./AskAccessModal.jsx";
 import OpenSharedModal from "./OpenSharedModal.jsx";
-import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconSwitch, IconBaluardLogo, IconUsers } from "./Icon.jsx";
+import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconSwitch, IconBaluardLogo, IconUsers, IconClock } from "./Icon.jsx";
 import ConflictBanner from "./ConflictBanner.jsx";
 import LegacyBanner from "./LegacyBanner.jsx";
 import RemovalBanner from "./RemovalBanner.jsx";
@@ -92,6 +92,7 @@ export default function VaultView() {
     { id: "favorites", name: "Favorites", icon: <IconHeart class="w-4 h-4 shrink-0" /> },
     { id: "login", name: "Login", icon: <IconLock class="w-4 h-4 shrink-0" /> },
     { id: "passkeys", name: "Passkeys", icon: <IconFingerprint class="w-4 h-4 shrink-0" /> },
+    { id: "totp", name: "TOTP", icon: <IconClock class="w-4 h-4 shrink-0" /> },
     { id: "card", name: "Card", icon: <IconCard class="w-4 h-4 shrink-0" /> },
     { id: "identity", name: "Identity", icon: <IconIdentity class="w-4 h-4 shrink-0" /> },
     { id: "secureNote", name: "Secure note", icon: <IconNote class="w-4 h-4 shrink-0" /> },
@@ -298,6 +299,11 @@ export default function VaultView() {
                     <Show when={cat.name === "Trash"}>
                       <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
                         {vault.trashCiphers().length}
+                      </span>
+                    </Show>
+                    <Show when={cat.name === "TOTP"}>
+                      <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
+                        {filterByCategory([...vault.ciphers(), ...vault.otherVaultCiphers()], "TOTP").length}
                       </span>
                     </Show>
                     <Show when={cat.name === "Archive"}>

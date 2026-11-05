@@ -439,6 +439,7 @@
     "favorites": "",
     "login": "",
     "passkeys": "",
+    "totp": "",
     "card": "",
     "identity": "",
     "secureNote": "",
