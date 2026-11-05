@@ -2,6 +2,10 @@
 
 Notable user-facing changes per release.
 
+## [UNRELEASED]
+
+- The in-app "What is git?" explainer pages are gone on desktop and mobile. The link now opens <https://baluard.app/what-the-git/> in the system browser, so the explainer can be corrected without shipping an app release.
+
 ## 0.1.1 - 2026-11-04
 
 - Fixed sync setup on macOS: the desktop sent an empty payload when polling the daemon about an OAuth sign-in, so the first GitHub connection always died with a generic error. The browser round-trip itself was fine.
