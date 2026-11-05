@@ -5611,15 +5611,19 @@ fn vaults_add(
 /// map) so the STATE column is accurate; falls back to a registry-only
 /// read when the daemon is not running.
 fn vaults_list(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
-    // Try the daemon first for live state.
-    let daemon_rows: Option<Vec<serde_json::Value>> = (|| {
-        let resp = client::request_to("vaults.list", "", cli.socket.as_deref()).ok()?;
-        if !resp.success {
-            return None;
-        }
-        let v: serde_json::Value = serde_json::from_str(&resp.payload).ok()?;
-        v.get("vaults").and_then(|a| a.as_array()).cloned()
-    })();
+    // Try the daemon first for live state, unless --direct was requested.
+    let daemon_rows: Option<Vec<serde_json::Value>> = if cli.direct {
+        None
+    } else {
+        (|| {
+            let resp = client::request_to("vaults.list", "", cli.socket.as_deref()).ok()?;
+            if !resp.success {
+                return None;
+            }
+            let v: serde_json::Value = serde_json::from_str(&resp.payload).ok()?;
+            v.get("vaults").and_then(|a| a.as_array()).cloned()
+        })()
+    };
 
     if let Some(rows) = daemon_rows {
         if rows.is_empty() {
