@@ -10,6 +10,7 @@ Notable user-facing changes per release.
 - Desktop folders are listed alphabetically at every level instead of in creation order.
 - Password history dates now read YYYY-MM-DD instead of an ambiguous locale date.
 - Entries with several websites now list them all in the entry view, each with open and copy buttons, and the order can be changed by dragging (first one is the primary).
+- The browser extension gains a view button on every match: it opens that entry in the desktop app, asking to unlock first when the vault is locked.
 
 ## 0.1.3 - 2026-11-05
 

@@ -117,9 +117,16 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUwNzA3OTA4MTFFNTQ1NDAKUldSQVJlVVJDSGx3NEdZN2ZOczE0YjFwMzl3dG5TaW9WbWNxQm1XUXc1SzJMRG82SGhXTFp6OEsK",
-     "requireSignedVersion": true,
+      "requireSignedVersion": true,
       "windows": {
         "installMode": "passive"
+      }
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "baluard"
+        ]
       }
     }
   }
