@@ -93,6 +93,11 @@ while IFS= read -r f; do
     "Baluard_${VER}_x64-setup.exe.sig")       target="Baluard-amd64-setup.exe.sig" ;;
     "baluard-extension-${VER}-chrome.zip")    target="Baluard-extension-chrome.zip" ;;
     "baluard-extension-${VER}-firefox.zip")   target="Baluard-extension-firefox.zip" ;;
+    # dev-smoke macOS build: ad-hoc signed, never notarized; published so
+    # Mac users have something installable while release-grade signing
+    # stays a known gap
+    "baluard-${VER}-macos-aarch64-non-notarized.zip")
+                                              target="Baluard-macos-aarch64-non-notarized.zip" ;;
     *"${VER}"*aarch64.dmg)                    target="Baluard-arm64.dmg" ;;
     # produced and consumed inside the repo trees; never uploaded
     *.deb.sig | *.rpm.sig | *.tar.gz.sig | *.zip.sig) ;;
