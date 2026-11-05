@@ -3471,6 +3471,29 @@ pub fn handle_enroll_with_phrase(
                 Some(result.device_id),
             )?;
 
+            // The enrollment bundle (roster extension, proof, keywrap,
+            // member binding) must land as one signed commit before any
+            // sync can run: a pull over these uncommitted writes silently
+            // discarded the roster extension and poisoned the vault for
+            // every peer (2026-11-05 cross-device outage). Same call the
+            // runtime flows make.
+            if path.join(".git").exists() {
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    path,
+                    &result.device_id.to_string(),
+                    Some(&devkey_seal),
+                );
+                if let Ok(repo) = engine.open_repo() {
+                    if let Err(e) =
+                        engine.commit_all(&repo, baluard_core::sync::commit::COMMIT_MESSAGE)
+                    {
+                        eprintln!(
+                            "warning: enrollment commit failed (the next sync will carry it): {e}"
+                        );
+                    }
+                }
+            }
+
             println!(
                 "Device enrolled: {} ({})",
                 result.entry.name, result.device_id

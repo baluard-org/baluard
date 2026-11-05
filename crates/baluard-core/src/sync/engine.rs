@@ -2099,57 +2099,75 @@ impl SyncEngine {
 
     /// Pull from remote: fetch + merge (with "ours" strategy for non-conflicting merges).
     /// Transitions state machine: Idle → Pulling → Merging → [Encrypting → Committing →] Idle.
-    /// Map a SAFE/limited-checkout refusal to the explicit dirty-worktree
-    /// error. Loud by design — the force-checkout alternative silently
-    /// discarded them (2026-11-05 outage).
-    fn map_checkout_conflict(e: git2::Error) -> BaluardError {
-        if e.code() == git2::ErrorCode::Conflict {
-            SyncError::DirtyWorktree.into()
-        } else {
-            SyncError::Git(format!("checkout: {e}")).into()
-        }
+    /// Checkouts inside the pull are limited to the pulled diff and never
+    /// overwrite locally dirty user content (see refuse_dirty_overlap).
+    fn map_checkout_error(e: git2::Error) -> BaluardError {
+        SyncError::Git(format!("checkout: {e}")).into()
     }
 
     /// Checkout restricted to the pulled diff, forced. Restricted because
     /// an unrestricted force resets every worktree path that differs from
     /// the target — including paths the pull does not touch — which is
     /// exactly what wiped an uncommitted roster extension in the
-    /// 2026-11-05 outage. The caller refuses dirty overlaps first.
+    /// 2026-11-05 outage. Pathspecs are literal: a remote-authored path
+    /// containing glob metacharacters must not widen the set.
     fn checkout_paths<'cb>(
         paths: impl Iterator<Item = &'cb str>,
     ) -> git2::build::CheckoutBuilder<'cb> {
         let mut co = git2::build::CheckoutBuilder::new();
         co.force();
+        co.disable_pathspec_match(true);
         for p in paths {
             co.path(p);
         }
         co
     }
 
-    /// Tracked paths with uncommitted changes (staged or worktree).
-    /// Untracked files are ignored: checkouts never touch them.
-    fn dirty_tracked_paths(repo: &Repository) -> Result<Vec<String>, BaluardError> {
+    /// Uncommitted tracked paths, split by supersede policy. `drafts` are
+    /// meta paths a remote signed commit may deliberately replace (a join
+    /// approval replacing the locally drafted member card, an invite the
+    /// owner consumed); everything else — roster, enrollment proofs,
+    /// keywraps, settings, recovery material, user content — refuses the
+    /// pull rather than being silently overwritten. Untracked files count
+    /// as local content too: a forced checkout would clobber them at any
+    /// path the pull adds.
+    fn dirty_paths_split(repo: &Repository) -> Result<(Vec<String>, Vec<String>), BaluardError> {
         use git2::Status;
+        fn superseded_draft(p: &str) -> bool {
+            p.starts_with("meta/members/")
+                || p.starts_with("meta/invites/")
+                || p == "meta/integrity.json"
+        }
         let statuses = repo
             .statuses(None)
             .map_err(|e| SyncError::Git(format!("status: {e}")))?;
-        let mut dirty = Vec::new();
+        let mut drafts = Vec::new();
+        let mut protected = Vec::new();
         for entry in statuses.iter() {
             if entry.status().intersects(
                 Status::INDEX_NEW
                     | Status::INDEX_MODIFIED
                     | Status::INDEX_DELETED
                     | Status::INDEX_RENAMED
+                    | Status::INDEX_TYPECHANGE
+                    | Status::WT_NEW
                     | Status::WT_MODIFIED
                     | Status::WT_DELETED
-                    | Status::WT_RENAMED,
+                    | Status::WT_RENAMED
+                    | Status::WT_TYPECHANGE
+                    | Status::CONFLICTED,
             ) {
-                if let Some(p) = entry.path() {
-                    dirty.push(p.to_string());
+                let p = entry
+                    .path()
+                    .ok_or_else(|| SyncError::Git("non-UTF8 path in worktree status".into()))?;
+                if superseded_draft(p) {
+                    drafts.push(p.to_string());
+                } else {
+                    protected.push(p.to_string());
                 }
             }
         }
-        Ok(dirty)
+        Ok((drafts, protected))
     }
 
     /// Paths whose content differs between two trees (added, modified,
@@ -2165,33 +2183,31 @@ impl SyncEngine {
             .map_err(|e| SyncError::Git(format!("tree diff: {e}")))?;
         let mut paths = Vec::new();
         for delta in diff.deltas() {
-            if let Some(p) = delta.new_file().path().or_else(|| delta.old_file().path()) {
-                paths.push(p.to_string_lossy().into_owned());
-            }
+            let p = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .and_then(|p| p.to_str())
+                .ok_or_else(|| SyncError::Git("non-UTF8 path in pulled diff".into()))?;
+            paths.push(p.to_string());
         }
         Ok(paths)
     }
 
-    /// Fail-closed guard: uncommitted USER content (ciphers, trash) inside
-    /// the pulled diff refuses the pull before refs move — never silently
-    /// discard it. Uncommitted meta/ drafts are deliberately superseded by
-    /// the remote's signed versions: a join approval replaces the local
-    /// draft card, and that overwrite is the flow working as designed.
+    /// Fail-closed guard: any locally uncommitted path inside the pulled
+    /// diff that the checkout would overwrite — except the drafts a remote
+    /// signed commit is allowed to supersede — refuses the pull before refs
+    /// move. Loud instead of the silent discard the outage shipped.
     fn refuse_dirty_overlap(repo: &Repository, update_set: &[String]) -> Result<(), BaluardError> {
         if update_set.is_empty() {
             return Ok(());
         }
-        let dirty = Self::dirty_tracked_paths(repo)?;
-        let mut lost_content = Vec::new();
-        for d in &dirty {
-            if update_set.contains(d) && !d.starts_with("meta/") {
-                lost_content.push(d.clone());
-            }
+        let (_drafts, protected) = Self::dirty_paths_split(repo)?;
+        let lost_protected = protected.iter().any(|p| update_set.contains(p));
+        if lost_protected {
+            return Err(SyncError::DirtyWorktree.into());
         }
-        if lost_content.is_empty() {
-            return Ok(());
-        }
-        Err(SyncError::DirtyWorktree.into())
+        Ok(())
     }
 
     pub fn pull(&self, repo: &Repository, remote_name: &str) -> Result<PullResult, BaluardError> {
@@ -2329,6 +2345,9 @@ impl SyncEngine {
             // carrying uncommitted local changes. The update set is the
             // base→target diff; an overlap with locally dirty tracked
             // paths refuses the pull fail-closed BEFORE any ref moves.
+            // An empty diff skips the checkout entirely: git2 treats zero
+            // pathspecs as "check out everything", which would replay the
+            // unrestricted-force wipe on empty commits.
             let base_tree = repo
                 .find_commit(local_oid)
                 .map_err(|e| SyncError::Git(format!("find commit: {e}")))?
@@ -2341,6 +2360,22 @@ impl SyncEngine {
                 .map_err(|e| SyncError::Git(format!("find tree: {e}")))?;
             let update_set = Self::tree_diff_paths(repo, &base_tree, &target_tree)?;
             Self::refuse_dirty_overlap(repo, &update_set)?;
+            if !update_set.is_empty() {
+                // Write the worktree BEFORE moving refs: a checkout failure
+                // then leaves the pull fully unwound instead of a half-state
+                // where HEAD is ahead and the next commit would revert the
+                // remote changes (the C1 failure mode). checkout_tree also
+                // updates the index for the checked-out paths, and the rest
+                // of the index already matches HEAD because everything else
+                // is identical between base and target.
+                repo.checkout_tree(
+                    target_tree.as_object(),
+                    Some(&mut Self::checkout_paths(
+                        update_set.iter().map(String::as_str),
+                    )),
+                )
+                .map_err(Self::map_checkout_error)?;
+            }
 
             repo.reference(
                 &format!("refs/heads/{branch}"),
@@ -2352,16 +2387,9 @@ impl SyncEngine {
             repo.set_head(&format!("refs/heads/{branch}"))
                 .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
 
-            // C1 fix: the worktree must land on the new HEAD. The checkout
-            // is limited to the update set and forced: bare SAFE no-ops for
-            // paths the index already covers, and an unrestricted force is
-            // what wiped an uncommitted roster extension in the outage. The
-            // overlap refusal above keeps every locally-dirty path outside
-            // the pathspec, so force here cannot discard local edits.
-            repo.checkout_head(Some(&mut Self::checkout_paths(
-                update_set.iter().map(String::as_str),
-            )))
-            .map_err(Self::map_checkout_conflict)?;
+            // The worktree and index already landed above (before the ref
+            // update); every path outside the update set is identical
+            // between base and target, so no index sync is needed.
 
             // P8b: verify + apply revocations arriving in the pulled batch.
             let _ = self.apply_revocations(repo, &new_oids)?;
@@ -2388,9 +2416,13 @@ impl SyncEngine {
         self.verify_commit_signatures(repo, &remote_new_oids)?;
 
         // S1a (2026-11-05 outage): refuse before any merge state exists if
-        // the incoming remote-side diff touches locally dirty tracked paths.
-        let local_tree = repo
-            .find_commit(local_oid)
+        // the incoming remote-side diff (merge_base→remote — the part the
+        // merge applies, not local-only changes) touches locally dirty
+        // tracked paths outside the superseded-draft allowlist. libgit2's
+        // merge refuses dirty overlaps itself with a generic conflict
+        // error; this runs first so the refusal names the real problem.
+        let merge_base_tree = repo
+            .find_commit(merge_base)
             .map_err(|e| SyncError::Git(format!("find commit: {e}")))?
             .tree()
             .map_err(|e| SyncError::Git(format!("find tree: {e}")))?;
@@ -2399,7 +2431,7 @@ impl SyncEngine {
             .map_err(|e| SyncError::Git(format!("find commit: {e}")))?
             .tree()
             .map_err(|e| SyncError::Git(format!("find tree: {e}")))?;
-        let incoming = Self::tree_diff_paths(repo, &local_tree, &remote_tree)?;
+        let incoming = Self::tree_diff_paths(repo, &merge_base_tree, &remote_tree)?;
         Self::refuse_dirty_overlap(repo, &incoming)?;
 
         // Perform merge
@@ -2517,21 +2549,31 @@ impl SyncEngine {
                 .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
 
             // C1 fix: ensure the working tree matches the merge commit we just
-            // created. repo.merge() updates the index but not the worktree,
-            // so a bare SAFE checkout compares equal trees and no-ops. The
-            // checkout is limited to the merge result's base→target diff and
+            // created. The checkout is limited to the local→merged diff and
             // forced — the pre-merge overlap refusal keeps every locally
-            // dirty path outside the pathspec, so nothing local is discarded.
+            // dirty protected path outside the pathspec, so nothing local
+            // is discarded. Skipped entirely on an empty diff: git2 treats
+            // zero pathspecs as "check out everything".
             let merged_tree = repo
                 .find_commit(merge_oid)
                 .map_err(|e| SyncError::Git(format!("find commit: {e}")))?
                 .tree()
                 .map_err(|e| SyncError::Git(format!("find tree: {e}")))?;
+            let local_tree = repo
+                .find_commit(local_oid)
+                .map_err(|e| SyncError::Git(format!("find commit: {e}")))?
+                .tree()
+                .map_err(|e| SyncError::Git(format!("find tree: {e}")))?;
             let update_set = Self::tree_diff_paths(repo, &local_tree, &merged_tree)?;
-            repo.checkout_head(Some(&mut Self::checkout_paths(
-                update_set.iter().map(String::as_str),
-            )))
-            .map_err(Self::map_checkout_conflict)?;
+            if !update_set.is_empty() {
+                repo.checkout_tree(
+                    merged_tree.as_object(),
+                    Some(&mut Self::checkout_paths(
+                        update_set.iter().map(String::as_str),
+                    )),
+                )
+                .map_err(Self::map_checkout_error)?;
+            }
 
             // P8b: verify + apply revocations arriving on the remote side of
             // the merge.
@@ -8284,6 +8326,86 @@ mod tests {
         );
     }
 
+    /// The roster file itself is protected: every normal remote commit
+    /// bumps last_seen_epoch in meta/devices.json, so that path is in
+    /// almost every pulled diff. A dirty roster edit (the enrollment-race
+    /// shape) must refuse the pull, not be overwritten by the carve-out.
+    #[test]
+    fn pull_refuses_when_the_dirty_roster_overlaps_the_pulled_diff() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        let (_remote, clone_dir, clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
+
+        // Origin moves devices.json (the epoch bump every commit carries).
+        enroll_device(dir.path(), &uuid::Uuid::new_v4(), &key_a);
+        engine_a.commit_all(&repo_a, "vault update").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        // The clone carries an uncommitted roster edit: the enrollment-race shape.
+        let roster_path = clone_dir.path().join("meta/devices.json");
+        let roster_before = std::fs::read(&roster_path).unwrap();
+        let mut roster: serde_json::Value = serde_json::from_slice(&roster_before).unwrap();
+        roster["devices"]["00000000-0000-0000-0000-000000000009"] =
+            serde_json::json!({"device_id": "00000000-0000-0000-0000-000000000009"});
+        let edited = roster.to_string();
+        std::fs::write(&roster_path, &edited).unwrap();
+
+        let err = clone_engine.pull(&cloned, "origin").unwrap_err();
+        assert!(
+            matches!(err, BaluardError::Sync(SyncError::DirtyWorktree)),
+            "expected DirtyWorktree, got {err:?}"
+        );
+        assert_eq!(std::fs::read(&roster_path).unwrap(), edited.as_bytes());
+    }
+
+    /// An empty pulled diff must skip the checkout entirely: git2 treats
+    /// zero pathspecs as "check out everything", which would replay the
+    /// unrestricted-force wipe on empty commits.
+    #[test]
+    fn pull_with_empty_diff_preserves_dirty_files() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        let (_remote, clone_dir, clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
+
+        // Origin gains an EMPTY commit (same tree): the autosync-tick shape.
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let empty = engine_a.commit_all(&repo_a, "tick").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+        let empty_tree = repo_a.find_commit(empty).unwrap().tree_id();
+        assert_eq!(
+            empty_tree,
+            repo_a
+                .find_commit(
+                    repo_a
+                        .head()
+                        .unwrap()
+                        .peel_to_commit()
+                        .unwrap()
+                        .parent_id(0)
+                        .unwrap()
+                )
+                .unwrap()
+                .tree_id(),
+            "fixture must produce an empty-diff commit"
+        );
+
+        std::fs::write(clone_dir.path().join("a.enc"), b"local-edit").unwrap();
+        clone_engine.pull(&cloned, "origin").unwrap();
+        assert_eq!(
+            std::fs::read(clone_dir.path().join("a.enc")).unwrap(),
+            b"local-edit"
+        );
+    }
     /// A raw unsigned commit (provider-side or hand-crafted) is rejected on
     /// pull — no unsigned fallback anywhere in the pulled range.
     #[test]
