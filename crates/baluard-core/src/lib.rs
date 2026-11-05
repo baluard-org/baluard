@@ -16,6 +16,7 @@ pub mod integrity;
 pub mod ipc;
 pub mod keys;
 pub mod legacy;
+pub mod nmh_register;
 pub mod orgs;
 pub mod paths;
 pub mod providers;

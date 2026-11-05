@@ -4,6 +4,9 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- The browser extension now pairs through the canonical host name (app.baluard.browser). Older 0.1.0 extensions keep working: every installer and app registration also carries the previous name.
+- The macOS and Windows desktop apps now register the browser-extension bridge themselves: the app writes and refreshes the native-messaging manifests on startup (macOS) or the installer registers them with the app manifest beside it (Windows), so the extension works right after installing the app, with no extra setup.
+
 - Fixed a cross-device sync failure: joining a vault from a second device could push an incomplete enrollment that every other device then refused, breaking sync for all of them. Enrollments now land as one complete signed commit, and a sync that would overwrite your unsaved local edits stops with a clear message instead of silently discarding them.
 - Desktop apps can now update themselves: the app checks for new signed releases, asks before downloading anything, and restarts into the new version. The check runs in the background on a slow jittered schedule and can be turned off in Settings; a manual "Check for updates" button lives there too. Linux updates work from the AppImage; deb and rpm users keep updating through the package repositories.
 
