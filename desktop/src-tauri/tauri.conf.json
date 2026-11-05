@@ -110,6 +110,7 @@
     },
     "windows": {
       "nsis": {
+        "template": "./installer.nsi",
         "installerHooks": "./installer-hooks.nsh"
       }
     }
