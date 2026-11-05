@@ -6,7 +6,6 @@ import { createProviderConnect } from "../lib/providerConnect.js";
 import { providerLabel as providerLabelT } from "../lib/providers.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess, toastWarning } from "../context/toastSignal.js";
-import GitExplainerModal from "./GitExplainerModal.jsx";
 import { normalizeSlug } from "../lib/slug.js";
 import { IconUpload, IconDownload, IconRefresh, IconAlert, IconSpinner } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
@@ -51,7 +50,6 @@ export default function SyncTab() {
   const [revokeToken, setRevokeToken] = createSignal(false);
   const [deleteRemote, setDeleteRemote] = createSignal(false);
   const [confirmDeleteRemote, setConfirmDeleteRemote] = createSignal(false);
-  const [showGitHelp, setShowGitHelp] = createSignal(false);
   // S3-8: move the vault's sync to a new address (admin). The daemon
   // commits a pointer file, pushes it to the old remote, re-points,
   // and pushes the history; every device follows on its next sync.
@@ -671,14 +669,14 @@ const [customError, setCustomError] = createSignal(null);
 
   return (
     <div class="space-y-6">
-      {/* Plain-words explainer for the storage backbone (non-technical users). */}
+      {/* Plain-words explainer lives on the website; git stays invisible in-app. */}
       <div class="flex justify-end">
-        <button
-          onClick={() => setShowGitHelp(true)}
-          class="text-[10px] font-semibold text-[var(--color-muted)] hover:text-[var(--color-text)] underline underline-offset-2 cursor-pointer bg-transparent border-0 p-0"
+        <ExternalLink
+          href="https://baluard.app/what-the-git/"
+          class="text-[10px] font-semibold text-[var(--color-muted)] hover:text-[var(--color-text)] underline underline-offset-2 cursor-pointer"
         >
           {t("gitWhat.link")}
-        </button>
+        </ExternalLink>
       </div>
       {/* Unavailable */}
       <Show when={topState() === "unavailable"}>
@@ -1316,7 +1314,6 @@ const [customError, setCustomError] = createSignal(null);
           </Show>
         </Show>
       </Show>
-      <GitExplainerModal open={showGitHelp()} onClose={() => setShowGitHelp(false)} />
       <ConfirmModal
         show={migConfirm()}
         idPrefix="sync-migrate"

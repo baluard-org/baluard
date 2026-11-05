@@ -71,27 +71,8 @@ internal val ES: Map<String, String> = mapOf(
     "onboarding.featureKeysTitle" to "Tus llaves, tus datos",
     "onboarding.featureKeysDesc" to "Una contraseña maestra, una frase de recuperación. Tu bóveda sigue siendo tuya.",
 
-    // "what is git?" explainer (shown in onboarding + settings, both platforms)
+    // git explainer moved to the website; only the link label stays local
     "gitWhat.link" to "¿Qué es git?",
-    "gitWhat.title" to "¿Qué es git, en palabras sencillas?",
-    "gitWhat.p1" to
-        "Baluard guarda tu bóveda en un repositorio git. Git es una herramienta probada (nació en " +
-            "2005 y mueve millones de proyectos) cuyo trabajo es mantener copias de tus archivos " +
-            "sincronizadas entre dispositivos y recordar cada cambio.",
-    "gitWhat.p2" to
-        "Piensa en el historial de versiones de Google Docs, o en los puntos de guardado de un " +
-            "videojuego: cada cambio tiene su propia entrada, nunca se sobrescribe nada en silencio " +
-            "y cualquier dispositivo puede ponerse al día con la última versión en cualquier momento.",
-    "gitWhat.p3" to
-        "Las copias viven en una cuenta que es tuya, como GitHub, GitLab o Codeberg. Baluard cifra " +
-            "todo en tu dispositivo antes de salir de él, así que tu cuenta solo guarda datos " +
-            "ilegibles que solo tú puedes abrir.",
-    "gitWhat.p4" to
-        "No existen servidores de Baluard. Tu bóveda nunca pasa por equipos nuestros.",
-    "gitWhat.diagramDevice" to "Este dispositivo",
-    "gitWhat.diagramAccount" to "Tu cuenta de git",
-    "gitWhat.diagramOther" to "Tus otros dispositivos",
-    "gitWhat.diagramEncrypted" to "cifrado",
 
     // create vault
     "onboarding.createButton" to "Crear bóveda",

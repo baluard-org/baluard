@@ -63,29 +63,9 @@ internal val PT: Map<String, String> = mapOf(
     "onboarding.featureSyncDesc" to "Faça backup pela sua própria conta. Não guardamos cópias.",
     "onboarding.featureKeysTitle" to "Suas chaves, seus dados",
     "onboarding.featureKeysDesc" to "Uma senha mestra, uma frase de recuperação. Seu cofre permanece seu.",
+
+    // git explainer moved to the website; only the link label stays local
     "gitWhat.link" to "O que é git?",
-    "gitWhat.title" to "O que é git, em palavras simples?",
-    "gitWhat.p1" to
-        "O Baluard mantém seu cofre em um repositório git. O Git é uma ferramenta " +
-        "consagrada (criada em 2005, utilizada por milhões de projetos) cuja única " +
-        "função é manter cópias dos seus arquivos sincronizadas entre dispositivos e " +
-        "registrar cada alteração.",
-    "gitWhat.p2" to
-        "Pense no histórico de versões de um documento ou nos pontos de salvamento " +
-        "de um jogo: cada alteração ganha seu próprio registro, nada é substituído " +
-        "silenciosamente e qualquer dispositivo pode se atualizar com a versão mais " +
-        "recente a qualquer momento.",
-    "gitWhat.p3" to
-        "As cópias ficam em uma conta que pertence a você, como GitHub, GitLab ou " +
-        "Codeberg. O Baluard criptografa tudo primeiro no seu dispositivo, de modo " +
-        "que sua conta só armazena dados codificados que apenas você pode abrir.",
-    "gitWhat.p4" to
-        "Não há nenhum servidor do Baluard. Seu cofre nunca passa por computadores " +
-        "administrados por nós.",
-    "gitWhat.diagramDevice" to "Este dispositivo",
-    "gitWhat.diagramAccount" to "Sua conta git",
-    "gitWhat.diagramOther" to "Seus outros dispositivos",
-    "gitWhat.diagramEncrypted" to "criptografado",
     "onboarding.createButton" to "Criar cofre",
     "onboarding.createSubtitle" to "Defina uma senha mestra forte. Esta senha descriptografa seu cofre neste dispositivo.",
     "onboarding.confirmPassword" to "Confirme a senha mestra",

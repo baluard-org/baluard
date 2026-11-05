@@ -788,16 +788,7 @@
     "pairedOn": "Connectée"
   },
   "gitWhat": {
-    "link": "Qu'est-ce que Git ?",
-    "title": "Qu'est-ce que Git, simplement ?",
-    "p1": "Baluard stocke votre coffre dans un dépôt Git. Git est un outil éprouvé (créé en 2005, utilisé par des millions de projets) dont le rôle exclusif est de synchroniser des copies de vos fichiers sur vos appareils et de garder en mémoire chaque modification.",
-    "p2": "Pensez à l'historique des versions dans Google Docs ou aux points de sauvegarde dans un jeu vidéo : chaque modification a son propre enregistrement, rien n'est jamais écrasé en silence et n'importe quel appareil peut se synchroniser avec la dernière version à tout instant.",
-    "p3": "Ces copies sont hébergées sur un compte qui vous appartient, comme GitHub, GitLab ou Codeberg. Baluard chiffre toutes les données sur votre appareil avant qu'elles ne soient envoyées : votre compte ne contient que des données chiffrées indéchiffrables que vous seul pouvez ouvrir.",
-    "p4": "Il n'y a aucun serveur Baluard. Votre coffre ne transite jamais par des ordinateurs gérés par nous.",
-    "diagramDevice": "Cet appareil",
-    "diagramAccount": "Votre compte Git",
-    "diagramOther": "Vos autres appareils",
-    "diagramEncrypted": "chiffré"
+    "link": "Qu'est-ce que Git ?"
   },
   "people": {
     "inviteTitle": "Inviter quelqu'un",
