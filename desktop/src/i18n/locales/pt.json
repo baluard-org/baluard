@@ -597,6 +597,7 @@
     "favorites": "Favoritos",
     "login": "Senhas",
     "passkeys": "Chaves de acesso",
+    "totp": "TOTP",
     "card": "Cartões",
     "identity": "Identidades",
     "secureNote": "Notas seguras",
