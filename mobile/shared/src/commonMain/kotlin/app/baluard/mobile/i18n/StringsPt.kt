@@ -671,8 +671,8 @@ internal val PT: Map<String, String> = mapOf(
     "shared.askWithdrawn" to "Pedido retirado",
 
         // §4.8-7 People & access (mobile admin surfaces)
-        "people.title" to "Pessoas e acesso",
-        "people.entrySubtitle" to "Membros, pedidos de entrada e permissões de pastas compartilhadas",
+        "people.title" to "Compartilhamento",
+        "people.entrySubtitle" to "Compartilhe com família, equipes ou organizações. Crie espaços separados para cada grupo.",
         "people.joinRequests" to "Pedidos de entrada",
         "people.stageIntro" to "Cole a resposta do convite",
         "people.staged" to "Pedido na fila. Aprove abaixo.",

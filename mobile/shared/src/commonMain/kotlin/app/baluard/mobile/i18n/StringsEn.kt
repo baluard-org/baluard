@@ -701,8 +701,8 @@ internal val EN: Map<String, String> = mapOf(
     "shared.askWithdrawn" to "Request withdrawn",
 
         // §4.8-7 People & access (mobile admin surfaces)
-        "people.title" to "People & access",
-        "people.entrySubtitle" to "Members, join requests, and shared folder grants",
+        "people.title" to "Sharing",
+        "people.entrySubtitle" to "Share with family, teams, or organizations. Create separate spaces for each group.",
         "people.joinRequests" to "Join requests",
         "people.stageIntro" to "Paste invite reply",
         "people.staged" to "Request staged. Approve it below.",

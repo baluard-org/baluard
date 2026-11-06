@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::MenuBuilder;
+#[cfg(target_os = "macos")]
+use tauri::menu::{AboutMetadata, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use zeroize::Zeroize;
@@ -1452,6 +1454,20 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_menu_event(|app, event| {
+            match event.id().as_ref() {
+                "check-updates" => {
+                    let _ = app.emit("menu:check-updates", ());
+                }
+                "settings" => {
+                    let _ = app.emit("menu:open-settings", ());
+                }
+                "sync-vault" => {
+                    let _ = app.emit("menu:sync-vault", ());
+                }
+                _ => {}
+            }
+        })
         .manage(Mutex::new(None::<Daemon>))
         .manage(Mutex::new(SessionStore {
             tokens: std::collections::HashMap::new(),
@@ -1574,6 +1590,76 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Native macOS Application Menu
+            #[cfg(target_os = "macos")]
+            {
+                let pkg_info = app.package_info();
+                let config = app.config();
+                let about_metadata = AboutMetadata {
+                    name: Some(pkg_info.name.clone()),
+                    version: Some(pkg_info.version.to_string()),
+                    copyright: config.bundle.copyright.clone(),
+                    authors: config.bundle.publisher.clone().map(|p| vec![p]),
+                    ..Default::default()
+                };
+
+                let check_updates = MenuItemBuilder::with_id("check-updates", "Check for Updates...")
+                    .build(app)?;
+                let settings = MenuItemBuilder::with_id("settings", "Settings...")
+                    .accelerator("CmdOrCtrl+,")
+                    .build(app)?;
+
+                let app_menu = SubmenuBuilder::new(app, &pkg_info.name)
+                    .about(Some(about_metadata))
+                    .item(&check_updates)
+                    .separator()
+                    .item(&settings)
+                    .separator()
+                    .services()
+                    .separator()
+                    .hide()
+                    .hide_others()
+                    .show_all()
+                    .separator()
+                    .quit()
+                    .build()?;
+
+                let file_menu = SubmenuBuilder::new(app, "File")
+                    .item(&MenuItemBuilder::with_id("sync-vault", "Sync Vault")
+                        .accelerator("CmdOrCtrl+R")
+                        .build(app)?)
+                    .separator()
+                    .close_window()
+                    .build()?;
+
+                let edit_menu = SubmenuBuilder::new(app, "Edit")
+                    .undo()
+                    .redo()
+                    .separator()
+                    .cut()
+                    .copy()
+                    .paste()
+                    .select_all()
+                    .build()?;
+
+                let view_menu = SubmenuBuilder::new(app, "View")
+                    .fullscreen()
+                    .build()?;
+
+                let window_menu = SubmenuBuilder::new(app, "Window")
+                    .minimize()
+                    .maximize()
+                    .separator()
+                    .close_window()
+                    .build()?;
+
+                let app_bar_menu = MenuBuilder::new(app)
+                    .items(&[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu])
+                    .build()?;
+
+                app.set_menu(app_bar_menu)?;
+            }
 
             // Apply tray-only preference at startup so the Dock / taskbar
             // state is correct from the first frame (no dock-icon flash on

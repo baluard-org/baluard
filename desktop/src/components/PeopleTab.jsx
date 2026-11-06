@@ -769,7 +769,10 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
 
       {/* Members */}
       <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
-        <h3 class="text-sm font-bold text-[var(--color-text)] mb-3">{t("people.membersTitle")}</h3>
+        <div class="mb-3">
+          <h3 class="text-sm font-bold text-[var(--color-text)]">{t("people.membersTitle")}</h3>
+          <p class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("people.sharingSubtitle")}</p>
+        </div>
         <ul class="space-y-2">
           <For each={members()}>
             {(m) => (
@@ -926,11 +929,11 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
           <h3 class="text-sm font-bold text-[var(--color-text)]">
             {t("people.reviewTitle")}
           </h3>
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2">
             <Show when={review()}>
               <button
                 onClick={exportReview}
-                class="text-[10px] font-bold text-[var(--color-primary)] cursor-pointer"
+                class="px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] hover:bg-[var(--color-sidebar)] text-[10px] font-bold text-[var(--color-text)] transition-all cursor-pointer shadow-sm"
               >
                 {t("people.reviewExport")}
               </button>
@@ -938,7 +941,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
             <button
               onClick={loadReview}
               disabled={reviewBusy()}
-              class="text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+              class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/20 text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed transition-all shadow-sm"
             >
               {reviewBusy() ? t("people.reviewRunning") : t("people.reviewRun")}
             </button>
@@ -1060,18 +1063,18 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
       <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-sm font-bold text-[var(--color-text)]">{t("people.activityTitle")}</h3>
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2">
             <button
               onClick={() => loadNotices(true)}
               disabled={busy() || checkingAccess()}
-              class="text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+              class="px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] hover:bg-[var(--color-sidebar)] text-[10px] font-bold text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed transition-all shadow-sm"
             >
               {checkingAccess() ? t("notices.checkingAccess") : t("notices.checkAccess")}
             </button>
             <button
               onClick={reloadAll}
               disabled={busy()}
-              class="text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+              class="px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] hover:bg-[var(--color-sidebar)] text-[10px] font-bold text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed transition-all shadow-sm"
             >
               {t("people.refresh")}
             </button>
