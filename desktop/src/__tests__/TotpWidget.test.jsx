@@ -33,6 +33,11 @@ describe("totpSeedOf", () => {
   it("reads the nested kind shape when no flat field exists", () => {
     expect(totpSeedOf({ totp: null, kind: { data: { totp_uri: "ABC" } } })).toBe("ABC");
   });
+  it("falls through an empty flat field to the nested seed", () => {
+    expect(totpSeedOf({ totp: "", kind: { data: { totp_uri: "ABC" } } })).toBe("ABC");
+    expect(totpSeedOf({ totp: null, totp_uri: "", kind: { data: { totp_uri: "ABC" } } })).toBe("ABC");
+  });
+
   it("rejects missing, empty, and blank seeds", () => {
     expect(totpSeedOf({})).toBeNull();
     expect(totpSeedOf({ totp: null, kind: { data: { totp_uri: null } } })).toBeNull();
