@@ -152,9 +152,12 @@ export function flashFilledField(el) {
 //      this — not even autocomplete="one-time-code".
 //   2. autocomplete="one-time-code" — explicit, trusted over all heuristics
 //   3. ignore hints — search boxes, commerce/postal codes
-//   4. strict name match — normalized equality against TOTP_FIELD_NAMES
+//   4. strong name — substring inside name/id identifiers (Bitwarden-style
+//      AppearsWithin), whole-value match on placeholder/aria-label
 //   5. ambiguous token + corroboration — numeric inputmode/pattern/maxlength
-const TOTP_FIELD_NAMES = new Set([
+// Bitwarden-parity name list. Their spellings collapse onto these after
+// normalizeHint ("security code" -> "securitycode"), so nothing is missing.
+const TOTP_FIELD_NAMES = [
   "2facode",
   "approvalscode",
   "mfacode",
@@ -171,7 +174,11 @@ const TOTP_FIELD_NAMES = new Set([
   "twofactor",
   "twofactorcode",
   "verificationcode",
-]);
+];
+const TOTP_NAME_SET = new Set(TOTP_FIELD_NAMES);
+// Substring search over name/id only — never over placeholder/aria-label
+// prose, where "Password or one-time code" must not reclassify a login box.
+const TOTP_NAME_RE = new RegExp(TOTP_FIELD_NAMES.join("|"));
 
 // Match only as whole tokens, never substrings: "discountcode" must not
 // match "code" (KeePassXC #2856: postcode, product_code, language code...).
@@ -204,55 +211,68 @@ const TOTP_IGNORE_TOKENS = new Set([
   "cvv",
   "cvc",
   "csc",
+  // Payment context: CVV boxes share OTP-ish names ("card security code").
+  "card",
+  "payment",
+  // TOTP setup/admin metadata: a secret or issuer field is not a code box.
+  "secret",
+  "seed",
+  "uri",
+  "url",
+  "issuer",
+  "label",
+  "nickname",
+  "length",
+  "period",
+  "algorithm",
 ]);
 
 function normalizeHint(s) {
   return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
-// Is this input a one-time-code box? Used by fillLoginForm (B10 exclusion),
-// isUsernameField, and inline.js (icon targeting + code-only fill mode).
-export function isTotpField(input) {
-  if (!input || input.tagName !== "INPUT") return false;
+// Classify an input as a one-time-code box. Returns -1 when it is not one,
+// else the evidence tier (explicit autocomplete > strong name > ambiguous
+// token), so consumers can prefer the strongest signal over DOM order.
+// Used by fillLoginForm (B10 exclusion), isUsernameField, and inline.js
+// (icon targeting + code-only fill mode).
+export function totpFieldTier(input) {
+  if (!input || input.tagName !== "INPUT") return -1;
   const type = (input.type || "text").toLowerCase();
-  const candidateType = isTextLike(input) || type === "number" || type === "password";
-  if (!candidateType) return false;
+  if (!(isTextLike(input) || type === "number" || type === "password")) return -1;
+  // A readonly or disabled field cannot receive a typed code.
+  if (input.readOnly || input.disabled) return -1;
   const ml = parseInt(input.getAttribute("maxlength"), 10);
   const size = parseInt(input.getAttribute("size"), 10);
   // Segmented per-digit boxes cannot receive a full code.
-  if (Number.isFinite(ml) && ml <= 1) return false;
-  if (Number.isFinite(size) && size === 1 && !Number.isFinite(ml)) return false;
-  // 2. Explicit attribute wins over every heuristic.
-  const ac = (input.getAttribute("autocomplete") || "").trim().toLowerCase();
-  if (ac === "one-time-code") {
-    return true;
-  }
-  if (ac.startsWith("cc-")) return false;
-  const attrs = [
-    input.name,
-    input.id,
-    input.getAttribute("placeholder"),
-    input.getAttribute("aria-label"),
-  ];
-  const raw = attrs.filter(Boolean).join(" ").toLowerCase();
-  const tokens = raw.split(/[^a-z0-9]+/).filter(Boolean);
-  // 3. Ignore hints (search boxes, commerce/postal codes).
-  if (tokens.some((t) => TOTP_IGNORE_TOKENS.has(t))) return false;
-  // 4. Name-based matches only. CVV fields are 3-4 digits ("security-code",
-  // incl. Amex CID maxlength=4); real OTP boxes are 5-10. No upper bound: an
-  // explicit name with a generous maxlength is still an OTP field.
-  if (Number.isFinite(ml) && ml < 5) return false;
-  // 5. Strict names: Bitwarden-style AppearsWithin — the strong name may sit
-  // anywhere inside the normalized attribute ("sign_in_totp_code" ->
-  // "signintotpcode" contains "totpcode"; "user[totp_code]" ->
-  // "usertotpcode"). Whole-attribute equality would miss every namespaced
-  // real-world form. Only strong, unambiguous names live here, so substring
-  // matching cannot catch postal/discount "code" fields.
-  if (attrs.some((a) => {
-    const n = normalizeHint(a);
-    return [...TOTP_FIELD_NAMES].some((name) => n.includes(name));
-  })) return true;
-  // 6. Ambiguous token + numeric corroboration.
+  if (Number.isFinite(ml) && ml <= 1) return -1;
+  if (Number.isFinite(size) && size === 1 && !Number.isFinite(ml)) return -1;
+  // autocomplete is a space-separated token list.
+  const acTokens = (input.getAttribute("autocomplete") || "")
+    .trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (acTokens.includes("one-time-code")) return 0;
+  if (acTokens.some((t) => t.startsWith("cc-"))) return -1;
+  const idAttrs = [input.name, input.id].filter(Boolean);
+  const textAttrs = [input.getAttribute("placeholder"), input.getAttribute("aria-label")].filter(Boolean);
+  // camelCase must split ("phoneVerificationCode" -> phone + verification +
+  // code) or glued identifiers slip past the token guards.
+  const tokensOf = (s) =>
+    String(s)
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+  const idTokens = idAttrs.flatMap(tokensOf);
+  const allTokens = [...idTokens, ...textAttrs.flatMap(tokensOf)];
+  // Identifier ignore tokens are a hard reject; prose ignore tokens only
+  // veto the ambiguous path, so a "code from your phone" placeholder does
+  // not kill a strongly named field.
+  if (idTokens.some((t) => TOTP_IGNORE_TOKENS.has(t))) return -1;
+  // CVV fields are 3-4 digits (incl. Amex CID maxlength=4); real OTP boxes
+  // are 5+. No upper bound: a generous maxlength is still an OTP field.
+  if (Number.isFinite(ml) && ml < 5) return -1;
+  if (idAttrs.some((a) => TOTP_NAME_RE.test(normalizeHint(a)))) return 1;
+  if (textAttrs.some((a) => TOTP_NAME_SET.has(normalizeHint(a)))) return 1;
   const patternQuant = /(?:\\d|\[0-9\])\{(\d+)\}/.exec(
     input.getAttribute("pattern") || ""
   );
@@ -260,14 +280,25 @@ export function isTotpField(input) {
     (input.getAttribute("inputmode") || "").toLowerCase() === "numeric" ||
     (!!patternQuant && +patternQuant[1] >= 4 && +patternQuant[1] <= 8) ||
     (Number.isFinite(ml) && ml >= 5 && ml <= 8);
-  return corroborated && tokens.some((t) => AMBIGUOUS_TOTP_NAMES.has(t));
+  if (!corroborated) return -1;
+  if (allTokens.some((t) => TOTP_IGNORE_TOKENS.has(t))) return -1;
+  return allTokens.some((t) => AMBIGUOUS_TOTP_NAMES.has(t)) ? 2 : -1;
 }
 
-// All visible TOTP fields on the page, DOM order.
+export function isTotpField(input) {
+  return totpFieldTier(input) >= 0;
+}
+
+// All visible TOTP fields on the page, strongest evidence first (DOM order
+// within a tier): a weak match earlier in the document must not steal
+// fields[0] from an explicit autocomplete=one-time-code box.
 export function findTotpFields() {
-  return Array.from(document.querySelectorAll("input")).filter(
-    (i) => isVisible(i) && isTotpField(i)
-  );
+  return Array.from(document.querySelectorAll("input"))
+    .filter((i) => isVisible(i))
+    .map((i) => ({ input: i, tier: totpFieldTier(i) }))
+    .filter((e) => e.tier >= 0)
+    .sort((a, b) => a.tier - b.tier)
+    .map((e) => e.input);
 }
 
 // Username-ish hints. Word-boundary regex so "mailchimp" does not count as

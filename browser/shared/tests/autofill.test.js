@@ -276,6 +276,125 @@ describe("fillLoginForm TOTP integration", () => {
   });
 });
 
+describe("TOTP detection review hardening", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  // MAJOR 1: substring matching is identifier-only; free-text attributes
+  // keep whole-value matching so prose cannot smuggle a strong name in.
+  it("keeps a password box whose placeholder mentions one-time codes as a password target", () => {
+    const el = makeInput("password", { name: "pw", placeholder: "Password or one-time code" });
+    document.body.appendChild(el);
+    expect(isTotpField(el)).toBe(false);
+  });
+
+  it("keeps an email-first box mentioning verification codes as a username target", () => {
+    const el = makeInput("email", { placeholder: "We'll email you a verification code" });
+    document.body.appendChild(el);
+    expect(isTotpField(el)).toBe(false);
+  });
+
+  it("keeps filter prose with two-factor words out of OTP classification", () => {
+    const el = makeInput("text", { "aria-label": "Filter by two-factor status" });
+    document.body.appendChild(el);
+    expect(isTotpField(el)).toBe(false);
+  });
+
+  // MAJOR 2: camelCase identifiers must split into tokens for the guards.
+  it("rejects camelCase CVV and phone code names", () => {
+    for (const name of ["phoneVerificationCode", "cardSecurityCode", "cvvSecurityCode"]) {
+      const el = makeInput("text", { name });
+      document.body.appendChild(el);
+      expect(isTotpField(el), name).toBe(false);
+    }
+  });
+
+  it("still matches camelCase OTP identifiers", () => {
+    const el = makeInput("password", { name: "signInTotpCode" });
+    document.body.appendChild(el);
+    expect(isTotpField(el)).toBe(true);
+  });
+
+  // MINOR 1: setup/admin fields are not code entry boxes.
+  it("rejects TOTP setup metadata fields", () => {
+    for (const name of ["totp_secret", "totp_seed", "totp_uri", "totp_label", "otp_code_length"]) {
+      const el = makeInput("text", { name });
+      document.body.appendChild(el);
+      expect(isTotpField(el), name).toBe(false);
+    }
+  });
+
+  it("rejects readonly and disabled fields", () => {
+    const ro = makeInput("text", { name: "totp" });
+    ro.readOnly = true;
+    const dis = makeInput("text", { name: "totp" });
+    dis.disabled = true;
+    document.body.append(ro, dis);
+    expect(isTotpField(ro)).toBe(false);
+    expect(isTotpField(dis)).toBe(false);
+  });
+
+  // MINOR 3: ignore tokens in prose must not veto a strongly named field.
+  it("matches user[totp_code] even with a phone mention in the placeholder", () => {
+    const el = makeInput("password", {
+      id: "sign_in_totp_code",
+      name: "user[totp_code]",
+      placeholder: "Enter the code from your phone",
+    });
+    document.body.appendChild(el);
+    expect(isTotpField(el)).toBe(true);
+  });
+
+  // MINOR 4/5: autocomplete is a token list.
+  it("accepts one-time-code inside a section-scoped token list", () => {
+    const el = makeInput("text", { name: "code", autocomplete: "section-login one-time-code" });
+    document.body.appendChild(el);
+    expect(isTotpField(el)).toBe(true);
+  });
+
+  it("rejects cc- tokens anywhere in the autocomplete list", () => {
+    const el = makeInput("text", { name: "security_code", autocomplete: "billing cc-csc" });
+    document.body.appendChild(el);
+    expect(isTotpField(el)).toBe(false);
+  });
+
+  it("matches every raw Bitwarden name spelling via placeholder equality", () => {
+    for (const ph of ["security code", "verification code", "otc-code", "otp-code", "second-factor", "approvals_code", "otc-confirmation"]) {
+      const el = makeInput("text", { placeholder: ph });
+      document.body.appendChild(el);
+      expect(isTotpField(el), ph).toBe(true);
+    }
+  });
+
+  it("rejects non-entry element kinds", () => {
+    const hidden = makeInput("hidden", { name: "totp" });
+    const check = makeInput("checkbox", { name: "totp_enabled" });
+    const sub = makeInput("submit", { name: "verify_totp" });
+    document.body.append(hidden, check, sub);
+    expect(isTotpField(hidden)).toBe(false);
+    expect(isTotpField(check)).toBe(false);
+    expect(isTotpField(sub)).toBe(false);
+  });
+
+  // MINOR 2: explicit signals outrank weaker evidence regardless of DOM order.
+  it("ranks explicit autocomplete above a weaker ambiguous match", () => {
+    attach(makeInput("text", { name: "otp", maxlength: "6", inputmode: "numeric" }));
+    attach(makeInput("text", { name: "code2", autocomplete: "one-time-code" }));
+    const found = findTotpFields();
+    expect(found[0].getAttribute("autocomplete")).toBe("one-time-code");
+  });
+
+  it("routes username, password, and the code to distinct fields on the reported form", () => {
+    attach(makeInput("text", { name: "user" }));
+    attach(makeInput("password", { name: "password" }));
+    attach(makeInput("password", { id: "sign_in_totp_code", name: "user[totp_code]", autocomplete: "off" }));
+    fillLoginForm({ username: "u", password: "p", totpCode: "123456" });
+    const inputs = document.querySelectorAll("input");
+    expect(inputs[0].value).toBe("u");
+    expect(inputs[1].value).toBe("p");
+    expect(inputs[2].value).toBe("123456");
+  });
+});
+
 describe("real-world 2FA field detection", () => {
   beforeEach(() => { document.body.innerHTML = ""; });
 
