@@ -6,12 +6,13 @@
 // (autocomplete, name/id/placeholder hints) then the structural "text input
 // directly before a password field in the same form" pattern.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   isUsernameField,
   isTotpField,
   findTotpFields,
   fillLoginForm,
+  setNativeValue,
 } from "../src/autofill.js";
 
 function makeInput(type, attrs = {}) {
@@ -272,5 +273,37 @@ describe("fillLoginForm TOTP integration", () => {
     expect(found.length).toBe(2);
     expect(found[0].name).toBe("totp");
     expect(found[1].name).toBe("otp");
+  });
+});
+
+describe("fill flash feedback", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    document.head.innerHTML = "";
+    vi.useRealTimers();
+  });
+
+  it("flashes a filled field and clears it after the timeout", () => {
+    vi.useFakeTimers();
+    const el = makeInput("text");
+    document.body.appendChild(el);
+    setNativeValue(el, "octocat");
+    expect(el.classList.contains("baluard-fill-flash")).toBe(true);
+    expect(document.querySelectorAll("#baluard-fill-flash-style").length).toBe(1);
+    vi.advanceTimersByTime(2200);
+    expect(el.classList.contains("baluard-fill-flash")).toBe(false);
+  });
+
+  it("injects the stylesheet once across fields and repeat fills", () => {
+    vi.useFakeTimers();
+    const a = makeInput("text");
+    const b = makeInput("password");
+    document.body.append(a, b);
+    setNativeValue(a, "u");
+    setNativeValue(b, "p");
+    setNativeValue(a, "u2");
+    expect(document.querySelectorAll("#baluard-fill-flash-style").length).toBe(1);
+    expect(a.classList.contains("baluard-fill-flash")).toBe(true);
+    expect(b.classList.contains("baluard-fill-flash")).toBe(true);
   });
 });

@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## UNRELEASED
 
+- The browser extension pulses a soft ring on the fields it just filled and fades it out after two seconds, so you can see what it touched.
+
 - The macOS Check for Updates menu item now checks in the background without opening Settings.
 
 - The vault list has a sync button next to New that runs the same pull and push as settings; the top-right dot is a passive indicator again since it cannot be clicked reliably.
