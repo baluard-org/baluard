@@ -32,6 +32,10 @@ Run `just bump-version X.Y.Z` first. It moves every version source in one pass a
 
 The recipe then rebuilds the committed extension dists so the bump commit carries fresh dists (the B11 rule: `browser/<store>/dist` artifacts are committed and must never go stale). `Cargo.lock` is refreshed by cargo, never sed-edited. Commit the version sources and the rebuilt dists together.
 
+## Multi-surface policy
+
+One version for everything: `bump-version` moves all seven sources together, so no variant ever diverges. Every GitHub release ships the full stable-name asset set, including surfaces whose code did not change, because version strings are baked into the binaries; the desktop updates manifest is republished each release so users keep receiving updates, and F-Droid always receives the new versionCode APK. The per-surface gate applies only to the store submissions: submit to the Chrome Web Store or AMO only when the extension bundle actually changed, since an unchanged bundle just burns a review cycle. Never stack a new store version on a listing that is still in review; wait for the verdict first.
+
 ## Keys and credentials
 
 Everything that signs lives outside the repository. Losing any of these orphans the matching channel.
