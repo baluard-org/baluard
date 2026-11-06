@@ -103,6 +103,29 @@ submit_chrome() {
   version="$(latest_version chrome)"
   zip="$ART/baluard-extension-$version-chrome.zip"
 
+  # Once the store item opts into Verified CRX Uploads, every upload must be
+  # a CRX3 signed with the RSA key registered on the Package tab; signing
+  # whenever the key exists keeps one code path across both states.
+  local key_path="${BALUARD_CHROME_CRX_KEY:-$HOME/.baluard/chrome-crx-upload.key}"
+  local upload_file="$zip"
+  if [[ -r "$key_path" ]]; then
+    local crx="$SEC/baluard-extension-$version-chrome.crx"
+    if command -v crx3 >/dev/null 2>&1; then
+      crx3 -p "$key_path" -o "$crx" < "$zip" \
+        || { echo "chrome/store: CRX packaging failed" >&2; return 1; }
+    else
+      command -v npx >/dev/null 2>&1 \
+        || { echo "chrome/store: neither crx3 nor npx found" >&2; return 1; }
+      npx --yes crx3@2.0.0 -p "$key_path" -o "$crx" < "$zip" \
+        || { echo "chrome/store: CRX packaging failed" >&2; return 1; }
+    fi
+    [[ -s "$crx" ]] || { echo "chrome/store: CRX packaging produced no output" >&2; return 1; }
+    upload_file="$crx"
+  else
+    echo "chrome/store: no signing key at $key_path; uploading the unsigned zip" \
+      "(rejected once Verified CRX Uploads is enabled on the Package tab)" >&2
+  fi
+
   local token_json token
   printf 'grant_type=refresh_token&client_id=%s&client_secret=%s&refresh_token=%s' \
     "$BALUARD_CHROME_CLIENT_ID" "$BALUARD_CHROME_CLIENT_SECRET" "$BALUARD_CHROME_REFRESH_TOKEN" > "$SEC/token-request"
@@ -119,7 +142,7 @@ submit_chrome() {
   printf 'Authorization: Bearer %s\n' "$token" > "$SEC/bearer"
 
   local upload_response
-  upload_response="$(curl -fsS --fail-with-body -X POST -T "$zip" --header @"$SEC/bearer" \
+  upload_response="$(curl -fsS --fail-with-body -X POST -T "$upload_file" --header @"$SEC/bearer" \
     "https://chromewebstore.googleapis.com/upload/v2/publishers/$BALUARD_CHROME_PUBLISHER_ID/items/$BALUARD_CHROME_EXTENSION_ID:upload")" \
     || { echo "chrome/store: upload failed" >&2; return 1; }
   # The v2 enum spells the good state both ways.
