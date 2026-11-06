@@ -333,6 +333,7 @@ export default function SpaceTab() {
 
   return (
     <div class="space-y-3">
+      <p class="text-xs text-[var(--color-muted)] leading-relaxed pb-1">{t("people.sharingSubtitle")}</p>
       {/* Team mode (S3-7b): the one-way upgrade. Rendered
           unconditionally — the daemon is the validator, and gating the
           state-creating control on its own state deadlocks fresh

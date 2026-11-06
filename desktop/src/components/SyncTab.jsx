@@ -1112,7 +1112,7 @@ const [customError, setCustomError] = createSignal(null);
                   <span class="text-[10px] text-[var(--color-muted)]">{showAdvancedPanel() ? "\u25BE" : "\u25B8"}</span>
                 </button>
                 <Show when={showAdvancedPanel()}>
-                  <div class="space-y-4 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                  <div class="motion-dropdown space-y-4 pt-1">
                     <Show when={syncStatus()}>
                       <div class="p-3 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-2">
                         <div class="flex items-center justify-between text-[10px]">
@@ -1237,7 +1237,7 @@ const [customError, setCustomError] = createSignal(null);
             >
               <FocusTrap containerRef={disconnectDialogRef} onEscape={() => { setShowDisconnectModal(false); setRevokeToken(false); setDeleteRemote(false); setConfirmDeleteRemote(false); }} />
               <div
-                class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[380px] p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150"
+                class="motion-modal bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[380px] p-6 space-y-5"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div>
@@ -1256,7 +1256,6 @@ const [customError, setCustomError] = createSignal(null);
                       checked={revokeToken()}
                       onChange={(e) => setRevokeToken(e.currentTarget.checked)}
                       label={t("sync.disconnectRevokeToken")}
-                      class="w-full flex-row-reverse"
                     />
                   </label>
 
@@ -1269,19 +1268,17 @@ const [customError, setCustomError] = createSignal(null);
                         if (!e.currentTarget.checked) setConfirmDeleteRemote(false);
                       }}
                       label={t("sync.disconnectDeleteRemote")}
-                      class="w-full flex-row-reverse"
                     />
                   </label>
 
                   <Show when={deleteRemote()}>
-                    <label class="p-3 border rounded-xl flex items-start gap-3 cursor-pointer select-none transition-all animate-in fade-in slide-in-from-top-2 duration-150 box-danger-warning">
+                    <label class="motion-dropdown p-3 border rounded-xl flex items-start gap-3 cursor-pointer select-none transition-all box-danger-warning">
                       <Toggle
                         variant="danger"
                         checked={confirmDeleteRemote()}
                         onChange={(e) => setConfirmDeleteRemote(e.currentTarget.checked)}
                         label={t("sync.disconnectConfirmDeleteRemote")}
                         description={t("sync.disconnectConfirmDeleteRemoteDesc")}
-                        class="w-full flex-row-reverse"
                       />
                     </label>
                   </Show>

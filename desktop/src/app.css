@@ -193,6 +193,12 @@
   --color-warning: #fcd34d;       /* derived: app's dark warning tone */
   --color-danger: #ef4444;
   --color-success: #10b981;
+
+  --motion-duration-fast: 150ms;
+  --motion-duration-normal: 200ms;
+  --motion-duration-slow: 250ms;
+  --motion-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .light-theme {
@@ -211,7 +217,7 @@
   --color-text-muted: #6c6f85;    /* Subtext0 */
   --color-muted: #6c6f85;         /* Subtext0 */
   --color-primary: #40a02b;       /* Green */
-  --color-primary-text: #eff1f5;  /* Base (text on green fills) */
+  --color-primary-text: #102427;  /* Dark text on green fills */
   --color-primary-hover: #55b83b; /* Green, lighter tint */
   --color-accent: #66bf4f;        /* Green, soft companion */
   --color-warning: #df8e1d;       /* Yellow */
@@ -311,7 +317,48 @@ input:not([type="checkbox"]):not([type="radio"]), textarea {
 
 /* Micro-animations and active states */
 .transition-all-fast {
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-window-morph {
+  transition: height var(--motion-duration-slow) var(--motion-ease-standard), width var(--motion-duration-slow) var(--motion-ease-standard);
+}
+
+.motion-vault-switch {
+  transition: opacity var(--motion-duration-normal) var(--motion-ease-standard), transform var(--motion-duration-normal) var(--motion-ease-standard), filter var(--motion-duration-normal) var(--motion-ease-standard);
+}
+
+@keyframes motionFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.motion-fade {
+  animation: motionFade var(--motion-duration-normal) var(--motion-ease-emphasized) both;
+}
+
+@keyframes motionDropdown {
+  from { opacity: 0; transform: translateY(-4px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.motion-dropdown {
+  transform-origin: top;
+  animation: motionDropdown var(--motion-duration-fast) var(--motion-ease-emphasized) both;
+}
+
+@keyframes motionModal {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+.motion-modal {
+  animation: motionModal var(--motion-duration-fast) var(--motion-ease-emphasized) both;
+}
+
+@keyframes motionFadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.motion-fade-up {
+  animation: motionFadeUp var(--motion-duration-slow) var(--motion-ease-emphasized) both;
 }
 
 /* Custom premium select styling */
@@ -341,7 +388,7 @@ select option {
 .fade-enter-active,
 .fade-exit-active {
   will-change: transform, opacity;
-  transition: opacity 0.12s cubic-bezier(0.4, 0, 0.2, 1), transform 0.12s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard), transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .fade-enter {
   opacity: 0;
@@ -366,14 +413,14 @@ select option {
 
 .vault-enter {
   will-change: transform, opacity;
-  animation: vaultEnter 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: vaultEnter var(--motion-duration-normal) var(--motion-ease-emphasized) both;
 }
 
 /* Slide Transition for forms and details in Column 3 */
 .slide-enter-active,
 .slide-exit-active {
   will-change: transform, opacity;
-  transition: opacity 0.1s cubic-bezier(0.4, 0, 0.2, 1), transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard), transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .slide-enter {
   opacity: 0;
@@ -388,7 +435,7 @@ select option {
 .sync-status-enter-active,
 .sync-status-exit-active {
   will-change: transform, opacity;
-  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity var(--motion-duration-slow) var(--motion-ease-emphasized), transform var(--motion-duration-slow) var(--motion-ease-emphasized);
 }
 .sync-status-enter {
   opacity: 0;
@@ -400,19 +447,49 @@ select option {
 }
 
 /* Page entrance / Element animations */
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.reveal-grow-enter-active,
+.reveal-grow-exit-active {
+  display: grid;
+  transition: grid-template-rows var(--motion-duration-normal) var(--motion-ease-emphasized), opacity var(--motion-duration-fast) ease-out;
 }
-
-.animate-fade-in-up {
-  animation: fadeInUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.reveal-grow-enter,
+.reveal-grow-exit-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.reveal-grow-enter-to,
+.reveal-grow-exit {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.reveal-grow-enter-active > *,
+.reveal-grow-exit-active > * {
+  min-height: 0;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion-fade,
+  .motion-dropdown,
+  .motion-modal,
+  .motion-fade-up,
+  .vault-enter,
+  .toast-enter,
+  .animate-conflict-panel,
+  .copy-feedback {
+    animation-duration: 0.001ms;
+  }
+  .motion-window-morph,
+  .motion-vault-switch,
+  .fade-enter-active,
+  .fade-exit-active,
+  .slide-enter-active,
+  .slide-exit-active,
+  .sync-status-enter-active,
+  .sync-status-exit-active,
+  .reveal-grow-enter-active,
+  .reveal-grow-exit-active {
+    transition-duration: 0.001ms;
+  }
 }
 
 /* Toast notification animations */

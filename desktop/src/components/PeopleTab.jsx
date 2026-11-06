@@ -612,7 +612,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
           <button
             onClick={doInvite}
             disabled={busy()}
-            class="px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+            class="px-3 py-2 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
           >
             {t("people.inviteButton")}
           </button>
@@ -657,7 +657,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
           <button
             type="submit"
             disabled={busy() || !stageIntro().trim()}
-            class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-[10px] font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+            class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] text-[10px] font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
           >
             {t("people.stageBtn")}
           </button>
@@ -693,7 +693,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
                   <button
                     onClick={() => doApprove(r.req_id)}
                     disabled={busy()}
-                    class="px-2.5 py-1 rounded-lg bg-green-600 text-white text-[10px] font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                    class="px-2.5 py-1 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] text-[10px] font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
                   >
                     {t("people.approve")}
                   </button>
@@ -771,7 +771,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
       <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
         <div class="mb-3">
           <h3 class="text-sm font-bold text-[var(--color-text)]">{t("people.membersTitle")}</h3>
-          <p class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("people.sharingSubtitle")}</p>
+          <p class="text-xs leading-relaxed text-[var(--color-muted)] mt-0.5">{t("people.sharingSubtitle")}</p>
         </div>
         <ul class="space-y-2">
           <For each={members()}>
@@ -1233,7 +1233,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
               <button
                 onClick={confirmVerify}
                 disabled={verifyBusy() || !verifyCode()}
-                class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
               >
                 {t("people.verifyConfirm")}
               </button>
@@ -1277,7 +1277,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
               <button
                 onClick={saveEmail}
                 disabled={busy()}
-                class="px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                class="px-3 py-2 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
               >
                 {t("people.emailSave")}
               </button>
