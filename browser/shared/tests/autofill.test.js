@@ -276,6 +276,35 @@ describe("fillLoginForm TOTP integration", () => {
   });
 });
 
+describe("real-world 2FA field detection", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  it("detects a namespaced password-type OTP input (sign_in_totp_code / user[totp_code])", () => {
+    const el = makeInput("password", {
+      id: "sign_in_totp_code",
+      name: "user[totp_code]",
+      autocomplete: "off",
+    });
+    document.body.appendChild(el);
+    expect(isTotpField(el)).toBe(true);
+  });
+
+  it("still rejects a generic code field with no numeric corroboration", () => {
+    const el = makeInput("text", { id: "discount_code", name: "discount_code" });
+    document.body.appendChild(el);
+    expect(isTotpField(el)).toBe(false);
+  });
+
+  it("detects the field for fillTotpField on a 2FA-only page", () => {
+    attach(makeInput("password", {
+      id: "sign_in_totp_code",
+      name: "user[totp_code]",
+      autocomplete: "off",
+    }));
+    expect(findTotpFields()).toHaveLength(1);
+  });
+});
+
 describe("fill flash feedback", () => {
   beforeEach(() => {
     document.body.innerHTML = "";

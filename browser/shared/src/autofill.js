@@ -242,9 +242,16 @@ export function isTotpField(input) {
   // incl. Amex CID maxlength=4); real OTP boxes are 5-10. No upper bound: an
   // explicit name with a generous maxlength is still an OTP field.
   if (Number.isFinite(ml) && ml < 5) return false;
-  // 5. Strict: normalized whole-attribute equality ("security_code" ->
-  // "securitycode").
-  if (attrs.some((a) => TOTP_FIELD_NAMES.has(normalizeHint(a)))) return true;
+  // 5. Strict names: Bitwarden-style AppearsWithin — the strong name may sit
+  // anywhere inside the normalized attribute ("sign_in_totp_code" ->
+  // "signintotpcode" contains "totpcode"; "user[totp_code]" ->
+  // "usertotpcode"). Whole-attribute equality would miss every namespaced
+  // real-world form. Only strong, unambiguous names live here, so substring
+  // matching cannot catch postal/discount "code" fields.
+  if (attrs.some((a) => {
+    const n = normalizeHint(a);
+    return [...TOTP_FIELD_NAMES].some((name) => n.includes(name));
+  })) return true;
   // 6. Ambiguous token + numeric corroboration.
   const patternQuant = /(?:\\d|\[0-9\])\{(\d+)\}/.exec(
     input.getAttribute("pattern") || ""

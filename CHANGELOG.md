@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## UNRELEASED
 
+- Two-factor fields with names like user[totp_code] are now detected and filled, on both the popup Fill and the inline menu, and picking an entry on a two-factor field inserts only the code.
+
 - The extension view-in-app button now uses the accent color so it reads as opening the app, not copying to the clipboard.
 
 - The browser extension pulses a soft ring on the fields it just filled and fades it out after two seconds, so you can see what it touched.
