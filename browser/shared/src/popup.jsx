@@ -241,10 +241,8 @@ const [settingsOpen, setSettingsOpen] = createSignal(false);
 const [inlineAutofill, setInlineAutofill] = createSignal(true);
 const [copyTotpEnabled, setCopyTotpEnabled] = createSignal(true);
 const [clipboardClear, setClipboardClear] = createSignal(60);
-// Live TOTP ring: entry id -> {period, expiresAt} (seconds), fetched at
-// match time; the copy button's border drains clockwise as the window
-// elapses and snaps back full when the code rotates.
-const [totpWindows, setTotpWindows] = createSignal({});
+// Live TOTP ring clock. Windows are epoch-aligned, so the drained fraction
+// is just now mod the row's period — no code is ever fetched for display.
 const [nowSec, setNowSec] = createSignal(Date.now() / 1000);
 // G24 section 4.11: vault attribution renders only when two or more
 // eligible vaults contribute, so a single-vault user never sees merge UI.
@@ -381,7 +379,6 @@ async function refresh(silent = false) {
     ]);
     const data = JSON.parse(payload || "{}");
     setMatches(data.matches || []);
-    fetchTotpWindows(data.matches || []);
     setActiveVault(data.active_vault || "");
     setVaultChips(data.vaults || []);
     setStatePersisted("ready");
@@ -559,37 +556,12 @@ async function copyField(entry, field) {
   }
 }
 
-function fetchTotpWindows(list) {
-  for (const m of list) {
-    if (!m.totp || totpWindows()[m.id]) continue;
-    send("cipher.totp_code", {
-      id: m.id,
-      url: tabUrl(),
-      vault_slug: m.vault_slug || "",
-    })
-      .then((raw) => {
-        const t = JSON.parse(raw || "{}");
-        if (t.period_seconds > 0 && t.expires_at > 0) {
-          setTotpWindows((w) => ({
-            ...w,
-            [m.id]: { period: t.period_seconds, expiresAt: t.expires_at },
-          }));
-        }
-      })
-      .catch(() => {});
-  }
-}
-
-// Degrees of border already drained (clockwise from 12 o'clock). The next
-// window derives from the stored expiry, so no refetch at rollover.
-function totpSweepDeg(id) {
-  const w = totpWindows()[id];
-  if (!w) return "";
-  const periodMs = w.period * 1000;
-  const elapsed =
-    (((nowSec() * 1000 - (w.expiresAt * 1000 - periodMs)) % periodMs) +
-      periodMs) %
-    periodMs;
+// Degrees of border already drained (clockwise from 12 o'clock), empty
+// when the row carries no usable period.
+function totpSweepDeg(m) {
+  if (!m.totp_period) return "";
+  const periodMs = m.totp_period * 1000;
+  const elapsed = ((nowSec() * 1000) % periodMs + periodMs) % periodMs;
   return `${((elapsed / periodMs) * 360).toFixed(2)}deg`;
 }
 
@@ -985,8 +957,8 @@ function App() {
                     </button>
                     <button
                       class="btn-icon"
-                      classList={{ "totp-ring": Boolean(totpWindows()[m.id]) }}
-                      style={{ "--totp-sweep": totpSweepDeg(m.id) }}
+                      classList={{ "totp-ring": Boolean(m.totp && m.totp_period) }}
+                      style={{ "--totp-sweep": totpSweepDeg(m) }}
                       onClick={() => copyTotp(m)}
                       title={t("copyTotp")}
                     >

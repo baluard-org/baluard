@@ -1380,8 +1380,16 @@ impl VaultState {
                 "username": meta.username,
                 "favorite": meta.favorite,
                 // Presence flag only — the seed never leaves the vault. The
-                // popup uses it to fetch windows for the live TOTP ring.
+                // period rides the row too: TOTP windows are epoch-aligned,
+                // so the popup renders the ring from now mod period and no
+                // code is ever fetched for display. 0 = none or unparseable.
                 "totp": login.totp_uri.as_deref().is_some_and(|t| !t.is_empty()),
+                "totp_period": login
+                    .totp_uri
+                    .as_deref()
+                    .and_then(|s| baluard_core::crypto::totp::parse_totp(s).ok())
+                    .map(|p| p.period)
+                    .unwrap_or(0),
             });
             if hit || trusted_hit {
                 matched.push(entry);

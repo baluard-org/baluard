@@ -465,7 +465,7 @@
             content: "";
             position: absolute;
             inset: -2px;
-            border-radius: 8px;
+            border-radius: 7px;
             padding: 2px;
             background: conic-gradient(
               from 0deg,

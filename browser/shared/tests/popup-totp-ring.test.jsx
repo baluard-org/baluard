@@ -1,11 +1,12 @@
 // TOTP live window ring on the popup copy button: the remaining code
 // lifetime renders as a red border draining clockwise into the regular
-// border color. The window (period + expiry) comes from the daemon's
-// cipher.totp_code, fetched once per matching entry at match time.
+// border color. The window is epoch-aligned, so the popup needs only the
+// entry's period from the match row — no code is ever fetched for display.
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
 
-const BASE = Date.parse("2026-11-06T12:00:00Z");
+// A whole multiple of 60s, so the ring starts exactly at a rollover.
+const BASE = 1794000000000;
 vi.useFakeTimers({ now: BASE });
 
 function installFakeStorage(initial = {}) {
@@ -37,8 +38,8 @@ globalThis.chrome.runtime.sendMessage = (msg, cb) => {
       ok: true,
       payload: JSON.stringify({
         matches: [
-          { id: "t1", name: "Site", username: "me", favorite: true, totp: true, vault_slug: "personal", vault_name: "Personal" },
-          { id: "t2", name: "Broken seed", username: "me2", favorite: false, totp: true, vault_slug: "personal", vault_name: "Personal" },
+          { id: "t1", name: "Site", username: "me", favorite: true, totp: true, totp_period: 60, vault_slug: "personal", vault_name: "Personal" },
+          { id: "t2", name: "Broken seed", username: "me2", favorite: false, totp: true, totp_period: 0, vault_slug: "personal", vault_name: "Personal" },
           { id: "n1", name: "No totp", username: "me3", favorite: false, totp: false, vault_slug: "personal", vault_name: "Personal" },
         ],
         vaults: [
@@ -50,19 +51,10 @@ globalThis.chrome.runtime.sendMessage = (msg, cb) => {
     return;
   }
   if (msg.action === "cipher.totp_code") {
-    const id = msg.payload.id;
-    if (id === "t1") {
-      cb({
-        ok: true,
-        payload: JSON.stringify({
-          code: "123456",
-          period_seconds: 60,
-          expires_at: BASE / 1000 + 60,
-        }),
-      });
-    } else {
-      cb({ ok: false, error: "Invalid TOTP secret or URI" });
-    }
+    cb({
+      ok: true,
+      payload: JSON.stringify({ code: "123456", period_seconds: 60, expires_at: BASE / 1000 + 60 }),
+    });
     return;
   }
   if (msg.action === "clipboard-copy") {
@@ -92,12 +84,8 @@ describe("popup TOTP window ring", () => {
     await flush();
   });
 
-  it("fetches the window only for entries the daemon flags as TOTP", () => {
-    const codes = sentMessages.filter((m) => m.action === "cipher.totp_code");
-    expect(codes.map((m) => m.payload.id).sort()).toEqual([
-      "t1",
-      "t2",
-    ]);
+  it("never fetches a code to render the ring", () => {
+    expect(sentMessages.filter((m) => m.action === "cipher.totp_code")).toHaveLength(0);
   });
 
   it("starts as a full red border on a fresh window", () => {
@@ -106,7 +94,7 @@ describe("popup TOTP window ring", () => {
     expect(btn.style.getPropertyValue("--totp-sweep")).toBe("0.00deg");
   });
 
-  it("no ring without TOTP or when the window fetch fails", () => {
+  it("no ring without a period or without TOTP", () => {
     expect(totpBtn(1).classList.contains("totp-ring")).toBe(false);
     expect(totpBtn(2).classList.contains("totp-ring")).toBe(false);
   });
@@ -121,5 +109,14 @@ describe("popup TOTP window ring", () => {
     expect(totpBtn(0).style.getPropertyValue("--totp-sweep")).toBe("357.00deg");
     await vi.advanceTimersByTimeAsync(1500); // 61s total = 1s into the next window
     expect(totpBtn(0).style.getPropertyValue("--totp-sweep")).toBe("6.00deg");
+  });
+
+  it("still fetches the code on copy click, not before", async () => {
+    sentMessages.length = 0;
+    totpBtn(0).click();
+    await flush(2);
+    const codes = sentMessages.filter((m) => m.action === "cipher.totp_code");
+    expect(codes).toHaveLength(1);
+    expect(codes[0].payload).toEqual({ id: "t1", url: TAB_URL, vault_slug: "personal" });
   });
 });
