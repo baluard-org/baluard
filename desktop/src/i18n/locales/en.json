@@ -239,6 +239,7 @@
     "totpUri": "TOTP URI",
     "copyCode": "Copy code",
     "totpUnavailable": "Code unavailable",
+    "retry": "Try again",
     "launchWebsite": "Launch website",
     "downloadFailed": "Download failed",
     "booleanYes": "Yes",

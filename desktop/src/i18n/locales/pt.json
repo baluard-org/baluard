@@ -203,6 +203,7 @@
     "viewNotes": "Ver notas",
     "copyCode": "Copiar código",
     "totpUnavailable": "Código indisponível",
+    "retry": "Tentar novamente",
     "user": "Usuário",
     "pass": "Senha",
     "passwordHistory": "Histórico de senhas ({count})",
