@@ -18,13 +18,13 @@ export default function DeviceFleetPanel() {
   const fleet = () => vault.deviceFleet() || [];
 
   function getStatusBadge(lastPush) {
-    if (!lastPush) return { label: t("devices.statusUnknown"), color: "bg-slate-600", textColor: "text-slate-300" };
+    if (!lastPush) return { label: t("devices.statusUnknown"), color: "bg-slate-700", textColor: "text-slate-200" };
     const diff = Date.now() - new Date(lastPush).getTime();
     const days = diff / (1000 * 60 * 60 * 24);
-    if (days < 7) return { label: t("devices.statusActive"), color: "bg-emerald-600", textColor: "text-emerald-200" };
-    if (days < 30) return { label: t("devices.statusIdle"), color: "bg-yellow-600", textColor: "text-yellow-200" };
-    if (days < 90) return { label: t("devices.statusStale"), color: "bg-orange-600", textColor: "text-orange-200" };
-    return { label: t("devices.statusDormant"), color: "bg-red-600", textColor: "text-red-200" };
+    if (days < 7) return { label: t("devices.statusActive"), color: "bg-emerald-900", textColor: "text-emerald-200" };
+    if (days < 30) return { label: t("devices.statusIdle"), color: "bg-yellow-900", textColor: "text-yellow-200" };
+    if (days < 90) return { label: t("devices.statusStale"), color: "bg-orange-900", textColor: "text-orange-200" };
+    return { label: t("devices.statusDormant"), color: "bg-red-900", textColor: "text-red-200" };
   }
 
   const [revokeAsk, setRevokeAsk] = createSignal(null);

@@ -38,7 +38,7 @@ export default function WelcomeScreen() {
 			when={view() === "clone"}
 			fallback={
 				<div class="welcome-screen flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4">
-					<div class="welcome-screen__card w-full max-w-md p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl animate-fade-in-up">
+					<div class="welcome-screen__card w-full max-w-md p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl motion-fade-up">
 						<div class="welcome-screen__header text-center mb-8">
 							<div class="w-24 h-24 mx-auto mb-4 flex items-center justify-center">
 								<IconBaluardLogo class="w-24 h-24 object-contain logo-shadow" />

@@ -19,6 +19,8 @@ export function Button(props) {
           : "bg-[var(--color-sidebar)] text-[var(--color-text)] border border-[var(--color-border)] hover:border-[var(--color-text)]"
       } ${props.class || ""}`}
       aria-label={props["aria-label"]}
+      aria-expanded={props["aria-expanded"] == null ? undefined : String(props["aria-expanded"])}
+      aria-controls={props["aria-controls"]}
       title={props.title}
     >
       {props.children}
@@ -53,7 +55,7 @@ export function Toggle(props) {
 
   return (
     <label
-      class={`inline-flex items-center justify-between gap-3 cursor-pointer select-none group ${
+      class={`flex w-full items-center justify-between gap-3 cursor-pointer select-none group ${
         props.disabled ? "opacity-50 cursor-not-allowed pointer-events-none" : ""
       } ${props.class || ""}`}
     >
@@ -71,7 +73,7 @@ export function Toggle(props) {
           </Show>
         </div>
       </Show>
-      <span class="relative inline-flex items-center shrink-0">
+      <span class="relative inline-flex items-center shrink-0 ml-auto">
         <input
           ref={inputRef}
           type="checkbox"

@@ -89,13 +89,16 @@ Keep animations subtle, micro, and composited (relying on `opacity` and `transfo
 
 ### Standard Conventions
 
-1. **Screen/Page Transitions**
-   - Use `<Transition name="fade" mode="out-in">` (200ms cubic-bezier).
-   - Class triggers defined in `desktop/src/app.css` under `.fade-*`.
-2. **Details & Editor Panes**
-   - Use `<Transition name="slide" mode="out-in">` (150ms cubic-bezier).
-   - Keeps side panel context changes smooth without jarring state jumps.
-3. **Modal/Dialog Overlays**
-   - Use `<Transition name="fade">` to smoothly dim screen backing and pop container.
-4. **Entrance/Welcome Animations**
-   - Use `.animate-fade-in-up` (450ms cubic-bezier(0.16, 1, 0.3, 1)) for initial screens like `LoginScreen`.
+1. **Shared Motion Components**
+   - Use the `motion-*` classes and `--motion-*` timing tokens defined in `desktop/src/app.css`.
+   - `.motion-dropdown` covers menus and inline disclosures, `.motion-modal` covers dialog entrances, `.motion-fade` covers content changes, and `.motion-fade-up` covers initial screens.
+   - Use `.motion-window-morph` for container resizing and `.motion-vault-switch` for vault pane transitions.
+2. **Screen/Page Transitions**
+   - Use `<Transition name="fade" mode="out-in">` with the `.fade-*` classes in `desktop/src/app.css`.
+3. **Details & Editor Panes**
+   - Use `<Transition name="slide" mode="out-in">` to keep side panel context changes smooth without jarring state jumps.
+4. **Modal/Dialog Overlays**
+   - Use `<Transition name="fade">` to smoothly dim the screen backing and `.motion-modal` for the dialog container.
+5. **Grow and Shrink Reveals**
+   - Use `<Transition name="reveal-grow">` for expandable content such as recovery codes.
+   - All shared motion components include reduced-motion behavior.

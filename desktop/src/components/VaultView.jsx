@@ -7,6 +7,7 @@ import { useI18n } from "../i18n/index.jsx";
 import BridgeUnlockBanner from "./BridgeUnlockBanner.jsx";
 import { daemon } from "../lib/daemon.js";
 import { buildFolderCreatePayload } from "../lib/payload.js";
+import { categoriesCollapsed as readCategoriesCollapsed, setCategoriesCollapsed, visibleCategories } from "../lib/categories.js";
 import { selectSource, filterByCategory, filterByFolder, filterByTag, filterByCollection, cipherCollectionId, searchCiphers } from "../lib/filters.js";
 import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
@@ -148,6 +149,13 @@ export default function VaultView() {
   });
 
   // Categories
+  const [isCategoriesCollapsed, setIsCategoriesCollapsed] = createSignal(readCategoriesCollapsed());
+  function toggleCategories() {
+    const collapsed = !isCategoriesCollapsed();
+    setIsCategoriesCollapsed(collapsed);
+    setCategoriesCollapsed(collapsed);
+  }
+
   const categories = [
     { id: "allItems", name: "All items", icon: <IconGrid class="w-4 h-4 shrink-0" /> },
     { id: "favorites", name: "Favorites", icon: <IconHeart class="w-4 h-4 shrink-0" /> },
@@ -337,14 +345,25 @@ export default function VaultView() {
         </div>
 
         {/* Navigation Scroll Area */}
-        <div class={`p-3 space-y-4 overflow-y-auto flex-1 min-h-0 transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
+        <div class={`motion-vault-switch p-3 space-y-4 overflow-y-auto flex-1 min-h-0 ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
           {/* Categories */}
           <div>
-            <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">
-              {t("vault.categoriesTitle")}
+            <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
+              <span>{t("vault.categoriesTitle")}</span>
+              <button
+                type="button"
+                aria-label={t(isCategoriesCollapsed() ? "vault.expandCategories" : "vault.collapseCategories")}
+                aria-expanded={String(!isCategoriesCollapsed())}
+                aria-controls="categories-navigation"
+                title={t(isCategoriesCollapsed() ? "vault.expandCategories" : "vault.collapseCategories")}
+                onClick={toggleCategories}
+                class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-card)] transition-colors cursor-pointer flex items-center justify-center"
+              >
+                <IconChevronDown class={`w-3.5 h-3.5 transition-transform duration-[var(--motion-duration-fast)] ${isCategoriesCollapsed() ? "-rotate-90" : ""}`} />
+              </button>
             </div>
-            <div class="space-y-0.5 mt-1">
-              <For each={categories}>
+            <div id="categories-navigation" class="space-y-0.5 mt-1">
+              <For each={visibleCategories(categories, isCategoriesCollapsed())}>
                 {(cat) => (
                   <button
                     data-testid={"category-" + cat.id}
@@ -498,7 +517,7 @@ export default function VaultView() {
       </div>
 
       {/* Column 2: Vault Items List Pane */}
-      <div class={`vault__list w-[360px] bg-[var(--color-list)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
+      <div class={`vault__list motion-vault-switch w-[360px] bg-[var(--color-list)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
         <ConflictBanner />
         <LegacyBanner />
         <RemovalBanner />
@@ -526,7 +545,7 @@ export default function VaultView() {
                   <IconChevronDown class={`w-3 h-3 transition-transform ${showAddMenu() ? "rotate-180" : ""}`} />
                 </button>
                 <Show when={showAddMenu()}>
-                <div class="absolute right-0 top-full mt-1.5 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-2xl py-1.5 w-56 z-50 whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                <div class="motion-dropdown absolute right-0 top-full mt-1.5 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-2xl py-1.5 w-56 z-50 whitespace-nowrap overflow-hidden">
                   <div class="flex flex-col gap-0.5 px-1.5">
                     <button data-testid="new-login" onClick={() => startAdd("login")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.login")}</button>
                     <button onClick={() => startAdd("secureNote")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.secureNote")}</button>
@@ -624,7 +643,7 @@ export default function VaultView() {
       </div>
 
       {/* Column 3: Main Details / Edit Panel */}
-      <div class={`vault__detail flex-1 bg-[var(--color-detail)] flex flex-col min-w-0 relative transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
+      <div class={`vault__detail motion-vault-switch flex-1 bg-[var(--color-detail)] flex flex-col min-w-0 relative ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
 
         <Transition name="slide" mode="out-in">
           <Switch>
