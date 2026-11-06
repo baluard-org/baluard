@@ -16,6 +16,19 @@ describe("daemon session expiry signal", () => {
     expect(seen).toHaveBeenCalledTimes(1);
   });
 
+  it("emits for the TTL expiry and the lock/re-unlock generation errors", async () => {
+    for (const error of [
+      "Session token expired. Re-unlock the vault.",
+      "Vault was locked and re-unlocked. Re-unlock required.",
+    ]) {
+      invokeMock.mockResolvedValue({ success: false, error });
+      const seen = vi.fn();
+      window.addEventListener("baluard:session-expired", seen, { once: true });
+      await expect(daemon("sync.autosync_status")).rejects.toThrow();
+      expect(seen).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("does not emit for unrelated errors", async () => {
     invokeMock.mockResolvedValue({ success: false, error: "vault is locked" });
     const seen = vi.fn();
