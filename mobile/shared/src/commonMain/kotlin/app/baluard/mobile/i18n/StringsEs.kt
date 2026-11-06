@@ -706,8 +706,8 @@ internal val ES: Map<String, String> = mapOf(
     "shared.askWithdrawn" to "Solicitud retirada",
 
         // §4.8-7 People & access (mobile admin surfaces)
-        "people.title" to "Personas y acceso",
-        "people.entrySubtitle" to "Miembros, solicitudes de acceso y permisos de carpetas compartidas",
+        "people.title" to "Compartir",
+        "people.entrySubtitle" to "Comparte con familia, equipos u organizaciones. Crea espacios separados para cada grupo.",
         "people.joinRequests" to "Solicitudes de incorporación",
         "people.stageIntro" to "Pega la respuesta de invitación",
         "people.staged" to "Solicitud en cola. Apruébala abajo.",

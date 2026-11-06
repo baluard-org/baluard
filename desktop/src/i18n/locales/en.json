@@ -392,7 +392,7 @@
     "avatarRemoved": "Avatar removed",
     "profileSaved": "Profile updated",
     "tabSync": "Sync",
-    "tabPeople": "People",
+    "tabPeople": "Sharing",
     "syncNotAvailable": "Sync is not available on this build.",
     "tabBridge": "Browser extensions",
     "themeSystem": "System",
@@ -619,7 +619,7 @@
     "bankAccount": "Bank Account",
     "driversLicense": "Driver License",
     "passport": "Passport & ID",
-    "signingKey": "Signing key & certificates"
+    "signingKey": "Signing Keys & Certs."
   },
   "fields": {
     "username": "Username",
@@ -849,7 +849,8 @@
     "approved": "Member approved",
     "denied": "Request removed",
     "malformedCount": "{n} unreadable request(s) are being ignored.",
-    "membersTitle": "Members",
+    "membersTitle": "People & Access",
+    "sharingSubtitle": "Share securely with family, teams, or organizations. Create separate shared spaces for each group you belong to.",
     "membersLegacy": "Sharing is not set up on this vault yet.",
     "reviewTitle": "Access review",
     "reviewRun": "Run review",
