@@ -48,6 +48,7 @@ appLaunchDelay: 3000
 # roster propagate to the joiner's clone.
 - tapOn:
     id: "e2e/home/settings"
+- tapOn: "Sync"
 - scrollUntilVisible:
     element:
       text: "Back up through your own Git account"
@@ -72,9 +73,15 @@ appLaunchDelay: 3000
     visible: "Backup repository ready.*"
     timeout: 90000
 
-# Flip to team shape: prepare, then the typed confirm. (No settle wait
-# here: the People screen's pollers animate forever, so the wait itself
-# becomes the failing step — scrollUntilVisible carries the step.)
+# Flip to team shape from the Space category: prepare, then the typed
+# confirm. (No settle wait here: the People screen's pollers animate
+# forever, so the wait itself becomes the failing step —
+# scrollUntilVisible carries the step.)
+- back
+- extendedWaitUntil:
+    visible: "Settings"
+    timeout: 20000
+- tapOn: "Space"
 - scrollUntilVisible:
     element:
       text: "Prepare members"
@@ -95,9 +102,14 @@ appLaunchDelay: 3000
     visible: "Team mode is on."
     timeout: 30000
 
-# Mint the invited joiner's code (Editor role: the joiner files the
-# org entry the merge-exclusion assert searches for; the box raises
-# the clone seat). The harness reads the code from logcat.
+# Mint the invited joiner's code from Sharing (Editor role: the joiner
+# files the org entry the merge-exclusion assert searches for; the box
+# raises the clone seat). The harness reads the code from logcat.
+- back
+- extendedWaitUntil:
+    visible: "Settings"
+    timeout: 20000
+- tapOn: "Sharing"
 - scrollUntilVisible:
     element:
       text: "Members, join requests, and collection grants"

@@ -29,7 +29,13 @@ appId: app.baluard.mobile
 - extendedWaitUntil:
     visible: "Settings"
     timeout: 20000
-- assertNotVisible: "People & access"
+- tapOn: "Sharing"
+- assertNotVisible: "Members, join requests, and collection grants"
+# System Back returns to the Settings index before leaving Settings.
+- back
+- extendedWaitUntil:
+    visible: "Settings"
+    timeout: 20000
 - back
 - extendedWaitUntil:
     visible:

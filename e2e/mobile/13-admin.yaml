@@ -21,17 +21,11 @@ appId: app.baluard.mobile
     timeout: 45000
 - tapOn:
     id: e2e/home/settings
-# The People card sits mid-screen in a long Settings list; uiautomator
-# reports only visible nodes, so scroll to it first. The rendered
-# SectionCard title is uppercase.
-- scrollUntilVisible:
-    element:
-      text: "PEOPLE & ACCESS"
-    timeout: 20000
-# The own-code display is already asserted in the editor leg (every
-# role carries the row); the vault section sits below People, so
-# re-asserting here would need a second scroll for no extra coverage.
+- tapOn: "Sharing"
 # The clickable row is the entry subtitle, not the section title.
+- extendedWaitUntil:
+    visible: "Members, join requests, and collection grants"
+    timeout: 20000
 - tapOn: "Members, join requests, and collection grants"
 # The Groups card sits below the members list inside People.
 - scrollUntilVisible:

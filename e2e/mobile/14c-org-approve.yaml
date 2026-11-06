@@ -57,6 +57,7 @@ appLaunchDelay: 3000
 # Stage the joiner's reply and approve.
 - tapOn:
     id: "e2e/home/settings"
+- tapOn: "Sharing"
 - scrollUntilVisible:
     element:
       text: "Members, join requests, and collection grants"
