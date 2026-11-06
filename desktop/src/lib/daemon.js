@@ -40,6 +40,11 @@ async function daemon(action, payload = "", slug = null) {
   if (slug) args.slug = slug;
   const res = await invoke("daemon_request", args);
   if (!res.success) {
+    // A dead session must not sit behind a stale but normal-looking UI:
+    // tell the app to drop to the lock screen (listener in AuthContext).
+    if (/Invalid session token/i.test(res.error || "")) {
+      window.dispatchEvent(new CustomEvent("baluard:session-expired"));
+    }
     throw new Error(res.error);
   }
   // Notify the UI immediately that a local mutation succeeded so the sync
