@@ -107,10 +107,11 @@ just ext-submit
 
 - Requires a version bump first; the Chrome upload API rejects a re-upload of an unchanged version.
 - Firefox: the submission is built from `browser/firefox/dist` via `web-ext sign --channel listed`; the packaged zip is used only for the version cross-check.
-- Chrome: pure curl flow against the v2 publisher API (token exchange, `-T` upload of the packaged zip, publish with an empty body).
+- Chrome: curl flow against the v2 publisher API (token exchange, `-T` upload, publish with an empty body). With the CRX key present the zip is signed into a CRX3 first; the CRX media must carry the `X-Goog-Upload-Protocol: raw` and `X-Goog-Upload-File-Name: <name>.crx` headers or the store rejects even a valid signed CRX with `PKG_MUST_UPDATE_AS_CRX` (zip uploads need no such headers). The token exchange feeds each secret to curl from its own 0600 temp file: curl reads stdin once, so two `name@` stdin fields in one call silently starve the second.
 - First listed AMO submission needs `AMO_METADATA` (summary, categories, license); minified-source review may need `AMO_UPLOAD_SOURCE`.
 - Partial credentials are a hard error, not a skip. A configured store failing aborts the run after the other store submitted.
-- The Chrome item exists since 2026-11-03 (first upload). Both store listings (Chrome, AMO) were submitted 2026-11-03 and are pending review at first upload.
+- First-time setup for the Chrome API: enable the Chrome Web Store API on the OAuth client's project (`https://console.developers.google.com/apis/api/chromewebstore.googleapis.com/overview?project=<project-id>`); uploads return 403 `SERVICE_DISABLED` naming the project until then, and enabling takes a few minutes to propagate without a token re-mint. Keep the consent screen in Production (testing-mode refresh tokens expire weekly), and back up the CRX private key in Bitwarden before opting in: losing it permanently freezes the item's update ability. The API error body carries the real reason; when a submit step fails with static text, replay the exchange-plus-upload manually and print the response body.
+- The Chrome item exists since 2026-11-03 (first upload, approved); the 0.1.4 update was submitted through `just ext-submit` on 2026-11-05 as the first fully automated store push. The AMO 0.1.0 listing remains the only pending review.
 
 ## Update channels
 
@@ -152,4 +153,4 @@ The desktop confirm-first flow: the Rust command surface (`desktop/src-tauri/src
 - Windows: no MSI (WiX is Windows-only); no Authenticode signing, so SmartScreen warns. Clean Windows machines need the VC++ redistributable (`VC_redist.x64.exe`) before the bundled exes run; the release notes carry this prerequisite and bundling it into NSIS is still open.
 - Windows installer: verified interactively on the Windows 11 smoke VM (uninstall old version, clean install, app launch over WebView2). A non-interactive start (ssh, scheduled task) exits with code 123 before any UI; that is a launch-context artifact, not an installer bug. The published 0.1.3 Windows installer was rebuilt in place from commit aa5b27d2 (carrying the post-0.1.3 desktop fixes) after the install-dir fix; the git tag intentionally stays at the 0.1.3 release commit because the other platforms' artifacts were built there.
 - Desktop updater: the feed endpoint and publish job exist (release.yml `publish-updates`); the residual gap is publish-side signature re-verification and manifest expiry (deferred M5/M9).
-- Chrome Web Store and AMO listings: both submitted 2026-11-03, pending review at first upload; automated ext-submit still needs the store API credentials in Bitwarden.
+- Chrome Web Store listing: 0.1.0 approved, 0.1.4 submitted for review on 2026-11-05 through the automated pipeline. AMO 0.1.0 remains pending review; once it clears, `just ext-submit` covers both stores with no manual steps.
