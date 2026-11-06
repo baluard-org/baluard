@@ -1,5 +1,5 @@
 import { render } from "solid-js/web";
-import { createSignal, Show, For, onMount } from "solid-js";
+import { createSignal, Show, For, onMount, onCleanup } from "solid-js";
 import { getSettings, updateSettings, normalizeClearSeconds } from "./settings.js";
 import { originOf } from "./url.js";
 // ?inline gives the raw CSS string. It is rendered as a DYNAMIC <style>
@@ -241,6 +241,11 @@ const [settingsOpen, setSettingsOpen] = createSignal(false);
 const [inlineAutofill, setInlineAutofill] = createSignal(true);
 const [copyTotpEnabled, setCopyTotpEnabled] = createSignal(true);
 const [clipboardClear, setClipboardClear] = createSignal(60);
+// Live TOTP ring: entry id -> {period, expiresAt} (seconds), fetched at
+// match time; the copy button's border drains clockwise as the window
+// elapses and snaps back full when the code rotates.
+const [totpWindows, setTotpWindows] = createSignal({});
+const [nowSec, setNowSec] = createSignal(Date.now() / 1000);
 // G24 section 4.11: vault attribution renders only when two or more
 // eligible vaults contribute, so a single-vault user never sees merge UI.
 function multiVault() {
@@ -376,6 +381,7 @@ async function refresh(silent = false) {
     ]);
     const data = JSON.parse(payload || "{}");
     setMatches(data.matches || []);
+    fetchTotpWindows(data.matches || []);
     setActiveVault(data.active_vault || "");
     setVaultChips(data.vaults || []);
     setStatePersisted("ready");
@@ -553,6 +559,40 @@ async function copyField(entry, field) {
   }
 }
 
+function fetchTotpWindows(list) {
+  for (const m of list) {
+    if (!m.totp || totpWindows()[m.id]) continue;
+    send("cipher.totp_code", {
+      id: m.id,
+      url: tabUrl(),
+      vault_slug: m.vault_slug || "",
+    })
+      .then((raw) => {
+        const t = JSON.parse(raw || "{}");
+        if (t.period_seconds > 0 && t.expires_at > 0) {
+          setTotpWindows((w) => ({
+            ...w,
+            [m.id]: { period: t.period_seconds, expiresAt: t.expires_at },
+          }));
+        }
+      })
+      .catch(() => {});
+  }
+}
+
+// Degrees of border already drained (clockwise from 12 o'clock). The next
+// window derives from the stored expiry, so no refetch at rollover.
+function totpSweepDeg(id) {
+  const w = totpWindows()[id];
+  if (!w) return "";
+  const periodMs = w.period * 1000;
+  const elapsed =
+    (((nowSec() * 1000 - (w.expiresAt * 1000 - periodMs)) % periodMs) +
+      periodMs) %
+    periodMs;
+  return `${((elapsed / periodMs) * 360).toFixed(2)}deg`;
+}
+
 async function copyTotp(entry) {
   try {
     const code = await send("cipher.totp_code", {
@@ -667,6 +707,10 @@ async function isStillUnpaired() {
   }
 }
 
+onMount(() => {
+  const iv = setInterval(() => setNowSec(Date.now() / 1000), 500);
+  onCleanup(() => clearInterval(iv));
+});
 onMount(boot);
 onMount(async () => {
   const s = await getSettings();
@@ -939,7 +983,13 @@ function App() {
                         <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                       </svg>
                     </button>
-                    <button class="btn-icon" onClick={() => copyTotp(m)} title={t("copyTotp")}>
+                    <button
+                      class="btn-icon"
+                      classList={{ "totp-ring": Boolean(totpWindows()[m.id]) }}
+                      style={{ "--totp-sweep": totpSweepDeg(m.id) }}
+                      onClick={() => copyTotp(m)}
+                      title={t("copyTotp")}
+                    >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="10" />
                         <polyline points="12 6 12 12 16 14" />

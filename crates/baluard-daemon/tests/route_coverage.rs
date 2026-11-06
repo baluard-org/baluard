@@ -3993,7 +3993,7 @@ async fn bridge_match_merges_across_eligible_vaults() {
                 "kind": {"type": "login", "data": {
                     "username": "me", "password": "p-secret",
                     "uris": [{"uri": "https://login.mybank.com", "matchStrategy": "domain"}],
-                    "totp_uri": null, "autofill_on_page_load": false,
+                    "totp_uri": "JBSWY3DPEHPK3PXP", "autofill_on_page_load": false,
                     "password_revision_date": null, "favicon": null,
                     "fido2_credentials": null
                 }}
@@ -4095,6 +4095,10 @@ async fn bridge_match_merges_across_eligible_vaults() {
     assert_eq!(matches.len(), 3, "personal x2 + family: {parsed:?}");
     assert_eq!(matches[0]["name"], serde_json::json!("MyBank personal"));
     assert_eq!(matches[1]["name"], serde_json::json!("Aaa personal"));
+    // The presence flag rides every match row: the popup needs it to know
+    // which entries get the live TOTP ring, without fetching codes.
+    assert_eq!(matches[0]["totp"], serde_json::json!(true));
+    assert_eq!(matches[1]["totp"], serde_json::json!(false));
     assert_eq!(matches[2]["vault_slug"], serde_json::json!("g24f"));
     assert!(
         !resp.payload.contains("p-secret") && !resp.payload.contains("f-secret"),
