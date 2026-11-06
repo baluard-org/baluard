@@ -4,6 +4,9 @@ Notable user-facing changes per release.
 
 ## UNRELEASED
 
+## 0.1.5 - 2026-11-06
+
+- The Chrome extension store update pipeline is fully automated: uploads are CRX3-signed with the store-registered key and submitted through the API.
 - The desktop app now has a native macOS menu (About, Settings, Check for updates, Sync now) and the web-style right-click menu no longer appears outside text fields.
 - Buttons across the desktop app give a brief press ripple for tactile feedback.
 - The People tab is now called Sharing on desktop and mobile, with clearer wording about what it does.
