@@ -108,6 +108,39 @@ export function setNativeValue(el, value) {
   }
   el.dispatchEvent(new Event("input", { bubbles: true }));
   el.dispatchEvent(new Event("change", { bubbles: true }));
+  flashFilledField(el);
+}
+
+// Visual fill confirmation: a brief brand-lime ring that pulses then fades
+// over ~2s. Implemented as a class + injected keyframes (NOT inline styles)
+// so the field's own box-shadow and transitions are left untouched once the
+// class comes off. One stylesheet per document, reused across fills.
+const FLASH_STYLE_ID = "baluard-fill-flash-style";
+const FLASH_CLASS = "baluard-fill-flash";
+export function flashFilledField(el) {
+  if (!el || !el.classList) return;
+  const doc = el.ownerDocument;
+  if (!doc.getElementById(FLASH_STYLE_ID)) {
+    const style = doc.createElement("style");
+    style.id = FLASH_STYLE_ID;
+    style.textContent =
+      "@keyframes baluard-fill-glow{" +
+      "0%{box-shadow:0 0 0 0 rgba(179,229,92,0)}" +
+      "12%{box-shadow:0 0 0 4px rgba(179,229,92,.75)}" +
+      "70%{box-shadow:0 0 0 4px rgba(179,229,92,.45)}" +
+      "100%{box-shadow:0 0 0 0 rgba(179,229,92,0)}}" +
+      `.${FLASH_CLASS}{animation:baluard-fill-glow 2s ease-out}`;
+    (doc.head || doc.documentElement).appendChild(style);
+  }
+  // Restart the animation on repeat fills of the same field.
+  el.classList.remove(FLASH_CLASS);
+  void el.offsetWidth;
+  el.classList.add(FLASH_CLASS);
+  clearTimeout(el.__baluardFlashTimer);
+  el.__baluardFlashTimer = setTimeout(() => {
+    el.classList.remove(FLASH_CLASS);
+    delete el.__baluardFlashTimer;
+  }, 2100);
 }
 
 // ── TOTP field detection ──
