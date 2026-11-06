@@ -4099,6 +4099,10 @@ async fn bridge_match_merges_across_eligible_vaults() {
     // which entries get the live TOTP ring, without fetching codes.
     assert_eq!(matches[0]["totp"], serde_json::json!(true));
     assert_eq!(matches[1]["totp"], serde_json::json!(false));
+    // The window length rides the row so the popup can render the ring
+    // without fetching any code: bare secrets default to 30s.
+    assert_eq!(matches[0]["totp_period"], serde_json::json!(30));
+    assert_eq!(matches[1]["totp_period"], serde_json::json!(0));
     assert_eq!(matches[2]["vault_slug"], serde_json::json!("g24f"));
     assert!(
         !resp.payload.contains("p-secret") && !resp.payload.contains("f-secret"),
