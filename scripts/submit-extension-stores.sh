@@ -127,14 +127,15 @@ submit_chrome() {
   fi
 
   local token_json token
-  printf 'grant_type=refresh_token&client_id=%s&client_secret=%s&refresh_token=%s' \
-    "$BALUARD_CHROME_CLIENT_ID" "$BALUARD_CHROME_CLIENT_SECRET" "$BALUARD_CHROME_REFRESH_TOKEN" > "$SEC/token-request"
-  # name@ takes the value from stdin; it never touches argv.
-  token_json="$(printf '%s' "$BALUARD_CHROME_CLIENT_SECRET" | curl -fsS \
+  # One value per @file: curl reads stdin once, so two name@ stdin fields
+  # silently starve the second. Files are 0600 inside the trap-cleaned dir.
+  printf '%s' "$BALUARD_CHROME_CLIENT_SECRET" > "$SEC/client-secret"
+  printf '%s' "$BALUARD_CHROME_REFRESH_TOKEN" > "$SEC/refresh-token"
+  token_json="$(curl -fsS \
     --data-urlencode grant_type=refresh_token \
-    --data-urlencode client_id="$BALUARD_CHROME_CLIENT_ID" \
-    --data-urlencode client_secret@ \
-    --data-urlencode refresh_token@ \
+    --data-urlencode "client_id=$BALUARD_CHROME_CLIENT_ID" \
+    --data-urlencode "client_secret@$SEC/client-secret" \
+    --data-urlencode "refresh_token@$SEC/refresh-token" \
     https://oauth2.googleapis.com/token)" \
     || { echo "chrome/store: token exchange failed" >&2; return 1; }
   token="$(jq -er '.access_token | select(type == "string" and length > 0)' <<< "$token_json")" \
@@ -142,7 +143,14 @@ submit_chrome() {
   printf 'Authorization: Bearer %s\n' "$token" > "$SEC/bearer"
 
   local upload_response
+  local -a upload_headers=()
+  if [[ "$upload_file" == *.crx ]]; then
+    # Verified-CRX items reject media without these flags with
+    # PKG_MUST_UPDATE_AS_CRX; they tell the gateway the media is CRX3.
+    upload_headers=("-H" "X-Goog-Upload-Protocol: raw" "-H" "X-Goog-Upload-File-Name: $(basename "$upload_file")")
+  fi
   upload_response="$(curl -fsS --fail-with-body -X POST -T "$upload_file" --header @"$SEC/bearer" \
+    "${upload_headers[@]}" \
     "https://chromewebstore.googleapis.com/upload/v2/publishers/$BALUARD_CHROME_PUBLISHER_ID/items/$BALUARD_CHROME_EXTENSION_ID:upload")" \
     || { echo "chrome/store: upload failed" >&2; return 1; }
   # The v2 enum spells the good state both ways.
