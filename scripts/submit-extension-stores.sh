@@ -106,7 +106,7 @@ submit_chrome() {
   # Once the store item opts into Verified CRX Uploads, every upload must be
   # a CRX3 signed with the RSA key registered on the Package tab; signing
   # whenever the key exists keeps one code path across both states.
-  local key_path="${BALUARD_CHROME_CRX_KEY:-$HOME/.baluard/chrome-crx-upload.key}"
+  local key_path="${BALUARD_CHROME_CRX_KEY:-$HOME/.baluard/chrome-web-store/chrome-crx-upload.key}"
   local upload_file="$zip"
   if [[ -r "$key_path" ]]; then
     local crx="$SEC/baluard-extension-$version-chrome.crx"
