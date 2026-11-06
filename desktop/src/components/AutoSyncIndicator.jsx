@@ -107,10 +107,10 @@ export default function AutoSyncIndicator() {
 
   const phase = () => localPhase();
 
-  // Click = the same bidirectional sync the settings Sync button runs.
-  // 30s cooldown: pushes are unthrottled over HTTPS and focus/idle pulls
-  // already run, so this only guards UI spam. A running cycle also swallows
-  // clicks. The polled-state effect reconciles waiting -> syncing -> synced.
+  // The dot itself is display-only (no reliable hit area in the titlebar
+  // drag band). This runs the same bidirectional sync as settings, triggered
+  // by the native menu Sync command or the toolbar SyncButton. The 30s
+  // cooldown only guards event spam; a running cycle also swallows repeats.
   let lastManualSync = 0;
   const MANUAL_SYNC_COOLDOWN_MS = 30_000;
   const canManualSync = () =>
@@ -162,21 +162,13 @@ export default function AutoSyncIndicator() {
             </span>
           </Show>
         </Transition>
-        <button
-          type="button"
-          onClick={manualSync}
-          title={t("sync.syncNow")}
-          aria-label={t("sync.syncNow")}
-          class="pointer-events-auto cursor-pointer rounded-full p-1 -m-1 hover:bg-[var(--color-card)] transition-colors"
-        >
-          <span class="relative flex h-2 w-2">
+        <span class="relative flex h-2 w-2">
             {/* soft expanding halo (visible only while syncing) */}
             <Show when={dotClass().pulse}>
               <span class={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${dotClass().halo}`} />
             </Show>
             <span class={`relative inline-flex rounded-full h-2 w-2 ${dotClass().dot}`} />
-          </span>
-        </button>
+        </span>
       </div>
     </Show>
   );

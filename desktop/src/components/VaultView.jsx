@@ -1,5 +1,6 @@
 import { createSignal, createMemo, createEffect, onSettled, Show, For, Switch, Match } from "solid-js";
 import { Transition } from "../lib/transition";
+import SyncButton from "./SyncButton.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
 import { toastError } from "../context/toastSignal.js";
@@ -534,6 +535,7 @@ export default function VaultView() {
               </div>
             </div>
 
+            <div class="flex items-center gap-2">
             <Show when={vault.selectedCategory() === "Trash"} fallback={
               <div class="relative" ref={addMenuRef}>
                 <button
@@ -581,6 +583,7 @@ export default function VaultView() {
                 {t("vault.emptyTrash")}
               </button>
             </Show>
+            <SyncButton />
             <Show when={vault.selectedCategory() !== "Trash"}>
               <button
                 data-testid="generator-open"
@@ -591,6 +594,7 @@ export default function VaultView() {
                 <IconBolt class="w-4 h-4" />
               </button>
             </Show>
+            </div>
           </div>
 
           {/* Search Input bar */}

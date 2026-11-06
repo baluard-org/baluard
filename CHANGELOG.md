@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## UNRELEASED
 
+- The vault list has a sync button next to New that runs the same pull and push as settings; the top-right dot is a passive indicator again since it cannot be clicked reliably.
+
 ## 0.1.6 - 2026-11-06
 
 - Desktop one-time codes now show a live countdown with a depleting bar and a copy button, like on mobile, and a failed code fetch shows an error with a retry instead of hiding the code.
