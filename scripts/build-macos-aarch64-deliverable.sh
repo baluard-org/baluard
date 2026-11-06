@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the aarch64 macOS release deliverable from Linux: cross-compiled
 # sidecars and desktop binary (cargo-zigbuild against the local SDK), an
-# ad-hoc signed Baluard.app, the non-notarized release zip, the sha-named
-# ~/Downloads copy, and the .app.tar.gz updater payload with its signature.
+# ad-hoc signed Baluard.app, the non-notarized release zip, and the
+# .app.tar.gz updater payload with its signature.
 #
 # Machine inputs outside the repo (checked up front):
 #   ~/.local/opt/macos-sdk/MacOSX.sdk        full macOS SDK (non-redistributable)
@@ -12,10 +12,8 @@
 #   TAURI_SIGNING_PRIVATE_KEY, or BALUARD_UPDATER_KEY (default
 #   ~/.tauri/baluard-updater.key), for the updater-payload signature
 #
-# The zip lands in dist/ for release-stage, the sha-named copy in
-# ~/Downloads for hand-off (maintainer-ordered location), and superseded
-# macos-aarch64 deliverables in ~/Downloads are removed per the
-# exactly-one-deliverable rule.
+# The zip lands in dist/ for release-stage. Nothing is written outside
+# the repo.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,7 +21,6 @@ VERSION="$(awk -F'"' '/^version = /{print $2; exit}' "$ROOT/Cargo.toml")"
 SDK="${MACOS_SDK:-$HOME/.local/opt/macos-sdk/MacOSX.sdk}"
 OSSSL="${MACOS_OPENSSL_DIR:-$HOME/.local/opt/macos-openssl/ossl-arm}"
 SHIM_ROOT="$HOME/.local/opt/macos-sdk/aarch64-shims"
-DL="$HOME/Downloads"
 WORK="$(mktemp -d)"
 LOGDIR="$ROOT/logs"
 mkdir -p "$LOGDIR"
@@ -161,9 +158,9 @@ rcodesign print-signature-info "$MAIN" | grep -q "ADHOC" || fail "main executabl
 echo "BATTERY_OK"
 
 echo "== zips =="
-python3 - "$STAGE" "$ROOT/dist" "$DL" "$VERSION" <<'PYEOF'
-import hashlib, os, shutil, sys, zipfile
-stage, dist, downloads, version = sys.argv[1:5]
+python3 - "$STAGE" "$ROOT/dist" "$VERSION" <<'PYEOF'
+import hashlib, os, sys, zipfile
+stage, dist, version = sys.argv[1:4]
 app = os.path.join(stage, "Baluard.app")
 
 def make_zip(path):
@@ -182,20 +179,8 @@ def make_zip(path):
 
 dist_zip = os.path.join(dist, f"baluard-{version}-macos-aarch64-non-notarized.zip")
 sha = make_zip(dist_zip)
-dl = os.path.join(downloads, f"Baluard-{version}-macos-aarch64-{sha[:8]}.zip")
-sha2 = make_zip(dl)
-assert sha == sha2, "dist and Downloads zips differ"
-with open(os.path.join(downloads, f"MANIFEST-macos-{sha[:8]}.sha256"), "w") as m:
-    m.write(f"{sha}  Baluard-{version}-macos-aarch64-{sha[:8]}.zip\n")
-# exactly-one-deliverable: retire superseded macos-aarch64 hand-offs.
-for name in os.listdir(downloads):
-    keep = (os.path.basename(dl), f"MANIFEST-macos-{sha[:8]}.sha256")
-    if ("macos-aarch64" in name or name.startswith("MANIFEST-macos-")) \
-       and name.endswith((".zip", ".sha256")) and name not in keep:
-        os.remove(os.path.join(downloads, name))
-        print(f"removed superseded {name}")
 print(f"ZIP_SHA={sha}")
-print(f"ZIP_BYTES={os.path.getsize(dl)}")
+print(f"ZIP_BYTES={os.path.getsize(dist_zip)}")
 PYEOF
 
 echo "== updater payload =="
