@@ -4,9 +4,12 @@ Notable user-facing changes per release.
 
 ## UNRELEASED
 
-- When the daemon rejects the session token, the desktop now drops to the lock screen instead of leaving a stale but normal-looking vault where live features silently fail.
+## 0.1.6 - 2026-11-06
 
 - Desktop one-time codes now show a live countdown with a depleting bar and a copy button, like on mobile, and a failed code fetch shows an error with a retry instead of hiding the code.
+- When the daemon rejects the session token, the desktop now drops to the lock screen instead of leaving a stale but normal-looking vault where live features silently fail.
+- Mobile settings are grouped into focused drill-down categories so each screen is easier to scan.
+- Desktop settings and sharing screens get a polish pass: more consistent controls, easier-to-scan navigation, better contrast, and motion that respects reduced-motion preferences.
 
 ## 0.1.5 - 2026-11-06
 
