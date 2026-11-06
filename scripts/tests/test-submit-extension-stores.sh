@@ -72,6 +72,33 @@ chmod +x "$TMP/bin/curl" "$TMP/bin/npx"
 export PATH="$TMP/bin:$PATH"
 export SUB_TEST_CURL_LOG="$CURL_LOG" SUB_TEST_NPX_LOG="$NPX_LOG"
 
+# CRX signing shim: honors the real crx3 flag surface (-p key, -o out, zip
+# bytes on stdin) so assertions check the script's actual argv usage.
+CRX_LOG="$TMP/crx3.log"
+cat > "$TMP/bin/crx3" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${SUB_TEST_CRX_LOG:?}"
+key=""; out=""
+while (($#)); do
+  case "$1" in
+    -p) key="$2"; shift 2 ;;
+    -o) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [[ -z "$key" || -z "$out" ]]; then echo "crx3 shim: missing -p/-o" >&2; exit 64; fi
+cat > /dev/null
+printf 'Cr24FAKE\n' > "$out"
+if [[ "${SUB_TEST_CRX_FAIL:-0}" == 1 ]]; then exit 1; fi
+exit 0
+EOF
+chmod +x "$TMP/bin/crx3"
+export SUB_TEST_CRX_LOG="$CRX_LOG"
+# The machine may carry a real signing key at the script's default path; the
+# default runs must never see it. CRX cases override per invocation.
+export BALUARD_CHROME_CRX_KEY="$TMP/absent-signing-key"
+
 AMO_ENV=(BALUARD_AMO_JWT_KEY=user:123 BALUARD_AMO_JWT_SECRET=amo-secret)
 CHROME_ENV=(BALUARD_CHROME_CLIENT_ID=cid BALUARD_CHROME_CLIENT_SECRET=chrome-secret
   BALUARD_CHROME_REFRESH_TOKEN=chrome-refresh BALUARD_CHROME_EXTENSION_ID=extid
@@ -202,5 +229,32 @@ if env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
 fi
 grep -qi 'upload rejected' "$TMP/state.err"
 grep -q 'firefox/AMO: submitted' "$TMP/state.out"
+
+# ── CRX signing: key present packages and uploads the signed CRX ──────────────
+printf 'test-key-material\n' > "$TMP/crx.key"
+rm -f "$CURL_LOG" "$CRX_LOG"
+env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+  BALUARD_CHROME_CRX_KEY="$TMP/crx.key" \
+  "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/crx.out"
+grep -q -- "-p $TMP/crx.key" "$CRX_LOG"
+grep -qE -- '-o [^ ]+baluard-extension-0.1.0-chrome\.crx' "$CRX_LOG"
+grep -qE -- '-T [^ ]+baluard-extension-0.1.0-chrome\.crx' "$CURL_LOG"
+if grep -q -- "-T $ART/baluard-extension-0.1.0-chrome.zip" "$CURL_LOG"; then
+  echo 'unsigned zip was uploaded despite the signing key' >&2
+  exit 1
+fi
+grep -q 'chrome/store: uploaded and submitted' "$TMP/crx.out"
+
+# ── CRX tool failure fails the run before any store contact ──────────────────
+rm -f "$CURL_LOG" "$CRX_LOG"
+if env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+  BALUARD_CHROME_CRX_KEY="$TMP/crx.key" SUB_TEST_CRX_FAIL=1 \
+  "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" \
+  > /dev/null 2> "$TMP/crxfail.err"; then
+  echo 'expected CRX packaging failure to fail the run' >&2
+  exit 1
+fi
+grep -q 'CRX packaging failed' "$TMP/crxfail.err"
+if [[ -s "$CURL_LOG" ]]; then echo "store contacted despite CRX failure" >&2; exit 1; fi
 
 printf 'PASS: submit-extension-stores.sh\n'

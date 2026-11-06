@@ -142,10 +142,17 @@ mkdir -p "$ART"
 : > "$ART/baluard-cli-windows-x86_64.tar.gz"
 PATH="$BIN:$PATH" "$STAGE" \
   --version "$VER" --output "$OUT" "$ART" > "$TMP/out3.log" 2>&1
+# The Windows CLI tarball is a release artifact since CLI self-update ships;
+# it must be renamed in, not dropped or passed through unmapped.
 check_set Baluard-cli-amd64.tar.gz Baluard-cli-darwin-arm64.tar.gz Baluard-arm64.dmg \
-  Baluard-arm64.app.tar.gz Baluard-arm64.app.tar.gz.sig SHA256SUMS SHA256SUMS.sig
+  Baluard-arm64.app.tar.gz Baluard-arm64.app.tar.gz.sig Baluard-cli-windows-x86_64.tar.gz \
+  SHA256SUMS SHA256SUMS.sig
+if [[ ! -f "$OUT/Baluard-cli-windows-x86_64.tar.gz" ]]; then
+  echo "FAIL: windows CLI tarball missing from the release set" >&2
+  exit 1
+fi
 if [[ -f "$OUT/baluard-cli-windows-x86_64.tar.gz" ]]; then
-  echo "FAIL: windows CLI tarball must stay out of the release set" >&2
+  echo "FAIL: windows CLI tarball staged under its unmapped name" >&2
   exit 1
 fi
 
