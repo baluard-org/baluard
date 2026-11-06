@@ -42,7 +42,9 @@ async function daemon(action, payload = "", slug = null) {
   if (!res.success) {
     // A dead session must not sit behind a stale but normal-looking UI:
     // tell the app to drop to the lock screen (listener in AuthContext).
-    if (/Invalid session token/i.test(res.error || "")) {
+    // The daemon has three rejection shapes: a wrong/missing token, the 4h
+    // TTL expiry, and a generation bump after a lock + re-unlock cycle.
+    if (/Invalid session token|Session token expired|Re-unlock required/i.test(res.error || "")) {
       window.dispatchEvent(new CustomEvent("baluard:session-expired", { detail: { slug: slug || null } }));
     }
     throw new Error(res.error);
