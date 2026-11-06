@@ -436,8 +436,20 @@
           }
         }
 
-        .toast-copied {
-          font-size: 11px;
+        /* View-in-app opens the desktop app, not the clipboard: keep it
+           visually distinct from the copy icon buttons (accent, not muted). */
+        .btn-icon--view {
+          color: var(--color-accent);
+          border-color: var(--color-accent);
+
+          &:hover {
+            color: var(--color-accent);
+            background-color: color-mix(in srgb, var(--color-accent) 14%, transparent);
+            border-color: var(--color-accent);
+          }
+        }
+
+        .toast-copied {          font-size: 11px;
           color: var(--color-success);
           font-weight: 500;
           margin-top: 4px;

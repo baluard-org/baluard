@@ -149,7 +149,11 @@ describe("popup merged surfaces (G24 step 5)", () => {
     createdTabs.length = 0;
     const card = [...document.querySelectorAll(".match-card")][0];
     const btns = card.querySelectorAll(".match-secondary-actions .btn-icon");
-    btns[btns.length - 1].click();
+    const viewBtn = btns[btns.length - 1];
+    // The view action opens the app; it must be visually distinct from the
+    // copy-to-clipboard icon buttons beside it.
+    expect(viewBtn.classList.contains("btn-icon--view")).toBe(true);
+    viewBtn.click();
     await flush(2);
     expect(createdTabs).toHaveLength(1);
     expect(createdTabs[0].url).toBe("baluard://entry/personal/u1");
