@@ -9,6 +9,7 @@ import { makeTransitionGuard } from "../lib/transitionGuard.js";
 import { buildCreatePayload } from "../lib/payload.js";
 import { startVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { toastError, toastWarning } from "./toastSignal.js";
+import { useI18n } from "../i18n/index.jsx";
 
 const AuthContext = createContext(null);
 
@@ -30,6 +31,11 @@ const VALID_AUTH_TRANSITIONS = {
 const guardStatus = makeTransitionGuard(VALID_AUTH_TRANSITIONS, "auth");
 
 function AuthProvider(props) {
+  const { t } = useI18n();
+  // Expiry coordination: one in-flight lock at a time, and an epoch that
+  // invalidates an expiry whose lock call outlives a fresh unlock.
+  let expiryInFlight = false;
+  let authEpoch = 0;
   const [status, setStatus] = createSignal("locked");
   const [vaultInfo, setVaultInfo] = createSignal(null);
   const [activeVault, setActiveVault] = createSignal(null);
@@ -63,6 +69,7 @@ function AuthProvider(props) {
     setLastUnlockError(null);
     setSwitchTarget(null);
     startVaultPrefetch();
+    authEpoch += 1;
     guardStatus(status(), "unlocked", setStatus);
   }
 
@@ -88,7 +95,7 @@ function AuthProvider(props) {
     // daemon.js signals a rejected session token here. Cached entries keep
     // rendering otherwise while every live call fails, which reads as
     // features silently missing (e.g. TOTP) instead of a dead session.
-    const onExpired = () => { void expireSession(); };
+    const onExpired = (e) => { void expireSession(e.detail); };
     window.addEventListener("baluard:session-expired", onExpired);
     return () => window.removeEventListener("baluard:session-expired", onExpired);
   });
@@ -147,6 +154,7 @@ function AuthProvider(props) {
       setLastUnlockError(null);
       setSwitchTarget(null);
       startVaultPrefetch();
+      authEpoch += 1;
       guardStatus(status(), "unlocked", setStatus);
       return true;
     } catch (e) {
@@ -170,14 +178,28 @@ function AuthProvider(props) {
     // VaultProvider unmounts via <Show>. All vault signals destroyed.
   }
 
-  async function expireSession() {
-    if (status() !== "unlocked") return;
-    // The token is already dead server-side, so the lock call itself can
-    // fail: lock locally regardless instead of leaving a stale UI up.
-    try { await daemon("vault.lock"); } catch { /* session already invalid */ }
-    lockLocal();
-    // Surfaced on the login screen as errors.sessionExpired.
-    setLastUnlockError("Invalid session token");
+  async function expireSession(detail) {
+    const slug = detail?.slug || null;
+    // A dead token in a secondary vault must not kill the active session.
+    if (slug && slug !== activeVault()?.slug) return;
+    // The in-flight guard also stops re-entry when the lock call below
+    // rejects with the same invalid-token error and re-emits the event.
+    if (status() !== "unlocked" || expiryInFlight) return;
+    expiryInFlight = true;
+    const epoch = authEpoch;
+    try {
+      // The token is already dead server-side, so the lock call itself can
+      // fail: lock locally regardless instead of leaving a stale UI up.
+      try { await daemon("vault.lock"); } catch { /* session already invalid */ }
+      // A re-unlock while the lock call was in flight wins over the expiry.
+      if (epoch !== authEpoch || status() !== "unlocked") return;
+      lockLocal();
+      // Shown on the login screen and as a toast so the drop is explained.
+      setLastUnlockError("Invalid session token");
+      toastWarning(t("errors.sessionExpired"));
+    } finally {
+      expiryInFlight = false;
+    }
   }
 
   async function lock(t) {
