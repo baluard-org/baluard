@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## UNRELEASED
 
+- Desktop one-time codes now show a live countdown with a depleting bar and a copy button, like on mobile, and a failed code fetch shows an error with a retry instead of hiding the code.
+
 ## 0.1.5 - 2026-11-06
 
 - The Chrome extension store update pipeline is fully automated: uploads are CRX3-signed with the store-registered key and submitted through the API.

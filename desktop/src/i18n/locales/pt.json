@@ -202,6 +202,7 @@
     "copyNotes": "Copiar notas",
     "viewNotes": "Ver notas",
     "copyCode": "Copiar código",
+    "totpUnavailable": "Código indisponível",
     "user": "Usuário",
     "pass": "Senha",
     "passwordHistory": "Histórico de senhas ({count})",

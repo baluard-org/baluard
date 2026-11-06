@@ -161,6 +161,20 @@ describe("CipherDetail (Login)", () => {
     expect(container.querySelectorAll("button").length).toBeGreaterThan(0);
   });
 
+  it("shows a generated code for a bare-secret seed carried as top-level totp", async () => {
+    const wireCipher = { ...LOGIN_CIPHER, totp_uri: null, totp: "JBSWY3DPEHPK3PXP" };
+    daemonMock.mockImplementation((action) => {
+      if (action === "cipher.totp_code") {
+        return Promise.resolve(JSON.stringify({ code: "123456", period_seconds: 30, expires_at: Math.floor(Date.now() / 1000) + 30 }));
+      }
+      return Promise.resolve("{}");
+    });
+    const { container } = render(() => (
+      <CipherDetail cipher={wireCipher} setViewCipher={vi.fn()} onEdit={vi.fn()} />
+    ));
+    await waitFor(() => expect(container.textContent).toContain("123 456"), { timeout: 3000 });
+  });
+
   it("clicking the TOTP button fetches a code from cipher.totp_code", async () => {
     const cipherWithTotp = { ...LOGIN_CIPHER, totp_uri: "otpauth://totp/GitHub?secret=ABC" };
     daemonMock.mockResolvedValueOnce(JSON.stringify({ code: "123456", expires_at: Math.floor(Date.now()/1000) + 30 }));

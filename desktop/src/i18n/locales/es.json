@@ -206,6 +206,7 @@
     "uris": "URIs",
     "totpUri": "URI de TOTP",
     "copyCode": "Copiar código",
+    "totpUnavailable": "Código no disponible",
     "launchWebsite": "Abrir sitio web",
     "downloadFailed": "Error de descarga",
     "booleanYes": "Sí",
