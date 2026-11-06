@@ -34,6 +34,8 @@ See [the ADR index](adr/index.md) for the full numbered list.
 | Document | Description |
 |----------|-------------|
 | [Software Architecture](dev/software-architecture.md) | Component diagram, data flows, IPC protocol, key lifecycle, cryptographic ceremonies |
+| [Key Concepts & Domain Architecture](dev/key-concepts.md) | Key hierarchy, cipher models, IPC, multi-vault host, auto-sync, passkeys, Android autofill |
+| [Engineering Invariants & Gotchas](dev/gotchas.md) | Core invariants, Git sync mechanics, IPC rules, platform quirks, and implementation edge cases |
 
 ## Development
 
