@@ -57,8 +57,7 @@ appId: app.baluard.mobile
 # for a non-admin member.
 - tapOn:
     id: "e2e/home/settings"
-# The verification-code row sits in the vault section at the bottom of
-# Settings; uiautomator only reports visible nodes.
+- tapOn: "Vault"
 # The row's full text carries the code after the colon, so match by
 # regex — Maestro text selectors match the whole node exactly.
 - scrollUntilVisible:
