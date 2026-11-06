@@ -85,6 +85,12 @@ function AuthProvider(props) {
     // slug so it re-fires once the daemon is ready instead of racing it
     // with a no-slug probe that logs at WARN on cold start.
     void refreshActiveVault();
+    // daemon.js signals a rejected session token here. Cached entries keep
+    // rendering otherwise while every live call fails, which reads as
+    // features silently missing (e.g. TOTP) instead of a dead session.
+    const onExpired = () => { void expireSession(); };
+    window.addEventListener("baluard:session-expired", onExpired);
+    return () => window.removeEventListener("baluard:session-expired", onExpired);
   });
 
   // Query Quick Unlock availability for a specific vault (slug). When slug
@@ -151,19 +157,33 @@ function AuthProvider(props) {
     }
   }
 
+  function lockLocal() {
+    guardStatus(status(), "locked", setStatus);
+    setVaultInfo(null);
+    // D3: defensive — if onboarding was abandoned mid-setup, the vault
+    // password signal must not survive a lock cycle either.
+    setCreatePassword("");
+    setKitPhrase("");
+    setRecoveryPhrase("");
+    // A locked vault must not leave a display-once phrase in module memory.
+    clearHeldPhrase();
+    // VaultProvider unmounts via <Show>. All vault signals destroyed.
+  }
+
+  async function expireSession() {
+    if (status() !== "unlocked") return;
+    // The token is already dead server-side, so the lock call itself can
+    // fail: lock locally regardless instead of leaving a stale UI up.
+    try { await daemon("vault.lock"); } catch { /* session already invalid */ }
+    lockLocal();
+    // Surfaced on the login screen as errors.sessionExpired.
+    setLastUnlockError("Invalid session token");
+  }
+
   async function lock(t) {
     try {
       await daemon("vault.lock");
-      guardStatus(status(), "locked", setStatus);
-      setVaultInfo(null);
-      // D3: defensive — if onboarding was abandoned mid-setup, the vault
-      // password signal must not survive a lock cycle either.
-      setCreatePassword("");
-      setKitPhrase("");
-      setRecoveryPhrase("");
-  // A locked vault must not leave a display-once phrase in module memory.
-  clearHeldPhrase();
-      // VaultProvider unmounts via <Show>. All vault signals destroyed.
+      lockLocal();
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
