@@ -238,6 +238,7 @@
     "uris": "URIs",
     "totpUri": "TOTP URI",
     "copyCode": "Copy code",
+    "totpUnavailable": "Code unavailable",
     "launchWebsite": "Launch website",
     "downloadFailed": "Download failed",
     "booleanYes": "Yes",

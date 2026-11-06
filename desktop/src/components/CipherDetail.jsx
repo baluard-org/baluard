@@ -14,6 +14,7 @@ import { looksLikeMarkdown } from "../lib/markdown.js";
 import MarkdownContent from "./MarkdownContent.jsx";
 import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint, IconEye, IconEyeOff, IconLock } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
+import TotpWidget, { totpSeedOf } from "./TotpWidget.jsx";
 
 /** G18: a sensitive CopyableField behind the re-prompt gate. While the
  * entry's master-password grant is closed, renders the lock strip instead
@@ -144,9 +145,7 @@ export default function CipherDetail(props) {
       setMoving(false);
     }
   }
-  const [totpCode, setTotpCode] = createSignal(null);
   const [attachLoading, setAttachLoading] = createSignal(false);
-  const [totpCopied, setTotpCopied] = createSignal(false);
   const [showPasskeyDelete, setShowPasskeyDelete] = createSignal(null); // { cipher_id, credential_id, name, isOnlyAuth }
   const [renamingPk, setRenamingPk] = createSignal(null); // { credential_id, value }
   const [renameSaving, setRenameSaving] = createSignal(false);
@@ -212,48 +211,6 @@ export default function CipherDetail(props) {
   // routes are slug-routed to the ACTIVE vault, so mutations would fail
   // (or worse, target a same-uuid cipher in the wrong vault).
   const foreign = () => !!props.cipher?._vault;
-
-  // TOTP code auto-refresh timer (boundary-aligned)
-  createEffect(
-    () => {
-      const c = cipher();
-      // The daemon flattens the seed to top-level `totp`; the nested
-      // kind.data.totp_uri shape only exists inside the edit form.
-      const uri = c?.totp ?? c?.totp_uri;
-      return (uri && c?.id) ? { id: c.id, totp_uri: uri } : null;
-    },
-    (target) => {
-      if (!target) {
-        setTotpCode(null);
-        return;
-      }
-      let active = true;
-      let timer = null;
-      const fetchCode = async () => {
-        if (!active) return;
-        try {
-          const data = JSON.parse(await daemon("cipher.totp_code", target.id, cipher()?._vault?.slug || null));
-          if (active) {
-            setTotpCode(data);
-            if (data.expires_at) {
-              const msLeft = data.expires_at * 1000 - Date.now();
-              const delay = Math.max(200, msLeft + 200);
-              timer = setTimeout(fetchCode, delay);
-            } else {
-              timer = setTimeout(fetchCode, 5000);
-            }
-          }
-        } catch (e) {
-          setTotpCode(null);
-        }
-      };
-      fetchCode();
-      return () => {
-        active = false;
-        if (timer) clearTimeout(timer);
-      };
-    },
-  );
 
   function startEdit() {
     const c = cipher();
@@ -372,26 +329,8 @@ export default function CipherDetail(props) {
               </Show>
             </Show>
 
-            {/* TOTP code widget */}
-            <Show when={totpCode()}>
-              <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
-                <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block mb-2">{t("fields.verificationCode")}</label>
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2">
-                    <span class="text-2xl font-mono font-bold tracking-[0.3em] text-[var(--color-text)] select-all">{totpCode()?.code?.match(/.{1,3}/g)?.join(" ") || totpCode()?.code}</span>
-                    <button
-                      onClick={async () => { await copyToClipboard(totpCode()?.code || ""); setTotpCopied(true); setTimeout(() => setTotpCopied(false), 1800); }}
-                      class="p-1.5 rounded-lg text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-                      title={t("entry.copyCode")}
-                    >
-                      <Show when={!totpCopied()} fallback={<span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>}>
-                        <IconCopy class="w-4 h-4" />
-                      </Show>
-                    </button>
-                  </div>
-                  <span class="text-[10px] text-[var(--color-muted)]">{totpCode()?.period_seconds}s</span>
-                </div>
-              </div>
+            <Show when={totpSeedOf(cipher())}>
+              <TotpWidget cipher={cipher()} />
             </Show>
           </div>
         </Show>

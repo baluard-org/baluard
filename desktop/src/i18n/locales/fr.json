@@ -238,6 +238,7 @@
     "uris": "Adresses (URI)",
     "totpUri": "URI TOTP",
     "copyCode": "Copier le code",
+    "totpUnavailable": "Code indisponible",
     "launchWebsite": "Ouvrir le site",
     "downloadFailed": "Échec du téléchargement",
     "booleanYes": "Oui",
