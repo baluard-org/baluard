@@ -58,8 +58,8 @@ android {
         applicationId = "app.baluard.mobile"
         minSdk = 32
         targetSdk = 35
-        versionCode = 1006
-        versionName = "0.1.6"
+        versionCode = 1007
+        versionName = "0.1.7"
         // Package only ABIs we ship a cdylib for. Alpha default: arm64-v8a
         // (every test phone since ~2016). Also strips the JNA aar's other-ABI
         // .so, which would otherwise let a 32-bit device load libjnidispatch

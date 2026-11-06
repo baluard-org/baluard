@@ -2,7 +2,11 @@
 
 Notable user-facing changes per release.
 
-## UNRELEASED
+## 0.1.7 - 2026-11-06
+
+- The app icon is a grey tile with the lock casting a soft shadow onto it, so it stays visible on dark taskbars and docks.
+
+- The desktop app now locks itself whenever the daemon reports the session as dead, including expiry and re-unlock from another client, instead of showing a stale vault.
 
 - Two-factor fields with names like user[totp_code] are now detected and filled, on both the popup Fill and the inline menu, and picking an entry on a two-factor field inserts only the code. Detection distinguishes real code boxes from look-alike payment, setup, and search fields, and prefers explicitly marked ones.
 
