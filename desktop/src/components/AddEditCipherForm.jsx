@@ -341,7 +341,7 @@ export default function AddEditCipherForm(props) {
                   <option value="regex">{t("entry.matchRegex")}</option>
                   <option value="never">{t("entry.matchNever")}</option>
                 </select>
-                <button type="button" onClick={() => removeUri(index())} class="px-3 py-3 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title={t("entry.removeUri")}>
+                <button type="button" onClick={() => removeUri(index())} class="px-3 py-3 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center motion-fade" title={t("entry.removeUri")}>
                   <IconX class="w-4 h-4" />
                 </button>
               </div>
@@ -457,7 +457,7 @@ export default function AddEditCipherForm(props) {
             <div class="flex flex-wrap gap-1.5 p-2 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] min-h-[46px]">
               <For each={newCipher().tags || []}>
                 {tag => (
-                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20 animate-fade-in">
+                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20 motion-fade">
                     {tag}
                     <button type="button" onClick={() => removeTag(tag)} class="hover:text-[var(--color-primary-hover)] cursor-pointer">×</button>
                   </span>
@@ -720,7 +720,7 @@ export default function AddEditCipherForm(props) {
                       <input placeholder={t("entry.fieldValuePlaceholder")} class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.value} onInput={e => { Object.assign(fieldsRef[i()], { value: e.target.value }); }} {...SECURE_INPUT} />
                     </Show>
                   </Show>
-                  <button type="button" onClick={() => { fieldsRef = fieldsRef.filter((_, j) => j !== i()); setFields([...fieldsRef]); }} class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title={t("entry.removeField")}>
+                  <button type="button" onClick={() => { fieldsRef = fieldsRef.filter((_, j) => j !== i()); setFields([...fieldsRef]); }} class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center motion-fade" title={t("entry.removeField")}>
                     <IconX class="w-4 h-4" />
                   </button>
                 </div>

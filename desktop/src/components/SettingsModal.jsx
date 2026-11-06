@@ -13,7 +13,7 @@ import { toastError, toastSuccess, toastWarning } from "../context/toastSignal.j
 import { buildImportPayload } from "../lib/payload.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 import { biometryAvailable } from "../lib/biometry.js";
-import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy } from "./Icon.jsx";
+import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy, IconCog, IconShield, IconUsers, IconFolder, IconIdentity, IconInbox, IconLinkSimple, IconClock } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import UpdateSettingsRow from "./UpdateSettingsRow.jsx";
 import AgentSettingsRow from "./AgentSettingsRow.jsx";
@@ -30,17 +30,20 @@ import RecoveryPhraseCard from "./RecoveryPhraseCard.jsx";
 import LegacyTab from "./LegacyTab.jsx";
 
 function TabButton(props) {
+  const Icon = props.icon;
   return (
     <button
       onClick={() => props.setActiveTab(props.id)}
       data-testid={`settings-tab-${props.id}`}
-      class={`flex-1 px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
+      aria-current={props.active === props.id ? "page" : undefined}
+      class={`w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold rounded-lg transition-colors text-left whitespace-nowrap cursor-pointer ${
         props.active === props.id
           ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
-          : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]/50"
+          : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]"
       }`}
     >
-      {props.label}
+      <Icon class="w-4 h-4 shrink-0" />
+      <span>{props.label}</span>
     </button>
   );
 }
@@ -65,6 +68,7 @@ export default function SettingsModal() {
       const newWidth = el.offsetWidth;
 
       if (oldHeight !== newHeight || oldWidth !== newWidth) {
+        el.classList.add("motion-window-morph");
         el.style.height = `${oldHeight}px`;
         el.style.width = `${oldWidth}px`;
         el.style.transition = "none";
@@ -72,7 +76,7 @@ export default function SettingsModal() {
         // Force reflow
         void el.offsetHeight;
 
-        el.style.transition = "height 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
+        el.style.transition = "";
         el.style.height = `${newHeight}px`;
         el.style.width = `${newWidth}px`;
 
@@ -81,6 +85,7 @@ export default function SettingsModal() {
             el.style.height = "";
             el.style.width = "";
             el.style.transition = "";
+            el.classList.remove("motion-window-morph");
           }
         }, 260);
       }
@@ -734,7 +739,7 @@ export default function SettingsModal() {
           onClick={() => vault.setShowSettingsModal(false)}
         >
           <FocusTrap containerRef={dialogRef} onEscape={() => vault.setShowSettingsModal(false)} />
-          <div ref={modalBodyRef} class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[720px] max-w-[94vw] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div ref={modalBodyRef} class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[920px] max-w-[94vw] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
               <h3 id="settings-title" class="text-lg font-bold text-[var(--color-text)]">{t("settings.title")}</h3>
@@ -747,24 +752,25 @@ export default function SettingsModal() {
                </button>
             </div>
 
-            {/* Navigation Tabs */}
-            <div class="px-6 py-3 border-b border-[var(--color-border)] shrink-0 bg-[var(--color-sidebar)]/30 flex gap-2 w-full">
-              <TabButton id="general" label={t("settings.tabGeneral")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="data" label={t("settings.tabData")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="sync" label={t("settings.tabSync")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="people" label={t("settings.tabPeople")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="space" label={t("settings.tabSpace")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="collections" label={t("settings.tabCollections")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="groups" label={t("settings.tabGroups")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="contacts" label={t("settings.tabContacts")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="outboxes" label={t("settings.tabOutboxes")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="devices" label={t("settings.tabDevices")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="bridge" label={t("settings.tabBridge")} active={activeTab()} setActiveTab={handleTabChange} />
-              <TabButton id="legacy" label={t("settings.tabLegacy")} active={activeTab()} setActiveTab={handleTabChange} />
-            </div>
+            <div class="flex flex-1 min-h-0">
+              {/* Settings navigation */}
+              <nav aria-label={t("settings.title")} class="w-48 shrink-0 overflow-y-auto p-3 space-y-1 border-r border-[var(--color-border)] bg-[var(--color-sidebar)]/30">
+                <TabButton id="general" icon={IconCog} label={t("settings.tabGeneral")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="data" icon={IconShield} label={t("settings.tabData")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="sync" icon={IconRefresh} label={t("settings.tabSync")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="people" icon={IconUsers} label={t("settings.tabPeople")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="space" icon={IconFolder} label={t("settings.tabSpace")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="collections" icon={IconFolder} label={t("settings.tabCollections")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="groups" icon={IconUsers} label={t("settings.tabGroups")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="contacts" icon={IconIdentity} label={t("settings.tabContacts")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="outboxes" icon={IconInbox} label={t("settings.tabOutboxes")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="devices" icon={IconMonitor} label={t("settings.tabDevices")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="bridge" icon={IconLinkSimple} label={t("settings.tabBridge")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="legacy" icon={IconClock} label={t("settings.tabLegacy")} active={activeTab()} setActiveTab={handleTabChange} />
+              </nav>
 
-            {/* Content */}
-            <div ref={contentRef} class="flex-1 overflow-y-auto p-6 space-y-6 animate-in fade-in duration-200" key={activeTab()}>
+              {/* Content */}
+              <div ref={contentRef} class="motion-fade flex-1 min-w-0 overflow-y-auto p-6 space-y-6" key={activeTab()}>
               <Show when={activeTab() === "general"}>
                 {/* Profile */}
                 <div class="space-y-3">
@@ -1231,10 +1237,10 @@ export default function SettingsModal() {
                     <button
                       onClick={() => doExport("baluard")}
                       disabled={exporting()}
-                      class="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary)]/10 hover:bg-[var(--color-primary)]/20 text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
+                      class="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
                     >
                       <span class="flex items-center gap-2">
-                        <IconDownload class="w-4 h-4 text-[var(--color-primary)]" />
+                        <IconDownload class="w-4 h-4 text-[var(--color-muted)]" />
                         {t("settings.exportBackup")}
                       </span>
                       <span class="text-[10px] font-normal text-[var(--color-muted)]">{t("settings.exportBackupHint")}</span>
@@ -1305,6 +1311,7 @@ export default function SettingsModal() {
               <Show when={activeTab() === "bridge"}>
                 <BridgeTab />
               </Show>
+              </div>
             </div>
 
             {/* Encrypted-backup passphrase dialog (§7). One dialog, both

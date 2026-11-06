@@ -6,7 +6,7 @@ import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import ConfirmModal from "./ConfirmModal.jsx";
 import FocusTrap from "./FocusTrap.jsx";
-import { Button, Input } from "./Primitives.jsx";
+import { Button, Input, Toggle } from "./Primitives.jsx";
 import { IconCopy } from "./Icon.jsx";
 
 const WINDOW_PRESETS = [14, 30, 90, 365];
@@ -197,15 +197,12 @@ export default function LegacyTab() {
                 </Show>
               </div>
               <p class="text-[10px] text-[var(--color-muted)]">{t("legacy.passphraseHint")}</p>
-              <label class="flex items-center gap-2 text-xs text-[var(--color-text)] cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={savedIt()}
-                  onChange={(e) => setSavedIt(e.currentTarget.checked)}
-                  data-testid="legacy-saved-it"
-                />
-                {t("legacy.savedIt")}
-              </label>
+              <Toggle
+                checked={savedIt()}
+                onChange={(e) => setSavedIt(e.currentTarget.checked)}
+                data-testid="legacy-saved-it"
+                label={t("legacy.savedIt")}
+              />
             </div>
 
             <Button
@@ -292,14 +289,11 @@ export default function LegacyTab() {
                 </code>
               </Show>
             </div>
-            <label class="flex items-center gap-2 text-xs text-[var(--color-text)] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={savedIt()}
-                onChange={(e) => setSavedIt(e.currentTarget.checked)}
-              />
-              {t("legacy.savedIt")}
-            </label>
+            <Toggle
+              checked={savedIt()}
+              onChange={(e) => setSavedIt(e.currentTarget.checked)}
+              label={t("legacy.savedIt")}
+            />
             <div class="flex gap-2">
               <Button onClick={() => setReplacing(false)} disabled={busy()}>{t("entry.cancel")}</Button>
               <Button variant="primary" onClick={arm} disabled={busy() || !passphrase() || !savedIt()} data-testid="legacy-replace-go">

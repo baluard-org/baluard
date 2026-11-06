@@ -6,6 +6,7 @@ import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import ConfirmModal from "./ConfirmModal.jsx";
 import { Button, Input } from "./Primitives.jsx";
+import { Transition } from "../lib/transition";
 
 /**
  * S2 UI: the address book. Import a contact card (out-of-band code),
@@ -96,23 +97,37 @@ export default function ContactsTab() {
           <div class="space-y-3">
             <div>
               <p class="text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">{t("contacts.cardCodeLabel")}</p>
-              <div class="flex items-start gap-2">
-                <code class={`flex-1 text-[11px] font-mono text-[var(--color-text)] break-all ${showFullCard() ? "" : "line-clamp-2"}`}>{myCard().card}</code>
-                <button
+              <Transition name="reveal-grow" mode="out-in">
+                <Show
+                  when={showFullCard()}
+                  fallback={
+                    <div>
+                      <code id="contact-card-code" class="block text-[11px] font-mono text-[var(--color-text)] break-all line-clamp-2 overflow-hidden">{myCard().card}</code>
+                    </div>
+                  }
+                >
+                  <div>
+                    <code id="contact-card-code" class="block text-[11px] font-mono text-[var(--color-text)] break-all overflow-hidden">{myCard().card}</code>
+                  </div>
+                </Show>
+              </Transition>
+              <div class="flex items-center gap-2">
+                <Button
                   onClick={() => setShowFullCard(!showFullCard())}
-                  class="text-[10px] font-bold text-[var(--color-primary)] cursor-pointer whitespace-nowrap"
+                  aria-expanded={showFullCard()}
+                  aria-controls="contact-card-code"
                 >
                   {showFullCard() ? t("contacts.hideCode") : t("contacts.showCode")}
-                </button>
+                </Button>
+                <Button
+                  onClick={async () => {
+                    await copyToClipboard(myCard().card);
+                    toastSuccess(t("contacts.cardCopied"));
+                  }}
+                >
+                  {t("contacts.copyCard")}
+                </Button>
               </div>
-              <Button
-                onClick={async () => {
-                  await copyToClipboard(myCard().card);
-                  toastSuccess(t("contacts.cardCopied"));
-                }}
-              >
-                {t("contacts.copyCard")}
-              </Button>
             </div>
             <div>
               <p class="text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">{t("contacts.myCodeLabel")}</p>

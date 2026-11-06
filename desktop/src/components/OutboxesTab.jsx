@@ -3,11 +3,13 @@ import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
+import { recipientOutboxPath } from "../lib/outbox.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import FocusTrap from "./FocusTrap.jsx";
 import { useVault } from "../context/VaultContext.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
 import { Button, Input } from "./Primitives.jsx";
+import SearchableTagSelect from "./SearchableTagSelect.jsx";
 
 /**
  * S2 UI: the outbox owner + recipient surfaces. Owner side mirrors
@@ -24,8 +26,8 @@ export default function OutboxesTab() {
   const [links, setLinks] = createSignal([]);
   const [busy, setBusy] = createSignal(false);
   // Publish form
-  const [pubCipher, setPubCipher] = createSignal("");
-  const [pubContact, setPubContact] = createSignal("");
+  const [pubCiphers, setPubCiphers] = createSignal([]);
+  const [pubContacts, setPubContacts] = createSignal([]);
   const [pubPath, setPubPath] = createSignal("");
   // Link form
   const [linkPath, setLinkPath] = createSignal("");
@@ -65,19 +67,29 @@ export default function OutboxesTab() {
   onSettled(() => void loadAll());
 
   async function publish() {
-    if (!pubCipher() || !pubContact() || !pubPath().trim()) return;
+    if (pubCiphers().length === 0 || pubContacts().length === 0 || !pubPath().trim()) return;
     setBusy(true);
     try {
-      await daemon("outbox.publish", {
-        outbox_path: pubPath().trim(),
-        cipher_id: pubCipher(),
-        contact: pubContact(),
-      });
+      const recipients = pubContacts()
+        .map((identity) => contacts().find((contact) => contact.identity_signing_pubkey === identity))
+        .filter(Boolean);
+      for (const recipient of recipients) {
+        for (const cipherId of pubCiphers()) {
+          await daemon("outbox.publish", {
+            outbox_path: recipients.length === 1 ? pubPath().trim() : recipientOutboxPath(pubPath(), recipient),
+            cipher_id: cipherId,
+            contact: recipient.identity_signing_pubkey,
+          });
+        }
+      }
+      setPubCiphers([]);
+      setPubContacts([]);
       setPubPath("");
       toastSuccess(t("outbox.publishedToast"));
       await loadAll();
     } catch (e) {
       toastError(sanitizeError(e, t));
+      await loadAll();
     } finally {
       setBusy(false);
     }
@@ -241,35 +253,33 @@ export default function OutboxesTab() {
             <label class="block text-xs font-semibold text-[var(--color-muted)] mb-1" for="ob-item">
               {t("outbox.itemLabel")}
             </label>
-            <select
+            <SearchableTagSelect
               id="ob-item"
-              value={pubCipher()}
-              onChange={(e) => setPubCipher(e.currentTarget.value)}
-              class="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] text-xs text-[var(--color-text)]"
-            >
-              <option value="">—</option>
-              <For each={vault.ciphers()}>
-                {(c) => <option value={c.id}>{c.name}</option>}
-              </For>
-            </select>
+              options={vault.ciphers().map((cipher) => ({ value: cipher.id, label: cipher.name }))}
+              values={pubCiphers()}
+              onChange={setPubCiphers}
+              placeholder={t("outbox.itemSearchPlaceholder")}
+              noResultsLabel={t("outbox.noResults")}
+              removeLabel={t("outbox.removeSelected")}
+              resultsLabel={t("outbox.itemLabel")}
+              disabled={busy()}
+            />
           </div>
           <div>
             <label class="block text-xs font-semibold text-[var(--color-muted)] mb-1" for="ob-contact">
               {t("outbox.contactLabel")}
             </label>
-            <select
+            <SearchableTagSelect
               id="ob-contact"
-              value={pubContact()}
-              onChange={(e) => setPubContact(e.currentTarget.value)}
-              class="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] text-xs text-[var(--color-text)]"
-            >
-              <option value="">—</option>
-              <For each={contacts().filter((c) => c.has_wrap_key)}>
-                {(c) => (
-                  <option value={c.identity_signing_pubkey}>{c.display_name}</option>
-                )}
-              </For>
-            </select>
+              options={contacts().filter((contact) => contact.has_wrap_key).map((contact) => ({ value: contact.identity_signing_pubkey, label: contact.display_name }))}
+              values={pubContacts()}
+              onChange={setPubContacts}
+              placeholder={t("outbox.contactSearchPlaceholder")}
+              noResultsLabel={t("outbox.noResults")}
+              removeLabel={t("outbox.removeSelected")}
+              resultsLabel={t("outbox.contactLabel")}
+              disabled={busy()}
+            />
           </div>
           <div>
             <label class="block text-xs font-semibold text-[var(--color-muted)] mb-1" for="ob-path">
@@ -280,9 +290,11 @@ export default function OutboxesTab() {
               value={pubPath()}
               onInput={(e) => setPubPath(e.currentTarget.value)}
               placeholder={t("outbox.pathPlaceholder")}
+              disabled={busy()}
             />
+            <p class="mt-1 text-[11px] leading-relaxed text-[var(--color-muted)]">{t("outbox.pathHint")}</p>
           </div>
-          <Button onClick={publish} disabled={busy() || !pubCipher() || !pubContact() || !pubPath().trim()}>
+          <Button onClick={publish} disabled={busy() || pubCiphers().length === 0 || pubContacts().length === 0 || !pubPath().trim()}>
             {busy() ? t("common.sending") : t("outbox.publishAction")}
           </Button>
         </div>
