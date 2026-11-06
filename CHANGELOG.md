@@ -8,6 +8,8 @@ Notable user-facing changes per release.
 
 - The extension view-in-app button now uses the accent color so it reads as opening the app, not copying to the clipboard.
 
+- On the extension popup, the copy-code button's border is a live countdown for the current two-factor code: it starts fully red and drains clockwise into the regular border color, snapping back full when the code rotates.
+
 - The browser extension pulses a soft ring on the fields it just filled and fades it out after two seconds, so you can see what it touched.
 
 - The macOS Check for Updates menu item now checks in the background without opening Settings.

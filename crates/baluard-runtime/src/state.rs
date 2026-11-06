@@ -1379,6 +1379,9 @@ impl VaultState {
                 "name": meta.name,
                 "username": meta.username,
                 "favorite": meta.favorite,
+                // Presence flag only — the seed never leaves the vault. The
+                // popup uses it to fetch windows for the live TOTP ring.
+                "totp": login.totp_uri.as_deref().is_some_and(|t| !t.is_empty()),
             });
             if hit || trusted_hit {
                 matched.push(entry);
