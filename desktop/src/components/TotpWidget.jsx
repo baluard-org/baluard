@@ -8,8 +8,10 @@ import { IconCopy, IconCheck, IconRefresh } from "./Icon.jsx";
  * to top-level `totp`, the edit form keeps `totp_uri`, and the nested kind
  * JSON holds `kind.data.totp_uri`. */
 export function totpSeedOf(c) {
-  const uri = c?.totp ?? c?.totp_uri ?? c?.kind?.data?.totp_uri;
-  return typeof uri === "string" && uri.trim().length > 0 ? uri : null;
+  for (const uri of [c?.totp, c?.totp_uri, c?.kind?.data?.totp_uri]) {
+    if (typeof uri === "string" && uri.trim().length > 0) return uri;
+  }
+  return null;
 }
 
 /** Live TOTP card: code, countdown, depleting bar, copy. Mirrors the mobile
@@ -31,37 +33,46 @@ export default function TotpWidget(props) {
   createEffect(
     () => {
       const c = props.cipher;
-      return c?.id && totpSeedOf(c) ? { id: c.id, seed: totpSeedOf(c), nonce: retryNonce() } : null;
+      return c?.id && totpSeedOf(c) ? `${c.id}:${retryNonce()}` : null;
     },
-    (target) => {
-      if (!target) return;
+    () => {
+      const id = props.cipher?.id;
+      if (!id) return;
       let active = true;
       let timer = null;
-      const tick = setInterval(() => setNow(Date.now()), 1000);
+      let tick = setInterval(() => setNow(Date.now()), 1000);
       setStatus("loading");
       setCode(null);
 
       const fetchCode = async () => {
         if (!active) return;
         try {
-          const data = JSON.parse(await daemon("cipher.totp_code", target.id, props.cipher?._vault?.slug || null));
+          const data = JSON.parse(await daemon("cipher.totp_code", id, props.cipher?._vault?.slug || null));
           if (!active) return;
           setCode(data.code || "");
           setPeriod(data.period_seconds || 30);
           setExpiresAt(data.expires_at || 0);
           setNow(Date.now());
           setStatus("ready");
+          if (!tick) tick = setInterval(() => setNow(Date.now()), 1000);
           const msLeft = data.expires_at ? data.expires_at * 1000 - Date.now() : 30000;
           timer = setTimeout(fetchCode, Math.max(200, msLeft + 200));
         } catch (e) {
-          if (active) setStatus("error");
+          if (!active) return;
+          console.warn("[totp] code fetch failed", e);
+          setStatus("error");
+          // A transient daemon hiccup must not strand the card until a
+          // manual retry: try again shortly, and stop the countdown tick.
+          clearInterval(tick);
+          tick = null;
+          timer = setTimeout(fetchCode, 5000);
         }
       };
       fetchCode();
       return () => {
         active = false;
         if (timer) clearTimeout(timer);
-        clearInterval(tick);
+        if (tick) clearInterval(tick);
       };
     },
   );
@@ -110,7 +121,7 @@ export default function TotpWidget(props) {
             data-testid="totp-retry"
             onClick={() => setRetryNonce((n) => n + 1)}
             class="p-1.5 rounded-lg text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-            title={t("entry.copyCode")}
+            title={t("entry.retry")}
           >
             <IconRefresh class="w-4 h-4" />
           </button>
