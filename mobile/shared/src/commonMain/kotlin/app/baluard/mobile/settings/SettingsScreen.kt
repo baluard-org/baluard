@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,9 +22,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Password
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.FilterChip
@@ -115,6 +122,7 @@ import app.baluard.mobile.ui.components.LabeledPreset
 import app.baluard.mobile.ui.components.PresetDropdown
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.components.ToggleRow
+import app.baluard.mobile.ui.BackPressHandler
 
 /** i18n key for a pending sensitive-op kind; unknown kinds fall
  * through to the raw identifier (t() renders unknown keys verbatim). */
@@ -172,12 +180,22 @@ fun SettingsScreen(
     // Sync-now feedback: shared runner choreography (spinner hold + terminal
     // beat + settle), same as the hub's sync button.
     var syncPhase by remember { mutableStateOf(SyncPhase.Idle) }
+    var selectedCategory by remember { mutableStateOf<SettingsCategory?>(null) }
+    var myRole by remember { mutableStateOf("viewer") }
+    LaunchedEffect(vault) {
+        myRole = repo.myRole(vault)
+    }
+    BackPressHandler(enabled = selectedCategory != null) {
+        selectedCategory = null
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             BaluardTopBar(
-                title = t("settings.title"),
-                onBack = onBack,
+                title = selectedCategory?.let { t(it.titleKey) } ?: t("settings.title"),
+                onBack = {
+                    if (selectedCategory == null) onBack() else selectedCategory = null
+                },
             )
         },
     ) { padding ->
@@ -189,6 +207,14 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (selectedCategory == null) {
+                SettingsCategoryIndex(
+                    canManageSpace = myRole == "owner" || myRole == "admin",
+                    onSelect = { selectedCategory = it },
+                )
+            } else {
+                when (selectedCategory) {
+                    SettingsCategory.Sync -> {
             // Sync Status Overview Card
             BaluardCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -700,6 +726,9 @@ fun SettingsScreen(
                     },
                 )
             }
+
+                    }
+                    SettingsCategory.Security -> {
 
             // Security Section
             // G19 health states (composable scope — the dialog renders
@@ -1327,6 +1356,9 @@ fun SettingsScreen(
                 }
             }
 
+                    }
+                    SettingsCategory.Autofill -> {
+
             // Autofill Section (Android only; iOS has no requestable role,
             // Phase 7). Status refreshes when the screen regains focus after
             // the user returns from the system provider picker.
@@ -1865,14 +1897,10 @@ fun SettingsScreen(
                 }
             }
 
-            // Vault Section: remove this device's copy (remote is kept).
-            // §4.8-7: People & access entry — admin devices only. The admin
-            // signal mirrors the desktop rule: any collections.list row
-            // carrying access:"admin" means this device manages the space.
-            var myRole by remember { mutableStateOf("viewer") }
-            LaunchedEffect(vault) {
-                myRole = repo.myRole(vault)
-            }
+                    }
+                    SettingsCategory.Sharing -> {
+
+            // People, shared folders, and per-device activity.
             // Role-gated, not key-gated: on a flipped Space an admin
             // holds no Root Key, so holds_root is the wrong signal here.
             if (myRole == "owner" || myRole == "admin") {
@@ -1922,6 +1950,9 @@ fun SettingsScreen(
                     )
                 }
             }
+                    }
+                    SettingsCategory.Space -> {
+
             if (myRole == "owner" || myRole == "admin") {
                 SectionCard(title = t("space.title")) {
                     val scope = rememberCoroutineScope()
@@ -2614,6 +2645,9 @@ fun SettingsScreen(
                     )
                 }
             }
+                    }
+                    SettingsCategory.Data -> {
+
             // ── Data: import / export (G2, one core parser set) ───────
             SectionCard(title = t("settings.dataSection")) {
                 val importPicker = rememberImportFilePicker()
@@ -3165,6 +3199,9 @@ fun SettingsScreen(
                     )
                 }
             }
+                    }
+                    SettingsCategory.Vault -> {
+
             SectionCard(title = t("settings.vaultSection")) {
                 var confirmRemove by remember { mutableStateOf(false) }
                 var removeError by remember { mutableStateOf<String?>(null) }
@@ -3372,6 +3409,9 @@ fun SettingsScreen(
                 }
             }
 
+                    }
+                    SettingsCategory.About -> {
+
             // About & Architecture Section
             SectionCard(title = t("settings.aboutTitle")) {
                 Row(
@@ -3408,7 +3448,79 @@ fun SettingsScreen(
                 }
             }
 
+                    }
+                    null -> Unit
+                }
+            }
+
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun SettingsCategoryIndex(canManageSpace: Boolean, onSelect: (SettingsCategory) -> Unit) {
+    val categories = settingsCategories(
+        autofillSupported = AutofillRole.isSupported(),
+        canManageSpace = canManageSpace,
+    )
+    BaluardCard(contentPadding = PaddingValues(0.dp)) {
+        categories.forEachIndexed { index, category ->
+            val icon = when (category) {
+                SettingsCategory.Sync -> Icons.Default.CloudSync
+                SettingsCategory.Security -> Icons.Default.Shield
+                SettingsCategory.Autofill -> Icons.Default.Password
+                SettingsCategory.Sharing -> Icons.Default.People
+                SettingsCategory.Space -> Icons.Default.Group
+                SettingsCategory.Data -> Icons.Default.Save
+                SettingsCategory.Vault -> Icons.Default.AccountCircle
+                SettingsCategory.About -> Icons.Default.Info
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSelect(category) }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(21.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = t(category.titleKey),
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = t(category.subtitleKey),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            if (index < categories.lastIndex) {
+                BaluardDivider(modifier = Modifier.padding(start = 68.dp))
+            }
         }
     }
 }
