@@ -130,8 +130,9 @@ export default function VaultView() {
         else unlisteners.push(fn);
       });
       listen("menu:check-updates", () => {
+        // Background check only: the banner reports the result, the current
+        // view stays put (no settings modal).
         window.dispatchEvent(new CustomEvent("baluard:check-updates"));
-        vault.setShowSettingsModal(true);
       }).then((fn) => {
         if (disposed) fn();
         else unlisteners.push(fn);
