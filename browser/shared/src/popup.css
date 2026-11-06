@@ -449,6 +449,39 @@
           }
         }
 
+        /* Live TOTP window: the border IS the countdown. Red = remaining
+           time; it drains clockwise into the regular border color and
+           snaps back full when the code rotates. The mask keeps only the
+           2px ring of the conic gradient (padding-box content excluded). */
+        .btn-icon.totp-ring {
+          position: relative;
+          border-color: transparent;
+
+          &:hover {
+            border-color: transparent;
+          }
+
+          &::after {
+            content: "";
+            position: absolute;
+            inset: -2px;
+            border-radius: 8px;
+            padding: 2px;
+            background: conic-gradient(
+              from 0deg,
+              var(--color-border) var(--totp-sweep, 0deg),
+              var(--color-danger) 0
+            );
+            -webkit-mask: linear-gradient(#000 0 0) content-box,
+              linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask: linear-gradient(#000 0 0) content-box,
+              linear-gradient(#000 0 0);
+            mask-composite: exclude;
+            pointer-events: none;
+          }
+        }
+
         .toast-copied {          font-size: 11px;
           color: var(--color-success);
           font-weight: 500;
