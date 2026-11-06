@@ -40,6 +40,15 @@ export function FolderNode(props) {
   const depth = () => props.depth;
   const indent = () => 14 + depth() * 16;
 
+  const folderCount = () => {
+    const active = [...(vault.ciphers() || []), ...(vault.otherVaultCiphers() || [])];
+    const archived = vault.archivedCiphers() || [];
+    const trash = vault.trashCiphers() || [];
+    const all = [...active, ...archived, ...trash];
+    const count = all.filter(c => c.folder_id === props.node.id).length;
+    return count;
+  };
+
   async function refreshFolders() {
     try { await vault.refreshCiphers(t); } catch {}
   }
@@ -113,6 +122,13 @@ export function FolderNode(props) {
             onClick={e => e.stopPropagation()}
             autofocus
           />
+        </Show>
+
+        {/* Entry count badge */}
+        <Show when={!hovered() || renaming()}>
+          <span class="ml-auto text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)] shrink-0">
+            {folderCount()}
+          </span>
         </Show>
 
         {/* Hover toolbar */}

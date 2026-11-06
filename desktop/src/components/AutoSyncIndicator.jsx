@@ -132,6 +132,14 @@ export default function AutoSyncIndicator() {
     }
   }
 
+  onSettled(() => {
+    const handleMenuSync = () => {
+      void manualSync();
+    };
+    window.addEventListener("baluard:sync-vault", handleMenuSync);
+    return () => window.removeEventListener("baluard:sync-vault", handleMenuSync);
+  });
+
   // Dot color: phase-driven while a cycle is active, else idle emerald.
   const dotClass = () => {
     const p = phase();

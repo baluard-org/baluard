@@ -99,6 +99,11 @@ export function UpdateProvider(props) {
       else unlisten = fn;
     });
 
+    const handleMenuCheck = () => {
+      void check({ manual: true });
+    };
+    window.addEventListener("baluard:check-updates", handleMenuCheck);
+
     const first = setTimeout(() => {
       if (backgroundCheckDue()) check({ manual: false });
     }, startupDelayMs());
@@ -117,6 +122,7 @@ export function UpdateProvider(props) {
     return () => {
       disposed = true;
       unlisten?.();
+      window.removeEventListener("baluard:check-updates", handleMenuCheck);
       clearTimeout(first);
       clearInterval(timer);
     };

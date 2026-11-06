@@ -1,8 +1,8 @@
 import { Show, For, createSignal, onSettled } from "solid-js";
-import { useAgentApprovals } from "../context/AgentApprovalContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
-import { Button } from "./Primitives.jsx";
+import { useAgentApprovals } from "../context/AgentApprovalContext.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
+import { Toggle } from "./Primitives.jsx";
 
 export default function AgentSettingsRow() {
   const agents = useAgentApprovals();
@@ -53,11 +53,12 @@ export default function AgentSettingsRow() {
           </For>
         </div>
       </Show>
-      <label class="flex items-start gap-2 text-xs cursor-pointer">
-        <input
+      <div class="p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl transition-all">
+        <Toggle
           data-testid="agent-yolo"
-          type="checkbox"
-          checked={agents.yolo()}
+          label={t("agents.yolo")}
+          description={t("agents.yoloDesc")}
+          checked={agents.yolo}
           onChange={(e) => {
             const wants = e.currentTarget.checked;
             // The native box follows the signal until a confirmed enable
@@ -67,11 +68,7 @@ export default function AgentSettingsRow() {
             else agents.setYolo(false).catch(() => {});
           }}
         />
-        <span>
-          <span class="block font-semibold">{t("agents.yolo")}</span>
-          <span class="block text-[var(--color-muted)] mt-1">{t("agents.yoloDesc")}</span>
-        </span>
-      </label>
+      </div>
       <ConfirmModal
         show={confirmYolo()}
         idPrefix="agent-yolo-warning"

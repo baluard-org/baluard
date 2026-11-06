@@ -115,6 +115,38 @@ export default function VaultView() {
     return () => document.removeEventListener("click", handler);
   });
 
+  // Native macOS menu items: Cmd+, and Check for Updates...
+  onSettled(() => {
+    const unlisteners = [];
+    let disposed = false;
+    import("@tauri-apps/api/event").then(({ listen }) => {
+      if (disposed) return;
+      listen("menu:open-settings", () => {
+        vault.setShowSettingsModal(true);
+      }).then((fn) => {
+        if (disposed) fn();
+        else unlisteners.push(fn);
+      });
+      listen("menu:check-updates", () => {
+        window.dispatchEvent(new CustomEvent("baluard:check-updates"));
+        vault.setShowSettingsModal(true);
+      }).then((fn) => {
+        if (disposed) fn();
+        else unlisteners.push(fn);
+      });
+      listen("menu:sync-vault", () => {
+        window.dispatchEvent(new CustomEvent("baluard:sync-vault"));
+      }).then((fn) => {
+        if (disposed) fn();
+        else unlisteners.push(fn);
+      });
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      unlisteners.forEach((fn) => fn());
+    };
+  });
+
   // Categories
   const categories = [
     { id: "allItems", name: "All items", icon: <IconGrid class="w-4 h-4 shrink-0" /> },
@@ -133,6 +165,13 @@ export default function VaultView() {
     { id: "archive", name: "Archive", icon: <IconArchive class="w-4 h-4 shrink-0" /> },
     { id: "trash", name: "Trash", icon: <IconTrash class="w-4 h-4 shrink-0" /> },
   ];
+
+  const categoryCount = (catName) => {
+    const cat = catName;
+    const source = selectSource(cat, vault.ciphers(), vault.trashCiphers(), vault.archivedCiphers());
+    const list = (cat !== "Trash" && cat !== "Archive") ? [...source, ...vault.otherVaultCiphers()] : source;
+    return filterByCategory(list, cat).length;
+  };
 
   // Client-side filtering & search (composed from lib/filters.js)
   const filteredCiphers = createMemo(() => {
@@ -320,26 +359,9 @@ export default function VaultView() {
                       {cat.icon}
                       <span>{t("categories." + cat.id)}</span>
                     </div>
-                    <Show when={cat.name === "All items"}>
-                      <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
-                        {vault.ciphers().length + vault.otherVaultCiphers().length}
-                      </span>
-                    </Show>
-                    <Show when={cat.name === "Trash"}>
-                      <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
-                        {vault.trashCiphers().length}
-                      </span>
-                    </Show>
-                    <Show when={cat.name === "TOTP"}>
-                      <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
-                        {filterByCategory([...vault.ciphers(), ...vault.otherVaultCiphers()], "TOTP").length}
-                      </span>
-                    </Show>
-                    <Show when={cat.name === "Archive"}>
-                      <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
-                        {vault.archivedCiphers().length}
-                      </span>
-                    </Show>
+                    <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
+                      {categoryCount(cat.name)}
+                    </span>
                   </button>
                 )}
               </For>
@@ -504,19 +526,25 @@ export default function VaultView() {
                   <IconChevronDown class={`w-3 h-3 transition-transform ${showAddMenu() ? "rotate-180" : ""}`} />
                 </button>
                 <Show when={showAddMenu()}>
-                <div class="absolute right-0 top-full mt-1 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl py-1 w-40 z-50">
-                  <button data-testid="new-login" onClick={() => startAdd("login")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.login")}</button>
-                  <button onClick={() => startAdd("secureNote")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.secureNote")}</button>
-                  <button onClick={() => startAdd("card")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.card")}</button>
-                  <button onClick={() => startAdd("identity")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.identity")}</button>
-                  <button onClick={() => startAdd("sshKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.sshKey")}</button>
-                  <button onClick={() => startAdd("signingKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.signingKey")}</button>
-                  <div class="border-t border-[var(--color-border)] my-1"></div>
-                  <button onClick={() => startAdd("bankAccount")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.bankAccount")}</button>
-                  <button onClick={() => startAdd("driversLicense")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.driversLicense")}</button>
-                  <button onClick={() => startAdd("passport")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.passport")}</button>
-                  <div class="border-t border-[var(--color-border)] my-1"></div>
-                  <button onClick={() => { setShowAddMenu(false); setShowOpenShared(true); }} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("share.openMenuEntry")}</button>
+                <div class="absolute right-0 top-full mt-1.5 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-2xl py-1.5 w-56 z-50 whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                  <div class="flex flex-col gap-0.5 px-1.5">
+                    <button data-testid="new-login" onClick={() => startAdd("login")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.login")}</button>
+                    <button onClick={() => startAdd("secureNote")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.secureNote")}</button>
+                    <button onClick={() => startAdd("card")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.card")}</button>
+                    <button onClick={() => startAdd("identity")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.identity")}</button>
+                    <button onClick={() => startAdd("sshKey")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.sshKey")}</button>
+                    <button onClick={() => startAdd("signingKey")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.signingKey")}</button>
+                  </div>
+                  <div class="border-t border-[var(--color-border)] my-1.5 mx-3"></div>
+                  <div class="flex flex-col gap-0.5 px-1.5">
+                    <button onClick={() => startAdd("bankAccount")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.bankAccount")}</button>
+                    <button onClick={() => startAdd("driversLicense")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.driversLicense")}</button>
+                    <button onClick={() => startAdd("passport")} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("types.passport")}</button>
+                  </div>
+                  <div class="border-t border-[var(--color-border)] my-1.5 mx-3"></div>
+                  <div class="flex flex-col gap-0.5 px-1.5">
+                    <button onClick={() => { setShowAddMenu(false); setShowOpenShared(true); }} class="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg flex items-center gap-2.5 cursor-pointer transition-colors outline-none">{t("share.openMenuEntry")}</button>
+                  </div>
                 </div>
                 </Show>
               </div>

@@ -50,7 +50,48 @@ export default function SettingsModal() {
   const auth = useAuth();
   const { t } = useI18n();
   let dialogRef;
+  let contentRef;
+  let modalBodyRef;
 
+  // Animate modal dimensions on tab switch for native-feeling fluid resizing.
+  function animateModalResize() {
+    const el = modalBodyRef;
+    if (!el) return;
+    const oldHeight = el.offsetHeight;
+    const oldWidth = el.offsetWidth;
+
+    requestAnimationFrame(() => {
+      const newHeight = el.offsetHeight;
+      const newWidth = el.offsetWidth;
+
+      if (oldHeight !== newHeight || oldWidth !== newWidth) {
+        el.style.height = `${oldHeight}px`;
+        el.style.width = `${oldWidth}px`;
+        el.style.transition = "none";
+
+        // Force reflow
+        void el.offsetHeight;
+
+        el.style.transition = "height 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
+        el.style.height = `${newHeight}px`;
+        el.style.width = `${newWidth}px`;
+
+        setTimeout(() => {
+          if (el) {
+            el.style.height = "";
+            el.style.width = "";
+            el.style.transition = "";
+          }
+        }, 260);
+      }
+    });
+  }
+
+  function handleTabChange(id) {
+    if (id === activeTab()) return;
+    setActiveTab(id);
+    animateModalResize();
+  }
   const [activeTab, setActiveTab] = createSignal("general"); // "general" or "data"
   
   // Auto-lock state (vault timeout policy token)
@@ -693,7 +734,7 @@ export default function SettingsModal() {
           onClick={() => vault.setShowSettingsModal(false)}
         >
           <FocusTrap containerRef={dialogRef} onEscape={() => vault.setShowSettingsModal(false)} />
-          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[720px] max-w-[94vw] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div ref={modalBodyRef} class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[720px] max-w-[94vw] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
               <h3 id="settings-title" class="text-lg font-bold text-[var(--color-text)]">{t("settings.title")}</h3>
@@ -708,22 +749,22 @@ export default function SettingsModal() {
 
             {/* Navigation Tabs */}
             <div class="px-6 py-3 border-b border-[var(--color-border)] shrink-0 bg-[var(--color-sidebar)]/30 flex gap-2 w-full">
-              <TabButton id="general" label={t("settings.tabGeneral")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="data" label={t("settings.tabData")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="sync" label={t("settings.tabSync")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="people" label={t("settings.tabPeople")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="space" label={t("settings.tabSpace")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="collections" label={t("settings.tabCollections")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="groups" label={t("settings.tabGroups")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="contacts" label={t("settings.tabContacts")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="outboxes" label={t("settings.tabOutboxes")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="devices" label={t("settings.tabDevices")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="bridge" label={t("settings.tabBridge")} active={activeTab()} setActiveTab={setActiveTab} />
-              <TabButton id="legacy" label={t("settings.tabLegacy")} active={activeTab()} setActiveTab={setActiveTab} />
+              <TabButton id="general" label={t("settings.tabGeneral")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="data" label={t("settings.tabData")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="sync" label={t("settings.tabSync")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="people" label={t("settings.tabPeople")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="space" label={t("settings.tabSpace")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="collections" label={t("settings.tabCollections")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="groups" label={t("settings.tabGroups")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="contacts" label={t("settings.tabContacts")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="outboxes" label={t("settings.tabOutboxes")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="devices" label={t("settings.tabDevices")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="bridge" label={t("settings.tabBridge")} active={activeTab()} setActiveTab={handleTabChange} />
+              <TabButton id="legacy" label={t("settings.tabLegacy")} active={activeTab()} setActiveTab={handleTabChange} />
             </div>
 
             {/* Content */}
-            <div class="flex-1 overflow-y-auto p-6 space-y-6">
+            <div ref={contentRef} class="flex-1 overflow-y-auto p-6 space-y-6 animate-in fade-in duration-200" key={activeTab()}>
               <Show when={activeTab() === "general"}>
                 {/* Profile */}
                 <div class="space-y-3">

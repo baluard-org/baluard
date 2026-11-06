@@ -11,7 +11,7 @@ import { IconUpload, IconDownload, IconRefresh, IconAlert, IconSpinner } from ".
 import FocusTrap from "./FocusTrap.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
 import ExternalLink from "./ExternalLink.jsx";
-import { Button } from "./Primitives.jsx";
+import { Button, Toggle } from "./Primitives.jsx";
 import CopyButton from "./CopyButton.jsx";
 
 const PROVIDER_STYLES = {
@@ -670,11 +670,16 @@ const [customError, setCustomError] = createSignal(null);
   return (
     <div class="space-y-6">
       {/* Plain-words explainer lives on the website; git stays invisible in-app. */}
-      <div class="flex justify-end">
+      <div class="flex items-center justify-end -mt-1">
         <ExternalLink
           href="https://baluard.app/what-the-git/"
-          class="text-[10px] font-semibold text-[var(--color-muted)] hover:text-[var(--color-text)] underline underline-offset-2 cursor-pointer"
+          class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer outline-none"
         >
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
           {t("gitWhat.link")}
         </ExternalLink>
       </div>
@@ -1101,13 +1106,13 @@ const [customError, setCustomError] = createSignal(null);
                 <button
                   type="button"
                   onClick={() => setShowAdvancedPanel(!showAdvancedPanel())}
-                  class="flex items-center gap-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer w-full"
+                  class="flex items-center justify-between w-full px-3 py-2 rounded-xl bg-[var(--color-sidebar)]/40 border border-[var(--color-border)]/60 hover:bg-[var(--color-sidebar)]/80 text-xs font-semibold text-[var(--color-text)] cursor-pointer transition-all outline-none"
                 >
-                  <span class="text-[8px]">{showAdvancedPanel() ? "\u25BE" : "\u25B8"}</span>
-                  {t("sync.advancedSection")}
+                  <span>{t("sync.advancedSection")}</span>
+                  <span class="text-[10px] text-[var(--color-muted)]">{showAdvancedPanel() ? "\u25BE" : "\u25B8"}</span>
                 </button>
                 <Show when={showAdvancedPanel()}>
-                  <div class="space-y-3">
+                  <div class="space-y-4 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
                     <Show when={syncStatus()}>
                       <div class="p-3 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-2">
                         <div class="flex items-center justify-between text-[10px]">
@@ -1143,31 +1148,31 @@ const [customError, setCustomError] = createSignal(null);
                         {t("sync.pull")}
                       </button>
                     </div>
+
+                    {/* S3-8: move the sync address (admin; daemon validates) */}
+                    <Show when={isManager()}>
+                      <div class="pt-3 border-t border-[var(--color-border)] space-y-2">
+                        <p class="text-[10px] font-bold text-[var(--color-muted)]">{t("sync.migrateTitle")}</p>
+                        <input
+                          type="text"
+                          value={migUrl()}
+                          onInput={(e) => setMigUrl(e.currentTarget.value)}
+                          placeholder={t("sync.migratePlaceholder")}
+                          disabled={migBusy()}
+                          class="w-full text-xs bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-[var(--color-text)] placeholder-[var(--color-muted)] focus:outline-none focus:border-[var(--color-primary)] disabled:opacity-50"
+                        />
+                        <Button onClick={() => setMigConfirm(true)} disabled={migBusy() || !migUrl().trim()}>
+                          {t("sync.migrateAction")}
+                        </Button>
+                      </div>
+                    </Show>
                   </div>
                 </Show>
               </div>
 
-              {/* S3-8: move the sync address (admin; daemon validates) */}
-              <Show when={isManager()}>
-                <div class="border-t border-[var(--color-border)] pt-3 space-y-2">
-                  <p class="text-[10px] font-bold text-[var(--color-muted)]">{t("sync.migrateTitle")}</p>
-                  <input
-                    type="text"
-                    value={migUrl()}
-                    onInput={(e) => setMigUrl(e.currentTarget.value)}
-                    placeholder={t("sync.migratePlaceholder")}
-                    disabled={migBusy()}
-                    class="w-full text-xs bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-[var(--color-text)] placeholder-[var(--color-muted)] focus:outline-none focus:border-[var(--color-primary)] disabled:opacity-50"
-                  />
-                  <Button onClick={() => setMigConfirm(true)} disabled={migBusy() || !migUrl().trim()}>
-                    {t("sync.migrateAction")}
-                  </Button>
-                </div>
-              </Show>
-
               <button
                 onClick={() => setShowDisconnectModal(true)}
-                class="w-full py-2 rounded-xl border border-red-900/30 text-xs font-bold text-red-400 hover:bg-red-950/20 transition-all cursor-pointer"
+                class="w-full py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-xs font-bold text-red-400 hover:bg-red-500/20 hover:border-red-500/50 transition-all cursor-pointer shadow-sm"
               >
                 {t("sync.disconnect")}
               </button>
@@ -1197,7 +1202,7 @@ const [customError, setCustomError] = createSignal(null);
                 </button>
                 <button
                   onClick={() => setShowDisconnectModal(true)}
-                  class="py-2.5 rounded-xl border border-red-900/30 text-red-400 text-xs font-bold hover:bg-red-950/20 cursor-pointer"
+                  class="py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-bold hover:bg-red-500/20 hover:border-red-500/50 cursor-pointer transition-all shadow-sm"
                 >
                   {t("sync.removeRemote")}
                 </button>
@@ -1246,48 +1251,38 @@ const [customError, setCustomError] = createSignal(null);
 
                 <div class="space-y-3">
                   <label class="p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl flex items-center gap-3 cursor-pointer select-none hover:bg-black/10 transition-all">
-                    <input
-                      type="checkbox"
+                    <Toggle
+                      variant="danger"
                       checked={revokeToken()}
-                      onChange={(e) => setRevokeToken(e.target.checked)}
-                      class="w-4 h-4 rounded border-[var(--color-border)] text-[var(--color-danger)] focus:ring-[var(--color-danger)] cursor-pointer accent-[var(--color-danger)] shrink-0"
+                      onChange={(e) => setRevokeToken(e.currentTarget.checked)}
+                      label={t("sync.disconnectRevokeToken")}
+                      class="w-full flex-row-reverse"
                     />
-                    <span class="text-xs font-semibold text-[var(--color-text)] leading-tight">
-                      {t("sync.disconnectRevokeToken")}
-                    </span>
                   </label>
 
                   <label class="p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl flex items-center gap-3 cursor-pointer select-none hover:bg-black/10 transition-all">
-                    <input
-                      type="checkbox"
+                    <Toggle
+                      variant="danger"
                       checked={deleteRemote()}
                       onChange={(e) => {
-                        setDeleteRemote(e.target.checked);
-                        if (!e.target.checked) setConfirmDeleteRemote(false);
+                        setDeleteRemote(e.currentTarget.checked);
+                        if (!e.currentTarget.checked) setConfirmDeleteRemote(false);
                       }}
-                      class="w-4 h-4 rounded border-[var(--color-border)] text-[var(--color-danger)] focus:ring-[var(--color-danger)] cursor-pointer accent-[var(--color-danger)] shrink-0"
+                      label={t("sync.disconnectDeleteRemote")}
+                      class="w-full flex-row-reverse"
                     />
-                    <span class="text-xs font-semibold text-[var(--color-text)] leading-tight">
-                      {t("sync.disconnectDeleteRemote")}
-                    </span>
                   </label>
 
                   <Show when={deleteRemote()}>
                     <label class="p-3 border rounded-xl flex items-start gap-3 cursor-pointer select-none transition-all animate-in fade-in slide-in-from-top-2 duration-150 box-danger-warning">
-                      <input
-                        type="checkbox"
+                      <Toggle
+                        variant="danger"
                         checked={confirmDeleteRemote()}
-                        onChange={(e) => setConfirmDeleteRemote(e.target.checked)}
-                        class="w-4 h-4 rounded text-[var(--color-danger)] focus:ring-[var(--color-danger)] cursor-pointer accent-[var(--color-danger)] mt-0.5 shrink-0"
+                        onChange={(e) => setConfirmDeleteRemote(e.currentTarget.checked)}
+                        label={t("sync.disconnectConfirmDeleteRemote")}
+                        description={t("sync.disconnectConfirmDeleteRemoteDesc")}
+                        class="w-full flex-row-reverse"
                       />
-                      <div class="flex flex-col gap-0.5">
-                        <span class="text-xs font-semibold leading-tight text-warning-title">
-                          {t("sync.disconnectConfirmDeleteRemote")}
-                        </span>
-                        <span class="text-[10px] leading-tight text-warning-desc">
-                          {t("sync.disconnectConfirmDeleteRemoteDesc")}
-                        </span>
-                      </div>
                     </label>
                   </Show>
                 </div>

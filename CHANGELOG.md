@@ -2,6 +2,12 @@
 
 Notable user-facing changes per release.
 
+## UNRELEASED
+
+- The desktop app now has a native macOS menu (About, Settings, Check for updates, Sync now) and the web-style right-click menu no longer appears outside text fields.
+- Buttons across the desktop app give a brief press ripple for tactile feedback.
+- The People tab is now called Sharing on desktop and mobile, with clearer wording about what it does.
+
 ## 0.1.4 - 2026-11-05
 
 - The desktop sidebar has a TOTP filter showing every entry that carries a one-time code seed, with a count, like on mobile.
