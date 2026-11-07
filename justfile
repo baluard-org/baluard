@@ -230,6 +230,7 @@ test-release-scripts:
 	./scripts/tests/test-generate-updates-manifest.sh
 	./scripts/tests/test-sign-updater-sigs.sh
 	./scripts/tests/test-stage-release-assets.sh
+	./scripts/tests/test-upload-play-release.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
@@ -605,6 +606,13 @@ smoke-pkg pkg:
 	bash scripts/linux-smoke.sh "{{pkg}}"
 
 # ── App Icons ──────────────────────────────────────────────────────────────
+
+# Upload the play-flavor AAB to a Play testing track through the androidpublisher
+# API (BALUARD_PLAY_SERVICE_ACCOUNT_JSON gated; default ~/.baluard/play-service-account.json).
+# BALUARD_PLAY_TRACK selects internal (default), alpha (closed), or production with
+# BALUARD_PLAY_ALLOW_PRODUCTION=1. Track: https://baluard.app docs/dev/google-play.md
+play-submit:
+	./scripts/upload-play-release.sh
 
 # ── E2E Smoke Test ─────────────────────────────────────────────────────────
 
