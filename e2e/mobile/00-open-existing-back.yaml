@@ -1,0 +1,24 @@
+# Play-flavor regression: a store user without Supporter must be able to
+# leave the Open existing vault gate, both with its Back button and Android Back.
+# Dedicated test device only: clearState wipes all Baluard app data.
+appId: app.baluard.mobile
+name: 00-open-existing-back
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: "android:id/button2"
+    optional: true
+- assertVisible: "Baluard"
+- tapOn: "Open an existing vault"
+- assertVisible: "Baluard Supporter"
+- tapOn: "Subscribe"
+- assertVisible: "Cancel"
+- tapOn: "Cancel"
+- assertVisible: "Baluard Supporter"
+- tapOn: "Back"
+- assertVisible: "Open an existing vault"
+- tapOn: "Open an existing vault"
+- assertVisible: "Baluard Supporter"
+- back
+- assertVisible: "Open an existing vault"

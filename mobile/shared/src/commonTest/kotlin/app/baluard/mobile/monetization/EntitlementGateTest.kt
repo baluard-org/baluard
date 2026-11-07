@@ -14,6 +14,7 @@ private class FakeStore(
     var next: StoreQuery,
     var purchaseOutcome: PurchaseOutcome = PurchaseOutcome.Unavailable,
     var throwOnQuery: Boolean = false,
+    override val isPaidStore: Boolean = false,
 ) : MonetizationStore {
     var queryCalls = 0
     override suspend fun query(): StoreQuery {
@@ -37,6 +38,27 @@ private class CountingCache(initial: CachedEntitlement?) : EntitlementCache {
 }
 
 class EntitlementGateTest {
+
+    @Test
+    fun supporter_status_requires_an_active_purchase_from_a_paid_store() = runTest {
+        val gate = EntitlementGate { NOW }
+        gate.initialize(
+            FakeStore(StoreQuery.Purchased(willRenew = true), isPaidStore = true),
+            MemoryEntitlementCache(),
+        )
+        assertFalse(gate.shouldShowSupporterStatus(gate.current()))
+        gate.refresh()
+        assertTrue(gate.shouldShowSupporterStatus(gate.current()))
+    }
+
+    @Test
+    fun supporter_status_stays_hidden_for_a_free_unlocked_store() = runTest {
+        val gate = EntitlementGate { NOW }
+        gate.initialize(FakeStore(StoreQuery.Purchased(willRenew = true)), MemoryEntitlementCache())
+        gate.refresh()
+        assertTrue(gate.current().syncUnlocked)
+        assertFalse(gate.shouldShowSupporterStatus(gate.current()))
+    }
 
     @Test
     fun initialize_seeds_state_from_persisted_cache() {

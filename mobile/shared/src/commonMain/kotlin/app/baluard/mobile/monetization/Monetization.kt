@@ -91,6 +91,8 @@ fun effectiveEntitlement(cache: CachedEntitlement?, nowEpochMs: Long): Effective
 
 /** The store backend, implemented per distribution channel (play flavor, fdroid, later iOS). */
 interface MonetizationStore {
+    val isPaidStore: Boolean get() = false
+
     suspend fun query(): StoreQuery
 
     /** Runs one purchase flow to completion; [PurchaseOutcome.Purchased] means the store confirmed it. */
@@ -173,6 +175,9 @@ class EntitlementGate(private val clock: () -> Long) {
      */
     fun current(): EffectiveEntitlement = effectiveEntitlement(cache.load(), clock())
 
+    fun shouldShowSupporterStatus(entitlement: EffectiveEntitlement): Boolean =
+        store.isPaidStore && entitlement.phase == EntitlementPhase.Unlocked
+
     suspend fun refresh(): EffectiveEntitlement = mutex.withLock {
         // Query first, load after: the persisted cache must reflect a purchase
         // completing while this query was in flight, here or in another process.
@@ -226,6 +231,9 @@ object Entitlements {
     fun initialize(store: MonetizationStore, cache: EntitlementCache) = gate.initialize(store, cache)
 
     fun current(): EffectiveEntitlement = gate.current()
+
+    fun shouldShowSupporterStatus(entitlement: EffectiveEntitlement): Boolean =
+        gate.shouldShowSupporterStatus(entitlement)
 
     suspend fun refresh(): EffectiveEntitlement = gate.refresh()
 
