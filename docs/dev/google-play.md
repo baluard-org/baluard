@@ -68,12 +68,15 @@ No official Play MCP or CLI exists. The path is the Google Play Developer API (a
 1. Play Console, Setup, API access: link a Google Cloud project, enable the Android Developer API.
 2. Create a service account with the Release Manager role, download the JSON key.
 3. Store the key in Bitwarden and at `~/.baluard/play-service-account.json` mode 600.
-4. Then `scripts/upload-play-release.sh` plus a `just play-submit` recipe can carry the AAB to the tracks, gated on `BALUARD_PLAY_SERVICE_ACCOUNT_JSON` with skip mode without credentials, like `ext-submit`.
+4. `just play-submit` runs `scripts/upload-play-release.sh`, the androidpublisher v3 edits flow gated on `BALUARD_PLAY_SERVICE_ACCOUNT_JSON` (default `~/.baluard/play-service-account.json`), with loud skip guidance when the key is absent, like `ext-submit`.
+- Guards: the workspace version drives versionName and versionCode through the bump formula, and the API's bundle list is checked before uploading, so an already-burned version code refuses the run instead of burning a second upload; the uploaded bundle's reported versionCode must match the workspace or the release step is skipped; when aapt2 and the fdroid APK are present, targetSdkVersion must meet `BALUARD_PLAY_MIN_TARGET_SDK` (default 35).
+- Track selection: `BALUARD_PLAY_TRACK` defaults to internal; use alpha for the closed testing track; production is refused without `BALUARD_PLAY_ALLOW_PRODUCTION=1` because staged rollouts stay console-managed. The release is named `X.Y.Z (NNNN)` with status from `BALUARD_PLAY_RELEASE_STATUS` (default completed).
+- Secrets: the RS256 JWT is signed with openssl and exchanged by curl; the private key, assertion, and bearer header ride 0600 temp files removed by an EXIT trap, never argv.
 
 ## Per-release flow
 
 1. Bump the workspace version (all seven sources, one versionCode).
 2. `just android-apk-release` builds the release APK and the Play AAB from the same source.
-3. Console: upload the AAB to the internal testing release and, when the runway clock should run, the closed testing release; release name `X.Y.Z (NNNN)`; paste tester notes.
+3. Upload the AAB to the tracks: `just play-submit` for internal testing and `BALUARD_PLAY_TRACK=alpha just play-submit` for the closed track once the service account exists; release notes are pasted in the console, which also handles the manual path until then. Release name `X.Y.Z (NNNN)`.
 4. `just release-repositories` stages the same versionCode APK into the F-Droid repo and publishes it through the baluard-org republish.
 5. Store submissions (Chrome, AMO) are governed by the unchanged-bundle gate in the release protocol, not by Play.
