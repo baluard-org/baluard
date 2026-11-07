@@ -140,6 +140,20 @@ class EntitlementGateTest {
     }
 
     @Test
+    fun purchase_pending_does_not_refresh() = runTest {
+        val gate = EntitlementGate { NOW }
+        val cache = CountingCache(CachedEntitlement(EntitlementPhase.Locked))
+        gate.initialize(
+            FakeStore(StoreQuery.NothingActive, purchaseOutcome = PurchaseOutcome.Pending),
+            cache,
+        )
+        assertEquals(PurchaseOutcome.Pending, gate.purchase())
+        // Payment is unsettled: the cache stays exactly as it was.
+        assertEquals(EntitlementPhase.Locked, gate.current().phase)
+        assertEquals(0, cache.saves)
+    }
+
+    @Test
     fun purchase_store_crash_maps_to_error() = runTest {
         val gate = EntitlementGate { NOW }
         gate.initialize(object : MonetizationStore {

@@ -53,6 +53,7 @@ Never bump the Play version ahead of F-Droid for the same `versionName`: a Play 
 - Acknowledgment happens in the purchases-updated listener; Google refunds unacknowledged subscriptions after 3 days.
 - The fdroid build seeds an in-memory permanently-unlocked cache: nothing persists and no fresh-install window can ever gate an F-Droid user.
 - Release guard: `mobile/scripts/build-android-apk.sh` greps the fdroid APK's dex pool for `com/android/billingclient` and fails the build if any billing class reaches it.
+- iOS has no app target yet. Its default entitlement is Unknown, which fails closed, so when the iOS app ships it must call `Entitlements.initialize` at startup with its own store (StoreKit or a free seed) before any gated surface renders.
 
 ## Store listing disclosure
 

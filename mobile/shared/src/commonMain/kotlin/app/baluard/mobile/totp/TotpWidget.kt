@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.i18n.t
+import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.CopiedBadge
 import app.baluard.mobile.ui.components.rememberCopied
@@ -60,11 +61,15 @@ fun TotpWidget(
 ) {
     val state by viewModel.state.collectAsState()
     val copied = rememberCopied()
+    // ADR 0102: the entitlement is an effect key so a purchase from the
+    // locked card's own sheet restarts start() and the live code appears
+    // without leaving the screen.
+    val entitlement by Entitlements.state.collectAsState()
 
     // Nothing else starts the fetch: without this the state sits on Loading
     // forever (spinner + "loading code"). Leaving the screen cancels the
     // countdown loop via the CancellationException path in start().
-    LaunchedEffect(vault, cipherId) { viewModel.start(vault, cipherId) }
+    LaunchedEffect(vault, cipherId, entitlement.totpUnlocked) { viewModel.start(vault, cipherId) }
 
     Surface(
         modifier = Modifier

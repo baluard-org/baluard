@@ -14,6 +14,7 @@ internal val EN: Map<String, String> = mapOf(
     "upgrade.title" to "Baluard Supporter",
     "upgrade.body" to "Sync, authenticator codes, and shared vaults are part of Baluard Supporter on this app. Your vault stays on the device either way, so nothing here locks your data.",
     "upgrade.subscribe" to "Subscribe",
+    "upgrade.pending" to "Payment pending - it activates once Google confirms it.",
     "upgrade.busy" to "Opening…",
     "upgrade.unavailable" to "The subscription is unavailable right now. Check your connection and try again.",
     "upgrade.failed" to "Something went wrong with the purchase. Please try again.",
