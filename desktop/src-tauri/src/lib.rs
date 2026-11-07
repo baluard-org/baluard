@@ -299,6 +299,12 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "contacts.import_card",
     "contacts.mark_verified",
     "contacts.remove",
+    // Legacy Contact owner settings and the contact's read-only kit view.
+    "legacy.status",
+    "legacy.arm",
+    "legacy.close",
+    "legacy.resend",
+    "legacy.contact_view",
     "outbox.publish",
     "outbox.unpublish",
     "outbox.revoke",
@@ -1916,6 +1922,11 @@ mod tests {
             "vaults.detach",
             "sync.pull",
             "bridge.pair_start",
+            "legacy.status",
+            "legacy.arm",
+            "legacy.close",
+            "legacy.resend",
+            "legacy.contact_view",
         ] {
             assert!(desktop_action_allowed(a), "{a} should be allowed");
         }
