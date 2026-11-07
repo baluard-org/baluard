@@ -47,6 +47,7 @@ import app.baluard.mobile.onboarding.OnboardingScreen
 import app.baluard.mobile.onboarding.ProviderConnectScreen
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.i18n.t
+import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.onboarding.ProviderFlowViewModel
 import app.baluard.mobile.onboarding.RepoPickerScreen
 import app.baluard.mobile.platform.AppPaths
@@ -364,6 +365,14 @@ fun App(
         // The 10-min focus guard lives in the runtime, so flicker collapses
         // there; the suspend bridge parks on the shared tokio runtime.
         LifecycleEventEffect(Lifecycle.Event.ON_START) {
+            scope.launch {
+                // ADR 0102: the entitlement decides sync, so refresh at every
+                // foreground and apply the result to the unlock-tail switch
+                // before any other sync event can fire.
+                runCatching { Entitlements.refresh() }.getOrNull()?.let { ent ->
+                    auth.applyAutosyncPolicy(ent.syncUnlocked)
+                }
+            }
             auth.vault()?.let { v ->
                 scope.launch {
                     // B6: lock check FIRST — returning to the foreground after
