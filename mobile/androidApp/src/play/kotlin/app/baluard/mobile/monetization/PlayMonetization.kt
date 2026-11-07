@@ -72,8 +72,13 @@ internal class PlayBillingStore(context: Context) : MonetizationStore {
     private val connectMutex = Mutex()
     private val client: BillingClient = BillingClient.newBuilder(context)
         .setListener { result, purchases -> onPurchasesUpdated(result, purchases.orEmpty()) }
+        // PBL 8+: the library re-establishes the billing service itself after
+        // transient drops, so a completed connect() stays valid.
+        .enableAutoServiceReconnection()
         .enablePendingPurchases(
-            com.android.billingclient.api.PendingPurchasesParams.newBuilder().build(),
+            com.android.billingclient.api.PendingPurchasesParams.newBuilder()
+                .enableOneTimeProducts()
+                .build(),
         )
         .build()
 
@@ -182,6 +187,12 @@ internal class PlayBillingStore(context: Context) : MonetizationStore {
             // gate refreshes from query() and lands on Purchased.
             purchaseFlow = null
             return@withContext PurchaseOutcome.Purchased
+        }
+        if (code == BillingClient.BillingResponseCode.BILLING_UNAVAILABLE) {
+            // PBL 9 reports a blocked or missing Play Store app with this code
+            // instead of ERROR; there is nothing to retry.
+            purchaseFlow = null
+            return@withContext PurchaseOutcome.Unavailable
         }
         if (code != BillingClient.BillingResponseCode.OK && code != BillingClient.BillingResponseCode.USER_CANCELED) {
             purchaseFlow = null

@@ -154,5 +154,5 @@ android {
 dependencies {
     // Google Play Billing, play flavor only: the fdroid APK must not carry the
     // proprietary library (F-Droid policy, ADR 0102).
-    "playImplementation"("com.android.billingclient:billing-ktx:7.1.1")
+    "playImplementation"("com.android.billingclient:billing-ktx:9.1.0")
 }
