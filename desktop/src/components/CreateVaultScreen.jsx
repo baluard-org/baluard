@@ -78,9 +78,9 @@ export default function CreateVaultScreen() {
   };
 
   return (
-    <div class="create-vault-screen flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 relative">
+    <div class="create-vault-screen flex justify-center h-full overflow-y-auto bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 py-8 relative">
       <ThemeToggleFloating />
-      <div class="create-vault-screen__card w-full max-w-md p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast">
+      <div class="create-vault-screen__card w-full max-w-md my-auto p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast">
 
         <div class="create-vault-screen__header text-center mb-8">
           <div class="create-vault-screen__logo-container w-24 h-24 mx-auto mb-4 flex items-center justify-center">
