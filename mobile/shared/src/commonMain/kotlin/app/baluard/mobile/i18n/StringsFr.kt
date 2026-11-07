@@ -13,6 +13,7 @@ internal val FR: Map<String, String> = mapOf(
     "upgrade.title" to "Baluard Supporter",
     "upgrade.body" to "La synchronisation, les codes d'authentification et les coffres partagés font partie de Baluard Supporter dans cette app. Votre coffre reste sur l'appareil, rien ne verrouille vos données.",
     "upgrade.subscribe" to "S'abonner",
+    "upgrade.pending" to "Paiement en attente - actif des que Google le confirme.",
     "upgrade.busy" to "Ouverture…",
     "upgrade.unavailable" to "L'abonnement n'est pas disponible pour le moment. Vérifiez votre connexion et réessayez.",
     "upgrade.failed" to "Un problème est survenu lors de l'achat. Veuillez réessayer.",

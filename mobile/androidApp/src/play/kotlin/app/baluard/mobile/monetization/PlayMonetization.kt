@@ -20,6 +20,8 @@ import com.android.billingclient.api.queryPurchasesAsync
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -40,13 +42,10 @@ class PlayMonetizationApplication : BaluardApplication() {
 }
 
 /**
- * Google Play Billing store for [SUBSCRIPTION_PRODUCT_ID]. All client calls run
- * on the main thread (Play requirement) via [withContext]; the suspend surface
- * stays the [MonetizationStore] contract, so the gate never sees billing types.
- *
- * Threading note: BillingClient callbacks arrive on the main looper, and every
- * deferred they complete is read from suspending call sites, so no extra
- * synchronization beyond the deferred handoff is needed.
+ * Google Play Billing store for [SUBSCRIPTION_PRODUCT_ID]. Every BillingClient
+ * call runs on the main thread (Play requirement) — [connect] serializes them
+ * behind a mutex; the suspend surface stays the [MonetizationStore] contract,
+ * so the gate never sees billing types.
  */
 internal class PlayBillingStore(context: Context) : MonetizationStore {
 
@@ -70,6 +69,7 @@ internal class PlayBillingStore(context: Context) : MonetizationStore {
     private var resumedActivity: Activity? = null
 
     private val main = Dispatchers.Main.immediate
+    private val connectMutex = Mutex()
     private val client: BillingClient = BillingClient.newBuilder(context)
         .setListener { result, purchases -> onPurchasesUpdated(result, purchases.orEmpty()) }
         .enablePendingPurchases(
@@ -84,56 +84,85 @@ internal class PlayBillingStore(context: Context) : MonetizationStore {
     @Volatile
     private var detailsCache: ProductDetails? = null
 
-    private suspend fun connect(): Boolean {
-        if (client.isReady) return true
-        if (!connected.isCompleted) {
-            connected = CompletableDeferred()
+    private suspend fun connect(): Boolean = connectMutex.withLock {
+        withContext(main) {
+            if (client.isReady) return@withContext true
+            // A completed deferred carries a stale answer (setup finished long
+            // ago, service dropped since). Reset so this attempt re-connects
+            // instead of awaiting the old result forever.
+            if (connected.isCompleted) connected = CompletableDeferred()
             client.startConnection(object : BillingClientStateListener {
                 override fun onBillingSetupFinished(result: BillingResult) {
                     connected.complete(result.responseCode == BillingClient.BillingResponseCode.OK)
                 }
 
                 override fun onBillingServiceDisconnected() {
-                    // The next call re-runs startConnection; stale deferreds resolve false.
+                    // The next connect() starts a fresh attempt.
                     if (!connected.isCompleted) connected.complete(false)
                 }
             })
+            withTimeoutOrNull(15_000) { connected.await() } ?: false
         }
-        return withTimeoutOrNull(15_000) { connected.await() } ?: false
     }
 
     /** Suspend form via billing-ktx; failures return null without caching so the next attempt retries. */
     private suspend fun details(): ProductDetails? {
         detailsCache?.let { return it }
-        val params = QueryProductDetailsParams.newBuilder()
-            .setProductList(
-                listOf(
-                    QueryProductDetailsParams.Product.newBuilder()
-                        .setProductId(SUBSCRIPTION_PRODUCT_ID)
-                        .setProductType(BillingClient.ProductType.SUBS)
-                        .build(),
-                ),
-            )
-            .build()
-        val result = client.queryProductDetails(params)
-        if (result.billingResult.responseCode != BillingClient.BillingResponseCode.OK) return null
-        return result.productDetailsList?.firstOrNull()?.also { detailsCache = it }
+        return withContext(main) {
+            val params = QueryProductDetailsParams.newBuilder()
+                .setProductList(
+                    listOf(
+                        QueryProductDetailsParams.Product.newBuilder()
+                            .setProductId(SUBSCRIPTION_PRODUCT_ID)
+                            .setProductType(BillingClient.ProductType.SUBS)
+                            .build(),
+                    ),
+                )
+                .build()
+            val result = client.queryProductDetails(params)
+            if (result.billingResult.responseCode != BillingClient.BillingResponseCode.OK) return@withContext null
+            result.productDetailsList?.firstOrNull()?.also { detailsCache = it }
+        }
     }
 
     override suspend fun query(): StoreQuery {
         if (!connect()) return StoreQuery.Unavailable
-        val result = client.queryPurchasesAsync(
-            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build(),
-        )
+        val result = withContext(main) {
+            client.queryPurchasesAsync(
+                QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build(),
+            )
+        }
         if (result.billingResult.responseCode != BillingClient.BillingResponseCode.OK) return StoreQuery.Unavailable
+        // Acknowledgment cannot ride only the purchase flow: a PENDING order
+        // settling later, a purchase from the Play subscriptions center, or a
+        // flow that died before the listener ran would never be acknowledged,
+        // and Google auto-refunds unacknowledged purchases after 3 days.
+        acknowledgeUnacknowledged(result.purchasesList)
         return mapPurchases(result.purchasesList)
+    }
+
+    /** Best-effort; any failure is retried on the next query via [Purchase.isAcknowledged]. */
+    private suspend fun acknowledgeUnacknowledged(purchases: List<Purchase>) = withContext(main) {
+        purchases
+            .filter { it.products.contains(SUBSCRIPTION_PRODUCT_ID) }
+            .filter { it.purchaseState == Purchase.PurchaseState.PURCHASED && !it.isAcknowledged }
+            .forEach { purchase ->
+                client.acknowledgePurchase(
+                    AcknowledgePurchaseParams.newBuilder().setPurchaseToken(purchase.purchaseToken).build(),
+                ) { }
+            }
     }
 
     override suspend fun purchase(): PurchaseOutcome = withContext(main) {
         if (!connect()) return@withContext PurchaseOutcome.Unavailable
         val activity = resumedActivity ?: return@withContext PurchaseOutcome.Unavailable
         val details = details() ?: return@withContext PurchaseOutcome.Unavailable
-        val offer = details.subscriptionOfferDetails?.firstOrNull()
+        // The 14-day trial offer (ADR 0102) is the free phase inside the offer's
+        // pricing phases; Play does not order offerDetails, so pick the one that
+        // carries a zero-price phase and fall back to the bare plan otherwise.
+        val offer = details.subscriptionOfferDetails
+            ?.firstOrNull { od -> od.pricingPhases.pricingPhaseList.any { it.priceAmountMicros == 0L } }
+            ?: details.subscriptionOfferDetails?.firstOrNull()
             ?: return@withContext PurchaseOutcome.Unavailable
         val params = BillingFlowParams.newBuilder()
             .setProductDetailsParamsList(
@@ -148,6 +177,12 @@ internal class PlayBillingStore(context: Context) : MonetizationStore {
         val flow = CompletableDeferred<PurchaseOutcome>()
         purchaseFlow = flow
         val code = client.launchBillingFlow(activity, params).responseCode
+        if (code == BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED) {
+            // Already subscribed (fresh install, second device, re-tap): the
+            // gate refreshes from query() and lands on Purchased.
+            purchaseFlow = null
+            return@withContext PurchaseOutcome.Purchased
+        }
         if (code != BillingClient.BillingResponseCode.OK && code != BillingClient.BillingResponseCode.USER_CANCELED) {
             purchaseFlow = null
             return@withContext PurchaseOutcome.Error("billing flow failed: $code")
@@ -163,17 +198,22 @@ internal class PlayBillingStore(context: Context) : MonetizationStore {
         when (result.responseCode) {
             BillingClient.BillingResponseCode.OK -> {
                 val bought = purchases.filter { it.products.contains(SUBSCRIPTION_PRODUCT_ID) }
-                val outcome = if (bought.any { it.purchaseState == Purchase.PurchaseState.PURCHASED }) {
-                    // Google requires acknowledgment within 3 days or the
-                    // purchase is refunded automatically.
-                    bought.filter { !it.isAcknowledged }.forEach { purchase ->
-                        client.acknowledgePurchase(
-                            AcknowledgePurchaseParams.newBuilder().setPurchaseToken(purchase.purchaseToken).build(),
-                        ) { }
+                val outcome = when {
+                    bought.any { it.purchaseState == Purchase.PurchaseState.PURCHASED } -> {
+                        // Google requires acknowledgment within 3 days or the
+                        // purchase is refunded automatically; query()'s ack pass
+                        // is the safety net if this listener never ran.
+                        bought.filter { !it.isAcknowledged }.forEach { purchase ->
+                            client.acknowledgePurchase(
+                                AcknowledgePurchaseParams.newBuilder()
+                                    .setPurchaseToken(purchase.purchaseToken).build(),
+                            ) { }
+                        }
+                        PurchaseOutcome.Purchased
                     }
-                    PurchaseOutcome.Purchased
-                } else {
-                    PurchaseOutcome.Cancelled
+                    bought.any { it.purchaseState == Purchase.PurchaseState.PENDING } ->
+                        PurchaseOutcome.Pending
+                    else -> PurchaseOutcome.Cancelled
                 }
                 purchaseFlow = null
                 flow.complete(outcome)

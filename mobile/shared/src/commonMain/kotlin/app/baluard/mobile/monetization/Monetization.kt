@@ -12,6 +12,11 @@ const val SUBSCRIPTION_PRODUCT_ID = "baluard_supporter_yearly"
 /** Result of one store entitlement query. */
 sealed interface StoreQuery {
     data class Purchased(val willRenew: Boolean) : StoreQuery
+    /**
+     * A store-reported active trial. Google Play reports trials as PURCHASED
+     * purchases, so the play flavor never produces this variant today — it
+     * stays for a future StoreKit (iOS) backend where trials are distinct.
+     */
     data class TrialActive(val endsAtEpochMs: Long, val willRenew: Boolean) : StoreQuery
     data object NothingActive : StoreQuery
 
@@ -95,6 +100,9 @@ interface MonetizationStore {
 /** Outcome of one purchase-flow attempt; the entitlement is refreshed by the gate, not the store. */
 sealed interface PurchaseOutcome {
     data object Purchased : PurchaseOutcome
+
+    /** Google accepted the order but payment is still processing (offline cash, card delay). The next refresh decides. */
+    data object Pending : PurchaseOutcome
     data object Cancelled : PurchaseOutcome
     data object Unavailable : PurchaseOutcome
     data class Error(val message: String) : PurchaseOutcome

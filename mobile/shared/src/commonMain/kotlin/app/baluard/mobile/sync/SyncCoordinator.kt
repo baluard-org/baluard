@@ -33,10 +33,12 @@ class SyncCoordinator(
         config = new
     }
 
-    // ADR 0102: the subscription gate lives in the app layer, so the coordinator
-    // is the single choke point: when locked, no sync method reaches the vault.
-    // Reading current() per call means a lapse locks at the next event without
-    // any restart.
+    // ADR 0102: the subscription gate lives in the app layer. This coordinator
+    // gates every EVENT-driven sync path; the unlock-time activation tail is
+    // gated separately by the runtime autosync_allowed switch (set from
+    // AuthViewModel and the foreground refresh), so neither layer alone is
+    // trusted. Reading current() per call means a lapse locks at the next
+    // event without any restart.
     private fun gated(): Boolean = !Entitlements.current().syncUnlocked
 
     /**

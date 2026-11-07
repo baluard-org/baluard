@@ -17,6 +17,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -33,6 +34,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import app.baluard.mobile.data.UnlockResult
 import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.i18n.t
+import app.baluard.mobile.monetization.Entitlements
+import app.baluard.mobile.ui.components.UpgradeSheet
 import app.baluard.mobile.platform.platformLogE
 import app.baluard.mobile.platform.copyToClipboard
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
@@ -55,6 +58,15 @@ fun JoinSpaceDialog(
 ) {
     val repo = remember { VaultRepository() }
     val scope = rememberCoroutineScope()
+
+    // ADR 0102: joining a shared vault is a sharing surface, paid on store
+    // builds. The sheet replaces the dialog entirely; a purchase flips this
+    // live via the collected state and the join form takes over.
+    val entitlement by Entitlements.state.collectAsState()
+    if (!entitlement.sharingUnlocked) {
+        UpgradeSheet(shown = true, onDismiss = onDismiss)
+        return
+    }
 
     // Phase: form -> waiting (intro code shown, poll running).
     var phase by remember { mutableStateOf("form") }

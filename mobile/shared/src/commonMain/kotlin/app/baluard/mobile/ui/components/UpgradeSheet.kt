@@ -67,6 +67,10 @@ fun UpgradeSheet(
                                 busy = false
                                 onDismiss()
                             }
+                            PurchaseOutcome.Pending -> {
+                                busy = false
+                                resultLine = t("upgrade.pending")
+                            }
                             PurchaseOutcome.Cancelled -> {
                                 busy = false
                             }
