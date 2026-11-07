@@ -3,7 +3,7 @@
 # build-android-apk.sh — produce Baluard Android debug or release packages on macOS or Linux.
 #
 # One command: builds the Rust cdylib for all 4 ABIs, writes local.properties,
-# runs `./gradlew :androidApp:assembleDebug`, and prints the APK path.
+# runs the gradle assemble for the chosen flavor, and prints the APK path.
 #
 # Usage:
 #   ./scripts/build-android-apk.sh --release # signed release APK + Play AAB
@@ -213,9 +213,14 @@ export JAVA_HOME="$JDK17_HOME"
 export PATH="$JAVA_HOME/bin:$PATH"
 if [[ $DO_RELEASE -eq 1 ]]; then
   [[ $DO_E2E -eq 0 ]] || fail "--e2e is debug-only and cannot be combined with --release"
-  GRADLE_TASKS=(":androidApp:assembleRelease" ":androidApp:bundleRelease")
+  # Both flavors from the same source (ADR 0102): the fdroid APK ships to
+  # F-Droid ungated, the play APK/AAB carry the billing gates. The Play
+  # upload vehicle is the AAB.
+  GRADLE_TASKS=(":androidApp:assembleFdroidRelease" ":androidApp:assemblePlayRelease" ":androidApp:bundlePlayRelease")
 else
-  GRADLE_TASKS=(":androidApp:assembleDebug")
+  # Dev installs default to the fdroid flavor; BALUARD_ANDROID_FLAVOR=play for store-flavor dev testing.
+  FLAVOR="${BALUARD_ANDROID_FLAVOR:-fdroid}"
+  GRADLE_TASKS=(":androidApp:assemble${FLAVOR^}Debug")
 fi
 echo "==> ./gradlew ${GRADLE_TASKS[*]}  (JAVA_HOME=$JAVA_HOME)"
 GRADLE_ARGS=()
@@ -229,8 +234,9 @@ echo
 
 # ── Step 4: locate + report the packages ────────────────────────────────────
 if [[ $DO_RELEASE -eq 1 ]]; then
-  APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/release" -name '*.apk' 2>/dev/null | head -1 || true)"
-  AAB="$(find "$MOBILE_DIR/androidApp/build/outputs/bundle/release" -name '*.aab' 2>/dev/null | head -1 || true)"
+  APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/fdroid/release" -name '*.apk' 2>/dev/null | head -1 || true)"
+  PLAY_APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/play/release" -name '*.apk' 2>/dev/null | head -1 || true)"
+  AAB="$(find "$MOBILE_DIR/androidApp/build/outputs/bundle/play/release" -name '*.aab' 2>/dev/null | head -1 || true)"
   [[ -n "$APK" && -n "$AAB" ]] || fail "Gradle reported success but the release APK or AAB is missing"
   # A release APK with a broken signature must not reach fdroid-stage or
   # Play. build-tools ships apksigner; verify before reporting success.
@@ -238,12 +244,14 @@ if [[ $DO_RELEASE -eq 1 ]]; then
   [[ -n "$APKSIGNER" ]] || fail "apksigner not found under $SDK_ROOT/build-tools; cannot verify the release signature"
   echo "==> apksigner verify (release APK)"
   "$APKSIGNER" verify --print-certs "$APK" | sed -n '1,2p'
-  echo "==> Release APK ready: $APK"
-  echo "==> Play AAB ready:    $AAB"
+  echo "==> F-Droid release APK ready: $APK"
+  echo "==> Play AAB ready:            $AAB"
+  [[ -n "$PLAY_APK" ]] && echo "==> Play APK (side artifact):  $PLAY_APK"
 else
-  APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/debug" -name '*.apk' 2>/dev/null | head -1 || true)"
+  FLAVOR="${BALUARD_ANDROID_FLAVOR:-fdroid}"
+  APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/$FLAVOR/debug" -name '*.apk' 2>/dev/null | head -1 || true)"
   if [[ -z "$APK" ]]; then
-    fail "Gradle reported success but no debug APK found under androidApp/build/outputs/apk/debug/"
+    fail "Gradle reported success but no debug APK found under androidApp/build/outputs/apk/$FLAVOR/debug/"
   fi
   echo "==> APK ready:"
   echo "    $APK"

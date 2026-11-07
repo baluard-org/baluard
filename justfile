@@ -188,7 +188,7 @@ release-sign artifacts="dist":
 # ~/.baluard/release-gnupg and ~/.baluard/fdroid). The output is the root of
 # the baluard-org/repo GitHub Pages site; .nojekyll keeps Pages serving raw files.
 repo-stage artifacts="dist" out="repo-out":
-	just fdroid-stage mobile/androidApp/build/outputs/apk/release/androidApp-release.apk {{ out }}
+	just fdroid-stage mobile/androidApp/build/outputs/apk/fdroid/release/androidApp-fdroid-release.apk {{ out }}
 	./scripts/build-apt-repo.sh {{ artifacts }} {{ out }}
 	./scripts/build-rpm-repo.sh {{ artifacts }} {{ out }}
 	cp {{ artifacts }}/SHA256SUMS {{ out }}/SHA256SUMS
@@ -199,7 +199,7 @@ repo-stage artifacts="dist" out="repo-out":
 
 # Stage the signed Android APK and signed F-Droid indexes. The repository
 # signing key stays outside the public output tree.
-fdroid-stage apk="mobile/androidApp/build/outputs/apk/release/androidApp-release.apk" out="repo-out":
+fdroid-stage apk="mobile/androidApp/build/outputs/apk/fdroid/release/androidApp-fdroid-release.apk" out="repo-out":
 	./scripts/build-fdroid-repo.sh {{ apk }} {{ out }}/fdroid/repo
 
 # Mirror staged repositories into the website worktree. This never commits
@@ -211,7 +211,7 @@ repo-sync out="repo-out" site="../baluard-org":
 # synchronize the website worktree in one fail-fast pipeline.
 release-repositories artifacts="dist" out="repo-out" site="../baluard-org":
 	just ext-package {{ artifacts }}
-	just fdroid-stage mobile/androidApp/build/outputs/apk/release/androidApp-release.apk {{ out }}
+	just fdroid-stage mobile/androidApp/build/outputs/apk/fdroid/release/androidApp-fdroid-release.apk {{ out }}
 	just release-sign {{ artifacts }}
 	just repo-stage {{ artifacts }} {{ out }}
 	just repo-sync {{ out }} {{ site }}

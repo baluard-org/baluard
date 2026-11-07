@@ -9,8 +9,11 @@ import app.baluard.mobile.platform.TokenEncryption
  * (BaluardAutofillService + AutofillActivity). Without this the autofill
  * process never initializes [AppContextHolder], and every platform actual
  * that reads it (Keystore glue, vault registry, biometric) fails (plan gap 1).
+ *
+ * Open: the play/fdroid flavors subclass it to install their monetization
+ * store (ADR 0102).
  */
-class BaluardApplication : Application() {
+open class BaluardApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         AppContextHolder.set(this)
