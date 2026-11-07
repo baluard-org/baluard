@@ -43,7 +43,7 @@ android {
     val releaseStoreFile = file(releaseStorePath)
 
     namespace = "app.baluard.mobile"
-    compileSdk = 35
+    compileSdk = 36
     // BuildConfig carries the E2E gate: `-Pbaluard.e2e=true` produces a
     // build that skips FLAG_SECURE so Maestro can screenshot (E12).
     // Normal debug/release builds never see it.
@@ -57,7 +57,7 @@ android {
     defaultConfig {
         applicationId = "app.baluard.mobile"
         minSdk = 32
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1008
         versionName = "0.1.8"
         // Package only ABIs we ship a cdylib for. Alpha default: arm64-v8a
