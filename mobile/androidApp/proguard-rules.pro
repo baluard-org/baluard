@@ -44,3 +44,11 @@
 -keepclasseswithmembers class app.baluard.mobile.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+# ── Entitlement cache format (ADR 0102) ────────────────────────────────
+# The persisted cache encodes EntitlementPhase.name, so the constant names
+# must survive R8 or a renamed field would break decode across releases and
+# lock paying users out offline.
+-keepclassmembers enum app.baluard.mobile.monetization.EntitlementPhase {
+    <fields>;
+}
