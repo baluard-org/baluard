@@ -45,6 +45,21 @@ Never bump the Play version ahead of F-Droid for the same `versionName`: a Play 
 - The gated surfaces on the store build are sync, sharing, and TOTP code generation. The F-Droid APK is a separate ungated build (the flavor split carries no Google billing library, which F-Droid policy forbids). Desktop stays free.
 - Add tester emails as license testers so purchases are free during testing.
 
+### Billing implementation facts (landed in the play flavor)
+
+- Gate mechanics: `mobile/shared/src/commonMain/kotlin/app/baluard/mobile/monetization/Monetization.kt` holds the pure entitlement model. The persisted cache encodes `EntitlementPhase.name`, so `androidApp/proguard-rules.pro` pins that enum's fields — R8 renaming the constants would silently break decode across releases.
+- The store contract is two suspend calls: `query()` and `purchase()` returning a `PurchaseOutcome`. The gate queries first and loads the cache after, so a purchase landing mid-flight wins, and identical query results never rewrite the cache.
+- `PlayBillingStore` (androidApp/src/play) uses the billing-ktx suspend extensions `queryPurchasesAsync` and `queryProductDetails` — note the product-details one has NO Async suffix in 7.1.1 — from `com.android.billingclient.api`. `launchBillingFlow` needs an Activity, so the store tracks the resumed activity via lifecycle callbacks registered by `PlayMonetizationApplication`.
+- Acknowledgment happens in the purchases-updated listener; Google refunds unacknowledged subscriptions after 3 days.
+- The fdroid build seeds an in-memory permanently-unlocked cache: nothing persists and no fresh-install window can ever gate an F-Droid user.
+- Release guard: `mobile/scripts/build-android-apk.sh` greps the fdroid APK's dex pool for `com/android/billingclient` and fails the build if any billing class reaches it.
+
+## Store listing disclosure
+
+- The full description must disclose the subscription in plain terms: sync, authenticator codes, and shared-vault member management are part of the Baluard Supporter subscription (4.99 USD per year, auto-renewing, with a 14-day free trial through Google Play); the vault always stays on the device and nothing locks existing data.
+- Add the free-elsewhere line to defuse the GPL tension: the same app is available free on F-Droid.
+- Google's subscription policy also requires the price, term, and trial to be visible before purchase — the Google Play purchase sheet carries those, so the app copy only needs the plain-language disclosure.
+
 ## Automation
 
 No official Play MCP or CLI exists. The path is the Google Play Developer API (androidpublisher) driven by curl plus a service-account JWT, mirroring the Chrome Web Store pipeline:
