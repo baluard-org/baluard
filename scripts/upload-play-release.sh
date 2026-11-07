@@ -13,6 +13,9 @@ STATUS="${BALUARD_PLAY_RELEASE_STATUS:-completed}"
 MIN_TARGET_SDK="${BALUARD_PLAY_MIN_TARGET_SDK:-35}"
 SA_JSON="${BALUARD_PLAY_SERVICE_ACCOUNT_JSON:-$HOME/.baluard/play-service-account.json}"
 API_BASE="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PKG"
+# Media uploads live under the /upload/ host prefix; the plain URI accepts
+# metadata only (edits.bundles.upload reference).
+UPLOAD_BASE="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/$PKG"
 
 die() { echo "play: $*" >&2; exit 1; }
 
@@ -21,11 +24,12 @@ for tool in curl jq python3 openssl; do
 done
 
 case "$TRACK" in
+  internal | alpha) ;;
   production)
     [[ "${BALUARD_PLAY_ALLOW_PRODUCTION:-0}" == 1 ]] \
       || die "refusing track=production without BALUARD_PLAY_ALLOW_PRODUCTION=1; roll out production from the console where staged rollouts are configurable"
     ;;
-  *[!a-z0-9-]* | "") die "invalid BALUARD_PLAY_TRACK '$TRACK' (use lowercase letters, digits, hyphens)" ;;
+  *) die "BALUARD_PLAY_TRACK '$TRACK' is not supported; use internal (default), alpha (closed testing), or production with the allow flag" ;;
 esac
 case "$STATUS" in
   completed | draft) ;;
@@ -62,7 +66,7 @@ if command -v aapt2 >/dev/null; then
 else
   AAPT2=()
   if [[ -n "${ANDROID_HOME:-}" ]]; then
-    bt="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name aapt2 2>/dev/null | sort -V | tail -1)"
+    bt="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name aapt2 2>/dev/null | sort -V | tail -1 || true)"
     [[ -n "$bt" ]] && AAPT2=("$bt")
   fi
 fi
@@ -78,10 +82,11 @@ fi
 
 SEC="$(mktemp -d)"
 trap 'rm -rf "$SEC"' EXIT
+umask 077
 
 CLIENT_EMAIL="$(jq -r '.client_email // empty' "$SA_JSON")"
 [[ -n "$CLIENT_EMAIL" ]] || die "service account JSON has no client_email"
-python3 -c 'import json, sys; sys.stdout.write(json.load(open(sys.argv[1]))["private_key"])' "$SA_JSON" > "$SEC/privkey.pem" \
+python3 -I -c 'import json, sys; sys.stdout.write(json.load(open(sys.argv[1]))["private_key"])' "$SA_JSON" > "$SEC/privkey.pem" \
   || die "service account JSON has no usable private_key"
 chmod 600 "$SEC/privkey.pem"
 
@@ -92,6 +97,7 @@ PAYLOAD="$(printf '{"iss":"%s","scope":"https://www.googleapis.com/auth/androidp
   "$CLIENT_EMAIL" "$NOW" "$((NOW + 1200))" | b64url)"
 printf '%s.%s' "$HEADER" "$PAYLOAD" | openssl dgst -sha256 -binary -sign "$SEC/privkey.pem" | b64url > "$SEC/sig"
 printf '%s.%s.%s' "$HEADER" "$PAYLOAD" "$(cat "$SEC/sig")" > "$SEC/assertion"
+chmod 600 "$SEC/assertion"
 TOKEN="$(curl -sS --fail-with-body -o "$SEC/token.json" \
   --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
   --data-urlencode "assertion@$SEC/assertion" \
@@ -107,19 +113,21 @@ chmod 600 "$SEC/auth-header"
 
 api() { curl -sS --fail-with-body -H @"$SEC/auth-header" "$@"; }
 
-EDIT="$(api -X POST -d '' "$API_BASE/edits" | jq -r '.id // empty')" \
-  || die "creating the edit failed"
+EDIT="$(api -X POST -d '' "$API_BASE/edits" > "$SEC/resp" && jq -r '.id // empty' "$SEC/resp")" \
+  || die "creating the edit failed: $(head -c 300 "$SEC/resp" 2>/dev/null || echo 'no response')"
 [[ -n "$EDIT" ]] || die "edit creation returned no id"
 
-EXISTING="$(api "$API_BASE/edits/$EDIT/bundles" | jq '[.bundles[]?.versionCode] | index('"$CODE"') != null')" \
-  || die "listing existing bundles failed"
+EXISTING="$(api "$API_BASE/edits/$EDIT/bundles" > "$SEC/resp" \
+  && jq '[.bundles[]?.versionCode] | index('"$CODE"') != null' "$SEC/resp")" \
+  || die "listing existing bundles failed: $(head -c 300 "$SEC/resp" 2>/dev/null || echo 'no response')"
 if [[ "$EXISTING" == "true" ]]; then
   die "version code $CODE was already used on this app; bump the workspace version and rebuild before uploading"
 fi
 
-BUNDLE="$(api -X POST "$API_BASE/edits/$EDIT/bundles?uploadType=media" \
-  -H 'Content-Type: application/octet-stream' --data-binary "@$AAB")" || die "AAB upload failed"
-UPLOADED="$(jq -r '.versionCode // empty' <<<"$BUNDLE")"
+api -X POST "$UPLOAD_BASE/edits/$EDIT/bundles" \
+  -H 'Content-Type: application/octet-stream' --data-binary "@$AAB" > "$SEC/bundle.json" \
+  || die "AAB upload failed: $(head -c 300 "$SEC/bundle.json" 2>/dev/null || echo 'no response')"
+UPLOADED="$(jq -r '.versionCode // empty' "$SEC/bundle.json")"
 [[ "$UPLOADED" == "$CODE" ]] \
   || die "uploaded bundle reports versionCode '$UPLOADED', expected $CODE; workspace and AAB have drifted"
 
@@ -127,7 +135,7 @@ api -X PUT "$API_BASE/edits/$EDIT/tracks/$TRACK" -H 'Content-Type: application/j
   -d "{\"track\":\"$TRACK\",\"releases\":[{\"name\":\"$VER ($CODE)\",\"versionCodes\":[$CODE],\"status\":\"$STATUS\"}]}" \
   > "$SEC/track.json" || die "track assignment failed: $(head -c 300 "$SEC/track.json")"
 
-api -X POST -d '' "$API_BASE/edits/$EDIT:commit" >/dev/null \
-  || die "committing the edit failed; the uploaded bundle stays unassigned"
+api -X POST -d '' "$API_BASE/edits/$EDIT:commit" > "$SEC/resp" \
+  || die "committing the edit failed; the discarded edit takes the uploaded bundle with it: $(head -c 300 "$SEC/resp" 2>/dev/null || echo 'no response')"
 
 echo "play/$TRACK: released $VER ($CODE)"
