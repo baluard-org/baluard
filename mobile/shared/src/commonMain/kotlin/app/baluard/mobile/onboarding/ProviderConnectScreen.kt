@@ -56,6 +56,7 @@ import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.ui.components.UpgradeSheet
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
 import app.baluard.mobile.ui.components.BaluardTextField
+import app.baluard.mobile.ui.BackPressHandler
 
 /**
  * Provider picker styled after Baluard design language.
@@ -80,6 +81,7 @@ fun ProviderConnectScreen(
     val entitlement by Entitlements.state.collectAsState()
     if (!entitlement.syncUnlocked) {
         var showUpgrade by remember { mutableStateOf(false) }
+        BackPressHandler(onBack = onCancelled)
         BaluardAmbientBackground {
             Column(
                 modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -101,6 +103,12 @@ fun ProviderConnectScreen(
                         BaluardOutlinedButton(
                             text = t("upgrade.subscribe"),
                             onClick = { showUpgrade = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        BaluardOutlinedButton(
+                            text = t("common.back"),
+                            onClick = onCancelled,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

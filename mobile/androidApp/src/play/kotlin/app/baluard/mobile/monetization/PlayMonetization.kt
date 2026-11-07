@@ -49,6 +49,8 @@ class PlayMonetizationApplication : BaluardApplication() {
  */
 internal class PlayBillingStore(context: Context) : MonetizationStore {
 
+    override val isPaidStore: Boolean = true
+
     val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: Activity) {
             resumedActivity = activity

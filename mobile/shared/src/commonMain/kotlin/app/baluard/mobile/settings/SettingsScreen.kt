@@ -213,6 +213,15 @@ val entitlement by Entitlements.state.collectAsState()
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (selectedCategory == null) {
+                if (Entitlements.shouldShowSupporterStatus(entitlement)) {
+                    BaluardCard(animateSize = false) {
+                        Text(
+                            text = t("upgrade.title"),
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
                 SettingsCategoryIndex(
                     canManageSpace = myRole == "owner" || myRole == "admin",
                     onSelect = { selectedCategory = it },
