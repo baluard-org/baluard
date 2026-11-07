@@ -5,6 +5,24 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 class I18nParityTest {
+    private val QUOTED = Regex("\"([^\"]+)\"")
+    private val KEY_SHAPE = Regex("[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)+")
+
+    /**
+     * Dotted literals in a t(...) argument window that are not part of a `+`
+     * concat. Keys are dotted identifiers by contract, so the shape whitelist
+     * ignores comparison literals ("true", "owners") and dynamic suffixes
+     * ("Title") that share the window.
+     */
+    private fun keysIn(window: String): List<String> =
+        QUOTED.findAll(window).mapNotNull { m ->
+            val frag = m.groupValues[1]
+            if (!KEY_SHAPE.matches(frag)) return@mapNotNull null
+            val prev = window.substring(0, m.range.first).trimEnd().lastOrNull()
+            val next = window.substring(m.range.last + 1).trimStart().firstOrNull()
+            if (prev == '+' || next == '+') null else frag
+        }.toList()
+
     @Test
     fun enAndEsHaveExactSameKeys() {
         val missingInEs = EN.keys - ES.keys
@@ -55,14 +73,37 @@ class I18nParityTest {
         val missing = mutableMapOf<String, MutableList<String>>()
         for (file in sources) {
             val text = file.readText()
-            for (match in Regex("""\bt\(\s*"([^"]+)"""").findAll(text)) {
-                val key = match.groupValues[1]
-                // Dynamic prefixes (t("people." + kind + "Title")) scan as a
-                // trailing-dot literal; their completions are runtime data.
-                if (key.endsWith(".")) continue
-                if (key !in EN.keys) missing.getOrPut(key) { mutableListOf() }.add(file.name)
+            // Scan every quoted string inside each t(...) argument list.
+            // Matching only the plain t("key") shape misses the conditional
+            // t(if (..) "a" else "b") form, which is exactly how the raw-key
+            // delete-dialog defect shipped.
+            for (call in Regex("""\bt\(""").findAll(text)) {
+                var depth = 0
+                var i = call.range.first + call.value.length
+                val window = StringBuilder()
+                while (i < text.length) {
+                    when (val c = text[i]) {
+                        '(' -> depth++
+                        ')' -> if (depth == 0) break else depth--
+                        else -> window.append(c)
+                    }
+                    i++
+                }
+                for (key in keysIn(window.toString())) {
+                    if (key !in EN.keys) missing.getOrPut(key) { mutableListOf() }.add(file.name)
+                }
             }
         }
         assertTrue(missing.isEmpty(), "Rendered keys missing from EN: $missing")
+    }
+
+    /**
+     * The rendered-key scanner's whitelist assumes every key is a dotted
+     * identifier; enforce the assumption instead of letting it rot silently.
+     */
+    @Test
+    fun enKeysAreKeyShaped() {
+        val odd = EN.keys.filter { !KEY_SHAPE.matches(it) }
+        assertTrue(odd.isEmpty(), "EN keys not matching key shape: $odd")
     }
 }

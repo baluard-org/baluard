@@ -2,6 +2,10 @@
 
 Notable user-facing changes per release.
 
+## [UNRELEASED]
+
+- The delete confirmation and the import dialog on mobile now show real text instead of raw keys like detail.deleteBody.
+
 ## 0.1.7 - 2026-11-06
 
 - The app icon is a grey tile with the lock casting a soft shadow onto it, so it stays visible on dark taskbars and docks.
