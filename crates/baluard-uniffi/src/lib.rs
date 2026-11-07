@@ -495,6 +495,13 @@ impl MobileVault {
         self.state.is_unlocked().await
     }
 
+    /// ADR 0102: the app layer gates the unlock-time auto-sync tail on the
+    /// subscription entitlement. Default is on; the play flavor turns it off
+    /// while locked, and off also stops a loop an earlier entitled unlock started.
+    pub async fn set_autosync_allowed(&self, allowed: bool) {
+        self.state.set_autosync_allowed(allowed).await;
+    }
+
     // ── Cipher CRUD (Phase 3 list/detail + Phase 4 edit/TOTP) ────────────
     // The runtime's get/add/update ciphers use JSON strings (the daemon wire
     // format — see AGENTS.md "Daemon Wire Format"). We pass those through the

@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -74,7 +75,8 @@ fun PeopleScreen(
 ) {
     // ADR 0102: member surfaces are paid on store builds. A single-user vault
     // stays fully usable — this screen just shows the upgrade path when locked.
-    if (!Entitlements.current().sharingUnlocked) {
+    val entitlement by Entitlements.state.collectAsState()
+    if (!entitlement.sharingUnlocked) {
         Scaffold(
             topBar = { BaluardTopBar(title = t("people.title"), onBack = onBack) },
         ) { padding ->

@@ -55,6 +55,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -183,6 +184,7 @@ fun SettingsScreen(
     // beat + settle), same as the hub's sync button.
     var syncPhase by remember { mutableStateOf(SyncPhase.Idle) }
 var showSyncUpgrade by remember { mutableStateOf(false) }
+val entitlement by Entitlements.state.collectAsState()
     var selectedCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var myRole by remember { mutableStateOf("viewer") }
     LaunchedEffect(vault) {
@@ -297,7 +299,7 @@ var showSyncUpgrade by remember { mutableStateOf(false) }
                     onClick = {
                         // ADR 0102: sync is gated on store builds; the button
                         // opens the upgrade sheet instead of doing nothing.
-                        if (!Entitlements.current().syncUnlocked) {
+                        if (!entitlement.syncUnlocked) {
                             showSyncUpgrade = true
                         } else if (syncPhase == SyncPhase.Idle) {
                             scope.launch {
@@ -338,7 +340,7 @@ var showSyncUpgrade by remember { mutableStateOf(false) }
             var gitCustomOk by remember { mutableStateOf(false) }
 
             SectionCard(title = t("settings.sync")) {
-                if (!Entitlements.current().syncUnlocked) {
+                if (!entitlement.syncUnlocked) {
                     Text(
                         t("upgrade.body"),
                         style = MaterialTheme.typography.bodyMedium,

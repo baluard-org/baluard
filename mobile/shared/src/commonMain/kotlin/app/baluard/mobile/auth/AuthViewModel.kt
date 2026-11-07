@@ -4,6 +4,7 @@ import app.baluard.mobile.data.UnlockResult
 import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.BaluardException
 import app.baluard.mobile.MobileVault
+import app.baluard.mobile.monetization.Entitlements
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
@@ -21,6 +22,10 @@ import app.baluard.mobile.platform.withSecurityKeyTransport
  * The KDF stays user-serialized — one password prompt runs one KDF.
  */
 class AuthViewModel(private val repo: VaultRepository) {
+
+    /** ADR 0102: apply the entitlement to every session's unlock-tail sync switch. */
+    suspend fun applyAutosyncPolicy(allowed: Boolean) = session.applyAutosyncPolicy(allowed)
+
     /**
      * G24 §4.9 merged app-search source: every OTHER still-unlocked session
      * whose vault passes the merge-eligibility sniff. (path, name, handle).
@@ -62,6 +67,9 @@ class AuthViewModel(private val repo: VaultRepository) {
     suspend fun openAndUnlock(path: String, password: String): UnlockResult {
         return try {
             val v = repo.openVault(path)
+            // ADR 0102: set the unlock-tail sync switch BEFORE unlocking so a
+            // locked entitlement never activates sync for a vault with a remote.
+            runCatching { v.setAutosyncAllowed(Entitlements.current().syncUnlocked) }
             if (requiresSecurityKey(v)) {
                 withSecurityKeyTransport { v.unlockWithSecurityKey(password, it) }
             } else {

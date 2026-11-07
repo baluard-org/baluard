@@ -1404,6 +1404,11 @@ internal interface UniffiLib : Library {
     `oldPassword`: RustBuffer.ByValue,
   ): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_set_autosync_allowed(
+    `ptr`: Pointer,
+    `allowed`: Byte,
+  ): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_set_collection(
     `ptr`: Pointer,
     `cipherId`: RustBuffer.ByValue,
@@ -2123,6 +2128,8 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_rotate_recovery_phrase(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_set_autosync_allowed(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_set_collection(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_set_settings(): Short
@@ -2614,6 +2621,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_rotate_recovery_phrase() != 51277.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_set_autosync_allowed() != 21113.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_set_collection() != 45662.toShort()) {
@@ -4812,6 +4822,13 @@ public interface MobileVaultInterface {
    * must use the Space Recovery Kit. Returns {phrase}.
    */
   suspend fun `rotateRecoveryPhrase`(`oldPassword`: kotlin.String): kotlin.String
+
+  /**
+   * ADR 0102: the app layer gates the unlock-time auto-sync tail on the
+   * subscription entitlement. Default is on; the play flavor turns it off
+   * while locked, and off also stops a loop an earlier entitled unlock started.
+   */
+  suspend fun `setAutosyncAllowed`(`allowed`: kotlin.Boolean)
 
   /**
    * Assign an entry to a shared collection (None unassigns). Same grant
@@ -8079,6 +8096,29 @@ open class MobileVault :
       { FfiConverterString.lift(it) },
       // Error FFI converter
       BaluardException.ErrorHandler,
+    )
+
+  /**
+   * ADR 0102: the app layer gates the unlock-time auto-sync tail on the
+   * subscription entitlement. Default is on; the play flavor turns it off
+   * while locked, and off also stops a loop an earlier entitled unlock started.
+   */
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `setAutosyncAllowed`(`allowed`: kotlin.Boolean) =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_set_autosync_allowed(
+          thisPtr,
+          FfiConverterBoolean.lower(`allowed`),
+        )
+      },
+      { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+      // lift function
+      { Unit },
+      // Error FFI converter
+      UniffiNullRustCallStatusErrorHandler,
     )
 
   /**

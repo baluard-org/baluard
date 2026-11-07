@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,6 +52,8 @@ import app.baluard.mobile.ui.components.BaluardAmbientBackground
 import app.baluard.mobile.ui.components.BaluardCard
 import app.baluard.mobile.ui.components.BaluardLogoBadge
 import app.baluard.mobile.ui.components.BaluardOutlinedButton
+import app.baluard.mobile.monetization.Entitlements
+import app.baluard.mobile.ui.components.UpgradeSheet
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
 import app.baluard.mobile.ui.components.BaluardTextField
 
@@ -70,6 +73,43 @@ fun ProviderConnectScreen(
     // is correct behavior for a secret.
     var token by remember { mutableStateOf("") }
     var showPat by rememberSaveable { mutableStateOf(false) }
+
+    // ADR 0102: connecting a provider exists to sync, so the whole flow is
+    // paid on store builds. Collecting the state lets a purchase from the
+    // sheet land live without navigation.
+    val entitlement by Entitlements.state.collectAsState()
+    if (!entitlement.syncUnlocked) {
+        var showUpgrade by remember { mutableStateOf(false) }
+        BaluardAmbientBackground {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                BaluardCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            t("upgrade.title"),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
+                        Text(
+                            t("upgrade.body"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(bottom = 12.dp),
+                        )
+                        BaluardOutlinedButton(
+                            text = t("upgrade.subscribe"),
+                            onClick = { showUpgrade = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+            UpgradeSheet(shown = showUpgrade, onDismiss = { showUpgrade = false })
+        }
+        return
+    }
 
     BaluardAmbientBackground {
         Column(

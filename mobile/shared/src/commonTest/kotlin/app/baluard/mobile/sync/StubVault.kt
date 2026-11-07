@@ -84,6 +84,7 @@ open class StubVault(
     override suspend fun unarchiveCipher(id: String) { calls += "unarchiveCipher" }
     override suspend fun restoreCipher(id: String) { calls += "restoreCipher" }
     override suspend fun deviceId(): String = "stub-device"
+override suspend fun setAutosyncAllowed(allowed: Boolean) { calls += "setAutosyncAllowed:$allowed" }
     override suspend fun listArchivedCiphers(): List<MobileCipherMeta> = err()
     override suspend fun listTotpCiphers(): List<MobileCipherMeta> = err()
     override suspend fun listTrashCiphers(): List<MobileCipherMeta> = err()

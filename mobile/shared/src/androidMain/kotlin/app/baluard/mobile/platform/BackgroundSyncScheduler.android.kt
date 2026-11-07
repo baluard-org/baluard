@@ -28,12 +28,8 @@ actual class BackgroundSyncScheduler {
         // ADR 0102: background sync is a sync surface, so the subscription gate
         // blocks scheduling AND cancels already-enqueued work when the
         // entitlement lapses between settings changes.
-        if (enabled && !Entitlements.current().syncUnlocked) {
-            WorkManager.getInstance(AppContextHolder.require()).cancelUniqueWork(WORK_NAME)
-            return
-        }
         val wm = WorkManager.getInstance(AppContextHolder.require())
-        if (!enabled) {
+        if (!enabled || !Entitlements.current().syncUnlocked) {
             wm.cancelUniqueWork(WORK_NAME)
             return
         }

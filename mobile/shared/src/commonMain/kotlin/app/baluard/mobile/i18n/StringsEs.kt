@@ -14,6 +14,7 @@ internal val ES: Map<String, String> = mapOf(
     "upgrade.title" to "Baluard Supporter",
     "upgrade.body" to "La sincronización, los códigos de autenticador y las bóvedas compartidas son parte de Baluard Supporter en esta app. Tu bóveda sigue en el dispositivo igualmente: nada de esto bloquea tus datos.",
     "upgrade.subscribe" to "Suscribirse",
+    "upgrade.pending" to "Pago pendiente: se activa cuando Google lo confirme.",
     "upgrade.busy" to "Abriendo…",
     "upgrade.unavailable" to "La suscripción no está disponible ahora. Revisa tu conexión y vuelve a intentarlo.",
     "upgrade.failed" to "Algo salió mal con la compra. Inténtalo de nuevo.",

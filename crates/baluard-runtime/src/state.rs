@@ -122,6 +122,9 @@ pub struct VaultState {
     /// Auto-sync coordinator. Activated on unlock when the vault has a remote
     /// + connected provider. Cheap clone (Arc inside).
     pub autosync: crate::autosync::AutoSyncHandle,
+    /// ADR 0102: the mobile app layer flips this off so a locked store build
+    /// never auto-activates sync on unlock. Arc so all clones share one switch.
+    autosync_allowed: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Why a quick-unlock primitive failed. The daemon rate limiter charges
@@ -200,6 +203,7 @@ impl VaultState {
             pin_failures: std::sync::atomic::AtomicU32::new(0),
             agent_grants: crate::agents::AgentGrants::new(),
             autosync,
+            autosync_allowed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 
@@ -723,7 +727,10 @@ impl VaultState {
                 .unwrap_or(false);
                 // E2E harness opt-out: explicit sync commands in tests must
                 // not race the debounced background push/pull.
-                if has_remote && std::env::var("BALUARD_AUTOSYNC").ok().as_deref() != Some("0") {
+                if has_remote
+                    && self.autosync_allowed.load(Ordering::SeqCst)
+                    && std::env::var("BALUARD_AUTOSYNC").ok().as_deref() != Some("0")
+                {
                     self.autosync
                         .activate(device_id.clone(), devkey_seal, enroll_vk)
                         .await;
@@ -943,6 +950,18 @@ impl VaultState {
     /// loop cannot outlive the map entry.
     pub async fn autosync_deactivate(&self) {
         self.autosync.deactivate().await;
+    }
+
+    /// ADR 0102: the mobile app layer turns unlock-time auto-sync on or off
+    /// with the subscription entitlement. Off also stops a loop that an
+    /// earlier entitled unlock started, so a lapse mid-session takes effect
+    /// without waiting for the next event.
+    pub async fn set_autosync_allowed(&self, allowed: bool) {
+        self.autosync_allowed
+            .store(allowed, std::sync::atomic::Ordering::SeqCst);
+        if !allowed {
+            self.autosync.deactivate().await;
+        }
     }
 
     /// Lock the vault, zeroizing keys in memory. Clears the session token.

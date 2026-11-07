@@ -58,6 +58,18 @@ class MultiVaultSession(
     // this map from a Binder thread. LRU order is maintained by re-inserting
     // on the mutation paths instead.
     private val sessions = LinkedHashMap<String, SessionEntry>()
+
+    /**
+     * ADR 0102: apply the entitlement to every session's unlock-tail sync
+     * switch. [allowed] false stops any loop an entitled unlock started, so a
+     * lapse lands without waiting for the next lock.
+     */
+    suspend fun applyAutosyncPolicy(allowed: Boolean) {
+        for (entry in sessions.values) {
+            val handle = entry.vault.mobile ?: continue
+            runCatching { handle.setAutosyncAllowed(allowed) }
+        }
+    }
     private val mapLock = Mutex()
 
     /** The active vault's handle, or null when nothing is unlocked. */

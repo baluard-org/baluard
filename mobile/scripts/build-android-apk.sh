@@ -251,8 +251,12 @@ APKSIGNER="$(find "$SDK_ROOT/build-tools" -name apksigner -type f 2>/dev/null | 
   echo "==> apksigner verify (release APK)"
   "$APKSIGNER" verify --print-certs "$APK" | sed -n '1,2p'
   # ADR 0102 hard gate: the fdroid APK must never carry Google billing
-  # classes. Grep the dex string pool for the package descriptor.
-  if unzip -p "$APK" 'classes*.dex' 2>/dev/null | grep -aq 'com/android/billingclient'; then
+  # classes. Grep the dex string pool for the package descriptor. Count form:
+  # grep -q stops reading at the first match, unzip dies on SIGPIPE, and
+  # pipefail flips the matched pipeline into failure - the gate would pass in
+  # exactly the case it exists to catch.
+  BILLING_HITS="$(unzip -p "$APK" 'classes*.dex' 2>/dev/null | grep -ac 'com/android/billingclient' || true)"
+  if [[ "${BILLING_HITS:-0}" -gt 0 ]]; then
     fail "billing classes found in the fdroid APK; the play/fdroid split is broken (ADR 0102)"
   fi
   echo "==> F-Droid release APK ready: $APK"
