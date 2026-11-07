@@ -46,6 +46,7 @@ See [the ADR index](adr/index.md) for the full numbered list.
 | [Translations & Localization](dev/translations.md) | Guide for adding and maintaining desktop and mobile language translations |
 | [Linux Repositories](dev/linux-repositories.md) | GPG-verified apt and dnf package repositories: user setup, key fingerprint, direct-download verification |
 | [Release Protocol](dev/release-protocol.md) | Shipping runbook for every variant: version bump, signing keys and store credentials, build matrix (Linux/macOS/Windows/extension/Android), the release pipeline, store publishing, update channels |
+| [Google Play](dev/google-play.md) | Play Console runbook: signing and version-code rules, testing tracks, console declarations, listing kit, the subscription model, and the per-release flow |
 | [Git Provider Apps & Tokens](dev/git-provider-apps-and-tokens.md) | App registration credentials and token management for GitHub, GitLab, and Codeberg |
 
 ## Design
