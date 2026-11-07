@@ -4,7 +4,11 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-- The Google Play build now gates sync, authenticator codes, and shared-vault member management behind the Baluard Supporter subscription, with an in-app upgrade sheet and a 14-day trial handled by Google Play. Your vault stays on the device either way. The F-Droid build stays fully free and carries no billing code.
+- Nothing yet.
+
+## 0.1.10 - 2026-11-07
+
+- The Google Play build now gates sync, authenticator codes, and shared-vault member management behind the Baluard Supporter subscription, with an in-app upgrade sheet and a 14-day trial handled by Google Play. Subscribing or lapsing applies without restarting the app. Your vault stays on the device either way. The F-Droid build stays fully free and carries no billing code.
 
 ## 0.1.8 - 2026-11-06
 
