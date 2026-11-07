@@ -239,7 +239,9 @@ echo
 # ── Step 4: locate + report the packages ────────────────────────────────────
 if [[ $DO_RELEASE -eq 1 ]]; then
   APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/fdroid/release" -name '*.apk' 2>/dev/null | head -1 || true)"
-  AAB="$(find "$MOBILE_DIR/androidApp/build/outputs/bundle/play/release" -name '*.aab' 2>/dev/null | head -1 || true)"
+  # Gradle capitalizes the flavor in bundle output dirs (playRelease) while
+  # apk dirs stay lowercase (fdroid).
+  AAB="$(find "$MOBILE_DIR/androidApp/build/outputs/bundle/playRelease" -name '*.aab' 2>/dev/null | head -1 || true)"
   [[ -n "$APK" && -n "$AAB" ]] || fail "Gradle reported success but the release APK or AAB is missing"
   # A release APK with a broken signature must not reach fdroid-stage or
   # Play. build-tools ships apksigner; verify before reporting success.
