@@ -1199,7 +1199,7 @@ build-signed: build-release
 
 # ── Mobile (Android) ────────────────────────────────────────────────────────
 # Build the Android debug APK. Runs on a macOS host: builds the Rust cdylib for
-# all 4 ABIs, writes local.properties, runs `./gradlew :androidApp:assembleDebug`.
+# all 4 ABIs, writes local.properties, runs `./gradlew :androidApp:assembleFdroidDebug`.
 # Prereqs + flags: see mobile/scripts/build-android-apk.sh and docs/dev/dev-setup-mobile.md.
 android-apk:
 	cd mobile && ./scripts/build-android-apk.sh

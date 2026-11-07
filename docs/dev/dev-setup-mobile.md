@@ -347,8 +347,8 @@ printf 'sdk.dir=/opt/homebrew/share/android-commandlinetools\n' > mobile/local.p
 ```sh
 cd mobile
 /tmp/gradle-8.10/bin/gradle wrapper --gradle-version 8.10   # generates ./gradlew
-./gradlew :androidApp:assembleDebug
-# -> androidApp/build/outputs/apk/debug/androidApp-debug.apk
+./gradlew :androidApp:assembleFdroidDebug
+# -> androidApp/build/outputs/apk/fdroid/debug/androidApp-fdroid-debug.apk
 ```
 
 Every `./gradlew` invocation needs `JAVA_HOME` set to JDK 17 (Gotcha 6).
@@ -370,7 +370,7 @@ Every `./gradlew` invocation needs `JAVA_HOME` set to JDK 17 (Gotcha 6).
 4. Install + launch:
 
    ```sh
-   adb install mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk
+   adb install mobile/androidApp/build/outputs/apk/fdroid/debug/androidApp-fdroid-debug.apk
    adb shell am start -n app.baluard.mobile/.MainActivity
    ```
 
@@ -447,7 +447,7 @@ host cdylib + UniFFI binding regenerated and committed):
    the real `FillCallback` API. Full AssistStructure parsing, KEK-gated unlock, and inline suggestions landed in Phase 6.
 
 **BUILD SUCCESSFUL (2026-07-30).** `just android-apk` produces
-`mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk` (~69 MB debug;
+`mobile/androidApp/build/outputs/apk/fdroid/debug/androidApp-fdroid-debug.apk` (~69 MB debug;
 4 ABIs x ~13 MB Rust `.so` + JNA + Compose runtime, release + ABI splits shrink
 this in Phase 8).
 
@@ -522,7 +522,7 @@ cd mobile && gradle wrapper --gradle-version 8.10   # first time only
 ./gradlew :androidApp:assembleDebug
 
 # --- device ---
-adb install androidApp/build/outputs/apk/debug/androidApp-debug.apk
+adb install androidApp/build/outputs/apk/fdroid/debug/androidApp-fdroid-debug.apk
 adb shell am start -n app.baluard.mobile/.MainActivity
 adb logcat -v time | grep -iE "baluard|uniffi|FATAL|AndroidRuntime"
 
