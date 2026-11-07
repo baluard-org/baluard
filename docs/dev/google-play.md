@@ -6,7 +6,7 @@ Baluard ships to Google Play as a free listing with an in-app subscription (ADR 
 
 - Package: `app.baluard.mobile`. Developer account: `baluardorg@gmail.com` (developer id 6959677981119303519, personal account).
 - Console: play.google.com/console, app card "Baluard". Until the first production review passes, testers see the temporary name `app.baluard.mobile (unreviewed)`.
-- The upload vehicle is an AAB; Play accepts AAB only for new apps. `just android-apk-release` emits both artifacts from the flavor split (ADR 0102): the F-Droid APK (ungated) at `mobile/androidApp/build/outputs/apk/fdroid/release/androidApp-fdroid-release.apk` and the AAB (for Play) at `mobile/androidApp/build/outputs/bundle/play/release/androidApp-play-release.aab`.
+- The upload vehicle is an AAB; Play accepts AAB only for new apps. `just android-apk-release` emits both artifacts from the flavor split (ADR 0102): the F-Droid APK (ungated) at `mobile/androidApp/build/outputs/apk/fdroid/release/androidApp-fdroid-release.apk` and the AAB (for Play) at `mobile/androidApp/build/outputs/bundle/playRelease/androidApp-play-release.aab`.
 
 ## Signing
 
