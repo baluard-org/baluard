@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+## 0.1.8 - 2026-11-06
+
 - The delete confirmation and the import dialog on mobile now show real text instead of raw keys like detail.deleteBody.
 
 ## 0.1.7 - 2026-11-06

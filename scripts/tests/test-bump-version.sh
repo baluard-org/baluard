@@ -22,6 +22,17 @@ cp "$ROOT/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.
   "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/"
 cp "$ROOT/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEs.kt" \
   "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/"
+cp "$ROOT/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsFr.kt" \
+  "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/"
+cp "$ROOT/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsPt.kt" \
+  "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/"
+# Simulate the drift that shipped: Fr stale at an old version, Pt a bare
+# label. The bump must key on the settings.version key, not on any version
+# literal, so both shapes land on the new version.
+sed -i 's|Baluard Mobile v[0-9.]*|Baluard Mobile v0.1.0|' \
+  "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsFr.kt"
+sed -i 's|"settings.version" to "[^"]*"|"settings.version" to "Versao"|' \
+  "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsPt.kt"
 cp "$ROOT/browser/shared/package.json" "$SANDBOX/browser/shared/package.json"
 cp "$ROOT/browser/shared/manifest.base.json" "$SANDBOX/browser/shared/"
 
@@ -59,6 +70,8 @@ expect_new mobile/androidApp/build.gradle.kts 'versionName = "0.2.0"'
 expect_new mobile/androidApp/build.gradle.kts 'versionCode = 2000'
 expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.kt 'Baluard Mobile v0.2.0'
 expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEs.kt 'Baluard Mobile v0.2.0'
+expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsFr.kt 'Baluard Mobile v0.2.0'
+expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsPt.kt 'Baluard Mobile v0.2.0'
 
 # The bump rebuilds the committed extension dists (B11).
 if [[ ! -s "$TMP/npm.log" ]]; then
