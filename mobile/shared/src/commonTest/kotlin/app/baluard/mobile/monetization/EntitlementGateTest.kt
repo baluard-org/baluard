@@ -12,7 +12,7 @@ private const val NOW = 1_794_000_000_000L
 /** Scripted store: each query returns [next]; can throw to simulate billing crashes. */
 private class FakeStore(
     var next: StoreQuery,
-    var purchaseResult: Boolean = false,
+    var purchaseOutcome: PurchaseOutcome = PurchaseOutcome.Unavailable,
     var throwOnQuery: Boolean = false,
 ) : MonetizationStore {
     var queryCalls = 0
@@ -22,7 +22,7 @@ private class FakeStore(
         return next
     }
 
-    override suspend fun launchPurchase() = purchaseResult
+    override suspend fun purchase() = purchaseOutcome
 }
 
 /** Cache spy counting saves, so tests can assert write suppression. */
@@ -119,8 +119,33 @@ class EntitlementGateTest {
     fun purchase_refreshes_the_cache() = runTest {
         val gate = EntitlementGate { NOW }
         val cache = MemoryEntitlementCache()
-        gate.initialize(FakeStore(StoreQuery.Purchased(willRenew = true), purchaseResult = true), cache)
-        assertTrue(gate.purchase())
+        gate.initialize(
+            FakeStore(StoreQuery.Purchased(willRenew = true), purchaseOutcome = PurchaseOutcome.Purchased),
+            cache,
+        )
+        assertEquals(PurchaseOutcome.Purchased, gate.purchase())
         assertEquals(EntitlementPhase.Unlocked, gate.current().phase)
+    }
+
+    @Test
+    fun purchase_cancellation_does_not_refresh() = runTest {
+        val gate = EntitlementGate { NOW }
+        val cache = MemoryEntitlementCache().apply { save(CachedEntitlement(EntitlementPhase.Locked)) }
+        gate.initialize(
+            FakeStore(StoreQuery.NothingActive, purchaseOutcome = PurchaseOutcome.Cancelled),
+            cache,
+        )
+        assertEquals(PurchaseOutcome.Cancelled, gate.purchase())
+        assertEquals(EntitlementPhase.Locked, gate.current().phase)
+    }
+
+    @Test
+    fun purchase_store_crash_maps_to_error() = runTest {
+        val gate = EntitlementGate { NOW }
+        gate.initialize(object : MonetizationStore {
+            override suspend fun query() = StoreQuery.NothingActive
+            override suspend fun purchase(): PurchaseOutcome = throw RuntimeException("sheet died")
+        }, MemoryEntitlementCache())
+        assertTrue(gate.purchase() is PurchaseOutcome.Error)
     }
 }

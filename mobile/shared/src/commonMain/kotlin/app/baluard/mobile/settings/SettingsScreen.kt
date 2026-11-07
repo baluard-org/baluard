@@ -90,6 +90,7 @@ import app.baluard.mobile.ui.toast.Toast
 import app.baluard.mobile.data.vaultTimeoutLabel
 import app.baluard.mobile.detail.str
 import app.baluard.mobile.i18n.t
+import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.platform.AutofillRole
 import app.baluard.mobile.platform.AutofillSuggestions
 import app.baluard.mobile.platform.AccessibilityFill
@@ -122,6 +123,7 @@ import app.baluard.mobile.ui.components.LabeledPreset
 import app.baluard.mobile.ui.components.PresetDropdown
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.components.ToggleRow
+import app.baluard.mobile.ui.components.UpgradeSheet
 import app.baluard.mobile.ui.BackPressHandler
 
 /** i18n key for a pending sensitive-op kind; unknown kinds fall
@@ -180,6 +182,7 @@ fun SettingsScreen(
     // Sync-now feedback: shared runner choreography (spinner hold + terminal
     // beat + settle), same as the hub's sync button.
     var syncPhase by remember { mutableStateOf(SyncPhase.Idle) }
+var showSyncUpgrade by remember { mutableStateOf(false) }
     var selectedCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var myRole by remember { mutableStateOf("viewer") }
     LaunchedEffect(vault) {
@@ -292,7 +295,11 @@ fun SettingsScreen(
                         else -> t("settings.syncNow")
                     },
                     onClick = {
-                        if (syncPhase == SyncPhase.Idle) {
+                        // ADR 0102: sync is gated on store builds; the button
+                        // opens the upgrade sheet instead of doing nothing.
+                        if (!Entitlements.current().syncUnlocked) {
+                            showSyncUpgrade = true
+                        } else if (syncPhase == SyncPhase.Idle) {
                             scope.launch {
                                 runSyncCycle(
                                     doPull = { coordinator.pullNow(vault) },
@@ -331,6 +338,18 @@ fun SettingsScreen(
             var gitCustomOk by remember { mutableStateOf(false) }
 
             SectionCard(title = t("settings.sync")) {
+                if (!Entitlements.current().syncUnlocked) {
+                    Text(
+                        t("upgrade.body"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    BaluardOutlinedButton(
+                        text = t("upgrade.subscribe"),
+                        onClick = { showSyncUpgrade = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
                 ToggleRow(t("settings.syncOnUnlock"), config.syncOnUnlock) {
                     viewModel.setSyncOnUnlock(it)
                 }
@@ -369,7 +388,9 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 2.dp),
                 )
+                }
             }
+            UpgradeSheet(shown = showSyncUpgrade, onDismiss = { showSyncUpgrade = false })
 
             if (showGitBackup) {
                 // The PAT is a secret: every close path scrubs the

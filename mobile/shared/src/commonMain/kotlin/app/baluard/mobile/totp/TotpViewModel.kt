@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.data.VaultRepository
+import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.platform.Clock
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -30,6 +31,13 @@ class TotpViewModel(private val repo: VaultRepository) {
      * returns "code seconds_remaining"; we parse defensively).
      */
     suspend fun start(vault: MobileVault, cipherId: String) {
+        // ADR 0102: generation is paid, storing the seed stays free. Read per
+        // call so a lapse mid-session locks the next card open.
+        val entitlement = Entitlements.current()
+        if (!entitlement.totpUnlocked) {
+            _state.value = TotpState.Locked(entitlement.trialDaysLeft)
+            return
+        }
         _state.value = TotpState.Loading
         try {
             _state.value = fetch(vault, cipherId).let { (c, s, period) ->
@@ -104,5 +112,8 @@ sealed interface TotpState {
         /** The token's full window; progress bars scale against it. */
         val periodSeconds: Int = 30,
     ) : TotpState
+
+    /** Subscription gate (ADR 0102); the editor still shows the stored seed. */
+    data class Locked(val trialDaysLeft: Int?) : TotpState
     data class Error(val message: String) : TotpState
 }
