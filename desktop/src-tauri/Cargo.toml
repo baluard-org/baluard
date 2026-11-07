@@ -1,6 +1,6 @@
 [package]
 name = "baluard-desktop"
-version = "0.1.10"
+version = "0.1.11"
 description = "Baluard desktop app"
 authors = ["EstebanForge"]
 license = "GPL-3.0"
