@@ -91,8 +91,6 @@ desktop/src-tauri/nmh-manifests/
 cache/
 logs/
 
-# Generated app icons (regenerate via `just app-icons`, not committed)
-assets/app-icons/
 mobile/keystore/
 
 # Stable-name release staging output (uploaded to the GitHub release)
