@@ -73,7 +73,7 @@ kotlin {
 
 android {
     namespace = "app.baluard.mobile.shared"
-    compileSdk = 35
+    compileSdk = 36
     buildFeatures {
         buildConfig = true
     }
