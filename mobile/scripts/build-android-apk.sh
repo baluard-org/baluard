@@ -243,8 +243,11 @@ if [[ $DO_RELEASE -eq 1 ]]; then
   [[ -n "$APK" && -n "$AAB" ]] || fail "Gradle reported success but the release APK or AAB is missing"
   # A release APK with a broken signature must not reach fdroid-stage or
   # Play. build-tools ships apksigner; verify before reporting success.
-  APKSIGNER="$(find "$SDK_ROOT/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -1 || true)"
+APKSIGNER="$(find "$SDK_ROOT/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -1 || true)"
   [[ -n "$APKSIGNER" ]] || fail "apksigner not found under $SDK_ROOT/build-tools; cannot verify the release signature"
+  # The billing dex gate below needs unzip; failing open there would ship
+  # billing classes in the fdroid APK (ADR 0102).
+  command -v unzip >/dev/null 2>&1 || fail "unzip not found on PATH; cannot run the fdroid billing gate"
   echo "==> apksigner verify (release APK)"
   "$APKSIGNER" verify --print-certs "$APK" | sed -n '1,2p'
   # ADR 0102 hard gate: the fdroid APK must never carry Google billing

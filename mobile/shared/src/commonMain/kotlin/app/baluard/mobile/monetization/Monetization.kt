@@ -113,11 +113,16 @@ internal object EntitlementCacheCodec {
     fun decode(raw: String): CachedEntitlement? {
         val parts = raw.split(';')
         if (parts.size != 3) return null
+        val willRenew = when (parts[2]) {
+            "true" -> true
+            "false" -> false
+            else -> return null
+        }
         return runCatching {
             CachedEntitlement(
                 phase = EntitlementPhase.valueOf(parts[0]),
                 trialEndsAtEpochMs = parts[1].takeIf { it != "-" }?.toLong(),
-                willRenew = parts[2] == "true",
+                willRenew = willRenew,
             )
         }.getOrNull()
     }
@@ -126,7 +131,11 @@ internal object EntitlementCacheCodec {
 class EntitlementGate(private val clock: () -> Long) {
 
     private val mutex = Mutex()
+
+    @kotlin.concurrent.Volatile
     private var store: MonetizationStore = UnavailableStore
+
+    @kotlin.concurrent.Volatile
     private var cache: EntitlementCache = MemoryEntitlementCache()
 
     private val mutable = MutableStateFlow(effectiveEntitlement(null, clock()))
