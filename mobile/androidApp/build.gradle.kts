@@ -97,8 +97,11 @@ android {
 
     // Fail on the signing validation task, which runs only in release
     // builds and BEFORE any signing: a doFirst on assemble/bundle fires
-    // after validate+sign have already executed.
-    tasks.matching { it.name == "validateSigningBaluardRelease" }.configureEach {
+    // after validate+sign have already executed. Flavor builds append the
+    // flavor name (validateSigningBaluardFdroidRelease / ...PlayRelease).
+    tasks.matching {
+        it.name.startsWith("validateSigningBaluard") && it.name.endsWith("Release")
+    }.configureEach {
         doFirst {
             require(releaseStoreFile.isFile) {
                 "Android release keystore not found. Run just android-release-key, then rerun."
@@ -107,6 +110,16 @@ android {
                 "Set BALUARD_ANDROID_STORE_PASSWORD and BALUARD_ANDROID_KEY_PASSWORD for release signing."
             }
         }
+    }
+
+    // Store vs free split (ADR 0102): play carries Google Play Billing and gates
+    // sync/sharing/TOTP generation; fdroid ships ungated with no billing code in the
+    // package (F-Droid policy forbids the proprietary library). Same applicationId,
+    // signing key, and versionCode on both.
+    flavorDimensions += "monetization"
+    productFlavors {
+        create("fdroid") { dimension = "monetization" }
+        create("play") { dimension = "monetization" }
     }
 
     buildTypes {
@@ -135,4 +148,10 @@ android {
             )
         }
     }
+}
+
+dependencies {
+    // Google Play Billing, play flavor only: the fdroid APK must not carry the
+    // proprietary library (F-Droid policy, ADR 0102).
+    "playImplementation"("com.android.billingclient:billing-ktx:7.1.1")
 }
