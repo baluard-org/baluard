@@ -11,7 +11,7 @@
 #   browser/shared/package.json         extension build package version
 #   browser/shared/manifest.base.json   extension manifest version
 #   mobile/androidApp/build.gradle.kts  versionName + versionCode
-#   mobile/.../i18n/Strings{En,Es}.kt   mobile about-screen version string
+#   mobile/.../i18n/Strings{En,Es,Fr,Pt}.kt  mobile about-screen version string
 #
 # Cargo.lock refreshes on the next cargo build; it is never sed-edited.
 #
@@ -38,6 +38,8 @@ MANIFEST="browser/shared/manifest.base.json"
 GRADLE="mobile/androidApp/build.gradle.kts"
 STRINGS_EN="mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.kt"
 STRINGS_ES="mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEs.kt"
+STRINGS_FR="mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsFr.kt"
+STRINGS_PT="mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsPt.kt"
 
 CURRENT=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$CARGO_TOML" | head -1)
 if [[ -z "$CURRENT" ]]; then
@@ -67,7 +69,7 @@ done
 sed -i "s/versionName = \"[^\"]*\"/versionName = \"$NEW\"/; s/versionCode = [0-9]*/versionCode = $VERSION_CODE/" "$GRADLE"
 
 # Mobile about-screen string.
-sed -i "s/Baluard Mobile v[0-9][0-9.]*/Baluard Mobile v$NEW/" "$STRINGS_EN" "$STRINGS_ES"
+sed -i "s|\"settings.version\" to \".*\"|\"settings.version\" to \"Baluard Mobile v$NEW\"|" "$STRINGS_EN" "$STRINGS_ES" "$STRINGS_FR" "$STRINGS_PT"
 
 # Verify every source actually moved; a miss means that file drifted.
 check() {
@@ -85,6 +87,8 @@ check "$GRADLE" "versionName = \"$NEW\""
 check "$GRADLE" "versionCode = $VERSION_CODE"
 check "$STRINGS_EN" "Baluard Mobile v$NEW"
 check "$STRINGS_ES" "Baluard Mobile v$NEW"
+check "$STRINGS_FR" "Baluard Mobile v$NEW"
+check "$STRINGS_PT" "Baluard Mobile v$NEW"
 
 # B11: the committed store dists are reviewable artifacts; rebuild them now so
 # the bump commit can carry fresh dists instead of drifting.
