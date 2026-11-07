@@ -606,19 +606,6 @@ smoke-pkg pkg:
 
 # ── App Icons ──────────────────────────────────────────────────────────────
 
-# Generate app icons for ALL platforms (Windows/macOS/Linux desktop + Android/iOS mobile)
-# from the brand SVGs and deploy them everywhere:
-#   - desktop/src-tauri/icons/     (Tauri bundle icons)
-#   - desktop/src/assets/logo.png  (browser-extension toolbar icon source)
-#   - mobile/androidApp res/       (launcher mipmaps + ADAPTIVE icon layers, so the
-#                                  launcher masks a full tile instead of shrink-
-#                                  wrapping a legacy bitmap on white)
-# Output bundle: assets/app-icons/{windows,macos,linux,tauri-desktop,android,ios}/
-# No arguments; sources are fixed: assets/baluard-lock-l4.svg (tile)
-# + assets/baluard-lock-only.svg (glyph). Tooling: rsvg-convert + magick + python3.
-app-icons:
-	./scripts/generate-all-icons.sh
-
 # ── E2E Smoke Test ─────────────────────────────────────────────────────────
 
 # Seed TWO demo vaults (personal + work) with realistic mixed test data.

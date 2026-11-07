@@ -119,7 +119,6 @@ All commands run from the project root. `just` reads the `justfile`.
 | `just ext-build` | Build both Chrome and Firefox extension bundles (Vite) |
 | `just ext-build-chrome` / `just ext-build-firefox` | Build a single target |
 | `just ext-dev-chrome` / `just ext-dev-firefox` | Dev: build + print load-unpacked / about:debugging instructions |
-| `just app-icons` | Generate platform icons (macOS/Win/Linux/Android/iOS + tray monochrome) from brand SVGs |
 | `just seed-demo` | Seed two demo vaults (personal with 100 entries + work, password: `baluard99`) |
 | `just android-apk` | Build release Android APK |
 | `just android-apk-fast` | Build debug Android APK |

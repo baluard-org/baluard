@@ -55,4 +55,4 @@ See [the ADR index](adr/index.md) for the full numbered list.
 |----------|-------------|
 | [Brand Guidelines](brand/brand-guidelines.md) | Color palette, design tokens, visual identity rules |
 | [Design Language Tokens](brand/design-language-tokens.json) | Machine-readable design tokens (single source for the CSS pipeline) |
-| [App Icons](brand/app-icons.md) | Generate platform icons (macOS/Win/Linux/Android/iOS) from one source image via `just app-icons` |
+| [Store Kits](../../assets/store/) | Chrome Web Store and Google Play listing graphics |
