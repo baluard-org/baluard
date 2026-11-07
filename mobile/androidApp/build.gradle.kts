@@ -97,10 +97,11 @@ android {
 
     // Fail on the signing validation task, which runs only in release
     // builds and BEFORE any signing: a doFirst on assemble/bundle fires
-    // after validate+sign have already executed. Flavor builds append the
-    // flavor name (validateSigningBaluardFdroidRelease / ...PlayRelease).
+    // after validate+sign have already executed. With flavors the tasks are
+    // validateSigningFdroidRelease / validateSigningPlayRelease (empirical
+    // names; the signing-config segment disappears once flavors exist).
     tasks.matching {
-        it.name.startsWith("validateSigningBaluard") && it.name.endsWith("Release")
+        it.name.startsWith("validateSigning") && it.name.endsWith("Release")
     }.configureEach {
         doFirst {
             require(releaseStoreFile.isFile) {

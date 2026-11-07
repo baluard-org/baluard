@@ -2,6 +2,9 @@ package app.baluard.mobile.monetization
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.cancellation.CancellationException
 
 /** ADR 0102: one auto-renewing yearly subscription unlocks sync, sharing, and TOTP codes. */
 const val SUBSCRIPTION_PRODUCT_ID = "baluard_supporter_yearly"
@@ -100,32 +103,60 @@ class MemoryEntitlementCache : EntitlementCache {
     }
 }
 
-/**
- * Process-wide entitlement state. Android flavors call [initialize] from their Application
- * subclass before any activity runs; UI reads [state] and calls [refresh] at app start and
- * resume, [purchase] for the upgrade flow.
- */
-object Entitlements {
+/** Line codec for persisted entitlements: `phase;trialEndsMillis|-;willRenew`. */
+internal object EntitlementCacheCodec {
 
-    private var store: MonetizationStore = object : MonetizationStore {
-        override suspend fun query() = StoreQuery.Unavailable
-        override suspend fun launchPurchase() = false
+    fun encode(value: CachedEntitlement): String =
+        "${value.phase.name};${value.trialEndsAtEpochMs?.toString() ?: "-"};${value.willRenew}"
+
+    /** Returns null on any malformed input; Unknown never round-trips (never persisted). */
+    fun decode(raw: String): CachedEntitlement? {
+        val parts = raw.split(';')
+        if (parts.size != 3) return null
+        return runCatching {
+            CachedEntitlement(
+                phase = EntitlementPhase.valueOf(parts[0]),
+                trialEndsAtEpochMs = parts[1].takeIf { it != "-" }?.toLong(),
+                willRenew = parts[2] == "true",
+            )
+        }.getOrNull()
     }
+}
+
+class EntitlementGate(private val clock: () -> Long) {
+
+    private val mutex = Mutex()
+    private var store: MonetizationStore = UnavailableStore
     private var cache: EntitlementCache = MemoryEntitlementCache()
 
-    private val mutable = MutableStateFlow(effectiveEntitlement(null, nowEpochMs()))
+    private val mutable = MutableStateFlow(effectiveEntitlement(null, clock()))
     val state: StateFlow<EffectiveEntitlement> = mutable
 
     fun initialize(store: MonetizationStore, cache: EntitlementCache) {
         this.store = store
         this.cache = cache
-        mutable.value = effectiveEntitlement(cache.load(), nowEpochMs())
+        mutable.value = effectiveEntitlement(cache.load(), clock())
     }
 
-    suspend fun refresh(): EffectiveEntitlement {
-        val cached = applyStoreQuery(cache.load(), store.query())
-        cache.save(cached)
-        return effectiveEntitlement(cached, nowEpochMs()).also { mutable.value = it }
+    /**
+     * Reads the persisted cache on every call. CrossProcessPrefs is built for
+     * read-per-call, so long-lived consumers (the :autofill process, background
+     * workers) never act on a stale snapshot, and a trial expiring mid-session
+     * locks the gates at the next read.
+     */
+    fun current(): EffectiveEntitlement = effectiveEntitlement(cache.load(), clock())
+
+    suspend fun refresh(): EffectiveEntitlement = mutex.withLock {
+        // Query first, load after: the persisted cache must reflect a purchase
+        // completing while this query was in flight, here or in another process.
+        val query = runCatching { store.query() }.getOrElse { throwable ->
+            if (throwable is CancellationException) throw throwable
+            StoreQuery.Unavailable
+        }
+        val loaded = cache.load()
+        val next = applyStoreQuery(loaded, query)
+        if (next != loaded) cache.save(next)
+        effectiveEntitlement(next, clock()).also { mutable.value = it }
     }
 
     suspend fun purchase(): Boolean {
@@ -133,6 +164,31 @@ object Entitlements {
         if (purchased) refresh()
         return purchased
     }
+
+    private object UnavailableStore : MonetizationStore {
+        override suspend fun query() = StoreQuery.Unavailable
+        override suspend fun launchPurchase() = false
+    }
+}
+
+/**
+ * Process-wide entitlement state. Android flavors call [initialize] from their Application
+ * subclass before any activity runs (every process, :autofill included); UI reads [state],
+ * gates read [current], and [refresh] runs at app start and resume.
+ */
+object Entitlements {
+
+    private val gate = EntitlementGate { nowEpochMs() }
+
+    val state: StateFlow<EffectiveEntitlement> get() = gate.state
+
+    fun initialize(store: MonetizationStore, cache: EntitlementCache) = gate.initialize(store, cache)
+
+    fun current(): EffectiveEntitlement = gate.current()
+
+    suspend fun refresh(): EffectiveEntitlement = gate.refresh()
+
+    suspend fun purchase(): Boolean = gate.purchase()
 }
 
 expect fun nowEpochMs(): Long

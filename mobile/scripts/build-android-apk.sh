@@ -213,14 +213,18 @@ export JAVA_HOME="$JDK17_HOME"
 export PATH="$JAVA_HOME/bin:$PATH"
 if [[ $DO_RELEASE -eq 1 ]]; then
   [[ $DO_E2E -eq 0 ]] || fail "--e2e is debug-only and cannot be combined with --release"
-  # Both flavors from the same source (ADR 0102): the fdroid APK ships to
-  # F-Droid ungated, the play APK/AAB carry the billing gates. The Play
-  # upload vehicle is the AAB.
-  GRADLE_TASKS=(":androidApp:assembleFdroidRelease" ":androidApp:assemblePlayRelease" ":androidApp:bundlePlayRelease")
+  # The fdroid APK ships to F-Droid; the play AAB is the Play upload vehicle
+  # (bundlePlayRelease covers the play side; the play APK is not built).
+  GRADLE_TASKS=(":androidApp:assembleFdroidRelease" ":androidApp:bundlePlayRelease")
 else
   # Dev installs default to the fdroid flavor; BALUARD_ANDROID_FLAVOR=play for store-flavor dev testing.
   FLAVOR="${BALUARD_ANDROID_FLAVOR:-fdroid}"
-  GRADLE_TASKS=(":androidApp:assemble${FLAVOR^}Debug")
+  case "$FLAVOR" in
+    fdroid) FLAVOR_CAP=Fdroid ;;
+    play) FLAVOR_CAP=Play ;;
+    *) fail "BALUARD_ANDROID_FLAVOR must be fdroid or play (got: $FLAVOR)" ;;
+  esac
+  GRADLE_TASKS=(":androidApp:assemble${FLAVOR_CAP}Debug")
 fi
 echo "==> ./gradlew ${GRADLE_TASKS[*]}  (JAVA_HOME=$JAVA_HOME)"
 GRADLE_ARGS=()
@@ -235,7 +239,6 @@ echo
 # ── Step 4: locate + report the packages ────────────────────────────────────
 if [[ $DO_RELEASE -eq 1 ]]; then
   APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/fdroid/release" -name '*.apk' 2>/dev/null | head -1 || true)"
-  PLAY_APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/play/release" -name '*.apk' 2>/dev/null | head -1 || true)"
   AAB="$(find "$MOBILE_DIR/androidApp/build/outputs/bundle/play/release" -name '*.aab' 2>/dev/null | head -1 || true)"
   [[ -n "$APK" && -n "$AAB" ]] || fail "Gradle reported success but the release APK or AAB is missing"
   # A release APK with a broken signature must not reach fdroid-stage or
@@ -244,9 +247,13 @@ if [[ $DO_RELEASE -eq 1 ]]; then
   [[ -n "$APKSIGNER" ]] || fail "apksigner not found under $SDK_ROOT/build-tools; cannot verify the release signature"
   echo "==> apksigner verify (release APK)"
   "$APKSIGNER" verify --print-certs "$APK" | sed -n '1,2p'
+  # ADR 0102 hard gate: the fdroid APK must never carry Google billing
+  # classes. Grep the dex string pool for the package descriptor.
+  if unzip -p "$APK" 'classes*.dex' 2>/dev/null | grep -aq 'com/android/billingclient'; then
+    fail "billing classes found in the fdroid APK; the play/fdroid split is broken (ADR 0102)"
+  fi
   echo "==> F-Droid release APK ready: $APK"
   echo "==> Play AAB ready:            $AAB"
-  [[ -n "$PLAY_APK" ]] && echo "==> Play APK (side artifact):  $PLAY_APK"
 else
   FLAVOR="${BALUARD_ANDROID_FLAVOR:-fdroid}"
   APK="$(find "$MOBILE_DIR/androidApp/build/outputs/apk/$FLAVOR/debug" -name '*.apk' 2>/dev/null | head -1 || true)"
