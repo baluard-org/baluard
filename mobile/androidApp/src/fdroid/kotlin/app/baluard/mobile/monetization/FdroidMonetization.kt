@@ -21,5 +21,5 @@ class FdroidMonetizationApplication : BaluardApplication() {
 
 internal object FreeStore : MonetizationStore {
     override suspend fun query() = StoreQuery.Purchased(willRenew = true)
-    override suspend fun launchPurchase() = false
+    override suspend fun purchase() = PurchaseOutcome.Unavailable
 }

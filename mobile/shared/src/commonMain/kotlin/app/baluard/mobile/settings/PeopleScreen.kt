@@ -47,12 +47,15 @@ import app.baluard.mobile.data.MobileMemberInfo
 import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.detail.formatEpochDate
 import app.baluard.mobile.i18n.t
+import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.platform.Clock
 import app.baluard.mobile.platform.copyToClipboard
 import app.baluard.mobile.platform.platformLogE
+import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.BaluardTextField
 import app.baluard.mobile.ui.components.BaluardTopBar
 import app.baluard.mobile.ui.components.SectionCard
+import app.baluard.mobile.ui.components.UpgradeSheet
 import app.baluard.mobile.ui.toast.Toast
 
 /**
@@ -69,6 +72,33 @@ fun PeopleScreen(
     onBack: () -> Unit = {},
     onSyncNudge: () -> Unit = {},
 ) {
+    // ADR 0102: member surfaces are paid on store builds. A single-user vault
+    // stays fully usable — this screen just shows the upgrade path when locked.
+    if (!Entitlements.current().sharingUnlocked) {
+        Scaffold(
+            topBar = { BaluardTopBar(title = t("people.title"), onBack = onBack) },
+        ) { padding ->
+            var showUpgrade by remember { mutableStateOf(false) }
+            Column(
+                modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            ) {
+                SectionCard(title = t("upgrade.title")) {
+                    Text(
+                        t("upgrade.body"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    BaluardOutlinedButton(
+                        text = t("upgrade.subscribe"),
+                        onClick = { showUpgrade = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            UpgradeSheet(shown = showUpgrade, onDismiss = { showUpgrade = false })
+        }
+        return
+    }
     val scope = rememberCoroutineScope()
     var members by remember { mutableStateOf<List<MobileMemberInfo>>(emptyList()) }
     var joinRequests by remember { mutableStateOf(emptyList<MobileJoinRequest>()) }

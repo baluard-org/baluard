@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.i18n.t
+import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.CopiedBadge
 import app.baluard.mobile.ui.components.rememberCopied
 
@@ -55,6 +56,7 @@ fun TotpWidget(
     vault: MobileVault,
     cipherId: String,
     viewModel: TotpViewModel,
+    onUpgradeRequired: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
     val copied = rememberCopied()
@@ -185,6 +187,28 @@ fun TotpWidget(
                             color = if (s.secondsRemaining <= 5) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                         )
                     }
+                }
+
+                is TotpState.Locked -> Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = t("totp.locked"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    s.trialDaysLeft?.let { days ->
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = t("upgrade.trialDaysLeft", days),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    BaluardOutlinedButton(
+                        text = t("upgrade.subscribe"),
+                        onClick = onUpgradeRequired,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
 
                 is TotpState.Error -> Text(

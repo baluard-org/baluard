@@ -2,6 +2,7 @@ package app.baluard.mobile.sync
 
 import app.baluard.mobile.MobileVaultInterface
 import app.baluard.mobile.MobileSyncStatus
+import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.platform.Clock
 import app.baluard.mobile.platform.isMeteredNetwork
 
@@ -32,6 +33,12 @@ class SyncCoordinator(
         config = new
     }
 
+    // ADR 0102: the subscription gate lives in the app layer, so the coordinator
+    // is the single choke point: when locked, no sync method reaches the vault.
+    // Reading current() per call means a lapse locks at the next event without
+    // any restart.
+    private fun gated(): Boolean = !Entitlements.current().syncUnlocked
+
     /**
      * Wi-Fi-only gate (plan §3.5, advisory): the host skips AUTOMATIC sync
      * triggers on metered networks. Explicit user gestures (`pullNow`) and
@@ -42,19 +49,19 @@ class SyncCoordinator(
 
     /** Vault unlock → immediate pull (if enabled). */
     suspend fun onUnlock(vault: MobileVaultInterface) {
-        if (!config.syncOnUnlock || blockedByNetwork()) return
+        if (gated() || !config.syncOnUnlock || blockedByNetwork()) return
         vault.syncOnUnlock()
     }
 
     /** CRUD mutation → arm the 5s debounced push (if enabled). */
     suspend fun onMutation(vault: MobileVaultInterface) {
-        if (!config.syncAfterChange || blockedByNetwork()) return
+        if (gated() || !config.syncAfterChange || blockedByNetwork()) return
         vault.syncOnMutation()
     }
 
     /** App foreground → pull with the runtime's 10-min guard (if enabled). */
     suspend fun onForeground(vault: MobileVaultInterface) {
-        if (!config.syncOnForeground || blockedByNetwork()) return
+        if (gated() || !config.syncOnForeground || blockedByNetwork()) return
         vault.syncOnForeground()
     }
 
@@ -63,11 +70,15 @@ class SyncCoordinator(
      * suspends the process within seconds and would drop the 5s timer).
      */
     suspend fun onBackground(vault: MobileVaultInterface) {
+        if (gated()) return
         vault.syncOnBackground()
     }
 
     /** User pull-to-refresh / "Sync now". */
-    suspend fun pullNow(vault: MobileVaultInterface) = vault.syncPullNow()
+    suspend fun pullNow(vault: MobileVaultInterface): Unit {
+        if (gated()) return
+        vault.syncPullNow()
+    }
 
     /**
      * Host-scheduled 30s connectivity probe (plan §3.5). The runtime no-ops
@@ -75,7 +86,7 @@ class SyncCoordinator(
      * tick; here we space calls to [SyncConfig.offlineRetryForegroundSecs].
      */
     suspend fun offlineTick(vault: MobileVaultInterface) {
-        if (blockedByNetwork()) return
+        if (gated() || blockedByNetwork()) return
         val now = Clock.currentTimeMillis()
         if (now - lastOfflineProbeMs < config.offlineRetryForegroundSecs * 1000L) return
         lastOfflineProbeMs = now
