@@ -23,7 +23,7 @@ printf 'AAB-PAYLOAD\n' > "$SANDBOX/mobile/androidApp/build/outputs/bundle/playRe
 # Throwaway service-account material: a real RSA key (the script signs a JWT
 # with openssl) wrapped in the Google JSON shape.
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$TMP/sa-key.pem" 2>/dev/null
-python3 - "$TMP/sa-key.pem" "$TMP/sa.json" <<'PY'
+python3 -I - "$TMP/sa-key.pem" "$TMP/sa.json" <<'PY'
 import json, sys
 key = open(sys.argv[1]).read()
 json.dump({"client_email": "baluard-upload@baluard-play.iam.gserviceaccount.com",
@@ -39,9 +39,13 @@ exit 0
 EOF
 chmod +x "$TMP/bin/aapt2"
 
-# Fake curl: records argv, answers the token exchange and the five
-# androidpublisher calls, and honors failure knobs.
+# Fake curl: parses -o and -H @file like the real CLI (header file contents
+# go to a separate log), records argv, answers the token exchange and the
+# five androidpublisher calls, and honors failure knobs. HTTP failures only
+# exit 22 when the script actually passes --fail-with-body; without it the
+# body is emitted and the exit is 0, matching real curl.
 CURL_LOG="$TMP/curl.log"
+HDR_LOG="$TMP/hdr.log"
 cat > "$TMP/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -51,19 +55,30 @@ args=()
 while (($#)); do
   case "$1" in
     -o) out="$2"; shift 2 ;;
+    -H)
+      if [[ "${2:-}" == @* ]]; then
+        printf '%s\n' "HEADER $(cat "${2#@}")" >> "${SUB_PLAY_HDR_LOG:?}"
+        shift 2
+      else
+        args+=("-H" "$2"); shift 2
+      fi ;;
     *) args+=("$1"); shift ;;
   esac
 done
-emit() { [[ -n "$out" ]] && printf '%s\n' "$1" > "$out" || printf '%s\n' "$1"; }
+fail() {
+  emit "$1"
+  [[ " ${args[*]} " == *' --fail-with-body '* ]] && exit 22
+  exit 0
+}
+emit() { if [[ -n "$out" ]]; then printf '%s\n' "$1" > "$out"; else printf '%s\n' "$1"; fi; }
 for arg in "${args[@]}"; do
   case "$arg" in
     *oauth2.googleapis.com/token*)
       emit '{"access_token": "test-token", "expires_in": 3600}'
       exit 0 ;;
-    *bundles?uploadType=media*)
+    */upload/*bundles*)
       if [[ "${SUB_PLAY_UPLOAD_FAIL:-0}" == 1 ]]; then
-        emit '{"error": {"message": "upload rejected"}}'
-        exit 22
+        fail '{"error": {"message": "upload rejected"}}'
       fi
       emit "{\"versionCode\": ${SUB_PLAY_UPLOAD_VC:-1011}}"
       exit 0 ;;
@@ -72,8 +87,7 @@ for arg in "${args[@]}"; do
       exit 0 ;;
     */tracks/*)
       if [[ "${SUB_PLAY_TRACK_FAIL:-0}" == 1 ]]; then
-        emit '{"error": {"message": "track rejected"}}'
-        exit 22
+        fail '{"error": {"message": "track rejected"}}'
       fi
       emit '{}'
       exit 0 ;;
@@ -94,14 +108,22 @@ exit 64
 EOF
 chmod +x "$TMP/bin/curl"
 export PATH="$TMP/bin:$PATH"
-export SUB_PLAY_CURL_LOG="$CURL_LOG"
+export SUB_PLAY_CURL_LOG="$CURL_LOG" SUB_PLAY_HDR_LOG="$HDR_LOG"
 
-# ── Happy path: full edit flow releases the AAB to internal ─────────────────
+# Pin every BALUARD_PLAY_* knob so machine-level exports cannot leak in.
+BASE_ENV=(BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/sa.json"
+  BALUARD_PLAY_PACKAGE_NAME=app.baluard.mobile
+  BALUARD_PLAY_TRACK=internal
+  BALUARD_PLAY_RELEASE_STATUS=completed
+  BALUARD_PLAY_MIN_TARGET_SDK=35)
+
 AAB="$SANDBOX/mobile/androidApp/build/outputs/bundle/playRelease/androidApp-play-release.aab"
 APK="$SANDBOX/mobile/androidApp/build/outputs/apk/fdroid/release/androidApp-fdroid-release.apk"
 printf 'APK\n' > "$APK"
-rm -f "$CURL_LOG"
-env BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/sa.json" \
+
+# ── Happy path: full edit flow releases the AAB to internal ─────────────────
+rm -f "$CURL_LOG" "$HDR_LOG"
+env -u BALUARD_PLAY_AAB -u BALUARD_PLAY_ALLOW_PRODUCTION "${BASE_ENV[@]}" \
   "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/happy.out"
 grep -q 'play/internal: released 0.1.11 (1011)' "$TMP/happy.out"
 
@@ -110,69 +132,87 @@ grep -q 'oauth2.googleapis.com/token' "$CURL_LOG"
 grep -q 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer' "$CURL_LOG"
 # The JWT rides a --data-urlencode @file, never raw argv.
 if grep -q 'assertion=ey' "$CURL_LOG"; then echo 'JWT leaked onto argv' >&2; exit 1; fi
+# The bearer token reaches curl only through the header file.
+grep -q 'HEADER Authorization: Bearer test-token' "$HDR_LOG"
+if grep -q 'Bearer test-token' "$CURL_LOG"; then echo 'bearer token on argv' >&2; exit 1; fi
+# The service-account private key never appears on argv or headers.
+if grep -q 'PRIVATE KEY' "$CURL_LOG" "$HDR_LOG"; then echo 'key material leaked' >&2; exit 1; fi
+# Edit flow: POST creates the edit, the id propagates into every later URL.
+grep -q -- '-X POST' "$CURL_LOG"
 grep -q 'applications/app.baluard.mobile/edits' "$CURL_LOG"
-grep -q 'bundles?uploadType=media' "$CURL_LOG"
-grep -q -- "--data-binary @$AAB" "$CURL_LOG"
-grep -q 'application/octet-stream' "$CURL_LOG"
-grep -q '/tracks/internal' "$CURL_LOG"
+grep -q 'edits/edit-1/bundles' "$CURL_LOG"
+# Upload goes to the /upload/ media URI with the right verb, content type,
+# and body file.
+grep 'upload/androidpublisher' "$CURL_LOG" | grep -q -- '-X POST'
+grep 'upload/androidpublisher' "$CURL_LOG" | grep -q -- "--data-binary @$AAB"
+grep 'upload/androidpublisher' "$CURL_LOG" | grep -q 'application/octet-stream'
+# Track assignment carries the computed code, the release name, and the verb.
+grep '/tracks/internal' "$CURL_LOG" | grep -q -- '-X PUT'
 grep -q '"versionCodes":\[1011\]' "$CURL_LOG"
 grep -q '"name":"0.1.11 (1011)"' "$CURL_LOG"
 grep -q '"status":"completed"' "$CURL_LOG"
 grep -q ':commit' "$CURL_LOG"
-# The service-account private key and the bearer token never appear on argv.
-if grep -q 'PRIVATE KEY' "$CURL_LOG"; then echo 'key material on argv' >&2; exit 1; fi
-if grep -q 'Bearer test-token' "$CURL_LOG"; then echo 'bearer token on argv' >&2; exit 1; fi
 
 # ── Burned versionCode refuses before any upload ────────────────────────────
 rm -f "$CURL_LOG"
-env BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/sa.json" SUB_PLAY_BURNED=1 \
+env "${BASE_ENV[@]}" SUB_PLAY_BURNED=1 \
   "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/burned.out" 2> "$TMP/burned.err" \
   && { echo 'burned version accepted' >&2; exit 1; }
-grep -qi 'already used' "$TMP/burned.out" "$TMP/burned.err"
-grep -q 'bump' "$TMP/burned.err" "$TMP/burned.out"
-if grep -q 'uploadType=media' "$CURL_LOG"; then echo 'upload ran past burn guard' >&2; exit 1; fi
+grep -qi 'already used' "$TMP/burned.err"
+grep -q 'bump' "$TMP/burned.err"
+if grep -q '/upload/' "$CURL_LOG"; then echo 'upload ran past burn guard' >&2; exit 1; fi
 
-# ── Upload failure stops before track assignment ────────────────────────────
+# ── Upload failure stops before track assignment, with the store's error ────
 rm -f "$CURL_LOG"
-env BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/sa.json" SUB_PLAY_UPLOAD_FAIL=1 \
-  "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/upfail.out" 2>&1 \
+env "${BASE_ENV[@]}" SUB_PLAY_UPLOAD_FAIL=1 \
+  "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/upfail.out" 2> "$TMP/upfail.err" \
   && { echo 'upload failure accepted' >&2; exit 1; }
+grep -q 'AAB upload failed' "$TMP/upfail.err"
+grep -q 'upload rejected' "$TMP/upfail.err"
 if grep -q '/tracks/' "$CURL_LOG"; then echo 'track ran past upload failure' >&2; exit 1; fi
 if grep -q ':commit' "$CURL_LOG"; then echo 'commit ran past upload failure' >&2; exit 1; fi
 
 # ── Upload response versionCode mismatch refuses the track step ─────────────
 rm -f "$CURL_LOG"
-env BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/sa.json" SUB_PLAY_UPLOAD_VC=999 \
-  "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/mismatch.out" 2>&1 \
+env "${BASE_ENV[@]}" SUB_PLAY_UPLOAD_VC=999 \
+  "$SANDBOX/scripts/upload-play-release.sh" > /dev/null 2> "$TMP/mismatch.err" \
   && { echo 'mismatched bundle accepted' >&2; exit 1; }
-if grep -q '/tracks/internal' "$CURL_LOG"; then echo 'track ran past mismatch' >&2; exit 1; fi
+grep -q 'drifted' "$TMP/mismatch.err"
+if grep -q '/tracks/' "$CURL_LOG"; then echo 'track ran past mismatch' >&2; exit 1; fi
 
 # ── Track failure stops before commit ────────────────────────────────────────
 rm -f "$CURL_LOG"
-env BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/sa.json" SUB_PLAY_TRACK_FAIL=1 \
-  "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/trkfail.out" 2>&1 \
+env "${BASE_ENV[@]}" SUB_PLAY_TRACK_FAIL=1 \
+  "$SANDBOX/scripts/upload-play-release.sh" > /dev/null 2> "$TMP/trkfail.err" \
   && { echo 'track failure accepted' >&2; exit 1; }
+grep -q 'track assignment failed' "$TMP/trkfail.err"
+grep -q 'track rejected' "$TMP/trkfail.err"
 if grep -q ':commit' "$CURL_LOG"; then echo 'commit ran past track failure' >&2; exit 1; fi
 
 # ── Missing credentials print guidance and never touch the network ──────────
 rm -f "$CURL_LOG"
 env BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/absent-key.json" \
-  "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/nocreds.out" 2> "$TMP/nocreds.err" \
+  "$SANDBOX/scripts/upload-play-release.sh" > /dev/null 2> "$TMP/nocreds.err" \
   && { echo 'missing creds accepted' >&2; exit 1; } || true
 grep -q 'BALUARD_PLAY_SERVICE_ACCOUNT_JSON' "$TMP/nocreds.err"
-test ! -s "$CURL_LOG" || { echo 'network touched without creds' >&2; exit 1; }
+if [[ -s "$CURL_LOG" ]]; then echo 'network touched without creds' >&2; exit 1; fi
 
 # ── Production track is refused without the explicit allow flag ─────────────
 rm -f "$CURL_LOG"
-env BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/sa.json" BALUARD_PLAY_TRACK=production \
+env "${BASE_ENV[@]}" BALUARD_PLAY_TRACK=production \
   "$SANDBOX/scripts/upload-play-release.sh" > /dev/null 2> "$TMP/prod.err" \
   && { echo 'production accepted without allow flag' >&2; exit 1; } || true
 grep -q 'BALUARD_PLAY_ALLOW_PRODUCTION' "$TMP/prod.err"
-test ! -s "$CURL_LOG" || { echo 'network touched for refused production' >&2; exit 1; }
+if [[ -s "$CURL_LOG" ]]; then echo 'network touched for refused production' >&2; exit 1; fi
+
+# ── Unsupported track names are refused ──────────────────────────────────────
+env "${BASE_ENV[@]}" BALUARD_PLAY_TRACK=beta \
+  "$SANDBOX/scripts/upload-play-release.sh" > /dev/null 2> "$TMP/beta.err" \
+  && { echo 'unsupported track accepted' >&2; exit 1; } || true
+grep -q 'is not supported' "$TMP/beta.err"
 
 # ── targetSdk below the floor refuses with guidance ─────────────────────────
-rm -f "$CURL_LOG"
-env BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/sa.json" SUB_PLAY_TARGET_SDK=34 \
+env "${BASE_ENV[@]}" SUB_PLAY_TARGET_SDK=34 \
   "$SANDBOX/scripts/upload-play-release.sh" > /dev/null 2> "$TMP/tsdk.err" \
   && { echo 'stale targetSdk accepted' >&2; exit 1; } || true
 grep -qi 'targetSdk' "$TMP/tsdk.err"
