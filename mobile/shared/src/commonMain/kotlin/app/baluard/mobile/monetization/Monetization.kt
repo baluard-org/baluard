@@ -87,7 +87,17 @@ fun effectiveEntitlement(cache: CachedEntitlement?, nowEpochMs: Long): Effective
 /** The store backend, implemented per distribution channel (play flavor, fdroid, later iOS). */
 interface MonetizationStore {
     suspend fun query(): StoreQuery
-    suspend fun launchPurchase(): Boolean
+
+    /** Runs one purchase flow to completion; [PurchaseOutcome.Purchased] means the store confirmed it. */
+    suspend fun purchase(): PurchaseOutcome
+}
+
+/** Outcome of one purchase-flow attempt; the entitlement is refreshed by the gate, not the store. */
+sealed interface PurchaseOutcome {
+    data object Purchased : PurchaseOutcome
+    data object Cancelled : PurchaseOutcome
+    data object Unavailable : PurchaseOutcome
+    data class Error(val message: String) : PurchaseOutcome
 }
 
 interface EntitlementCache {
@@ -162,21 +172,35 @@ class EntitlementGate(private val clock: () -> Long) {
             if (throwable is CancellationException) throw throwable
             StoreQuery.Unavailable
         }
+        publishQuery(query)
+    }
+
+    suspend fun purchase(): PurchaseOutcome = mutex.withLock {
+        val outcome = runCatching { store.purchase() }.getOrElse { throwable ->
+            if (throwable is CancellationException) throw throwable
+            PurchaseOutcome.Error(throwable.message ?: "purchase failed")
+        }
+        if (outcome == PurchaseOutcome.Purchased) {
+            val query = runCatching { store.query() }.getOrElse { throwable ->
+                if (throwable is CancellationException) throw throwable
+                StoreQuery.Unavailable
+            }
+            publishQuery(query)
+        }
+        outcome
+    }
+
+    /** Query-then-load: the store answer wins, the cache is written only when it changes. */
+    private fun publishQuery(query: StoreQuery): EffectiveEntitlement {
         val loaded = cache.load()
         val next = applyStoreQuery(loaded, query)
         if (next != loaded) cache.save(next)
-        effectiveEntitlement(next, clock()).also { mutable.value = it }
-    }
-
-    suspend fun purchase(): Boolean {
-        val purchased = store.launchPurchase()
-        if (purchased) refresh()
-        return purchased
+        return effectiveEntitlement(next, clock()).also { mutable.value = it }
     }
 
     private object UnavailableStore : MonetizationStore {
         override suspend fun query() = StoreQuery.Unavailable
-        override suspend fun launchPurchase() = false
+        override suspend fun purchase() = PurchaseOutcome.Unavailable
     }
 }
 
@@ -197,7 +221,7 @@ object Entitlements {
 
     suspend fun refresh(): EffectiveEntitlement = gate.refresh()
 
-    suspend fun purchase(): Boolean = gate.purchase()
+    suspend fun purchase(): PurchaseOutcome = gate.purchase()
 }
 
 expect fun nowEpochMs(): Long

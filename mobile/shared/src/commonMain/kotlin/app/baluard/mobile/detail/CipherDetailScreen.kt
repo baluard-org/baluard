@@ -81,6 +81,7 @@ import app.baluard.mobile.ui.components.CategoryBadge
 import app.baluard.mobile.ui.components.CipherAvatar
 import app.baluard.mobile.ui.components.CopyableFieldRow
 import app.baluard.mobile.ui.components.SectionCard
+import app.baluard.mobile.ui.components.UpgradeSheet
 
 /**
  * Decrypted cipher detail styled after Baluard design language.
@@ -237,7 +238,14 @@ fun CipherDetailScreen(
 
             // TOTP Live Code Card if applicable
             if (s.hasTotp) {
-                TotpWidget(vault = vault, cipherId = s.id, viewModel = totpViewModel)
+                var showTotpUpgrade by remember { mutableStateOf(false) }
+                TotpWidget(
+                    vault = vault,
+                    cipherId = s.id,
+                    viewModel = totpViewModel,
+                    onUpgradeRequired = { showTotpUpgrade = true },
+                )
+                UpgradeSheet(shown = showTotpUpgrade, onDismiss = { showTotpUpgrade = false })
             }
 
             // Share as file: passphrase-guest reveal (Login-only; the

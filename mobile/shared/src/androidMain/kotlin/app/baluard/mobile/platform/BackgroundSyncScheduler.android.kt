@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import app.baluard.mobile.backgroundFetch
+import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.platform.platformLogE
 
 /**
@@ -24,6 +25,13 @@ import app.baluard.mobile.platform.platformLogE
  */
 actual class BackgroundSyncScheduler {
     actual fun setEnabled(enabled: Boolean, intervalMinutes: Int) {
+        // ADR 0102: background sync is a sync surface, so the subscription gate
+        // blocks scheduling AND cancels already-enqueued work when the
+        // entitlement lapses between settings changes.
+        if (enabled && !Entitlements.current().syncUnlocked) {
+            WorkManager.getInstance(AppContextHolder.require()).cancelUniqueWork(WORK_NAME)
+            return
+        }
         val wm = WorkManager.getInstance(AppContextHolder.require())
         if (!enabled) {
             wm.cancelUniqueWork(WORK_NAME)
@@ -51,6 +59,9 @@ class BackgroundFetchWorker(
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
+            // The entitlement may have lapsed after this work was enqueued:
+            // re-check at execution time (ADR 0102).
+            if (!Entitlements.current().syncUnlocked) return@withContext Result.success()
             // Every discovered vault, not just the default dir: created
             // (vaults/) and cloned vaults must background-fetch too.
             val paths = VaultRegistry.listVaults().map { it.path }
