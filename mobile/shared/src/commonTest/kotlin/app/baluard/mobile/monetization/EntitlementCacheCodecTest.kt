@@ -41,6 +41,13 @@ class EntitlementCacheCodecTest {
     }
 
     @Test
+    fun rejects_invalid_boolean() {
+        assertNull(EntitlementCacheCodec.decode("Unlocked;-;yes"))
+        assertNull(EntitlementCacheCodec.decode("Unlocked;-;1"))
+        assertNull(EntitlementCacheCodec.decode("Unlocked;-;"))
+    }
+
+    @Test
     fun decodes_the_dash_sentinel() {
         val decoded = EntitlementCacheCodec.decode("Locked;-;true")
         assertEquals(CachedEntitlement(EntitlementPhase.Locked, willRenew = true), decoded)
