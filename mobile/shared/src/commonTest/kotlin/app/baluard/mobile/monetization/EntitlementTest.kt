@@ -77,6 +77,22 @@ class EntitlementTest {
         assertEquals(EntitlementPhase.Locked, applyStoreQuery(trial, StoreQuery.NothingActive)?.phase)
     }
 
+    @Test
+    fun unavailablePreservesAnExplicitLockedCache() {
+        val locked = CachedEntitlement(EntitlementPhase.Locked)
+        assertEquals(locked, applyStoreQuery(locked, StoreQuery.Unavailable))
+    }
+
+    @Test
+    fun trialWithNullEndFailsClosed() {
+        val eff = effectiveEntitlement(
+            CachedEntitlement(EntitlementPhase.Trial, trialEndsAtEpochMs = null),
+            NOW,
+        )
+        assertEquals(EntitlementPhase.Locked, eff.phase)
+        assertFalse(eff.totpUnlocked)
+    }
+
     // ── effectiveEntitlement ──
 
     @Test
