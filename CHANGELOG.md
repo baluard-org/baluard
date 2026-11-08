@@ -4,8 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 - Deleting a vault can now also delete its repository on the provider. Deleting the remote repository always requires your 24-word recovery phrase; removing the vault from this device alone asks for the master password. Disconnecting sync with repository deletion asks for the phrase too.
-
-No user-facing changes yet.
+- The autofill picker that lists all your logins now renders as a normal opaque screen instead of a see-through overlay over the browser page.
 
 ## 0.2.1 - 2026-11-08
 

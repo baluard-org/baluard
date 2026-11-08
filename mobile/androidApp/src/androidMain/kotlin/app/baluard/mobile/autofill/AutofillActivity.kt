@@ -270,6 +270,9 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
     ) {
         statusView().visibility = View.GONE
         findViewById<View>(R.id.autofill_progress).visibility = View.GONE
+        val title = findViewById<TextView>(R.id.autofill_picker_title)
+        title.text = t("autofill.pickerTitle")
+        title.visibility = View.VISIBLE
         findViewById<View>(R.id.autofill_picker_scroll).visibility = View.VISIBLE
         val list = findViewById<LinearLayout>(R.id.autofill_picker_list)
         list.removeAllViews()
@@ -423,6 +426,12 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         val user = TextView(this).apply {
             text = subtitle?.takeIf { it.isNotBlank() } ?: t("autofill.noUsername")
             textSize = 13f
+            setTextColor(
+                androidx.core.content.ContextCompat.getColor(
+                    this@AutofillActivity,
+                    R.color.autofill_muted_text,
+                ),
+            )
         }
         row.addView(name)
         row.addView(user)
