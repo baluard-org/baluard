@@ -1,10 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Adaptive launcher icon: full-bleed dark background layer + padlock
-     foreground (glyph-only PNG, sized for the 66dp safe zone). The launcher
-     applies its own mask (squircle/circle/etc), so the icon fills the whole
-     tile like Bitwarden instead of being shrink-wrapped on white. -->
+<!-- The launcher masks the full-bleed layers instead of shrink-wrapping the icon. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background" />
+    <background android:drawable="@drawable/ic_launcher_background" />
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
     <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>
