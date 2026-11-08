@@ -1,6 +1,6 @@
 {
   "name": "baluard-extension-shared",
-  "version": "0.1.12",
+  "version": "0.2.0",
   "description": "Baluard browser extension (shared source, chrome + firefox targets)",
   "type": "module",
   "scripts": {
