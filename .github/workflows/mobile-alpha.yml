@@ -85,7 +85,7 @@ jobs:
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
-          ./gradlew -Pbaluard.abis="$APK_ABI" :androidApp:assembleFdroidDebug
+          ./gradlew -Pbaluard.abis="$APK_ABI" :androidApp:assembleFdroidDebug :fellowship:assembleDebug
           # M8: keep the autofill process-isolation assertion honest.
           ./gradlew :shared:testDebugUnitTest \
             --tests "app.baluard.mobile.platform.AutofillProcessIsolationTest" \

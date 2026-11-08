@@ -1,0 +1,15 @@
+# Play-flavor contract: a signature-valid installed Fellowship companion
+# unlocks past the Supporter gate while normal Play checks continue.
+# Install the signed Fellowship APK before this flow. Dedicated test device only.
+appId: app.baluard.mobile
+name: 00-fellowship-unlock
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: "android:id/button2"
+    optional: true
+- assertVisible: "Baluard"
+- tapOn: "Open an existing vault"
+- assertVisible: "GitHub"
+- assertVisible: "GitLab"

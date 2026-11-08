@@ -1,5 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+    <queries>
+        <package android:name="app.baluard.mobile.fellowship" />
+    </queries>
     <application
         android:name=".monetization.PlayMonetizationApplication"
         tools:replace="android:name" />

@@ -1,0 +1,10 @@
+# Dedicated test device only: clearState wipes Fellowship app data.
+appId: app.baluard.mobile.fellowship
+name: 00-fellowship-screen
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Welcome to the Fellowship"
+- assertVisible: "Thank you for helping polish and test Baluard."
+- assertVisible: "Fellowship access is active while this app is installed."
+- assertVisible: "Baluard Fellowship golden lock"

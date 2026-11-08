@@ -217,4 +217,19 @@ env "${BASE_ENV[@]}" SUB_PLAY_TARGET_SDK=34 \
   && { echo 'stale targetSdk accepted' >&2; exit 1; } || true
 grep -qi 'targetSdk' "$TMP/tsdk.err"
 
+# ── Independent apps can override workspace-derived version metadata ───────
+rm -f "$CURL_LOG"
+env "${BASE_ENV[@]}" BALUARD_PLAY_VERSION_NAME=1.0.0 BALUARD_PLAY_VERSION_CODE=1 SUB_PLAY_UPLOAD_VC=1 \
+  "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/override.out"
+grep -q 'play/internal: released 1.0.0 (1)' "$TMP/override.out"
+grep -q '"versionCodes":\[1\]' "$CURL_LOG"
+grep -q '"name":"1.0.0 (1)"' "$CURL_LOG"
+
+rm -f "$CURL_LOG"
+env "${BASE_ENV[@]}" BALUARD_PLAY_VERSION_CODE=not-a-number \
+  "$SANDBOX/scripts/upload-play-release.sh" > /dev/null 2> "$TMP/bad-version.err" \
+  && { echo 'invalid version code accepted' >&2; exit 1; } || true
+grep -qi 'version code' "$TMP/bad-version.err"
+if [[ -s "$CURL_LOG" ]]; then echo 'network touched for invalid version code' >&2; exit 1; fi
+
 echo "PASS: upload-play-release.sh"

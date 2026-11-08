@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Baluard Fellowship</string>
+    <string name="welcome">Bienvenido a la Fellowship</string>
+    <string name="thanks">Gracias por ayudar a pulir y probar Baluard.</string>
+    <string name="status">El acceso Fellowship está activo mientras esta app esté instalada.</string>
+    <string name="icon_description">Candado dorado de Baluard Fellowship</string>
+</resources>
