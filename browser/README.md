@@ -31,7 +31,7 @@ MV3 extension (Chrome + Firefox) that bridges the browser to the Baluard native 
 
 `just ext-submit` publishes. It never runs as part of `just release-repositories`: the store upload is the public boundary of the release flow, so it stays a deliberate step. The script refuses to submit when the newest packaged zip does not match the dist manifests; rerun `just ext-package` first.
 
-Credentials live in the environment only (Bitwarden keeps them, never the repo):
+Credentials live in the environment only (never the repo):
 
 - Firefox AMO: `BALUARD_AMO_JWT_KEY` and `BALUARD_AMO_JWT_SECRET` from the AMO API keys page. The submission uses the pinned `web-ext` release (`sign --channel listed --approval-timeout 0`); a system `web-ext` is used when installed, otherwise `npx` fetches the pinned one.
 - Chrome Web Store: `BALUARD_CHROME_CLIENT_ID`, `BALUARD_CHROME_CLIENT_SECRET`, `BALUARD_CHROME_REFRESH_TOKEN`, `BALUARD_CHROME_EXTENSION_ID`, and `BALUARD_CHROME_PUBLISHER_ID`. The refresh token comes from the OAuth 2.0 Playground flow in the Chrome Web Store API guide (scope `https://www.googleapis.com/auth/chromewebstore`); the consent screen must stay in Production or the token expires weekly. Enable the Chrome Web Store API on the OAuth client's project before the first upload (`console.developers.google.com` -> APIs -> `chromewebstore.googleapis.com`) or uploads fail with 403 `SERVICE_DISABLED`. The script exchanges the token for an access token, packages the zip into a CRX3 when the signing key exists, uploads it, and publishes through the v2 API.

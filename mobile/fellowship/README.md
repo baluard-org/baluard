@@ -8,7 +8,7 @@ The companion has no network permission, accounts, activation, expiry, billing, 
 
 The package name alone is not a credential. Baluard accepts only `app.baluard.mobile.fellowship` signed by a certificate pinned in the comma-separated `FELLOWSHIP_CERTIFICATES_SHA256` setting in `mobile/androidApp/build.gradle.kts`. The pinned fingerprints are public; private signing keys are not. A rotated certificate can match through signing history. If Play uses hybrid signing with multiple current signers, every current signer must match a pinned fingerprint.
 
-Keep the dedicated keystore and its passwords backed up in Bitwarden. The current local path is `~/.baluard/fellowship/fellowship-upload-v2.keystore`. Never commit the keystore or passwords.
+Keep the dedicated keystore and its passwords backed up off this machine. The current local path is `~/.baluard/fellowship/fellowship-upload-v2.keystore`. Never commit the keystore or passwords.
 
 Configure signing in the git-ignored `mobile/local.properties`:
 
@@ -21,7 +21,7 @@ fellowship.keyAlias=fellowship
 
 For PKCS12 keystores, set `fellowship.keyPassword` to the same value as `fellowship.storePassword`. Java's PKCS12 implementation protects the private key with the store password, even if keytool accepted a different key password during generation.
 
-The equivalent environment variables are `BALUARD_FELLOWSHIP_KEYSTORE`, `BALUARD_FELLOWSHIP_STORE_PASSWORD`, `BALUARD_FELLOWSHIP_KEY_PASSWORD`, and `BALUARD_FELLOWSHIP_KEY_ALIAS`.
+The equivalent environment variables are `BALUARD_FELLOWSHIP_KEYSTORE`, `BALUARD_FELLOWSHIP_STORE_PASSWORD`, `BALUARD_FELLOWSHIP_KEY_PASSWORD`, and `BALUARD_FELLOWSHIP_KEY_ALIAS`. Prefer them: the environment wins over local.properties, and local.properties is the file tooling rewrites when it refreshes sdk.dir, which has already erased fellowship credentials once. Keep the credentials in ~/.secrets and a copy outside this machine.
 
 Create a new key interactively only if no Fellowship key exists:
 

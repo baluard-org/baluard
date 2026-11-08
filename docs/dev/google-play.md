@@ -12,7 +12,7 @@ Baluard ships to Google Play as a free listing with an in-app subscription (ADR 
 
 Play App Signing is set up, and the store and F-Droid share one identity:
 
-- The upload keystore is `~/.baluard/baluard-android-upload.keystore`, alias `baluard-upload` (distinct from the F-Droid repo keystore at `~/.baluard/fdroid/keystore.p12`). Passwords come from `BALUARD_ANDROID_STORE_PASSWORD` / `BALUARD_ANDROID_KEY_PASSWORD` in the environment; the keystore is backed up in Bitwarden.
+- The upload keystore is `~/.baluard/baluard-android-upload.keystore`, alias `baluard-upload` (distinct from the F-Droid repo keystore at `~/.baluard/fdroid/keystore.p12`). Passwords come from `BALUARD_ANDROID_STORE_PASSWORD` / `BALUARD_ANDROID_KEY_PASSWORD` in the environment; the keystore is backed up off this machine.
 - The Play app signing key is the same `baluard-release` key, transferred through the PEPK flow (`java -jar pepk.jar` answering keystore prompts from a pty driver so passwords never hit argv; the transfer key zip uploaded on the App signing page). The console's in-use App signing certificate SHA-256 must equal `9cdf3df5ef4a228d51cc5bfabaa303d65bd534c306c12aa0a8857cea223130ff`, which is the same fingerprint pinned in the F-Droid metadata `AllowedAPKSigningKeys`. Verify both sides stay equal after any signing change.
 - The signing key cannot be changed after a release rolls out to open testing or production. Closed and internal testing do not lock it.
 
@@ -84,7 +84,7 @@ No official Play MCP or CLI exists. The path is the Google Play Developer API (a
 
 1. Google Cloud Console: enable the Google Play Android Developer API on the project, create the service account, download its JSON key.
 2. Play Console, Users and permissions, Invite new users: paste the service account email, grant Release to testing tracks and Manage testing tracks and edit tester lists, leave Release to production unchecked.
-3. Store the key in Bitwarden and at `~/.baluard/play-service-account.json` mode 600.
+3. Back the key up off this machine and store it at `~/.baluard/play-service-account.json` mode 600.
 4. `just play-submit` runs `scripts/upload-play-release.sh`, the androidpublisher v3 edits flow gated on `BALUARD_PLAY_SERVICE_ACCOUNT_JSON` (default `~/.baluard/play-service-account.json`), with loud skip guidance when the key is absent, like `ext-submit`.
 - Guards: the workspace version drives versionName and versionCode through the bump formula, and the API's bundle list is checked before uploading, so an already-burned version code refuses the run instead of burning a second upload; the uploaded bundle's reported versionCode must match the workspace or the release step is skipped; when aapt2 and the fdroid APK are present, targetSdkVersion must meet `BALUARD_PLAY_MIN_TARGET_SDK` (default 35).
 - Track selection: `BALUARD_PLAY_TRACK` defaults to internal; use alpha for the closed testing track; production is refused without `BALUARD_PLAY_ALLOW_PRODUCTION=1` because staged rollouts stay console-managed. The release is named `X.Y.Z (NNNN)` with status from `BALUARD_PLAY_RELEASE_STATUS` (default completed). The API's track update replaces the track's whole release list, so on alpha prefer `BALUARD_PLAY_RELEASE_STATUS=draft` when the console should control the rollout, and paste release notes in the console on a draft (a completed release cannot take notes afterwards).
