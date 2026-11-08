@@ -1,4 +1,4 @@
-const METADATA_TOKEN_URL = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
+const METADATA_TOKEN_URL = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fandroidpublisher';
 const REFRESH_BEFORE_EXPIRY_MS = 60_000;
 
 export function createMetadataTokenProvider({ now = Date.now, fetchImpl = fetch } = {}) {

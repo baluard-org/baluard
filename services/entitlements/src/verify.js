@@ -4,11 +4,24 @@ const TERMINAL_GOOGLE_ERRORS = new Set([410]);
 const PLAY_API_ROOT = 'https://androidpublisher.googleapis.com/androidpublisher/v3/applications';
 
 class GooglePlayRequestError extends Error {
-  constructor(status) {
-    super(`Google Play request failed with status ${status}`);
+  constructor(status, reason) {
+    super(`Google Play request failed with status ${status}${reason ? ` (${reason})` : ''}`);
     this.name = 'GooglePlayRequestError';
     this.status = status;
   }
+}
+
+async function googleErrorReason(response) {
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    return null;
+  }
+  const details = Array.isArray(body?.error?.details) ? body.error.details : [];
+  const errorInfo = details.find((detail) => detail?.['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo');
+  const reason = errorInfo?.reason ?? body?.error?.status;
+  return typeof reason === 'string' && /^[A-Z0-9_]{1,100}$/.test(reason) ? reason : null;
 }
 
 export function createPlayVerifier({
@@ -38,9 +51,11 @@ export function createPlayVerifier({
     }
 
     if (!response.ok) {
-      await response.body?.cancel();
-      if (TERMINAL_GOOGLE_ERRORS.has(response.status)) return { active: false };
-      throw new GooglePlayRequestError(response.status);
+      if (TERMINAL_GOOGLE_ERRORS.has(response.status)) {
+        await response.body?.cancel();
+        return { active: false };
+      }
+      throw new GooglePlayRequestError(response.status, await googleErrorReason(response));
     }
 
     let purchase;

@@ -108,7 +108,7 @@ async function handleRequest(request, response, verifyPurchase, checkRateLimit) 
     sendJson(response, 400, { error: 'invalid_request' });
     return;
   }
-  if (path === '/healthz' && request.method === 'GET') {
+  if (path === '/health' && request.method === 'GET') {
     sendJson(response, 200, { status: 'ok' });
     return;
   }
@@ -135,6 +135,7 @@ async function handleRequest(request, response, verifyPurchase, checkRateLimit) 
       sendJson(response, error.status, { error: 'invalid_request' });
       return;
     }
+    console.error(JSON.stringify({ event: 'play_verification_failed', message: error.message }));
     sendJson(response, 503, { error: 'verification_unavailable' });
   }
 }

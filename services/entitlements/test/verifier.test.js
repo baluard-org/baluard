@@ -77,6 +77,27 @@ for (const status of [400, 401, 403, 404, 429, 500, 503]) {
   });
 }
 
+test('Google error logs include only a structured reason', async () => {
+  const verify = verifierWith(async () => googleResponse(401, {
+    error: {
+      status: 'PERMISSION_DENIED',
+      message: 'sensitive upstream message',
+      details: [{
+        '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+        reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT',
+      }],
+    },
+  }));
+  await assert.rejects(
+    () => verify('synthetic-purchase-token'),
+    (error) => {
+      assert.equal(error.message, 'Google Play request failed with status 401 (ACCESS_TOKEN_SCOPE_INSUFFICIENT)');
+      assert.equal(error.message.includes('sensitive upstream message'), false);
+      return true;
+    },
+  );
+});
+
 test('a malformed Google success response remains a verification failure', async () => {
   const verify = verifierWith(async () => googleResponse(200, '{not-json'));
   await assert.rejects(() => verify('synthetic-purchase-token'));

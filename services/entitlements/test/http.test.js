@@ -17,7 +17,7 @@ async function withServer(verifyPurchase, run, options = {}) {
 
 test('health checks do not call Google Play', async () => {
   await withServer(async () => { throw new Error('must not run'); }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/healthz`);
+    const response = await fetch(`${baseUrl}/health`);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { status: 'ok' });
   });
@@ -49,6 +49,26 @@ test('a transient verifier failure is never returned as an inactive subscription
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: 'verification_unavailable' });
   });
+});
+
+test('verification failure logs exclude tokens and upstream response bodies', async (t) => {
+  const errors = [];
+  t.mock.method(console, 'error', (entry) => errors.push(entry));
+  await withServer(async () => {
+    throw new Error('Google Play verification failed: HTTP 403');
+  }, async (baseUrl) => {
+    await fetch(`${baseUrl}/v1/entitlements/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ purchaseToken: 'synthetic-purchase-token' }),
+    });
+  });
+  assert.equal(errors.length, 1);
+  assert.deepEqual(JSON.parse(errors[0]), {
+    event: 'play_verification_failed',
+    message: 'Google Play verification failed: HTTP 403',
+  });
+  assert.equal(errors[0].includes('synthetic-purchase-token'), false);
 });
 
 const invalidRequests = [
