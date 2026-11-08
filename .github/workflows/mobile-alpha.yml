@@ -94,7 +94,7 @@ jobs:
           CONTRACT_PID=$!
           trap 'kill "$CONTRACT_PID" 2>/dev/null || true' EXIT
           for attempt in 1 2 3 4 5; do
-            curl --fail --silent http://127.0.0.1:18080/healthz && break
+            curl --fail --silent http://127.0.0.1:18080/health && break
             sleep 1
           done
           BALUARD_TEST_ENTITLEMENT_URL="http://127.0.0.1:18080" ./gradlew :androidApp:testPlayDebugUnitTest

@@ -10,7 +10,7 @@ test('metadata tokens are cached until their refresh window', async () => {
     now: () => now,
     fetchImpl: async (url, options) => {
       metadataCalls += 1;
-      assert.equal(url, 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token');
+      assert.equal(url, 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fandroidpublisher');
       assert.equal(options.headers['Metadata-Flavor'], 'Google');
       return Response.json({ access_token: `token-${metadataCalls}`, expires_in: 3600, token_type: 'Bearer' });
     },

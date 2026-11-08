@@ -28,7 +28,7 @@ Transient Google, authentication, argument or configuration, timeout, and malfor
 
 Verification requests are limited to 10 per client IP and 60 per service instance per minute. Excess requests return HTTP 429 with `{"error":"rate_limited"}` and `Retry-After`; Android treats them as unavailable. Health checks are not limited.
 
-`GET /healthz` returns `{"status":"ok"}` without calling Google Play. All responses carry `Cache-Control: no-store`.
+`GET /health` returns `{"status":"ok"}` without calling Google Play. The path does not end in `z`, which Cloud Run reserves for Google system checks. All responses carry `Cache-Control: no-store`.
 
 ## Local verification
 
@@ -114,7 +114,7 @@ Purchase tokens are bearer credentials and are not bound to a Baluard account or
 Check the deployed health endpoint:
 
 ```bash
-curl --fail "https://YOUR_SERVICE_URL/healthz"
+curl --fail "https://YOUR_SERVICE_URL/health"
 ```
 
 Do not put a real purchase token in shell arguments, shell history, logs, tickets, or test fixtures. Verify a real purchase through the Play build and Play Billing Lab instead.
