@@ -36,6 +36,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test entitlement service
+        run: npm test --prefix services/entitlements
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -83,6 +90,17 @@ jobs:
           ./gradlew :shared:testDebugUnitTest \
             --tests "app.baluard.mobile.platform.AutofillProcessIsolationTest" \
             --tests "app.baluard.mobile.monetization.*"
+          PORT=18080 node ../services/entitlements/test-support/server.js >/tmp/baluard-contract-service.log 2>&1 &
+          CONTRACT_PID=$!
+          trap 'kill "$CONTRACT_PID" 2>/dev/null || true' EXIT
+          for attempt in 1 2 3 4 5; do
+            curl --fail --silent http://127.0.0.1:18080/healthz && break
+            sleep 1
+          done
+          BALUARD_TEST_ENTITLEMENT_URL="http://127.0.0.1:18080" ./gradlew :androidApp:testPlayDebugUnitTest
+          kill "$CONTRACT_PID"
+          wait "$CONTRACT_PID" || true
+          trap - EXIT
           # Stop the daemon inside the step: a daemon holding the step stdio
           # is the known cause of the next step appearing hung for 15+ min.
           ./gradlew --stop

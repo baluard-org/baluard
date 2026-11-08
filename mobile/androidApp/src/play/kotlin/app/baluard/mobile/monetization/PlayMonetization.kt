@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import android.os.Bundle
 import app.baluard.mobile.BaluardApplication
+import app.baluard.mobile.BuildConfig
 import com.android.billingclient.api.AcknowledgePurchaseParams
 import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClientStateListener
@@ -33,7 +34,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class PlayMonetizationApplication : BaluardApplication() {
     override fun onCreate() {
         super.onCreate()
-        val store = PlayBillingStore(this)
+        val store = PlayBillingStore(this, BuildConfig.ENTITLEMENT_SERVICE_URL)
         // launchBillingFlow needs an Activity, not the application context:
         // the store tracks the resumed one via lifecycle callbacks.
         registerActivityLifecycleCallbacks(store.lifecycleCallbacks)
@@ -47,9 +48,11 @@ class PlayMonetizationApplication : BaluardApplication() {
  * behind a mutex; the suspend surface stays the [MonetizationStore] contract,
  * so the gate never sees billing types.
  */
-internal class PlayBillingStore(context: Context) : MonetizationStore {
+internal class PlayBillingStore(context: Context, entitlementServiceUrl: String) : MonetizationStore {
 
     override val isPaidStore: Boolean = true
+    private val entitlementVerifier = entitlementServiceUrl.takeIf { it.isNotBlank() }
+        ?.let(::ServerEntitlementVerifier)
 
     val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: Activity) {
@@ -145,7 +148,7 @@ internal class PlayBillingStore(context: Context) : MonetizationStore {
         // flow that died before the listener ran would never be acknowledged,
         // and Google auto-refunds unacknowledged purchases after 3 days.
         acknowledgeUnacknowledged(result.purchasesList)
-        return mapPurchases(result.purchasesList)
+        return mapPurchases(result.purchasesList, entitlementVerifier)
     }
 
     /** Best-effort; any failure is retried on the next query via [Purchase.isAcknowledged]. */
@@ -241,11 +244,25 @@ internal class PlayBillingStore(context: Context) : MonetizationStore {
             }
         }
     }
+}
 
-    /** Maps a purchases list to the store contract; any active sub unlocks. */
-    private fun mapPurchases(purchases: List<Purchase>): StoreQuery {
-        val active = purchases.filter { it.products.contains(SUBSCRIPTION_PRODUCT_ID) }
-        if (active.none { it.purchaseState == Purchase.PurchaseState.PURCHASED }) return StoreQuery.NothingActive
-        return StoreQuery.Purchased(willRenew = active.any { it.isAutoRenewing })
+internal suspend fun mapPurchases(
+    purchases: List<Purchase>,
+    verifier: ServerEntitlementVerifier?,
+): StoreQuery {
+    val purchased = purchases.filter {
+        it.products.contains(SUBSCRIPTION_PRODUCT_ID) && it.purchaseState == Purchase.PurchaseState.PURCHASED
     }
+    if (purchased.isEmpty()) return StoreQuery.NothingActive
+    if (verifier == null) return StoreQuery.Purchased(willRenew = purchased.any { it.isAutoRenewing })
+
+    var unavailable = false
+    for (purchase in purchased) {
+        when (val result = verifier.verify(purchase.purchaseToken)) {
+            is StoreQuery.Purchased -> return result
+            StoreQuery.Unavailable -> unavailable = true
+            else -> Unit
+        }
+    }
+    return if (unavailable) StoreQuery.Unavailable else StoreQuery.NothingActive
 }

@@ -28,6 +28,7 @@ baluard/
 ├── desktop/                 # Tauri v2 + SolidJS frontend
 ├── browser/                 # Browser extension (MV3, Chrome + Firefox)
 ├── mobile/                  # Kotlin Multiplatform app (Compose Multiplatform UI)
+├── services/entitlements/   # Cloud Run Google Play entitlement verification
 ├── proto/                   # Protobuf schemas (compiled via prost)
 └── docs/                    # Architecture records (ADRs), developer guides, and security specifications
 ```
@@ -118,6 +119,6 @@ Env vars (set automatically by `just desktop-debug`):
 * **Hide the machinery:** The user sees entries, folders, and a sync status dot. Never expose Git terms, crypto terms, epochs, tokens, sockets, or raw error codes in user-facing UI.
 * **Ease of use is the evaluation axis:** A change breaks UX if it removes working functionality, adds friction, or confuses a non-technical user.
 * **Plain language:** Use "entry" instead of "cipher". Hide UUIDs. Collections are "Shared folders" in UI.
-* **No server backend:** Desktop and mobile apps work standalone and offline. Git sync is optional.
+* **No vault server backend:** Desktop and mobile apps work standalone and offline. Git sync is optional. Cloud Run verifies Play subscriptions only and never receives vault data.
 * **The app prints commands, the user runs them:** When a system component is missing (e.g. Secret Service on Linux), display the install command for the user to run. Never execute privileged commands directly or prompt for sudo.
 * **i18n:** All user-facing strings must use `t()` translation keys with parity maintained across `en.json`, `es.json`, and `pt.json`.

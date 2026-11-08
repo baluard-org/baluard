@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeMultiplatform)
@@ -34,6 +36,9 @@ kotlin {
         }
     }
 }
+
+val entitlementServiceUrl = (findProperty("baluard.entitlementServiceUrl") as String?)
+    ?: System.getenv("BALUARD_ENTITLEMENT_SERVICE_URL").orEmpty()
 
 android {
     val releaseStorePath = System.getenv("BALUARD_ANDROID_KEYSTORE")
@@ -120,7 +125,11 @@ android {
     flavorDimensions += "monetization"
     productFlavors {
         create("fdroid") { dimension = "monetization" }
-        create("play") { dimension = "monetization" }
+        create("play") {
+            dimension = "monetization"
+            val escapedUrl = entitlementServiceUrl.replace("\\", "\\\\").replace("\"", "\\\"")
+            buildConfigField("String", "ENTITLEMENT_SERVICE_URL", "\"$escapedUrl\"")
+        }
     }
 
     buildTypes {
@@ -151,8 +160,29 @@ android {
     }
 }
 
+tasks.matching { it.name == "prePlayReleaseBuild" }.configureEach {
+    val serviceUrl = entitlementServiceUrl
+    doLast {
+        if (serviceUrl.isBlank()) {
+            throw GradleException("Play release requires baluard.entitlementServiceUrl")
+        }
+        val uri = runCatching { URI(serviceUrl) }.getOrElse { error ->
+            throw GradleException("Play release entitlement URL is invalid", error)
+        }
+        if (uri.scheme != "https" || uri.host.isNullOrBlank() ||
+            uri.userInfo != null || uri.query != null || uri.fragment != null
+        ) {
+            throw GradleException("Play release entitlement URL must be an HTTPS origin without user info, query, or fragment")
+        }
+    }
+}
+
 dependencies {
     // Google Play Billing, play flavor only: the fdroid APK must not carry the
     // proprietary library (F-Droid policy, ADR 0102).
     "playImplementation"("com.android.billingclient:billing-ktx:9.1.0")
+    "playImplementation"("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    "testImplementation"("junit:junit:4.13.2")
+    "testImplementation"("org.json:json:20240303")
+    "testImplementation"("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }

@@ -308,6 +308,10 @@ test-nmh:
 test-browser:
 	cd browser/shared && npm test
 
+# Run Cloud Run entitlement service tests (Node 22+)
+test-entitlements:
+	cd services/entitlements && npm test
+
 # Run tests with output
 test-verbose:
 	{{ linuxbrew_env }} cargo test -- --nocapture

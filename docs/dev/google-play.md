@@ -44,6 +44,7 @@ Never bump the Play version ahead of F-Droid for the same `versionName`: a Play 
 - Subscription product (create it only once the billing build exists on a test track): product ID `baluard_supporter_yearly`, one base plan, 1 year auto-renew at 4.99 USD, plus a 14-day free-trial offer. Google runs the trial clock; the app only checks entitlement.
 - The gated surfaces on the store build are sync, sharing, and TOTP code generation. The F-Droid APK is a separate ungated build (the flavor split carries no Google billing library, which F-Droid policy forbids). Desktop stays free.
 - Add tester emails as license testers so purchases are free during testing.
+- Production Play builds verify purchase tokens through the Cloud Run service in `services/entitlements`. Follow its README for the service-account grant, deployment, and `baluard.entitlementServiceUrl` build setting. Device-only checks remain available for local development; ADR 0103 records the server-verification and offline-cache rules.
 
 ### Billing implementation facts (landed in the play flavor)
 

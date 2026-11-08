@@ -74,6 +74,7 @@ baluard/
 ├── mobile/                     # Kotlin Multiplatform Mobile App (Compose UI + UniFFI integration)
 │   ├── shared/                 # Common Compose UI, ViewModels, repository, and platform implementations
 │   └── androidApp/             # Android host application (single-Activity, BaluardAutofillService, BaluardAccessibilityService, BaluardA11yTileService, AutofillActivity, adaptive icons, R8 rules)
+├── services/entitlements/      # Stateless Cloud Run Google Play subscription verification; no vault data
 └── docs/                       # Numbered ADRs, security analysis, development guides, and brand assets
 ```
 
