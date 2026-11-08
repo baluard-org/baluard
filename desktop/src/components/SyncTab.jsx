@@ -570,8 +570,9 @@ const [customError, setCustomError] = createSignal(null);
   async function confirmDisconnect() {
     setSubState("creating");
     setError(null);
+    const wasDeleteRemote = deleteRemote();
     try {
-      const payload = { delete_remote: deleteRemote() };
+      const payload = { delete_remote: wasDeleteRemote };
       if (deleteRemote()) {
         payload.confirm = { kind: "phrase", value: credValue() };
       }
@@ -587,7 +588,6 @@ const [customError, setCustomError] = createSignal(null);
       setDeleteRemote(false);
       setConfirmDeleteRemote(false);
       setCredValue("");
-      setCredValue("");
       setSubState("idle");
       // Reset session flags so the post-disconnect view lands on the picker
       // (state A), not a stale "Connected as @user" (state B), and never
@@ -600,7 +600,7 @@ const [customError, setCustomError] = createSignal(null);
       // with a persistent toast + the manual-delete URL so they can finish.
       let result = {};
       try { result = JSON.parse(raw) || {}; } catch { /* legacy string response */ }
-      if (deleteRemote() && result.remote_deleted === false) {
+      if (wasDeleteRemote && result.remote_deleted === false) {
         toastWarning(
           result.repo_web_url
             ? t("sync.disconnectDeleteFailedWithUrl", { url: result.repo_web_url })
@@ -616,6 +616,8 @@ const [customError, setCustomError] = createSignal(null);
       setShowDisconnectModal(false);
       setDeleteRemote(false);
       setConfirmDeleteRemote(false);
+      // The typed phrase must not outlive the closed modal.
+      setCredValue("");
     }
   }
 

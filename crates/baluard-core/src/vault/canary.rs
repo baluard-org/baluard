@@ -127,11 +127,22 @@ pub fn verify_master_password_at(
     master_password: &str,
 ) -> Result<(), BaluardError> {
     let password = Zeroizing::new(master_password.to_string());
-    let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))?;
+    let kdf_json =
+        std::fs::read_to_string(vault_path.join("meta/kdf-params.json")).map_err(|e| {
+            BaluardError::Io(std::io::Error::new(
+                e.kind(),
+                format!("reading kdf params: {e}"),
+            ))
+        })?;
     let kdf_params = crate::crypto::kdf::parse_kdf_params(&kdf_json)?;
     let kek = Zeroizing::new(crate::crypto::kdf::derive_kek(&password, &kdf_params)?);
     let session_key = Zeroizing::new(crate::crypto::hkdf_derive::derive_session_key(&kek)?);
-    let canary = std::fs::read(vault_path.join("meta/kek-canary.enc"))?;
+    let canary = std::fs::read(vault_path.join("meta/kek-canary.enc")).map_err(|e| {
+        BaluardError::Io(std::io::Error::new(
+            e.kind(),
+            format!("reading kek canary: {e}"),
+        ))
+    })?;
     verify_kek_canary(&session_key, &canary).map_err(|_| {
         BaluardError::Crypto(crate::error::CryptoError::DecryptFailed(
             "master password incorrect".into(),

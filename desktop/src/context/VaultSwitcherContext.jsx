@@ -129,17 +129,24 @@ function VaultSwitcherProvider(props) {
   // daemon). The safe, reversible arm only — the vault directory is left
   // untouched on disk and can be re-attached later via Open Vault.
   //
-  // The destructive arm (delete-from-disk) is intentionally not exposed
-  // here; it lives in the CLI (`baluard vaults detach --delete-from-disk`)
-  // as a power-user escape hatch. See DetachVaultModal.jsx for the
-  // rationale.
+  // The destructive arms live in DetachVaultModal.jsx; the daemon gate
+  // (passphrase + phrase-only remote deletion) enforces the rest.
   //
-  // `refresh()` lives in `finally` so the dropdown re-syncs even if the
-  // daemon reports an error.
+  // Resolves with the daemon's response object (remote_deleted /
+  // remote_error / deleted_from_disk) so callers can warn when the
+  // best-effort remote delete degraded. `refresh()` lives in `finally`
+  // so the dropdown re-syncs even if the daemon reports an error.
   async function detach(slug, extra = {}) {
     const payload = JSON.stringify({ slug, ...extra });
     try {
-      await daemon("vaults.detach", payload);
+      const raw = await daemon("vaults.detach", payload);
+      let result = {};
+      try {
+        result = JSON.parse(raw) || {};
+      } catch {
+        /* legacy string response */
+      }
+      return result;
     } finally {
       await refresh();
     }
