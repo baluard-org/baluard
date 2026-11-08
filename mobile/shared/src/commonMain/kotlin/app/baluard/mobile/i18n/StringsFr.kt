@@ -610,6 +610,7 @@ internal val FR: Map<String, String> = mapOf(
     // Android autofill picker + trampoline (Phase 6). The biometric prompt
     // title reuses login.biometricTitle.
     "autofill.unlockHint" to "Appuyez pour déverrouiller et remplir",
+"autofill.pickerTitle" to "Choisissez un identifiant",
     "autofill.totpWillCopy" to "Le code 2FA sera copi\u00e9",
     "autofill.securityKeyTitle" to "Remplissage automatique indisponible",
     "autofill.securityKeyHint" to "Le remplissage automatique n'est pas disponible pour les coffres nécessitant une clé de sécurité physique",

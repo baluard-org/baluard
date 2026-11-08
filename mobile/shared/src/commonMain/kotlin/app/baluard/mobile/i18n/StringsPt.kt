@@ -585,6 +585,7 @@ internal val PT: Map<String, String> = mapOf(
         "versão agora e abra-a mais tarde no dispositivo que possui essas chaves.",
     "conflict.error" to "Não foi possível resolver o conflito. Tente novamente.",
     "autofill.unlockHint" to "Desbloqueie o cofre para preencher seus dados de acesso.",
+"autofill.pickerTitle" to "Escolha um login",
     "autofill.totpWillCopy" to "O c\u00f3digo 2FA ser\u00e1 copiado",
     "autofill.securityKeyTitle" to "Preenchimento indisponível",
     "autofill.securityKeyHint" to "O preenchimento automático não está disponível em cofres que exigem a chave de segurança",

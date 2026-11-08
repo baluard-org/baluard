@@ -1,34 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Trampoline + picker host (ADR 0090/D10). Visible-but-empty for the
-     biometric ceremony (NoDisplay would break it); the a11y picker mode
-     reveals the scrollable list of matching logins. -->
+<!-- Trampoline + picker host (ADR 0090/D10). OPAQUE on purpose: the
+     fallback picker lists every login and previously rendered as bare
+     rows over a translucent window, reading as a ghost of the vault
+     over the browser (0.2.1 bug report). Dataset mode shows the same
+     branded screen behind the biometric prompt. Plain Views only, no
+     Compose in this process (D9). -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#66000000"
+    android:background="@color/autofill_screen"
     android:clickable="true"
     android:focusable="true">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_vertical"
+        android:layout_height="match_parent"
         android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/autofill_picker_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="24dp"
+            android:paddingBottom="8dp"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/white"
+            android:visibility="gone" />
 
         <ProgressBar
             android:id="@+id/autofill_progress"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal" />
+            android:layout_gravity="center_horizontal"
+            android:paddingTop="24dp" />
 
         <TextView
             android:id="@+id/autofill_status"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:paddingTop="12dp"
             android:paddingStart="24dp"
             android:paddingEnd="24dp"
-            android:layout_gravity="center_horizontal"
             android:gravity="center"
             android:textSize="14sp"
             android:textColor="@android:color/white" />
@@ -36,7 +51,8 @@
         <ScrollView
             android:id="@+id/autofill_picker_scroll"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:visibility="gone">
 
             <LinearLayout
