@@ -3,10 +3,16 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
-- Android autofill no longer puts logins into verification-code boxes, and the one-time code lands on your clipboard with a confirmation whenever a fill has one.
-- App-to-web suggestions are now on by default: logins saved for a website can fill inside an app after you confirm that app once. Turn it off in Settings > Security.
 
 - Nothing yet.
+
+## 0.1.12 - 2026-11-07
+
+- Android autofill no longer puts logins into verification-code boxes, and the one-time code lands on your clipboard with a confirmation whenever a fill has one.
+- App-to-web suggestions are now on by default: logins saved for a website can fill inside an app after you confirm that app once. Turn it off in Settings > Security.
+- Importing a backup is much faster: large imports no longer decrypt the whole vault again after every entry.
+- Backing out of the supporter upgrade sheet on mobile now returns you to where you were instead of dead-ending.
+- On the Play build, subscription status is now verified through Google's servers, so trial starts and lapses hold correctly.
 
 ## 0.1.10 - 2026-11-07
 
