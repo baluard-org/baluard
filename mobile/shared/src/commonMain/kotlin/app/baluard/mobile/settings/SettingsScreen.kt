@@ -66,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1680,9 +1681,10 @@ val entitlement by Entitlements.state.collectAsState()
                     // App-to-web suggestions (path B trust-on-first-use):
                     // web-saved logins may fill inside a native app after
                     // the user trusts the (package, domain) pairing once.
-                    // Opt-in, default off.
+                    // Default on; that per-pairing trust prompt is the
+                    // consent gate, so the switch only silences the pathway.
                     BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    var suggestAppLogins by remember(vaultPath) { mutableStateOf(false) }
+                    var suggestAppLogins by remember(vaultPath) { mutableStateOf(true) }
                     var trustedApps by remember(vaultPath) {
                         mutableStateOf<List<Pair<String, String>>>(emptyList())
                     }
@@ -1700,7 +1702,7 @@ val entitlement by Entitlements.state.collectAsState()
                             val obj = Json.parseToJsonElement(json) as? JsonObject
                                 ?: return@launch
                             suggestAppLogins =
-                                (obj["suggest_app_logins"] as? JsonPrimitive)?.content == "true"
+                                (obj["suggest_app_logins"] as? JsonPrimitive)?.content != "false"
                             fun parsePairs(key: String): List<Pair<String, String>> =
                                 (obj[key] as? JsonArray)?.mapNotNull { t ->
                                     val o = t as? JsonObject ?: return@mapNotNull null
@@ -2888,8 +2890,13 @@ val entitlement by Entitlements.state.collectAsState()
                                 onClick = {
                                     scope.launch {
                                         importBusy = true
+                                        // UniFFI async polls the Rust future on the calling thread;
+                                        // a large import is seconds of native work, so keep it off
+                                        // the main dispatcher or Android ANRs mid-import.
                                         val raw = runCatching {
-                                            repo.importData(vault, importFormat, file.bytes)
+                                            withContext(Dispatchers.Default) {
+                                                repo.importData(vault, importFormat, file.bytes)
+                                            }
                                         }.getOrNull()
                                         importBusy = false
                                         pendingImport = null

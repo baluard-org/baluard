@@ -7089,10 +7089,17 @@ impl VaultState {
                 }
             }
 
-            match handle.add_cipher(&cipher) {
+            match handle.add_cipher_batch(&cipher) {
                 Ok(_) => created += 1,
                 Err(e) => errors.push(format!("Cipher '{}': {e}", cipher.name)),
             }
+        }
+
+        // Batch adds skip the per-cipher index rebuild (O(N²) there);
+        // one pass realigns it. Best-effort: the reader's staleness
+        // guard self-heals on the next read (see rebuild_cipher_index).
+        if let Err(e) = handle.rebuild_index() {
+            log::warn!("[import] index rebuild failed (will self-heal): {e}");
         }
 
         let folders_created = if tree_folder_ids.is_empty() {
@@ -9632,7 +9639,9 @@ fn app_match_context(
     target: &str,
 ) -> Option<AppMatchContext> {
     let s = settings?;
-    if !s.suggest_app_logins.unwrap_or(false) {
+    // Absent means on: the per-(package, domain) trust prompt is the consent
+    // gate, so the toggle only silences the pathway.
+    if !s.suggest_app_logins.unwrap_or(true) {
         return None;
     }
     let pkg = target.trim().to_ascii_lowercase();
