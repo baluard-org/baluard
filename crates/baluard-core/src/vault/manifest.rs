@@ -320,10 +320,11 @@ pub struct VaultSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub personal_merge: Option<bool>,
 
-    /// App-to-web suggestion toggle (path B trust-on-first-use). When true,
-    /// native-app fills may surface web-saved logins whose registrable domain
-    /// matches a package-name-derived candidate, after the user explicitly
-    /// trusts the (package, domain) pairing. None/false = off (default).
+    /// App-to-web suggestion toggle (path B trust-on-first-use). When not
+    /// false, native-app fills may surface web-saved logins whose registrable
+    /// domain matches a package-name-derived candidate, after the user
+    /// explicitly trusts the (package, domain) pairing. Absent means on; an
+    /// explicit false turns it off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggest_app_logins: Option<bool>,
     /// Trusted (package, registrable domain) pairs for app-to-web matching.
@@ -468,7 +469,9 @@ pub struct EncryptedSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub personal_merge: Option<bool>,
 
-    /// App-to-web suggestion toggle (path B trust-on-first-use).
+    /// App-to-web suggestion toggle (path B trust-on-first-use). Absent
+    /// means on: the per-pairing trust prompt is the consent gate, so only
+    /// an explicit false turns it off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggest_app_logins: Option<bool>,
     /// Trusted (package, registrable domain) pairs for app-to-web matching.
