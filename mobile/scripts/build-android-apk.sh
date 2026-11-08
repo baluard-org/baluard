@@ -33,7 +33,9 @@ DO_REGEN_BINDINGS=0
 SKIP_NATIVE=0
 DO_E2E=0
 DO_RELEASE=0
-ABIS="${ABIS:-arm64-v8a,armeabi-v7a,x86_64,x86}"
+# Ship shape is arm64-only (minSdk 32 loses nobody; F-Droid download drops
+# from ~90 MB to ~26 MB). Multi-ABI builds stay available via --abis.
+ABIS="${ABIS:-arm64-v8a}"
 DEVICE="${ANDROID_DEVICE:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
