@@ -28,7 +28,7 @@ Never bump the Play version ahead of F-Droid for the same `versionName`: a Play 
 
 - Internal testing: up to 100 testers, no Google review, installs immediate. Does NOT count toward the personal-account production requirement (12 continuous opted-in testers for 14 days).
 - Closed testing: the track that satisfies the 12-testers/14-days production runway. Carry the same AAB there when the clock should start.
-- Testers install through the opt-in link on each track's Testers tab. Testers get paid products and subscriptions free while in a testing track, so nothing charges until production.
+- Testers install through the opt-in link on each track's Testers tab. Internal testers install paid apps free. Open and closed testers must purchase a paid app or redeem a paid-app promo code. In-app purchases and subscriptions have separate license-testing rules below.
 - Test-track subscriptions run on Google's accelerated clock, and the console never warns you about it (developer.android.com/google/play/billing/test has the table): a 1-year base plan renews every 30 minutes, a free trial is always 3 minutes regardless of its configured length, grace is 5 minutes, and account hold 10. The purchase sheet therefore reads like "CLP 4,900 / 30 min" and "3 minute free trial" even though the real product is 4.99 USD/year with a 14-day trial. Nothing is misconfigured, and production shows the true durations.
 - A test subscription renews at most SIX times, then ends (free-trial and introductory periods do not count toward the cap). A yearly-plan tester therefore holds a license for roughly 3.5 hours per purchase, then the gate locks until they resubscribe. Resubscribing re-arms the full cycle; Play Billing Lab lets a license tester re-test the trial offer unlimited times and jump the subscription into grace or account hold with one click.
 - Users incur REAL charges for test-track purchases unless the account is on the License testing list (Manage account > Play apps settings > Monetization settings > License testing). Every closed-track tester email must also be on that list, or a tester subscribing to the Supporter subscription pays the real 4.99 USD. License testers pay nothing: purchases use Google's test payment instrument, and renewals are free.
@@ -50,6 +50,15 @@ Never bump the Play version ahead of F-Droid for the same `versionName`: a Play 
 - The gated surfaces on the store build are sync, sharing, and TOTP code generation. The F-Droid APK is a separate ungated build (the flavor split carries no Google billing library, which F-Droid policy forbids). Desktop stays free.
 - Add tester emails as license testers so purchases are free during testing.
 - Production Play builds verify purchase tokens through the Cloud Run service in `services/entitlements`. Follow its README for the service-account grant, deployment, and `baluard.entitlementServiceUrl` build setting. Device-only checks remain available for local development; ADR 0103 records the server-verification and offline-cache rules.
+- Invited testers can instead install the signature-verified `app.baluard.mobile.fellowship` companion from `mobile/fellowship`. It unlocks only while installed and provides an offline fallback; Play acknowledgment and Cloud Run purchase verification continue for paid users. ADR 0104 records the trust model.
+
+### Fellowship companion distribution
+
+- Fellowship is a separate Play app with package `app.baluard.mobile.fellowship`, configured as a high-priced one-time paid app. Keep it on an invite-only internal-testing release and off production. Internal testers install paid apps free, so no promo codes are needed for up to 100 testers. A closed-testing alternative requires purchase or a paid-app promo code; a draft app cannot be installed by testers.
+- Build both artifacts from `mobile/` with `./gradlew :fellowship:assembleRelease :fellowship:bundleRelease`. Upload `mobile/fellowship/build/outputs/bundle/release/fellowship-release.aab`; the APK is for local signature tests only.
+- The dedicated local key is the upload key. Play App Signing signs delivered APKs with its own identity by default. Copy the applicable app-signing SHA-256 fingerprints from Play Console > Play app signing > App signing key, remove the colons, and put them in `baluard.fellowshipPlayCertificatesSha256` (or `BALUARD_FELLOWSHIP_PLAY_CERTIFICATES_SHA256`). Then make those public pins the default in `mobile/androidApp/build.gradle.kts`. The build combines them with the local upload pin in `FELLOWSHIP_CERTIFICATES_SHA256`. Ship that Baluard update before inviting users. The upload certificate alone does not authenticate a Play-installed companion. Hybrid signing may require multiple pins; every current signer must match.
+- `prePlayReleaseBuild` refuses a blank or malformed Play pin list. Until the Play fingerprints are configured, a main Baluard Play release intentionally fails this guard. Debug builds remain available with the local upload pin.
+- The local upload fingerprint can remain pinned for directly signed test APKs, which deliberately remain bearer licenses. Remove it after Play verification if that test path is no longer needed. Public certificate fingerprints are not secrets. Follow `mobile/fellowship/README.md` for key backup and certificate verification.
 
 ### Billing implementation facts (landed in the play flavor)
 
@@ -69,10 +78,10 @@ Never bump the Play version ahead of F-Droid for the same `versionName`: a Play 
 
 ## Automation
 
-No official Play MCP or CLI exists. The path is the Google Play Developer API (androidpublisher) driven by curl plus a service-account JWT, mirroring the Chrome Web Store pipeline:
+No official Play MCP or CLI exists. The path is the Google Play Developer API (androidpublisher) driven by curl plus a service-account JWT, mirroring the Chrome Web Store pipeline. The console no longer has a Setup, API access page and no project linking is needed; the service account is invited like a user (developers.google.com/android-publisher/getting_started, updated 2025-12):
 
-1. Play Console, Setup, API access: link a Google Cloud project, enable the Android Developer API.
-2. Create a service account with the Release Manager role, download the JSON key.
+1. Google Cloud Console: enable the Google Play Android Developer API on the project, create the service account, download its JSON key.
+2. Play Console, Users and permissions, Invite new users: paste the service account email, grant Release to testing tracks and Manage testing tracks and edit tester lists, leave Release to production unchecked.
 3. Store the key in Bitwarden and at `~/.baluard/play-service-account.json` mode 600.
 4. `just play-submit` runs `scripts/upload-play-release.sh`, the androidpublisher v3 edits flow gated on `BALUARD_PLAY_SERVICE_ACCOUNT_JSON` (default `~/.baluard/play-service-account.json`), with loud skip guidance when the key is absent, like `ext-submit`.
 - Guards: the workspace version drives versionName and versionCode through the bump formula, and the API's bundle list is checked before uploading, so an already-burned version code refuses the run instead of burning a second upload; the uploaded bundle's reported versionCode must match the workspace or the release step is skipped; when aapt2 and the fdroid APK are present, targetSdkVersion must meet `BALUARD_PLAY_MIN_TARGET_SDK` (default 35).
