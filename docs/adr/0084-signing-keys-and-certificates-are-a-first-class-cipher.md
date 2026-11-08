@@ -4,7 +4,7 @@
 
 ## Context
 
-Notes do not provide expiry warnings, fingerprint and public-key copy controls, or appropriate field handling for private keys. Release signing material was stored as attachments to a Bitwarden Login, demonstrating the need to model long-lived signing identities. A signing key and its certificate chain form one identity; SSH keys have distinct per-use authentication workflows and fingerprint conventions.
+Notes do not provide expiry warnings, fingerprint and public-key copy controls, or appropriate field handling for private keys. Release signing material was stored as attachments inside a consumer password-manager login, demonstrating the need to model long-lived signing identities. A signing key and its certificate chain form one identity; SSH keys have distinct per-use authentication workflows and fingerprint conventions.
 
 ## Decision
 
