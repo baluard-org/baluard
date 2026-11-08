@@ -4,7 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-- Nothing yet.
+- Opening Baluard from the autofill dropdown or a keyboard suggestion no longer renders the app see-through over the page you were on.
 
 ## 0.2.0 - 2026-11-08
 
@@ -72,9 +72,7 @@ Notable user-facing changes per release.
 - The CLI can update itself, notices when a newer release is available, and installs through a mise path too.
 - CLI fixes: vaults list honors --direct on machines with a running daemon, removing an entry's last passkey now sticks, and --output json in direct mode matches the daemon format (it also no longer exposes passkey private keys).
 
-## [UNRELEASED]
-
-No user-facing changes yet.
+## 0.1.3 - 2026-11-05
 
 - The browser extension now pairs through the canonical host name (app.baluard.browser). Older 0.1.0 extensions keep working: every installer and app registration also carries the previous name.
 - The macOS and Windows desktop apps now register the browser-extension bridge themselves: the app writes and refreshes the native-messaging manifests on startup (macOS) or the installer registers them with the app manifest beside it (Windows), so the extension works right after installing the app, with no extra setup.
