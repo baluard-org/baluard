@@ -35,7 +35,7 @@ keytool -genkeypair -v \
 
 The local key is the Play upload key. Play App Signing signs delivered APKs with its own identity. The current Play app-signing SHA-256 pin is the default `fellowshipPlayCertificatesSha256` value in `mobile/androidApp/build.gradle.kts`. During rotation, copy every applicable fingerprint from Play Console > Protected with Play > Play Store protection > Play app signing, remove the colons, and update the default or supply a comma-separated `baluard.fellowshipPlayCertificatesSha256` Gradle property or `BALUARD_FELLOWSHIP_PLAY_CERTIFICATES_SHA256` environment value. The build combines Play pins with the local upload pin in `FELLOWSHIP_CERTIFICATES_SHA256`.
 
-Play release builds refuse a blank or malformed Play pin list. Ship the pinned Baluard update and verify a Play-installed companion before inviting users. The upload certificate alone cannot authenticate a Play-installed companion. Remove the local upload pin after verification if directly signed test APKs no longer need access; retaining it deliberately keeps those APKs valid as bearer licenses.
+Play release builds refuse a blank or malformed Play pin list. Ship the pinned Baluard update and verify a Play-installed companion before inviting users; both steps are done (Baluard 0.2.1 carries the pin, the unlock was confirmed on-device). The upload certificate alone cannot authenticate a Play-installed companion. Remove the local upload pin after verification if directly signed test APKs no longer need access; retaining it deliberately keeps those APKs valid as bearer licenses.
 
 ## Build
 
