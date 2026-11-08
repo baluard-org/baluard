@@ -34,6 +34,7 @@ Never bump the Play version ahead of F-Droid for the same `versionName`: a Play 
 - Users incur REAL charges for test-track purchases unless the account is on the License testing list (Manage account > Play apps settings > Monetization settings > License testing). Every closed-track tester email must also be on that list, or a tester subscribing to the Supporter subscription pays the real 4.99 USD. License testers pay nothing: purchases use Google's test payment instrument, and renewals are free.
 - Test purchase email volume is bounded by the renewal cap: one initial receipt, up to six renewal notices, then it stops by itself unless the tester subscribes again. The only developer-side email the docs promise is the unacknowledged-purchase cancellation notice, which cannot fire because the app acknowledges purchases immediately (ADR 0102 billing contract).
 - Release naming convention in the forms: `0.1.9 (1009)` style, version visible to testers. Tester-facing release notes: what changed, what to try, report to support@baluard.app, end with "Thanks for testing."
+- The full purchase cycle was verified live on the internal track with 0.2.0 (versionCode 2000): subscribe, server-side verification through the entitlement service, trial lapse locking the gates, and resubscribe unlocking, all confirmed working (2026-11-08).
 
 ## Console setup already done
 
