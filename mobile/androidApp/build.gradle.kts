@@ -79,6 +79,9 @@ android {
         // and then fail on the missing libbaluard_uniffi.
         // Multi-ABI build: ./gradlew -Pbaluard.abis=arm64-v8a,x86_64 :androidApp:assembleDebug
         ndk {
+            // clear() first: abiFilters restores stale entries from the gradle
+            // configuration cache, and += then merges old ABIs back in.
+            abiFilters.clear()
             abiFilters += (findProperty("baluard.abis") as String? ?: "arm64-v8a")
                 .split(",").map(String::trim)
         }
