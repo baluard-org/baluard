@@ -164,6 +164,7 @@
       "credPlaceholderPassword": "Mot de passe maître",
       "credPlaceholderPhrase": "les 24 mots, séparés par des espaces",
       "verifyRequired": "Entrez votre mot de passe maître ou votre phrase de récupération pour continuer.",
+      "verifyPhraseOnly": "Supprimer le dépôt distant requiert votre phrase de récupération de 24 mots.",
       "deleteSubmit": "Supprimer",
       "working": "En cours...",
       "deleted": "{name} supprimé"

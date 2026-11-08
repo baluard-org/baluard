@@ -76,12 +76,16 @@ describe("DetachVaultModal", () => {
     const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     fireEvent.click(checkboxes[1]); // also delete the repository
     await Promise.resolve();
+    // The remote arm is phrase-only: the kind radios disappear and the
+    // note explains why.
+    expect(
+      container.querySelectorAll('input[name="detach-cred-kind"]').length
+    ).toBe(0);
+    expect(
+      document.body.textContent
+    ).toContain("vault.vaultSwitcher.verifyPhraseOnly");
     const inputs = container.querySelectorAll('input[type="password"]');
     fireEvent.input(inputs[0], { target: { value: "wrong" } });
-    await Promise.resolve();
-    // Switch to the recovery-phrase credential kind.
-    const radios = container.querySelectorAll('input[name="detach-cred-kind"]');
-    fireEvent.click(radios[1]);
     await Promise.resolve();
 
     fireEvent.click(getByText("vault.vaultSwitcher.deleteSubmit"));
@@ -91,6 +95,37 @@ describe("DetachVaultModal", () => {
       delete_from_disk: false,
       delete_remote: true,
       confirm: { kind: "phrase", value: "wrong" },
+    });
+    unmount();
+  });
+
+  it("checking the remote toggle next to device-delete forces the phrase kind", async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    const { getByText, container, unmount } = render(() => (
+      <DetachVaultModal show={true} setShow={() => {}} vault={vault} onConfirm={onConfirm} />
+    ));
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+    fireEvent.click(checkboxes[0]); // delete from this device (password default)
+    await Promise.resolve();
+    expect(
+      container.querySelectorAll('input[name="detach-cred-kind"]').length
+    ).toBe(2);
+    fireEvent.click(checkboxes[1]); // also delete the repository
+    await Promise.resolve();
+    expect(
+      container.querySelectorAll('input[name="detach-cred-kind"]').length
+    ).toBe(0);
+    const inputs = container.querySelectorAll('input[type="password"]');
+    fireEvent.input(inputs[0], { target: { value: "phrase-words" } });
+    await Promise.resolve();
+
+    fireEvent.click(getByText("vault.vaultSwitcher.deleteSubmit"));
+    await Promise.resolve();
+    expect(lastPayloadOf(onConfirm)).toEqual({
+      slug: "dev-vault",
+      delete_from_disk: true,
+      delete_remote: true,
+      confirm: { kind: "phrase", value: "phrase-words" },
     });
     unmount();
   });

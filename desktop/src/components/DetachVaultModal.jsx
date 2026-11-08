@@ -31,6 +31,7 @@ export default function DetachVaultModal(props) {
 
   const destructive = () => delFromDevice() || delRemote();
   const hasRemote = () => Boolean(props.vault?.provider && props.vault?.remote_url);
+  const remoteArm = () => delRemote() && hasRemote();
 
   function close() {
     if (busy()) return;
@@ -55,7 +56,7 @@ export default function DetachVaultModal(props) {
       }
       payload.delete_from_disk = delFromDevice();
       payload.delete_remote = delRemote() && hasRemote();
-      payload.confirm = { kind: credKind(), value: credValue() };
+      payload.confirm = { kind: remoteArm() ? "phrase" : credKind(), value: credValue() };
     }
     setBusy(true);
     try {
@@ -114,7 +115,12 @@ export default function DetachVaultModal(props) {
                     type="checkbox"
                     class="accent-[var(--color-danger)]"
                     checked={delRemote()}
-                    onChange={(e) => setDelRemote(e.currentTarget.checked)}
+                    onChange={(e) => {
+                      setDelRemote(e.currentTarget.checked);
+                      if (e.currentTarget.checked && credKind() === "password") {
+                        setCredKind("phrase");
+                      }
+                    }}
                   />
                   <span class="text-sm text-[var(--color-text)]">
                     {t("vault.vaultSwitcher.deleteRemoteRepo", {
@@ -130,35 +136,46 @@ export default function DetachVaultModal(props) {
                 <p class="text-sm font-semibold text-[var(--color-text)] mb-2">
                   {t("vault.vaultSwitcher.verifyTitle")}
                 </p>
-                <div class="flex gap-4 mb-2 text-sm">
-                  <label class="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="detach-cred-kind"
-                      checked={credKind() === "password"}
-                      onChange={() => setCredKind("password")}
-                    />
-                    <span class="text-[var(--color-text)]">
-                      {t("vault.vaultSwitcher.credPassword")}
-                    </span>
-                  </label>
-                  <label class="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="detach-cred-kind"
-                      checked={credKind() === "phrase"}
-                      onChange={() => setCredKind("phrase")}
-                    />
-                    <span class="text-[var(--color-text)]">
-                      {t("vault.vaultSwitcher.credPhrase")}
-                    </span>
-                  </label>
-                </div>
+                <Show
+                  when={remoteArm()}
+                  fallback={
+                    <div class="flex gap-4 mb-2 text-sm">
+                      <label class="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="detach-cred-kind"
+                          checked={credKind() === "password"}
+                          onChange={() => setCredKind("password")}
+                        />
+                        <span class="text-[var(--color-text)]">
+                          {t("vault.vaultSwitcher.credPassword")}
+                        </span>
+                      </label>
+                      <label class="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="detach-cred-kind"
+                          checked={credKind() === "phrase"}
+                          onChange={() => setCredKind("phrase")}
+                        />
+                        <span class="text-[var(--color-text)]">
+                          {t("vault.vaultSwitcher.credPhrase")}
+                        </span>
+                      </label>
+                    </div>
+                  }
+                >
+                  <p class="text-sm text-[var(--color-text-muted)] mb-2">
+                    {t("vault.vaultSwitcher.verifyPhraseOnly")}
+                  </p>
+                </Show>
                 <input
                   type="password"
                   class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
                   placeholder={
-                    credKind() === "password"
+                    remoteArm()
+                      ? t("vault.vaultSwitcher.credPlaceholderPhrase")
+                      : credKind() === "password"
                       ? t("vault.vaultSwitcher.credPlaceholderPassword")
                       : t("vault.vaultSwitcher.credPlaceholderPhrase")
                   }

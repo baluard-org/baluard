@@ -1240,6 +1240,7 @@ async fn route_host_request_inner(
                     &entry.path,
                     Some(entry.vault_id),
                     payload.get("confirm"),
+                    delete_remote,
                 ) {
                     return err_response(e);
                 }
@@ -7319,11 +7320,16 @@ async fn handle_sync_conflict_resolve(
 /// destructive surfaces (vaults.detach arms and sync.disconnect's remote
 /// delete) funnel through here so a repository holding a vault can never
 /// be removed without the passphrase. Wrong answers are rate-limited per
-/// vault.
+/// vault. `require_phrase` (set whenever the remote repository is being
+/// deleted) accepts only the phrase: the master password defends the
+/// daily session, while the 256-bit phrase is the break-glass secret —
+/// it cannot be offline-guessed from the repo's own ciphertext and it is
+/// not the credential users share for emergency access.
 fn verify_destroy_confirm(
     vault_path: &std::path::Path,
     vault_id: Option<uuid::Uuid>,
     confirm: Option<&serde_json::Value>,
+    require_phrase: bool,
 ) -> Result<(), String> {
     let Some(c) = confirm else {
         return Err("This destructive operation requires 'confirm': {\"kind\": \"password\"|\"phrase\", \"value\": ...}".to_string());
@@ -7331,6 +7337,19 @@ fn verify_destroy_confirm(
     let kind = c["kind"]
         .as_str()
         .ok_or("confirm.kind must be \"password\" or \"phrase\"")?;
+    if require_phrase && kind != "phrase" {
+        return Err(
+            "Deleting the remote repository requires the 24-word recovery phrase; the master password cannot authorize it.".to_string(),
+        );
+    }
+    if require_phrase
+        && !baluard_core::vault::recovery_kit::kit_exists(vault_path)
+            .map_err(|e| format!("cannot inspect the vault's recovery kit: {e}"))?
+    {
+        return Err(
+            "Deleting the remote repository requires the 24-word recovery phrase, but no recovery kit is set up for this vault. Enable the recovery kit in Settings first.".to_string(),
+        );
+    }
     let value = c["value"]
         .as_str()
         .filter(|v| !v.is_empty())
@@ -7449,7 +7468,7 @@ async fn sync_disconnect(
             .ok()
             .flatten()
             .map(|m| m.vault_id);
-        verify_destroy_confirm(vault_path, vault_id, payload.get("confirm"))?;
+        verify_destroy_confirm(vault_path, vault_id, payload.get("confirm"), true)?;
     }
 
     let engine = baluard_core::sync::engine::SyncEngine::new(
