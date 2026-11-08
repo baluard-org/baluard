@@ -129,6 +129,19 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                     InlineStyle(AutofillInlineCache.specs, AutofillInlineCache.maxCount)
                         .takeIf { AutofillInlineCache.specs.isNotEmpty() },
                 ) ?: AutofillResponseBuilder.saveOnlyResponse(applicationContext, fields, target)
+                // Bitwarden-parity clipboard copy (Claude review, minimal
+                // shape): the framework sheet gives no per-dataset pick
+                // callback, so copy only when exactly one match carries
+                // TOTP - guessing a favorite would put the wrong entry's
+                // code on the clipboard. Runs while this activity still
+                // holds focus (Android 10+ drops unfocused clipboard
+                // writes); the copied-toast fires from copyTotpFor.
+                runCatching {
+                    val totpMatches = AutofillSession.query(target).matches.filter { it.totp }
+                    if (totpMatches.size == 1) {
+                        AutofillResponseBuilder.copyTotpFor(applicationContext, totpMatches[0])
+                    }
+                }
                 runOnUiThread { deliverDatasetResponse(response) }
             }
         }

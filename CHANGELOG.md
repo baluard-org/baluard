@@ -3,6 +3,8 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
+- Android autofill no longer puts logins into verification-code boxes, and the one-time code lands on your clipboard with a confirmation whenever a fill has one.
+- App-to-web suggestions are now on by default: logins saved for a website can fill inside an app after you confirm that app once. Turn it off in Settings > Security.
 
 - Nothing yet.
 

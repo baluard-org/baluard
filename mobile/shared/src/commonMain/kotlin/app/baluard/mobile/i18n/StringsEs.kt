@@ -624,6 +624,7 @@ internal val ES: Map<String, String> = mapOf(
     // Android autofill picker + trampoline (Phase 6). El título del prompt
     // biométrico reutiliza login.biometricTitle.
     "autofill.unlockHint" to "Toca para desbloquear y rellenar",
+    "autofill.totpWillCopy" to "Se copiar\u00e1 el c\u00f3digo 2FA",
     "autofill.securityKeyTitle" to "Autocompletar no disponible",
     "autofill.securityKeyHint" to "El autocompletado no está disponible en bóvedas que requieren la llave de seguridad",
     "autofill.unlockVault" to "Desbloquear {0}",

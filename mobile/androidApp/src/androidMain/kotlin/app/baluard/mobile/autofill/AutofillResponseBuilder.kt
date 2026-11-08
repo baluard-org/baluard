@@ -148,7 +148,7 @@ object AutofillResponseBuilder {
                 ?.let { "${match.name} ($it)" }
                 ?: match.name
             val chip = inline?.let { inlineChipOrNull(context, it, index, title, username) }
-            val views = datasetPresentation(context, title, username)
+            val views = datasetPresentation(context, title, username, match.totp)
             val ds = Dataset.Builder().setId("fill-" + match.id)
             var hasValue = false
 
@@ -282,7 +282,7 @@ object AutofillResponseBuilder {
     ): FillResponse? {
         val (username, password) = AutofillSession.credential(match.vaultPath, match.id) ?: return null
         val chip = inline?.let { inlineChipOrNull(context, it, 0, match.name, username) }
-        val views = datasetPresentation(context, match.name, username)
+        val views = datasetPresentation(context, match.name, username, match.totp)
         val ds = Dataset.Builder().setId("fill-" + match.id)
         var hasValue = false
 
@@ -319,18 +319,22 @@ object AutofillResponseBuilder {
 
     /**
      * TOTP auto-copy for the manually-picked entry (Bitwarden parity): after
-     * selection, the entry's code goes to the clipboard with a toast.
+     * selection, the entry's code goes to the clipboard with a toast. The
+     * toast fires only when the write landed - Android drops clipboard
+     * writes from an unfocused context, and a false "copied" would send the
+     * user hunting for a code that is nowhere.
      */
     suspend fun copyTotpFor(context: Context, match: AutofillSession.Match) {
         AutofillSession.totpCode(match.vaultPath, match.id)?.let { code ->
-            app.baluard.mobile.platform.copyToClipboard(code)
-            // This runs on Dispatchers.Default; Toast needs a Looper.
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(
-                    context,
-                    t("a11y.totpCopied"),
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
+            if (app.baluard.mobile.platform.copyToClipboard(code)) {
+                // This runs on Dispatchers.Default; Toast needs a Looper.
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(
+                        context,
+                        t("a11y.totpCopied"),
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
             }
         }
     }
@@ -461,12 +465,18 @@ object AutofillResponseBuilder {
             setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
         }
 
-    private fun datasetPresentation(context: Context, name: String, username: String?): RemoteViews =
+    private fun datasetPresentation(context: Context, name: String, username: String?, totp: Boolean = false): RemoteViews =
         RemoteViews(context.packageName, R.layout.autofill_dataset_item).apply {
             setTextViewText(R.id.autofill_item_title, name)
             setTextViewText(
                 R.id.autofill_item_subtitle,
-                username?.takeIf { it.isNotBlank() } ?: t("autofill.noUsername"),
+                buildString {
+                    append(username?.takeIf { it.isNotBlank() } ?: t("autofill.noUsername"))
+                    // Static promise, never the code itself: the response
+                    // RemoteViews are frozen at build time, so digits would
+                    // sit stale in the sheet (Claude review Q3).
+                    if (totp) append(" (").append(t("autofill.totpWillCopy")).append(")")
+                },
             )
             setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
         }

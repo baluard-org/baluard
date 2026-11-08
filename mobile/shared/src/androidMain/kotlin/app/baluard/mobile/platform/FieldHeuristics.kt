@@ -27,7 +27,7 @@ data class FieldView(
     val htmlLabel: String? = null,
 )
 
-enum class FieldKind { Username, Password, Other }
+enum class FieldKind { Username, Password, Otp, Other }
 
 /**
  * Layered login-form heuristics (plan P3, risk: AssistStructure variance).
@@ -51,6 +51,7 @@ object FieldHeuristics {
         // HTML input type itself (Chromium compat exposes type=password
         // even when everything else is empty).
         when (f.htmlAutocomplete?.lowercase()?.trim()) {
+            "one-time-code" -> return FieldKind.Otp
             "current-password", "new-password" -> return FieldKind.Password
             "username", "email", "login" -> return FieldKind.Username
         }
@@ -65,6 +66,11 @@ object FieldHeuristics {
         ) {
             return FieldKind.Password
         }
+        // The documented OTP hint is the literal "smsOtpCode"; android-36
+        // ships no View constant for it (grep-verified 2026-11-08).
+        if ("smsotpcode" in hints) {
+            return FieldKind.Otp
+        }
         if (hints.any { it in usernameHints } ||
             hints.contains(android.view.View.AUTOFILL_HINT_USERNAME.lowercase()) ||
             hints.contains(android.view.View.AUTOFILL_HINT_EMAIL_ADDRESS.lowercase())
@@ -72,7 +78,13 @@ object FieldHeuristics {
             return FieldKind.Username
         }
 
+        // 2b. OTP-name guard: a verification-code box must never be a fill
+        // target or a promotion candidate on any path (the 2026-11-08
+        // incident put a username into a TOTP box). Explicit password
+        // metadata above still wins.
+
         // 3. Input type (works even when apps set no hints at all).
+        if (isOtpField(f)) return FieldKind.Otp
         val variation = f.inputType and InputType.TYPE_MASK_VARIATION
         val cls = f.inputType and InputType.TYPE_MASK_CLASS
         if (cls == InputType.TYPE_CLASS_TEXT &&
@@ -108,6 +120,73 @@ object FieldHeuristics {
         if (f.text?.contains('@') == true) return FieldKind.Username
 
         return FieldKind.Other
+    }
+
+    /** Diacritic fold so "Código" matches the latin-script phrase list. */
+    private fun foldDiacritics(raw: String): String =
+        java.text.Normalizer.normalize(raw, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "")
+
+    /** Lowercase tokens with camelCase and digit boundaries split first. */
+    private fun tokens(folded: String): Set<String> {
+        val spaced = StringBuilder()
+        for ((i, c) in folded.withIndex()) {
+            if (i > 0) {
+                val prev = folded[i - 1]
+                if ((c.isDigit() != prev.isDigit()) ||
+                    (c.isUpperCase() && (prev.isLowerCase() || prev.isDigit()))
+                ) {
+                    spaced.append(' ')
+                }
+            }
+            spaced.append(c)
+        }
+        return spaced.toString()
+            .lowercase(java.util.Locale.ROOT)
+            .split(Regex("[^a-z0-9]+"))
+            .filter { it.isNotEmpty() }
+            .toSet()
+    }
+
+    private val otpTokens = setOf("otp", "otc", "totp", "hotp", "2fa", "mfa")
+
+    // Matched on the space-normalized folded form, so hyphenated and
+    // spaced spellings share one entry.
+    private val otpPhrases = listOf(
+        "one time", "onetime", "verification code", "security code",
+        "temporary code", "codigo de verificacion", "codigo de seguridad",
+        "codigo temporal", "codigo enviado", "codigo de autenticacion",
+        "codigo de dois fatores", "two factor", "two step", "twofactor",
+        "authenticator code", "codigo unico",
+    )
+
+    private val codeTokens = setOf("code", "codigo", "token")
+
+    private val identityTokens = setOf(
+        "email", "correo", "username", "user", "login", "account", "usuario", "conta",
+    )
+
+    /**
+     * True when a field names a verification-code box. Field CONTENT is
+     * never metadata here: an address like a.2fa@example.com must stay a
+     * username. The prose rule (code + identity wording on a label or hint)
+     * covers prompts like "code sent to your email" whose identifier
+     * carries no OTP token.
+     */
+    fun isOtpField(f: FieldView): Boolean {
+        for (source in listOfNotNull(f.idEntry, f.htmlName, f.htmlId, f.htmlLabel, f.hint)) {
+            val raw = source.trim().takeIf { it.isNotEmpty() } ?: continue
+            val folded = foldDiacritics(raw)
+            val normalized = folded.lowercase(java.util.Locale.ROOT).replace(Regex("[^a-z0-9]+"), " ").trim()
+            val toks = tokens(folded)
+            if (toks.any { it in otpTokens }) return true
+            if (otpPhrases.any { normalized.contains(it) }) return true
+            val isProse = source == f.htmlLabel || source == f.hint
+            if (isProse && toks.any { it in codeTokens } && toks.any { it in identityTokens }) {
+                return true
+            }
+        }
+        return false
     }
 
     /**

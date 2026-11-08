@@ -183,6 +183,8 @@ class BaluardAutofillService : AutofillService() {
                         when (kind) {
                             FieldKind.Password -> password = password ?: value
                             FieldKind.Username -> username = username ?: value
+                            // A verification-code box's content is never a saved credential.
+                            FieldKind.Otp -> Unit
                             FieldKind.Other -> Unit
                         }
                     }
@@ -260,6 +262,10 @@ class BaluardAutofillService : AutofillService() {
                             usernameId = id
                         }
                     }
+                    // A verification-code box is never a fill target, never
+                    // a promotion candidate, and deliberately not in the
+                    // ignored list (it is not a login field).
+                    FieldKind.Otp -> {}
                     FieldKind.Other -> {
                         if (id != null && isEditableInput(effective ?: node)) {
                             ignored += id

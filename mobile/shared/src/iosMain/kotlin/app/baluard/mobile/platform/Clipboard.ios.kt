@@ -13,7 +13,7 @@ import platform.UIKit.UIPasteboardOptionLocalOnly
  * expiration is enforced by iOS, so it fires even though the app process
  * suspends in the background — a `delay`-based clear would never run.
  */
-actual fun copyToClipboard(text: String) {
+actual fun copyToClipboard(text: String): Boolean {
     val pb = UIPasteboard.generalPasteboard
     val seconds = ClipboardPrefs().loadSeconds()
     if (seconds <= 0) {
@@ -22,7 +22,7 @@ actual fun copyToClipboard(text: String) {
             listOf(mapOf(kUTTypeUTF8PlainText to text)),
             options = mapOf(UIPasteboardOptionLocalOnly to true),
         )
-        return
+        return true
     }
     pb.setItems(
         listOf(mapOf(kUTTypeUTF8PlainText to text)),
@@ -31,4 +31,5 @@ actual fun copyToClipboard(text: String) {
             UIPasteboardOptionExpirationDate to NSDate(timeIntervalSinceNow = seconds * 1.0),
         ),
     )
+    return true
 }
