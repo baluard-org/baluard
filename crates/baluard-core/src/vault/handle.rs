@@ -9315,6 +9315,25 @@ impl VaultHandle {
         input: &CipherInput,
         collection_id: Option<Uuid>,
     ) -> Result<Uuid, BaluardError> {
+        let cipher_id = self.write_new_cipher(input, collection_id)?;
+        self.rebuild_index()?;
+        Ok(cipher_id)
+    }
+
+    /// Batch import add: same gates and on-disk result as
+    /// [Self::add_cipher], minus the per-add index rebuild — that rebuild
+    /// rescans the whole vault, so an N-record import with it is O(N²).
+    /// The import loop calls [Self::rebuild_index] once at the end; until
+    /// then the reader's set-equality staleness guard heals any read.
+    pub fn add_cipher_batch(&mut self, input: &CipherInput) -> Result<Uuid, BaluardError> {
+        self.write_new_cipher(input, None)
+    }
+
+    fn write_new_cipher(
+        &mut self,
+        input: &CipherInput,
+        collection_id: Option<Uuid>,
+    ) -> Result<Uuid, BaluardError> {
         if !self.device_manager.writes_allowed() {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
@@ -9362,7 +9381,6 @@ impl VaultHandle {
         )?;
 
         super::write_vault_file(&file_path, &file.envelope_bytes)?;
-        self.rebuild_index()?;
         self.record_integrity(&cipher_id.to_string(), 1);
 
         Ok(cipher_id)
@@ -20430,6 +20448,59 @@ mod tests {
                 "work".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn add_cipher_batch_defers_index_and_reads_stay_complete() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Seed via the regular add so a real on-disk index exists.
+        handle
+            .add_cipher(&CipherInput {
+                name: "Seed".into(),
+                kind: crate::types::CipherKind::Login(Default::default()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let index_key =
+            crate::crypto::hkdf_derive::derive_index_key(&handle.unlocked().meta_ikm()).unwrap();
+        let count_indexed = |handle: &VaultHandle| -> usize {
+            match index::read_sharded(handle.vault_id, &handle.path.join("meta"), &index_key) {
+                Some((ciphers, skipped)) => ciphers.len() + skipped.len(),
+                None => 0,
+            }
+        };
+        assert_eq!(count_indexed(&handle), 1, "seed add must build the index");
+
+        for i in 0..4 {
+            handle
+                .add_cipher_batch(&CipherInput {
+                    name: format!("Batch {i}"),
+                    kind: crate::types::CipherKind::Login(Default::default()),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        // Deferral pinned: the index still holds only the seed although
+        // four ciphers exist on disk. Restoring a per-add rebuild in
+        // add_cipher_batch fails this assertion.
+        assert_eq!(
+            count_indexed(&handle),
+            1,
+            "batch adds must not touch the index"
+        );
+
+        // The reader's set-equality staleness guard diverges and heals to
+        // the full on-disk set: deferred adds never strand data.
+        assert_eq!(handle.list_cipher_meta().unwrap().len(), 5);
+
+        // The explicit post-batch rebuild realigns the index with disk.
+        handle.rebuild_index().unwrap();
+        assert_eq!(count_indexed(&handle), 5);
     }
 
     #[test]

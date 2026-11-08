@@ -7097,7 +7097,8 @@ impl VaultState {
 
         // Batch adds skip the per-cipher index rebuild (O(N²) there);
         // one pass realigns it. Best-effort: the reader's staleness
-        // guard self-heals on the next read (see rebuild_cipher_index).
+        // guard (P5b, list_cipher_meta_full_with_skipped) self-heals
+        // on the next read.
         if let Err(e) = handle.rebuild_index() {
             log::warn!("[import] index rebuild failed (will self-heal): {e}");
         }

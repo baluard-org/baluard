@@ -2390,6 +2390,29 @@ async fn import_restores_folder_hierarchy() {
 }
 
 #[tokio::test]
+async fn import_bulk_ciphers_lands_every_entry() {
+    let (_dir, state) = open_unlocked("imp-bulk").await;
+
+    let mut result = baluard_core::import::ImportResult::new();
+    for i in 0..300 {
+        result.ciphers.push(CipherInput {
+            name: format!("Bulk Entry {i}"),
+            kind: CipherKind::Login(Default::default()),
+            ..Default::default()
+        });
+    }
+
+    let resp: serde_json::Value =
+        serde_json::from_str(&state.import_ciphers(result).await.expect("import")).unwrap();
+    assert_eq!(resp["imported"], 300);
+    assert_eq!(resp["skipped"], 0);
+    assert_eq!(resp["errors"], serde_json::json!([]));
+
+    let metas = state.list_cipher_meta().await.expect("list");
+    assert_eq!(metas.len(), 300, "post-loop rebuild covers every add");
+}
+
+#[tokio::test]
 async fn vaults_copy_items_founds_a_family_vault() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
