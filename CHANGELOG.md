@@ -4,6 +4,11 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+No user-facing changes yet.
+
+## 0.2.1 - 2026-11-08
+
+- The Android launcher icon now matches the new grey app icon.
 - Opening Baluard from the autofill dropdown or a keyboard suggestion no longer renders the app see-through over the page you were on.
 
 ## 0.2.0 - 2026-11-08

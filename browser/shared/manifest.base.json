@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Baluard",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Bridge client for the Baluard password manager. Connects to your local Baluard app.",
   "icons": {
     "16": "icons/icon-16.png",
