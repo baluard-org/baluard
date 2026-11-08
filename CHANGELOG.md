@@ -13,6 +13,7 @@ Notable user-facing changes per release.
 - Importing a backup is much faster: large imports no longer decrypt the whole vault again after every entry.
 - Backing out of the supporter upgrade sheet on mobile now returns you to where you were instead of dead-ending.
 - On the Play build, subscription status is now verified through Google's servers, so trial starts and lapses hold correctly.
+- The Android download is now a single arm64 build, so it is about 70 MB smaller to install.
 
 ## 0.1.10 - 2026-11-07
 
