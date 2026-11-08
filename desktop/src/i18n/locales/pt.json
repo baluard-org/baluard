@@ -163,7 +163,19 @@
       "unlockBody": "Digite a senha mestra para desbloquear este cofre.",
       "stateUnlocked": "Desbloqueado",
       "stateLocked": "Bloqueado",
-      "stateClosed": "Fechado"
+      "stateClosed": "Fechado",
+      "deleteTitle": "Excluir cofre",
+      "deleteFromDevice": "Excluir deste dispositivo. Não pode ser desfeito.",
+      "deleteRemoteRepo": "Também excluir o repositório no {provider}",
+      "verifyTitle": "Confirme com sua senha mestra ou sua frase de recuperação",
+      "credPassword": "Senha mestra",
+      "credPhrase": "Frase de recuperação de 24 palavras",
+      "credPlaceholderPassword": "Senha mestra",
+      "credPlaceholderPhrase": "as 24 palavras, separadas por espaços",
+      "verifyRequired": "Insira sua senha mestra ou sua frase de recuperação para continuar.",
+      "deleteSubmit": "Excluir",
+      "working": "Trabalhando...",
+      "deleted": "{name} excluído"
     },
     "unreadableEntries": "{{count}} entradas precisam de uma versão mais recente da app e ficam ocultas até atualizar o Baluard."
   },

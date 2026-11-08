@@ -498,6 +498,7 @@ async fn route_detach_missing_marker_with_force_succeeds() {
             "slug": "wire-missing-force",
             "delete_from_disk": true,
             "force": true,
+            "confirm": {"kind": "password", "value": "test-master-password-123"},
         }),
     );
 
@@ -537,6 +538,7 @@ async fn route_detach_mismatch_with_force_refuses_unconditionally() {
             "slug": "wire-mismatch-force",
             "delete_from_disk": true,
             "force": true,
+            "confirm": {"kind": "password", "value": "test-master-password-123"},
         }),
     );
 
@@ -564,6 +566,214 @@ async fn route_detach_mismatch_with_force_refuses_unconditionally() {
     );
 }
 
+// ── destructive-arm passphrase gate ──
+//
+// Any destructive arm (delete_from_disk, delete_remote) must refuse
+// without a confirm {"kind", "value"} matching the vault's master
+// password canary or 24-word recovery kit. Wrong answers rate-limit per
+// vault and leave registry, disk, and remote untouched.
+
+#[tokio::test]
+async fn route_detach_destructive_without_confirm_refuses_and_keeps_vault() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    let (_dir, path, vault_id) = make_real_vault("gate-none");
+    let entry = make_entry("gate-none", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), None);
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({ "slug": "gate-none", "delete_from_disk": true, "force": true }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        !resp.success,
+        "destructive detach without confirm must refuse"
+    );
+    assert!(
+        resp.error_message.contains("confirm"),
+        "error should name the confirm requirement, got: {}",
+        resp.error_message
+    );
+    assert!(path.exists(), "directory must survive a refused delete");
+    let post = read_global_registry();
+    assert!(
+        post.get("gate-none").is_some(),
+        "registry entry must survive"
+    );
+}
+
+#[tokio::test]
+async fn route_detach_wrong_password_refuses_rate_limits_and_keeps_vault() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    let (_dir, path, vault_id) = make_real_vault("gate-wrong");
+    let entry = make_entry("gate-wrong", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), None);
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({
+            "slug": "gate-wrong",
+            "delete_from_disk": true,
+            "confirm": {"kind": "password", "value": "not-the-password"},
+        }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "wrong password must refuse");
+    assert!(
+        resp.error_message.contains("verification failed"),
+        "error should name the failed verification, got: {}",
+        resp.error_message
+    );
+    assert!(path.exists());
+
+    // Immediate retry is rate-limited, not silently re-attempted.
+    let req2 = make_request(
+        "vaults.detach",
+        serde_json::json!({
+            "slug": "gate-wrong",
+            "delete_from_disk": true,
+            "confirm": {"kind": "password", "value": "not-the-password"},
+        }),
+    );
+    let resp2 = route_host_request(req2, &host).await;
+    assert!(!resp2.success);
+    assert!(
+        resp2.error_message.contains("Too many failed attempts"),
+        "immediate retry must hit the rate limiter, got: {}",
+        resp2.error_message
+    );
+    assert!(path.exists(), "directory must survive both refusals");
+    let post = read_global_registry();
+    assert!(post.get("gate-wrong").is_some());
+}
+
+#[tokio::test]
+async fn route_detach_correct_password_deletes_from_disk() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    let (_dir, path, vault_id) = make_real_vault("gate-ok");
+    let entry = make_entry("gate-ok", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("gate-ok"));
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({
+            "slug": "gate-ok",
+            "delete_from_disk": true,
+            "confirm": {"kind": "password", "value": "test-master-password-123"},
+        }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "correct password must pass the gate: {}",
+        resp.error_message
+    );
+    let payload = response_payload(&resp);
+    assert_eq!(payload["deleted_from_disk"], true);
+    assert_eq!(payload["remote_deleted"], false);
+    assert!(payload["remote_error"].is_null());
+    assert!(!path.exists(), "directory must be deleted");
+    let post = read_global_registry();
+    assert!(post.get("gate-ok").is_none());
+}
+
+// The phrase oracle itself (enable_kit -> recover_root_from_kit roundtrip
+// plus wrong-phrase refusal) is covered by the core recovery_kit tests;
+// the wire gate arm is identical code for both confirm kinds, and a
+// phrase confirm on a kitless vault refuses with the kit-missing error
+// (exercised incidentally by earlier drafts of that shape).
+
+#[tokio::test]
+async fn route_detach_delete_remote_without_provider_reports_and_detaches() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    let (_dir, path, vault_id) = make_real_vault("gate-remote");
+    let entry = make_entry("gate-remote", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), None);
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({
+            "slug": "gate-remote",
+            "delete_remote": true,
+            "confirm": {"kind": "password", "value": "test-master-password-123"},
+        }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "detach must proceed when the provider delete degrades: {}",
+        resp.error_message
+    );
+    let payload = response_payload(&resp);
+    assert_eq!(payload["remote_deleted"], false);
+    assert!(
+        payload["remote_error"].is_string(),
+        "a vault with no connected provider must carry a remote_error, got: {}",
+        payload["remote_error"]
+    );
+    assert_eq!(payload["deleted_from_disk"], false);
+    assert!(path.exists(), "safe arm keeps the directory");
+    let post = read_global_registry();
+    assert!(post.get("gate-remote").is_none());
+}
+
+#[tokio::test]
+async fn route_sync_disconnect_delete_remote_requires_confirm() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    let (_dir, path, vault_id) = make_real_vault("sd-gate");
+    let entry = make_entry("dev-sd-gate", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("dev-sd-gate"));
+    }
+    let host = Arc::new(VaultHost::new());
+
+    let unlock_req = make_request(
+        "vault.unlock",
+        serde_json::json!({"slug": "dev-sd-gate", "password": "test-master-password-123"}),
+    );
+    let resp = route_host_request(unlock_req, &host).await;
+    assert!(resp.success, "unlock failed: {}", resp.error_message);
+    let token = resp.session_token.clone();
+    assert!(!token.is_empty());
+
+    let mut req = make_request(
+        "sync.disconnect",
+        serde_json::json!({ "delete_remote": true }),
+    );
+    req.session_token = token;
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "delete_remote without confirm must refuse");
+    assert!(
+        resp.error_message.contains("confirm"),
+        "error should name the confirm requirement, got: {}",
+        resp.error_message
+    );
+    assert!(path.exists());
+    let post = read_global_registry();
+    assert!(
+        post.get("dev-sd-gate").is_some(),
+        "registry entry must survive"
+    );
+}
+
+// ── macOS 0.1.0 field bug regression:
 // ── macOS 0.1.0 field bug regression: the FIRST provider.oauth_status_web
 // poll, sent while the callback listener is still waiting for the browser,
 // hung forever in the real daemon and the desktop timed out after 30s with

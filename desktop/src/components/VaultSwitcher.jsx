@@ -97,25 +97,29 @@ export default function VaultSwitcher(props) {
   // Apply the detach once the modal confirms. Safe arm only — the
   // vault directory is preserved on disk and can be re-attached via
   // Open Vault.
-  async function confirmDetach() {
+  async function confirmDetach(payload = {}) {
     const target = detachTarget();
     if (!target) return;
     // Capture BEFORE detach: the refresh inside detach() clears the
     // active pointer when the active vault goes away.
     const wasActive = target.slug === switcher.activeSlug();
-    try {
-      await switcher.detach(target.slug);
-      // Detaching the vault being viewed drops the daemon's active
-      // pointer: the shell must leave the (now phantom) unlocked session.
-      if (wasActive && auth.status() === "unlocked") {
-        auth.setStatus("locked");
-        auth.setVaultInfo(null);
-      }
+    const deletedFromDisk = payload.delete_from_disk === true;
+    // Errors propagate: the modal surfaces them inline and stays open.
+    await switcher.detach(target.slug, payload);
+    // Detaching the vault being viewed drops the daemon's active
+    // pointer: the shell must leave the (now phantom) unlocked session.
+    if (wasActive && auth.status() === "unlocked") {
+      auth.setStatus("locked");
+      auth.setVaultInfo(null);
+    }
+    if (deletedFromDisk) {
+      toastSuccess(
+        t("vault.vaultSwitcher.deleted", { name: target.display_name })
+      );
+    } else {
       toastSuccess(
         t("vault.vaultSwitcher.detached", { name: target.display_name })
       );
-    } catch (err) {
-      toastError(sanitizeError(err, t));
     }
   }
 

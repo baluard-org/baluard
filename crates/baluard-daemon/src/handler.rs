@@ -1215,13 +1215,79 @@ async fn route_host_request_inner(
             // CLI (`--delete-from-disk` with slug retyping) always set
             // `force=true` on the destructive arm.
             let force = payload["force"].as_bool().unwrap_or(false);
+            let delete_remote = payload["delete_remote"].as_bool().unwrap_or(false);
 
-            // Single load: remove + save in one lock cycle. `VaultRegistry::remove`
-            // returns the removed entry, giving us the path + vault_id
-            // without a second load (which would have been a TOCTOU
-            // window — `save_locked`'s file lock is per-call, not per-
-            // handler, so a concurrent process could mutate the registry
-            // between two loads).
+            // Peek before removal: the passphrase gate and the remote
+            // deletion both need the entry while the registry still holds
+            // it, and a refusal here must leave everything untouched.
+            let peeked = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                Ok(reg) => reg,
+                Err(e) => return err_response(format!("Registry load failed: {e}")),
+            };
+            let entry = match peeked.get(slug).cloned() {
+                Some(e) => e,
+                None => {
+                    return err_response(format!("Vault '{slug}' is not registered in Baluard"));
+                }
+            };
+
+            // Any destructive arm (delete from disk, delete the remote
+            // repository) demands the passphrase gate first. A wrong
+            // answer rate-limits and leaves registry, disk, and remote
+            // untouched.
+            if delete_from_disk || delete_remote {
+                if let Err(e) = verify_destroy_confirm(
+                    &entry.path,
+                    Some(entry.vault_id),
+                    payload.get("confirm"),
+                ) {
+                    return err_response(e);
+                }
+            }
+
+            // External side effect runs first: the provider repo is
+            // deleted before any local teardown. Failures degrade rather
+            // than abort — the detach proceeds and the response carries
+            // remote_deleted/remote_error so the UI can tell the user to
+            // delete the repository manually (same contract as
+            // sync.disconnect).
+            let (remote_deleted, remote_error) = if delete_remote {
+                match (entry.provider.as_ref(), entry.remote_url.as_ref()) {
+                    (Some(provider), Some(url)) => {
+                        match try_delete_remote_repo(provider, url).await {
+                            Ok(()) => (true, None),
+                            Err(e) => (false, Some(e)),
+                        }
+                    }
+                    _ => (
+                        false,
+                        Some("no provider repository is connected to this vault".to_string()),
+                    ),
+                }
+            } else {
+                (false, None)
+            };
+
+            // Later refusals must still tell the user what happened to the
+            // remote: a deleted repo with a silent local refusal would read
+            // as "nothing happened".
+            let remote_note = if delete_remote {
+                if remote_deleted {
+                    " The remote repository was deleted.".to_string()
+                } else {
+                    format!(
+                        " The remote repository could NOT be deleted: {}.",
+                        remote_error.as_deref().unwrap_or("unknown error")
+                    )
+                }
+            } else {
+                String::new()
+            };
+
+            // Re-load after the awaits (verification + network): the peek
+            // snapshot may be stale, and save_locked() writes the whole
+            // registry — removing from a stale snapshot would silently
+            // drop concurrent updates.
             let mut reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
                 Ok(reg) => reg,
                 Err(e) => return err_response(format!("Registry load failed: {e}")),
@@ -1310,7 +1376,7 @@ async fn route_host_request_inner(
                                  when the marker positively disagrees with the \
                                  registry. To clean up: rename the directory, fix the \
                                  .baluard marker inside it, or remove it manually \
-                                 (e.g. `rm -rf`).",
+                                 (e.g. `rm -rf`).{remote_note}",
                                 path.display()
                             ));
                         }
@@ -1320,7 +1386,7 @@ async fn route_host_request_inner(
                                     "Refusing to delete {}: .baluard marker is missing. \
                                      Pass force=true if the caller has already established \
                                      user intent through another gate (typed-name modal, CLI \
-                                     slug retyping).",
+                                     slug retyping).{remote_note}",
                                     path.display()
                                 ));
                             }
@@ -1387,6 +1453,8 @@ async fn route_host_request_inner(
                     "slug": slug,
                     "deleted_from_disk": deleted_from_disk,
                     "path": entry_path.to_string_lossy(),
+                    "remote_deleted": remote_deleted,
+                    "remote_error": remote_error,
                 })
                 .to_string(),
                 None,
@@ -7180,14 +7248,25 @@ fn sync_status_json(vault_path: &std::path::Path) -> Result<String, String> {
 
 pub(crate) fn parse_repo_owner_name(url: &str) -> Option<(String, String)> {
     let cleaned = url.strip_suffix(".git").unwrap_or(url);
-    let segments: Vec<&str> = cleaned.split(['/', ':']).collect();
-    if segments.len() >= 2 {
-        let name = segments[segments.len() - 1].to_string();
-        let owner = segments[segments.len() - 2].to_string();
-        Some((owner, name))
+    // Exactly owner/name after the host: GitLab subgroup paths
+    // (group/sub/repo) refuse rather than delete a truncated — wrong —
+    // project path.
+    let tail = if let Some(rest) = cleaned
+        .strip_prefix("https://")
+        .or_else(|| cleaned.strip_prefix("http://"))
+        .or_else(|| cleaned.strip_prefix("ssh://"))
+    {
+        rest.split_once('/')?.1
+    } else if let Some(rest) = cleaned.strip_prefix("git@") {
+        rest.split_once(':')?.1
     } else {
-        None
+        return None;
+    };
+    let (owner, name) = tail.split_once('/')?;
+    if owner.is_empty() || name.is_empty() || name.contains('/') {
+        return None;
     }
+    Some((owner.to_string(), name.to_string()))
 }
 
 /// Convert a git remote URL (SSH or HTTPS) to a browser URL for the repo.
@@ -7235,6 +7314,123 @@ async fn handle_sync_conflict_resolve(
 }
 
 #[cfg(feature = "git-sync")]
+/// Verify the destructive-operation credential: master-password canary or
+/// 24-word recovery-kit phrase, checked against the vault directory. Both
+/// destructive surfaces (vaults.detach arms and sync.disconnect's remote
+/// delete) funnel through here so a repository holding a vault can never
+/// be removed without the passphrase. Wrong answers are rate-limited per
+/// vault.
+fn verify_destroy_confirm(
+    vault_path: &std::path::Path,
+    vault_id: Option<uuid::Uuid>,
+    confirm: Option<&serde_json::Value>,
+) -> Result<(), String> {
+    let Some(c) = confirm else {
+        return Err("This destructive operation requires 'confirm': {\"kind\": \"password\"|\"phrase\", \"value\": ...}".to_string());
+    };
+    let kind = c["kind"]
+        .as_str()
+        .ok_or("confirm.kind must be \"password\" or \"phrase\"")?;
+    let value = c["value"]
+        .as_str()
+        .filter(|v| !v.is_empty())
+        .ok_or("confirm.value must be the master password or the 24-word recovery phrase")?;
+    let limiter = baluard_runtime::rate_limit::global();
+    let key = format!(
+        "destroy-confirm:{}",
+        vault_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| vault_path.display().to_string())
+    );
+    let permit = match limiter.claim_attempt(&key) {
+        baluard_runtime::rate_limit::ClaimResult::Allowed(p) => p,
+        baluard_runtime::rate_limit::ClaimResult::Backoff(d) => {
+            return Err(format!(
+                "Too many failed attempts. Wait {}s before retrying.",
+                d.as_secs_f64().ceil() as u64
+            ));
+        }
+        baluard_runtime::rate_limit::ClaimResult::LockedOut(d) => {
+            return Err(format!(
+                "Too many failed attempts. Locked for {}s.",
+                d.as_secs_f64().ceil() as u64
+            ));
+        }
+    };
+    let verdict = match kind {
+        "password" => baluard_core::vault::canary::verify_master_password_at(vault_path, value)
+            .map_err(|e| e.to_string()),
+        "phrase" => match vault_id {
+            Some(id) => {
+                baluard_core::vault::recovery_kit::recover_root_from_kit(vault_path, id, value)
+                    .map(|_root| ())
+                    .map_err(|e| e.to_string())
+            }
+            None => Err(
+                "recovery-phrase verification needs the vault id; verify with the master password"
+                    .to_string(),
+            ),
+        },
+        other => Err(format!(
+            "confirm.kind must be \"password\" or \"phrase\" (got \"{other}\")"
+        )),
+    };
+    match verdict {
+        Ok(()) => {
+            permit.commit_success();
+            Ok(())
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            // Environmental failures (disk, config, kitless vault) stay
+            // neutral so a transient error does not eat backoff; every
+            // unrecognized failure charges — fail closed on rate limiting.
+            let neutral = msg.contains("reading kdf params")
+                || msg.contains("reading kek canary")
+                || msg.contains("No recovery kit is set up");
+            if neutral {
+                permit.commit_neutral();
+            } else {
+                permit.commit_failure();
+            }
+            Err(format!("verification failed: {msg}"))
+        }
+    }
+}
+
+/// Delete the provider-side repository a vault syncs to: resolve
+/// slug/provider/owner/name from the registry, refresh the stored token,
+/// call the forge's delete. Idempotent on an already-deleted repo (the
+/// forges map 404 to RepoNotFound, which lands as Ok). Err carries the
+/// human-readable reason; callers decide whether a failure aborts or
+/// degrades to a warning.
+async fn try_delete_remote_repo(provider_name: &str, remote_url: &str) -> Result<(), String> {
+    let provider = baluard_core::providers::types::Provider::all()
+        .iter()
+        .find(|p| p.to_string() == provider_name)
+        .copied()
+        .ok_or_else(|| format!("unknown provider '{provider_name}'"))?;
+    let state_file = baluard_core::providers::token::ProvidersState::load()
+        .map_err(|e| format!("cannot load providers state: {e}"))?;
+    let info = state_file
+        .get(provider)
+        .ok_or_else(|| format!("no connected token for provider '{provider_name}'"))?;
+    let token = ensure_valid_token(provider, info)
+        .await
+        .map_err(|_e| format!("token refresh failed for provider '{provider_name}'"))?;
+    let prov = baluard_core::providers::provider_for(provider, info.config())
+        .map_err(|e| format!("provider init failed: {e}"))?;
+    let (owner, name) = parse_repo_owner_name(remote_url).ok_or_else(|| {
+        "cannot parse owner/repository from the remote URL; delete the repository manually on the provider"
+            .to_string()
+    })?;
+    match prov.delete_repo(&token, &owner, &name).await {
+        Ok(()) => Ok(()),
+        Err(baluard_core::providers::types::ProviderError::RepoNotFound(_)) => Ok(()),
+        Err(e) => Err(format!("failed to delete remote repo: {e}")),
+    }
+}
+
 async fn sync_disconnect(
     vault_path: &std::path::Path,
     payload_str: &str,
@@ -7246,6 +7442,15 @@ async fn sync_disconnect(
         serde_json::from_str(payload_str).map_err(|e| format!("invalid disconnect payload: {e}"))?
     };
     let delete_remote = payload["delete_remote"].as_bool().unwrap_or(false);
+    if delete_remote {
+        // The passphrase gate runs BEFORE the engine even opens the repo:
+        // a wrong answer must leave remote and sync state untouched.
+        let vault_id = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
+            .ok()
+            .flatten()
+            .map(|m| m.vault_id);
+        verify_destroy_confirm(vault_path, vault_id, payload.get("confirm"))?;
+    }
 
     let engine = baluard_core::sync::engine::SyncEngine::new(
         vault_path,
@@ -7270,8 +7475,7 @@ async fn sync_disconnect(
     let mut remote_deleted = false;
     let mut delete_error: Option<String> = None;
     if delete_remote {
-        // Try to resolve slug/provider/owner/name. Each missing piece just
-        // means we cannot delete; we still disconnect below.
+        let remote_hint = remote_url.clone();
         let resolved = (async {
             let slug = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
                 .ok()
@@ -7279,49 +7483,28 @@ async fn sync_disconnect(
                 .map(|m| m.slug)?;
             let reg = baluard_core::vault::registry::VaultRegistry::load_locked().ok()?;
             let entry = reg.get(&slug)?;
-            let provider_name = entry.provider.as_ref()?;
-            let reg_remote = entry.remote_url.as_ref()?;
-            let url_source = if remote_url.is_empty() {
+            let provider_name = entry.provider.clone()?;
+            let reg_remote = entry.remote_url.clone()?;
+            let url = if remote_hint.is_empty() {
                 reg_remote
             } else {
-                &remote_url
+                remote_hint
             };
-            let (owner, name) = parse_repo_owner_name(url_source)?;
-            let provider = baluard_core::providers::types::Provider::all()
-                .iter()
-                .find(|p| p.to_string() == *provider_name)?;
-            Some((*provider, owner, name))
+            Some((provider_name, url))
         })
         .await;
-
         match resolved {
-            Some((provider, owner, name)) => {
-                // Token + provider init + delete. Each step can fail on
-                // permissions; capture the message for the warning.
-                let attempt = async {
-                    let state_file = baluard_core::providers::token::ProvidersState::load()
-                        .map_err(|e| format!("cannot load providers state: {e}"))?;
-                    let info = state_file
-                        .get(provider)
-                        .ok_or_else(|| format!("no token for provider '{provider}'"))?;
-                    let token = ensure_valid_token(provider, info)
-                        .await
-                        .map_err(|_e| format!("token refresh failed for provider '{provider}'"))?;
-                    let prov = baluard_core::providers::provider_for(provider, info.config())
-                        .map_err(|e| format!("provider init failed: {e}"))?;
-                    prov.delete_repo(&token, &owner, &name)
-                        .await
-                        .map_err(|e| format!("failed to delete remote repo: {e}"))?;
-                    Ok::<(), String>(())
-                }
-                .await;
-                match attempt {
+            Some((provider_name, url)) => {
+                match try_delete_remote_repo(&provider_name, &url).await {
                     Ok(()) => remote_deleted = true,
                     Err(e) => delete_error = Some(e),
                 }
             }
             None => {
-                delete_error = Some("could not resolve vault provider/owner/name".to_string());
+                delete_error = Some(
+                    "could not resolve the vault's provider/remote; delete the repository manually on the provider"
+                        .to_string(),
+                );
             }
         }
     }
@@ -7923,6 +8106,16 @@ mod tests {
     /// never a silent skip of the destructive op.
     #[test]
     fn parse_repo_owner_name_rejects_garbage() {
+        // GitLab subgroup paths refuse rather than delete a truncated
+        // (wrong) project path.
+        assert_eq!(
+            parse_repo_owner_name("https://gitlab.com/group/sub/repo.git"),
+            None
+        );
+        assert_eq!(
+            parse_repo_owner_name("git@gitlab.com:group/sub/repo.git"),
+            None
+        );
         assert_eq!(parse_repo_owner_name("not-a-url"), None);
         assert_eq!(parse_repo_owner_name(""), None);
     }

@@ -136,8 +136,8 @@ function VaultSwitcherProvider(props) {
   //
   // `refresh()` lives in `finally` so the dropdown re-syncs even if the
   // daemon reports an error.
-  async function detach(slug) {
-    const payload = JSON.stringify({ slug });
+  async function detach(slug, extra = {}) {
+    const payload = JSON.stringify({ slug, ...extra });
     try {
       await daemon("vaults.detach", payload);
     } finally {

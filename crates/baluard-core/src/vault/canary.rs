@@ -6,7 +6,7 @@
 use hkdf::Hkdf;
 use sha2::Sha256;
 use uuid::Uuid;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::BaluardError;
 use crate::keys::hierarchy::RootKey;
@@ -116,6 +116,29 @@ pub fn verify_kek_canary(session_key: &[u8; 32], canary_bytes: &[u8]) -> Result<
     Ok(())
 }
 
+/// Canary-only master-password proof against a vault directory. Works on
+/// LOCKED vaults: it needs only `meta/kdf-params.json` and
+/// `meta/kek-canary.enc` on disk, never an open session. This is the
+/// honest oracle for destructive-operation gates (vault delete, remote
+/// repo removal) where requiring a full unlock would be the wrong shape.
+/// Wrong passwords are the caller's rate-limit business.
+pub fn verify_master_password_at(
+    vault_path: &std::path::Path,
+    master_password: &str,
+) -> Result<(), BaluardError> {
+    let password = Zeroizing::new(master_password.to_string());
+    let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))?;
+    let kdf_params = crate::crypto::kdf::parse_kdf_params(&kdf_json)?;
+    let kek = Zeroizing::new(crate::crypto::kdf::derive_kek(&password, &kdf_params)?);
+    let session_key = Zeroizing::new(crate::crypto::hkdf_derive::derive_session_key(&kek)?);
+    let canary = std::fs::read(vault_path.join("meta/kek-canary.enc"))?;
+    verify_kek_canary(&session_key, &canary).map_err(|_| {
+        BaluardError::Crypto(crate::error::CryptoError::DecryptFailed(
+            "master password incorrect".into(),
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +176,26 @@ mod tests {
         let wrong = [99u8; 32];
         let bytes = create_kek_canary(&key, vault_id).unwrap();
         assert!(verify_kek_canary(&wrong, &bytes).is_err());
+    }
+
+    #[test]
+    fn master_password_verify_accepts_only_the_correct_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta = dir.path().join("meta");
+        std::fs::create_dir(&meta).unwrap();
+        let kdf_params = crate::crypto::kdf::create_params(crate::types::KdfProfile::DesktopStd);
+        std::fs::write(
+            meta.join("kdf-params.json"),
+            serde_json::to_string(&kdf_params).unwrap(),
+        )
+        .unwrap();
+        let kek = crate::crypto::kdf::derive_kek("correct horse", &kdf_params).unwrap();
+        let session_key = crate::crypto::hkdf_derive::derive_session_key(&kek).unwrap();
+        let canary = create_kek_canary(&session_key, Uuid::new_v4()).unwrap();
+        std::fs::write(meta.join("kek-canary.enc"), canary).unwrap();
+
+        assert!(verify_master_password_at(dir.path(), "correct horse").is_ok());
+        let err = verify_master_password_at(dir.path(), "wrong password").unwrap_err();
+        assert!(err.to_string().contains("master password incorrect"));
     }
 }

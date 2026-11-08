@@ -327,6 +327,7 @@ impl VaultHost {
                 presence: presence.as_str(),
                 active: active.as_deref() == Some(entry.slug.as_str()),
                 provider: entry.provider.clone(),
+                remote_url: entry.remote_url.clone(),
                 last_opened: entry.last_opened,
                 // Audit C19: withhold the filesystem path while the vault is
                 // not unlocked. Pre-unlock surfaces (login screen, vault
@@ -636,6 +637,7 @@ pub struct VaultListRow {
     pub presence: &'static str,
     pub active: bool,
     pub provider: Option<String>,
+    pub remote_url: Option<String>,
     pub last_opened: Option<u64>,
     /// Vault directory on disk (from the registry entry). Surfaced so the
     /// desktop detach modal can show the user what is about to be removed.

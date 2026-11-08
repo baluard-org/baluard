@@ -3,6 +3,7 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
+- Deleting a vault can now also delete its repository on the provider, gated by your master password or 24-word recovery phrase. Disconnecting sync with repository deletion asks for the same confirmation.
 
 No user-facing changes yet.
 

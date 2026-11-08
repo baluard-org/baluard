@@ -497,4 +497,21 @@ mod tests {
         // the swapped wrap, but the result cannot open the kit's seal.
         assert!(recover_root_from_kit(&path, vid, &phrase).is_err());
     }
+
+    #[test]
+    fn recover_root_from_kit_accepts_only_the_kits_phrase() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = RootKey::generate();
+        let vid = Uuid::new_v4();
+        let phrase = enable_kit(dir.path(), &root, vid).unwrap();
+
+        let recovered = recover_root_from_kit(dir.path(), vid, &phrase).unwrap();
+        assert_eq!(recovered.as_bytes(), root.as_bytes());
+
+        // A different valid 24-word phrase opens nothing.
+        let wrong = crate::recovery::RecoveryPhrase::generate()
+            .unwrap()
+            .phrase();
+        assert!(recover_root_from_kit(dir.path(), vid, &wrong).is_err());
+    }
 }
