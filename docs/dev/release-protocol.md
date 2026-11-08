@@ -45,7 +45,8 @@ Everything that signs lives outside the repository. Losing any of these orphans 
 | Updater minisign key | `~/.tauri/baluard-updater.key` | Release artifacts (`.sig` sidecars, `SHA256SUMS`) and desktop updater bundles; public key pinned in `tauri.conf.json` |
 | Release GPG key | `~/.baluard/release-gnupg` | apt and dnf repository metadata; fingerprint `223310EA BF1A B6FE E6BD DF3E 2A53 1D54 E6D7 4804` |
 | F-Droid repo key + APK keystore | `~/.baluard/fdroid/` (`config.yml`, `keystore.p12`, `allowed-apk-signing-key`) | APK and F-Droid indexes; repo fingerprint `1CE90DCFE0FB1003F2F66999257B5E6F074E46EE453FB0D44F8CF8E13E6EEAAB` |
-| Android upload keystore | `~/.baluard/baluard-android-upload.keystore` (mode 600, RSA 4096, alias `baluard-upload`; keystore and passwords backed up in Bitwarden) | Release APKs and the Play AAB via the `baluardRelease` signing config |
+| Android upload keystore | `~/.baluard/baluard-android-upload.keystore` (mode 600, RSA 4096, alias `baluard-upload`; keystore and passwords backed up in Bitwarden) | Release APKs and the Play AAB via the `baluardRelease` signing config; the same certificate is the Play app signing key (PEPK-transferred, matching the F-Droid `AllowedAPKSigningKeys` pin) |
+| Play service account | `~/.baluard/play-service-account.json` (mode 600; JSON backed up in Bitwarden; the SA is invited under Play Console Users and permissions with testing-track release rights, no production) | Google Play uploads via `just play-submit`; `BALUARD_PLAY_SERVICE_ACCOUNT_JSON` overrides the path |
 | Chrome Web Store OAuth | Bitwarden (`BALUARD_CHROME_CLIENT_ID`, `BALUARD_CHROME_CLIENT_SECRET`, `BALUARD_CHROME_REFRESH_TOKEN`) | Store API uploads; export into the environment only when running `just ext-submit` |
 | Chrome CRX upload key | `~/.baluard/chrome-web-store/chrome-crx-upload.key` (mode 600, RSA 2048; public half registered on the item's Package tab, private backed up in Bitwarden) | `BALUARD_CHROME_CRX_KEY` overrides the path; ext-submit signs uploads into CRX3 when the key exists (required after Verified CRX Uploads opt-in) |
 | AMO JWT keys | Bitwarden (`BALUARD_AMO_JWT_KEY`, `BALUARD_AMO_JWT_SECRET`) | `web-ext sign` submissions |
@@ -89,17 +90,17 @@ Stage order, fail-fast (any failure stops the pipeline):
 
 Publishing is a manual review, commit, and push of the `baluard-org` diff. The pipeline never commits or pushes. The Linux trees map to `repo/`, the F-Droid tree to the site root `fdroid/`; a push of `baluard-org` main is what updates `baluard.app` and both Linux repositories.
 
+The Play upload is its own step after the bump and the Android build: `just play-submit` releases the play-flavor AAB to internal testing (`BALUARD_PLAY_TRACK=alpha` for the closed track, production refused without `BALUARD_PLAY_ALLOW_PRODUCTION=1`). The script checks the bundle pool before uploading so a burned versionCode fails the run instead of burning another, verifies the uploaded code matches the workspace, and gates on the service account at `~/.baluard/play-service-account.json`; the full rules live in [google-play.md](google-play.md).
+
 ## GitHub release staging
 
 The published release carries ONLY stable, unversioned asset names, so the site's `releases/latest/download/<name>` links always track the newest release and no file exists twice on the release. Stage the upload set after `release-repositories`:
 
 ```sh
 just release-stage
-# Android APK ride-along (not part of dist/):
-scripts/stage-release-assets.sh --version <X.Y.Z> --apk ~/.baluard/fdroid/repo/<app.baluard.mobile_N>.apk dist
 ```
 
-`scripts/stage-release-assets.sh` copies `./dist` artifacts into `release-upload/` under the stable mapping (Baluard-amd64.AppImage, Baluard-amd64.deb, Baluard-amd64.rpm, Baluard-amd64-setup.exe, Baluard-cli-amd64.tar.gz, Baluard-android.apk, Baluard-extension-chrome.zip, Baluard-extension-firefox.zip, Baluard-macos-aarch64-non-notarized.zip), signs `SHA256SUMS` with the updater minisign key, and fails loudly on target collisions, unmapped files, wrong-arch or stale-version strays, or a missing `--require` entry. Note there are two signed `SHA256SUMS` files by design: `dist/` carries the versioned-name set the apt/dnf repo build consumes, while `release-upload/` carries this stable-name set for the GitHub release; the site and the repo trees each publish their own. Only the updater payloads keep per-asset `.sig` files (AppImage, setup exe); everything else is covered by the signed `SHA256SUMS`. Upload with `gh release upload <tag> --clobber release-upload/*` and keep versioned names out of the release. The versioned names stay required locally: the apt/dnf pools, the extension submit flow, and the CI artifacts all consume them.
+`scripts/stage-release-assets.sh` copies `./dist` artifacts into `release-upload/` under the stable mapping (Baluard-amd64.AppImage, Baluard-amd64.deb, Baluard-amd64.rpm, Baluard-amd64-setup.exe, Baluard-cli-amd64.tar.gz, Baluard-android.apk, Baluard-extension-chrome.zip, Baluard-extension-firefox.zip, Baluard-macos-aarch64-non-notarized.zip), signs `SHA256SUMS` with the updater minisign key, and fails loudly on target collisions, unmapped files, wrong-arch or stale-version strays, or a missing `--require` entry. Note there are two signed `SHA256SUMS` files by design: `dist/` carries the versioned-name set the apt/dnf repo build consumes, while `release-upload/` carries this stable-name set for the GitHub release; the site and the repo trees each publish their own. Only the updater payloads keep per-asset `.sig` files (AppImage, setup exe, app.tar.gz); everything else is covered by the signed `SHA256SUMS`. Upload with `gh release upload <tag> --clobber release-upload/*` and keep versioned names out of the release. The versioned names stay required locally: the apt/dnf pools, the extension submit flow, and the CI artifacts all consume them.
 
 ## Store publishing
 
@@ -116,7 +117,7 @@ just ext-submit
 - Partial credentials are a hard error, not a skip. A configured store failing aborts the run after the other store submitted.
 - First-time setup for the Chrome API: enable the Chrome Web Store API on the OAuth client's project (`https://console.developers.google.com/apis/api/chromewebstore.googleapis.com/overview?project=<project-id>`); uploads return 403 `SERVICE_DISABLED` naming the project until then, and enabling takes a few minutes to propagate without a token re-mint. Keep the consent screen in Production (testing-mode refresh tokens expire weekly), and back up the CRX private key in Bitwarden before opting in: losing it permanently freezes the item's update ability. The API error body carries the real reason; when a submit step fails with static text, replay the exchange-plus-upload manually and print the response body.
 - Both stores are approved and automated: Chrome since 2026-11-03, the AMO 0.1.0 listing cleared 2026-11-06, and the 0.1.7 Firefox update cleared review in under ten minutes the same day. `just ext-submit` covers both stores end to end. Check AMO verdicts without the dashboard with an HMAC-JWT from `BALUARD_AMO_JWT_KEY`/`BALUARD_AMO_JWT_SECRET` against `https://addons.mozilla.org/api/v5/addons/addon/baluard@actitud.xyz/versions/?filter=all_with_unlisted`; `file_status: public` means approved and live.
-- Google Play is console-driven today and API-driven later; the signing identity, version-code rules, testing tracks, subscription model, and per-release flow live in [google-play.md](google-play.md).
+- Google Play is API-driven through `just play-submit` (service-account JWT to the androidpublisher API); the signing identity, version-code rules, testing tracks, subscription model, and per-release flow live in [google-play.md](google-play.md).
 
 ## Update channels
 

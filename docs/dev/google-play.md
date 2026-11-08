@@ -92,6 +92,6 @@ No official Play MCP or CLI exists. The path is the Google Play Developer API (a
 
 1. Bump the workspace version (all seven sources, one versionCode).
 2. `just android-apk-release` builds the release APK and the Play AAB from the same source.
-3. Upload the AAB to the tracks: `just play-submit` for internal testing and `BALUARD_PLAY_TRACK=alpha just play-submit` for the closed track once the service account exists; release notes are pasted in the console, which also handles the manual path until then. Release name `X.Y.Z (NNNN)`.
+3. Upload the AAB to the tracks: `just play-submit` for internal testing and `BALUARD_PLAY_TRACK=alpha just play-submit` for the closed track (production stays refused without `BALUARD_PLAY_ALLOW_PRODUCTION=1`). Release name `X.Y.Z (NNNN)`; release notes are pasted in the console.
 4. `just release-repositories` stages the same versionCode APK into the F-Droid repo and publishes it through the baluard-org republish.
 5. Store submissions (Chrome, AMO) are governed by the unchanged-bundle gate in the release protocol, not by Play.
