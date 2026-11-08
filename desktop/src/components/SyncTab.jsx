@@ -52,7 +52,6 @@ export default function SyncTab() {
   const [confirmDeleteRemote, setConfirmDeleteRemote] = createSignal(false);
   // The daemon refuses a remote delete without a master-password or
   // recovery-phrase confirm (same gate as the vault delete modal).
-  const [credKind, setCredKind] = createSignal("password");
   const [credValue, setCredValue] = createSignal("");
   // S3-8: move the vault's sync to a new address (admin). The daemon
   // commits a pointer file, pushes it to the old remote, re-points,
@@ -574,7 +573,7 @@ const [customError, setCustomError] = createSignal(null);
     try {
       const payload = { delete_remote: deleteRemote() };
       if (deleteRemote()) {
-        payload.confirm = { kind: credKind(), value: credValue() };
+        payload.confirm = { kind: "phrase", value: credValue() };
       }
       const raw = await daemon("sync.disconnect", JSON.stringify(payload));
       if (revokeToken()) {
@@ -587,7 +586,7 @@ const [customError, setCustomError] = createSignal(null);
       setRevokeToken(false);
       setDeleteRemote(false);
       setConfirmDeleteRemote(false);
-      setCredKind("password");
+      setCredValue("");
       setCredValue("");
       setSubState("idle");
       // Reset session flags so the post-disconnect view lands on the picker
@@ -1297,38 +1296,13 @@ const [customError, setCustomError] = createSignal(null);
                       <p class="text-sm font-semibold text-[var(--color-text)] mb-2">
                         {t("vault.vaultSwitcher.verifyTitle")}
                       </p>
-                      <div class="flex gap-4 mb-2 text-sm">
-                        <label class="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="disconnect-cred-kind"
-                            checked={credKind() === "password"}
-                            onChange={() => setCredKind("password")}
-                          />
-                          <span class="text-[var(--color-text)]">
-                            {t("vault.vaultSwitcher.credPassword")}
-                          </span>
-                        </label>
-                        <label class="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="disconnect-cred-kind"
-                            checked={credKind() === "phrase"}
-                            onChange={() => setCredKind("phrase")}
-                          />
-                          <span class="text-[var(--color-text)]">
-                            {t("vault.vaultSwitcher.credPhrase")}
-                          </span>
-                        </label>
-                      </div>
+                      <p class="text-sm text-[var(--color-text-muted)] mb-2">
+                        {t("vault.vaultSwitcher.verifyPhraseOnly")}
+                      </p>
                       <input
                         type="password"
                         class="w-full bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
-                        placeholder={
-                          credKind() === "password"
-                            ? t("vault.vaultSwitcher.credPlaceholderPassword")
-                            : t("vault.vaultSwitcher.credPlaceholderPhrase")
-                        }
+                        placeholder={t("vault.vaultSwitcher.credPlaceholderPhrase")}
                         value={credValue()}
                         onInput={(e) => setCredValue(e.currentTarget.value)}
                       />
@@ -1338,7 +1312,7 @@ const [customError, setCustomError] = createSignal(null);
 
                 <div class="flex items-center gap-3 pt-1">
                   <Button
-                    onClick={() => { setShowDisconnectModal(false); setRevokeToken(false); setDeleteRemote(false); setConfirmDeleteRemote(false); setCredKind("password"); setCredValue(""); }}
+                    onClick={() => { setShowDisconnectModal(false); setRevokeToken(false); setDeleteRemote(false); setConfirmDeleteRemote(false); setCredValue(""); }}
                     disabled={subState() === "creating"}
                     class="flex-1 py-2.5"
                   >

@@ -132,6 +132,7 @@
       "credPlaceholderPassword": "Contraseña maestra",
       "credPlaceholderPhrase": "las 24 palabras, separadas por espacios",
       "verifyRequired": "Ingresa tu contraseña maestra o tu frase de recuperación para continuar.",
+      "verifyPhraseOnly": "Eliminar el repositorio remoto requiere tu frase de recuperación de 24 palabras.",
       "deleteSubmit": "Eliminar",
       "working": "Trabajando...",
       "deleted": "Se eliminó {name}"

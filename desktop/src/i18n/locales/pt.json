@@ -173,6 +173,7 @@
       "credPlaceholderPassword": "Senha mestra",
       "credPlaceholderPhrase": "as 24 palavras, separadas por espaços",
       "verifyRequired": "Insira sua senha mestra ou sua frase de recuperação para continuar.",
+      "verifyPhraseOnly": "Excluir o repositório remoto exige sua frase de recuperação de 24 palavras.",
       "deleteSubmit": "Excluir",
       "working": "Trabalhando...",
       "deleted": "{name} excluído"

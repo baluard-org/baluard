@@ -706,12 +706,39 @@ async fn route_detach_delete_remote_without_provider_reports_and_detaches() {
     }
 
     let host = Arc::new(VaultHost::new());
+
+    // The remote arm accepts only the 24-word phrase, so arm a real kit
+    // through the wire route and use its phrase as the confirm credential.
+    let unlock = make_request(
+        "vault.unlock",
+        serde_json::json!({"slug": "gate-remote", "password": "test-master-password-123"}),
+    );
+    let unlock_resp = route_host_request(unlock, &host).await;
+    assert!(
+        unlock_resp.success,
+        "unlock failed: {}",
+        unlock_resp.error_message
+    );
+    let token = unlock_resp.session_token.clone();
+    let mut kit_req = make_request("space.kit_enable", serde_json::json!({}));
+    kit_req.session_token = token;
+    let kit_resp = route_host_request(kit_req, &host).await;
+    assert!(
+        kit_resp.success,
+        "kit enable failed: {}",
+        kit_resp.error_message
+    );
+    let phrase = response_payload(&kit_resp)["phrase"]
+        .as_str()
+        .expect("kit_enable must return the phrase")
+        .to_string();
+
     let req = make_request(
         "vaults.detach",
         serde_json::json!({
             "slug": "gate-remote",
             "delete_remote": true,
-            "confirm": {"kind": "password", "value": "test-master-password-123"},
+            "confirm": {"kind": "phrase", "value": phrase},
         }),
     );
     let resp = route_host_request(req, &host).await;
@@ -731,6 +758,45 @@ async fn route_detach_delete_remote_without_provider_reports_and_detaches() {
     assert!(path.exists(), "safe arm keeps the directory");
     let post = read_global_registry();
     assert!(post.get("gate-remote").is_none());
+}
+
+// The remote arm is phrase-only: the master password is the daily
+// credential (typed often, shared for emergency access, offline-guessable
+// from the repo's own ciphertext), while the phrase is the 256-bit
+// break-glass secret. The refusal fires before the limiter, so the
+// client can immediately retry with the phrase.
+#[tokio::test]
+async fn route_detach_delete_remote_refuses_master_password() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    let (_dir, path, vault_id) = make_real_vault("gate-remote-pw");
+    let entry = make_entry("gate-remote-pw", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), None);
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({
+            "slug": "gate-remote-pw",
+            "delete_remote": true,
+            "confirm": {"kind": "password", "value": "test-master-password-123"},
+        }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        !resp.success,
+        "master password must not authorize remote deletion"
+    );
+    assert!(
+        resp.error_message.contains("24-word recovery phrase"),
+        "refusal should name the phrase requirement, got: {}",
+        resp.error_message
+    );
+    assert!(path.exists(), "refusal keeps the directory");
+    let post = read_global_registry();
+    assert!(post.get("gate-remote-pw").is_some());
 }
 
 #[tokio::test]

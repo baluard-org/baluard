@@ -164,6 +164,7 @@
       "credPlaceholderPassword": "Master password",
       "credPlaceholderPhrase": "the 24 words, separated by spaces",
       "verifyRequired": "Enter your master password or your recovery phrase to continue.",
+      "verifyPhraseOnly": "Deleting the remote repository requires your 24-word recovery phrase.",
       "deleteSubmit": "Delete",
       "working": "Working...",
       "deleted": "Deleted {name}"
