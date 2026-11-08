@@ -1224,7 +1224,7 @@ async fn route_host_request_inner(
                 Ok(reg) => reg,
                 Err(e) => return err_response(format!("Registry load failed: {e}")),
             };
-            let entry = match peeked.get(slug).cloned() {
+            let peeked_entry = match peeked.get(slug).cloned() {
                 Some(e) => e,
                 None => {
                     return err_response(format!("Vault '{slug}' is not registered in Baluard"));
@@ -1234,14 +1234,23 @@ async fn route_host_request_inner(
             // Any destructive arm (delete from disk, delete the remote
             // repository) demands the passphrase gate first. A wrong
             // answer rate-limits and leaves registry, disk, and remote
-            // untouched.
-            if delete_from_disk || delete_remote {
-                if let Err(e) = verify_destroy_confirm(
-                    &entry.path,
-                    Some(entry.vault_id),
-                    payload.get("confirm"),
-                    delete_remote,
-                ) {
+            // untouched. The canary check is sync Argon2 — keep it off
+            // the async workers.
+            // A gone directory has nothing to verify against: skip the
+            // gate so the idempotent already-absent branch can clean the
+            // stale entry. Everything else gates.
+            let needs_gate = delete_remote || (delete_from_disk && peeked_entry.path.exists());
+            if needs_gate {
+                let confirm = payload.get("confirm").cloned();
+                let gate_path = peeked_entry.path.clone();
+                let gate_vid = Some(peeked_entry.vault_id);
+                let gate = tokio::task::spawn_blocking(move || {
+                    verify_destroy_confirm(&gate_path, gate_vid, confirm.as_ref(), delete_remote)
+                })
+                .await
+                .map_err(|e| format!("verification task failed: {e}"))
+                .and_then(|r| r);
+                if let Err(e) = gate {
                     return err_response(e);
                 }
             }
@@ -1253,7 +1262,10 @@ async fn route_host_request_inner(
             // delete the repository manually (same contract as
             // sync.disconnect).
             let (remote_deleted, remote_error) = if delete_remote {
-                match (entry.provider.as_ref(), entry.remote_url.as_ref()) {
+                match (
+                    peeked_entry.provider.as_ref(),
+                    peeked_entry.remote_url.as_ref(),
+                ) {
                     (Some(provider), Some(url)) => {
                         match try_delete_remote_repo(provider, url).await {
                             Ok(()) => (true, None),
@@ -1276,10 +1288,14 @@ async fn route_host_request_inner(
                 if remote_deleted {
                     " The remote repository was deleted.".to_string()
                 } else {
-                    format!(
-                        " The remote repository could NOT be deleted: {}.",
-                        remote_error.as_deref().unwrap_or("unknown error")
-                    )
+                    // Provider errors can carry trailing periods and raw
+                    // bodies; trim so the sentence stays one line.
+                    let reason = remote_error
+                        .as_deref()
+                        .unwrap_or("unknown error")
+                        .trim_end_matches('.')
+                        .to_string();
+                    format!(" The remote repository could NOT be deleted: {reason}.")
                 }
             } else {
                 String::new()
@@ -1299,6 +1315,16 @@ async fn route_host_request_inner(
                     return err_response(format!("Vault '{slug}' is not registered in Baluard"));
                 }
             };
+            // The gate and the remote delete ran against the peeked
+            // snapshot. If another process detached and re-attached the
+            // same slug during that window, the fresh entry may point at
+            // a DIFFERENT directory or vault — refuse without saving so
+            // the concurrent change stands.
+            if entry.vault_id != peeked_entry.vault_id || entry.path != peeked_entry.path {
+                return err_response(format!(
+                    "Vault '{slug}' changed in the registry while the delete was being confirmed; aborting without deleting anything.{remote_note}"
+                ));
+            }
             // Persist BEFORE `host.close`. If `save_locked` fails, the
             // in-memory state is unchanged — the user gets an error and
             // the vault is intact. `host.close` cannot fail (in-memory
@@ -1413,7 +1439,7 @@ async fn route_host_request_inner(
                                     "Refusing to delete {}: .baluard marker could not be \
                                      read ({error}). Pass force=true if the caller has \
                                      already established user intent through another gate \
-                                     (typed-name modal, CLI slug retyping).",
+                                     (typed-name modal, CLI slug retyping).{remote_note}",
                                     path.display()
                                 ));
                             }
@@ -1428,7 +1454,7 @@ async fn route_host_request_inner(
                     purge_qu(&reg);
                     if let Err(e) = std::fs::remove_dir_all(path) {
                         return err_response(format!(
-                            "Detached '{slug}' from Baluard, but disk delete failed: {e}"
+                            "Detached '{slug}' from Baluard, but disk delete failed: {e}{remote_note}"
                         ));
                     }
                     deleted_from_disk = true;
@@ -7252,17 +7278,16 @@ pub(crate) fn parse_repo_owner_name(url: &str) -> Option<(String, String)> {
     // Exactly owner/name after the host: GitLab subgroup paths
     // (group/sub/repo) refuse rather than delete a truncated — wrong —
     // project path.
-    let tail = if let Some(rest) = cleaned
+    let tail = cleaned
         .strip_prefix("https://")
         .or_else(|| cleaned.strip_prefix("http://"))
         .or_else(|| cleaned.strip_prefix("ssh://"))
-    {
-        rest.split_once('/')?.1
-    } else if let Some(rest) = cleaned.strip_prefix("git@") {
-        rest.split_once(':')?.1
-    } else {
-        return None;
-    };
+        .and_then(|rest| rest.split_once('/').map(|(_, t)| t))
+        .or_else(|| {
+            cleaned
+                .strip_prefix("git@")
+                .and_then(|rest| rest.split_once(':').map(|(_, t)| t))
+        })?;
     let (owner, name) = tail.split_once('/')?;
     if owner.is_empty() || name.is_empty() || name.contains('/') {
         return None;
@@ -7434,9 +7459,12 @@ async fn try_delete_remote_repo(provider_name: &str, remote_url: &str) -> Result
     let info = state_file
         .get(provider)
         .ok_or_else(|| format!("no connected token for provider '{provider_name}'"))?;
-    let token = ensure_valid_token(provider, info)
-        .await
-        .map_err(|_e| format!("token refresh failed for provider '{provider_name}'"))?;
+    let token = ensure_valid_token(provider, info).await.map_err(|e| {
+        format!(
+            "token refresh failed for provider '{provider_name}': {}",
+            e.error_message
+        )
+    })?;
     let prov = baluard_core::providers::provider_for(provider, info.config())
         .map_err(|e| format!("provider init failed: {e}"))?;
     let (owner, name) = parse_repo_owner_name(remote_url).ok_or_else(|| {
@@ -7468,7 +7496,22 @@ async fn sync_disconnect(
             .ok()
             .flatten()
             .map(|m| m.vault_id);
-        verify_destroy_confirm(vault_path, vault_id, payload.get("confirm"), true)?;
+        // The phrase arm needs the vault_id from the marker for the kit
+        // check; without it the gate would mislead ("verify with the
+        // master password") and charge the limiter for a config problem.
+        if vault_id.is_none() {
+            return Err(
+                "Cannot verify the recovery phrase: this vault's .baluard marker is unreadable. Detach without deleting the remote, then delete the repository manually on the provider.".to_string(),
+            );
+        }
+        let confirm = payload.get("confirm").cloned();
+        let gate_path = vault_path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            verify_destroy_confirm(&gate_path, vault_id, confirm.as_ref(), true)
+        })
+        .await
+        .map_err(|e| format!("verification task failed: {e}"))
+        .and_then(|r| r)?;
     }
 
     let engine = baluard_core::sync::engine::SyncEngine::new(
@@ -7528,10 +7571,18 @@ async fn sync_disconnect(
         }
     }
 
-    // Remove the remote
-    engine
-        .remove_remote(&repo, "origin")
-        .map_err(|e| format!("Failed to remove remote: {e}"))?;
+    // Remove the remote. After a successful provider-side delete this
+    // must not fail the whole route: the response would lose the
+    // remote_deleted flag and the registry would still point at the dead
+    // repo. Surface both facts instead.
+    if let Err(e) = engine.remove_remote(&repo, "origin") {
+        if remote_deleted {
+            return Err(format!(
+                "The remote repository was deleted, but removing the local git remote failed: {e}"
+            ));
+        }
+        return Err(format!("Failed to remove remote: {e}"));
+    }
 
     // Clear sync fields in registry
     let slug = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)

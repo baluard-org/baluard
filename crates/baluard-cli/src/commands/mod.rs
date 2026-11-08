@@ -5885,10 +5885,20 @@ fn vaults_detach(
     // makes the "they are always the same" invariant explicit at the
     // call site.
     let destructive = delete_from_disk;
+    // The daemon's passphrase gate refuses a destructive arm without a
+    // confirm credential; the typed-slug retype above is intent, not the
+    // credential.
+    let confirm = if destructive {
+        let password = prompt_password("Master password: ")?;
+        Some(serde_json::json!({ "kind": "password", "value": password }))
+    } else {
+        None
+    };
     let payload = serde_json::json!({
         "slug": slug,
         "delete_from_disk": destructive,
         "force": destructive,
+        "confirm": confirm,
     })
     .to_string();
     let resp = client::request_to("vaults.detach", &payload, cli.socket.as_deref())?;

@@ -760,6 +760,40 @@ async fn route_detach_delete_remote_without_provider_reports_and_detaches() {
     assert!(post.get("gate-remote").is_none());
 }
 
+// A kitless vault cannot satisfy the phrase arm: the refusal must name
+// the Settings remedy (and not charge the limiter, so a later real
+// phrase attempt after arming the kit starts from zero backoff).
+#[tokio::test]
+async fn route_detach_delete_remote_on_kitless_vault_names_the_remedy() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    let (_dir, path, vault_id) = make_real_vault("gate-nokit");
+    let entry = make_entry("gate-nokit", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), None);
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({
+            "slug": "gate-nokit",
+            "delete_remote": true,
+            "confirm": {"kind": "phrase", "value": "abandon abandon ability ability able academy absorb access accident account accuse achieve acid acoustic act action activist actor adapt admire adobe admit"},
+        }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "kitless vault must refuse the phrase arm");
+    assert!(
+        resp.error_message.contains("Enable the recovery kit"),
+        "refusal should name the remedy, got: {}",
+        resp.error_message
+    );
+    assert!(path.exists(), "refusal keeps the directory");
+    let post = read_global_registry();
+    assert!(post.get("gate-nokit").is_some());
+}
+
 // The remote arm is phrase-only: the master password is the daily
 // credential (typed often, shared for emergency access, offline-guessable
 // from the repo's own ciphertext), while the phrase is the 256-bit

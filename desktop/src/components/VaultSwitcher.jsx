@@ -14,7 +14,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { AuthContext } from "../context/AuthContext.jsx";
 import { VaultContext } from "../context/VaultContext.jsx";
-import { toastError, toastSuccess } from "../context/toastSignal.js";
+import { toastError, toastSuccess, toastWarning } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
 import { IconChevronDown, IconLock, IconCheck, IconX, IconTrash } from "./Icon.jsx";
 import DetachVaultModal from "./DetachVaultModal.jsx";
@@ -105,14 +105,23 @@ export default function VaultSwitcher(props) {
     const wasActive = target.slug === switcher.activeSlug();
     const deletedFromDisk = payload.delete_from_disk === true;
     // Errors propagate: the modal surfaces them inline and stays open.
-    await switcher.detach(target.slug, payload);
+    const result = await switcher.detach(target.slug, payload);
     // Detaching the vault being viewed drops the daemon's active
     // pointer: the shell must leave the (now phantom) unlocked session.
     if (wasActive && auth.status() === "unlocked") {
       auth.setStatus("locked");
       auth.setVaultInfo(null);
     }
-    if (deletedFromDisk) {
+    // The remote delete is best-effort on the daemon side: a failure
+    // still detaches, so warn instead of celebrating.
+    if (payload.delete_remote === true && result.remote_deleted === false) {
+      toastWarning(
+        t("vault.vaultSwitcher.deleteRemoteFailed", {
+          reason: result.remote_error ?? t("vault.vaultSwitcher.deleteRemoteFailedUnknown"),
+        }),
+        { duration: 0, manual: true }
+      );
+    } else if (deletedFromDisk) {
       toastSuccess(
         t("vault.vaultSwitcher.deleted", { name: target.display_name })
       );
