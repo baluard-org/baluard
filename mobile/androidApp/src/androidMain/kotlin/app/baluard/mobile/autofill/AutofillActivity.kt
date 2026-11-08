@@ -1,5 +1,6 @@
 package app.baluard.mobile.autofill
 
+import android.app.ActivityOptions
 import android.content.Intent
 import android.os.Bundle
 import android.view.Gravity
@@ -100,7 +101,7 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
             ?: VaultRegistry.loadActiveVault()
         if (path == null) {
             status.text = t("autofill.openAppToSetup")
-            openMainAndFinishDelayed()
+            openMainAndFinish()
             return
         }
 
@@ -110,7 +111,7 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
             // has no master-password path by design (plan D5); send the user
             // to the app to enroll.
             status.text = t("autofill.openAppToSetup")
-            openMainAndFinishDelayed()
+            openMainAndFinish()
             return
         }
 
@@ -159,7 +160,7 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
             if (AutofillSession.hardwareSealed(path)) {
                 runOnUiThread {
                     status.text = t("autofill.securityKeyHint")
-                    openMainAndFinishDelayed()
+                    openMainAndFinish()
                 }
                 return@launch
             }
@@ -175,7 +176,7 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
             // has no master-password path by design (plan D5); send the user
             // to the app to enroll.
             status.text = t("autofill.openAppToSetup")
-            openMainAndFinishDelayed()
+            openMainAndFinish()
             return
         }
         status.text = t("autofill.unlockHint")
@@ -453,12 +454,17 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         }
     }
 
-    private fun openMainAndFinishDelayed() {
+    private fun openMainAndFinish() {
         // Guide setup: opening the app lands on unlock/quick-unroll flows.
         val launch = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(launch)
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ finish() }, 1200)
+        // This activity is windowIsTranslucent; a lingering translucent source
+        // makes the shell open MainActivity as a cross-fade that never reaches
+        // full alpha, rendering the whole app see-through over the browser.
+        // A basic transition plus an immediate finish forces an opaque open.
+        startActivity(launch, ActivityOptions.makeBasic().toBundle())
+        finish()
+        overridePendingTransition(0, 0)
     }
 
     override fun onDestroy() {

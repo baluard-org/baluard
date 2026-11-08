@@ -1,5 +1,6 @@
 package app.baluard.mobile.autofill
 
+import android.app.ActivityOptions
 import android.app.assist.AssistStructure
 import android.content.Intent
 import android.os.Build
@@ -148,7 +149,10 @@ class BaluardAutofillService : AutofillService() {
                             AutofillSaveToken.mint(captured.username, captured.password, captured.uri),
                         )
                     }
-                    startActivity(launch)
+                    // A basic transition keeps the resumed app opaque: a plain
+                    // service-context launch over the autofill sheet renders
+                    // the same stuck-alpha see-through window the open path did.
+                    startActivity(launch, ActivityOptions.makeBasic().toBundle())
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "save handoff failed", e)
