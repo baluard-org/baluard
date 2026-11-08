@@ -1,6 +1,5 @@
 package app.baluard.mobile.autofill
 
-import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -431,16 +430,12 @@ object AutofillResponseBuilder {
         }.getOrDefault(false)
         if (!styleOk) return null
         // Placeholder launch: tapping a chip fills through the dataset itself;
-        // some IMEs fire this intent for their own UI affordances. NEW_TASK
-        // plus a basic transition keeps the resumed app opaque when the IME
-        // fires the launch over another task (translucent-open stuck alpha).
+        // some IMEs fire this intent for their own UI affordances.
         val pi = PendingIntent.getActivity(
             context,
             1001,
-            Intent(context, app.baluard.mobile.MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(context, app.baluard.mobile.MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            ActivityOptions.makeBasic().toBundle(),
         )
         val content = InlineSuggestionUi.newContentBuilder(pi)
             .setTitle(name)

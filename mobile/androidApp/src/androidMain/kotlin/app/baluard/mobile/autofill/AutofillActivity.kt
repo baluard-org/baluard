@@ -458,11 +458,14 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         // Guide setup: opening the app lands on unlock/quick-unroll flows.
         val launch = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        // This activity is windowIsTranslucent; a lingering translucent source
-        // makes the shell open MainActivity as a cross-fade that never reaches
-        // full alpha, rendering the whole app see-through over the browser.
-        // A basic transition plus an immediate finish forces an opaque open.
-        startActivity(launch, ActivityOptions.makeBasic().toBundle())
+        // Finish immediately: the old 1200 ms delayed finish kept this
+        // translucent activity mounted while MainActivity opened, and on real
+        // hardware the whole app rendered see-through over the previous app.
+        // The explicit zero animation opens it at full alpha with no ramp.
+        startActivity(
+            launch,
+            ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle(),
+        )
         finish()
         overridePendingTransition(0, 0)
     }
