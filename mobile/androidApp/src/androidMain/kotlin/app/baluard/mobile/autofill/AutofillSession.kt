@@ -43,6 +43,8 @@ object AutofillSession {
         /** Owning vault (merged surfaces only; null = active-vault legacy). */
         val vaultPath: String? = null,
         val vaultName: String? = null,
+        /** Entry stores a TOTP seed (autofill_query carries the flag). */
+        val totp: Boolean = false,
     )
 
     /** Path-B app-to-web suggestion: an untrusted candidate domain and
@@ -279,6 +281,7 @@ object AutofillSession {
                 name = o.optString("name"),
                 username = o.opt("username") as? String,
                 favorite = o.optBoolean("favorite", false),
+                totp = o.optBoolean("totp", false),
             )
         }
     }

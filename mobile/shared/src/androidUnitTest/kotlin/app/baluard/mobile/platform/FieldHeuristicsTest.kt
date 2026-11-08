@@ -142,4 +142,72 @@ class FieldHeuristicsTest {
         assertNull(FieldHeuristics.targetFor(null, null))
         assertNull(FieldHeuristics.targetFor("  ", ""))
     }
+
+    // ── OTP-field guard (2026-11-08 incident: the username landed in a
+    // TOTP box and a 6-digit code never filled). OTP-named fields must
+    // classify Otp so no fill path targets them.
+
+    @Test
+    fun otpIdentifiersClassifyOtp() {
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(idEntry = "sign_in_totp_code")))
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(htmlName = "user[totp_code]")))
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(idEntry = "otp")))
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(idEntry = "totpSecret")))
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(idEntry = "inputOtp1")))
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(idEntry = "login_otp")))
+    }
+
+    @Test
+    fun otpPhrasesAndTokensClassifyOtp() {
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(hint = "Verification code")))
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(hint = "Código de verificación")))
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(hint = "Enter the 6-digit security code")))
+        assertEquals(FieldKind.Otp, FieldHeuristics.classify(field(htmlLabel = "Two-factor authentication code")))
+        assertEquals(
+            FieldKind.Otp,
+            FieldHeuristics.classify(field(htmlAutocomplete = "one-time-code")),
+        )
+    }
+
+    @Test
+    fun otpProseWithUsernameKeywordStaysOtp() {
+        // The reported misclassification shape: a verification-code hint
+        // carrying a username keyword ("email") used to classify Username.
+        assertEquals(
+            FieldKind.Otp,
+            FieldHeuristics.classify(field(hint = "Enter the code sent to your email")),
+        )
+        assertEquals(
+            FieldKind.Otp,
+            FieldHeuristics.classify(field(htmlLabel = "Código enviado a tu correo")),
+        )
+    }
+
+    @Test
+    fun lookAlikeFieldsStayNonOtp() {
+        assertEquals(FieldKind.Other, FieldHeuristics.classify(field(idEntry = "laptop")))
+        assertEquals(FieldKind.Other, FieldHeuristics.classify(field(idEntry = "zip_code")))
+        assertEquals(FieldKind.Other, FieldHeuristics.classify(field(hint = "Promo code")))
+    }
+
+    @Test
+    fun authoritativeSignalsStillBeatTheOtpGuard() {
+        assertEquals(
+            FieldKind.Password,
+            FieldHeuristics.classify(field(htmlAutocomplete = "current-password", htmlName = "totpPasswordField")),
+        )
+        assertEquals(
+            FieldKind.Otp,
+            FieldHeuristics.classify(field(htmlAutocomplete = "one-time-code", htmlName = "login_code")),
+        )
+    }
+
+    @Test
+    fun fieldContentNeverTriggersTheOtpGuard() {
+        // An email address containing 2fa must stay a username.
+        assertEquals(
+            FieldKind.Username,
+            FieldHeuristics.classify(field(idEntry = "email", text = "a.2fa@example.com")),
+        )
+    }
 }

@@ -173,8 +173,9 @@ class BaluardAccessibilityService : AccessibilityService() {
                 AutofillA11yBridge.pendingFill = null
                 AutofillA11yBridge.pendingFillAttempts = 0
                 AutofillSession.totpCode(fill.vaultPath, fill.cipherId)?.let { code ->
-                    copyToClipboard(code)
-                    toastMain(t("a11y.totpCopied"))
+                    if (copyToClipboard(code)) {
+                        toastMain(t("a11y.totpCopied"))
+                    }
                 }
             }
             // Fill failed: the attempt is already counted; the budget clears
@@ -203,6 +204,9 @@ class BaluardAccessibilityService : AccessibilityService() {
         val passwordNodes = mutableListOf<AccessibilityNodeInfo>()
         walk(root) { node ->
             if (!node.isEditable) return@walk
+            // Verification-code boxes never receive credentials (the
+            // 2026-11-08 incident put a username into a TOTP box).
+            if (kindOf(node) == FieldKind.Otp) return@walk
             if (node.isPassword || kindOf(node) == FieldKind.Password) {
                 passwordNodes += node
                 return@walk

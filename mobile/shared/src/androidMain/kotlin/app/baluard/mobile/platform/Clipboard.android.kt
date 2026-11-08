@@ -6,8 +6,8 @@ import android.os.Handler
 import android.os.Looper
 
 /** Android `actual`: ClipboardManager via the app context + auto-clear. */
-actual fun copyToClipboard(text: String) {
-    val ctx = AppContextHolder.get() ?: return
+actual fun copyToClipboard(text: String): Boolean {
+    val ctx = AppContextHolder.get() ?: return false
     val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     val clip = ClipData.newPlainText("Baluard", text)
     // M2: mark the clip sensitive so Android 13+ hides the plaintext from
@@ -15,8 +15,12 @@ actual fun copyToClipboard(text: String) {
     clip.description.extras = android.os.PersistableBundle().apply {
         putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
     }
-    cm.setPrimaryClip(clip)
-    scheduleAutoClear(cm, ctx, text)
+    // Android 10+ silently drops the write when the app holds no window
+    // focus (Claude review, 2026-11-08): callers gate feedback on the
+    // returned success instead of assuming the clip landed.
+    val ok = runCatching { cm.setPrimaryClip(clip) }.isSuccess
+    if (ok) scheduleAutoClear(cm, ctx, text)
+    return ok
 }
 
 /**
