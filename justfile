@@ -582,6 +582,33 @@ bump-version new_version:
 _nmh-manifests:
 	./scripts/build-nmh-manifests.sh
 
+# Back up machine-local signing and release material without reproducible
+# environments or large Android/Linux artifacts. The ZIP contains secrets.
+backup-baluard-dot-home:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	umask 077
+	source_dir="$HOME/.baluard"
+	downloads="$HOME/Downloads"
+	[[ -d "$source_dir" ]] || { echo "Missing $source_dir" >&2; exit 1; }
+	[[ -d "$downloads" ]] || { echo "Missing $downloads" >&2; exit 1; }
+	command -v zip >/dev/null
+	command -v unzip >/dev/null
+	archive="$downloads/baluard-dot-home-$(date -u +%Y%m%d-%H%M%S).zip"
+	[[ ! -e "$archive" ]] || { echo "Refusing to overwrite $archive" >&2; exit 1; }
+	trap 'rm -f -- "$archive"' ERR
+	(
+		cd "$HOME"
+		zip -q -r -y "$archive" .baluard \
+			-x '.baluard/fdroidserver-venv' '.baluard/fdroidserver-venv/*' \
+			'*.deb' '*.rpm' '*.apk' '*.aab'
+	)
+	unzip -tq "$archive"
+	chmod 600 "$archive"
+	trap - ERR
+	printf 'Backup: %s\n' "$archive"
+	du -h "$archive"
+
 # D79: print (do not run) the updater signing-key generation command.
 # The private key never leaves your machine; the PUBLIC key from that
 # output replaces REPLACE_WITH_UPDATER_PUBLIC_KEY in

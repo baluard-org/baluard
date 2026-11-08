@@ -23,3 +23,4 @@ rootProject.name = "baluard-mobile"
 
 include(":shared")
 include(":androidApp")
+include(":fellowship")

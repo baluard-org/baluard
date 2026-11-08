@@ -105,6 +105,65 @@ class EntitlementGateTest {
     }
 
     @Test
+    fun fellowship_unlocks_without_showing_supporter_status() = runTest {
+        val gate = EntitlementGate { NOW }
+        gate.initialize(FakeStore(StoreQuery.Fellowship, isPaidStore = true), MemoryEntitlementCache())
+        val eff = gate.refresh()
+        assertEquals(EntitlementPhase.Fellowship, eff.phase)
+        assertTrue(eff.syncUnlocked)
+        assertTrue(eff.sharingUnlocked)
+        assertTrue(eff.totpUnlocked)
+        assertFalse(gate.shouldShowSupporterStatus(eff))
+    }
+
+    @Test
+    fun fellowship_preserves_a_trial_cache() {
+        val trial = CachedEntitlement(
+            EntitlementPhase.Trial,
+            trialEndsAtEpochMs = NOW + DAY_MS,
+            willRenew = true,
+        )
+
+        assertEquals(trial, applyStoreQuery(trial, StoreQuery.FellowshipOffline))
+    }
+
+    @Test
+    fun paid_cache_survives_fellowship_removal_offline() = runTest {
+        val paid = CachedEntitlement(EntitlementPhase.Unlocked, willRenew = true)
+        val store = FakeStore(StoreQuery.FellowshipOffline, isPaidStore = true)
+        val cache = MemoryEntitlementCache().apply { save(paid) }
+        val gate = EntitlementGate { NOW }
+        gate.initialize(store, cache)
+
+        assertEquals(EntitlementPhase.Unlocked, gate.refresh().phase)
+        store.next = StoreQuery.Unavailable
+        assertEquals(EntitlementPhase.Unlocked, gate.refresh().phase)
+        assertEquals(paid, cache.load())
+    }
+
+    @Test
+    fun definite_inactive_play_result_replaces_a_stale_paid_cache_with_fellowship() = runTest {
+        val paid = CachedEntitlement(EntitlementPhase.Unlocked, willRenew = true)
+        val cache = MemoryEntitlementCache().apply { save(paid) }
+        val gate = EntitlementGate { NOW }
+        gate.initialize(FakeStore(StoreQuery.Fellowship, isPaidStore = true), cache)
+
+        assertEquals(EntitlementPhase.Fellowship, gate.refresh().phase)
+        assertEquals(EntitlementPhase.Fellowship, cache.load()?.phase)
+    }
+
+    @Test
+    fun unavailable_locks_cached_fellowship_after_companion_removal() = runTest {
+        val gate = EntitlementGate { NOW }
+        val cache = MemoryEntitlementCache().apply { save(CachedEntitlement(EntitlementPhase.Fellowship)) }
+        gate.initialize(FakeStore(StoreQuery.Unavailable, isPaidStore = true), cache)
+        val eff = gate.refresh()
+        assertEquals(EntitlementPhase.Locked, eff.phase)
+        assertFalse(eff.syncUnlocked)
+        assertEquals(EntitlementPhase.Locked, cache.load()?.phase)
+    }
+
+    @Test
     fun refresh_does_not_rewrite_an_unchanged_cache() = runTest {
         val gate = EntitlementGate { NOW }
         val cache = CountingCache(CachedEntitlement(EntitlementPhase.Unlocked, willRenew = true))

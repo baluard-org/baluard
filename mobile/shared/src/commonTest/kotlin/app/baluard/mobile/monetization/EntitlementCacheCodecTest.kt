@@ -11,6 +11,7 @@ class EntitlementCacheCodecTest {
         val samples = listOf(
             CachedEntitlement(EntitlementPhase.Locked),
             CachedEntitlement(EntitlementPhase.Unlocked, willRenew = true),
+            CachedEntitlement(EntitlementPhase.Fellowship),
             CachedEntitlement(EntitlementPhase.Trial, trialEndsAtEpochMs = 1_794_000_000_000L, willRenew = false),
         )
         for (sample in samples) {

@@ -49,14 +49,18 @@ fi
 AAB="${1:-${BALUARD_PLAY_AAB:-$ROOT/mobile/androidApp/build/outputs/bundle/playRelease/androidApp-play-release.aab}}"
 [[ -f "$AAB" ]] || die "AAB not found: $AAB (build it with just android-apk-release)"
 
-# versionName comes from the workspace; versionCode from the same formula the
-# bump script uses. The upload response is cross-checked against it, and the
-# API's existing-bundles list is refused when the code is already burned.
-VER="$(awk '/\[workspace\.package\]/{f=1} f && /^version = /{gsub(/"/, "", $3); print $3; exit}' "$ROOT/Cargo.toml")"
+# Version metadata defaults to the workspace formula. Independent apps can
+# override both values; the upload response and existing-bundle pool are checked.
+VER="${BALUARD_PLAY_VERSION_NAME:-$(awk '/\[workspace\.package\]/{f=1} f && /^version = /{gsub(/"/, "", $3); print $3; exit}' "$ROOT/Cargo.toml")}"
 [[ "$VER" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
-  || die "workspace version '$VER' is not plain semver"
-MAJOR=${VER%%.*}; REST=${VER#*.}; MINOR=${REST%%.*}; PATCH=${REST#*.}
-CODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))
+  || die "version name '$VER' is not plain semver"
+if [[ -n "${BALUARD_PLAY_VERSION_CODE:-}" ]]; then
+  CODE="$BALUARD_PLAY_VERSION_CODE"
+else
+  MAJOR=${VER%%.*}; REST=${VER#*.}; MINOR=${REST%%.*}; PATCH=${REST#*.}
+  CODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))
+fi
+[[ "$CODE" =~ ^[1-9][0-9]*$ ]] || die "version code '$CODE' must be a positive integer"
 
 # Play gates rollout on targetSdkVersion. The fdroid APK shares defaultConfig
 # with the play AAB, so its badging is a faithful pre-upload check when both

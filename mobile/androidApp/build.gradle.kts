@@ -39,6 +39,14 @@ kotlin {
 
 val entitlementServiceUrl = (findProperty("baluard.entitlementServiceUrl") as String?)
     ?: System.getenv("BALUARD_ENTITLEMENT_SERVICE_URL").orEmpty()
+val fellowshipUploadCertificateSha256 = "392514C7E4B6C83FBA25D01E301693A4471CF3C3EB05ED97EA3267CFFC5A2CB3"
+val fellowshipPlayCertificatesSha256 = (findProperty("baluard.fellowshipPlayCertificatesSha256") as String?)
+    ?: System.getenv("BALUARD_FELLOWSHIP_PLAY_CERTIFICATES_SHA256").orEmpty().ifBlank {
+        "1856707D5517FF046FC76E780C63585FA62ECA8FE4BE53B0FE705E6E2BFC4D31"
+    }
+val fellowshipCertificatesSha256 = listOf(fellowshipUploadCertificateSha256, fellowshipPlayCertificatesSha256)
+    .filter(String::isNotBlank)
+    .joinToString(",")
 
 android {
     val releaseStorePath = System.getenv("BALUARD_ANDROID_KEYSTORE")
@@ -129,6 +137,13 @@ android {
             dimension = "monetization"
             val escapedUrl = entitlementServiceUrl.replace("\\", "\\\\").replace("\"", "\\\"")
             buildConfigField("String", "ENTITLEMENT_SERVICE_URL", "\"$escapedUrl\"")
+            // Comma-separated upload + Play signing pins; every hybrid signer must be pinned.
+            val escapedFellowshipPins = fellowshipCertificatesSha256.replace("\\", "\\\\").replace("\"", "\\\"")
+            buildConfigField(
+                "String",
+                "FELLOWSHIP_CERTIFICATES_SHA256",
+                "\"$escapedFellowshipPins\"",
+            )
         }
     }
 
@@ -162,6 +177,8 @@ android {
 
 tasks.matching { it.name == "prePlayReleaseBuild" }.configureEach {
     val serviceUrl = entitlementServiceUrl
+    val playPins = fellowshipPlayCertificatesSha256
+    val allPins = fellowshipCertificatesSha256
     doLast {
         if (serviceUrl.isBlank()) {
             throw GradleException("Play release requires baluard.entitlementServiceUrl")
@@ -173,6 +190,15 @@ tasks.matching { it.name == "prePlayReleaseBuild" }.configureEach {
             uri.userInfo != null || uri.query != null || uri.fragment != null
         ) {
             throw GradleException("Play release entitlement URL must be an HTTPS origin without user info, query, or fragment")
+        }
+        val sha256 = Regex("[0-9a-fA-F]{64}")
+        if (playPins.isBlank() || playPins.split(",").map(String::trim).any { !sha256.matches(it) }) {
+            throw GradleException(
+                "Play release requires baluard.fellowshipPlayCertificatesSha256 with valid Play app-signing pins",
+            )
+        }
+        if (allPins.split(",").map(String::trim).any { !sha256.matches(it) }) {
+            throw GradleException("Play release Fellowship pin list is malformed")
         }
     }
 }

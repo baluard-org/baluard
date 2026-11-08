@@ -18,14 +18,18 @@ sealed interface StoreQuery {
      * stays for a future StoreKit (iOS) backend where trials are distinct.
      */
     data class TrialActive(val endsAtEpochMs: Long, val willRenew: Boolean) : StoreQuery
+    data object Fellowship : StoreQuery
+
+    /** Play could not answer; preserve a previously verified store entitlement. */
+    data object FellowshipOffline : StoreQuery
     data object NothingActive : StoreQuery
 
-    /** Billing offline or broken: the cached entitlement must not change. */
+    /** Billing offline or broken: ordinary cached entitlement must not change. */
     data object Unavailable : StoreQuery
 }
 
 /** Persisted phases only; Unknown is the never-queried state and is never persisted. */
-enum class EntitlementPhase { Unknown, Locked, Trial, Unlocked }
+enum class EntitlementPhase { Unknown, Locked, Trial, Unlocked, Fellowship }
 
 data class CachedEntitlement(
     val phase: EntitlementPhase,
@@ -49,12 +53,20 @@ data class EffectiveEntitlement(
 private const val DAY_MS = 24L * 60 * 60 * 1000
 
 /**
- * A completed store query replaces the cached entitlement outright; [StoreQuery.Unavailable]
- * is the only result that leaves the cache untouched, so a paying user offline never gets
- * locked mid-flight and a non-payer offline never gains access.
+ * Unavailable preserves store purchases but not Fellowship: its local companion was
+ * absent during this query, so retaining that cache would outlive the installation.
+ * FellowshipOffline preserves an existing purchase or trial so companion removal cannot revoke it.
  */
 fun applyStoreQuery(cache: CachedEntitlement?, query: StoreQuery): CachedEntitlement? = when (query) {
-    StoreQuery.Unavailable -> cache
+    StoreQuery.Unavailable -> if (cache?.phase == EntitlementPhase.Fellowship) {
+        CachedEntitlement(EntitlementPhase.Locked)
+    } else {
+        cache
+    }
+    StoreQuery.Fellowship -> CachedEntitlement(EntitlementPhase.Fellowship)
+    StoreQuery.FellowshipOffline -> cache?.takeIf {
+        it.phase == EntitlementPhase.Unlocked || it.phase == EntitlementPhase.Trial
+    } ?: CachedEntitlement(EntitlementPhase.Fellowship)
     StoreQuery.NothingActive -> CachedEntitlement(EntitlementPhase.Locked)
     is StoreQuery.Purchased -> CachedEntitlement(EntitlementPhase.Unlocked, willRenew = query.willRenew)
     is StoreQuery.TrialActive -> CachedEntitlement(
@@ -77,7 +89,8 @@ fun effectiveEntitlement(cache: CachedEntitlement?, nowEpochMs: Long): Effective
             else -> c.phase
         }
     }
-    val unlocked = phase == EntitlementPhase.Unlocked || phase == EntitlementPhase.Trial
+    val unlocked = phase == EntitlementPhase.Unlocked ||
+        phase == EntitlementPhase.Trial || phase == EntitlementPhase.Fellowship
     val trialEnds = cache?.trialEndsAtEpochMs?.takeIf { phase == EntitlementPhase.Trial }
     return EffectiveEntitlement(
         phase = phase,

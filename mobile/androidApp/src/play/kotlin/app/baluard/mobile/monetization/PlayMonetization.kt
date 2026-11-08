@@ -51,6 +51,7 @@ class PlayMonetizationApplication : BaluardApplication() {
 internal class PlayBillingStore(context: Context, entitlementServiceUrl: String) : MonetizationStore {
 
     override val isPaidStore: Boolean = true
+    private val fellowshipAccess = FellowshipAccess(context)
     private val entitlementVerifier = entitlementServiceUrl.takeIf { it.isNotBlank() }
         ?.let(::ServerEntitlementVerifier)
 
@@ -135,7 +136,11 @@ internal class PlayBillingStore(context: Context, entitlementServiceUrl: String)
         }
     }
 
-    override suspend fun query(): StoreQuery {
+    override suspend fun query(): StoreQuery = queryWithFellowship(fellowshipAccess.isActive()) {
+        queryPlay()
+    }
+
+    private suspend fun queryPlay(): StoreQuery {
         if (!connect()) return StoreQuery.Unavailable
         val result = withContext(main) {
             client.queryPurchasesAsync(
