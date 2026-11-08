@@ -97,6 +97,8 @@ for arg in "${args[@]}"; do
     */bundles)
       if [[ "${SUB_PLAY_BURNED:-0}" == 1 ]]; then
         emit '{"bundles": [{"versionCode": 1011}]}'
+      elif [[ -n "${SUB_PLAY_EXISTING_SHA:-}" ]]; then
+        emit "{\"bundles\": [{\"versionCode\": 1011, \"sha256\": \"${SUB_PLAY_EXISTING_SHA}\"}]}"
       else
         emit '{"bundles": []}'
       fi
@@ -158,9 +160,32 @@ rm -f "$CURL_LOG"
 env "${BASE_ENV[@]}" SUB_PLAY_BURNED=1 \
   "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/burned.out" 2> "$TMP/burned.err" \
   && { echo 'burned version accepted' >&2; exit 1; }
-grep -qi 'already used' "$TMP/burned.err"
+grep -qi 'different bytes' "$TMP/burned.err"
 grep -q 'bump' "$TMP/burned.err"
 if grep -q '/upload/' "$CURL_LOG"; then echo 'upload ran past burn guard' >&2; exit 1; fi
+
+# ── Same bundle on a second track skips the upload and assigns ──────────────
+# While Baluard is in pre-release, internal and closed testing must carry
+# the SAME version: the second play-submit run sees the committed bundle
+# with identical bytes and goes straight to track assignment.
+rm -f "$CURL_LOG"
+AAB_SHA="$(sha256sum "$AAB" | awk '{print $1}')"
+env "${BASE_ENV[@]}" BALUARD_PLAY_TRACK=alpha SUB_PLAY_EXISTING_SHA="$AAB_SHA" \
+  "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/same.out"
+grep -q 'already on the app with identical bytes' "$TMP/same.out"
+grep -q 'play/alpha: released 0.1.11 (1011)' "$TMP/same.out"
+if grep -q '/upload/' "$CURL_LOG"; then echo 'identical bundle re-uploaded' >&2; exit 1; fi
+grep '/tracks/alpha' "$CURL_LOG" | grep -q -- '-X PUT'
+grep -q '"versionCodes":\[1011\]' "$CURL_LOG"
+grep -q ':commit' "$CURL_LOG"
+
+# ── Same versionCode with different bytes still refuses ─────────────────────
+rm -f "$CURL_LOG"
+env "${BASE_ENV[@]}" SUB_PLAY_EXISTING_SHA=deadbeef \
+  "$SANDBOX/scripts/upload-play-release.sh" > "$TMP/samebad.out" 2> "$TMP/samebad.err" \
+  && { echo 'different bytes accepted' >&2; exit 1; }
+grep -qi 'different bytes' "$TMP/samebad.err"
+if grep -q '/upload/' "$CURL_LOG"; then echo 'upload ran past byte guard' >&2; exit 1; fi
 
 # ── Upload failure stops before track assignment, with the store's error ────
 rm -f "$CURL_LOG"

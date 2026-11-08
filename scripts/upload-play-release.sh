@@ -121,19 +121,29 @@ EDIT="$(api -X POST -d '' "$API_BASE/edits" > "$SEC/resp" && jq -r '.id // empty
   || die "creating the edit failed: $(head -c 300 "$SEC/resp" 2>/dev/null || echo 'no response')"
 [[ -n "$EDIT" ]] || die "edit creation returned no id"
 
-EXISTING="$(api "$API_BASE/edits/$EDIT/bundles" > "$SEC/resp" \
-  && jq '[.bundles[]?.versionCode] | index('"$CODE"') != null' "$SEC/resp")" \
+api "$API_BASE/edits/$EDIT/bundles" > "$SEC/resp" \
   || die "listing existing bundles failed: $(head -c 300 "$SEC/resp" 2>/dev/null || echo 'no response')"
-if [[ "$EXISTING" == "true" ]]; then
-  die "version code $CODE was already used on this app; bump the workspace version and rebuild before uploading"
+# Fail closed: a code that exists without a usable sha is treated as a
+# burn, never as a re-upload opportunity.
+PRESENT="$(jq --argjson code "$CODE" '[.bundles[]?.versionCode] | index($code) != null' "$SEC/resp")"
+EXISTING_SHA="$(jq -r --argjson code "$CODE" '.bundles[]? | select(.versionCode == $code) | .sha256 // empty' "$SEC/resp")"
+LOCAL_SHA="$(sha256sum "$AAB" | awk '{print $1}')"
+if [[ "$PRESENT" == "true" ]]; then
+  if [[ -n "$EXISTING_SHA" && "${EXISTING_SHA,,}" == "$LOCAL_SHA" ]]; then
+    # The same bytes are already committed (the other pre-release track);
+    # assigning this track needs no second upload.
+    echo "play/$TRACK: bundle $CODE is already on the app with identical bytes; assigning it to the track"
+  else
+    die "version code $CODE already exists on this app with different bytes; bump the workspace version and rebuild before uploading"
+  fi
+else
+  api -X POST "$UPLOAD_BASE/edits/$EDIT/bundles" \
+    -H 'Content-Type: application/octet-stream' --data-binary "@$AAB" > "$SEC/bundle.json" \
+    || die "AAB upload failed: $(head -c 300 "$SEC/bundle.json" 2>/dev/null || echo 'no response')"
+  UPLOADED="$(jq -r '.versionCode // empty' "$SEC/bundle.json")"
+  [[ "$UPLOADED" == "$CODE" ]] \
+    || die "uploaded bundle reports versionCode '$UPLOADED', expected $CODE; workspace and AAB have drifted"
 fi
-
-api -X POST "$UPLOAD_BASE/edits/$EDIT/bundles" \
-  -H 'Content-Type: application/octet-stream' --data-binary "@$AAB" > "$SEC/bundle.json" \
-  || die "AAB upload failed: $(head -c 300 "$SEC/bundle.json" 2>/dev/null || echo 'no response')"
-UPLOADED="$(jq -r '.versionCode // empty' "$SEC/bundle.json")"
-[[ "$UPLOADED" == "$CODE" ]] \
-  || die "uploaded bundle reports versionCode '$UPLOADED', expected $CODE; workspace and AAB have drifted"
 
 api -X PUT "$API_BASE/edits/$EDIT/tracks/$TRACK" -H 'Content-Type: application/json' \
   -d "{\"track\":\"$TRACK\",\"releases\":[{\"name\":\"$VER ($CODE)\",\"versionCodes\":[$CODE],\"status\":\"$STATUS\"}]}" \
