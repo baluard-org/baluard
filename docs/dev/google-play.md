@@ -29,6 +29,7 @@ Never bump the Play version ahead of F-Droid for the same `versionName`: a Play 
 - Internal testing: up to 100 testers, no Google review, installs immediate. Does NOT count toward the personal-account production requirement (12 continuous opted-in testers for 14 days).
 - Closed testing: the track that satisfies the 12-testers/14-days production runway. Carry the same AAB there when the clock should start.
 - Testers install through the opt-in link on each track's Testers tab. Testers get paid products and subscriptions free while in a testing track, so nothing charges until production.
+- Test-track subscriptions run on Google's accelerated clock, and the console never warns you about it (developer.android.com/google/play/billing/test has the table): a 1-year base plan renews every 30 minutes, a free trial is always 3 minutes regardless of its configured length, grace is about 10 minutes, and account hold about 30. The purchase sheet therefore reads like "CLP 4,900 / 30 min" and "3 minute free trial" even though the real product is 4.99 USD/year with a 14-day trial. Nothing is misconfigured, and production shows the true durations.
 - Release naming convention in the forms: `0.1.9 (1009)` style, version visible to testers. Tester-facing release notes: what changed, what to try, report to support@baluard.app, end with "Thanks for testing."
 
 ## Console setup already done
