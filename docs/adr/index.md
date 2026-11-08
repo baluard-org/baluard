@@ -106,3 +106,4 @@ Numbered in design chronology. Each record carries its context, decision, and co
 | [0100](0100-legacy-contact.md) | Legacy Contact |
 | [0101](0101-domain-appendix.md) | Domain Appendix: Device Fleet, Lifecycle, Terminology, and Tags |
 | [0102](0102-store-sync-subscription.md) | Sync, Sharing, and TOTP Subscription on Store Builds |
+| [0103](0103-play-entitlement-verification-service.md) | Google Play Entitlement Verification Service |

@@ -4,7 +4,7 @@
 
 ## Context
 
-Baluard is GPL-3.0 free software with no server backend. Sync is the user's own Git repository on their own provider, so serving a user costs Baluard nothing per user. The project's costs are structural, recurring, and independent of user count:
+Baluard is GPL-3.0 free software with no vault server backend. Sync is the user's own Git repository on their own provider, so serving a user costs Baluard nothing per user. The project's costs are structural, recurring, and independent of user count:
 
 | Cost | Nature | Status |
 |---|---|---|
@@ -28,7 +28,7 @@ The audience splits cleanly. Average users install from a store and never learn 
 4. The gate lives in the mobile app layer behind a Gradle flavor split. The `play` flavor ships Google Play Billing and gates sync. The `fdroid` flavor contains no billing code at all, because Google's billing library is proprietary and F-Droid policy forbids it, and its sync stays free and ungated. Both flavors share the applicationId, signing key, versionName, and versionCode.
 5. The core library never gates anything. `baluard-core` exposes sync to desktop and mobile identically, and desktop sync stays free forever. The gate is a product surface of the store build, not a property of the codebase. A future iOS build gates the same way through StoreKit 2 with the same product terms.
 6. A lapsed or refused subscription disables sync in the app only. The local vault keeps working fully offline, the user's Git repository on their provider remains theirs and untouched, and the desktop app can always sync the same vault for free. Nothing is deleted, locked, or held hostage.
-7. Entitlement is checked through `queryPurchasesAsync` at app start and resume, with the last known state cached so offline use never locks a paying user out mid-flight. Revocations and refunds take effect at the next check.
+7. Entitlement is checked through `queryPurchasesAsync` at app start and resume, with the last known state cached so offline use never locks a paying user out mid-flight. Revocations and refunds take effect at the next check. ADR 0103 adds server-side verification for configured Play builds without changing this offline cache policy.
 8. No other existing feature is ever retro-gated. Entries, passkeys, and everything else shipped before this decision stay free on every channel. Three exceptions are disclosed up front: sync, sharing, and TOTP code generation on the Play mobile build. Forward-only gating beyond these three keeps the split honest: store builds pay for sync, sharing, and live codes, every other path keeps everything free.
 
 ## Consequences
