@@ -6,6 +6,10 @@ Notable user-facing changes per release.
 
 - Nothing yet.
 
+## 0.2.0 - 2026-11-08
+
+- Baluard now ships on Google Play. Subscriptions there are verified through Google's servers, so trial starts and lapses hold correctly.
+
 ## 0.1.12 - 2026-11-07
 
 - Android autofill no longer puts logins into verification-code boxes, and the one-time code lands on your clipboard with a confirmation whenever a fill has one.
