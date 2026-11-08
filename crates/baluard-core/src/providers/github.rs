@@ -769,7 +769,18 @@ impl ForgeProvider for GitHubProvider {
         client
             .delete::<(), _, ()>(route, None as Option<&()>)
             .await
-            .map_err(api_error)
+            .map_err(|e| {
+                // 404 maps to RepoNotFound so callers can treat
+                // "already deleted" as success instead of an outage.
+                if let octocrab::Error::GitHub { source, .. } = &e {
+                    if source.status_code.as_u16() == 404 {
+                        return ProviderError::RepoNotFound(format!(
+                            "delete repo: {owner}/{name} not found (already deleted?)"
+                        ));
+                    }
+                }
+                api_error(e)
+            })
     }
 
     async fn add_collaborator(

@@ -8389,22 +8389,19 @@ impl VaultState {
         let vault_path = self.vault_path.clone();
         let password = master_password.to_string();
         tokio::task::spawn_blocking(move || {
-            let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))
-                .map_err(|e| format!("reading kdf params: {e}"))?;
-            let kdf_params = baluard_core::crypto::kdf::parse_kdf_params(&kdf_json)
-                .map_err(|e| format!("kdf params: {e}"))?;
-            let kek = zeroize::Zeroizing::new(
-                baluard_core::crypto::kdf::derive_kek(&password, &kdf_params)
-                    .map_err(|e| format!("kdf: {e}"))?,
-            );
-            let session_key = zeroize::Zeroizing::new(
-                baluard_core::crypto::hkdf_derive::derive_session_key(&kek)
-                    .map_err(|e| format!("kdf: {e}"))?,
-            );
-            let canary = std::fs::read(vault_path.join("meta/kek-canary.enc"))
-                .map_err(|e| format!("reading kek canary: {e}"))?;
-            baluard_core::vault::canary::verify_kek_canary(&session_key, &canary)
-                .map_err(|_| "master password incorrect".to_string())
+            baluard_core::vault::canary::verify_master_password_at(&vault_path, &password).map_err(
+                |e| match e {
+                    // The bare string is the wire contract the unlock gate's
+                    // limiter charging (and every error mapper) keys on; do
+                    // not widen it into the wrapped BaluardError text.
+                    baluard_core::error::BaluardError::Crypto(
+                        baluard_core::error::CryptoError::DecryptFailed(m),
+                    ) if m == "master password incorrect" => {
+                        "master password incorrect".to_string()
+                    }
+                    other => other.to_string(),
+                },
+            )
         })
         .await
         .map_err(|e| format!("verify task: {e}"))?

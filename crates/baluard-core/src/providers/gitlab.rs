@@ -591,6 +591,15 @@ impl ForgeProvider for GitLabProvider {
             .map_err(|e| ProviderError::Api(e.to_string()))?;
 
         if !resp.status().is_success() {
+            // GitLab also 404s repos the token cannot see, so an
+            // access failure can read as "already deleted". Accepted:
+            // Baluard deletes the token owner's own repository, where
+            // 404 genuinely means gone.
+            if resp.status().as_u16() == 404 {
+                return Err(ProviderError::RepoNotFound(format!(
+                    "delete repo: {owner}/{name} not found (already deleted?)"
+                )));
+            }
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             return Err(ProviderError::Api(format!(
