@@ -229,7 +229,10 @@ fi
 echo "==> ./gradlew ${GRADLE_TASKS[*]}  (JAVA_HOME=$JAVA_HOME)"
 GRADLE_ARGS=()
 [[ $DO_E2E -eq 1 ]] && GRADLE_ARGS+=("-Pbaluard.e2e=true")
-[[ -n "${ABIS:-}" ]] && GRADLE_ARGS+=("-Pbaluard.abis=$ABIS")
+# Always pin baluard.abis. Without -P the build has packaged all four ABIs
+# even though build.gradle.kts defaults to arm64-v8a, so the documented
+# default is only trusted when passed explicitly.
+GRADLE_ARGS+=("-Pbaluard.abis=${ABIS:-arm64-v8a}")
 (
   cd "$MOBILE_DIR"
   ./gradlew "${GRADLE_TASKS[@]}" "${GRADLE_ARGS[@]}"
