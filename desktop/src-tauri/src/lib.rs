@@ -20,6 +20,7 @@ use zeroize::Zeroize;
 mod daemon_ctl;
 mod deep_link;
 mod updater;
+mod window_geometry;
 use updater::{updater_check, updater_install, updater_status};
 
 /// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
@@ -666,6 +667,62 @@ fn show_window(window: tauri::WebviewWindow) {
     // SIGTERMs never reach RunEvent::Exit and must not read as crashes.
     #[cfg(target_os = "linux")]
     render::clear_marker();
+}
+
+/// Full quit from the frontend keyboard shortcut; Linux and Windows have no
+/// native menu, so the tray menu was the only exit path. Mirrors the tray
+/// Quit so RunEvent::Exit cleanup runs.
+#[tauri::command]
+fn exit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+/// Best-effort save of the main window's on-screen rect into the app config
+/// dir; restore_window_geometry reads it back on the next launch.
+fn save_window_geometry(app: &AppHandle) {
+    let Some(w) = app.get_webview_window("main") else {
+        return;
+    };
+    let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else {
+        return;
+    };
+    let Ok(dir) = app.path().app_config_dir() else {
+        return;
+    };
+    let g = window_geometry::SavedGeometry {
+        x: pos.x,
+        y: pos.y,
+        width: size.width,
+        height: size.height,
+    };
+    let Ok(json) = serde_json::to_string(&g) else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(dir.join("window.json"), json);
+    }
+}
+
+/// Re-apply the last saved rect, clamped into the current monitor so a
+/// window left off-screen or under a panel reappears reachable.
+fn restore_window_geometry(window: &tauri::WebviewWindow) {
+    let Ok(dir) = window.path().app_config_dir() else {
+        return;
+    };
+    let Ok(raw) = std::fs::read_to_string(dir.join("window.json")) else {
+        return;
+    };
+    let Some(saved) = window_geometry::parse_saved(&raw) else {
+        return;
+    };
+    let Ok(Some(mon)) = window.current_monitor() else {
+        return;
+    };
+    let mp = mon.position();
+    let ms = mon.size();
+    let g = window_geometry::clamp_geometry(mp.x, mp.y, ms.width, ms.height, saved);
+    let _ = window.set_size(tauri::PhysicalSize::new(g.width, g.height));
+    let _ = window.set_position(tauri::PhysicalPosition::new(g.x, g.y));
 }
 
 /// D1 + D77: save the recovery-key sheet to a user-chosen file — dialog AND
@@ -1450,6 +1507,13 @@ pub fn run() {
         // link relaunches the app and this plugin hands the URL to the
         // running window (macOS delivers it as an event instead).
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // A plain second launch must surface the existing window instead
+            // of dying silently (macOS covers this via RunEvent::Reopen;
+            // Linux and Windows have no other path).
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
             for arg in argv {
                 if arg.starts_with("baluard://") {
                     deep_link::emit_entry(app, &arg);
@@ -1693,6 +1757,10 @@ pub fn run() {
                 );
             }
 
+            if let Some(w) = app.get_webview_window("main") {
+                restore_window_geometry(&w);
+            }
+
             Ok(())
         })
         // Window events → defensive (policy-driven) lock.
@@ -1714,6 +1782,9 @@ pub fn run() {
         .on_window_event(|window, event| {
             match event {
                 WindowEvent::CloseRequested { api, .. } => {
+                    // Remember the rect before hiding so the next launch can
+                    // clamp it back into view (window_geometry).
+                    save_window_geometry(window.app_handle());
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -1819,6 +1890,7 @@ pub fn run() {
             updater_check,
             updater_install,
             show_window,
+            exit_app,
             update_tray_icon,
             save_recovery_phrase,
             backup_save_encrypted,

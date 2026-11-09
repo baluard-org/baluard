@@ -638,7 +638,14 @@ select option {
 .notes-md > :first-child { margin-top: 0; }
 .notes-md > :last-child { margin-bottom: 0; }
 
-
-
-
-
+/* Sync indicator: macOS parks it in the titlebar drag band; every other
+   platform has a native titlebar outside the webview, so it drops below
+   the header row instead of overlapping the action buttons. */
+.autosync-indicator {
+  position: absolute;
+  top: 3.5rem;
+  right: 0.75rem;
+}
+.platform-mac .autosync-indicator {
+  top: 0.5rem;
+}

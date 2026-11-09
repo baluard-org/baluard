@@ -1,6 +1,7 @@
 {
   "app": {
-    "name": ""
+    "name": "",
+    "trayHint": ""
   },
   "common": {
     "back": "",
@@ -187,7 +188,7 @@
     "deleteTagConfirm": "",
     "subfolderPlaceholder": "",
     "copyNotes": "",
- "viewNotes": "",
+    "viewNotes": "",
     "untitled": "",
     "itemType": "",
     "confirmPassword": "",

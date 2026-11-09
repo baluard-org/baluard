@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { initDeepLink, flushPendingEntry } from "./lib/deepLink.js";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon, showWindow } from "./lib/daemon.js";
+import { toastInfo } from "./context/toastSignal.js";
 import { disableAutofill } from "./lib/disableAutofill.js";
 import { useAuth } from "./context/AuthContext.jsx";
 import { VaultProvider } from "./context/VaultContext.jsx";
@@ -85,6 +86,15 @@ export default function App() {
         // Detect macOS to apply titlebar adjustments
         if (navigator.userAgent.includes("Mac")) {
           document.documentElement.classList.add("platform-mac");
+        } else {
+          // Linux and Windows have no native menu, so the tray menu was the
+          // only exit path until the keyboard shortcut below.
+          window.addEventListener("keydown", (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "q") {
+              e.preventDefault();
+              invoke("exit_app").catch(() => {});
+            }
+          });
         }
 
         // Version gate FIRST: a stale daemon answers old protocol shapes and
@@ -136,6 +146,16 @@ export default function App() {
       } finally {
         // Show window once initialization and initial state checks finish.
         await showWindow();
+        // One-time hint: closing the window hides to the tray rather than
+        // quitting, which reads as a dead app on Linux/Windows otherwise.
+        try {
+          if (!localStorage.getItem("baluard.trayHint.v1")) {
+            localStorage.setItem("baluard.trayHint.v1", "1");
+            toastInfo(t("app.trayHint"));
+          }
+        } catch {
+          // Storage unavailable (tests, private mode): skip the hint.
+        }
       }
     })();
   });
