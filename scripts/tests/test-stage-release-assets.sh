@@ -231,6 +231,25 @@ if ! grep -q "required artifacts missing" "$TMP/out5c.log"; then
   exit 1
 fi
 
+# --- Case 5d: an empty artifacts dir must stay a loud failure (the
+# always-present updater.pub staging must not satisfy the mapped-set guard) ---
+rm -rf "$ART" "$OUT"
+mkdir -p "$ART"
+if PATH="$BIN:$PATH" "$STAGE" \
+  --version "$VER" --output "$OUT" "$ART" > "$TMP/out5d.log" 2>&1; then
+  echo "FAIL: empty artifacts dir must exit nonzero" >&2
+  exit 1
+fi
+if ! grep -q "no artifacts mapped" "$TMP/out5d.log"; then
+  echo "FAIL: empty-dir error must name the guard" >&2
+  cat "$TMP/out5d.log" >&2
+  exit 1
+fi
+if [[ -d "$OUT" ]]; then
+  echo "FAIL: a failed staging must leave no partial output dir" >&2
+  exit 1
+fi
+
 # --- Case 6: missing updater key fails fast before staging ---
 rm -rf "$ART" "$OUT"
 make_artifacts

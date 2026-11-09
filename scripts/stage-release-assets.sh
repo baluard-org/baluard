@@ -65,7 +65,7 @@ rm -rf "$OUT_ABS"
 mkdir -p "$OUT_ABS"
 
 # target -> first source claiming it; a second claim is a mapping-table bug
-declare -A MAP
+declare -A MAP=()
 claim() {
   local target="$1" source="$2"
   if [[ -n "${MAP[$target]:-}" ]]; then
@@ -121,6 +121,10 @@ if [[ -n "$APK" ]]; then
   cp -p "$APK" "$OUT_ABS/Baluard-android.apk"
 fi
 
+# The empty-dist guard must fire before the always-present key staging, or
+# every bare call would silently stage a release set of checksums plus key.
+[[ ${#MAP[@]} -gt 0 ]] || die "no artifacts mapped from $SRC"
+
 # The README's manual-verify flow downloads the minisign public key from the
 # same release page (minisign -V -p updater.pub); it is committed repo
 # content, not a build artifact, so it stages from ROOT rather than dist/.
@@ -139,7 +143,6 @@ fi
 if [[ ${#unmapped[@]} -gt 0 ]]; then
   die "unmapped artifacts in $SRC (extend the mapping table or remove them): ${unmapped[*]}"
 fi
-[[ ${#MAP[@]} -gt 0 ]] || die "no artifacts mapped from $SRC"
 
 # Sorted for stable diffs and locale-independent order; names only, no version strings survive
 (cd "$OUT_ABS" && sha256sum ./* | sed 's| \./| |' | LC_ALL=C sort -k2 > SHA256SUMS)
