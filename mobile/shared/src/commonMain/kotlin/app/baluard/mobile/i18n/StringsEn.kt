@@ -397,6 +397,8 @@ internal val EN: Map<String, String> = mapOf(
     "settings.gitRepoHint" to "Defaults to this vault's name.",
     "settings.gitBackupDone" to "Backup repository ready: {0}",
     "settings.gitBackupFailed" to "Could not set up the backup repository.",
+    "settings.gitBackupWhere" to "Where should the copy live?",
+    "settings.gitBackupAccount" to "Account details",
     "settings.customChip" to "Custom server",
     "settings.customWarn" to "You manage this server: repository creation, clone access, and removal happen there by hand. Credentials stay on this device only.",
     "settings.customSshNote" to "Sign in with an access token. SSH keys are set up from the desktop app.",
