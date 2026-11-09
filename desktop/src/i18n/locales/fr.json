@@ -441,7 +441,15 @@
     "customTrustOtherType": "Cet hôte a déjà une clé d'un autre type enregistrée.",
     "customChangedTitle": "La clé d'hôte de ce serveur a changé",
     "customChangedBody": "L'identité de ce serveur a changé depuis votre dernière connexion, l'application a donc bloqué la connexion pour vous protéger. Vérifiez auprès de l'administrateur du serveur avant toute action : si ce changement n'était pas prévu, quelqu'un usurpe peut-être l'identité de votre serveur.",
-    "customBadUrl": "Cela ne ressemble pas à une URL de dépôt."
+    "customBadUrl": "Cela ne ressemble pas à une URL de dépôt.",
+    "iconsTitle": "Icônes de sites",
+    "iconsDesc": "Les entrées importées peuvent manquer d'icône. Ceci les récupère une par une ; ce qui est trop lent est ignoré.",
+    "iconsStart": "Récupérer les icônes manquantes",
+    "iconsCancel": "Annuler",
+    "iconsRunning": "Récupération {done} sur {total}",
+    "iconsDone": "{fetched} icônes récupérées ; {skipped} ignorées.",
+    "iconsUpToDate": "Toutes les entrées ont déjà une icône.",
+    "iconsNeedEnabled": "La récupération d'icônes est désactivée. Activez « Afficher les icônes de sites » dans les réglages."
   },
   "settings": {
     "faviconLabel": "Afficher les icônes des sites web",

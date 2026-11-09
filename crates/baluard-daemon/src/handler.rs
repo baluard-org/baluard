@@ -5829,6 +5829,19 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        // ── Batch favicon backfill (token required) ──
+        "favicon.backfill_start" => match baluard_runtime::icon_backfill::start(state).await {
+            Ok(s) => ok_resp(s, token_str),
+            Err(e) => err_response(e),
+        },
+        "favicon.backfill_cancel" => {
+            baluard_runtime::icon_backfill::cancel(state);
+            ok_resp("cancelled", token_str)
+        }
+        "favicon.backfill_status" => {
+            ok_resp(baluard_runtime::icon_backfill::status(state), token_str)
+        }
+
         // ── Import (token required) ──
         "vault.import" => {
             // Payload: JSON {"format": "bw-json", "data": "..."}

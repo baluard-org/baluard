@@ -74,8 +74,10 @@ fn mask_conflict(
 pub struct VaultState {
     /// Path to the vault directory on disk.
     pub vault_path: PathBuf,
+    /// Batch favicon backfill job state (start/cancel/status).
+    pub icon_backfill: crate::icon_backfill::IconBackfillJob,
     /// The vault handle. None = not opened or locked.
-    inner: RwLock<Option<VaultHandle>>,
+    pub(crate) inner: RwLock<Option<VaultHandle>>,
     /// R7-2: Session authorization token. Generated on unlock.
     /// Any same-UID process connecting after unlock must present this token
     /// to access cipher data. Prevents the daemon from being a full-vault oracle.
@@ -187,6 +189,7 @@ impl VaultState {
         let autosync = crate::autosync::AutoSyncHandle::new(&vault_path);
         Self {
             vault_path,
+            icon_backfill: Default::default(),
             inner: RwLock::new(None),
             session_token: RwLock::new(None),
             session_token_created: AtomicU64::new(0),
@@ -3153,29 +3156,39 @@ impl VaultState {
         // the full sum of per-request timeouts (~40s sequential worst
         // case). 12s covers the happy path (DNS + one 200 probe) with
         // room for one fallback.
-        let crawl = async {
-            // 1-3. Well-known static paths, cheapest probes first.
-            for path in Self::STATIC_ICON_PATHS {
-                let url = format!("https://{domain}{path}");
-                if let Some(icon) = Self::try_fetch_icon(&client, &url).await {
-                    return Some(icon);
-                }
-            }
-
-            // 4. Scrape the page for <link rel="...icon..."> targets.
-            for url in Self::scrape_icon_links(&client, &domain).await {
-                if let Some(icon) = Self::try_fetch_icon(&client, &url).await {
-                    return Some(icon);
-                }
-            }
-
-            // 5. Google's favicon service, last resort.
-            Self::try_fetch_icon(&client, &Self::favicon_url(&domain)).await
-        };
-        match tokio::time::timeout(std::time::Duration::from_secs(12), crawl).await {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(12),
+            Self::crawl_site_icon(&client, &domain),
+        )
+        .await
+        {
             Ok(Some(icon)) => Ok(icon),
             _ => Ok(String::new()),
         }
+    }
+
+    /// The domain crawl shared by the one-shot favicon.get route and the
+    /// batch backfill job: well-known static paths first, then the page
+    /// scrape, then Google's favicon service. Callers own the deadline and
+    /// the SSRF guards; this only probes.
+    pub(crate) async fn crawl_site_icon(client: &reqwest::Client, domain: &str) -> Option<String> {
+        // 1-3. Well-known static paths, cheapest probes first.
+        for path in Self::STATIC_ICON_PATHS {
+            let url = format!("https://{domain}{path}");
+            if let Some(icon) = Self::try_fetch_icon(client, &url).await {
+                return Some(icon);
+            }
+        }
+
+        // 4. Scrape the page for <link rel="...icon..."> targets.
+        for url in Self::scrape_icon_links(client, domain).await {
+            if let Some(icon) = Self::try_fetch_icon(client, &url).await {
+                return Some(icon);
+            }
+        }
+
+        // 5. Google's favicon service, last resort.
+        Self::try_fetch_icon(client, &Self::favicon_url(domain)).await
     }
 
     /// Well-known favicon paths, in probe order. favicon.ico stays first:
@@ -3188,7 +3201,7 @@ impl VaultState {
     /// range by name. (DNS is re-checked per candidate host by
     /// [Self::host_resolves_public]; redirect hops to a public name that
     /// resolves privately are out of scope for a client-side fetcher.)
-    fn build_icon_client() -> Option<reqwest::Client> {
+    pub(crate) fn build_icon_client() -> Option<reqwest::Client> {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
@@ -3248,7 +3261,7 @@ impl VaultState {
     /// localhost, dot-less LAN names, and private/loopback/link-local/CGNAT
     /// IP literals. Public IP literals pass; DNS results are re-checked in
     /// [Self::host_resolves_public].
-    fn host_fetchable_str(host: &str) -> bool {
+    pub(crate) fn host_fetchable_str(host: &str) -> bool {
         let h = host.trim().trim_end_matches('.');
         let h = h.trim_start_matches('[').trim_end_matches(']');
         if h.is_empty() || !h.contains('.') {
@@ -3277,7 +3290,7 @@ impl VaultState {
 
     /// DNS-layer guard: EVERY resolved address must be public. Resolution
     /// failure fails closed.
-    async fn host_resolves_public(host: &str) -> bool {
+    pub(crate) async fn host_resolves_public(host: &str) -> bool {
         let h = host.to_string();
         tokio::task::spawn_blocking(move || {
             use std::net::ToSocketAddrs;
@@ -3480,7 +3493,7 @@ impl VaultState {
     /// kept exactly as entered (www. is NOT stripped): origin probes must
     /// hit the host the entry actually points at — many sites serve no
     /// certificate on the apex.
-    fn extract_domain(input: &str) -> String {
+    pub(crate) fn extract_domain(input: &str) -> String {
         let stripped = input
             .strip_prefix("https://")
             .or_else(|| input.strip_prefix("http://"))

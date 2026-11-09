@@ -558,7 +558,15 @@
     "customTrustOtherType": "This host already has a key of another type on file.",
     "customChangedTitle": "This server's host key changed",
     "customChangedBody": "This server's identity changed since you last connected, so the app blocked the connection to protect you. Check with the server's administrator before doing anything: if the change was not expected, someone may be pretending to be your server.",
-    "customBadUrl": "That does not look like a repository URL."
+    "customBadUrl": "That does not look like a repository URL.",
+    "iconsTitle": "Site icons",
+    "iconsDesc": "Imported entries can be missing their website icons. This fetches them one by one; anything too slow is skipped.",
+    "iconsStart": "Fetch missing icons",
+    "iconsCancel": "Cancel",
+    "iconsRunning": "Fetching {done} of {total}",
+    "iconsDone": "Fetched {fetched} icons; {skipped} skipped.",
+    "iconsUpToDate": "All entries already have icons.",
+    "iconsNeedEnabled": "Fetching icons is off. Enable \"Show website icons\" in Settings to use this."
   },
   "autosync": {
     "upToDate": "All changes synced",

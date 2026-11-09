@@ -42,4 +42,5 @@ pub use bridge::SharedBridgeRegistry;
 pub use host::{SharedVaultHost, SnapshotError, VaultHost, VaultPresence};
 pub use pin::PinEscrow;
 pub use providers::ProviderManager;
+pub mod icon_backfill;
 pub use state::{SharedVaultState, VaultState};

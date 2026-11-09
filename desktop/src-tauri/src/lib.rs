@@ -381,6 +381,9 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "generator.history_list",
     "ssh.generate_key",
     "favicon.get",
+    "favicon.backfill_start",
+    "favicon.backfill_cancel",
+    "favicon.backfill_status",
     // sync
     "sync.autosync_nudge_pull",
     "sync.autosync_status",
