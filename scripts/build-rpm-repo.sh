@@ -24,6 +24,14 @@ for package in "$ART"/*.rpm; do
 done
 cp -f "$HISTORY/rpm"/*.rpm "$OUT/rpms/"
 
+# Serve only the newest versions; the machine-local history keeps the full
+# set. Mirrors the F-Droid APK retention so the Pages deploy stays small.
+KEEP="${BALUARD_LINUX_REPO_KEEP:-3}"
+find "$OUT/rpms" -maxdepth 1 -name 'Baluard-*.x86_64.rpm' -printf '%f\n' \
+  | sed -E 's/^Baluard-([0-9.]+)-1\.x86_64\.rpm$/\1 \0/' | sort -rV \
+  | awk -v k="$KEEP" 'NR>k{print $2}' \
+  | while IFS= read -r old; do rm -f "$OUT/rpms/$old"; done
+
 # Sign the packages BEFORE building metadata: rpmsign rewrites the file, so
 # the repodata hashes must be taken over the signed bytes. dnf's gpgcheck=1
 # refuses an unsigned package even when the repo metadata verifies.
