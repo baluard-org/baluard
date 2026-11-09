@@ -65,7 +65,7 @@ BALUARD_CHROME_PUBLISHER_ID=d6e3a68c-a6f3-4359-9769-9fd105198720
 | Target | Command | Notes |
 |---|---|---|
 | Core + CLI + daemon | `just build-release` | daemon and CLI carry the `fido2` feature |
-| Desktop Linux | `just desktop-build` | sidecars, deb/rpm/AppImage, and NMH manifest regeneration in one recipe |
+| Desktop Linux | `just desktop-build` | rebuilds sidecars unconditionally (a version bump that edits only manifests defeats mtime staleness checks; the 0.2.0 release shipped stale 0.1.12 sidecars this way), then deb/rpm/AppImage and NMH manifest regeneration in one recipe |
 | Desktop macOS | Dev-smoke on a macOS host (`just desktop-build`, `just build-signed`; dmg/app, ad-hoc). Releases and the smoke VM bundle come off Linux: `scripts/build-macos-aarch64-deliverable.sh` (aarch64 deliverable zip + updater payload) and `scripts/build-macos-app.sh [--smoke]` (x86_64 VM debug bundle), both cargo-zigbuild against the local SDK with the shim steps each script header documents |
 | Desktop Windows | `just desktop-windows` | cargo-xwin cross-compile of the sidecars plus NSIS bundling |
 | Extension zips | `just ext-package` | rebuilds both dists, enforces the drift gate, zips each store |

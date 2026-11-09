@@ -541,7 +541,10 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 	BALUARD_DEBUG=1 BALUARD_LOG_DIR="$LOG_DIR" cd desktop && npm run tauri dev
 
 # Build desktop app (production bundle)
-desktop-build: _sysdeps-desktop _sidecar desktop-deps _nmh-manifests
+# _sidecar-force (not _sidecar) because the staleness check keys on Rust
+# source mtimes only: a version bump that edits manifests alone would ship
+# stale sidecars (the 0.2.0 defect).
+desktop-build: _sysdeps-desktop _sidecar-force desktop-deps _nmh-manifests
 	#!/usr/bin/env bash
 	set -euo pipefail
 	if [[ "$(uname -s)" == "Linux" ]]; then
