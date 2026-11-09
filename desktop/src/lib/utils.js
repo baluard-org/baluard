@@ -14,6 +14,10 @@ export const ERROR_PATTERNS = [
   { pattern: /Commit failed|UnsignedCommitRefused/i, key: "errors.syncCommit" },
   { pattern: /Git open failed|Git init failed|Status check failed/i, key: "errors.syncLocal" },
   { pattern: /vault registry could not be (loaded|updated)/i, key: "errors.syncRegistry" },
+  // Site-icon backfill outcomes (daemon strings from the batch job).
+  { pattern: /Fetching site icons is turned off/i, key: "errors.backfillDisabled" },
+  { pattern: /An icon fetch is already running/i, key: "errors.backfillBusy" },
+  { pattern: /Icon fetching stopped/i, key: "errors.backfillStopped" },
   // Hardware-seal failures are NOT wrong passwords; they must match
   // before the password patterns so the unlock screen can tell them apart.
   // Security-key (FIDO) touch outcomes carry their own honest copy; the

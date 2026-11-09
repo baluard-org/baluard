@@ -565,8 +565,7 @@
     "iconsCancel": "Cancel",
     "iconsRunning": "Fetching {done} of {total}",
     "iconsDone": "Fetched {fetched} icons; {skipped} skipped.",
-    "iconsUpToDate": "All entries already have icons.",
-    "iconsNeedEnabled": "Fetching icons is off. Enable \"Show website icons\" in Settings to use this."
+    "iconsUpToDate": "All entries already have icons."
   },
   "autosync": {
     "upToDate": "All changes synced",
@@ -622,7 +621,10 @@
     "hwKeyWrong": "This is not the security key this vault was sealed to.",
     "hwKeyUvForced": "This key always demands its own verification and cannot guard this vault.",
     "hwKeyPinRequired": "This key requires its PIN for this operation. Use a key without a PIN.",
-    "hwKeyMissing": "Plug in your security key."
+    "hwKeyMissing": "Plug in your security key.",
+    "backfillBusy": "An icon fetch is already running.",
+    "backfillStopped": "Fetching icons stopped because the vault locked or changed.",
+    "backfillDisabled": "Fetching icons is off. Enable \"Show website icons\" in Settings to use this."
   },
   "categories": {
     "allItems": "All items",

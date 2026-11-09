@@ -565,8 +565,7 @@
     "iconsCancel": "Cancelar",
     "iconsRunning": "Buscando {done} de {total}",
     "iconsDone": "{fetched} ícones buscados; {skipped} pulados.",
-    "iconsUpToDate": "Todas as entradas já têm ícone.",
-    "iconsNeedEnabled": "Buscar ícones está desativado. Ative \"Mostrar ícones de sites\" nas Configurações para usar isto."
+    "iconsUpToDate": "Todas as entradas já têm ícone."
   },
   "autosync": {
     "upToDate": "Todas as alterações sincronizadas",
@@ -622,7 +621,10 @@
     "hwKeyWrong": "Esta não é a chave de segurança com a qual este cofre foi protegido.",
     "hwKeyUvForced": "Esta chave sempre exige sua própria verificação e não pode proteger este cofre.",
     "hwKeyPinRequired": "Esta chave exige seu PIN para esta operação. Use uma chave sem PIN.",
-    "hwKeyMissing": "Conecte sua chave de segurança."
+    "hwKeyMissing": "Conecte sua chave de segurança.",
+    "backfillBusy": "Uma busca de ícones já está em andamento.",
+    "backfillStopped": "A busca de ícones parou porque o cofre bloqueou ou mudou.",
+    "backfillDisabled": "Buscar ícones está desativado. Ative \"Mostrar ícones de sites\" nas Configurações para usar isto."
   },
   "categories": {
     "allItems": "Todos os itens",
