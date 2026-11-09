@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- The autofill login picker now looks like the app's entry cards, with a search bar on top. It only lists entries that match the site you are filling; search finds anything else.
+
 - Settings > Sync gains a site-icon backfill: after importing a vault, one click fetches the missing website icons entry by entry (2-second budget per site, slow sites skipped), with progress and cancel.
 
 - Showing a recovery phrase now ends with a second confirmation that asks whether you really stored the words, and the words screen states clearly that they are the only way to recover the vault.

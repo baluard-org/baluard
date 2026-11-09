@@ -7,7 +7,11 @@ import android.view.Gravity
 import android.view.View
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillManager
+import android.text.Editable
+import android.text.TextWatcher
 import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -50,6 +54,18 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
 
     private var pickerMode: String = MODE_A11Y_PICKER
     private var pickerTarget: String? = null
+
+    /** One load backing both views: direct matches for the default list,
+     *  the full login universe for the search box. */
+    private data class PickerData(
+        val matches: List<AutofillSession.Match>,
+        val allLogins: List<AutofillSession.Match>,
+        val suggestions: List<AutofillSession.AppSuggestion>,
+    )
+
+    private var pickerData: PickerData? = null
+    private var searchQuery: String = ""
+    private var searchHooked = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -232,48 +248,84 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
     }
 
     /**
-     * Plain-Views login list. [all] false = only entries matching the fill
-     * target (a11y tile flow); true = every login plus path-B app-to-web
-     * suggestion banners (zero-match fallback). A11Y selection rides the
-     * bridge; fallback selection returns a dataset response for the
-     * framework.
+     * Plain-Views login picker. The default view shows ONLY entries that
+     * match the fill target (plus path-B app-to-web suggestions under
+     * their trust banner); the search box reaches the whole vault, so the
+     * old dump-everything fallback list is gone - unrelated logins were
+     * the 0.2.1 noise complaint. A11Y selection rides the bridge;
+     * fallback selection returns a dataset response for the framework.
      */
     private fun showList(target: String, all: Boolean) {
         AutofillSession.scope.launch {
-            if (all) {
-                // Fallback picker: full list + untrusted app-to-web
-                // suggestions under their trust banner.
-                val result = AutofillSession.query(target)
-                val logins = AutofillSession.logins()
-                val suggestionIds = result.suggestions
-                    .flatMap { it.matches }
-                    .map { it.id }
-                    .toSet()
-                // Direct/trusted matches pin to the top of the list
-                // (review finding #4); the rest stays alphabetical.
-                val directIds = result.matches.map { it.id }.toSet()
-                val (matched, other) = logins
-                    .filter { it.id !in suggestionIds }
-                    .partition { it.id in directIds }
-                runOnUiThread { renderList(target, matched + other, result.suggestions) }
-            } else {
-                val matches = AutofillSession.matches(target)
-                runOnUiThread { renderList(target, matches, emptyList()) }
-            }
+            val result = AutofillSession.query(target)
+            val logins = AutofillSession.logins()
+            val suggestionIds = result.suggestions
+                .flatMap { it.matches }
+                .map { it.id }
+                .toSet()
+            // Direct/trusted matches pin to the top of the default list
+            // (review finding #4); everything else answers the search box.
+            val directIds = result.matches.map { it.id }.toSet()
+            pickerData = PickerData(
+                matches = logins.filter { it.id in directIds },
+                allLogins = logins.filter { it.id !in suggestionIds },
+                suggestions = result.suggestions,
+            )
+            runOnUiThread { renderList(target) }
         }
     }
 
-    private fun renderList(
-        target: String,
-        matches: List<AutofillSession.Match>,
-        suggestions: List<AutofillSession.AppSuggestion>,
-    ) {
+    /** Case-insensitive containment over name and username: the only
+     *  filter the search box applies. */
+    internal fun matchesQuery(
+        m: AutofillSession.Match,
+        q: String,
+    ): Boolean = m.name.contains(q, ignoreCase = true) ||
+        m.username?.contains(q, ignoreCase = true) == true
+
+    private fun renderList(target: String) {
+        val matches: List<AutofillSession.Match>
+        val suggestions: List<AutofillSession.AppSuggestion>
+        val data = pickerData
+        if (data == null) {
+            matches = emptyList()
+            suggestions = emptyList()
+        } else {
+            val q = searchQuery.trim()
+            if (q.isEmpty()) {
+                matches = data.matches
+                suggestions = data.suggestions
+            } else {
+                matches = data.allLogins.filter { matchesQuery(it, q) }
+                    .sortedBy { it.name.lowercase() }
+                suggestions = emptyList()
+            }
+        }
         statusView().visibility = View.GONE
         findViewById<View>(R.id.autofill_progress).visibility = View.GONE
         val title = findViewById<TextView>(R.id.autofill_picker_title)
         title.text = t("autofill.pickerTitle")
         title.visibility = View.VISIBLE
         findViewById<View>(R.id.autofill_picker_scroll).visibility = View.VISIBLE
+        findViewById<EditText>(R.id.autofill_picker_search).apply {
+            visibility = View.VISIBLE
+            hint = t("autofill.searchHint")
+            if (!searchHooked) {
+                searchHooked = true
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+
+                    override fun afterTextChanged(s: Editable?) {
+                        val q = s?.toString() ?: ""
+                        if (q != searchQuery) {
+                            searchQuery = q
+                            pickerTarget?.let { renderList(it) }
+                        }
+                    }
+                })
+            }
+        }
         val list = findViewById<LinearLayout>(R.id.autofill_picker_list)
         list.removeAllViews()
         val pkg = targetPackage()
@@ -303,26 +355,18 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                 ),
             )
             for (match in suggestion.matches) {
-                list.addView(
-                    entryRow(
-                        title = match.name,
-                        subtitle = match.username,
-                        onClick = { onPicked(target, all = true, match) },
-                    ),
-                )
+                list.addView(entryRow(match) { onPicked(target, all = true, match) })
             }
         }
         if (matches.isEmpty() && suggestions.isEmpty()) {
-            list.addView(rowText(t("a11y.noMatches")))
+            list.addView(
+                rowText(
+                    if (searchQuery.isBlank()) t("autofill.noMatchesSearch") else t("autofill.searchEmpty"),
+                ).apply { gravity = Gravity.CENTER },
+            )
         }
         for (match in matches) {
-            list.addView(
-                entryRow(
-                    title = match.name,
-                    subtitle = match.username,
-                    onClick = { onPicked(target, all = true, match) },
-                ),
-            )
+            list.addView(entryRow(match) { onPicked(target, all = true, match) })
         }
         list.addView(
             rowText(t("common.cancel")).apply {
@@ -404,27 +448,78 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
 
     private fun statusView(): TextView = findViewById(R.id.autofill_status)
 
-    private fun entryRow(title: String, subtitle: String?, onClick: () -> Unit): View {
+    private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
+
+    /** App-style card row: rounded card, teal initials avatar, bold name
+     *  with a lime star for favorites, muted username - the same shape as
+     *  the vault list's CipherRowCard (D9: plain Views, no Compose). */
+    private fun entryRow(
+        match: AutofillSession.Match,
+        onClick: () -> Unit,
+    ): View {
         val row = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 32, 48, 32)
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { setMargins(16.dp(), 6.dp(), 16.dp(), 6.dp()) }
+            background = androidx.core.content.ContextCompat.getDrawable(
+                this@AutofillActivity,
+                R.drawable.autofill_card_bg,
+            )
             isClickable = true
             isFocusable = true
-            // System touch highlight for free a11y feedback (resolved:
-            // setBackgroundResource expects a drawable id, not an attr id).
-            val tv = android.util.TypedValue()
-            theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
-            setBackgroundResource(tv.resourceId)
             setOnClickListener { onClick() }
-            contentDescription = "$title, ${subtitle ?: t("autofill.noUsername")}"
+            contentDescription = "${match.name}, ${match.username ?: t("autofill.noUsername")}"
         }
-        val name = TextView(this).apply {
-            text = title
+        row.addView(avatarView(match.name))
+
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f,
+            ).apply { marginStart = 12.dp() }
+        }
+        val nameLine = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        nameLine.addView(TextView(this).apply {
+            text = match.name
             textSize = 16f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(
+                androidx.core.content.ContextCompat.getColor(
+                    this@AutofillActivity,
+                    R.color.autofill_text,
+                ),
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f,
+            )
+        })
+        if (match.favorite) {
+            nameLine.addView(TextView(this).apply {
+                text = "\u2605"
+                textSize = 14f
+                setTextColor(
+                    androidx.core.content.ContextCompat.getColor(
+                        this@AutofillActivity,
+                        R.color.autofill_lime,
+                    ),
+                )
+                contentDescription = null
+            })
         }
-        val user = TextView(this).apply {
-            text = subtitle?.takeIf { it.isNotBlank() } ?: t("autofill.noUsername")
+        col.addView(nameLine)
+        col.addView(TextView(this).apply {
+            text = match.username?.takeIf { it.isNotBlank() } ?: t("autofill.noUsername")
             textSize = 13f
             setTextColor(
                 androidx.core.content.ContextCompat.getColor(
@@ -432,10 +527,31 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                     R.color.autofill_muted_text,
                 ),
             )
-        }
-        row.addView(name)
-        row.addView(user)
+        })
+        row.addView(col)
         return row
+    }
+
+    /** 42dp rounded teal tile with the entry's initials, mirroring the
+     *  app's CipherAvatar. */
+    private fun avatarView(name: String): View {
+        val size = 42.dp()
+        val initials = name.trim().take(2).uppercase().ifEmpty { "?" }
+        return FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(size, size)
+            addView(View(this@AutofillActivity).apply {
+                layoutParams = FrameLayout.LayoutParams(size, size)
+                setBackgroundResource(R.drawable.autofill_avatar_bg)
+            })
+            addView(TextView(this@AutofillActivity).apply {
+                text = initials
+                textSize = 16f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(android.graphics.Color.WHITE)
+                gravity = Gravity.CENTER
+                layoutParams = FrameLayout.LayoutParams(size, size)
+            })
+        }
     }
 
     private fun rowText(text: String): TextView = TextView(this).apply {
