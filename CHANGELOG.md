@@ -4,7 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-No user-facing changes yet.
+- The git backup setup is now a full settings page on mobile, with proper room for the own-server flow.
+- Desktop: the site-icon backfill now respects the Show website icons setting; the fetch button was unreachable.
 
 ## 0.2.4 - 2026-11-09
 
