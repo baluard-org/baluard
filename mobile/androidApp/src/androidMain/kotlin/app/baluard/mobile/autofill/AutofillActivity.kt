@@ -47,6 +47,12 @@ class AutofillActivity : FragmentActivity() {
         const val EXTRA_TARGET_PACKAGE = "baluard.autofill.extra.TARGET_PACKAGE"
 const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         const val MODE_DATASETS = "datasets"
+
+        /** Search never renders more than this many rows: a vault with
+         *  thousands of hits must not build a view per hit per keystroke. */
+        private val MAX_SEARCH_RESULTS = 50
+
+        private val MN_REGEX = Regex("\\p{Mn}+")
         const val MODE_A11Y_PICKER = "a11y_picker"
         const val MODE_FALLBACK_PICK = "fallback_pick"
         private const val TAG = "BaluardAutofill"
@@ -154,7 +160,9 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                 // holds focus (Android 10+ drops unfocused clipboard
                 // writes); the copied-toast fires from copyTotpFor.
                 runCatching {
-                    val totpMatches = AutofillSession.query(target).matches.filter { it.totp }
+                    val totpMatches = AutofillSession.query(target).matches
+                        .take(MAX_SHEET_DATASETS)
+                        .filter { it.totp }
                     if (totpMatches.size == 1) {
                         AutofillResponseBuilder.copyTotpFor(applicationContext, totpMatches[0])
                     }
@@ -259,16 +267,18 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         AutofillSession.scope.launch {
             val result = AutofillSession.query(target)
             val logins = AutofillSession.logins()
-            val suggestionIds = result.suggestions
+            // Suggestion membership keys on (vault, id): a bare id match
+            // would hide a same-UUID entry from a different vault.
+            val suggestionKeys = result.suggestions
                 .flatMap { it.matches }
-                .map { it.id }
+                .map { it.vaultPath to it.id }
                 .toSet()
-            // Direct/trusted matches pin to the top of the default list
-            // (review finding #4); everything else answers the search box.
-            val directIds = result.matches.map { it.id }.toSet()
+            // Direct matches come daemon-ranked and are used in place:
+            // refiltering logins by id would flatten that order and mix
+            // same-UUID entries across vaults.
             pickerData = PickerData(
-                matches = logins.filter { it.id in directIds },
-                allLogins = logins.filter { it.id !in suggestionIds },
+                matches = result.matches,
+                allLogins = logins.filter { (it.vaultPath to it.id) !in suggestionKeys },
                 suggestions = result.suggestions,
             )
             runOnUiThread { renderList(target) }
@@ -279,7 +289,7 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
      *  FieldHeuristics fold). */
     internal fun fold(s: String): String =
         java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
-            .replace(Regex("\\p{Mn}+"), "")
+            .replace(MN_REGEX, "")
 
     /** Search rank: 2 = name hit, 1 = username hit, 0 = no match. Name
      *  hits outrank the rest (Bitwarden's priority model). */
@@ -311,6 +321,7 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                     .filter { it.second > 0 }
                     .sortedWith(compareBy({ -it.second }, { it.first.name.lowercase() }))
                     .map { it.first }
+                    .take(MAX_SEARCH_RESULTS)
                 suggestions = emptyList()
             }
         }
@@ -323,6 +334,10 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         findViewById<EditText>(R.id.autofill_picker_search).apply {
             visibility = View.VISIBLE
             hint = t("autofill.searchHint")
+            // After a rotation the field restores its own text while the
+            // activity's field reset to empty: the box is the truth.
+            val shown = text?.toString().orEmpty()
+            if (shown != searchQuery) searchQuery = shown
             if (!searchHooked) {
                 searchHooked = true
                 addTextChangedListener(object : TextWatcher {
