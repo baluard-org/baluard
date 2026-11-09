@@ -1423,7 +1423,9 @@ val entitlement by Entitlements.state.collectAsState()
                                 )
                             }
                             TextButton(onClick = {
-                                app.baluard.mobile.platform.openCredentialProviderSettings()
+                                if (!app.baluard.mobile.platform.openCredentialProviderSettings()) {
+                                    Toast.error(t("error.generic"))
+                                }
                             }) { Text(t("settings.passkeyProviderOpen")) }
                         }
                     }
