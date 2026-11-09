@@ -59,6 +59,10 @@ kotlin {
             // AndroidKeystore AES-GCM key wrapping the vault KEK. Fragment is
             // referenced directly (BiometricPrompt needs a FragmentActivity).
             implementation("androidx.biometric:biometric:1.1.0")
+            // Passkey provider settings: CredentialManager's
+            // createSettingsPendingIntent is the only supported entry into
+            // the system's default-credential-provider picker.
+            implementation("androidx.credentials:credentials:1.6.0")
             implementation("androidx.fragment:fragment-ktx:1.6.2")
             // UniFFI 0.28 generates JNA-backed Kotlin bindings (com.sun.jna.*).
             // The aar is the Android artifact; the binding is Android-only by
