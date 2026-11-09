@@ -3433,8 +3433,7 @@ mod tests {
 
         // App target: package equality only. The suggest_app_logins
         // setting is on by default, so the app-to-web suggestion rides the
-        // response; the opt-out shape is covered by the settings tests
-        // below.
+        // response; the explicit opt-out is exercised below in this test.
         let app = serde_json::from_str::<serde_json::Value>(
             &vault
                 .autofill_query("androidapp://com.github.android".to_string())
@@ -3462,6 +3461,31 @@ mod tests {
         assert!(
             sug_names.contains(&"GitHub"),
             "suggestion carries the vault logins: {sug_names:?}"
+        );
+        assert!(
+            !app.to_string().contains("gh-secret"),
+            "password leaked in autofill app suggestions"
+        );
+
+        // Explicit off: the toggle silences the app-to-web pathway.
+        vault
+            .set_settings(r#"{"suggest_app_logins": false}"#.to_string())
+            .await
+            .unwrap();
+        let app_off = serde_json::from_str::<serde_json::Value>(
+            &vault
+                .autofill_query("androidapp://com.github.android".to_string())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            app_off["matches"].as_array().unwrap().is_empty(),
+            "opt-out must not turn suggestions into matches: {app_off:?}"
+        );
+        assert!(
+            app_off["app_suggestions"].as_array().unwrap().is_empty(),
+            "explicit opt-out must surface no suggestions: {app_off:?}"
         );
 
         // Secret-absence invariant: passwords never in autofill output.
@@ -3550,8 +3574,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Opt in, then query the native app: untrusted candidate surfaces
-        // as a suggestion, never as a match.
+        // Suggestion semantics on this fixture: the explicit-on setting
+        // surfaces the untrusted candidate as a suggestion, never as a
+        // match.
         vault
             .set_settings(r#"{"suggest_app_logins": true}"#.to_string())
             .await
