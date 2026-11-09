@@ -151,7 +151,7 @@ export default function AutoSyncIndicator() {
     <Show when={autosync.active()}>
       <div
         title={phase() ? LABELS[phase()]() : t("autosync.upToDate")}
-        class="absolute top-2 right-3 z-[60] pointer-events-none select-none flex items-center justify-end gap-1.5 h-5"
+        class="autosync-indicator z-[60] pointer-events-none select-none flex items-center justify-end gap-1.5 h-5"
       >
         {/* solid-transition-group's <Transition> has no `when` prop — it animates
             the enter/leave of control-flow children (here, the inner <Show>). */}

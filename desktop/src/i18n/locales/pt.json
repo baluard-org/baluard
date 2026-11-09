@@ -1,6 +1,7 @@
 {
   "app": {
-    "name": "Baluard"
+    "name": "Baluard",
+    "trayHint": "Fechar a janela mantém o Baluard ativo na bandeja do sistema. Para sair totalmente, use o menu da bandeja ou pressione Ctrl+Q."
   },
   "common": {
     "back": "Voltar",

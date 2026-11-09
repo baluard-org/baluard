@@ -1,6 +1,7 @@
 {
   "app": {
-    "name": "Baluard"
+    "name": "Baluard",
+    "trayHint": "Fermer la fenêtre laisse Baluard actif dans la zone de notification. Pour quitter complètement, passez par le menu de la zone ou appuyez sur Ctrl+Q."
   },
   "common": {
     "back": "Retour",

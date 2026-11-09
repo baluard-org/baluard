@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Relaunching Baluard while it is already running now brings the window back to the front instead of doing nothing, and Ctrl+Q quits on Linux and Windows.
+- The desktop window remembers where you left it and is pulled back on screen at startup even if it was dragged off the edge of a monitor.
 - With Auto-lock timeout set to On app exit, the vault no longer locks itself after about four hours away. Closing the window pauses the background activity that keeps the session alive, and a hidden four-hour session cap then logged you out on return; the cap now steps aside for On app exit.
 - The desktop login screen presents the biometric prompt on its own when Quick Unlock is set up, like the big password managers; cancel falls back to the password form and the button retries.
 - The Android autofill picker header now carries the Baluard logo and wordmark on the left and the Choose a login prompt on the right, with more room below the status bar.

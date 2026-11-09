@@ -1,6 +1,7 @@
 {
   "app": {
-    "name": "Baluard"
+    "name": "Baluard",
+    "trayHint": "Closing the window keeps Baluard running in the system tray. Quit fully from the tray menu, or press Ctrl+Q."
   },
   "common": {
     "back": "Back",
