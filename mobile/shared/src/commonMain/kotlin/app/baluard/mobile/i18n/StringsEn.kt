@@ -731,6 +731,7 @@ internal val EN: Map<String, String> = mapOf(
         // §4.8-7 People & access (mobile admin surfaces)
         "people.title" to "Sharing",
         "people.entrySubtitle" to "Share with family, teams, or organizations. Create separate spaces for each group.",
+        "people.open" to "Manage people",
         "people.joinRequests" to "Join requests",
         "people.stageIntro" to "Paste invite reply",
         "people.staged" to "Request staged. Approve it below.",
@@ -838,6 +839,7 @@ internal val EN: Map<String, String> = mapOf(
         // §4.8-9 collection CRUD.
         "collections.title" to "Shared folders",
         "collections.entrySubtitle" to "Create, rename, or remove shared folders",
+        "collections.open" to "Manage folders",
         "collections.listTitle" to "Your shared folders",
         "collections.empty" to "No shared folders yet.",
         "collections.grantCount" to "{0} grant(s)",
@@ -884,6 +886,7 @@ internal val EN: Map<String, String> = mapOf(
     // S1b surfaces: notices + per-device activity.
     "activity.title" to "Activity",
     "activity.entrySubtitle" to "Notices, shared-item activity, and sync refusals on this device",
+    "activity.open" to "View activity",
     "activity.noticesTitle" to "Needs attention",
     "activity.noNotices" to "Nothing needs attention.",
     "activity.eventsTitle" to "Recent activity",

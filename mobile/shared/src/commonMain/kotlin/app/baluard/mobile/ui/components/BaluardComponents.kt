@@ -369,7 +369,7 @@ fun BaluardPrimaryButton(
         ),
         modifier = modifier
             .fillMaxWidth()
-            .height(50.dp),
+            .heightIn(min = 50.dp),
     ) {
         if (loading) {
             CircularProgressIndicator(
