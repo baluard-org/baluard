@@ -44,7 +44,7 @@
   },
   "recovery": {
     "title": "Frase de recuperación",
-    "warning": "Escribe esta frase. NO se volverá a mostrar.",
+    "warning": "Escribe estas palabras y guárdalas en un lugar seguro. Son la ÚNICA forma de recuperar tu bóveda. No hay reinicio y no se volverán a mostrar.",
     "confirm": "He guardado mi frase de recuperación",
     "confirmDisabled": "Verifica todas las palabras para continuar",
     "downloadTxt": "Descargar como archivo de texto",
@@ -70,7 +70,7 @@
       "replace": "Reemplazar frase",
       "replacedNote": "La frase nueva se muestra una sola vez; la anterior deja de funcionar de inmediato.",
       "ceremonyTitle": "Tu nueva frase de recuperación",
-      "warning": "Cualquiera que pueda leer esta frase puede leer este vault. Guárdala antes de cerrar esta ventana.",
+      "warning": "Estas palabras son la única forma de recuperar esta bóveda. Quien pueda leerlas puede abrir esta bóveda, y nunca se volverán a mostrar.",
       "copy": "Copiar",
       "copied": "Copiado",
       "stored": "Guardé mi nueva frase en un lugar seguro",
@@ -81,7 +81,11 @@
     "kitBody": "Estas 24 palabras abren la bóveda cuando no queda ningún dispositivo de administrador. Se muestran una sola vez — guárdalas con el kit familiar.",
     "kitSavedAck": "Guardé la frase del kit en un lugar seguro.",
     "kitSheetTitle": "Kit de recuperación familiar",
-    "kitSheetWarning": "Cualquiera que tenga estas 24 palabras puede abrir esta bóveda. Guarda este archivo con el kit familiar, en un lugar seguro."
+    "kitSheetWarning": "Cualquiera que tenga estas 24 palabras puede abrir esta bóveda. Guarda este archivo con el kit familiar, en un lugar seguro.",
+    "finalTitle": "Una última comprobación",
+    "finalBody": "No hay reinicio ni forma de recuperar tu bóveda sin estas 24 palabras, ni siquiera para nosotros. Si se pierden, todo lo que guardas se pierde para siempre. ¿Las guardaste de verdad en un lugar seguro?",
+    "finalDecline": "No, aún no",
+    "finalConfirm": "Sí, están guardadas"
   },
   "setup": {
     "title": "Sincroniza tu bóveda",

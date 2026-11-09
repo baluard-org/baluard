@@ -21,11 +21,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +69,7 @@ fun RecoveryPhraseScreen(
     fileStem: String = "baluard-recovery-phrase",
 ) {
     var acknowledged by rememberSaveable { mutableStateOf(false) }
+    var showFinalCheck by rememberSaveable { mutableStateOf(false) }
 
     val saver = rememberRecoverySheetSaver()
     val exportSheet = { mimeType: String, fileName: String, format: String ->
@@ -233,12 +236,45 @@ fun RecoveryPhraseScreen(
             BaluardPrimaryButton(
                 modifier = Modifier.testTag(E2eTags.RECOVERY_CONTINUE),
                 text = t("common.continue"),
-                onClick = onAcknowledged,
+                // The final check keeps the words on screen unless the
+                // user explicitly confirms they are stored.
+                onClick = { showFinalCheck = true },
                 enabled = acknowledged,
             )
 
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    if (showFinalCheck) {
+        AlertDialog(
+            onDismissRequest = { showFinalCheck = false },
+            title = {
+                Text(
+                    text = t("recovery.finalTitle"),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                )
+            },
+            text = {
+                Text(
+                    text = t("recovery.finalBody"),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showFinalCheck = false
+                    onAcknowledged()
+                }) {
+                    Text(t("recovery.finalConfirm"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFinalCheck = false }) {
+                    Text(t("recovery.finalDecline"))
+                }
+            },
+        )
     }
 }
 

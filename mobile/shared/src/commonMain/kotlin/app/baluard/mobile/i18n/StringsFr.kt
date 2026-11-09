@@ -95,8 +95,12 @@ internal val FR: Map<String, String> = mapOf(
     // recovery phrase
     "recovery.title" to "Phrase de récupération",
     "recovery.subtitle" to "Ces 24 mots sont votre filet de sécurité. Si vous perdez votre appareil ou oubliez votre mot de passe, ils constituent l'unique moyen de rouvrir votre coffre.",
-    "recovery.warning" to "Ne confiez jamais ces mots à qui que ce soit. Baluard ne vous les demandera jamais en dehors de l'écran de récupération.",
+    "recovery.warning" to "Ces mots sont la seule façon de récupérer votre coffre. Conservez-les en lieu sûr. Jamais sur cet appareil ni dans le cloud.",
     "recovery.ack" to "J'ai noté ces mots dans un endroit sûr",
+    "recovery.finalTitle" to "Une dernière vérification",
+    "recovery.finalBody" to "Il n'y a pas de réinitialisation et personne, pas même nous, ne peut récupérer votre coffre sans ces 24 mots. S'ils sont perdus, tout ce qu'il contient l'est aussi pour toujours. Les avez-vous vraiment conservés en lieu sûr ?",
+    "recovery.finalDecline" to "Non, pas encore",
+    "recovery.finalConfirm" to "Oui, ils sont conservés",
     "recovery.copyPhrase" to "Copier la phrase",
     "recovery.saveTxt" to "Enregistrer en .txt",
     "recovery.savePdf" to "Enregistrer en .pdf",

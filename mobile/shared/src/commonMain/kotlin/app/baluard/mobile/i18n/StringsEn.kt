@@ -100,8 +100,12 @@ internal val EN: Map<String, String> = mapOf(
     "recovery.subtitle" to
         "These 24 words are the only way to unlock your vault on a new device if you " +
             "forget the master password. Write them down on paper and keep them safe.",
-    "recovery.warning" to "Never store the phrase on this device or in the cloud.",
+    "recovery.warning" to "These words are the only way to recover your vault. Store them somewhere safe. Never on this device or in the cloud.",
     "recovery.ack" to "I wrote it down on paper",
+    "recovery.finalTitle" to "One last check",
+    "recovery.finalBody" to "There is no reset and no way for anyone, including us, to recover your vault without these 24 words. If they are lost, everything inside is lost forever. Did you really store them somewhere safe?",
+    "recovery.finalDecline" to "No, I haven't yet",
+    "recovery.finalConfirm" to "Yes, they are stored safely",
     "recovery.copyPhrase" to "Copy recovery phrase",
     "recovery.saveTxt" to "Save as text file",
     "recovery.savePdf" to "Save as PDF",

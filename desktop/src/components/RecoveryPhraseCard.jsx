@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, onSettled, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -6,6 +6,7 @@ import { copyToClipboard } from "../lib/clipboard.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { holdPhrase, takeHeldPhrase, clearHeldPhrase } from "../lib/heldPhrase.js";
 import FocusTrap from "./FocusTrap.jsx";
+import FinalPhraseCheckDialog from "./FinalPhraseCheckDialog.jsx";
 import { Transition } from "../lib/transition";
 import { Button } from "./Primitives.jsx";
 import { invoke } from "@tauri-apps/api/core";
@@ -20,6 +21,7 @@ export default function RecoveryPhraseCard() {
   const [phrase, setPhrase] = createSignal("");
   const [stored, setStored] = createSignal(false);
   const [copied, setCopied] = createSignal(false);
+  const [finalCheck, setFinalCheck] = createSignal(false);
   let dialogRef;
 
   const words = () => phrase().split(/\s+/).filter(Boolean);
@@ -72,17 +74,24 @@ export default function RecoveryPhraseCard() {
 
   const close = () => {
     if (!stored()) return;
+    // Done routes through the final check; this runs only after its
+    // explicit confirm.
+    setFinalCheck(false);
     setPhrase("");
     setStored(false);
     clearHeldPhrase("recovery");
   };
 
   // A blur-lock unmounted the ceremony before the phrase was confirmed:
-  // re-show it (still gated on the stored checkbox).
-  if (!phrase() && stored() === false) {
-    const held = takeHeldPhrase("recovery");
-    if (held) setPhrase(held);
-  }
+  // re-show it (still gated on the stored checkbox). onSettled is this
+  // codebase's mount-time hook; writing a signal during the render phase
+  // is a reactive-scope violation that Solid's dev mode rejects outright.
+  onSettled(() => {
+    if (!phrase() && stored() === false) {
+      const held = takeHeldPhrase("recovery");
+      if (held) setPhrase(held);
+    }
+  });
 
   return (
     <div class="space-y-2">
@@ -143,7 +152,7 @@ export default function RecoveryPhraseCard() {
                 </label>
                 <div class="flex justify-end">
                   <Button
-                    onClick={close}
+                    onClick={() => setFinalCheck(true)}
                     disabled={!stored()}
                     variant="primary"
                     class="text-xs py-2 px-4 font-mono uppercase"
@@ -155,6 +164,11 @@ export default function RecoveryPhraseCard() {
           </div>
         </Show>
       </Transition>
+      <FinalPhraseCheckDialog
+        open={finalCheck()}
+        onDecline={() => setFinalCheck(false)}
+        onConfirm={close}
+      />
     </div>
   );
 }
