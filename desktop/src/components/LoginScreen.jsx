@@ -1,4 +1,4 @@
-import { Show, createSignal, createEffect, onCleanup } from "solid-js";
+import { Show, createSignal, createEffect, onCleanup, untrack } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import BridgeUnlockBanner from "./BridgeUnlockBanner.jsx";
@@ -54,6 +54,27 @@ export default function LoginScreen() {
     },
   );
   const [bruteLock, setBruteLock] = createSignal(false);
+
+  // Shared Quick Unlock body: platform biometric gate, then the daemon
+  // unlocks from the per-vault keychain escrow. The slug must ride the
+  // vault.open call so a multi-vault setup unlocks the vault the user
+  // actually selected; a bare no-slug call would fall through to the
+  // daemon-active vault.
+  const runQuickUnlock = async () => {
+    if (bruteLock()) return;
+    try {
+      const target = auth.switchTarget();
+      await biometryPrompt();
+      const infoStr = await daemon("vault.open", "", target);
+      await daemon("vault.biometric_unlock", "", target);
+      auth.finishQuickUnlock(infoStr);
+    } catch (e) {
+      if (!/cancelled|canceled|user cancel/i.test(e?.message || "")) {
+        toastError(sanitizeError(e, t));
+      }
+    }
+  };
+
   const [pinValue, setPinValue] = createSignal("");
   const [pinBusy, setPinBusy] = createSignal(false);
 
@@ -67,6 +88,22 @@ export default function LoginScreen() {
   const [joinPassword, setJoinPassword] = createSignal("");
   const [joinConfirm, setJoinConfirm] = createSignal("");
   const [joinDeviceName, setJoinDeviceName] = createSignal("");
+
+  // 1Password/Bitwarden parity: present the platform biometric prompt as
+  // soon as Quick Unlock is available on this screen instead of waiting
+  // for the button. Cancel drops the user on the password form and the
+  // button retries. One shot per resolved target so a cancel cannot loop.
+  const [autoPromptedSlug, setAutoPromptedSlug] = createSignal(null);
+  createEffect(
+    () => [auth.biometricAvailable(), auth.switchTarget() ?? switcher.activeSlug(), joinMode()],
+    ([available, slug, joining]) => {
+      // Guard reads are deliberately untracked: they gate this run only.
+      if (untrack(() => !available || !slug || joining || bruteLock())) return;
+      if (untrack(() => autoPromptedSlug() === slug)) return;
+      setAutoPromptedSlug(slug);
+      runQuickUnlock();
+    },
+  );
   const [joinEmail, setJoinEmail] = createSignal("");
   const [introCode, setIntroCode] = createSignal("");
   const [joinBusy, setJoinBusy] = createSignal(false);
@@ -265,26 +302,7 @@ export default function LoginScreen() {
           <Show when={auth.biometricAvailable()}>
             <button
               type="button"
-              onClick={async () => {
-                if (bruteLock()) return;
-                try {
-                  // Touch ID prompt (UX gate)
-                  const target = auth.switchTarget();
-                  // Daemon reads password from file-based keychain + unlocks
-                  // vault. Pass the target slug so we unlock the vault the
-                  // user actually selected (mirrors the PIN path below); a bare
-                  // no-slug call would fall through to the daemon-active vault
-                  // and unlock the wrong one in a multi-vault setup.
-                  await biometryPrompt();
-                  const infoStr = await daemon("vault.open", "", target);
-                  await daemon("vault.biometric_unlock", "", target);
-                  auth.finishQuickUnlock(infoStr);
-                } catch (e) {
-                  if (!/cancelled|canceled|user cancel/i.test(e?.message || "")) {
-                    toastError(sanitizeError(e, t));
-                  }
-                }
-              }}
+              onClick={() => runQuickUnlock()}
               disabled={bruteLock()}
               class="login-screen__quick-unlock-btn w-full mt-2 py-3 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
             >
