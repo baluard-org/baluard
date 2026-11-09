@@ -17,6 +17,11 @@ vi.mock("../lib/utils.js", () => ({
   sanitizeError: (e) => String(e?.message ?? e),
 }));
 
+const vaultMock = { refreshCiphers: vi.fn().mockResolvedValue(undefined) };
+vi.mock("../context/VaultContext.jsx", () => ({
+  useVault: () => vaultMock,
+}));
+
 const daemonMock = vi.fn();
 vi.mock("../lib/daemon.js", () => ({ daemon: (...args) => daemonMock(...args) }));
 
@@ -51,6 +56,7 @@ beforeEach(() => {
   dispatchSpy = vi.spyOn(window, "dispatchEvent");
   toasts.success.mockReset();
   toasts.warning.mockReset();
+  vaultMock.refreshCiphers.mockReset().mockResolvedValue(undefined);
   daemonMock.mockReset();
   // Default: favicons on, no job running.
   daemonMock.mockImplementation((action) => {
@@ -82,7 +88,7 @@ describe("IconBackfillSection", () => {
       throw new Error(`unexpected daemon action ${action}`);
     });
     await mountAndSettle();
-    await waitFor(() => expect(screen.getByText("sync.iconsNeedEnabled")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("errors.backfillDisabled")).toBeTruthy());
     expect(screen.queryByText("sync.iconsStart")).toBeNull();
   });
 
@@ -133,7 +139,9 @@ describe("IconBackfillSection", () => {
       },
       { timeout: 4000 },
     );
-    // The vault list must refresh so new icons actually appear.
+    // The vault list must re-read (the job wrote through the daemon)
+    // and the indicator must hear about the local change.
+    expect(vaultMock.refreshCiphers).toHaveBeenCalled();
     expect(
       dispatchSpy.mock.calls.filter(([e]) => e.type === "baluard:local-mutation").length,
     ).toBeGreaterThanOrEqual(1);
@@ -157,6 +165,36 @@ describe("IconBackfillSection", () => {
       },
       { timeout: 2000 },
     );
+    expect(screen.getByText("sync.iconsStart")).toBeTruthy();
+  });
+
+  it("a cancelled job stops silently: no error toast", async () => {
+    daemonMock.mockImplementation((action) => {
+      if (action === "settings.get") return Promise.resolve({ fetch_favicons: true });
+      if (action === "favicon.backfill_status")
+        return Promise.resolve(STATUS({ running: false, finished: true, error: "Cancelled." }));
+      throw new Error(`unexpected daemon action ${action}`);
+    });
+    await mountAndSettle();
+    // Reopening after a cancel shows idle without re-toasting anything.
+    expect(toasts.warning).not.toHaveBeenCalled();
+    expect(toasts.success).not.toHaveBeenCalled();
+    expect(screen.getByText("sync.iconsStart")).toBeTruthy();
+  });
+
+  it("a job that finished while the tab was closed shows its counts without re-toasting", async () => {
+    daemonMock.mockImplementation((action) => {
+      if (action === "settings.get") return Promise.resolve({ fetch_favicons: true });
+      if (action === "favicon.backfill_status")
+        return Promise.resolve(STATUS({ finished: true, total: 9, done: 9, fetched: 6, skipped: 3 }));
+      throw new Error(`unexpected daemon action ${action}`);
+    });
+    await mountAndSettle();
+    await waitFor(
+      () => expect(screen.getByText(/sync\.iconsDone/)).toBeTruthy(),
+      { timeout: 2000 },
+    );
+    expect(toasts.success).not.toHaveBeenCalled();
     expect(screen.getByText("sync.iconsStart")).toBeTruthy();
   });
 

@@ -38,6 +38,9 @@ pub struct BackfillProgress {
 
 #[derive(Default)]
 pub struct IconBackfillJob {
+    /// Claim flag: only one job may exist. CAS'd at start so two rapid
+    /// starts cannot both spawn a job.
+    claim: AtomicBool,
     cancel: AtomicBool,
     progress: Mutex<BackfillProgress>,
 }
@@ -100,9 +103,21 @@ fn build_targets<'a>(
 /// Validate, snapshot the work list, and spawn the job. Returns the initial
 /// status JSON so the caller can render it immediately.
 pub async fn start(state: &SharedVaultState) -> Result<String, String> {
+    // Claim first (atomic): two rapid starts cannot both spawn a job.
+    // Released on every failure path and by finish().
+    if state
+        .icon_backfill
+        .claim
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("An icon fetch is already running.".into());
+    }
+
     {
         let guard = state.inner.read().await;
         let Some(handle) = guard.as_ref() else {
+            state.icon_backfill.claim.store(false, Ordering::SeqCst);
             return Err("Vault is locked. Unlock first.".into());
         };
         if !handle.is_unlocked() {
@@ -110,6 +125,7 @@ pub async fn start(state: &SharedVaultState) -> Result<String, String> {
         }
         let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
         if !matches!(settings.fetch_favicons, Some(true)) {
+            state.icon_backfill.claim.store(false, Ordering::SeqCst);
             return Err(
                 "Fetching site icons is turned off. Enable \"Show website icons\" in Settings first."
                     .into(),
@@ -117,38 +133,38 @@ pub async fn start(state: &SharedVaultState) -> Result<String, String> {
         }
     }
 
-    if state
-        .icon_backfill
-        .progress
-        .lock()
-        .expect("backfill progress poisoned")
-        .running
-    {
-        return Err("An icon fetch is already running.".into());
-    }
-
     // Snapshot under a read lock: cipher reads need decryption, so the
-    // vault must stay unlocked for the duration of this call.
+    // vault must stay unlocked for the duration of this call. Only the
+    // kind is kept per cipher; decrypted payloads drop here.
     let (vault_id, targets) = {
         let guard = state.inner.read().await;
-        let handle = guard.as_ref().ok_or("Vault is locked. Unlock first.")?;
+        let handle = guard.as_ref().ok_or_else(|| {
+            state.icon_backfill.claim.store(false, Ordering::SeqCst);
+            "Vault is locked. Unlock first.".to_string()
+        })?;
         if !handle.is_unlocked() {
+            state.icon_backfill.claim.store(false, Ordering::SeqCst);
             return Err("Vault is locked. Unlock first.".into());
         }
         let mut items = Vec::new();
-        for id in handle.list_cipher_ids().map_err(|e| format!("{e}"))? {
+        for id in handle.list_cipher_ids().map_err(|e| {
+            state.icon_backfill.claim.store(false, Ordering::SeqCst);
+            format!("{e}")
+        })? {
             if let Ok(baluard_core::vault::handle::CipherRead::Decrypted(c)) = handle.get_cipher(id)
             {
-                items.push((id, *c));
+                items.push((id, c.kind.clone()));
             }
         }
         (
             handle.vault_id,
-            build_targets(items.iter().map(|(id, c)| (id, &c.kind))),
+            build_targets(items.iter().map(|(id, c)| (id, c))),
         )
     };
 
-    let total = targets.len();
+    // Counters speak in entries, not sites, so a deduped group accounts
+    // for every entry it covers.
+    let total: usize = targets.iter().map(|t| t.cipher_ids.len()).sum();
     state.icon_backfill.cancel.store(false, Ordering::SeqCst);
     state.icon_backfill.update(|p| {
         *p = BackfillProgress {
@@ -199,9 +215,12 @@ async fn run(state: SharedVaultState, targets: Vec<BackfillTarget>, vault_id: Uu
             match tokio::time::timeout(Duration::from_secs(ENTRY_BUDGET_SECS), fetch).await {
                 Ok(Ok(Some(json))) => json,
                 Ok(Ok(None)) | Ok(Err(_)) | Err(_) => {
-                    state.icon_backfill.update(|p| {
-                        p.done += 1;
-                        p.skipped += 1;
+                    // Every counter speaks in ENTRIES, not sites: a
+                    // skipped host skips its whole group.
+                    let n = target.cipher_ids.len();
+                    state.icon_backfill.update(move |p| {
+                        p.done += n;
+                        p.skipped += n;
                     });
                     continue;
                 }
@@ -214,9 +233,10 @@ async fn run(state: SharedVaultState, targets: Vec<BackfillTarget>, vault_id: Uu
         let favicon = match favicon {
             Ok(f) if !f.data.is_empty() => f,
             _ => {
-                state.icon_backfill.update(|p| {
-                    p.done += 1;
-                    p.skipped += 1;
+                let n = target.cipher_ids.len();
+                state.icon_backfill.update(move |p| {
+                    p.done += n;
+                    p.skipped += n;
                 });
                 continue;
             }
@@ -225,8 +245,8 @@ async fn run(state: SharedVaultState, targets: Vec<BackfillTarget>, vault_id: Uu
         match apply_icon(&state, vault_id, &target.cipher_ids, favicon).await {
             Ok(count) => {
                 applied_any = applied_any || count > 0;
-                state.icon_backfill.update(|p| {
-                    p.done += 1;
+                state.icon_backfill.update(move |p| {
+                    p.done += count;
                     p.fetched += count;
                 });
             }
@@ -234,7 +254,7 @@ async fn run(state: SharedVaultState, targets: Vec<BackfillTarget>, vault_id: Uu
                 // Vault locked, switched, or a write failed mid-run: stop
                 // rather than keep fetching for a vault we can no longer
                 // write to.
-                finish(&state, &e);
+                finish(&state, &format!("Icon fetching stopped: {e}"));
                 return;
             }
         }
@@ -243,7 +263,11 @@ async fn run(state: SharedVaultState, targets: Vec<BackfillTarget>, vault_id: Uu
     if applied_any {
         let mut guard = state.inner.write().await;
         if let Some(handle) = guard.as_mut() {
-            let _ = handle.rebuild_tag_index();
+            // Same convention as the single-update path; only rebuild
+            // when the vault we fetched for is still the unlocked one.
+            if handle.is_unlocked() && handle.vault_id == vault_id {
+                let _ = handle.rebuild_tag_index();
+            }
         }
     }
     finish(&state, "");
@@ -315,6 +339,7 @@ async fn apply_icon(
 }
 
 fn finish(state: &SharedVaultState, error: &str) {
+    state.icon_backfill.claim.store(false, Ordering::SeqCst);
     state.icon_backfill.update(|p| {
         p.running = false;
         p.finished = true;

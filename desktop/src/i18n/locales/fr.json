@@ -345,7 +345,10 @@
     "hwKeyWrong": "Ce n'est pas la clé de sécurité avec laquelle ce coffre a été scellé.",
     "hwKeyUvForced": "Cette clé exige toujours sa propre vérification et ne peut pas protéger ce coffre.",
     "hwKeyPinRequired": "Cette clé requiert son code PIN pour cette opération. Utilisez une clé sans PIN.",
-    "hwKeyMissing": "Branchez votre clé de sécurité."
+    "hwKeyMissing": "Branchez votre clé de sécurité.",
+    "backfillBusy": "Une récupération d'icônes est déjà en cours.",
+    "backfillStopped": "La récupération d'icônes s'est arrêtée parce que le coffre s'est verrouillé ou a changé.",
+    "backfillDisabled": "La récupération d'icônes est désactivée. Activez « Afficher les icônes de sites » dans les réglages."
   },
   "sync": {
     "title": "Synchronisation du coffre",
@@ -448,8 +451,7 @@
     "iconsCancel": "Annuler",
     "iconsRunning": "Récupération {done} sur {total}",
     "iconsDone": "{fetched} icônes récupérées ; {skipped} ignorées.",
-    "iconsUpToDate": "Toutes les entrées ont déjà une icône.",
-    "iconsNeedEnabled": "La récupération d'icônes est désactivée. Activez « Afficher les icônes de sites » dans les réglages."
+    "iconsUpToDate": "Toutes les entrées ont déjà une icône."
   },
   "settings": {
     "faviconLabel": "Afficher les icônes des sites web",

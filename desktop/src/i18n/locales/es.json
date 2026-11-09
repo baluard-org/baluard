@@ -533,8 +533,7 @@
     "iconsCancel": "Cancelar",
     "iconsRunning": "Trayendo {done} de {total}",
     "iconsDone": "Se trajeron {fetched} iconos; {skipped} omitidos.",
-    "iconsUpToDate": "Todas las entradas ya tienen icono.",
-    "iconsNeedEnabled": "Traer iconos está desactivado. Activa \"Mostrar iconos de sitios\" en Ajustes para usar esto."
+    "iconsUpToDate": "Todas las entradas ya tienen icono."
   },
   "autosync": {
     "upToDate": "Todos los cambios sincronizados",
@@ -590,7 +589,10 @@
     "hwKeyWrong": "Esta no es la llave de seguridad con la que se protegió esta bóveda.",
     "hwKeyUvForced": "Esta llave siempre exige su propia verificación y no puede proteger esta bóveda.",
     "hwKeyPinRequired": "Esta llave exige su PIN para esta operación. Usa una llave sin PIN.",
-    "hwKeyMissing": "Conecta tu llave de seguridad."
+    "hwKeyMissing": "Conecta tu llave de seguridad.",
+    "backfillBusy": "Ya se está trayendo iconos.",
+    "backfillStopped": "Se detuvo la extracción de iconos porque la bóveda se bloqueó o cambió.",
+    "backfillDisabled": "Traer iconos está desactivado. Activa \"Mostrar iconos de sitios\" en Ajustes para usar esto."
   },
   "categories": {
     "allItems": "Todos los elementos",

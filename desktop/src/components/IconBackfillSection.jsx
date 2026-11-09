@@ -3,6 +3,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess, toastWarning } from "../context/toastSignal.js";
+import { useVault } from "../context/VaultContext.jsx";
 import { IconSpinner } from "./Icon.jsx";
 
 // Batch site-icon backfill for imported entries: entries saved through the
@@ -13,10 +14,15 @@ import { IconSpinner } from "./Icon.jsx";
 // a run that finished while closed shows its counts without re-toasting.
 export default function IconBackfillSection() {
   const { t } = useI18n();
+  const vault = useVault();
   const [iconsState, setIconsState] = createSignal(null);
   const [iconsBusy, setIconsBusy] = createSignal(false);
   const [faviconsEnabled, setFaviconsEnabled] = createSignal(null); // null = unknown
   let iconsPollTimer = null;
+  // The deferred daemon reads and the poll interval must not outlive the
+  // component: a poll tick that lands after unmount would otherwise start
+  // a fresh interval nothing will ever clean up.
+  let disposed = false;
 
   function stopIconsPolling() {
     if (iconsPollTimer) {
@@ -24,6 +30,11 @@ export default function IconBackfillSection() {
       iconsPollTimer = null;
     }
   }
+
+  onCleanup(() => {
+    disposed = true;
+    stopIconsPolling();
+  });
 
   async function refreshIconStatus() {
     try {
@@ -36,8 +47,9 @@ export default function IconBackfillSection() {
   }
 
   function startIconsPolling() {
-    if (iconsPollTimer) return;
+    if (disposed || iconsPollTimer) return;
     iconsPollTimer = setInterval(async () => {
+      if (disposed) return;
       try {
         const s = JSON.parse(await daemon("favicon.backfill_status"));
         setIconsState(s);
@@ -52,9 +64,14 @@ export default function IconBackfillSection() {
   }
 
   async function onIconsFinished(s) {
+    // The vault list itself must re-read: the job wrote through the
+    // daemon, so no local signal knows the icons changed.
+    await vault.refreshCiphers(t);
     window.dispatchEvent(new CustomEvent("baluard:local-mutation"));
     if (s.error) {
-      toastWarning(s.error);
+      // The user asked to cancel: returning to idle IS the feedback.
+      if (s.error === "Cancelled.") return;
+      toastWarning(sanitizeError(s.error, t));
       return;
     }
     if (s.total === 0) {
@@ -94,14 +111,13 @@ export default function IconBackfillSection() {
     // under the onSettled owner: Solid forbids cleanup registration in
     // that scope, and the spinner uses it. Macrotask defer sheds it.
     setTimeout(() => {
+      if (disposed) return;
       daemon("settings.get")
         .then((d) => setFaviconsEnabled(d.fetch_favicons === true))
         .catch(() => setFaviconsEnabled(null));
       refreshIconStatus();
     }, 0);
   });
-  // onSettled's return value is not a cleanup hook; register one.
-  onCleanup(stopIconsPolling);
 
   return (
     <div class="border-t border-[var(--color-border)] pt-3 space-y-2">
@@ -111,8 +127,13 @@ export default function IconBackfillSection() {
       <p class="text-[10px] text-[var(--color-muted)] leading-relaxed">{t("sync.iconsDesc")}</p>
       <Show
         when={faviconsEnabled()}
-        fallback={<p class="text-[10px] text-yellow-400/90">{t("sync.iconsNeedEnabled")}</p>}
+        fallback={<p class="text-[10px] text-yellow-400/90">{t("errors.backfillDisabled")}</p>}
       >
+        <Show when={!iconsState()?.running && iconsState()?.finished && (iconsState()?.total ?? 0) > 0}>
+          <p class="text-[10px] text-[var(--color-muted)]">
+            {t("sync.iconsDone", { fetched: iconsState()?.fetched ?? 0, skipped: iconsState()?.skipped ?? 0 })}
+          </p>
+        </Show>
         <Show
           when={iconsState()?.running}
           fallback={
