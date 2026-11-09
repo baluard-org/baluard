@@ -4,11 +4,21 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+No user-facing changes yet.
+
+## 0.2.4 - 2026-11-09
+
 - The autofill login picker now looks like the app's entry cards, with a search bar on top. It only lists entries that match the site you are filling; search finds anything else, ignoring accents, and never floods the sheet with more than twenty suggestions.
 
 - Settings > Sync gains a site-icon backfill: after importing a vault, one click fetches the missing website icons entry by entry (2-second budget per site, slow sites skipped), with progress and cancel.
 
 - Showing a recovery phrase now ends with a second confirmation that asks whether you really stored the words, and the words screen states clearly that they are the only way to recover the vault.
+
+- Settings screens have more breathing room: clearer spacing between entries and their dividers, and the cards on the Sharing screen now carry their own action buttons.
+
+- The Passkeys setting in Autofill now actually opens Android's passkey-provider picker; before, the button did nothing.
+
+- Buttons and fields with long labels no longer clip their text in Spanish, Portuguese, or French.
 
 ## 0.2.3 - 2026-11-08
 - Filled fields now breathe a soft neon halo three times after the fill ring, about one second per breath, and then return to their normal look.

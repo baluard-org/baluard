@@ -606,7 +606,7 @@ internal val EN: Map<String, String> = mapOf(
     "settings.active" to "Active",
     "settings.idle" to "Idle",
     "settings.aboutTitle" to "About Baluard",
-    "settings.version" to "Baluard Mobile v0.2.3",
+    "settings.version" to "Baluard Mobile v0.2.4",
     "settings.aboutSubtitle" to "Git-native password manager • GPL-3.0",
     "conflict.title" to "Sync conflict",
     "conflict.body" to "\"{0}\" was changed on two devices. Choose the version to keep.",
