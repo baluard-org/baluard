@@ -176,10 +176,16 @@ export function createProviderConnect({ t, onUpdate }) {
 		throw new Error(t("sync.errorAuthFailed"));
 	}
 
-	// ── Public: connect a provider. Skips auth if already connected. ──
+	// ── Public: connect a provider. ──
 	async function connect(provider, { pat, advanced } = {}) {
 		// A previously cancelled attempt must not poison this one.
 		disposed = false;
+		const overrides = buildOverrides(advanced);
+
+		// A typed PAT is an explicit instruction: it must win over any
+		// already-stored token, so it runs before the connected short-circuit.
+		if (pat?.trim()) return runPat(provider, pat.trim(), overrides);
+
 		// Already connected? provider.status validates the stored token.
 		try {
 			const statusRaw = await daemon(
@@ -191,10 +197,6 @@ export function createProviderConnect({ t, onUpdate }) {
 		} catch {
 			// Not connected yet — proceed to auth below.
 		}
-
-		const overrides = buildOverrides(advanced);
-
-		if (pat?.trim()) return runPat(provider, pat.trim(), overrides);
 
 		const method = await resolveMethod(provider);
 		if (method === "device-flow") return runDeviceFlow(provider, overrides);

@@ -11,6 +11,7 @@ Notable user-facing changes per release.
 - The Android autofill picker header now carries the Baluard logo and wordmark on the left and the Choose a login prompt on the right, with more room below the status bar.
 - The git backup setup is now a full settings page on mobile, with proper room for the own-server flow.
 - Setting up Git backup on mobile now offers the same one-tap browser sign-in as onboarding (GitHub and Codeberg in the browser, GitLab with a device code); a vault that already backs up shows its status instead of the wizard.
+- Desktop sync setup: the repository name now defaults to the vault's own name, a custom-server vault no longer triggers a wrong-provider warning, a failed credential check no longer hangs the setup screen, and a typed access token is always honored even if an account is already connected.
 - Desktop: the site-icon backfill now respects the Show website icons setting; the fetch button was unreachable.
 
 ## 0.2.4 - 2026-11-09

@@ -402,6 +402,7 @@ internal val EN: Map<String, String> = mapOf(
     "settings.gitBackupActive" to "Backup is already set up for this vault.",
     "settings.gitConnectBrowser" to "Sign in with browser",
     "settings.gitConnected" to "Account connected.",
+    "settings.gitConnectedAs" to "Connected as {0}",
     "settings.customChip" to "Custom server",
     "settings.customWarn" to "You manage this server: repository creation, clone access, and removal happen there by hand. Credentials stay on this device only.",
     "settings.customSshNote" to "Sign in with an access token. SSH keys are set up from the desktop app.",

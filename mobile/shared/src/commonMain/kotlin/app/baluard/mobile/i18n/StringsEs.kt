@@ -397,6 +397,7 @@ internal val ES: Map<String, String> = mapOf(
     "settings.gitBackupActive" to "La copia de seguridad ya está configurada para esta bóveda.",
     "settings.gitConnectBrowser" to "Iniciar sesión con el navegador",
     "settings.gitConnected" to "Cuenta conectada.",
+    "settings.gitConnectedAs" to "Conectado como {0}",
     "settings.customChip" to "Servidor propio",
     "settings.customWarn" to "Tú gestionas este servidor: crear el repositorio, dar acceso y eliminar se hace a mano allí. Las credenciales se quedan solo en este dispositivo.",
     "settings.customSshNote" to "Inicia sesión con un token de acceso. Las claves SSH se configuran desde la app de escritorio.",
