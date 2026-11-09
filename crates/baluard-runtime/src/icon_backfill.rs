@@ -70,21 +70,17 @@ struct BackfillTarget {
 /// whose first fetchable URI yields a domain, deduped by domain in
 /// first-seen order.
 fn build_targets<'a>(
-    items: impl IntoIterator<Item = (&'a Uuid, &'a baluard_core::types::CipherKind)>,
+    items: impl IntoIterator<Item = (&'a Uuid, &'a [String], bool)>,
 ) -> Vec<BackfillTarget> {
     let mut targets: Vec<BackfillTarget> = Vec::new();
     let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for (id, kind) in items {
-        let baluard_core::types::CipherKind::Login(login) = kind else {
-            continue;
-        };
-        if login.favicon.is_some() {
+    for (id, uris, has_favicon) in items {
+        if has_favicon {
             continue;
         }
-        let domain = login
-            .uris
+        let domain = uris
             .iter()
-            .map(|u| VaultState::extract_domain(u.uri.trim()))
+            .map(|u| VaultState::extract_domain(u.trim()))
             .find(|d| !d.is_empty() && VaultState::host_fetchable_str(d));
         let Some(domain) = domain else { continue };
         if let Some(&i) = index.get(&domain) {
@@ -121,9 +117,13 @@ pub async fn start(state: &SharedVaultState) -> Result<String, String> {
             return Err("Vault is locked. Unlock first.".into());
         };
         if !handle.is_unlocked() {
+            state.icon_backfill.claim.store(false, Ordering::SeqCst);
             return Err("Vault is locked. Unlock first.".into());
         }
-        let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+        let settings = handle.get_settings().map_err(|e| {
+            state.icon_backfill.claim.store(false, Ordering::SeqCst);
+            format!("{e}")
+        })?;
         if !matches!(settings.fetch_favicons, Some(true)) {
             state.icon_backfill.claim.store(false, Ordering::SeqCst);
             return Err(
@@ -153,12 +153,25 @@ pub async fn start(state: &SharedVaultState) -> Result<String, String> {
         })? {
             if let Ok(baluard_core::vault::handle::CipherRead::Decrypted(c)) = handle.get_cipher(id)
             {
-                items.push((id, c.kind.clone()));
+                // Only login URIs and favicon presence survive the
+                // snapshot: cloning the whole kind would carry password
+                // and TOTP material into a long-lived job.
+                if let baluard_core::types::CipherKind::Login(login) = &c.kind {
+                    items.push((
+                        id,
+                        login.uris.iter().map(|u| u.uri.clone()).collect::<Vec<_>>(),
+                        login.favicon.is_some(),
+                    ));
+                }
             }
         }
         (
             handle.vault_id,
-            build_targets(items.iter().map(|(id, c)| (id, c))),
+            build_targets(
+                items
+                    .iter()
+                    .map(|(id, uris, fav)| (id, uris.as_slice(), *fav)),
+            ),
         )
     };
 
@@ -192,6 +205,18 @@ pub fn status(state: &SharedVaultState) -> String {
 }
 
 async fn run(state: SharedVaultState, targets: Vec<BackfillTarget>, vault_id: Uuid) {
+    // finish() clears the claim on every orderly exit; this guard covers
+    // the disorderly ones (a mid-job panic), which would otherwise wedge
+    // fetching until daemon restart.
+    struct ClaimGuard<'a>(&'a std::sync::atomic::AtomicBool);
+    impl Drop for ClaimGuard<'_> {
+        fn drop(&mut self) {
+            use std::sync::atomic::Ordering;
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
+    let _claim_guard = ClaimGuard(&state.icon_backfill.claim);
+
     let client = match VaultState::build_icon_client() {
         Some(c) => c,
         None => {
@@ -372,34 +397,26 @@ mod tests {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
         let c = Uuid::new_v4();
-        let d = Uuid::new_v4();
         let e = Uuid::new_v4();
         let items = vec![
-            (a, login(&["https://github.com/x"], None)),
+            (a, vec!["https://github.com/x".to_string()], false),
             (
                 b,
-                login(&["https://api.github.com/y", "https://github.com/z"], None),
+                vec![
+                    "https://api.github.com/y".to_string(),
+                    "https://github.com/z".to_string(),
+                ],
+                false,
             ),
             // Already has an icon: never a target, even same domain.
-            (
-                c,
-                login(
-                    &["https://github.com/w"],
-                    Some(baluard_core::types::FaviconData {
-                        data: "AA".into(),
-                        mime: "image/png".into(),
-                    }),
-                ),
-            ),
-            // Non-login kinds are skipped outright.
-            (d, CipherKind::SecureNote),
+            (c, vec!["https://github.com/w".to_string()], true),
             // Localhost-style and non-http hosts are not fetchable.
-            (e, login(&["http://localhost:8080/panel"], None)),
+            (e, vec!["http://localhost:8080/panel".to_string()], false),
         ];
         // Dedup is per exact host (same semantics as the save-time fetch):
         // github.com and api.github.com are separate targets, but two
         // entries on the SAME host share one fetch.
-        let t = build_targets(items.iter().map(|(id, k)| (id, k)));
+        let t = build_targets(items.iter().map(|(id, u, f)| (id, u.as_slice(), *f)));
         assert_eq!(t.len(), 2, "localhost is refused; subdomains stay separate");
         assert_eq!(t[0].domain, "github.com");
         assert_eq!(t[0].cipher_ids, vec![a]);
@@ -412,10 +429,10 @@ mod tests {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
         let items = vec![
-            (a, login(&["https://gitlab.com/x"], None)),
-            (b, login(&["https://example.com/y"], None)),
+            (a, vec!["https://gitlab.com/x".to_string()], false),
+            (b, vec!["https://example.com/y".to_string()], false),
         ];
-        let t = build_targets(items.iter().map(|(id, k)| (id, k)));
+        let t = build_targets(items.iter().map(|(id, u, f)| (id, u.as_slice(), *f)));
         assert_eq!(t.len(), 2);
         assert_eq!(t[0].domain, "gitlab.com");
         assert_eq!(t[1].domain, "example.com");

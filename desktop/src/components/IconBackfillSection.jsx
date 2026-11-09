@@ -19,6 +19,10 @@ export default function IconBackfillSection() {
   const [iconsBusy, setIconsBusy] = createSignal(false);
   const [faviconsEnabled, setFaviconsEnabled] = createSignal(null); // null = unknown
   let iconsPollTimer = null;
+  // One finish handling per job: overlapping poll ticks must not
+  // double-refresh or double-toast, and a run that finished while the tab
+  // was closed refreshes the vault list once, silently.
+  let finishHandled = false;
   // The deferred daemon reads and the poll interval must not outlive the
   // component: a poll tick that lands after unmount would otherwise start
   // a fresh interval nothing will ever clean up.
@@ -40,7 +44,16 @@ export default function IconBackfillSection() {
     try {
       const s = JSON.parse(await daemon("favicon.backfill_status"));
       setIconsState(s);
-      if (s.running) startIconsPolling();
+      if (s.running) {
+        finishHandled = false;
+        startIconsPolling();
+        // Icons were written while this tab was closed: the vault list
+        // must still re-read, just without re-toasting.
+      } else if (s.finished && s.total > 0 && !finishHandled) {
+        finishHandled = true;
+        await vault.refreshCiphers(t);
+        window.dispatchEvent(new CustomEvent("baluard:local-mutation"));
+      }
     } catch {
       // Vault may be locked; leave the section inert.
     }
@@ -55,7 +68,10 @@ export default function IconBackfillSection() {
         setIconsState(s);
         if (!s.running) {
           stopIconsPolling();
-          onIconsFinished(s);
+          if (!finishHandled) {
+            finishHandled = true;
+            onIconsFinished(s);
+          }
         }
       } catch {
         stopIconsPolling();
@@ -87,8 +103,10 @@ export default function IconBackfillSection() {
       const s = JSON.parse(await daemon("favicon.backfill_start"));
       setIconsState(s);
       if (s.running) {
+        finishHandled = false;
         startIconsPolling();
       } else {
+        finishHandled = true;
         onIconsFinished(s);
       }
     } catch (e) {

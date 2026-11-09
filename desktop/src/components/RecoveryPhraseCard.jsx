@@ -120,7 +120,15 @@ export default function RecoveryPhraseCard() {
               aria-labelledby="recovery-ceremony-title"
               class="w-full max-w-lg rounded-2xl bg-[var(--color-bg)] border border-amber-500/40 p-6 space-y-4"
             >
-              <FocusTrap containerRef={dialogRef} onEscape={close} />
+              {/* Escape after ticking the box must land on the final
+                  check, not destroy the phrase past it; until stored,
+                  Escape is a no-op like every other close path. */}
+              <FocusTrap
+                containerRef={dialogRef}
+                onEscape={() => {
+                  if (stored()) setFinalCheck(true);
+                }}
+              />
                 <h3 id="recovery-ceremony-title" class="text-sm font-bold text-amber-400 font-mono uppercase tracking-wider">
                   {t("recovery.rotation.ceremonyTitle")}
                 </h3>

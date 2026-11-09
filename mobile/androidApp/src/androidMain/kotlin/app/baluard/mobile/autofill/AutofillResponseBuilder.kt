@@ -30,7 +30,7 @@ import app.baluard.mobile.i18n.t
 data class InlineStyle(val specs: List<InlinePresentationSpec>, val maxCount: Int)
 
 /** Max per-entry datasets one fill response may carry. */
-private const val MAX_SHEET_DATASETS = 20
+internal const val MAX_SHEET_DATASETS = 20
 
 /**
  * Shared FillResponse construction for the service (direct path, session
