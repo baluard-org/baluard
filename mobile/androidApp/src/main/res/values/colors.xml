@@ -16,5 +16,15 @@
          all-logins list never renders see-through over the browser
          (0.2.1 ghost bug). -->
     <color name="autofill_screen">#091315</color>
-    <color name="autofill_muted_text">#94A3B8</color>
+    <color name="autofill_muted_text">#A2B7BA</color>
+    <!-- Picker card look, mirrored from the app's CipherRowCard
+         (surfaceContainer #0B1517, outline #1D3A3D, login avatar gradient
+         #0D9488-#0F766E, search field #14292C, primary text #F3F4F6). -->
+    <color name="autofill_text">#F3F4F6</color>
+    <color name="autofill_card">#0B1517</color>
+    <color name="autofill_card_border">#1D3A3D</color>
+    <color name="autofill_avatar_start">#0D9488</color>
+    <color name="autofill_avatar_end">#0F766E</color>
+    <color name="autofill_search_bg">#14292C</color>
+    <color name="autofill_lime">#B3E55C</color>
 </resources>

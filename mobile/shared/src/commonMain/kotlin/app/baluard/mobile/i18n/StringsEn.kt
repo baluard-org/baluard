@@ -623,6 +623,9 @@ internal val EN: Map<String, String> = mapOf(
     // Android autofill picker + trampoline (Phase 6). The biometric prompt
     // title reuses login.biometricTitle.
     "autofill.unlockHint" to "Tap to unlock and fill",
+    "autofill.searchHint" to "Search logins",
+    "autofill.searchEmpty" to "No entries found",
+    "autofill.noMatchesSearch" to "No entries match this site. Search to find one.",
 "autofill.pickerTitle" to "Choose a login",
     "autofill.totpWillCopy" to "2FA code will be copied",
     "autofill.securityKeyTitle" to "Autofill unavailable",

@@ -27,7 +27,28 @@
             android:paddingBottom="8dp"
             android:textSize="18sp"
             android:textStyle="bold"
-            android:textColor="@android:color/white"
+            android:textColor="@color/autofill_text"
+            android:visibility="gone" />
+
+        <EditText
+            android:id="@+id/autofill_picker_search"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:background="@drawable/autofill_search_bg"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="11dp"
+            android:paddingBottom="11dp"
+            android:maxLines="1"
+            android:inputType="text"
+            android:imeOptions="actionSearch"
+            android:textSize="15sp"
+            android:textColor="@color/autofill_text"
+            android:textColorHint="@color/autofill_muted_text"
             android:visibility="gone" />
 
         <ProgressBar
