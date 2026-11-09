@@ -111,10 +111,15 @@ export function setNativeValue(el, value) {
   flashFilledField(el);
 }
 
-// Visual fill confirmation: a brief brand-lime ring that pulses then fades
-// over ~2s. Implemented as a class + injected keyframes (NOT inline styles)
-// so the field's own box-shadow and transitions are left untouched once the
-// class comes off. One stylesheet per document, reused across fills.
+// Visual fill confirmation: the brand-lime ring pops once, then the field
+// breathes a neon halo three times (~1s per bright-dim-bright cycle, 50%
+// faster than the 2s reference) and the final frame lands back on
+// transparent so the field returns to its normal look with no glow. One
+// keyframe timeline rather than two animations because both effects paint
+// box-shadow and the last animation on a property wins. Implemented as a
+// class + injected keyframes (NOT inline styles) so the field's own
+// box-shadow and transitions are left untouched once the class comes off.
+// One stylesheet per document, reused across fills.
 const FLASH_STYLE_ID = "baluard-fill-flash-style";
 const FLASH_CLASS = "baluard-fill-flash";
 export function flashFilledField(el) {
@@ -126,10 +131,14 @@ export function flashFilledField(el) {
     style.textContent =
       "@keyframes baluard-fill-glow{" +
       "0%{box-shadow:0 0 0 0 rgba(179,229,92,0)}" +
-      "12%{box-shadow:0 0 0 4px rgba(179,229,92,.75)}" +
-      "70%{box-shadow:0 0 0 4px rgba(179,229,92,.45)}" +
+      "10%{box-shadow:0 0 0 4px rgba(179,229,92,.75)}" +
+      "25%{box-shadow:0 0 12px 0 rgba(179,229,92,.7)}" +
+      "40%{box-shadow:0 0 3px -1px rgba(179,229,92,.4)}" +
+      "55%{box-shadow:0 0 12px 0 rgba(179,229,92,.7)}" +
+      "70%{box-shadow:0 0 3px -1px rgba(179,229,92,.4)}" +
+      "85%{box-shadow:0 0 12px 0 rgba(179,229,92,.7)}" +
       "100%{box-shadow:0 0 0 0 rgba(179,229,92,0)}}" +
-      `.${FLASH_CLASS}{animation:baluard-fill-glow 2s ease-out}`;
+      `.${FLASH_CLASS}{animation:baluard-fill-glow 3.3s ease-in-out}`;
     (doc.head || doc.documentElement).appendChild(style);
   }
   // Restart the animation on repeat fills of the same field.
@@ -140,7 +149,7 @@ export function flashFilledField(el) {
   el.__baluardFlashTimer = setTimeout(() => {
     el.classList.remove(FLASH_CLASS);
     delete el.__baluardFlashTimer;
-  }, 2100);
+  }, 3400);
 }
 
 // ── TOTP field detection ──

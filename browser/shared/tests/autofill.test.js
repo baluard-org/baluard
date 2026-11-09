@@ -439,7 +439,21 @@ describe("fill flash feedback", () => {
     expect(el.classList.contains("baluard-fill-flash")).toBe(true);
     expect(document.querySelectorAll("#baluard-fill-flash-style").length).toBe(1);
     vi.advanceTimersByTime(2200);
+    expect(el.classList.contains("baluard-fill-flash")).toBe(true);
+    vi.advanceTimersByTime(1400);
     expect(el.classList.contains("baluard-fill-flash")).toBe(false);
+  });
+
+  it("breathes the neon halo three times at ~1s cycles and returns to no glow", () => {
+    const el = makeInput("password");
+    document.body.appendChild(el);
+    setNativeValue(el, "s3cret");
+    const css = document.getElementById("baluard-fill-flash-style").textContent;
+    const peaks = (css.match(/0 0 12px 0/g) || []).length;
+    expect(peaks).toBe(3);
+    expect(css).toContain("animation:baluard-fill-glow 3.3s ease-in-out");
+    expect(css).toContain("10%{box-shadow:0 0 0 4px rgba(179,229,92,.75)}");
+    expect(css).toContain("100%{box-shadow:0 0 0 0 rgba(179,229,92,0)}");
   });
 
   it("injects the stylesheet once across fields and repeat fills", () => {
