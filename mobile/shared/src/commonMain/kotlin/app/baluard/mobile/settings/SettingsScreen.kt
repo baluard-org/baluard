@@ -365,15 +365,15 @@ val entitlement by Entitlements.state.collectAsState()
                 ToggleRow(t("settings.syncOnUnlock"), config.syncOnUnlock) {
                     viewModel.setSyncOnUnlock(it)
                 }
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                 ToggleRow(t("settings.syncAfterChange"), config.syncAfterChange) {
                     viewModel.setSyncAfterChange(it)
                 }
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                 ToggleRow(t("settings.syncOnForeground"), config.syncOnForeground) {
                     viewModel.setSyncOnForeground(it)
                 }
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                 ToggleRow(
                     t("settings.backgroundSync", config.backgroundIntervalMinutes),
                     config.backgroundSyncEnabled,
@@ -384,11 +384,11 @@ val entitlement by Entitlements.state.collectAsState()
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 2.dp, bottom = 4.dp),
                 )
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                 ToggleRow(t("settings.wifiOnly"), config.wifiOnly) {
                     viewModel.setWifiOnly(it)
                 }
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                 BaluardOutlinedButton(
                     text = t("settings.gitBackup"),
                     onClick = { showGitBackup = true },
@@ -790,7 +790,7 @@ val entitlement by Entitlements.state.collectAsState()
                     modifier = Modifier.padding(top = 6.dp),
                 )
 
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                 // Website icons on new entries (fetch_favicons opt-in,
                 // desktop SettingsModal parity; default off for privacy).
@@ -839,7 +839,7 @@ val entitlement by Entitlements.state.collectAsState()
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                 // Biometric quick unlock (per-vault). Disable always works;
                 // enable runs the enroll ceremony with the KEK retained from
@@ -923,7 +923,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                 }
 
                 // Security key (FIDO2 hmac-secret): one operation-scoped
@@ -1013,7 +1013,7 @@ val entitlement by Entitlements.state.collectAsState()
                             },
                         )
                     }
-                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                 }
 
                 // Clipboard auto-clear (device-local, desktop parity).
@@ -1040,7 +1040,7 @@ val entitlement by Entitlements.state.collectAsState()
                     modifier = Modifier.padding(top = 6.dp),
                 )
 
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                 // Allow screenshots (default off, fail secure). Only
                 // offered where the shield is actually implemented — an OS
@@ -1064,7 +1064,7 @@ val entitlement by Entitlements.state.collectAsState()
                     )
                 }
 
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                 // G3: recovery-phrase rotation (D74 ceremony). The current
                 // master password gates it; the new 24 words show once.
@@ -1199,7 +1199,7 @@ val entitlement by Entitlements.state.collectAsState()
                     )
                 }
 
-                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                 // G19: password health check (vault.health) — a decrypting
                 // pass; findings are read-only, search the hub for the row.
@@ -1341,7 +1341,7 @@ val entitlement by Entitlements.state.collectAsState()
                             }
                         }
                     }
-                    if (d != fleet.last()) BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    if (d != fleet.last()) BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                 }
                 Text(
                     t("settings.fleetHint"),
@@ -1453,7 +1453,7 @@ val entitlement by Entitlements.state.collectAsState()
                         modifier = Modifier.padding(top = 6.dp),
                     )
 
-                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                     // Display autofill suggestions: inline chips or popup.
                     var inlineSuggestions by remember {
@@ -1490,7 +1490,7 @@ val entitlement by Entitlements.state.collectAsState()
                     // browser's settings. One row per installed browser.
                     val browsers = remember { BrowserAutofillIntegration.browsers() }
                     for (browser in browsers) {
-                        BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                         var browserEnabled by remember(browser.id) {
                             mutableStateOf(browser.enabled == true)
                         }
@@ -1528,7 +1528,7 @@ val entitlement by Entitlements.state.collectAsState()
                     // equivalent-domains parity): domains in one group
                     // autofill each other. Stored in vault settings
                     // (encrypted, git-synced).
-                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     var domainGroups by remember(vaultPath) {
                         mutableStateOf<List<List<String>>>(emptyList())
                     }
@@ -1683,7 +1683,7 @@ val entitlement by Entitlements.state.collectAsState()
                     // the user trusts the (package, domain) pairing once.
                     // Default on; that per-pairing trust prompt is the
                     // consent gate, so the switch only silences the pathway.
-                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     var suggestAppLogins by remember(vaultPath) { mutableStateOf(true) }
                     var trustedApps by remember(vaultPath) {
                         mutableStateOf<List<Pair<String, String>>>(emptyList())
@@ -1854,7 +1854,7 @@ val entitlement by Entitlements.state.collectAsState()
                     // Use accessibility (Phase 6.5): the quick-settings fill
                     // tile for apps that ignore normal autofill. Opt-in,
                     // default off, disclosed before enabling.
-                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     var a11yOn by remember { mutableStateOf(AccessibilityFill.enabled()) }
                     var showA11yDisclosure by remember { mutableStateOf(false) }
                     var a11ySystemOn by remember { mutableStateOf(AccessibilityFill.serviceEnabledInSystem()) }
@@ -2120,10 +2120,11 @@ val entitlement by Entitlements.state.collectAsState()
                                 color = MaterialTheme.colorScheme.error,
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 enabled = !teamBusy && spaceTeam != null,
                                 onClick = { runPrepare() },
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(t("space.teamPrepare"))
                             }
@@ -2133,6 +2134,7 @@ val entitlement by Entitlements.state.collectAsState()
                                     flipWord = "" // no leak across dialog opens
                                     showFlipConfirm = true
                                 },
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(t("space.teamUpgrade"))
                             }
@@ -2177,16 +2179,18 @@ val entitlement by Entitlements.state.collectAsState()
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             enabled = !spaceBusy,
                             onClick = { setSpace(inviteAuthority = "admins") },
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(t("space.authorityAdmins"))
                         }
                         OutlinedButton(
                             enabled = !spaceBusy,
                             onClick = { setSpace(inviteAuthority = "owners") },
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(t("space.authorityOwners"))
                         }
@@ -2204,7 +2208,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2225,6 +2229,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
+                    Spacer(Modifier.height(12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2756,6 +2761,8 @@ val entitlement by Entitlements.state.collectAsState()
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+
+                Spacer(Modifier.height(12.dp))
 
                 // Import row (restored: the 3180802 share-open refactor
                 // dropped it along with the export row, leaving the
