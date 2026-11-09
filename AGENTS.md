@@ -61,7 +61,7 @@ baluard/
 | Ubuntu | 26.04 | Secret Service (gnome-keyring or compatible) at runtime for keyring storage. |
 | Fedora | 43 | Secret Service (gnome-keyring or compatible) at runtime for keyring storage. |
 
-Rust edition 2024, MSRV 1.85. The optional `fido2` feature requires Rust 1.89 (ctap-hid-fido2 requirement); default builds stay 1.85.
+Rust edition 2024, MSRV 1.85. The optional `fido2` feature requires Rust 1.89 (ctap-hid-fido2 requirement); default builds stay 1.85. The floor is enforced by `just msrv-check` (rustup 1.85.0 workspace check) and mirrored by the dispatch-only `.github/workflows/msrv.yml`; Cargo.lock stays untracked on purpose (the MSRV-aware resolver pins compatible dependency lines from `rust-version` alone).
 Linux build dependencies: `protoc`, WebKitGTK/GTK dev headers. Run `just sysdeps` for distro-specific packages.
 
 ## CODING STANDARDS

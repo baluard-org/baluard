@@ -1,0 +1,21 @@
+# MSRV floor check: the workspace declares rust-version = "1.85" but the
+# stable-track CI jobs never compile under it, so dependency drift could
+# silently raise the real floor. This job compiles the default-feature
+# workspace with exactly 1.85. The optional fido2 feature needs a newer
+# Rust (ctap-hid-fido2) and is deliberately not enabled here.
+name: msrv
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain 1.85
+        uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Check the workspace under the MSRV
+        run: cargo check --workspace --all-targets
