@@ -2,6 +2,7 @@ package app.baluard.mobile.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,13 +10,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,9 +27,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -33,10 +40,13 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import app.baluard.mobile.MobileDeviceFlow
+import app.baluard.mobile.MobileDeviceFlowStatus
 import app.baluard.mobile.MobileProvider
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.i18n.t
+import app.baluard.mobile.platform.openUrl
 import app.baluard.mobile.ui.components.BaluardDivider
 import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
@@ -74,6 +84,114 @@ fun GitBackupScreen(
     var gitCustomChangedJson by remember { mutableStateOf<String?>(null) }
     var gitCustomOk by remember { mutableStateOf(false) }
 
+    // Browser sign-in (the same primitives as onboarding's provider flow).
+    // A connected account means setup_sync can run with a blank token.
+    var gitConnectBusy by remember { mutableStateOf(false) }
+    var gitWebAuthWaiting by remember { mutableStateOf(false) }
+    var gitDeviceFlow by remember { mutableStateOf<MobileDeviceFlow?>(null) }
+    var gitConnected by remember { mutableStateOf(false) }
+    var gitConnectError by remember { mutableStateOf<String?>(null) }
+    // Null while the first status read runs, so an already-connected vault
+    // never flashes the wizard.
+    var alreadyConnected by remember { mutableStateOf<Boolean?>(null) }
+
+    LaunchedEffect(Unit) {
+        alreadyConnected = runCatching { repo.syncStatus(vault).active }.getOrDefault(false)
+    }
+
+    // A provider switch or the custom server invalidates an in-flight
+    // browser sign-in: its token belongs to the previous selection.
+    fun resetConnectState() {
+        gitConnectBusy = false
+        gitWebAuthWaiting = false
+        gitDeviceFlow = null
+        gitConnected = false
+        gitConnectError = null
+    }
+
+    fun startBrowserSignIn() {
+        gitConnectError = null
+        gitConnectBusy = true
+        scope.launch {
+            try {
+                if (gitProvider == MobileProvider.GIT_LAB) {
+                    // GitLab has no in-app web OAuth: RFC 8628 device flow.
+                    val flow = repo.startDeviceFlow(gitProvider)
+                    gitDeviceFlow = flow
+                    openUrl(flow.verificationUri())
+                } else {
+                    val url = repo.webOauthStart(gitProvider)
+                    gitWebAuthWaiting = true
+                    openUrl(url)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                gitConnectError = (e.message ?: "")
+                    .removePrefix("detail=")
+                    .ifBlank { t("provider.errorConnection") }
+            }
+            gitConnectBusy = false
+        }
+    }
+
+    // Web-OAuth poll loop; dies with composition (backing out cancels it).
+    LaunchedEffect(gitWebAuthWaiting) {
+        if (!gitWebAuthWaiting) return@LaunchedEffect
+        while (isActive) {
+            delay(2_000)
+            try {
+                val o = Json.parseToJsonElement(repo.webOauthStatus(gitProvider)).jsonObject
+                when (o["status"]?.jsonPrimitive?.content) {
+                    "success" -> {
+                        gitConnected = true
+                        gitWebAuthWaiting = false
+                        break
+                    }
+                    "error" -> {
+                        gitConnectError = o["error"]?.jsonPrimitive?.content
+                            ?: t("provider.errorAuth")
+                        gitWebAuthWaiting = false
+                        break
+                    }
+                    else -> Unit
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Transient: resuming from the browser can briefly cut
+                // sockets; the next tick retries (same policy as onboarding).
+            }
+        }
+    }
+
+    // Device-flow poll loop (GitLab).
+    LaunchedEffect(gitDeviceFlow) {
+        val flow = gitDeviceFlow ?: return@LaunchedEffect
+        while (isActive) {
+            delay(5_000)
+            try {
+                when (flow.poll()) {
+                    MobileDeviceFlowStatus.SUCCESS -> {
+                        gitConnected = true
+                        gitDeviceFlow = null
+                        break
+                    }
+                    MobileDeviceFlowStatus.EXPIRED -> {
+                        gitConnectError = t("provider.errorAuth")
+                        gitDeviceFlow = null
+                        break
+                    }
+                    else -> Unit
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Transient network noise; the code outlives a few failures.
+            }
+        }
+    }
+
     // The host strips scheme, userinfo, path, and port — bound-host
     // release compares bare host names.
     fun gitCustomHost(): String {
@@ -101,6 +219,50 @@ fun GitBackupScreen(
                 put("username", JsonPrimitive(gitCustomUsername.trim()))
             }
         }.toString()
+    }
+
+    // Already syncing to a remote: the wizard would fight the existing
+    // setup (setup_sync refuses a second origin), so show status only.
+    if (alreadyConnected != false) {
+        Scaffold(
+            topBar = {
+                BaluardTopBar(
+                    title = t("settings.gitBackup"),
+                    onBack = onBack,
+                )
+            },
+        ) { pad ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(pad)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                if (alreadyConnected == true) {
+                    SectionCard(title = t("settings.gitBackupWhere")) {
+                        Text(
+                            t("settings.gitBackupActive"),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            t("settings.gitBackupDesc"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+        return
     }
 
     Scaffold(
@@ -136,7 +298,10 @@ fun GitBackupScreen(
                             .fillMaxWidth()
                             .clickable(enabled = !gitBusy) {
                                 gitCustom = false
-                                gitProvider = provider
+                                if (gitProvider != provider) {
+                                    gitProvider = provider
+                                    resetConnectState()
+                                }
                             }
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -167,7 +332,12 @@ fun GitBackupScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(enabled = !gitBusy) { gitCustom = true }
+                        .clickable(enabled = !gitBusy) {
+                            if (!gitCustom) {
+                                gitCustom = true
+                                resetConnectState()
+                            }
+                        }
                         .padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -358,16 +528,112 @@ fun GitBackupScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(6.dp))
-                    BaluardTextField(
-                        value = gitPat,
-                        onValueChange = { gitPat = it },
-                        label = t("settings.gitPat"),
-                        isPassword = true,
-                        singleLine = true,
-                        enabled = !gitBusy,
-                        supportingText = t("settings.gitPatHint"),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+
+                    when {
+                        gitConnected -> {
+                            Text(
+                                t("settings.gitConnected"),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+
+                        gitWebAuthWaiting || gitDeviceFlow != null -> {
+                            val flow = gitDeviceFlow
+                            if (flow != null) {
+                                Text(
+                                    t("deviceCode.hint"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    flow.userCode(),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                BaluardOutlinedButton(
+                                    text = t("deviceCode.openBrowser"),
+                                    onClick = { openUrl(flow.verificationUri()) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    t("deviceCode.waiting"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            } else {
+                                Text(
+                                    t("provider.webAuthTitle"),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    t("provider.webAuthBody"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                t("common.cancel"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = !gitConnectBusy) {
+                                        gitWebAuthWaiting = false
+                                        gitDeviceFlow = null
+                                    },
+                            )
+                        }
+
+                        else -> {
+                            // Same one-tap sign-in as the onboarding flow:
+                            // browser OAuth for GitHub and Codeberg, the
+                            // device code for GitLab. The token lands in the
+                            // device keyring, so Continue needs no PAT.
+                            BaluardPrimaryButton(
+                                text = t("settings.gitConnectBrowser"),
+                                onClick = { startBrowserSignIn() },
+                                enabled = !gitBusy,
+                                loading = gitConnectBusy,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            BaluardTextField(
+                                value = gitPat,
+                                onValueChange = { gitPat = it },
+                                label = t("settings.gitPat"),
+                                isPassword = true,
+                                singleLine = true,
+                                enabled = !gitBusy,
+                                supportingText = t("settings.gitPatHint"),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+
+                    gitConnectError?.let { err ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            err,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+
                     Spacer(Modifier.height(6.dp))
                     BaluardTextField(
                         value = gitRepo,
