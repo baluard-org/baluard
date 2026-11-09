@@ -275,13 +275,23 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         }
     }
 
-    /** Case-insensitive containment over name and username: the only
-     *  filter the search box applies. */
-    internal fun matchesQuery(
+    /** Accent-insensitive fold so "inició" finds "inicio" (mirrors the
+     *  FieldHeuristics fold). */
+    internal fun fold(s: String): String =
+        java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+
+    /** Search rank: 2 = name hit, 1 = username hit, 0 = no match. Name
+     *  hits outrank the rest (Bitwarden's priority model). */
+    internal fun searchRank(
         m: AutofillSession.Match,
         q: String,
-    ): Boolean = m.name.contains(q, ignoreCase = true) ||
-        m.username?.contains(q, ignoreCase = true) == true
+    ): Int =
+        when {
+            fold(m.name).contains(fold(q), ignoreCase = true) -> 2
+            m.username?.let { fold(it).contains(fold(q), ignoreCase = true) } == true -> 1
+            else -> 0
+        }
 
     private fun renderList(target: String) {
         val matches: List<AutofillSession.Match>
@@ -296,8 +306,11 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                 matches = data.matches
                 suggestions = data.suggestions
             } else {
-                matches = data.allLogins.filter { matchesQuery(it, q) }
-                    .sortedBy { it.name.lowercase() }
+                matches = data.allLogins
+                    .map { it to searchRank(it, q) }
+                    .filter { it.second > 0 }
+                    .sortedWith(compareBy({ -it.second }, { it.first.name.lowercase() }))
+                    .map { it.first }
                 suggestions = emptyList()
             }
         }
