@@ -60,7 +60,7 @@ beforeEach(() => {
   daemonMock.mockReset();
   // Default: favicons on, no job running.
   daemonMock.mockImplementation((action) => {
-    if (action === "settings.get") return Promise.resolve({ fetch_favicons: true });
+    if (action === "settings.get") return Promise.resolve(JSON.stringify({ fetch_favicons: true }));
     if (action === "favicon.backfill_status") return Promise.resolve(STATUS());
     throw new Error(`unexpected daemon action ${action}`);
   });
@@ -83,7 +83,7 @@ describe("IconBackfillSection", () => {
 
   it("shows the enable hint instead of the button when favicons are off", async () => {
     daemonMock.mockImplementation((action) => {
-      if (action === "settings.get") return Promise.resolve({ fetch_favicons: false });
+      if (action === "settings.get") return Promise.resolve(JSON.stringify({ fetch_favicons: false }));
       if (action === "favicon.backfill_status") return Promise.resolve(STATUS());
       throw new Error(`unexpected daemon action ${action}`);
     });
@@ -94,7 +94,7 @@ describe("IconBackfillSection", () => {
 
   it("a job already running on mount resumes the progress view without re-toasting", async () => {
     daemonMock.mockImplementation((action) => {
-      if (action === "settings.get") return Promise.resolve({ fetch_favicons: true });
+      if (action === "settings.get") return Promise.resolve(JSON.stringify({ fetch_favicons: true }));
       if (action === "favicon.backfill_status")
         return Promise.resolve(
           STATUS({ running: true, total: 10, done: 3, current_domain: "example.com" }),
@@ -114,7 +114,7 @@ describe("IconBackfillSection", () => {
     // scheduling this component relies on.
     let pollCount = 0;
     daemonMock.mockImplementation((action) => {
-      if (action === "settings.get") return Promise.resolve({ fetch_favicons: true });
+      if (action === "settings.get") return Promise.resolve(JSON.stringify({ fetch_favicons: true }));
       if (action === "favicon.backfill_start")
         return Promise.resolve(STATUS({ running: true, total: 4, done: 0 }));
       if (action === "favicon.backfill_status") {
@@ -150,7 +150,7 @@ describe("IconBackfillSection", () => {
 
   it("a refused start (favicons off at the daemon) surfaces the refusal as a warning", async () => {
     daemonMock.mockImplementation((action) => {
-      if (action === "settings.get") return Promise.resolve({ fetch_favicons: true });
+      if (action === "settings.get") return Promise.resolve(JSON.stringify({ fetch_favicons: true }));
       if (action === "favicon.backfill_status") return Promise.resolve(STATUS());
       if (action === "favicon.backfill_start")
         return Promise.reject(new Error("Fetching site icons is turned off."));
@@ -170,7 +170,7 @@ describe("IconBackfillSection", () => {
 
   it("a cancelled job stops silently: no error toast", async () => {
     daemonMock.mockImplementation((action) => {
-      if (action === "settings.get") return Promise.resolve({ fetch_favicons: true });
+      if (action === "settings.get") return Promise.resolve(JSON.stringify({ fetch_favicons: true }));
       if (action === "favicon.backfill_status")
         return Promise.resolve(STATUS({ running: false, finished: true, error: "Cancelled." }));
       throw new Error(`unexpected daemon action ${action}`);
@@ -184,7 +184,7 @@ describe("IconBackfillSection", () => {
 
   it("a job that finished while the tab was closed shows its counts without re-toasting", async () => {
     daemonMock.mockImplementation((action) => {
-      if (action === "settings.get") return Promise.resolve({ fetch_favicons: true });
+      if (action === "settings.get") return Promise.resolve(JSON.stringify({ fetch_favicons: true }));
       if (action === "favicon.backfill_status")
         return Promise.resolve(STATUS({ finished: true, total: 9, done: 9, fetched: 6, skipped: 3 }));
       throw new Error(`unexpected daemon action ${action}`);
@@ -200,7 +200,7 @@ describe("IconBackfillSection", () => {
 
   it("cancel calls the cancel action", async () => {
     daemonMock.mockImplementation((action) => {
-      if (action === "settings.get") return Promise.resolve({ fetch_favicons: true });
+      if (action === "settings.get") return Promise.resolve(JSON.stringify({ fetch_favicons: true }));
       if (action === "favicon.backfill_status")
         return Promise.resolve(STATUS({ running: true, total: 5, done: 1 }));
       if (action === "favicon.backfill_cancel") return Promise.resolve("cancelled");

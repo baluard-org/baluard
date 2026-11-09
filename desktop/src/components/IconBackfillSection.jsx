@@ -131,7 +131,9 @@ export default function IconBackfillSection() {
     setTimeout(() => {
       if (disposed) return;
       daemon("settings.get")
-        .then((d) => setFaviconsEnabled(d.fetch_favicons === true))
+        // daemon() returns the raw payload string; every other
+        // settings.get caller JSON.parses it (SettingsModal pattern).
+        .then((raw) => setFaviconsEnabled(JSON.parse(raw).fetch_favicons === true))
         .catch(() => setFaviconsEnabled(null));
       refreshIconStatus();
     }, 0);
