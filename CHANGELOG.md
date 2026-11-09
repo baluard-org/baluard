@@ -4,6 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- The Android autofill picker header now carries the Baluard logo and wordmark on the left and the Choose a login prompt on the right, with more room below the status bar.
 - The git backup setup is now a full settings page on mobile, with proper room for the own-server flow.
 - Desktop: the site-icon backfill now respects the Show website icons setting; the fetch button was unreachable.
 
