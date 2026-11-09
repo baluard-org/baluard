@@ -29,6 +29,9 @@ import app.baluard.mobile.i18n.t
  */
 data class InlineStyle(val specs: List<InlinePresentationSpec>, val maxCount: Int)
 
+/** Max per-entry datasets one fill response may carry. */
+private const val MAX_SHEET_DATASETS = 20
+
 /**
  * Shared FillResponse construction for the service (direct path, session
  * already unlocked) and [AutofillActivity] (post-biometric path). One builder,
@@ -139,9 +142,13 @@ object AutofillResponseBuilder {
         // Plan D2 holds where it matters: the QUERY never returns passwords.
         // G24 §4.11: vault attribution renders only when two or more vaults
         // contribute, so a single-vault user never sees merge machinery.
-        val multiVault = matches.mapNotNull { it.vaultPath }.distinct().size > 1
+        // Cap the sheet: past ~20 rows the dropdown becomes unusable and
+        // the "Open Baluard" row (search) is the way to the rest. Bitwarden
+        // ships the same cap.
+        val capped = matches.take(MAX_SHEET_DATASETS)
+        val multiVault = capped.mapNotNull { it.vaultPath }.distinct().size > 1
         val builder = FillResponse.Builder()
-        matches.forEachIndexed { index, match ->
+        capped.forEachIndexed { index, match ->
             val (username, password) = AutofillSession.credential(match.vaultPath, match.id) ?: return@forEachIndexed
             val title = match.vaultName
                 ?.takeIf { multiVault }
