@@ -53,6 +53,20 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         private val MAX_SEARCH_RESULTS = 50
 
         private val MN_REGEX = Regex("\\p{Mn}+")
+
+        /** The blackletter wordmark ships as a Compose resource; the plain-View
+         *  process reads the same file through the merged asset path. Loaded
+         *  once; bold-sans fallback if the asset is ever missing. */
+        private val brandTypeface: android.graphics.Typeface? by lazy {
+            val assets = AppContextHolder.get()?.assets ?: return@lazy null
+            runCatching {
+                android.graphics.Typeface.createFromAsset(
+                    assets,
+                    "composeResources/baluard_mobile.shared.generated.resources/font/morris_roman.ttf",
+                )
+            }.getOrNull()
+        }
+
         const val MODE_A11Y_PICKER = "a11y_picker"
         const val MODE_FALLBACK_PICK = "fallback_pick"
         private const val TAG = "BaluardAutofill"
@@ -90,6 +104,10 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
         setContentView(R.layout.autofill_activity)
+
+        findViewById<TextView>(R.id.autofill_brand).apply {
+            brandTypeface?.let { typeface = it }
+        }
 
         val mode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_DATASETS
         val target = intent?.getStringExtra(EXTRA_TARGET)
