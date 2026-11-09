@@ -1951,6 +1951,11 @@ val entitlement by Entitlements.state.collectAsState()
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    Spacer(Modifier.height(12.dp))
+                    BaluardPrimaryButton(
+                        text = t("people.open"),
+                        onClick = { onOpenPeople() },
+                    )
                 }
             }
             if (myRole == "owner" || myRole == "admin") {
@@ -1967,6 +1972,11 @@ val entitlement by Entitlements.state.collectAsState()
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    Spacer(Modifier.height(12.dp))
+                    BaluardPrimaryButton(
+                        text = t("collections.open"),
+                        onClick = { onOpenCollections() },
+                    )
                 }
             }
             // Activity is per-device local data — every member gets it.
@@ -1983,6 +1993,11 @@ val entitlement by Entitlements.state.collectAsState()
                         modifier = Modifier.weight(1f),
                     )
                 }
+                Spacer(Modifier.height(12.dp))
+                BaluardPrimaryButton(
+                    text = t("activity.open"),
+                    onClick = { onOpenActivity() },
+                )
             }
                     }
                     SettingsCategory.Space -> {
