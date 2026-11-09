@@ -683,7 +683,16 @@ fn save_window_geometry(app: &AppHandle) {
     let Some(w) = app.get_webview_window("main") else {
         return;
     };
-    let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else {
+    // Matched coordinate pairs (see window_geometry's contract): Linux's
+    // set_position writes the CLIENT origin (GTK move_) so it must pair
+    // with inner_position, while macOS/Windows pair the frame origin with
+    // outer_position. Size is the client size everywhere. Mismatched pairs
+    // drift every close/relaunch cycle (the size pair grew by the title bar).
+    #[cfg(target_os = "linux")]
+    let (pos, size) = (w.inner_position(), w.inner_size());
+    #[cfg(not(target_os = "linux"))]
+    let (pos, size) = (w.outer_position(), w.inner_size());
+    let (Ok(pos), Ok(size)) = (pos, size) else {
         return;
     };
     let Ok(dir) = app.path().app_config_dir() else {
@@ -703,8 +712,10 @@ fn save_window_geometry(app: &AppHandle) {
     }
 }
 
-/// Re-apply the last saved rect, clamped into the current monitor so a
-/// window left off-screen or under a panel reappears reachable.
+/// Re-apply the last saved rect, clamped into the monitor that contains
+/// its center, so a window left off-screen or under a panel reappears
+/// reachable. A saved rect from a disconnected screen falls back to the
+/// current monitor (safe, not faithful).
 fn restore_window_geometry(window: &tauri::WebviewWindow) {
     let Ok(dir) = window.path().app_config_dir() else {
         return;
@@ -715,7 +726,27 @@ fn restore_window_geometry(window: &tauri::WebviewWindow) {
     let Some(saved) = window_geometry::parse_saved(&raw) else {
         return;
     };
-    let Ok(Some(mon)) = window.current_monitor() else {
+    // current_monitor() is unreliable for a never-shown window (unmapped GDK
+    // windows report the primary), so pick the screen from the saved rect's
+    // center and only fall back to the current monitor when none matches.
+    let target = match window.available_monitors() {
+        Ok(monitors) => {
+            let rects: Vec<_> = monitors
+                .iter()
+                .map(|m| {
+                    let p = m.position();
+                    let s = m.size();
+                    (p.x, p.y, s.width, s.height)
+                })
+                .collect();
+            match window_geometry::monitor_index_for_center(&rects, &saved) {
+                Some(i) => monitors.get(i).cloned(),
+                None => window.current_monitor().ok().flatten(),
+            }
+        }
+        Err(_) => window.current_monitor().ok().flatten(),
+    };
+    let Some(mon) = target else {
         return;
     };
     let mp = mon.position();
@@ -1509,8 +1540,10 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // A plain second launch must surface the existing window instead
             // of dying silently (macOS covers this via RunEvent::Reopen;
-            // Linux and Windows have no other path).
+            // Linux and Windows have no other path). Unminimize first: on
+            // Windows SetForegroundWindow does not restore a minimized one.
             if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
             }
@@ -1927,9 +1960,11 @@ pub fn run() {
             // hoped). An adopted daemon (started by the CLI or the browser
             // extension) is locked over the socket instead of killed.
             if let tauri::RunEvent::Exit = event {
-                daemon_ctl::on_app_exit(
-                    app_handle.state::<Mutex<Option<Daemon>>>().inner(),
-                );
+                // Save last before teardown: Ctrl+Q and the tray Quit skip
+                // CloseRequested, so the exit path is the only save that
+                // covers every quit route (the window is still queryable).
+                save_window_geometry(app_handle);
+                daemon_ctl::on_app_exit(app_handle.state::<Mutex<Option<Daemon>>>().inner());
             }
             // Linux: clean exit clears the watchdog marker so the next
             // launch does not read this run as a rendering crash. A

@@ -83,14 +83,16 @@ export default function App() {
   onSettled(() => {
     (async () => {
       try {
+        const isMac = navigator.userAgent.includes("Mac");
         // Detect macOS to apply titlebar adjustments
-        if (navigator.userAgent.includes("Mac")) {
+        if (isMac) {
           document.documentElement.classList.add("platform-mac");
         } else {
           // Linux and Windows have no native menu, so the tray menu was the
-          // only exit path until the keyboard shortcut below.
+          // only exit path until the keyboard shortcut below. e.code keys on
+          // the physical key, so it survives non-Latin keyboard layouts.
           window.addEventListener("keydown", (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "q") {
+            if (e.ctrlKey && e.code === "KeyQ") {
               e.preventDefault();
               invoke("exit_app").catch(() => {});
             }
@@ -146,10 +148,15 @@ export default function App() {
       } finally {
         // Show window once initialization and initial state checks finish.
         await showWindow();
-        // One-time hint: closing the window hides to the tray rather than
-        // quitting, which reads as a dead app on Linux/Windows otherwise.
+        // One-time hint, non-Mac only: closing the window hides to the tray
+        // rather than quitting, which reads as a dead app on Linux/Windows
+        // otherwise (macOS users expect the dock + Cmd+Q convention).
         try {
-          if (!localStorage.getItem("baluard.trayHint.v1")) {
+          const isMac = navigator.userAgent.includes("Mac");
+          if (
+            !isMac &&
+            !localStorage.getItem("baluard.trayHint.v1")
+          ) {
             localStorage.setItem("baluard.trayHint.v1", "1");
             toastInfo(t("app.trayHint"));
           }

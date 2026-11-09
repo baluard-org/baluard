@@ -2,10 +2,18 @@
 //!
 //! Nothing else in the app manages geometry, so a window dragged partly
 //! off-screen (or parked under a panel) stays there across restarts. The
-//! saved rect is clamped into the current monitor's bounds before reuse.
-//! Wayland compositors ignore client-side positioning, so the clamp is
-//! advisory there by platform contract; it fully applies on X11, macOS,
-//! and Windows.
+//! saved rect is clamped into the monitor that contains its center before
+//! reuse, so a window saved on a disconnected screen still comes back
+//! reachable. Wayland compositors ignore client-side positioning, so the
+//! clamp is advisory there by platform contract; it fully applies on X11,
+//! macOS, and Windows.
+//!
+//! Coordinate contract (tao is asymmetric per platform): `x`/`y` is the
+//! origin as consumed by `set_position` — the frame origin on macOS and
+//! Windows, the client origin on Linux (GTK `move_`); `width`/`height` is
+//! the CLIENT size everywhere, matched by `set_size`. Saving and restoring
+//! must use matched pairs or the window drifts (grows by the title bar on
+//! Linux) every close/relaunch cycle.
 
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +56,21 @@ pub fn clamp_geometry(
 pub fn parse_saved(raw: &str) -> Option<SavedGeometry> {
     let g: SavedGeometry = serde_json::from_str(raw).ok()?;
     (g.width > 0 && g.height > 0).then_some(g)
+}
+
+/// Index of the monitor whose bounds contain the saved rect's center
+/// point — the closest statement of "which screen was this window on".
+/// None when no monitor contains it (disconnected setup); callers then
+/// fall back to the current monitor so the clamp still lands safely.
+pub fn monitor_index_for_center(
+    monitors: &[(i32, i32, u32, u32)],
+    g: &SavedGeometry,
+) -> Option<usize> {
+    let cx = g.x + g.width as i32 / 2;
+    let cy = g.y + g.height as i32 / 2;
+    monitors.iter().position(|&(mx, my, mw, mh)| {
+        mw > 0 && mh > 0 && cx >= mx && cx < mx + mw as i32 && cy >= my && cy < my + mh as i32
+    })
 }
 
 #[cfg(test)]
@@ -109,5 +132,37 @@ mod tests {
         assert!(parse_saved(r#"{"x":0,"y":0,"width":0,"height":600}"#).is_none());
         let parsed = parse_saved(r#"{"x":10,"y":20,"width":1200,"height":700}"#).unwrap();
         assert_eq!(parsed, geo(10, 20, 1200, 700),);
+    }
+
+    #[test]
+    fn monitor_center_picks_the_containing_screen() {
+        let monitors = [(0, 0, 1920, 1080), (1920, 0, 2880, 1080)];
+        assert_eq!(
+            monitor_index_for_center(&monitors, &geo(2400, 300, 1200, 700)),
+            Some(1)
+        );
+        assert_eq!(
+            monitor_index_for_center(&monitors, &geo(100, 300, 1200, 700)),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn monitor_center_off_every_screen_is_none() {
+        let monitors = [(0, 0, 1920, 1080)];
+        // Center at (-5000, -5000): a screen that no longer exists.
+        assert_eq!(
+            monitor_index_for_center(&monitors, &geo(-5600, -5350, 1200, 700)),
+            None
+        );
+    }
+
+    #[test]
+    fn monitor_degenerate_entries_are_skipped() {
+        let monitors = [(0, 0, 0, 0), (1920, 0, 2880, 1080)];
+        assert_eq!(
+            monitor_index_for_center(&monitors, &geo(2400, 300, 1200, 700)),
+            Some(1)
+        );
     }
 }
