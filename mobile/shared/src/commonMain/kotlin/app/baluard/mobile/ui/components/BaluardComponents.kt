@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -429,7 +430,9 @@ fun BaluardOutlinedButton(
         ),
         modifier = modifier
             .fillMaxWidth()
-            .height(48.dp),
+            // Grow for wrapped labels: localized strings run long and a
+            // fixed height clips the second line.
+            .heightIn(min = 48.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
