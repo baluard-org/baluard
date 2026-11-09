@@ -85,11 +85,12 @@ internal val PT: Map<String, String> = mapOf(
     "onboarding.errorCreateFailed" to "Não foi possível criar o cofre. Verifique se o nome é válido e tente novamente.",
     "recovery.title" to "Sua frase de recuperação",
     "recovery.subtitle" to "Guarde estas palavras em um local seguro",
-    "recovery.warning" to
-        "Esta frase de 24 palavras é a sua única rede de segurança. Se você esquecer " +
-        "sua senha mestra ou perder seus dispositivos, ninguém poderá recuperar seu " +
-        "cofre.",
+    "recovery.warning" to "Essas palavras são a única forma de recuperar seu cofre. Guarde-as em um lugar seguro. Nunca neste dispositivo nem na nuvem.",
     "recovery.ack" to "Escrevi e guardei minha frase de recuperação em segurança",
+    "recovery.finalTitle" to "Uma última verificação",
+    "recovery.finalBody" to "Não há redefinição e ninguém, nem nós, pode recuperar seu cofre sem essas 24 palavras. Se elas se perderem, tudo dentro dele se perde para sempre. Você realmente as guardou em um lugar seguro?",
+    "recovery.finalDecline" to "Não, ainda não",
+    "recovery.finalConfirm" to "Sim, estão guardadas",
     "recovery.copyPhrase" to "Copiar frase",
     "recovery.saveTxt" to "Salvar como arquivo de texto",
     "recovery.savePdf" to "Salvar como PDF",

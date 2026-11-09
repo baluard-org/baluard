@@ -4,6 +4,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { IconNote, IconCopy, IconCheck, IconDownload } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import { useCopyFeedback } from "../lib/useCopyFeedback.js";
+import FinalPhraseCheckDialog from "./FinalPhraseCheckDialog.jsx";
 import { invoke } from "@tauri-apps/api/core";
 import { toastSuccess, toastError } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -54,6 +55,7 @@ export default function RecoveryScreen() {
   const [verifyWords, setVerifyWords] = createSignal(["", "", "", ""]);
   const [showExamples, setShowExamples] = createSignal(false);
   const [kitAck, setKitAck] = createSignal(false);
+  const [finalCheck, setFinalCheck] = createSignal(false);
 
   const phrase = () => auth.recoveryPhrase();
   const kit = () => auth.kitPhrase();
@@ -115,6 +117,11 @@ export default function RecoveryScreen() {
   const handleConfirm = (e) => {
     e.preventDefault();
     if (!canFinish()) return;
+    setFinalCheck(true);
+  };
+
+  const finishAfterFinalCheck = () => {
+    setFinalCheck(false);
     // Zero recovery phrase from memory, transition to setup wizard
     auth.setRecoveryPhrase("");
     auth.setKitPhrase("");
@@ -304,6 +311,11 @@ export default function RecoveryScreen() {
         </form>
       </div>
       </div>
+      <FinalPhraseCheckDialog
+        open={finalCheck()}
+        onDecline={() => setFinalCheck(false)}
+        onConfirm={finishAfterFinalCheck}
+      />
     </div>
   );
 }

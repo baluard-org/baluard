@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Showing a recovery phrase now ends with a second confirmation that asks whether you really stored the words, and the words screen states clearly that they are the only way to recover the vault.
+
 ## 0.2.3 - 2026-11-08
 - Filled fields now breathe a soft neon halo three times after the fill ring, about one second per breath, and then return to their normal look.
 

@@ -76,7 +76,7 @@
   },
   "recovery": {
     "title": "Recovery Phrase",
-    "warning": "Write this down. It will NOT be shown again.",
+    "warning": "Write these words down and store them somewhere safe. They are the ONLY way to recover your vault. There is no reset, and they will not be shown again.",
     "confirm": "I've saved my recovery phrase",
     "confirmDisabled": "Verify all words above to continue",
     "downloadTxt": "Download as text file",
@@ -102,7 +102,7 @@
       "replace": "Replace phrase",
       "replacedNote": "A fresh phrase is printed once; the old one stops working right away.",
       "ceremonyTitle": "Your new recovery phrase",
-      "warning": "Anyone who can read this phrase can read this vault. Store it before you close this window.",
+      "warning": "These words are the only way to recover this vault. Anyone who can read them can read this vault, and they will never be shown again.",
       "copy": "Copy",
       "copied": "Copied",
       "stored": "I stored my new phrase somewhere safe",
@@ -113,7 +113,11 @@
     "kitBody": "These 24 words open the vault when every admin device is gone. Shown once — keep them with the family kit.",
     "kitSavedAck": "I saved the kit phrase somewhere safe.",
     "kitSheetTitle": "Family recovery kit",
-    "kitSheetWarning": "Anyone holding these 24 words can open this vault. Store this file with the family kit, somewhere safe."
+    "kitSheetWarning": "Anyone holding these 24 words can open this vault. Store this file with the family kit, somewhere safe.",
+    "finalTitle": "One last check",
+    "finalBody": "There is no reset and no way for anyone, including us, to recover your vault without these 24 words. If they are lost, everything inside is lost forever. Did you really store them somewhere safe?",
+    "finalDecline": "No, I haven't yet",
+    "finalConfirm": "Yes, they are stored safely"
   },
   "setup": {
     "title": "Sync your vault",

@@ -100,8 +100,12 @@ internal val ES: Map<String, String> = mapOf(
     "recovery.subtitle" to
         "Estas 24 palabras son la única forma de abrir tu bóveda en un dispositivo nuevo " +
             "si olvidas la contraseña maestra. Escríbelas en papel y guárdalas en un lugar seguro.",
-    "recovery.warning" to "Nunca guardes la frase en este dispositivo ni en la nube.",
+    "recovery.warning" to "Estas palabras son la única forma de recuperar tu bóveda. Guárdalas en un lugar seguro. Nunca en este dispositivo ni en la nube.",
     "recovery.ack" to "La escribí en papel",
+    "recovery.finalTitle" to "Una última comprobación",
+    "recovery.finalBody" to "No hay reinicio ni forma de recuperar tu bóveda sin estas 24 palabras, ni siquiera para nosotros. Si se pierden, todo lo que guardas se pierde para siempre. ¿Las guardaste de verdad en un lugar seguro?",
+    "recovery.finalDecline" to "No, aún no",
+    "recovery.finalConfirm" to "Sí, están guardadas",
     "recovery.copyPhrase" to "Copiar frase de recuperación",
     "recovery.saveTxt" to "Guardar como archivo de texto",
     "recovery.savePdf" to "Guardar como PDF",

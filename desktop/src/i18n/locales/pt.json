@@ -76,7 +76,7 @@
   },
   "recovery": {
     "title": "Frase de Recuperação",
-    "warning": "Anote isso. NÃO será mostrado novamente.",
+    "warning": "Anote estas palavras e guarde-as em um lugar seguro. Elas são a ÚNICA forma de recuperar seu cofre. Não há redefinição e elas não serão mostradas novamente.",
     "confirm": "Salvei minha frase de recuperação",
     "confirmDisabled": "Verifique todas as palavras acima para continuar",
     "downloadTxt": "Baixar como arquivo de texto",
@@ -102,7 +102,7 @@
       "replace": "Substituir frase",
       "replacedNote": "A nova frase é mostrada uma única vez; a antiga para de funcionar imediatamente.",
       "ceremonyTitle": "Sua nova frase de recuperação",
-      "warning": "Qualquer pessoa que possa ler esta frase pode ler este vault. Guarde-a antes de fechar esta janela.",
+      "warning": "Essas palavras são a única forma de recuperar este cofre. Quem puder lê-las pode abrir este cofre, e elas nunca serão mostradas novamente.",
       "copy": "Copiar",
       "copied": "Copiado",
       "stored": "Guardei minha nova frase em um local seguro",
@@ -113,7 +113,11 @@
     "kitBody": "Essas 24 palavras abrem o cofre quando nenhum dispositivo de administrador restar. Mostradas uma única vez — guarde-as com o kit familiar.",
     "kitSavedAck": "Guardei a frase do kit em um lugar seguro.",
     "kitSheetTitle": "Kit de recuperação familiar",
-    "kitSheetWarning": "Qualquer pessoa com essas 24 palavras pode abrir este cofre. Guarde este arquivo com o kit familiar, em um lugar seguro."
+    "kitSheetWarning": "Qualquer pessoa com essas 24 palavras pode abrir este cofre. Guarde este arquivo com o kit familiar, em um lugar seguro.",
+    "finalTitle": "Uma última verificação",
+    "finalBody": "Não há redefinição e ninguém, nem nós, pode recuperar seu cofre sem essas 24 palavras. Se elas se perderem, tudo dentro dele se perde para sempre. Você realmente as guardou em um lugar seguro?",
+    "finalDecline": "Não, ainda não",
+    "finalConfirm": "Sim, estão guardadas"
   },
   "setup": {
     "title": "Sincronize seu cofre",

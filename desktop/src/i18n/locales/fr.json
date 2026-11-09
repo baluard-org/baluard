@@ -76,7 +76,7 @@
   },
   "recovery": {
     "title": "Phrase de récupération",
-    "warning": "Notez cette phrase. Elle ne sera PLUS JAMAIS affichée.",
+    "warning": "Écrivez ces mots et conservez-les en lieu sûr. Ils sont la SEULE façon de récupérer votre coffre. Il n'y a pas de réinitialisation et ils ne seront plus jamais affichés.",
     "confirm": "J'ai enregistré ma phrase de récupération",
     "confirmDisabled": "Vérifiez tous les mots ci-dessus pour continuer",
     "downloadTxt": "Télécharger sous forme de fichier texte",
@@ -102,7 +102,7 @@
       "replace": "Remplacer la phrase",
       "replacedNote": "Une nouvelle phrase est générée une seule fois ; l'ancienne cesse immédiatement de fonctionner.",
       "ceremonyTitle": "Votre nouvelle phrase de récupération",
-      "warning": "Quiconque peut lire cette phrase peut lire ce coffre. Conservez-la avant de fermer cette fenêtre.",
+      "warning": "Ces mots sont la seule façon de récupérer ce coffre. Quiconque peut les lire peut ouvrir ce coffre, et ils ne seront plus jamais affichés.",
       "copy": "Copier",
       "copied": "Copié",
       "stored": "J'ai conservé ma nouvelle phrase en lieu sûr",
@@ -113,7 +113,11 @@
     "kitBody": "Ces 24 mots permettent d'ouvrir le coffre si tous les appareils d'administration disparaissent. Affichés une seule fois : conservez-les avec le kit familial.",
     "kitSavedAck": "J'ai conservé la phrase du kit en lieu sûr.",
     "kitSheetTitle": "Kit de récupération familial",
-    "kitSheetWarning": "Quiconque possède ces 24 mots peut ouvrir ce coffre. Conservez ce fichier avec le kit familial, en lieu sûr."
+    "kitSheetWarning": "Quiconque possède ces 24 mots peut ouvrir ce coffre. Conservez ce fichier avec le kit familial, en lieu sûr.",
+    "finalTitle": "Une dernière vérification",
+    "finalBody": "Il n'y a pas de réinitialisation et personne, pas même nous, ne peut récupérer votre coffre sans ces 24 mots. S'ils sont perdus, tout ce qu'il contient l'est aussi pour toujours. Les avez-vous vraiment conservés en lieu sûr ?",
+    "finalDecline": "Non, pas encore",
+    "finalConfirm": "Oui, ils sont conservés"
   },
   "setup": {
     "title": "Synchroniser votre coffre",
