@@ -6,6 +6,7 @@
      branded screen behind the biometric prompt. Plain Views only, no
      Compose in this process (D9). -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/autofill_screen"
@@ -53,9 +54,12 @@
                 android:id="@+id/autofill_picker_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Choose a login"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:accessibilityHeading="true"
                 android:textSize="15sp"
-                android:textColor="@color/autofill_muted_text" />
+                android:textColor="@color/autofill_muted_text"
+                tools:text="Choose a login" />
         </LinearLayout>
 
         <EditText

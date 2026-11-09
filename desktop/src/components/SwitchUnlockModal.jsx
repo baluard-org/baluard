@@ -140,7 +140,10 @@ export default function SwitchUnlockModal(props) {
       props.onUnlocked?.();
       props.onClose?.();
     } catch (e) {
-      if (!/cancelled|canceled|user cancel/i.test(e?.message || "")) {
+      // Tauri invokes reject plugin errors as plain strings, so read the
+      // rejection itself, not e.message.
+      const msg = typeof e === "string" ? e : e?.message || "";
+      if (!/cancelled|canceled|user cancel/i.test(msg)) {
         toastError(sanitizeError(e, t));
       }
       setBusy(false);

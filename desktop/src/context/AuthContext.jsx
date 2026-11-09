@@ -106,6 +106,10 @@ function AuthProvider(props) {
   // decryption, so this works for a locked-but-open vault.
   async function refreshBiometric(slug = null) {
     try {
+      // Reset while the per-vault query is in flight so a stale enabled
+      // state from the previously targeted vault can never act on the new
+      // one (the login screen auto-prompts off this signal).
+      setBiometricAvailable(false);
       const s = JSON.parse(await daemon("vault.biometric_status", "", slug));
       setBiometricAvailable(s.available && s.enabled);
       // Install command when the system keyring (Linux Secret Service) is

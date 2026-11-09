@@ -4,7 +4,7 @@ import { useI18n } from "../i18n/index.jsx";
 import BridgeUnlockBanner from "./BridgeUnlockBanner.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { daemon, getRenderState } from "../lib/daemon.js";
-import { biometryPrompt } from "../lib/biometry.js";
+import { biometryAvailable, biometryPrompt } from "../lib/biometry.js";
 import { toastError } from "../context/toastSignal.js";
 import { sanitizeError, isHardwareError } from "../lib/utils.js";
 import { IconLock, IconFingerprint, IconSpinner, IconBaluardLogo } from "./Icon.jsx";
@@ -33,6 +33,15 @@ export default function LoginScreen() {
     })
     .catch(() => {});
 
+  // Plugin truth: the daemon reports per-vault Quick Unlock state, but only
+  // this plugin can actually show a prompt (Linux holds keyring escrow with
+  // no platform biometry, so the daemon says enabled while a prompt is
+  // impossible). One probe per mount gates both the button and the prompt.
+  const [pluginBiometryOk, setPluginBiometryOk] = createSignal(false);
+  biometryAvailable()
+    .then(ok => setPluginBiometryOk(ok))
+    .catch(() => setPluginBiometryOk(false));
+
   // Re-query Quick Unlock status whenever the effective target vault changes.
   // Post-QU fix the keychain entry is per-vault, so the button must reflect
   // the currently-targeted vault, not a global flag.
@@ -55,23 +64,27 @@ export default function LoginScreen() {
   );
   const [bruteLock, setBruteLock] = createSignal(false);
 
-  // Shared Quick Unlock body: platform biometric gate, then the daemon
-  // unlocks from the per-vault keychain escrow. The slug must ride the
-  // vault.open call so a multi-vault setup unlocks the vault the user
-  // actually selected; a bare no-slug call would fall through to the
-  // daemon-active vault.
-  const runQuickUnlock = async () => {
-    if (bruteLock()) return;
+  // One Quick Unlock at a time; the auto-prompt and the button share it so a
+  // click cannot stack a second prompt on top of the running one. Tauri
+  // invokes reject plugin errors as PLAIN STRINGS (the biometry plugin
+  // serializes its error enum), so the cancel check must read the rejection
+  // itself, not e.message.
+  const [quBusy, setQuBusy] = createSignal(false);
+  const runQuickUnlock = async (slug) => {
+    if (bruteLock() || quBusy()) return;
+    setQuBusy(true);
     try {
-      const target = auth.switchTarget();
       await biometryPrompt();
-      const infoStr = await daemon("vault.open", "", target);
-      await daemon("vault.biometric_unlock", "", target);
+      const infoStr = await daemon("vault.open", "", slug);
+      await daemon("vault.biometric_unlock", "", slug);
       auth.finishQuickUnlock(infoStr);
     } catch (e) {
-      if (!/cancelled|canceled|user cancel/i.test(e?.message || "")) {
+      const msg = typeof e === "string" ? e : e?.message || "";
+      if (!/cancelled|canceled|user cancel/i.test(msg)) {
         toastError(sanitizeError(e, t));
       }
+    } finally {
+      setQuBusy(false);
     }
   };
 
@@ -95,13 +108,16 @@ export default function LoginScreen() {
   // button retries. One shot per resolved target so a cancel cannot loop.
   const [autoPromptedSlug, setAutoPromptedSlug] = createSignal(null);
   createEffect(
-    () => [auth.biometricAvailable(), auth.switchTarget() ?? switcher.activeSlug(), joinMode()],
-    ([available, slug, joining]) => {
+    () => [auth.biometricAvailable(), pluginBiometryOk(), auth.switchTarget() ?? switcher.activeSlug(), joinMode()],
+    ([available, pluginOk, slug, joining]) => {
       // Guard reads are deliberately untracked: they gate this run only.
-      if (untrack(() => !available || !slug || joining || bruteLock())) return;
+      if (untrack(() => !available || !pluginOk || !slug || joining || bruteLock() || quBusy())) return;
+      // Never prompt while a password unlock is already in flight, nor
+      // after the vault unlocked underneath us mid-batch.
+      if (untrack(() => auth.status() !== "locked")) return;
       if (untrack(() => autoPromptedSlug() === slug)) return;
       setAutoPromptedSlug(slug);
-      runQuickUnlock();
+      runQuickUnlock(slug);
     },
   );
   const [joinEmail, setJoinEmail] = createSignal("");
@@ -299,11 +315,11 @@ export default function LoginScreen() {
           </button>
 
           {/* Quick Unlock (Biometric) */}
-          <Show when={auth.biometricAvailable()}>
+          <Show when={auth.biometricAvailable() && pluginBiometryOk()}>
             <button
               type="button"
-              onClick={() => runQuickUnlock()}
-              disabled={bruteLock()}
+              onClick={() => runQuickUnlock(auth.switchTarget() ?? switcher.activeSlug())}
+              disabled={bruteLock() || quBusy()}
               class="login-screen__quick-unlock-btn w-full mt-2 py-3 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <IconFingerprint class="w-4 h-4" />
