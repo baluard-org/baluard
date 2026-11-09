@@ -3431,8 +3431,10 @@ mod tests {
             "unrelated entry must not match"
         );
 
-        // App target: package equality only; no suggestions without the
-        // suggest_app_logins setting.
+        // App target: package equality only. The suggest_app_logins
+        // setting is on by default, so the app-to-web suggestion rides the
+        // response; the opt-out shape is covered by the settings tests
+        // below.
         let app = serde_json::from_str::<serde_json::Value>(
             &vault
                 .autofill_query("androidapp://com.github.android".to_string())
@@ -3444,9 +3446,22 @@ mod tests {
             app["matches"].as_array().unwrap().is_empty(),
             "web URIs must never match app targets: {app:?}"
         );
+        let sug = app["app_suggestions"].as_array().unwrap();
+        assert_eq!(
+            sug.len(),
+            1,
+            "default settings suggest the matching site: {app:?}"
+        );
+        assert_eq!(sug[0]["domain"], "github.com");
+        let sug_names: Vec<&str> = sug[0]["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v["name"].as_str())
+            .collect();
         assert!(
-            app["app_suggestions"].as_array().unwrap().is_empty(),
-            "suggestions require the opt-in setting: {app:?}"
+            sug_names.contains(&"GitHub"),
+            "suggestion carries the vault logins: {sug_names:?}"
         );
 
         // Secret-absence invariant: passwords never in autofill output.
