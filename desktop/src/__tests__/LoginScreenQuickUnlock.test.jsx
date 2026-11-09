@@ -3,17 +3,29 @@
 // 1Password/Bitwarden parity: when the login screen mounts and Quick Unlock
 // is available for the targeted vault, the platform biometric prompt fires
 // immediately. Cancel falls back to the password form (no toast, no loop);
-// the button remains for manual retry.
-import { describe, test, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@solidjs/testing-library";
+// the button remains for manual retry. Rejections arrive as Tauri's plain
+// strings, which is the shape the cancel check must survive.
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor, cleanup } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
+
+// A REAL Solid signal: the auto-prompt effect tracks auth.biometricAvailable,
+// so a cold-start flip (false -> true after mount) must be observable
+// reactivity, not a plain object property.
+const [biometricAvailable, setBiometricAvailable] = createSignal(false);
+
+const authState = {
+  status: "locked",
+  switchTarget: null, // null = the switcher's activeSlug is the real target
+};
 
 const authMock = {
-  status: () => "locked",
+  status: () => authState.status,
   activeVault: () => null,
   lastUnlockError: () => null,
-  switchTarget: () => "baluard-x",
+  switchTarget: () => authState.switchTarget,
   setSwitchTarget: vi.fn(),
-  biometricAvailable: () => biometricState.available,
+  biometricAvailable,
   pinAvailable: () => false,
   keyringHint: () => null,
   refreshBiometric: vi.fn(),
@@ -31,8 +43,6 @@ const switcherMock = {
   vaults: () => [],
 };
 
-const biometricState = { available: false };
-
 vi.mock("../context/AuthContext.jsx", () => ({
   useAuth: () => authMock,
 }));
@@ -40,6 +50,7 @@ vi.mock("../context/VaultSwitcherContext.jsx", () => ({
   useVaultSwitcher: () => switcherMock,
 }));
 vi.mock("../lib/biometry.js", () => ({
+  biometryAvailable: vi.fn(() => Promise.resolve(true)),
   biometryPrompt: vi.fn(),
 }));
 vi.mock("../lib/daemon.js", () => ({
@@ -66,19 +77,28 @@ vi.mock("../components/CopyButton.jsx", () => ({ default: () => null }));
 vi.mock("../components/OpenSharedModal.jsx", () => ({ default: () => null }));
 vi.mock("../components/LegacyContactOpen.jsx", () => ({ default: () => null }));
 
-import { biometryPrompt } from "../lib/biometry.js";
+import { biometryAvailable, biometryPrompt } from "../lib/biometry.js";
 import { daemon } from "../lib/daemon.js";
 import { toastError } from "../context/toastSignal.js";
 import LoginScreen from "../components/LoginScreen.jsx";
 
+// Without this, each test's LoginScreen stays mounted and its effect keeps
+// sharing the module-scope availability signal with the next test's mount.
+afterEach(() => {
+  cleanup();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
-  biometricState.available = false;
+  authState.status = "locked";
+  authState.switchTarget = null;
+  setBiometricAvailable(false);
+  biometryAvailable.mockResolvedValue(true);
 });
 
 describe("LoginScreen Quick Unlock auto-prompt", () => {
   test("fires the biometric prompt once as soon as Quick Unlock is available", async () => {
-    biometricState.available = true;
+    setBiometricAvailable(true);
     biometryPrompt.mockResolvedValue(true);
     daemon.mockImplementation(async (action) => {
       if (action === "vault.open") return JSON.stringify({ info: "x" });
@@ -90,6 +110,8 @@ describe("LoginScreen Quick Unlock auto-prompt", () => {
     await waitFor(() => expect(biometryPrompt).toHaveBeenCalledTimes(1));
     // Assert on the terminal step so the whole unlock chain has landed.
     await waitFor(() => expect(authMock.finishQuickUnlock).toHaveBeenCalled());
+    // The slug comes from the switcher's activeSlug when no explicit target
+    // is set — the daemon-active vault on a cold start.
     expect(daemon).toHaveBeenCalledWith("vault.open", "", "baluard-x");
     expect(daemon).toHaveBeenCalledWith("vault.biometric_unlock", "", "baluard-x");
     // The prompt must not loop while the unlock completes.
@@ -97,9 +119,11 @@ describe("LoginScreen Quick Unlock auto-prompt", () => {
     expect(biometryPrompt).toHaveBeenCalledTimes(1);
   });
 
-  test("cancel leaves the password form usable with no toast and no loop", async () => {
-    biometricState.available = true;
-    biometryPrompt.mockRejectedValue(new Error("User canceled the prompt"));
+  test("a plain-string cancel (the real Tauri rejection shape) stays silent", async () => {
+    setBiometricAvailable(true);
+    biometryPrompt.mockRejectedValue(
+      "[userCancel] - Authentication was canceled by the user",
+    );
 
     render(() => <LoginScreen />);
 
@@ -113,12 +137,55 @@ describe("LoginScreen Quick Unlock auto-prompt", () => {
     expect(screen.getAllByTestId("login-unlock").length).toBeGreaterThan(0);
   });
 
-  test("no prompt when Quick Unlock is not available", async () => {
-    biometricState.available = false;
+  test("a plain-string non-cancel rejection surfaces a toast", async () => {
+    setBiometricAvailable(true);
+    biometryPrompt.mockRejectedValue(
+      "[biometryUnavailable] - No biometric hardware",
+    );
+
+    render(() => <LoginScreen />);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(daemon).not.toHaveBeenCalled();
+  });
+
+  test("no prompt when the daemon reports Quick Unlock unavailable", async () => {
+    setBiometricAvailable(false);
 
     render(() => <LoginScreen />);
 
     await new Promise(r => setTimeout(r, 20));
     expect(biometryPrompt).not.toHaveBeenCalled();
+  });
+
+  test("no prompt when the platform biometry plugin cannot prompt (Linux)", async () => {
+    setBiometricAvailable(true);
+    biometryAvailable.mockResolvedValue(false);
+
+    render(() => <LoginScreen />);
+
+    await new Promise(r => setTimeout(r, 20));
+    expect(biometryPrompt).not.toHaveBeenCalled();
+  });
+
+  test("no prompt while a password unlock is in flight", async () => {
+    setBiometricAvailable(true);
+    authState.status = "unlocking";
+
+    render(() => <LoginScreen />);
+
+    await new Promise(r => setTimeout(r, 20));
+    expect(biometryPrompt).not.toHaveBeenCalled();
+  });
+
+  test("prompts once availability flips true after mount (cold start)", async () => {
+    render(() => <LoginScreen />);
+    await new Promise(r => setTimeout(r, 20));
+    expect(biometryPrompt).not.toHaveBeenCalled();
+
+    setBiometricAvailable(true);
+    await waitFor(() => expect(biometryPrompt).toHaveBeenCalledTimes(1));
+    await new Promise(r => setTimeout(r, 20));
+    expect(biometryPrompt).toHaveBeenCalledTimes(1);
   });
 });

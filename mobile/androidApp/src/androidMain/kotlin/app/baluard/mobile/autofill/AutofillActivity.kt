@@ -116,6 +116,18 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
             return
         }
 
+        // The header is always visible, so the title must carry mode-correct
+        // copy before any async work: picker modes get the picker prompt up
+        // front, dataset mode (unlock ceremony) hides it — there is nothing
+        // to choose behind the prompt.
+        val titleView = findViewById<TextView>(R.id.autofill_picker_title)
+        if (mode == MODE_A11Y_PICKER || mode == MODE_FALLBACK_PICK) {
+            titleView.text = t("autofill.pickerTitle")
+            titleView.visibility = View.VISIBLE
+        } else {
+            titleView.visibility = View.GONE
+        }
+
         if (mode == MODE_A11Y_PICKER || mode == MODE_FALLBACK_PICK) {
             pickerMode = mode
             pickerTarget = target
