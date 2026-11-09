@@ -46,7 +46,7 @@ export default function SyncTab() {
 
   const [authSession, setAuthSession] = createSignal(null);
   const [selectedProvider, setSelectedProvider] = createSignal(null);
-  const [repoName, setRepoName] = createSignal("baluard-vault");
+  const [repoName, setRepoName] = createSignal(switcher.activeSlug() || "baluard-vault");
   const [showDisconnectModal, setShowDisconnectModal] = createSignal(false);
   const [revokeToken, setRevokeToken] = createSignal(false);
   const [deleteRemote, setDeleteRemote] = createSignal(false);
@@ -127,7 +127,9 @@ const [customError, setCustomError] = createSignal(null);
     setDeleteRemote(false);
     setConfirmDeleteRemote(false);
     // Clear user-typed advanced/repo fields so vault A's inputs don't prefill vault B.
-    setRepoName("baluard-vault");
+    // Default the repo name to this vault's slug (a shared "baluard-vault"
+    // default collides across vaults on the provider).
+    setRepoName(slug || "baluard-vault");
     setShowAdvanced(false);
     setAdvClientId("");
     setAdvInstanceUrl("");
@@ -186,17 +188,19 @@ const [customError, setCustomError] = createSignal(null);
           // by checking that the remote URL provider matches any connected provider
           setTopState("C");
         } else {
-          // Check if a DIFFERENT provider is connected than the remote expects
-          const anyOtherConnected = Object.entries(providers).some(([key, val]) =>
-            val.connected && key !== inferredProvider
-          );
+          // A custom-server remote has no provider to compare against: the
+          // "different provider" banner must not fire just because any
+          // provider token exists on the device.
+          const anyOtherConnected = inferredProvider
+            ? Object.entries(providers).some(([key, val]) =>
+                val.connected && key !== inferredProvider,
+              )
+            : false;
           if (anyOtherConnected) {
             // Connected to a different provider than the remote uses
             setError(t("sync.warningDescription"));
-            setTopState("D");
-          } else {
-            setTopState("D");
           }
+          setTopState("D");
         }
       } else {
         // State B (create-repo) only after a connect done IN THIS session.
@@ -301,26 +305,37 @@ const [customError, setCustomError] = createSignal(null);
     setError(null);
     const provider = detectConnectedProvider();
     if (!provider) { setError(t("sync.errorAuthFailed")); setSubState("error"); return; }
+    // A vault switch during the flow must not point the newly active vault's
+    // setup at this vault's repo: the slug-switch reset cannot cancel an
+    // in-flight call, so every mutating step re-checks.
+    const slugAtStart = switcher.activeSlug();
+    const slugChanged = () => switcher.activeSlug() !== slugAtStart;
 
     // M3: Verify provider token is still valid before creating repo
     try {
       const statusRaw = await daemon("provider.status", JSON.stringify({ provider }));
       const statusResult = JSON.parse(statusRaw);
-      if (!statusResult.valid && !statusResult.connected) {
+      // `||` on purpose: a connected-but-expired token must not fall through
+      // to repo creation.
+      if (!statusResult.valid || !statusResult.connected) {
         setError(t("sync.errorAuthFailed"));
         setSubState("error");
         await loadState();
         return;
       }
     } catch (e) {
-      // Token validation failed — refresh state and bail
+      // Token validation failed — surface it; staying on "creating" would
+      // spin forever with no message and no cancel.
+      setError(sanitizeError(e, t));
+      setSubState("error");
       await loadState();
       return;
     }
+    if (slugChanged()) { setSubState("idle"); return; }
 
     try {
       // Try creating the repo. If it already exists (partial failure), skip to setup.
-      const repoNameUsed = normalizeSlug(repoName() || "baluard-vault");
+      const repoNameUsed = normalizeSlug(repoName() || slugAtStart || "baluard-vault");
       let repoCreated = false;
       let cloneUrl = null;
       try {
@@ -340,6 +355,7 @@ const [customError, setCustomError] = createSignal(null);
       }
 
       try {
+        if (slugChanged()) { setSubState("idle"); return; }
         const setupPayload = { provider, repo_name: repoNameUsed };
         if (cloneUrl) setupPayload.clone_url = cloneUrl;
         await daemon("vault.setup_sync", JSON.stringify(setupPayload));

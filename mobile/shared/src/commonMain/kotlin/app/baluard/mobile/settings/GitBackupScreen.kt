@@ -90,13 +90,20 @@ fun GitBackupScreen(
     var gitWebAuthWaiting by remember { mutableStateOf(false) }
     var gitDeviceFlow by remember { mutableStateOf<MobileDeviceFlow?>(null) }
     var gitConnected by remember { mutableStateOf(false) }
+    var gitConnectedAs by remember { mutableStateOf<String?>(null) }
     var gitConnectError by remember { mutableStateOf<String?>(null) }
     // Null while the first status read runs, so an already-connected vault
     // never flashes the wizard.
     var alreadyConnected by remember { mutableStateOf<Boolean?>(null) }
 
     LaunchedEffect(Unit) {
-        alreadyConnected = runCatching { repo.syncStatus(vault).active }.getOrDefault(false)
+        alreadyConnected = try {
+            repo.syncStatus(vault).active
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // A provider switch or the custom server invalidates an in-flight
@@ -106,11 +113,18 @@ fun GitBackupScreen(
         gitWebAuthWaiting = false
         gitDeviceFlow = null
         gitConnected = false
+        gitConnectedAs = null
         gitConnectError = null
+        // A half-typed PAT must never survive a provider switch: connectPat
+        // would send it to the newly selected provider.
+        gitPat = ""
     }
 
     fun startBrowserSignIn() {
         gitConnectError = null
+        // A stale typed PAT would be sent by Continue over the fresh OAuth
+        // token (Continue prefers the PAT field whenever it is non-blank).
+        gitPat = ""
         gitConnectBusy = true
         scope.launch {
             try {
@@ -144,13 +158,16 @@ fun GitBackupScreen(
                 val o = Json.parseToJsonElement(repo.webOauthStatus(gitProvider)).jsonObject
                 when (o["status"]?.jsonPrimitive?.content) {
                     "success" -> {
+                        gitConnectedAs = o["username"]?.jsonPrimitive?.content
                         gitConnected = true
                         gitWebAuthWaiting = false
                         break
                     }
                     "error" -> {
-                        gitConnectError = o["error"]?.jsonPrimitive?.content
-                            ?: t("provider.errorAuth")
+                        // Localized on purpose: the runtime error strings are
+                        // diagnostics (callback timeout, provider bodies),
+                        // not user copy.
+                        gitConnectError = t("provider.errorAuth")
                         gitWebAuthWaiting = false
                         break
                     }
@@ -159,8 +176,12 @@ fun GitBackupScreen(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Transient: resuming from the browser can briefly cut
-                // sockets; the next tick retries (same policy as onboarding).
+                // Terminal, not transient: the Rust side already reports
+                // transient trouble as pending status; an exception here
+                // means the session is gone (same policy as onboarding).
+                gitConnectError = t("provider.errorAuth")
+                gitWebAuthWaiting = false
+                break
             }
         }
     }
@@ -168,8 +189,9 @@ fun GitBackupScreen(
     // Device-flow poll loop (GitLab).
     LaunchedEffect(gitDeviceFlow) {
         val flow = gitDeviceFlow ?: return@LaunchedEffect
+        var intervalMs = 5_000L
         while (isActive) {
-            delay(5_000)
+            delay(intervalMs)
             try {
                 when (flow.poll()) {
                     MobileDeviceFlowStatus.SUCCESS -> {
@@ -182,12 +204,19 @@ fun GitBackupScreen(
                         gitDeviceFlow = null
                         break
                     }
+                    // RFC 8628: the server asked for a slower cadence.
+                    MobileDeviceFlowStatus.SLOW_DOWN ->
+                        intervalMs = (intervalMs + 5_000L).coerceAtMost(30_000L)
                     else -> Unit
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Transient network noise; the code outlives a few failures.
+                // Terminal: a spent device code cannot recover (same policy
+                // as onboarding's device-code screen).
+                gitConnectError = t("provider.errorAuth")
+                gitDeviceFlow = null
+                break
             }
         }
     }
@@ -531,8 +560,13 @@ fun GitBackupScreen(
 
                     when {
                         gitConnected -> {
+                            val asUser = gitConnectedAs
                             Text(
-                                t("settings.gitConnected"),
+                                if (asUser.isNullOrBlank()) {
+                                    t("settings.gitConnected")
+                                } else {
+                                    t("settings.gitConnectedAs", asUser)
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary,
@@ -698,7 +732,7 @@ fun GitBackupScreen(
                         }
                     }
                 },
-                enabled = !gitBusy,
+                enabled = !gitBusy && !gitWebAuthWaiting && gitDeviceFlow == null,
                 loading = gitBusy,
                 modifier = Modifier.fillMaxWidth(),
             )

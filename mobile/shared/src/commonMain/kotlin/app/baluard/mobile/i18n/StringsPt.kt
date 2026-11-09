@@ -364,6 +364,7 @@ internal val PT: Map<String, String> = mapOf(
     "settings.gitBackupActive" to "O backup já está configurado para este cofre.",
     "settings.gitConnectBrowser" to "Entrar com o navegador",
     "settings.gitConnected" to "Conta conectada.",
+    "settings.gitConnectedAs" to "Conectado como {0}",
     "settings.customChip" to "Servidor próprio",
     "settings.customWarn" to "Você gerencia este servidor: criar o repositório, dar acesso e remover acontecem lá manualmente. As credenciais ficam apenas neste dispositivo.",
     "settings.customSshNote" to "Entre com um token de acesso. As chaves SSH são configuradas pelo app de desktop.",
