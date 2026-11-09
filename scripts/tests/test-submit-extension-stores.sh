@@ -99,6 +99,13 @@ export SUB_TEST_CRX_LOG="$CRX_LOG"
 # default runs must never see it. CRX cases override per invocation.
 export BALUARD_CHROME_CRX_KEY="$TMP/absent-signing-key"
 
+# The invoking shell may carry real store credentials (they live in the
+# interactive environment since the real keys were set up); every invocation
+# must start from a scrubbed slate or the skip cases silently submit instead.
+UNSET=(BALUARD_AMO_JWT_KEY BALUARD_AMO_JWT_SECRET AMO_METADATA AMO_UPLOAD_SOURCE
+  BALUARD_CHROME_CLIENT_ID BALUARD_CHROME_CLIENT_SECRET BALUARD_CHROME_REFRESH_TOKEN
+  BALUARD_CHROME_EXTENSION_ID BALUARD_CHROME_PUBLISHER_ID)
+
 AMO_ENV=(BALUARD_AMO_JWT_KEY=user:123 BALUARD_AMO_JWT_SECRET=amo-secret)
 CHROME_ENV=(BALUARD_CHROME_CLIENT_ID=cid BALUARD_CHROME_CLIENT_SECRET=chrome-secret
   BALUARD_CHROME_REFRESH_TOKEN=chrome-refresh BALUARD_CHROME_EXTENSION_ID=extid
@@ -109,7 +116,7 @@ CHROME_ENV=(BALUARD_CHROME_CLIENT_ID=cid BALUARD_CHROME_CLIENT_SECRET=chrome-sec
 
 # ── Happy path: both stores submit ───────────────────────────────────────────
 rm -f "$CURL_LOG" "$NPX_LOG"
-env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/happy.out"
+env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/happy.out"
 grep -q 'firefox/AMO: submitted' "$TMP/happy.out"
 grep -q 'chrome/store: uploaded and submitted' "$TMP/happy.out"
 
@@ -135,7 +142,7 @@ if grep -q 'test-token' "$CURL_LOG"; then echo 'access token hit argv' >&2; exit
 
 # ── Optional AMO knobs ride through ──────────────────────────────────────────
 rm -f "$CURL_LOG" "$NPX_LOG"
-env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
   AMO_METADATA="$TMP/meta.json" AMO_UPLOAD_SOURCE="$TMP/source.zip" \
   "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > /dev/null
 grep -q -- "--amo-metadata $TMP/meta.json" "$NPX_LOG"
@@ -143,14 +150,14 @@ grep -q -- "--upload-source-code $TMP/source.zip" "$NPX_LOG"
 
 # ── Firefox only: chrome skipped cleanly ─────────────────────────────────────
 rm -f "$CURL_LOG" "$NPX_LOG"
-env "${AMO_ENV[@]}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/ff-only.out"
+env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/ff-only.out"
 grep -q 'firefox/AMO: submitted' "$TMP/ff-only.out"
 grep -q 'chrome/store: skipped' "$TMP/ff-only.out"
 if [[ -s "$CURL_LOG" ]]; then echo "curl shim was invoked unexpectedly" >&2; exit 1; fi
 
 # ── Partial store credentials are an error, not a skip ─────────────────────
 rm -f "$CURL_LOG" "$NPX_LOG"
-if env BALUARD_AMO_JWT_KEY=only-one "${CHROME_ENV[@]}" \
+if env "${UNSET[@]/#/-u}" BALUARD_AMO_JWT_KEY=only-one "${CHROME_ENV[@]}" \
   "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/partial.out" 2> "$TMP/partial.err"; then
   echo 'expected partial AMO credentials to fail the run' >&2
   exit 1
@@ -161,14 +168,14 @@ if [[ -s "$NPX_LOG" ]]; then echo "npx shim was invoked unexpectedly" >&2; exit 
 
 # ── Chrome only: firefox skipped cleanly ─────────────────────────────────────
 rm -f "$CURL_LOG" "$NPX_LOG"
-env "${CHROME_ENV[@]}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/ch-only.out"
+env "${UNSET[@]/#/-u}" "${CHROME_ENV[@]}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/ch-only.out"
 grep -q 'chrome/store: uploaded and submitted' "$TMP/ch-only.out"
 grep -q 'firefox/AMO: skipped' "$TMP/ch-only.out"
 if [[ -s "$NPX_LOG" ]]; then echo "npx shim was invoked unexpectedly" >&2; exit 1; fi
 
 # ── AMO submission failure fails the run; chrome still submits ─────────────
 rm -f "$CURL_LOG" "$NPX_LOG"
-if env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+if env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
   SUB_TEST_AMO_FAIL=1 "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" \
   > "$TMP/amofail.out" 2> "$TMP/amofail.err"; then
   echo 'expected failed AMO submission to fail the run' >&2
@@ -180,7 +187,7 @@ grep -q ':upload' "$CURL_LOG"
 
 # ── Nothing configured: loud guidance, no submissions ────────────────────────
 rm -f "$CURL_LOG" "$NPX_LOG"
-if "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > /dev/null 2> "$TMP/none.err"; then
+if env "${UNSET[@]/#/-u}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > /dev/null 2> "$TMP/none.err"; then
   echo 'expected unconfigured stores to fail the run' >&2
   exit 1
 fi
@@ -192,7 +199,7 @@ if [[ -s "$NPX_LOG" ]]; then echo "npx shim was invoked unexpectedly" >&2; exit 
 # ── Version guard: dist moved past the newest packaged zip ───────────────────
 make_zip chrome 0.1.1
 rm -f "$CURL_LOG" "$NPX_LOG"
-env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" 2> "$TMP/mismatch.err" \
+env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" 2> "$TMP/mismatch.err" \
   && { echo 'expected stale dist to refuse submission' >&2; exit 1; }
 grep -qi 'ext-package' "$TMP/mismatch.err"
 if [[ -s "$CURL_LOG" ]]; then echo "curl shim was invoked unexpectedly" >&2; exit 1; fi
@@ -201,7 +208,7 @@ if [[ -s "$NPX_LOG" ]]; then echo "npx shim was invoked unexpectedly" >&2; exit 
 # ── Chrome upload failure fails the run, firefox still submits ──────────────
 rm -f "$ART/baluard-extension-0.1.1-chrome.zip"
 rm -f "$CURL_LOG" "$NPX_LOG"
-if env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+if env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
   SUB_TEST_UPLOAD_STATE=FAILURE SUB_TEST_UPLOAD_CODE=22 "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" \
   > "$TMP/upfail.out" 2> "$TMP/upfail.err"; then
   echo 'expected failed chrome upload to fail the run' >&2
@@ -214,14 +221,14 @@ grep -q 'firefox/AMO: submitted' "$TMP/upfail.out"
 # The API can spell the good upload state as SUCCEEDED instead of SUCCESS;
 # only its absence must fail the run.
 rm -f "$CURL_LOG" "$NPX_LOG"
-env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
   SUB_TEST_UPLOAD_STATE=SUCCEEDED "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > /dev/null
 
 # ── Chrome branch honors uploadState rejection (HTTP 200, FAILURE body) ─────
 # The knob rewires the shim's :upload response to a success exit with a
 # FAILURE uploadState, the other way a store can silently reject a package.
 rm -f "$CURL_LOG" "$NPX_LOG"
-if env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+if env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
   SUB_TEST_UPLOAD_STATE=FAILURE "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" \
   > "$TMP/state.out" 2> "$TMP/state.err"; then
   echo 'expected FAILURE uploadState to fail the run' >&2
@@ -233,7 +240,7 @@ grep -q 'firefox/AMO: submitted' "$TMP/state.out"
 # ── CRX signing: key present packages and uploads the signed CRX ──────────────
 printf 'test-key-material\n' > "$TMP/crx.key"
 rm -f "$CURL_LOG" "$CRX_LOG"
-env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
   BALUARD_CHROME_CRX_KEY="$TMP/crx.key" \
   "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > "$TMP/crx.out"
 grep -q -- "-p $TMP/crx.key" "$CRX_LOG"
@@ -247,7 +254,7 @@ grep -q 'chrome/store: uploaded and submitted' "$TMP/crx.out"
 
 # ── CRX tool failure fails the run before any store contact ──────────────────
 rm -f "$CURL_LOG" "$CRX_LOG"
-if env "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+if env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
   BALUARD_CHROME_CRX_KEY="$TMP/crx.key" SUB_TEST_CRX_FAIL=1 \
   "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" \
   > /dev/null 2> "$TMP/crxfail.err"; then

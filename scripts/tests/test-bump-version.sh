@@ -57,21 +57,29 @@ expect_new() {
   fi
 }
 
-# ── Happy path: every source moves together ──────────────────────────────────
-run_bump 0.2.0 > "$TMP/happy.out" 2> "$TMP/happy.err"
+# The fixture copies the real root Cargo.toml, so the bump target must be
+# derived from the workspace version; a hardcoded one silently becomes a
+# downgrade the next time the workspace moves past it.
+CUR="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -1)"
+IFS=. read -r B_MA B_MI B_PA <<< "$CUR"
+BUMP="$B_MA.$B_MI.$((10#$B_PA + 1))"
+VCODE=$((10#$B_MA * 1000000 + 10#$B_MI * 1000 + 10#$B_PA + 1))
 
-expect_new Cargo.toml '^version = "0.2.0"$'
-expect_new desktop/src-tauri/Cargo.toml '^version = "0.2.0"$'
-expect_new desktop/package.json '"version": "0.2.0"'
-expect_new browser/shared/package.json '"version": "0.2.0"'
-expect_new browser/shared/manifest.base.json '"version": "0.2.0"'
-expect_new mobile/androidApp/build.gradle.kts 'versionName = "0.2.0"'
-# versionCode derives from semver, 3 digits per component: 0.2.0 -> 2000.
-expect_new mobile/androidApp/build.gradle.kts 'versionCode = 2000'
-expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.kt 'Baluard Mobile v0.2.0'
-expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEs.kt 'Baluard Mobile v0.2.0'
-expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsFr.kt 'Baluard Mobile v0.2.0'
-expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsPt.kt 'Baluard Mobile v0.2.0'
+# ── Happy path: every source moves together ──────────────────────────────────
+run_bump "$BUMP" > "$TMP/happy.out" 2> "$TMP/happy.err"
+
+expect_new Cargo.toml "^version = \"$BUMP\"$"
+expect_new desktop/src-tauri/Cargo.toml "^version = \"$BUMP\"$"
+expect_new desktop/package.json "\"version\": \"$BUMP\""
+expect_new browser/shared/package.json "\"version\": \"$BUMP\""
+expect_new browser/shared/manifest.base.json "\"version\": \"$BUMP\""
+expect_new mobile/androidApp/build.gradle.kts "versionName = \"$BUMP\""
+# versionCode derives from the bumped semver, 3 digits per component.
+expect_new mobile/androidApp/build.gradle.kts "versionCode = $VCODE"
+expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.kt "Baluard Mobile v$BUMP"
+expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEs.kt "Baluard Mobile v$BUMP"
+expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsFr.kt "Baluard Mobile v$BUMP"
+expect_new mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsPt.kt "Baluard Mobile v$BUMP"
 
 # The bump rebuilds the committed extension dists (B11).
 if [[ ! -s "$TMP/npm.log" ]]; then
@@ -100,15 +108,15 @@ if run_bump 0.08.0 2> "$TMP/zero.err"; then
 fi
 
 # ── Refuses a downgrade ───────────────────────────────────────────────────────
-if run_bump 0.1.0 2> "$TMP/down.err"; then
+if run_bump 0.0.1 2> "$TMP/down.err"; then
   echo "downgrade must fail" >&2
   exit 1
 fi
 grep -qi "higher" "$TMP/down.err" || { echo "downgrade error unexplained" >&2; exit 1; }
-expect_new Cargo.toml '^version = "0.2.0"$'
+expect_new Cargo.toml "^version = \"$BUMP\"$"
 
 # ── Same-version rerun is also refused ────────────────────────────────────────
-if run_bump 0.2.0 2> "$TMP/same.err"; then
+if run_bump "$CUR" 2> "$TMP/same.err"; then
   echo "same-version rerun must fail" >&2
   exit 1
 fi
