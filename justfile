@@ -343,6 +343,13 @@ audit:
 		echo "cargo-audit not installed (run: cargo install cargo-audit --locked)"; \
 	fi
 
+# The workspace declares rust-version = 1.85 but the stable-track CI jobs
+# never compile under it, so dependency drift could silently raise the real
+# floor. This compiles the default-feature workspace with exactly 1.85.0.
+# The optional fido2 feature needs a newer Rust and is deliberately excluded.
+msrv-check:
+	rustup run 1.85.0 cargo check --workspace --all-targets
+
 # ── Full Check ──────────────────────────────────────────────────────────────
 
 # Run all checks: fmt + clippy + audit + tests + build
