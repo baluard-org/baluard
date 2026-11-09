@@ -9,7 +9,7 @@ use baluard_core::wire::cipher_to_json;
 use base64::Engine;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -83,8 +83,16 @@ pub struct VaultState {
     /// to access cipher data. Prevents the daemon from being a full-vault oracle.
     session_token: RwLock<Option<String>>,
     /// H6 fix: Timestamp when session token was created (epoch seconds).
-    /// Token expires after SESSION_TOKEN_TTL_SECONDS.
+    /// Token expires after SESSION_TOKEN_TTL_SECONDS — except under the
+    /// OnAppExit timeout policy (see session_token_ttl_exempt).
     session_token_created: AtomicU64,
+    /// When the vault's timeout policy is OnAppExit, the wall-clock token
+    /// TTL never applies: the idle-lock walker honors OnAppExit ("no
+    /// maximum cap"), and a TTL that slides only on authenticated requests
+    /// kills the session while the window is hidden (tray hide / macOS
+    /// AppNap) precisely because no requests arrive. Refreshed at unlock
+    /// and when settings_set changes vault_timeout.
+    session_token_ttl_exempt: AtomicBool,
     /// P1c: Lock generation counter. Bumped on every `lock()`; the session
     /// token is only valid while its mint-time generation matches. Even if
     /// a future lock path forgets to clear the token, a stale token dies
@@ -193,6 +201,7 @@ impl VaultState {
             inner: RwLock::new(None),
             session_token: RwLock::new(None),
             session_token_created: AtomicU64::new(0),
+            session_token_ttl_exempt: AtomicBool::new(false),
             session_generation: AtomicU64::new(0),
             session_token_generation: AtomicU64::new(0),
             last_activity: AtomicU64::new(0),
@@ -610,6 +619,20 @@ impl VaultState {
             Ordering::Relaxed,
         );
         drop(token_guard);
+        // Derive from the guard we already hold: timeout_policy() would
+        // re-enter inner.read() while this fn still holds inner.write()
+        // (tokio RwLock is not reentrant — same-task deadlock).
+        let exempt = guard
+            .as_ref()
+            .map(|handle| {
+                matches!(
+                    handle.get_settings().map(|s| s.vault_timeout),
+                    Ok(baluard_core::vault::manifest::VaultTimeout::OnAppExit)
+                )
+            })
+            .unwrap_or(false);
+        self.session_token_ttl_exempt
+            .store(exempt, Ordering::Relaxed);
 
         Ok(())
     }
@@ -641,6 +664,20 @@ impl VaultState {
                 .as_secs(),
             Ordering::Relaxed,
         );
+        drop(token_guard);
+        self.refresh_session_token_ttl_exempt().await;
+    }
+
+    /// Re-derive whether the wall-clock token TTL is suspended for this
+    /// vault (OnAppExit policy). Called at every session mint and when
+    /// settings_set changes vault_timeout mid-session; fresh vaults need
+    /// no call because the default policy keeps the TTL (the flag's
+    /// default).
+    async fn refresh_session_token_ttl_exempt(&self) {
+        let exempt =
+            self.timeout_policy().await == baluard_core::vault::manifest::VaultTimeout::OnAppExit;
+        self.session_token_ttl_exempt
+            .store(exempt, Ordering::Relaxed);
     }
 
     /// Full unlock landing for an already-open vault whose token was
@@ -1728,6 +1765,12 @@ impl VaultState {
             handle
                 .save_settings(&settings)
                 .map_err(|e| format!("{e}"))?;
+        }
+        if partial.get("vault_timeout").is_some() {
+            let exempt =
+                settings.vault_timeout == baluard_core::vault::manifest::VaultTimeout::OnAppExit;
+            self.session_token_ttl_exempt
+                .store(exempt, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -9527,7 +9570,7 @@ impl VaultState {
         // H6: Check token expiry before comparison
         const SESSION_TOKEN_TTL_SECONDS: u64 = 4 * 3600; // 4 hours
         let created = self.session_token_created.load(Ordering::Relaxed);
-        if created > 0 {
+        if created > 0 && !self.session_token_ttl_exempt.load(Ordering::Relaxed) {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -10068,6 +10111,54 @@ mod session_token_tests {
         let tok2 = state.get_session_token().await.unwrap();
         assert_ne!(tok, tok2, "re-unlock must mint a fresh token");
         state.verify_session_token(&tok2).await.unwrap();
+    }
+
+    /// H6 carve-out: the wall-clock session-token TTL must never override
+    /// the OnAppExit timeout policy. The TTL slid only on authenticated
+    /// requests, so a hidden window (tray hide, macOS AppNap) issued none
+    /// and the token aged to death in wall-clock time: the reopen poll
+    /// returned "Session token expired" and the desktop force-locked a
+    /// vault whose policy promised no idle cap (Mac incident 2026-11-09:
+    /// unlock 13:09, hidden window, reopen 17:09). OnAppExit tokens live
+    /// until the vault locks or the daemon dies; every other policy keeps
+    /// the TTL as its backstop.
+    #[tokio::test]
+    async fn session_token_ttl_yields_to_on_app_exit() {
+        if !baluard_core::keyring_disabled() {
+            eprintln!("skipping: set BALUARD_DISABLE_KEYRING=1 to run hermetically");
+            return;
+        }
+        use baluard_core::vault::manifest::VaultTimeout;
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+        state
+            .create_vault(r#"{"password":"test-pass-123","profile":"mobile_low"}"#)
+            .await
+            .unwrap();
+        let tok = state.get_session_token().await.unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let stale = now - (4 * 3600 + 60);
+
+        // OnAppExit: four hours of hidden-window silence must NOT expire.
+        state
+            .settings_set(r#"{"vault_timeout":"on_app_exit"}"#)
+            .await
+            .unwrap();
+        assert_eq!(state.timeout_policy().await, VaultTimeout::OnAppExit);
+        state.session_token_created.store(stale, Ordering::Relaxed);
+        state.verify_session_token(&tok).await.unwrap();
+
+        // Every other policy keeps the TTL as the belt-and-suspenders backstop.
+        state
+            .settings_set(r#"{"vault_timeout":"15m"}"#)
+            .await
+            .unwrap();
+        state.session_token_created.store(stale, Ordering::Relaxed);
+        let err = state.verify_session_token(&tok).await.unwrap_err();
+        assert_eq!(err, "Session token expired. Re-unlock the vault.");
     }
 }
 
