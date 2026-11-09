@@ -4,6 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+## 0.2.3 - 2026-11-08
 - Filled fields now breathe a soft neon halo three times after the fill ring, about one second per breath, and then return to their normal look.
 
 ## 0.2.2 - 2026-11-08
