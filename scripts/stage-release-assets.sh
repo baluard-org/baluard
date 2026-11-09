@@ -121,6 +121,13 @@ if [[ -n "$APK" ]]; then
   cp -p "$APK" "$OUT_ABS/Baluard-android.apk"
 fi
 
+# The README's manual-verify flow downloads the minisign public key from the
+# same release page (minisign -V -p updater.pub); it is committed repo
+# content, not a build artifact, so it stages from ROOT rather than dist/.
+[[ -f "$ROOT/updater.pub" ]] || die "updater public key missing: $ROOT/updater.pub"
+claim "updater.pub" "updater.pub"
+cp -p "$ROOT/updater.pub" "$OUT_ABS/updater.pub"
+
 if [[ -n "$REQUIRE" ]]; then
   IFS=',' read -r -a NEED <<< "$REQUIRE"
   missing=()

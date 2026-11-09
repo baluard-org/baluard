@@ -62,7 +62,7 @@ EXPECT=(
   Baluard-android.apk
   Baluard-macos-aarch64-non-notarized.zip
   Baluard-extension-chrome.zip Baluard-extension-firefox.zip
-  SHA256SUMS SHA256SUMS.sig
+  updater.pub SHA256SUMS SHA256SUMS.sig
 )
 
 check_set() {
@@ -112,6 +112,10 @@ if ! grep -q "Baluard-amd64.AppImage" "$OUT/SHA256SUMS"; then
   echo "FAIL: SHA256SUMS misses the AppImage entry" >&2
   exit 1
 fi
+if ! grep -q "updater.pub" "$OUT/SHA256SUMS"; then
+  echo "FAIL: SHA256SUMS misses the updater.pub entry" >&2
+  exit 1
+fi
 
 # SHA256SUMS got signed through the tauri CLI shim
 if ! grep -q "signer sign .*SHA256SUMS" "$SHIM_LOG"; then
@@ -146,7 +150,7 @@ PATH="$BIN:$PATH" "$STAGE" \
 # it must be renamed in, not dropped or passed through unmapped.
 check_set Baluard-cli-amd64.tar.gz Baluard-cli-darwin-arm64.tar.gz Baluard-arm64.dmg \
   Baluard-arm64.app.tar.gz Baluard-arm64.app.tar.gz.sig Baluard-cli-windows-x86_64.tar.gz \
-  SHA256SUMS SHA256SUMS.sig
+  updater.pub SHA256SUMS SHA256SUMS.sig
 if [[ ! -f "$OUT/Baluard-cli-windows-x86_64.tar.gz" ]]; then
   echo "FAIL: windows CLI tarball missing from the release set" >&2
   exit 1
