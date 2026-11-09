@@ -1009,7 +1009,7 @@ fun ToggleRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .padding(vertical = 8.dp),
     ) {
         Text(
             text = label,
