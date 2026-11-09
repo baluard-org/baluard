@@ -62,6 +62,7 @@ import app.baluard.mobile.vault.EntryListScreen
 import app.baluard.mobile.vault.TagListScreen
 import app.baluard.mobile.vault.VaultHomeScreen
 import app.baluard.mobile.vault.VaultListViewModel
+import app.baluard.mobile.settings.GitBackupScreen
 import app.baluard.mobile.settings.PeopleScreen
 import app.baluard.mobile.settings.ActivityScreen
 import app.baluard.mobile.settings.CollectionsScreen
@@ -88,6 +89,7 @@ private sealed interface Nav {
     data object People : Nav
     data object Collections : Nav
     data object Activity : Nav
+    data object GitBackup : Nav
     data class EntryList(val kind: EntryListKind) : Nav
     data object TagList : Nav
 }
@@ -96,7 +98,7 @@ private fun navDepth(nav: Nav): Int = when (nav) {
     is Nav.List -> 0
     is Nav.Detail, Nav.Generator, Nav.Settings, is Nav.EntryList, Nav.TagList -> 1
     // Settings sub-pages sit one level below Settings: back animates a pop.
-    Nav.People, Nav.Collections, Nav.Activity -> 2
+    Nav.People, Nav.Collections, Nav.Activity, Nav.GitBackup -> 2
     is Nav.Edit -> 2
 }
 
@@ -666,6 +668,7 @@ fun App(
                                     onOpenCollections = { nav = Nav.Collections },
                                     onSyncNudge = { notifyMutation() },
                                     onOpenActivity = { nav = Nav.Activity },
+                                    onOpenGitBackup = { nav = Nav.GitBackup },
                                     onVaultTimeoutChange = { token ->
                                         autoLockToken = token
                                         scope.launch {
@@ -693,6 +696,12 @@ fun App(
                                     vault = vault,
                                     repo = repo,
                                     onBack = { nav = Nav.Settings },
+                                )
+                                Nav.GitBackup -> GitBackupScreen(
+                                    vault = vault,
+                                    repo = repo,
+                                    onBack = { nav = Nav.Settings },
+                                    onSyncNudge = { notifyMutation() },
                                 )
                             }
                         }

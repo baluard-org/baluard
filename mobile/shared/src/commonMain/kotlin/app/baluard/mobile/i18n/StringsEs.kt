@@ -392,6 +392,8 @@ internal val ES: Map<String, String> = mapOf(
     "settings.gitRepoHint" to "Se usa el nombre de esta bóveda por defecto.",
     "settings.gitBackupDone" to "Repositorio de respaldo listo: {0}",
     "settings.gitBackupFailed" to "No se pudo configurar el repositorio de respaldo.",
+    "settings.gitBackupWhere" to "\u00bfD\u00f3nde quieres guardar la copia?",
+    "settings.gitBackupAccount" to "Datos de la cuenta",
     "settings.customChip" to "Servidor propio",
     "settings.customWarn" to "Tú gestionas este servidor: crear el repositorio, dar acceso y eliminar se hace a mano allí. Las credenciales se quedan solo en este dispositivo.",
     "settings.customSshNote" to "Inicia sesión con un token de acceso. Las claves SSH se configuran desde la app de escritorio.",
