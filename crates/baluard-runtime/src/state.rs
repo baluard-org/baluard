@@ -9692,7 +9692,11 @@ fn app_match_context(
     settings: Option<&baluard_core::vault::manifest::VaultSettings>,
     target: &str,
 ) -> Option<AppMatchContext> {
-    let s = settings?;
+    // Absent settings behave like present-but-unset: a vault whose
+    // settings object cannot be read keeps the on default rather than
+    // silently losing the whole pathway.
+    let default_settings = baluard_core::vault::manifest::VaultSettings::default();
+    let s = settings.unwrap_or(&default_settings);
     // Absent means on: the per-(package, domain) trust prompt is the consent
     // gate, so the toggle only silences the pathway.
     if !s.suggest_app_logins.unwrap_or(true) {
@@ -11015,5 +11019,28 @@ mod devkey_op_lock_tests {
 
         state.lock().await.unwrap();
         state.unlock(&new_pass).await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod app_match_context_tests {
+    use super::app_match_context;
+
+    /// Absent settings must behave like present-but-unset: the suggest
+    /// default is on and the per-(package, domain) trust prompt is the
+    /// consent gate. The old `settings?` arm failed a settings-less vault
+    /// closed to no suggestions, contradicting the absent-field-means-on
+    /// default.
+    #[test]
+    fn missing_settings_follow_the_on_default() {
+        let ctx = app_match_context(None, "androidapp://com.github.android");
+        assert!(ctx.is_some(), "missing settings must not kill suggestions");
+    }
+
+    #[test]
+    fn explicit_opt_out_still_wins() {
+        let mut s = baluard_core::vault::manifest::VaultSettings::default();
+        s.suggest_app_logins = Some(false);
+        assert!(app_match_context(Some(&s), "androidapp://com.github.android").is_none());
     }
 }
