@@ -49,7 +49,7 @@ curl -LO https://github.com/baluard-org/baluard/releases/latest/download/SHA256S
 curl -LO https://github.com/baluard-org/baluard/releases/latest/download/SHA256SUMS.sig
 base64 -d SHA256SUMS.sig > SHA256SUMS.minisig
 minisign -V -p updater.pub -x SHA256SUMS.minisig -m SHA256SUMS
-sha256sum -c SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
 # Extract; both binaries go next to each other
 tar xzf Baluard-cli-amd64.tar.gz
 sudo mv baluard baluard-daemon /usr/local/bin/

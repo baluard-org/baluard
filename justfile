@@ -1189,7 +1189,7 @@ release-stage dist-dir="dist":
 	code="$(printf %s "$version" | awk -F. '{print $1*1000000+$2*1000+$3}')"
 	scripts/stage-release-assets.sh --version "$version" \
 		--apk "$HOME/.baluard/fdroid/repo/app.baluard.mobile_${code}.apk" \
-		--require "Baluard-amd64.AppImage,Baluard-amd64.AppImage.sig,Baluard-amd64.deb,Baluard-amd64.rpm,Baluard-cli-amd64.tar.gz,Baluard-extension-chrome.zip,Baluard-extension-firefox.zip,Baluard-amd64-setup.exe,Baluard-amd64-setup.exe.sig,Baluard-macos-aarch64-non-notarized.zip,Baluard-arm64.app.tar.gz,Baluard-arm64.app.tar.gz.sig,Baluard-android.apk" \
+		--require "Baluard-amd64.AppImage,Baluard-amd64.AppImage.sig,Baluard-amd64.deb,Baluard-amd64.rpm,Baluard-cli-amd64.tar.gz,Baluard-extension-chrome.zip,Baluard-extension-firefox.zip,Baluard-amd64-setup.exe,Baluard-amd64-setup.exe.sig,Baluard-macos-aarch64-non-notarized.zip,Baluard-arm64.app.tar.gz,Baluard-arm64.app.tar.gz.sig,Baluard-android.apk,updater.pub" \
 		"{{ dist-dir }}"
 	# Version-stamped updater signatures: requireSignedVersion clients
 	# refuse signatures without a version comment.
