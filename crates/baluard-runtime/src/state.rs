@@ -10151,6 +10151,18 @@ mod session_token_tests {
         state.session_token_created.store(stale, Ordering::Relaxed);
         state.verify_session_token(&tok).await.unwrap();
 
+        // The unlock path re-derives the flag too (this is the branch that
+        // briefly deadlocked during development): lock kills the token,
+        // unlock mints a fresh one from the OnAppExit policy, and the
+        // backdated token must still verify.
+        state.lock().await.unwrap();
+        assert!(state.verify_session_token(&tok).await.is_err());
+        let state = std::sync::Arc::new(state);
+        state.unlock("test-pass-123").await.unwrap();
+        let tok2 = state.get_session_token().await.unwrap();
+        state.session_token_created.store(stale, Ordering::Relaxed);
+        state.verify_session_token(&tok2).await.unwrap();
+
         // Every other policy keeps the TTL as the belt-and-suspenders backstop.
         state
             .settings_set(r#"{"vault_timeout":"15m"}"#)
