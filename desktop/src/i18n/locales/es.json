@@ -526,7 +526,15 @@
     "customTrustOtherType": "Este servidor ya tiene una clave de otro tipo registrada.",
     "customChangedTitle": "La clave del servidor ha cambiado",
     "customChangedBody": "La identidad de este servidor cambió desde tu última conexión, así que la app bloqueó la conexión para protegerte. Consulta con el administrador del servidor antes de hacer nada: si el cambio no era esperado, alguien podría estar suplantando a tu servidor.",
-    "customBadUrl": "Eso no parece una URL de repositorio."
+    "customBadUrl": "Eso no parece una URL de repositorio.",
+    "iconsTitle": "Iconos de sitios",
+    "iconsDesc": "Las entradas importadas pueden no tener su icono. Esto los trae uno por uno; lo que tarde demasiado se omite.",
+    "iconsStart": "Traer iconos que faltan",
+    "iconsCancel": "Cancelar",
+    "iconsRunning": "Trayendo {done} de {total}",
+    "iconsDone": "Se trajeron {fetched} iconos; {skipped} omitidos.",
+    "iconsUpToDate": "Todas las entradas ya tienen icono.",
+    "iconsNeedEnabled": "Traer iconos está desactivado. Activa \"Mostrar iconos de sitios\" en Ajustes para usar esto."
   },
   "autosync": {
     "upToDate": "Todos los cambios sincronizados",
