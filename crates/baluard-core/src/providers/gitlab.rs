@@ -233,6 +233,7 @@ impl ForgeProvider for GitLabProvider {
 
     async fn device_flow_start(&self) -> Result<DeviceFlowSession, ProviderError> {
         let client_id = self.client_id();
+        crate::providers::types::ensure_client_id_configured(&client_id)?;
         let resp = self
             .http
             .post(format!("{}/oauth/authorize_device", self.base()))
@@ -1126,13 +1127,19 @@ mod tests {
         assert!(!GitLabProvider::is_pat(&oauth));
     }
 
-    #[test]
-    fn default_client_id_is_placeholder() {
-        // Until the project GitLab OAuth app is registered, this is a sentinel.
-        assert_eq!(
-            Provider::GitLab.default_client_id(),
-            "REPLACE_WITH_GITLAB_CLIENT_ID"
-        );
+    #[tokio::test]
+    async fn device_flow_refuses_placeholder_client_id() {
+        // A build without BALUARD_GITLAB_CLIENT_ID keeps the sentinel; the
+        // flow must fail before any network call, not 404 at gitlab.com.
+        let gl = GitLabProvider::with_config(ProviderConfig {
+            client_id: Some(crate::providers::types::GITLAB_CLIENT_ID_PLACEHOLDER.into()),
+            instance_url: None,
+            client_secret: None,
+        });
+        assert!(matches!(
+            gl.device_flow_start().await,
+            Err(ProviderError::Other(_))
+        ));
     }
 
     #[test]

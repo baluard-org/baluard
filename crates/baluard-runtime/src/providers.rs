@@ -884,16 +884,15 @@ pub async fn web_oauth_start(
         .map_err(|e| e.to_string())?;
 
     // Bind a random loopback port for the callback. RFC 8252 §7.3 says loopback
-    // redirects allow any port, so we bind :0 (OS-assigned). Forgejo's OAuth2
-    // provider is documented to honor this for public clients registered with
-    // `http://127.0.0.1/` as the redirect URI.
+    // redirects allow any port, so we bind :0 (OS-assigned). Forgejo (via the
+    // inherited Gitea behavior, PR go-gitea/gitea#21373) strips the port for
+    // loopback URIs of PUBLIC (non-confidential) clients only — the app must be
+    // registered public with `http://127.0.0.1/callback` (path exact, no port).
     //
-    // TODO(H1, release-gate): verify Codeberg (Forgejo) actually accepts a
-    // dynamic-port redirect at runtime before shipping the automatic flow.
-    // If Codeberg requires an exact registered port, register a fixed port
-    // here and change the bind to `127.0.0.1:<FIXED>` to match. Test
-    // end-to-end against codeberg.org. Tracked in docs/dev/git-provider-apps-
-    // and-tokens.md §9.6. Until verified, Codeberg users fall back to PAT.
+    // TODO(H1, release-gate): source evidence is solid; still verify against
+    // codeberg.org with a live login once the project app is registered.
+    // docs/dev/git-provider-apps-and-tokens.md §9.6 tracks the gate. Until
+    // verified, Codeberg users fall back to PAT.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("Failed to bind callback listener: {e}"))?;

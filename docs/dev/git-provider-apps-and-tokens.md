@@ -256,18 +256,18 @@ One active instance per provider is supported in v1. Switching instances (e.g. g
 | Desktop device-flow UI | Done (generalized) | Done (reuses GitHub UI) | N/A |
 | Desktop PKCE UI | N/A | N/A | Done |
 | Advanced Options UI | Done | Done | Done |
-| Embedded client_id | Real (verify org) | Placeholder | Placeholder |
+| Embedded client_id | Real (verify org) | Baked at build (`option_env!`) | Baked at build (`option_env!`) |
 
 ---
 
 ## 9. Open items for the maintainer
 
 1. **Audit `Ov23liuGmBAmBRWm3Ni`**: confirm it is org-owned. If personal, re-register under the project org and update `GITHUB_CLIENT_ID`.
-2. **Register the GitLab app** under a project group. Enable the device-flow toggle. Provide the Application ID.
-3. **Register the Codeberg app** as a public PKCE client. Provide the Client ID.
+2. **Register the GitLab app** — DONE 2026-11-27. Registered on the personal account (device-flow toggle on, Confidential unchecked, scope `api` only, redirect `http://127.0.0.1/callback` — mandatory field, inert for device flow). Application ID delivered as `BALUARD_GITLAB_CLIENT_ID` in `~/.secrets` and baked into release builds via `option_env!` (`Provider::default_client_id`). Group migration later = same org audit as GitHub item 1.
+3. **Register the Codeberg app** — DONE 2026-11-27. Public client, redirect `http://127.0.0.1/callback` (port-free: Forgejo strips the port for public loopback clients, see item 6). Client ID delivered as `BALUARD_CODEBERG_CLIENT_ID`, baked via `option_env!`. The `BALUARD_GITLAB_CLIENT_SECRET` / `BALUARD_CODEBERG_CLIENT_SECRET` env vars are NOT consumed: both flows are public clients that send no secret, and no secret may ship in the binary.
 4. **Verify the GitLab device-flow toggle** is available for group-owned apps (not just user-owned). Report back if it is group-restricted.
 5. **Decide on the Codeberg full-access warning UX** before task 5 ships: warning modal vs inline banner. Recommended: modal blocking first connect, dismissible thereafter.
-6. **H1 manual verification (release gate)**: confirm the registered Codeberg OAuth2 app actually accepts a loopback `redirect_uri` with a dynamic port (i.e. `http://127.0.0.1/` wildcarding any port per RFC 8252). The PKCE flow binds a random ephemeral port at runtime; if Codeberg requires an exact registered port, registration must use a fixed port and the listener bind must match. Test end-to-end against codeberg.org before release.
+6. **H1 manual verification (release gate)**: confirm the registered Codeberg OAuth2 app actually accepts a loopback `redirect_uri` with a dynamic port. Source evidence (2026-11-27): Gitea `ContainsRedirectURI` ignores the port for loopback redirects **only for public (non-confidential) clients**, since gitea 1.18 (PR go-gitea/gitea#21293 / #21373); Forgejo inherited the behavior at fork. Registration must therefore be a public client with `http://127.0.0.1/callback` listed (exact path, port-free), and the "Confidential client" box must stay unchecked. The PKCE flow binds a random ephemeral port at runtime; a confidential registration would break it. Live end-to-end test against codeberg.org still pending; tracked here as the release gate.
 
 ---
 
@@ -284,3 +284,4 @@ One active instance per provider is supported in v1. Switching instances (e.g. g
 - Forgejo token scopes (PAT): `https://forgejo.org/docs/latest/user/token-scope/`
 - RFC 8628 (Device Authorization Grant): `https://datatracker.ietf.org/doc/html/rfc8628`
 - RFC 8252 (Native Apps, loopback redirect): `https://datatracker.ietf.org/doc/html/rfc8252`
+- Gitea loopback port-wildcard PR (inherited by Forgejo): `https://github.com/go-gitea/gitea/pull/21373`

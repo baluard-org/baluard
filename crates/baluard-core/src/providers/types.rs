@@ -101,9 +101,15 @@ impl Provider {
     ///    `BALUARD_CODEBERG_CLIENT_ID` env var (loaded from process env,
     ///    which `dotenvy` populates from `.env` at startup). Empty string
     ///    is treated as unset.
-    /// 2. The embedded default (real GitHub app; placeholder for GitLab +
-    ///    Codeberg until the project app is registered — see
-    ///    `docs/dev/git-provider-apps-and-tokens.md` §3/§4/§5).
+    /// 2. The value baked at compile time from the same variable via
+    ///    `option_env!`: release builds run with the env sourced, so the
+    ///    real project app ID ships inside the binary. Builds without it
+    ///    (fresh clones, CI) keep the placeholder.
+    ///
+    /// Client IDs are public identifiers, safe to embed. The
+    /// BALUARD_*_CLIENT_SECRET vars are NOT consumed this way: GitLab
+    /// (device flow) and Codeberg (PKCE) are public clients that must not
+    /// send a secret.
     ///
     /// Returns `String` (not `&'static str`) because env-var reads are
     /// owned. Callers that need the embedded default without env influence
@@ -119,10 +125,37 @@ impl Provider {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| match self {
                 Self::GitHub => super::github::GITHUB_CLIENT_ID.to_string(),
-                Self::GitLab => "REPLACE_WITH_GITLAB_CLIENT_ID".to_string(),
-                Self::Codeberg => "REPLACE_WITH_CODEBERG_CLIENT_ID".to_string(),
+                Self::GitLab => option_env!("BALUARD_GITLAB_CLIENT_ID")
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(GITLAB_CLIENT_ID_PLACEHOLDER)
+                    .to_string(),
+                Self::Codeberg => option_env!("BALUARD_CODEBERG_CLIENT_ID")
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(CODEBERG_CLIENT_ID_PLACEHOLDER)
+                    .to_string(),
             })
     }
+}
+
+/// Sentinels that keep builds without the provider env functional: OAuth
+/// starts with these ID would 404 at the forge, so flows refuse them via
+/// `ensure_client_id_configured`.
+pub const GITLAB_CLIENT_ID_PLACEHOLDER: &str = "REPLACE_WITH_GITLAB_CLIENT_ID";
+pub const CODEBERG_CLIENT_ID_PLACEHOLDER: &str = "REPLACE_WITH_CODEBERG_CLIENT_ID";
+
+/// Refuse OAuth starts whose client_id is blank or an unconfigured sentinel.
+/// Real project IDs are baked at compile time (`option_env!` in
+/// `Provider::default_client_id`); reaching a placeholder here means a
+/// plain build without `BALUARD_GITLAB_CLIENT_ID` / `BALUARD_CODEBERG_CLIENT_ID`.
+pub fn ensure_client_id_configured(client_id: &str) -> Result<(), ProviderError> {
+    let id = client_id.trim();
+    if id.is_empty() || id == GITLAB_CLIENT_ID_PLACEHOLDER || id == CODEBERG_CLIENT_ID_PLACEHOLDER {
+        return Err(ProviderError::Other(
+            "Sign-in is not configured for this provider. Connect with an access token instead."
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Provider connection config. `None` fields mean "use the provider's public
@@ -1137,6 +1170,17 @@ mod tests {
     }
 
     #[test]
+    fn client_id_guard_accepts_real_and_rejects_blank_or_placeholder() {
+        assert!(ensure_client_id_configured("real-client-id").is_ok());
+        assert!(ensure_client_id_configured(GITLAB_CLIENT_ID_PLACEHOLDER).is_err());
+        assert!(ensure_client_id_configured(CODEBERG_CLIENT_ID_PLACEHOLDER).is_err());
+        // .env ships blank assignments; a build shell that exports them
+        // must not produce an empty client_id that bypasses the guard.
+        assert!(ensure_client_id_configured("").is_err());
+        assert!(ensure_client_id_configured("   ").is_err());
+    }
+
+    #[test]
     fn env_override_takes_precedence_over_embedded() {
         let _guard = ENV_LOCK.lock().unwrap();
         let _restore = snapshot_client_id_env();
@@ -1179,16 +1223,20 @@ mod tests {
             crate::providers::github::GITHUB_CLIENT_ID
         );
 
+        // GitLab/Codeberg fall back to the compile-time `option_env!` bake:
+        // on a machine that builds with the env sourced this is the real
+        // project app ID, elsewhere the placeholder. The test mirrors the
+        // same expression, so it holds in both build environments.
         unsafe { std::env::remove_var("BALUARD_GITLAB_CLIENT_ID") };
         assert_eq!(
             Provider::GitLab.default_client_id(),
-            "REPLACE_WITH_GITLAB_CLIENT_ID"
+            option_env!("BALUARD_GITLAB_CLIENT_ID").unwrap_or(GITLAB_CLIENT_ID_PLACEHOLDER)
         );
 
         unsafe { std::env::remove_var("BALUARD_CODEBERG_CLIENT_ID") };
         assert_eq!(
             Provider::Codeberg.default_client_id(),
-            "REPLACE_WITH_CODEBERG_CLIENT_ID"
+            option_env!("BALUARD_CODEBERG_CLIENT_ID").unwrap_or(CODEBERG_CLIENT_ID_PLACEHOLDER)
         );
     }
 

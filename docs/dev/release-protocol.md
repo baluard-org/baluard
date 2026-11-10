@@ -56,9 +56,13 @@ Non-secret store identifiers live on the release box in `~/.config/environment.d
 ```sh
 BALUARD_CHROME_EXTENSION_ID=nmkmfkmdhbifkjdhioejeoegcjpaiijl
 BALUARD_CHROME_PUBLISHER_ID=d6e3a68c-a6f3-4359-9769-9fd105198720
+BALUARD_GITLAB_CLIENT_ID=<gitlab application id>
+BALUARD_CODEBERG_CLIENT_ID=<codeberg client id>
 ```
 
 `BALUARD_CHROME_EXTENSION_ID` is consumed at desktop build time: `scripts/build-nmh-manifests.sh` bakes `chrome-extension://<id>/` into the chrome, chromium, and edge host manifests that the deb and rpm install system-wide (`/etc/opt/chrome`, `/etc/chromium`, `/etc/opt/edge`, and `/usr/lib` or `/usr/lib64/mozilla` for Firefox). Unset, it falls back to a `baluard-unconfigured` placeholder origin that can never match a real extension; never ship packages built without the real ID. A terminal opened before the environment changed needs a re-login, or prefix the variable for one-off runs.
+
+`BALUARD_GITLAB_CLIENT_ID` and `BALUARD_CODEBERG_CLIENT_ID` (public identifiers, not secrets) are consumed at build time via `option_env!`: they bake into the daemon, CLI, desktop bundle, and mobile native lib. Unset or empty, the build keeps `REPLACE_WITH_*` placeholders and the OAuth flows refuse to start with a plain-language error. A terminal opened before the environment changed needs a re-login, or prefix the variables for one-off runs.
 
 ## Build matrix
 
@@ -152,7 +156,8 @@ The desktop confirm-first flow: the Rust command surface (`desktop/src-tauri/src
 2. `just test-release-scripts` green (thirteen hermetic suites: fdroid, sync-site-repos, build-extension-packages, submit-extension-stores, build-windows-installer, build-nmh-manifests, bump-version, generate-updates-manifest, sign-updater-sigs, stage-release-assets, upload-play-release, build-arch-repo, build-apt-repo).
 3. `just smoke-pkg` for the deb, and the relevant `e2e` recipes for changed surfaces (`e2e-desktop`, `e2e-android` with `just emulator`, `e2e-extension`, `e2e-extension-firefox`).
 4. After `just desktop-build`, confirm the NMH manifests carry the real origin: `grep -r baluard-unconfigured desktop/src-tauri/nmh-manifests/` must find nothing.
-5. Confirm the newest store zips carry the bumped version (`just ext-package` already refuses a mismatch).
+5. Confirm the release binaries carry the real provider client IDs: `strings target/release/baluard-daemon | grep REPLACE_WITH_` must find nothing (GitLab and Codeberg IDs bake at build from `BALUARD_GITLAB_CLIENT_ID` / `BALUARD_CODEBERG_CLIENT_ID` on the release box).
+6. Confirm the newest store zips carry the bumped version (`just ext-package` already refuses a mismatch).
 
 ## Release-day gotchas
 
