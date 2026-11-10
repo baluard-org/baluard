@@ -1255,15 +1255,15 @@ const BLUR_LOCK_DELAY: std::time::Duration = std::time::Duration::from_millis(15
 //
 // Lives at <data_dir>/desktop-prefs.json in plaintext. Unlike VaultSettings
 // (per-vault, encrypted), these are client-level behaviors that must apply on
-// the login screen and across every vault. The tray/dock presence is not a
-// vault property, so it does not belong in settings.enc.
+// the login screen and across every vault. The background preference is not
+// a vault property, so it does not belong in settings.enc.
 
 fn default_true() -> bool {
     true
 }
 
 /// App-global desktop preferences. Plaintext on disk; no secrets.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DesktopPrefs {
     /// Keep Baluard running after the window closes: close hides to the tray
     /// (daemon + browser extension stay alive). Off, closing quits the app.
@@ -1279,16 +1279,72 @@ struct DesktopPrefs {
     compatible_rendering: Option<bool>,
 }
 
+// Manual Default: the derived impl would give run_in_background = false,
+// while the serde field default only fills missing keys in an EXISTING file —
+// so fresh installs (no desktop-prefs.json) and corrupt files would load OFF,
+// reversing the intended close behavior. Default and serde default must agree.
+impl Default for DesktopPrefs {
+    fn default() -> Self {
+        Self {
+            run_in_background: true,
+            compatible_rendering: None,
+        }
+    }
+}
+
 fn desktop_prefs_path() -> std::path::PathBuf {
     baluard_core::paths::data_dir().join("desktop-prefs.json")
 }
 
-/// Load desktop prefs; missing/corrupt file falls back to default (tray off).
-/// Never propagates an error — a bad prefs file must not block app launch.
+/// Load desktop prefs; missing/corrupt file falls back to the default
+/// (run-in-background on). Never propagates an error — a bad prefs file must
+/// not block app launch.
 fn load_desktop_prefs() -> DesktopPrefs {
     match std::fs::read_to_string(desktop_prefs_path()) {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
         Err(_) => DesktopPrefs::default(),
+    }
+}
+
+#[cfg(test)]
+mod desktop_prefs_tests {
+    use super::DesktopPrefs;
+
+    // The serde field default only fills a MISSING key inside an existing
+    // file; the in-memory Default is what missing/corrupt files actually get.
+    // These two must agree on run_in_background = true (regression: the
+    // derived Default silently shipped close-quits to fresh installs).
+
+    #[test]
+    fn in_memory_default_is_run_in_background_on() {
+        assert!(DesktopPrefs::default().run_in_background);
+    }
+
+    #[test]
+    fn empty_json_object_defaults_to_on() {
+        let prefs: DesktopPrefs = serde_json::from_str("{}").unwrap();
+        assert!(prefs.run_in_background);
+    }
+
+    #[test]
+    fn legacy_tray_only_key_defaults_to_on_regardless_of_its_value() {
+        for v in ["{\"tray_only\": true}", "{\"tray_only\": false}"] {
+            let prefs: DesktopPrefs = serde_json::from_str(v).unwrap();
+            assert!(prefs.run_in_background, "input: {v}");
+        }
+    }
+
+    #[test]
+    fn explicit_false_still_wins() {
+        let prefs: DesktopPrefs = serde_json::from_str("{\"run_in_background\": false}").unwrap();
+        assert!(!prefs.run_in_background);
+    }
+
+    #[test]
+    fn run_in_background_true_parses_and_compatible_rendering_defaults_to_auto() {
+        let prefs: DesktopPrefs = serde_json::from_str("{\"run_in_background\": true}").unwrap();
+        assert!(prefs.run_in_background);
+        assert_eq!(prefs.compatible_rendering, None);
     }
 }
 
@@ -1759,7 +1815,7 @@ pub fn run() {
         // we ask the daemon to lock only the vaults whose timeout policy is
         // `Immediately`. Other policies (Minutes / OnAppExit) are
         // honored: backgrounding the app alone no longer forces a lock.
-        // Close still hides to tray.
+        // Close follows the Run-in-the-background setting.
         //
         // NOTE: OS suspend / screen-lock hooks are platform-specific and
         // not yet wired here. Tauri v2 has no cross-platform power-event
@@ -1924,7 +1980,9 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 // Save last before teardown: Ctrl+Q and the tray Quit skip
                 // CloseRequested, so the exit path is the only save that
-                // covers every quit route (the window is still queryable).
+                // covers every quit route. Harmless on the close-quits route
+                // too (CloseRequested already saved; the window may be gone,
+                // in which case this saves nothing).
                 save_window_geometry(app_handle);
                 daemon_ctl::on_app_exit(app_handle.state::<Mutex<Option<Daemon>>>().inner());
             }
