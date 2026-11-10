@@ -146,8 +146,7 @@ done
 run_arch >/dev/null || die "retention run failed"
 [[ -f "$ARCHDIR/baluard-0.2.5-1-x86_64.pkg.tar.zst" ]] || die "new package missing after retention"
 [[ -f "$ARCHDIR/baluard-0.2.4-1-x86_64.pkg.tar.zst" ]] || die "0.2.4 should be retained"
-[[ -f "$ARCHDIR/baluard-0.2.3-1-x86_64.pkg.tar.zst" ]] || die "0.2.3 should be retained"
-[[ -f "$ARCHDIR/baluard-0.2.2-1-x86_64.pkg.tar.zst" ]] && die "0.2.2 should be pruned"
+[[ -f "$ARCHDIR/baluard-0.2.3-1-x86_64.pkg.tar.zst" ]] && die "0.2.3 should be pruned at keep-two"
 grep -qF 'repo-add --sign baluard.db.tar.zst baluard-*-1-x86_64.pkg.tar.zst' "$LOG/podman.log" \
   || die "database is not rebuilt from the retained packages"
 

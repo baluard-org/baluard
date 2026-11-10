@@ -49,7 +49,7 @@ VER=$(awk '/^Version:/ {print $2; exit}' "$tmp/control")
 # writes the new package, so the set must include it to stay within KEEP.
 ARCH="$OUT/arch/x86_64"
 mkdir -p "$ARCH"
-KEEP="${BALUARD_LINUX_REPO_KEEP:-3}"
+KEEP="${BALUARD_LINUX_REPO_KEEP:-2}"
 while IFS= read -r old; do
   rm -f "$ARCH/$old" "$ARCH/$old.sig"
 done < <({ find "$ARCH" -maxdepth 1 -name 'baluard-*-1-x86_64.pkg.tar.zst' -printf '%f\n'; \

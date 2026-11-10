@@ -233,6 +233,7 @@ test-release-scripts:
 	./scripts/tests/test-stage-release-assets.sh
 	./scripts/tests/test-upload-play-release.sh
 	./scripts/tests/test-build-arch-repo.sh
+	./scripts/tests/test-build-apt-repo.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
