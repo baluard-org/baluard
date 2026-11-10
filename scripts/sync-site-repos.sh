@@ -29,12 +29,14 @@ git -C "$SITE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "site is 
 [[ ! -e "$SITE/repo" && ! -e "$SITE/fdroid" ]] || fail "site still carries package trees: remove repo/ and fdroid/ from the site repo (packages publish to baluard-packages)"
 [[ -d "$PKG_SITE" ]] || fail "package site clone missing: $PKG_SITE (git clone baluard-org/baluard-packages)"
 
-# Packages publish straight from staging. The clone's dotfiles plus the
+# Packages publish straight from staging. The clone's dotfiles, the GitHub
+# workflow that deploys it, and the author-owned install definitions
 # author-owned install definitions (baluard.repo, baluard.sources,
 # index.html) are not mirrored; the CNAME binds the custom domain.
 rsync -a --delete --exclude=/fdroid/ --exclude=/index.html \
   --exclude=/baluard.repo --exclude=/baluard.sources \
   --exclude=.git --exclude=.gitignore --exclude=.nojekyll --exclude=/CNAME \
+  --exclude=/.github/ \
   "$SRC/" "$PKG_SITE/"
 mkdir -p "$PKG_SITE/fdroid/repo"
 rsync -a --delete --exclude=.git --exclude=.gitignore --exclude=.nojekyll \
