@@ -62,15 +62,16 @@ async function showWindow() {
   return invoke("show_window");
 }
 
-// Read app-global desktop preferences (tray-only mode, etc.). Handled in the
-// Tauri layer, not the daemon — these are client-level, pre-unlock prefs.
+// Read app-global desktop preferences (background behavior, etc.). Handled in
+// the Tauri layer, not the daemon — these are client-level, pre-unlock prefs.
 async function getDesktopPrefs() {
   return invoke("get_desktop_prefs");
 }
 
-// Toggle tray-only mode (hide from Dock / taskbar). Persists + applies at once.
-async function setTrayOnly(enabled) {
-  return invoke("set_tray_only", { enabled });
+// Toggle run-in-background (keep running in the tray when the window closes).
+// Persists; takes effect on the next close.
+async function setRunInBackground(enabled) {
+  return invoke("set_run_in_background", { enabled });
 }
 
 // Linux compatible-rendering state: drives the login recovery notice and the
@@ -85,4 +86,4 @@ async function setCompatibleRendering(value) {
   return invoke("set_compatible_rendering", { value });
 }
 
-export { daemon, showWindow, getDesktopPrefs, setTrayOnly, getRenderState, setCompatibleRendering };
+export { daemon, showWindow, getDesktopPrefs, setRunInBackground, getRenderState, setCompatibleRendering };
