@@ -62,9 +62,11 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["NSS
 # Linux tray: pure-Rust SNI over DBus. tauri's own tray is pinned to
 # tray-icon 0.24 whose only Linux backend is the deprecated libayatana
 # appindicator (deprecation warnings + Gtk-CRITICALs under Wayland), so the
-# Linux tray is built directly on ksni instead of tauri::tray.
+# Linux tray is built directly on ksni instead of tauri::tray. The async-io
+# feature keeps zbus on its own default runtime (tokio would flip the
+# runtime shared with notify-rust and tauri-plugin-single-instance).
 [target.'cfg(target_os = "linux")'.dependencies]
-ksni = "0.3"
+ksni = { version = "0.3", default-features = false, features = ["async-io"] }
 
 [features]
 default = []
