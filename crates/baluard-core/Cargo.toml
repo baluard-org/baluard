@@ -39,7 +39,7 @@ rsa = "0.9"
 # assertion-signature oracle in the passkey provider tests (§8 of
 # ADR 0095). The earlier dev-only placement predates the
 # attestation verifier (hwkey/attest.rs), which verifies in production.
-p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdsa", "ecdh", "std"] }
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdsa", "ecdh", "pkcs8", "std"] }
 bip39.workspace = true
 serde.workspace = true
 serde_json.workspace = true
