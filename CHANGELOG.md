@@ -4,6 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 - Update notifications show more of the release notes and carry a View changelog link that opens the release page in your browser.
+- The vault header castles the generator next to the new-entry button, with sync following.
 
 - No user-facing changes yet.
 
