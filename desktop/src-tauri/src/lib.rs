@@ -1,7 +1,7 @@
 //! Baluard desktop Tauri backend.
 //!
 //! - Starts baluard-daemon on launch, stops on quit
-//! - Window close hides to system tray
+//! - Window close keeps Baluard running in the tray (configurable in Settings)
 //! - Proxies vault operations via Protobuf-over-Unix-socket
 
 use prost::Message;
@@ -1258,14 +1258,19 @@ const BLUR_LOCK_DELAY: std::time::Duration = std::time::Duration::from_millis(15
 // the login screen and across every vault. The tray/dock presence is not a
 // vault property, so it does not belong in settings.enc.
 
+fn default_true() -> bool {
+    true
+}
+
 /// App-global desktop preferences. Plaintext on disk; no secrets.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct DesktopPrefs {
-    /// Tray-only mode: hide the app from the macOS Dock / Windows+Linux
-    /// taskbar. The window stays reachable via the tray icon. Closing the
-    /// window still hides it to the tray (unchanged).
-    #[serde(default)]
-    tray_only: bool,
+    /// Keep Baluard running after the window closes: close hides to the tray
+    /// (daemon + browser extension stay alive). Off, closing quits the app.
+    /// Default on — it preserves the pre-setting close behavior, and the
+    /// browser extension pairs with the daemon this keeps alive.
+    #[serde(default = "default_true")]
+    run_in_background: bool,
     /// Linux compatible-rendering preference. `None` = automatic (decided
     /// at each launch from GPU detection + crash recovery). `Some(true)`
     /// forces the WebKitGTK workaround on, `Some(false)` forces it off.
@@ -1307,38 +1312,6 @@ fn save_desktop_prefs(prefs: &DesktopPrefs) {
     }
 }
 
-/// Apply tray-only mode to the OS chrome.
-///
-/// macOS: switch the activation policy. `Accessory` removes the Dock icon
-/// (menu-bar-tray app); `Regular` restores it. This is the canonical macOS
-/// mechanism and is dynamic at runtime.
-/// Windows/Linux: no activation-policy equivalent, so toggle the window's
-/// taskbar button via `set_skip_taskbar`. The tray icon remains the anchor.
-///
-/// Returns `Err` if the OS call failed so the caller (set_tray_only command)
-/// can surface it to the UI instead of falsely reporting success. The prefs
-/// file write is handled separately by the caller and stays best-effort.
-fn apply_tray_only(app: &AppHandle, tray_only: bool) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        let policy = if tray_only {
-            tauri::ActivationPolicy::Accessory
-        } else {
-            tauri::ActivationPolicy::Regular
-        };
-        app.set_activation_policy(policy)
-            .map_err(|e| format!("set_activation_policy: {e}"))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let w = app
-            .get_webview_window("main")
-            .ok_or_else(|| "main window not found".to_string())?;
-        w.set_skip_taskbar(tray_only)
-            .map_err(|e| format!("set_skip_taskbar: {e}"))
-    }
-}
-
 /// Read desktop prefs (for the Settings UI to reflect current state).
 #[tauri::command]
 async fn get_desktop_prefs() -> DesktopPrefs {
@@ -1347,22 +1320,18 @@ async fn get_desktop_prefs() -> DesktopPrefs {
         .unwrap_or_default()
 }
 
-/// Toggle tray-only mode: persist + apply immediately.
-///
-/// The prefs file write is best-effort (logged on failure, matching the
-/// theme/locale persistence pattern): a failed write doesn't block the
-/// in-session apply. The OS-apply failure DOES propagate so the UI doesn't
-/// falsely report success when the Dock/taskbar state didn't actually change.
+/// Toggle run-in-background: persist. Takes effect on the next window close,
+/// so there is no immediate OS state to apply.
 #[tauri::command]
-async fn set_tray_only(app: AppHandle, enabled: bool) -> Result<(), String> {
-    // Load-mutate-save: the prefs struct carries more than one field now;
+async fn set_run_in_background(enabled: bool) -> Result<(), String> {
+    // Load-mutate-save: the prefs struct carries more than one field;
     // reconstructing it here would silently wipe the others.
     let mut prefs = tauri::async_runtime::spawn_blocking(load_desktop_prefs)
         .await
         .unwrap_or_default();
-    prefs.tray_only = enabled;
+    prefs.run_in_background = enabled;
     let _ = tauri::async_runtime::spawn_blocking(move || save_desktop_prefs(&prefs)).await;
-    apply_tray_only(&app, enabled)
+    Ok(())
 }
 
 // ── Linux compatible rendering (WebKitGTK DMABUF workaround) ──
@@ -1767,18 +1736,6 @@ pub fn run() {
                 app.set_menu(app_bar_menu)?;
             }
 
-            // Apply tray-only preference at startup so the Dock / taskbar
-            // state is correct from the first frame (no dock-icon flash on
-            // macOS). Loaded from <data_dir>/desktop-prefs.json.
-            let prefs = load_desktop_prefs();
-            if prefs.tray_only {
-                // Best-effort: a failure here must NOT abort app launch. Log
-                // and continue; the user can re-toggle from Settings.
-                if let Err(e) = apply_tray_only(app.handle(), true) {
-                    log::warn!("[desktop] startup tray-only apply failed: {e}");
-                }
-            }
-
             // Record the rendering decision in the log now that the file
             // logger is attached (the decision itself happened in run(),
             // before the builder).
@@ -1815,11 +1772,16 @@ pub fn run() {
         .on_window_event(|window, event| {
             match event {
                 WindowEvent::CloseRequested { api, .. } => {
-                    // Remember the rect before hiding so the next launch can
-                    // clamp it back into view (window_geometry).
+                    // Remember the rect so the next launch can clamp it back
+                    // into view (window_geometry). The RunEvent::Exit arm also
+                    // saves, but the hide path never exits.
                     save_window_geometry(window.app_handle());
-                    api.prevent_close();
-                    let _ = window.hide();
+                    if load_desktop_prefs().run_in_background {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    // Background off: let the close proceed; the RunEvent::Exit
+                    // path runs the graceful teardown (lock vaults, stop daemon).
                 }
                 WindowEvent::Focused(false) => {
                     // M4: arm a debounced lock-all. Transient blurs (menus,
@@ -1932,7 +1894,7 @@ pub fn run() {
             export_save_plain,
             clipboard_mark_concealed,
             get_desktop_prefs,
-            set_tray_only,
+            set_run_in_background,
             get_render_state,
             set_compatible_rendering
         ])

@@ -230,10 +230,6 @@
   "settings": {
     "faviconLabel": "",
     "faviconDesc": "",
-    "trayOnlyLabel": "",
-    "trayOnlyDesc": "",
-    "trayOnlyEnabled": "",
-    "trayOnlyDisabled": "",
     "compatibleRenderingLabel": "",
     "compatibleRenderingDesc": "",
     "compatibleRenderingAuto": "",
@@ -319,7 +315,11 @@
     "tabSync": "",
     "syncNotAvailable": "",
     "tabBridge": "",
-    "themeSystem": ""
+    "themeSystem": "",
+    "runInBackgroundLabel": "",
+    "runInBackgroundDesc": "",
+    "runInBackgroundEnabled": "",
+    "runInBackgroundDisabled": ""
   },
   "sync": {
     "title": "",

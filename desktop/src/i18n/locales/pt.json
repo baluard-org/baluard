@@ -295,10 +295,6 @@
   "settings": {
     "faviconLabel": "Exibir ícones de sites",
     "faviconDesc": "Desativado por padrão. Ao ativar, os logotipos são buscados em cada site e, se não houver, no Google. Ambos os serviços ficam sabendo quais sites você salva. Apenas o primeiro site de cada item é enviado.",
-    "trayOnlyLabel": "Ocultar da barra de tarefas / Dock",
-    "trayOnlyDesc": "Manter o Baluard apenas na bandeja do sistema. A janela continua acessível pelo ícone da bandeja; fechá-la oculta para a bandeja.",
-    "trayOnlyEnabled": "Modo somente bandeja ativado",
-    "trayOnlyDisabled": "Modo somente bandeja desativado",
     "compatibleRenderingLabel": "Renderização compatível",
     "compatibleRenderingDesc": "Corrige janelas em branco ou com falhas em alguns sistemas Linux. Automático ativa somente quando necessário. Vale após reiniciar o Baluard.",
     "compatibleRenderingAuto": "Automático",
@@ -463,7 +459,11 @@
     "hwTouchBody": "Toque a chave quando ela piscar. Aguardando seu toque…",
     "hwAttestVerified": "Chave de segurança verificada como fabricada pela Yubico.",
     "hwAttestUnknownShort": "Não foi possível verificar o fabricante da chave; ela funciona mesmo assim.",
-    "hwAttestUnknownToast": "Esta chave não está verificada como fabricada pela Yubico. O Baluard a aceitou: a proteção continuará precisando da sua senha e desta chave."
+    "hwAttestUnknownToast": "Esta chave não está verificada como fabricada pela Yubico. O Baluard a aceitou: a proteção continuará precisando da sua senha e desta chave.",
+    "runInBackgroundLabel": "Executar em segundo plano",
+    "runInBackgroundDesc": "Mantém o Baluard executando na bandeja do sistema após fechar a janela, para que o preenchimento automático do navegador continue funcionando. Desative para encerrar o Baluard ao fechar.",
+    "runInBackgroundEnabled": "O Baluard continua executando ao fechar a janela",
+    "runInBackgroundDisabled": "O Baluard agora é encerrado ao fechar a janela"
   },
   "sync": {
     "title": "Sincronização do Cofre",

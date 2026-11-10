@@ -2,7 +2,7 @@ import { onSettled, Show, createSignal, createEffect } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { initDeepLink, flushPendingEntry } from "./lib/deepLink.js";
 import { useI18n } from "./i18n/index.jsx";
-import { daemon, showWindow } from "./lib/daemon.js";
+import { daemon, showWindow, getDesktopPrefs } from "./lib/daemon.js";
 import { toastInfo } from "./context/toastSignal.js";
 import { disableAutofill } from "./lib/disableAutofill.js";
 import { useAuth } from "./context/AuthContext.jsx";
@@ -150,18 +150,21 @@ export default function App() {
         await showWindow();
         // One-time hint, non-Mac only: closing the window hides to the tray
         // rather than quitting, which reads as a dead app on Linux/Windows
-        // otherwise (macOS users expect the dock + Cmd+Q convention).
+        // otherwise (macOS users expect the dock + Cmd+Q convention). Only
+        // meaningful when run-in-background is on — off, closing quits.
         try {
           const isMac = navigator.userAgent.includes("Mac");
+          const prefs = await getDesktopPrefs();
           if (
             !isMac &&
+            prefs.run_in_background !== false &&
             !localStorage.getItem("baluard.trayHint.v1")
           ) {
             localStorage.setItem("baluard.trayHint.v1", "1");
             toastInfo(t("app.trayHint"));
           }
         } catch {
-          // Storage unavailable (tests, private mode): skip the hint.
+          // Storage or prefs unavailable (tests, private mode): skip the hint.
         }
       }
     })();

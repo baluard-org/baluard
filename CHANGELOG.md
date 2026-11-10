@@ -11,6 +11,7 @@ Notable user-facing changes per release.
 - Update notifications show more of the release notes and carry a View changelog link that opens the release page in your browser.
 
 ## [UNRELEASED]
+- Closing the window now follows the new Run in the background setting: on (the default), Baluard keeps running in the tray so browser autofill stays working; off, closing quits Baluard. The old hide-from-Dock toggle is gone.
 
 ## 0.3.0 - 2026-11-10
 

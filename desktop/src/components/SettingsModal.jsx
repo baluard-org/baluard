@@ -4,7 +4,7 @@ import { useVault } from "../context/VaultContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
-import { daemon, getDesktopPrefs, setTrayOnly, getRenderState, setCompatibleRendering } from "../lib/daemon.js";
+import { daemon, getDesktopPrefs, setRunInBackground, getRenderState, setCompatibleRendering } from "../lib/daemon.js";
 import ConfirmModal from "./ConfirmModal.jsx";
 import { sanitizeError, generatePassphrase } from "../lib/utils.js";
 import { copyToClipboard } from "../lib/clipboard.js";
@@ -132,9 +132,9 @@ export default function SettingsModal() {
   // Favicon state
   const [fetchFavicons, setFetchFavicons] = createSignal(false);
 
-  // Tray-only mode (app-global: hide from Dock / taskbar). Lives in the Tauri
-  // layer, not the daemon — pre-unlock client preference.
-  const [trayOnly, setTrayOnlySignal] = createSignal(false);
+  // Run-in-background (app-global: keep running in the tray after close).
+  // Lives in the Tauri layer, not the daemon — pre-unlock client preference.
+  const [runInBackground, setRunInBackgroundSignal] = createSignal(true);
 
   // Linux compatible rendering (WebKitGTK workaround). Setting cycles
   // automatic → on → off → automatic; `active` mirrors what the backend
@@ -393,11 +393,11 @@ export default function SettingsModal() {
       setBiometricEnabled(enabled);
       await loadPinStatus();
 
-      // Tray-only pref is app-global (Tauri layer), separate from daemon
-      // vault settings. Load failures fall back to off (default).
+      // Run-in-background pref is app-global (Tauri layer), separate from
+      // daemon vault settings. Load failures fall back to on (default).
       try {
         const prefs = await getDesktopPrefs();
-        setTrayOnlySignal(!!prefs.tray_only);
+        setRunInBackgroundSignal(prefs.run_in_background !== false);
       } catch {}
 
       // Linux compatible rendering state (also Tauri layer). One call fills
@@ -457,14 +457,14 @@ export default function SettingsModal() {
     }
   }
 
-  async function toggleTrayOnly() {
-    const next = !trayOnly();
-    setTrayOnlySignal(next);
+  async function toggleRunInBackground() {
+    const next = !runInBackground();
+    setRunInBackgroundSignal(next);
     try {
-      await setTrayOnly(next);
-      toastSuccess(t(next ? "settings.trayOnlyEnabled" : "settings.trayOnlyDisabled"));
+      await setRunInBackground(next);
+      toastSuccess(t(next ? "settings.runInBackgroundEnabled" : "settings.runInBackgroundDisabled"));
     } catch (e) {
-      setTrayOnlySignal(!next);
+      setRunInBackgroundSignal(!next);
       toastError(sanitizeError(e, t));
     }
   }
@@ -1049,18 +1049,18 @@ export default function SettingsModal() {
                   </div>
                 </div>
 
-                {/* Tray-only mode (hide from Dock / taskbar) */}
+                {/* Run in the background (close behavior) */}
                 <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
                   <div class="flex items-center justify-between">
                     <div class="flex flex-col flex-1 pr-4">
-                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.trayOnlyLabel")}</span>
-                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.trayOnlyDesc")}</span>
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.runInBackgroundLabel")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.runInBackgroundDesc")}</span>
                     </div>
                     <button
-                      onClick={toggleTrayOnly}
-                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${trayOnly() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                      onClick={toggleRunInBackground}
+                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${runInBackground() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
                     >
-                      {trayOnly() ? t("settings.enabled") : t("settings.disabled")}
+                      {runInBackground() ? t("settings.enabled") : t("settings.disabled")}
                     </button>
                   </div>
                 </div>

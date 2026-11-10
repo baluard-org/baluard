@@ -457,10 +457,6 @@
   "settings": {
     "faviconLabel": "Afficher les icônes des sites web",
     "faviconDesc": "Désactivé par défaut. L'activer télécharge les logos depuis chaque site web, avec Google comme repli. Les deux services peuvent déduire quels sites vous enregistrez. Seul le premier site web de chaque élément est envoyé.",
-    "trayOnlyLabel": "Masquer du Dock / de la barre des tâches",
-    "trayOnlyDesc": "Conserver Baluard uniquement dans la zone de notification système. La fenêtre reste accessible depuis l'icône de notification ; la fermer réduit vers la zone de notification.",
-    "trayOnlyEnabled": "Mode zone de notification activé",
-    "trayOnlyDisabled": "Mode zone de notification désactivé",
     "compatibleRenderingLabel": "Rendu graphique compatible",
     "compatibleRenderingDesc": "Corrige les fenêtres blanches ou les bugs d'affichage sur certains systèmes Linux. Automatique l'active uniquement si nécessaire. S'applique après redémarrage de Baluard.",
     "compatibleRenderingAuto": "Automatique",
@@ -625,7 +621,11 @@
     "hwTouchBody": "Touchez la clé lorsqu'elle clignote. En attente de votre contact…",
     "hwAttestVerified": "Clé de sécurité vérifiée comme fabriquée par Yubico.",
     "hwAttestUnknownShort": "Le fabricant de la clé n'a pas pu être vérifié ; la clé fonctionne quand même.",
-    "hwAttestUnknownToast": "Cette clé n'est pas vérifiée comme fabriquée par Yubico. Baluard l'a acceptée : la protection nécessite toujours votre mot de passe et cette clé."
+    "hwAttestUnknownToast": "Cette clé n'est pas vérifiée comme fabriquée par Yubico. Baluard l'a acceptée : la protection nécessite toujours votre mot de passe et cette clé.",
+    "runInBackgroundLabel": "Exécuter en arrière-plan",
+    "runInBackgroundDesc": "Garde Baluard actif dans la zone de notification après la fermeture de la fenêtre, pour que le remplissage automatique du navigateur continue de fonctionner. Désactivez pour quitter Baluard à la fermeture.",
+    "runInBackgroundEnabled": "Baluard reste actif à la fermeture de la fenêtre",
+    "runInBackgroundDisabled": "Baluard se ferme désormais à la fermeture de la fenêtre"
   },
   "categories": {
     "allItems": "Tous les éléments",

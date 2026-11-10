@@ -263,10 +263,6 @@
   "settings": {
     "faviconLabel": "Mostrar iconos de sitios web",
     "faviconDesc": "Desactivado por defecto. Al activarlo, los logos se piden a cada sitio web y, si no hay, a Google. Ambos servicios saben qué sitios guardas. Solo se envía el primer sitio web de cada entrada.",
-    "trayOnlyLabel": "Ocultar del Dock / barra de tareas",
-    "trayOnlyDesc": "Mantiene Baluard solo en la bandeja del sistema. La ventana sigue accesible desde el icono de la bandeja; cerrarla la sigue ocultando ahí.",
-    "trayOnlyEnabled": "Modo bandeja activado",
-    "trayOnlyDisabled": "Modo bandeja desactivado",
     "compatibleRenderingLabel": "Renderizado compatible",
     "compatibleRenderingDesc": "Corrige ventanas en blanco o con fallos en algunos sistemas Linux. Automático lo activa solo cuando hace falta. Se aplica tras reiniciar Baluard.",
     "compatibleRenderingAuto": "Automático",
@@ -431,7 +427,11 @@
     "hwTouchBody": "Toca la llave cuando parpadee. Esperando tu toque…",
     "hwAttestVerified": "Llave de seguridad verificada como fabricada por Yubico.",
     "hwAttestUnknownShort": "No se pudo verificar el fabricante de la llave; funciona igual.",
-    "hwAttestUnknownToast": "Esta llave no está verificada como fabricada por Yubico. Baluard la aceptó: la protección seguirá necesitando tu contraseña y esta llave."
+    "hwAttestUnknownToast": "Esta llave no está verificada como fabricada por Yubico. Baluard la aceptó: la protección seguirá necesitando tu contraseña y esta llave.",
+    "runInBackgroundLabel": "Ejecutar en segundo plano",
+    "runInBackgroundDesc": "Mantiene Baluard ejecutándose en la bandeja del sistema tras cerrar la ventana, para que el autocompletado del navegador siga funcionando. Desactívalo para salir de Baluard al cerrar.",
+    "runInBackgroundEnabled": "Baluard sigue ejecutándose al cerrar la ventana",
+    "runInBackgroundDisabled": "Baluard ahora se cierra al cerrar la ventana"
   },
   "sync": {
     "title": "Sincronización de bóveda",
