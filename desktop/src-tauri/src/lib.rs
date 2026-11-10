@@ -27,14 +27,15 @@ mod updater;
 mod window_geometry;
 use updater::{updater_check, updater_install, updater_status};
 
-/// Shared tray id across platform backends.
+/// Linux: handle to the ksni tray service plus state the UI path needs.
+/// desired_dark remembers the last theme request so a theme event that lands
+/// before the D-Bus registration completes is applied once the handle exists.
 #[cfg(target_os = "linux")]
-const MAIN_TRAY_ID: &str = "main";
-
-/// Linux: handle to the ksni tray service so the theme listener can swap the
-/// icon after the setup closure is gone.
-#[cfg(target_os = "linux")]
-struct LinuxTrayState(Mutex<Option<ksni::Handle<tray_linux::LinuxTray>>>);
+struct LinuxTrayState {
+    handle: Mutex<Option<ksni::Handle<tray_linux::LinuxTray>>>,
+    desired_dark: std::sync::atomic::AtomicBool,
+    host_offline: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
 
 /// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -971,20 +972,30 @@ async fn clipboard_mark_concealed(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Current liveness of the SNI host, so the frontend can show the
+/// install-an-extension guidance even when the offline event fired before it
+/// started listening (Tauri does not buffer events).
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn tray_host_offline(_app: AppHandle) -> bool {
+    _app.try_state::<LinuxTrayState>()
+        .map(|s| s.host_offline.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 fn update_tray_icon(_app: AppHandle, _is_dark: bool) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        let handle = _app
-            .state::<LinuxTrayState>()
-            .0
-            .lock()
-            .ok()
-            .and_then(|g| g.clone());
-        if let Some(handle) = handle {
-            tauri::async_runtime::spawn(async move {
-                handle.update(|t| t.set_dark(_is_dark)).await;
-            });
+        use std::sync::atomic::Ordering;
+        if let Some(state) = _app.try_state::<LinuxTrayState>() {
+            state.desired_dark.store(_is_dark, Ordering::Relaxed);
+            let handle = state.handle.lock().ok().and_then(|g| g.clone());
+            if let Some(handle) = handle {
+                tauri::async_runtime::spawn(async move {
+                    handle.update(|t| t.set_dark(_is_dark)).await;
+                });
+            }
         }
         Ok(())
     }
@@ -1709,25 +1720,40 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             {
                 use ksni::TrayMethods;
+                use std::sync::atomic::AtomicBool;
+                use std::sync::Arc;
                 use tray_linux::LinuxTray;
-                app.manage(LinuxTrayState(Mutex::new(None)));
+                // Start dark: SNI has no reliable light/dark signal on most
+                // hosts, the theme listener corrects it, and GNOME's top bar
+                // is dark — where the light glyph is the visible one.
+                let state = LinuxTrayState {
+                    handle: Mutex::new(None),
+                    desired_dark: AtomicBool::new(true),
+                    host_offline: Arc::new(AtomicBool::new(false)),
+                };
+                app.manage(state);
                 let app_handle = app.handle().clone();
-                // SNI has no reliable light/dark signal on most hosts; start
-                // on the dark icon (matches the old default). The theme
-                // listener still swaps it via update_tray_icon.
-                let is_dark = true;
+                let host_offline = app.state::<LinuxTrayState>().host_offline.clone();
                 tauri::async_runtime::spawn(async move {
                     // assume_sni_available routes a missing StatusNotifier
                     // host to watcher_offline instead of failing the spawn,
                     // so installing an extension later lights the icon up
                     // without restarting Baluard.
-                    match LinuxTray::new(app_handle.clone(), is_dark)
+                    match LinuxTray::new(app_handle.clone(), true, host_offline)
                         .assume_sni_available(true)
                         .spawn()
                         .await
                     {
                         Ok(handle) => {
-                            if let Ok(mut g) = app_handle.state::<LinuxTrayState>().0.lock() {
+                            let state = app_handle.state::<LinuxTrayState>();
+                            let wanted = state
+                                .desired_dark
+                                .load(std::sync::atomic::Ordering::Relaxed);
+                            // update returns None once the service is gone.
+                            if handle.update(|t| t.set_dark(wanted)).await.is_none() {
+                                log::debug!("[desktop] linux tray service gone before theme apply");
+                            }
+                            if let Ok(mut g) = state.handle.lock() {
                                 *g = Some(handle);
                             }
                         }
@@ -2003,6 +2029,8 @@ pub fn run() {
             show_window,
             exit_app,
             update_tray_icon,
+            #[cfg(target_os = "linux")]
+            tray_host_offline,
             save_recovery_phrase,
             backup_save_encrypted,
             legacy_read_letter,

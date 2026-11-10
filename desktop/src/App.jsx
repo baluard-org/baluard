@@ -171,11 +171,16 @@ export default function App() {
         // Linux only, GNOME only, emitted once per session by the ksni tray
         // when no StatusNotifier host is reachable: without a shell extension
         // GNOME renders no tray icons at all, so the user needs the pointer.
+        // Tauri does not buffer events, so the spawn-time emit can land
+        // before this listener exists — query the current state too.
         let unListenHostOffline;
         try {
           unListenHostOffline = await listen("tray://host-offline", () => {
             toastInfo(t("app.trayHostMissing"));
           });
+          if (await invoke("tray_host_offline")) {
+            toastInfo(t("app.trayHostMissing"));
+          }
         } catch {
           // Non-Tauri contexts (tests): skip.
         }
