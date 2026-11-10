@@ -1312,7 +1312,7 @@
   },
   "update": {
     "availableTitle": "La version {version} est disponible",
-    "installNow": "Installer et redémarrer",
+    "installNow": "Installer la mise à jour",
     "installing": "Installation de la version {version}…",
     "dismiss": "Ignorer",
     "checkFailed": "Impossible de vérifier les mises à jour.",
@@ -1326,7 +1326,9 @@
     "settingsDesc": "Canal : {channel}",
     "managed": "Les mises à jour de cette installation sont gérées en externe.",
     "versionMismatchTitle": "Le service d'arrière-plan de Baluard n'est pas à jour",
-    "versionMismatchBody": "L'application et son service d'arrière-plan utilisent des versions différentes.\nQuittez complètement Baluard et relancez-le."
+    "versionMismatchBody": "L'application et son service d'arrière-plan utilisent des versions différentes.\nQuittez complètement Baluard et relancez-le.",
+    "viewChangelog": "Voir les changements",
+    "notNow": "Pas maintenant"
   },
   "agents": {
     "title": "Demande d'identifiants",

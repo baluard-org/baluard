@@ -3,6 +3,8 @@
 // app-level, above auth screens and the vault alike.
 
 import { Show, Switch, Match } from "solid-js";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { toastError } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { useUpdater } from "../context/UpdateContext.jsx";
 import { formatProgress } from "../lib/update.js";
@@ -80,7 +82,7 @@ export default function UpdateBanner() {
             </div>
           </Match>
 
-          {/* Update available: version, notes, install + dismiss. */}
+          {/* Update available: version, notes, changelog + install + dismiss. */}
           <Match when={u.available() && u.available().version !== u.dismissedVersion()}>
             <div class="flex items-start gap-3">
               <div class="flex-1 min-w-0">
@@ -88,27 +90,40 @@ export default function UpdateBanner() {
                   {t("update.availableTitle", { version: u.available().version })}
                 </div>
                 <Show when={u.available().notes}>
-                  <p class="text-[10px] text-[var(--color-muted)] mt-0.5 whitespace-pre-line line-clamp-3">
+                  <p class="text-[10px] text-[var(--color-muted)] mt-0.5 whitespace-pre-line line-clamp-6">
                     {u.available().notes}
                   </p>
                 </Show>
-                <div class="mt-2 flex items-center gap-2">
+                <div class="mt-2 flex items-center justify-between gap-2">
                   <button
-                    data-testid="update-install"
-                    onClick={u.install}
-                    class="px-3 py-1.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-[10px] font-bold transition-all cursor-pointer"
+                    data-testid="update-changelog"
+                    onClick={() => {
+                      const version = u.available()?.version;
+                      if (!version) return;
+                      openUrl(`https://github.com/baluard-org/baluard/releases/tag/${version}`).catch(() =>
+                        toastError(t("errors.openFailed")),
+                      );
+                    }}
+                    class="px-3 py-1.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-[10px] font-bold transition-all cursor-pointer"
                   >
-                    {t("update.installNow")}
+                    {t("update.viewChangelog")}
                   </button>
-                  <button
-                    data-testid="update-dismiss"
-                    onClick={u.dismiss}
-                    aria-label={t("update.dismiss")}
-                    title={t("update.dismiss")}
-                    class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer"
-                  >
-                    <IconClose class="w-3.5 h-3.5" />
-                  </button>
+                  <div class="flex items-center gap-2">
+                    <button
+                      data-testid="update-dismiss"
+                      onClick={u.dismiss}
+                      class="px-3 py-1.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      {t("update.notNow")}
+                    </button>
+                    <button
+                      data-testid="update-install"
+                      onClick={u.install}
+                      class="px-3 py-1.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      {t("update.installNow")}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

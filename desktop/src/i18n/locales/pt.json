@@ -1312,7 +1312,7 @@
   },
   "update": {
     "availableTitle": "A versão {version} está disponível",
-    "installNow": "Instalar e reiniciar",
+    "installNow": "Instalar atualização",
     "installing": "Instalando a versão {version}…",
     "dismiss": "Descartar",
     "checkFailed": "Não foi possível verificar atualizações.",
@@ -1326,7 +1326,9 @@
     "settingsDesc": "Canal: {channel}",
     "managed": "As atualizações desta instalação são gerenciadas externamente.",
     "versionMismatchTitle": "O serviço em segundo plano do Baluard está desatualizado",
-    "versionMismatchBody": "O aplicativo e o serviço em segundo plano são de versões diferentes.\nFeche o Baluard completamente e abra-o novamente."
+    "versionMismatchBody": "O aplicativo e o serviço em segundo plano são de versões diferentes.\nFeche o Baluard completamente e abra-o novamente.",
+    "viewChangelog": "Ver mudanças",
+    "notNow": "Agora não"
   },
   "agents": {
     "title": "Pedido de credenciais",

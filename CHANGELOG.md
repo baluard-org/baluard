@@ -3,6 +3,7 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
+- Update notifications show more of the release notes and carry a View changelog link that opens the release page in your browser.
 
 - No user-facing changes yet.
 
