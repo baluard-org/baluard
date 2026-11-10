@@ -24,9 +24,9 @@ for package in "$ART"/*.rpm; do
 done
 cp -f "$HISTORY/rpm"/*.rpm "$OUT/rpms/"
 
-# Serve only the newest versions; the machine-local history keeps the full
-# set. Mirrors the F-Droid APK retention so the Pages deploy stays small.
-KEEP="${BALUARD_LINUX_REPO_KEEP:-3}"
+# Serve only the newest versions; the machine-local history mirrors the same
+# window. Keeps the Pages deploy small, like the F-Droid APK retention.
+KEEP="${BALUARD_LINUX_REPO_KEEP:-2}"
 find "$OUT/rpms" -maxdepth 1 -name 'Baluard-*.x86_64.rpm' -printf '%f\n' \
   | sed -E 's/^Baluard-([0-9.]+)-1\.x86_64\.rpm$/\1 \0/' | sort -rV \
   | awk -v k="$KEEP" 'NR>k{print $2}' \
@@ -50,6 +50,10 @@ else
       rpmsign --define '_gpg_name $EMAIL' --define '_gpg_path /gnupg' --addsign *.rpm"
 fi
 cp -f "$OUT"/rpms/*.rpm "$HISTORY/rpm/"
+find "$HISTORY/rpm" -maxdepth 1 -name 'Baluard-*.x86_64.rpm' -printf '%f\n' \
+  | sed -E 's/^Baluard-([0-9.]+)-1\.x86_64\.rpm$/\1 \0/' | sort -rV \
+  | awk -v k="$KEEP" 'NR>k{print $2}' \
+  | while IFS= read -r old; do rm -f "$HISTORY/rpm/$old"; done
 
 if command -v createrepo_c >/dev/null 2>&1; then
   (cd "$OUT/rpms" && createrepo_c .)

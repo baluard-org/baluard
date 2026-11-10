@@ -24,13 +24,17 @@ mkdir -p "$POOL" "$DIST" "$HISTORY/deb"
 cp -f "$ART"/*.deb "$HISTORY/deb/"
 cp -f "$HISTORY/deb"/*.deb "$POOL/"
 
-# Serve only the newest versions; the machine-local history keeps the full
-# set. Mirrors the F-Droid APK retention so the Pages deploy stays small.
-KEEP="${BALUARD_LINUX_REPO_KEEP:-3}"
+# Serve only the newest versions; the machine-local history mirrors the same
+# window. Keeps the Pages deploy small, like the F-Droid APK retention.
+KEEP="${BALUARD_LINUX_REPO_KEEP:-2}"
 find "$POOL" -maxdepth 1 -name 'Baluard_*_amd64.deb' -printf '%f\n' \
   | sed -E 's/^Baluard_([0-9.]+)_amd64\.deb$/\1 \0/' | sort -rV \
   | awk -v k="$KEEP" 'NR>k{print $2}' \
   | while IFS= read -r old; do rm -f "$POOL/$old"; done
+find "$HISTORY/deb" -maxdepth 1 -name 'Baluard_*_amd64.deb' -printf '%f\n' \
+  | sed -E 's/^Baluard_([0-9.]+)_amd64\.deb$/\1 \0/' | sort -rV \
+  | awk -v k="$KEEP" 'NR>k{print $2}' \
+  | while IFS= read -r old; do rm -f "$HISTORY/deb/$old"; done
 
 # One stanza per deb: fields from the deb's control file plus the repo-added
 # location, size, and hashes apt needs.

@@ -149,7 +149,7 @@ The desktop confirm-first flow: the Rust command surface (`desktop/src-tauri/src
 ## Pre-release checklist
 
 1. `just check` green (fmt, clippy, audit, tests, build).
-2. `just test-release-scripts` green (ten hermetic suites: fdroid, sync-site-repos, build-extension-packages, submit-extension-stores, build-windows-installer, build-nmh-manifests, bump-version, generate-updates-manifest, stage-release-assets, sign-updater-sigs).
+2. `just test-release-scripts` green (thirteen hermetic suites: fdroid, sync-site-repos, build-extension-packages, submit-extension-stores, build-windows-installer, build-nmh-manifests, bump-version, generate-updates-manifest, sign-updater-sigs, stage-release-assets, upload-play-release, build-arch-repo, build-apt-repo).
 3. `just smoke-pkg` for the deb, and the relevant `e2e` recipes for changed surfaces (`e2e-desktop`, `e2e-android` with `just emulator`, `e2e-extension`, `e2e-extension-firefox`).
 4. After `just desktop-build`, confirm the NMH manifests carry the real origin: `grep -r baluard-unconfigured desktop/src-tauri/nmh-manifests/` must find nothing.
 5. Confirm the newest store zips carry the bumped version (`just ext-package` already refuses a mismatch).
