@@ -10,6 +10,8 @@ required=(
   fdroid/repo/entry.jar
   dists/stable/InRelease
   rpms/repodata/repomd.xml.asc
+  arch/x86_64/baluard.db
+  arch/x86_64/baluard.db.sig
   SHA256SUMS
   SHA256SUMS.sig
   baluard-release.asc

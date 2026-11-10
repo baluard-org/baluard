@@ -1,0 +1,23 @@
+pkgbase = baluard-bin
+	pkgdesc = Git-native password manager. No accounts, no servers.
+	pkgver = 0.2.5
+	pkgrel = 1
+	url = https://baluard.app
+	arch = x86_64
+	license = GPL-3.0-only
+	depends = gtk3
+	depends = webkit2gtk-4.1
+	depends = libayatana-appindicator
+	depends = openssl
+	depends = libgit2.so=1.9-64
+	depends = libssh2
+	depends = hicolor-icon-theme
+	optdepends = gnome-keyring: OS keyring storage and quick unlock (biometric/PIN)
+	provides = baluard
+	conflicts = baluard
+	options = !strip
+	options = !debug
+	source = https://github.com/baluard-org/baluard/releases/download/0.2.5/Baluard-amd64.deb
+	sha256sums = c50b0c0061e1cd4ec46a60d27868204348e85e286c6de336f10fd9f31a014393
+
+pkgname = baluard-bin

@@ -191,6 +191,7 @@ repo-stage artifacts="dist" out="repo-out":
 	just fdroid-stage mobile/androidApp/build/outputs/apk/fdroid/release/androidApp-fdroid-release.apk {{ out }}
 	./scripts/build-apt-repo.sh {{ artifacts }} {{ out }}
 	./scripts/build-rpm-repo.sh {{ artifacts }} {{ out }}
+	./scripts/build-arch-repo.sh {{ artifacts }} {{ out }}
 	cp {{ artifacts }}/SHA256SUMS {{ out }}/SHA256SUMS
 	cp {{ artifacts }}/SHA256SUMS.sig {{ out }}/SHA256SUMS.sig
 	cp ~/.baluard/release-gnupg/baluard-release.asc {{ out }}/baluard-release.asc
@@ -231,6 +232,7 @@ test-release-scripts:
 	./scripts/tests/test-sign-updater-sigs.sh
 	./scripts/tests/test-stage-release-assets.sh
 	./scripts/tests/test-upload-play-release.sh
+	./scripts/tests/test-build-arch-repo.sh
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret

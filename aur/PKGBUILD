@@ -1,0 +1,79 @@
+# Maintainer: Esteban <baluard@actitud.xyz>
+# Contributor: O'car Johann <ocarjohann@gmail.com>
+# Upstream: https://github.com/baluard-org/baluard
+#
+# Packages the upstream .deb payload as a native Arch package. The .deb is an
+# ar archive (control.tar.gz + data.tar.gz) containing only upstream binaries,
+# a desktop entry, icons, and native-messaging manifests - no maintainer
+# scripts and no Debian-specific paths that need rewriting.
+
+pkgname=baluard-bin
+pkgver=0.2.5
+pkgrel=1
+pkgdesc="Git-native password manager. No accounts, no servers."
+arch=('x86_64')
+url="https://baluard.app"
+license=('GPL-3.0-only')
+depends=(
+  'gtk3'
+  'webkit2gtk-4.1'
+  'libayatana-appindicator'
+  'openssl'
+  # Soname pin, not the package name: pacman resolves provides, so the next
+  # libgit2 ABI bump fails the install loudly instead of crashing at exec.
+  'libgit2.so=1.9-64'
+  'libssh2'
+  'hicolor-icon-theme'
+)
+optdepends=(
+  'gnome-keyring: OS keyring storage and quick unlock (biometric/PIN)'
+)
+provides=('baluard')
+conflicts=('baluard')
+options=('!strip' '!debug')
+source=("https://github.com/baluard-org/baluard/releases/download/${pkgver}/Baluard-amd64.deb")
+sha256sums=('c50b0c0061e1cd4ec46a60d27868204348e85e286c6de336f10fd9f31a014393')
+
+package() {
+  local deb="${srcdir}/Baluard-amd64.deb"
+  local work="${srcdir}/deb"
+
+  mkdir -p "$work"
+
+  # Unpack the ar archive. bsdtar reads ar directly; otherwise use ar + tar,
+  # both of which are in Arch's core repo.
+  if command -v bsdtar >/dev/null 2>&1; then
+    bsdtar -xf "$deb" -C "$work"
+    tar -xzf "$work/data.tar.gz" -C "$work"
+  else
+    (cd "$work" && ar x "$deb")
+    tar -xzf "$work/data.tar.gz" -C "$work"
+  fi
+
+  # Binaries: GUI, resident daemon, CLI, and the browser native-messaging host.
+  install -Dm755 "$work/usr/bin/baluard"        "$pkgdir/usr/bin/baluard"
+  install -Dm755 "$work/usr/bin/baluard-daemon" "$pkgdir/usr/bin/baluard-daemon"
+  install -Dm755 "$work/usr/bin/baluard-desktop" "$pkgdir/usr/bin/baluard-desktop"
+  install -Dm755 "$work/usr/bin/baluard-nmh"    "$pkgdir/usr/bin/baluard-nmh"
+
+  install -Dm644 "$work/usr/share/applications/Baluard.desktop" \
+    "$pkgdir/usr/share/applications/Baluard.desktop"
+
+  for size in 32x32 128x128 256x256@2; do
+    install -Dm644 "$work/usr/share/icons/hicolor/${size}/apps/baluard-desktop.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}/apps/baluard-desktop.png"
+  done
+
+  # Native-messaging host manifests for the browser extension bridge.
+  local host
+  for host in app.baluard.browser xyz.actitud.baluard; do
+    install -Dm644 "$work/etc/chromium/native-messaging-hosts/${host}.json" \
+      "$pkgdir/etc/chromium/native-messaging-hosts/${host}.json"
+    install -Dm644 "$work/etc/opt/chrome/native-messaging-hosts/${host}.json" \
+      "$pkgdir/etc/opt/chrome/native-messaging-hosts/${host}.json"
+    install -Dm644 "$work/etc/opt/edge/native-messaging-hosts/${host}.json" \
+      "$pkgdir/etc/opt/edge/native-messaging-hosts/${host}.json"
+    install -Dm644 "$work/usr/lib/mozilla/native-messaging-hosts/${host}.json" \
+      "$pkgdir/usr/lib/mozilla/native-messaging-hosts/${host}.json"
+  done
+}

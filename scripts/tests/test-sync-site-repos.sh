@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 SRC="$TMP/repo-out"
 SITE="$TMP/baluard-org"
-mkdir -p "$SRC/dists/stable" "$SRC/rpms/repodata" "$SRC/fdroid/repo" "$SITE/repo/dists" "$SITE/fdroid/repo"
+mkdir -p "$SRC/dists/stable" "$SRC/rpms/repodata" "$SRC/fdroid/repo" "$SRC/arch/x86_64" "$SITE/repo/dists" "$SITE/fdroid/repo"
 printf 'release\n' > "$SRC/dists/stable/InRelease"
 printf 'rpm\n' > "$SRC/rpms/repodata/repomd.xml.asc"
 printf 'fdroid\n' > "$SRC/fdroid/repo/index-v2.json"
@@ -15,6 +15,8 @@ printf 'apk\n' > "$SRC/fdroid/repo/app.baluard.mobile_1.apk"
 printf 'sums\n' > "$SRC/SHA256SUMS"
 printf 'sig\n' > "$SRC/SHA256SUMS.sig"
 printf 'key\n' > "$SRC/baluard-release.asc"
+printf 'archdb\n' > "$SRC/arch/x86_64/baluard.db"
+printf 'archdbsig\n' > "$SRC/arch/x86_64/baluard.db.sig"
 touch "$SRC/.nojekyll"
 printf 'stale\n' > "$SITE/repo/dists/stale"
 printf 'stale\n' > "$SITE/fdroid/repo/stale.apk"
@@ -33,6 +35,8 @@ test ! -e "$SITE/fdroid/repo/stale.apk"
 test "$(cat "$SITE/repo/dists/index.html")" = guard
 test "$(cat "$SITE/repo/baluard.repo")" = "[baluard]"
 test "$(cat "$SITE/repo/baluard.sources")" = "Types: deb"
+test "$(cat "$SITE/repo/arch/x86_64/baluard.db")" = archdb
+test "$(cat "$SITE/repo/arch/x86_64/baluard.db.sig")" = archdbsig
 test "$(cat "$SITE/fdroid/index.html")" = landing
 test "$(cat "$SITE/index.html")" = keep
 test -f "$SITE/.nojekyll"

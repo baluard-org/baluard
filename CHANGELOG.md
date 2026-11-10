@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Baluard now ships an Arch Linux pacman repository at baluard.app and an AUR package (`baluard-bin`), both GPG-signed with the release key.
+
 - Relaunching Baluard while it is already running now brings the window back to the front instead of doing nothing, and Ctrl+Q quits on Linux and Windows.
 - The desktop window remembers where you left it and is pulled back on screen at startup even if it was dragged off the edge of a monitor.
 - With Auto-lock timeout set to On app exit, the vault no longer locks itself after about four hours away. Closing the window pauses the background activity that keeps the session alive, and a hidden four-hour session cap then logged you out on return; the cap now steps aside for On app exit.
