@@ -1,6 +1,6 @@
 pkgbase = baluard-bin
 	pkgdesc = Git-native password manager. No accounts, no servers.
-	pkgver = 0.2.5
+	pkgver = 0.3.0
 	pkgrel = 1
 	url = https://baluard.app
 	arch = x86_64
@@ -17,7 +17,7 @@ pkgbase = baluard-bin
 	conflicts = baluard
 	options = !strip
 	options = !debug
-	source = https://github.com/baluard-org/baluard/releases/download/0.2.5/Baluard-amd64.deb
-	sha256sums = c50b0c0061e1cd4ec46a60d27868204348e85e286c6de336f10fd9f31a014393
+	source = https://github.com/baluard-org/baluard/releases/download/0.3.0/Baluard-amd64.deb
+	sha256sums = 89160e44c1ddb7cbeb5ce550d51a04b576482d119a4b1ec6e0adc9af345ac286
 
 pkgname = baluard-bin

@@ -85,7 +85,7 @@ podman run --rm \
   -v "$GNUPGHOME":/gnupg:Z -e GNUPGHOME=/gnupg \
   -e PKGVER="$VER" \
   "$IMAGE" bash -euc '
-    pacman -Sy --noconfirm fakeroot debugedit >/dev/null
+    pacman -Syu --noconfirm fakeroot debugedit >/dev/null
     useradd -M builder
     chown -R builder:builder /build
     su builder -c "cd /build && makepkg -f -d"
