@@ -198,7 +198,7 @@ object AutofillResponseBuilder {
                 lockedVaultDataset(context, fields, target, lockedPath, lockedName).build(),
             )
         }
-        builder.addDataset(openBaluardDataset(context, fields, target).build())
+        builder.addDataset(openBaluardDataset(context, fields, target, inline).build())
         return applyIgnored(builder.setSaveInfo(saveInfo(fields)), ignored).build()
     }
 
@@ -270,9 +270,10 @@ object AutofillResponseBuilder {
         fields: TargetFields,
         target: String,
         ignored: List<AutofillId> = emptyList(),
+        inline: InlineStyle? = null,
     ): FillResponse {
         val builder = FillResponse.Builder()
-            .addDataset(openBaluardDataset(context, fields, target).build())
+            .addDataset(openBaluardDataset(context, fields, target, inline).build())
         return applyIgnored(builder.setSaveInfo(saveInfo(fields)), ignored).build()
     }
 
@@ -355,6 +356,7 @@ object AutofillResponseBuilder {
         context: Context,
         fields: TargetFields,
         target: String,
+        inline: InlineStyle? = null,
     ): Dataset.Builder {
         val views = openBaluardPresentation(context)
         val intent = Intent(context, AutofillActivity::class.java).apply {
@@ -378,8 +380,15 @@ object AutofillResponseBuilder {
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        // Bitwarden's vault-item chip: the brand row rides the reserved
+        // inline slot, and tapping the chip launches the same full-screen
+        // picker as the dropdown row.
+        val chip = inline?.let { openBaluardChipOrNull(context, it, pending) }
         val dataset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val presentations = Presentations.Builder().setMenuPresentation(views).build()
+            val presentations = Presentations.Builder()
+                .setMenuPresentation(views)
+                .apply { chip?.let { setInlinePresentation(it) } }
+                .build()
             val b = Dataset.Builder()
             listOfNotNull(fields.usernameId, fields.passwordId).forEach { autofillId ->
                 b.setField(autofillId, Field.Builder().setPresentations(presentations).build())
@@ -387,7 +396,9 @@ object AutofillResponseBuilder {
             b
         } else {
             @Suppress("DEPRECATION")
-            Dataset.Builder(views)
+            Dataset.Builder(views).apply {
+                chip?.let { setInlinePresentation(it) }
+            }
         }
         return dataset.setId("baluard-open").setAuthentication(pending.intentSender)
     }
@@ -429,8 +440,10 @@ object AutofillResponseBuilder {
         name: String,
         username: String?,
     ): InlinePresentation? {
+        // Cipher chips stay below the system budget so the brand chip keeps
+        // its slot; past the cap there is no chip (silent popup fallback).
         val budget = (inline.maxCount - 1).coerceIn(0, 5)
-        val spec = if (index < budget) inline.specs.getOrNull(index) else inline.specs.lastOrNull()
+        val spec = if (index < budget) inline.specs.getOrNull(index) else null
         spec ?: return null
         val styleOk = runCatching {
             UiVersions.getVersions(spec.style).contains(UiVersions.INLINE_UI_VERSION_1)
@@ -447,6 +460,31 @@ object AutofillResponseBuilder {
         val content = InlineSuggestionUi.newContentBuilder(pi)
             .setTitle(name)
             .setSubtitle(username?.takeIf { it.isNotBlank() } ?: t("autofill.noUsername"))
+            .setStartIcon(Icon.createWithResource(context, R.mipmap.ic_launcher))
+            .build()
+        return InlinePresentation(content.slice, spec, false)
+    }
+
+    /**
+     * Brand chip for the reserved inline slot (Bitwarden vault-item parity):
+     * carries the open dataset's own PendingIntent so a chip tap launches the
+     * full-screen picker, exactly like the dropdown's Open row.
+     */
+    private fun openBaluardChipOrNull(
+        context: Context,
+        inline: InlineStyle,
+        pending: PendingIntent,
+    ): InlinePresentation? {
+        val reserved = (inline.maxCount - 1).coerceIn(0, 5)
+        val spec = inline.specs.getOrNull(reserved) ?: inline.specs.lastOrNull()
+        spec ?: return null
+        val styleOk = runCatching {
+            UiVersions.getVersions(spec.style).contains(UiVersions.INLINE_UI_VERSION_1)
+        }.getOrDefault(false)
+        if (!styleOk) return null
+        val content = InlineSuggestionUi.newContentBuilder(pending)
+            .setTitle(t("autofill.openBaluard"))
+            .setSubtitle(t("autofill.pickLogin"))
             .setStartIcon(Icon.createWithResource(context, R.mipmap.ic_launcher))
             .build()
         return InlinePresentation(content.slice, spec, false)
