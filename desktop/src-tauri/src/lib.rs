@@ -972,15 +972,55 @@ async fn clipboard_mark_concealed(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// What closing the main window does. Quit lets the close proceed so the
+/// RunEvent::Exit path runs the graceful teardown (lock vaults, stop daemon).
+#[derive(Debug, PartialEq, Eq)]
+enum CloseResponse {
+    Hide,
+    Minimize,
+    Quit,
+}
+
+/// Hide-to-tray requires a tray to hide TO. On Linux a GNOME user without a
+/// tray extension would otherwise end up with no window and no icon; there
+/// the window minimizes instead (GNOME keeps minimized windows reachable in
+/// the Activities overview), keeping the daemon and the extension pairing
+/// alive exactly as the Run-in-the-background setting promises.
+fn close_response(run_in_background: bool, tray_online: bool) -> CloseResponse {
+    if !run_in_background {
+        CloseResponse::Quit
+    } else if tray_online {
+        CloseResponse::Hide
+    } else {
+        CloseResponse::Minimize
+    }
+}
+
+/// Whether a functioning tray exists to hide to. None (no state yet, or the
+/// ksni service never registered) reads as offline: minimize is always a
+/// safe landing, hide is not.
+#[cfg(target_os = "linux")]
+fn tray_host_online(app: &AppHandle) -> bool {
+    app.try_state::<LinuxTrayState>()
+        .map(|s| {
+            s.handle.lock().map(|g| g.is_some()).unwrap_or(false)
+                && !s.host_offline.load(std::sync::atomic::Ordering::Relaxed)
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tray_host_online(_app: &AppHandle) -> bool {
+    true
+}
+
 /// Current liveness of the SNI host, so the frontend can show the
 /// install-an-extension guidance even when the offline event fired before it
 /// started listening (Tauri does not buffer events).
 #[cfg(target_os = "linux")]
 #[tauri::command]
-fn tray_host_offline(_app: AppHandle) -> bool {
-    _app.try_state::<LinuxTrayState>()
-        .map(|s| s.host_offline.load(std::sync::atomic::Ordering::Relaxed))
-        .unwrap_or(false)
+fn tray_host_offline(app: AppHandle) -> bool {
+    !tray_host_online(&app)
 }
 
 #[tauri::command]
@@ -1360,6 +1400,30 @@ mod desktop_prefs_tests {
     }
 
     #[test]
+    fn close_quits_when_background_off_even_with_tray() {
+        assert_eq!(
+            super::close_response(false, true),
+            super::CloseResponse::Quit
+        );
+        assert_eq!(
+            super::close_response(false, false),
+            super::CloseResponse::Quit
+        );
+    }
+
+    #[test]
+    fn online_tray_hides_and_offline_tray_minimizes_when_background_on() {
+        assert_eq!(
+            super::close_response(true, true),
+            super::CloseResponse::Hide
+        );
+        // The stranding guard: no tray host must never produce a hidden
+        // window with no icon.
+        assert_eq!(
+            super::close_response(true, false),
+            super::CloseResponse::Minimize
+        );
+    }
     fn empty_json_object_defaults_to_on() {
         let prefs: DesktopPrefs = serde_json::from_str("{}").unwrap();
         assert!(prefs.run_in_background);
@@ -1918,12 +1982,25 @@ pub fn run() {
                     // into view (window_geometry). The RunEvent::Exit arm also
                     // saves, but the hide path never exits.
                     save_window_geometry(window.app_handle());
-                    if load_desktop_prefs().run_in_background {
-                        api.prevent_close();
-                        let _ = window.hide();
+                    let response = close_response(
+                        load_desktop_prefs().run_in_background,
+                        tray_host_online(window.app_handle()),
+                    );
+                    match response {
+                        CloseResponse::Quit => {
+                            // Let the close proceed; the RunEvent::Exit path
+                            // runs the graceful teardown (lock vaults, stop
+                            // daemon).
+                        }
+                        CloseResponse::Hide => {
+                            api.prevent_close();
+                            let _ = window.hide();
+                        }
+                        CloseResponse::Minimize => {
+                            api.prevent_close();
+                            let _ = window.minimize();
+                        }
                     }
-                    // Background off: let the close proceed; the RunEvent::Exit
-                    // path runs the graceful teardown (lock vaults, stop daemon).
                 }
                 WindowEvent::Focused(false) => {
                     // M4: arm a debounced lock-all. Transient blurs (menus,
