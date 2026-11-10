@@ -1815,7 +1815,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     // Who may invite members (admins+owner, or owner only).
                     Text(
                         text = t("space.inviteAuthorityLabel"),
@@ -1855,7 +1855,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    Spacer(Modifier.height(12.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1876,7 +1876,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    Spacer(Modifier.height(12.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1897,7 +1897,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                     // G6: Space Recovery Kit. Family vaults carry one from
                     // creation; enabling over it (or disabling) may demand
@@ -1970,13 +1970,13 @@ val entitlement by Entitlements.state.collectAsState()
                             }
                         }
                     }
+                    }
                     if (kitEnabled == false) {
                         Text(
                             t("space.kitOffHint"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
                     }
                     
                     if (kitConfirm == "disable") {
@@ -2047,7 +2047,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     // Who may trash entries (§6.5 trash_policy).
                     Text(t("space.trashPolicyLabel"), style = MaterialTheme.typography.bodyMedium)
                     Text(
@@ -2082,7 +2082,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     // How join asks are approved (§6.5 join_approval).
                     Text(t("space.joinApprovalLabel"), style = MaterialTheme.typography.bodyMedium)
                     Text(
@@ -2117,7 +2117,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     // How many admins must confirm sensitive ops
                     // (§6.5 quorum_admin_ops, decided 2026-09-27).
                     Text(t("space.quorumLabel"), style = MaterialTheme.typography.bodyMedium)
@@ -2143,7 +2143,7 @@ val entitlement by Entitlements.state.collectAsState()
                         )
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     // Who may create collections (§6.5, decided
                     // 2026-09-27): admins by default, editors optional.
                     Text(t("space.createAuthLabel"), style = MaterialTheme.typography.bodyMedium)
@@ -2316,7 +2316,7 @@ val entitlement by Entitlements.state.collectAsState()
                         }
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
                     // Restore is admin-only in v1 — single-valued, shown
                     // read-only so the surface tells the whole truth.
                     Text(t("space.restorePolicyLabel"), style = MaterialTheme.typography.bodyMedium)
