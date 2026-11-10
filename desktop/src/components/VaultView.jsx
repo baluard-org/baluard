@@ -584,7 +584,6 @@ export default function VaultView() {
                 {t("vault.emptyTrash")}
               </button>
             </Show>
-            <SyncButton />
             <Show when={vault.selectedCategory() !== "Trash"}>
               <button
                 data-testid="generator-open"
@@ -595,6 +594,7 @@ export default function VaultView() {
                 <IconBolt class="w-4 h-4" />
               </button>
             </Show>
+            <SyncButton />
             </div>
           </div>
 
