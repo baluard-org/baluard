@@ -145,6 +145,7 @@ impl ForgeProvider for CodebergProvider {
         let challenge = code_challenge_s256(&verifier);
         let state = generate_state();
         let client_id = self.client_id();
+        crate::providers::types::ensure_client_id_configured(&client_id)?;
 
         let params = [
             ("client_id", client_id.as_str()),
@@ -875,12 +876,42 @@ mod tests {
         assert_eq!(cb.base(), "https://forgejo.example.com");
     }
 
-    #[test]
-    fn default_client_id_is_placeholder() {
-        assert_eq!(
-            Provider::Codeberg.default_client_id(),
-            "REPLACE_WITH_CODEBERG_CLIENT_ID"
+    #[tokio::test]
+    async fn oauth_start_refuses_placeholder_client_id() {
+        // A build without BALUARD_CODEBERG_CLIENT_ID keeps the sentinel; the
+        // flow must fail before any network call, not 404 at codeberg.org.
+        let cb = CodebergProvider::with_config(ProviderConfig {
+            client_id: Some(crate::providers::types::CODEBERG_CLIENT_ID_PLACEHOLDER.into()),
+            instance_url: None,
+            client_secret: None,
+        });
+        assert!(matches!(
+            cb.oauth_start("http://127.0.0.1:9/callback").await,
+            Err(ProviderError::Other(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn oauth_start_builds_pkce_url_without_scope() {
+        // oauth_start is pure (no network): safe to assert the auth URL.
+        let cb = CodebergProvider::with_config(ProviderConfig {
+            client_id: Some("test-client-id".into()),
+            instance_url: None,
+            client_secret: None,
+        });
+        let start = cb.oauth_start("http://127.0.0.1:9/callback").await.unwrap();
+        assert!(
+            start
+                .auth_url
+                .starts_with("https://codeberg.org/login/oauth/authorize?")
         );
+        assert!(start.auth_url.contains("client_id=test-client-id"));
+        assert!(start.auth_url.contains("response_type=code"));
+        assert!(start.auth_url.contains("code_challenge_method=S256"));
+        assert!(start.auth_url.contains("redirect_uri="));
+        assert!(start.auth_url.contains("state="));
+        // Forgejo ignores the scope param (no OAuth2 scopes); none is sent.
+        assert!(!start.auth_url.contains("scope"));
     }
 
     #[test]

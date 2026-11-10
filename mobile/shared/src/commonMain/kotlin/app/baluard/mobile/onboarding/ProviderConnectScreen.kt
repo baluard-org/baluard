@@ -216,8 +216,15 @@ fun ProviderConnectScreen(
                 } else {
                     when (vm.provider) {
                         MobileProvider.CODEBERG -> {
+                            // Forgejo has no device flow: web sign-in is the
+                            // one-tap path, PAT is the fallback.
                             BaluardPrimaryButton(
-                                text = t("provider.continuePat"),
+                                text = t("provider.continueWebSignIn"),
+                                onClick = { scope.launch { vm.startWebOAuth() } },
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            BaluardOutlinedButton(
+                                text = t("provider.usePatInstead"),
                                 onClick = { showPat = true },
                             )
                         }

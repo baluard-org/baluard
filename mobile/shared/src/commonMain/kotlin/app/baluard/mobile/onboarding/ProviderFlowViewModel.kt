@@ -96,7 +96,7 @@ class ProviderFlowViewModel(
         private set
 
     /** Clean up background resources. */
-    /** Start the device flow (GitHub/GitLab; Codeberg has none, use PAT). */
+    /** Start the device flow (GitHub/GitLab; Forgejo has none: Codeberg uses web OAuth or PAT). */
     suspend fun startDeviceFlow() {
         if (busy) return
         busy = true
