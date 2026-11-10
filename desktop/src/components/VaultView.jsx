@@ -537,6 +537,17 @@ export default function VaultView() {
             </div>
 
             <div class="flex items-center gap-2">
+            <SyncButton />
+            <Show when={vault.selectedCategory() !== "Trash"}>
+              <button
+                data-testid="generator-open"
+                onClick={() => setShowGenerator(true)}
+                class="p-2 rounded-xl bg-[var(--color-sidebar)] hover:bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-sm transition-all cursor-pointer"
+                title={t("generator.title")}
+              >
+                <IconBolt class="w-4 h-4" />
+              </button>
+            </Show>
             <Show when={vault.selectedCategory() === "Trash"} fallback={
               <div class="relative" ref={addMenuRef}>
                 <button
@@ -584,17 +595,6 @@ export default function VaultView() {
                 {t("vault.emptyTrash")}
               </button>
             </Show>
-            <Show when={vault.selectedCategory() !== "Trash"}>
-              <button
-                data-testid="generator-open"
-                onClick={() => setShowGenerator(true)}
-                class="p-2 rounded-xl bg-[var(--color-sidebar)] hover:bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-sm transition-all cursor-pointer"
-                title={t("generator.title")}
-              >
-                <IconBolt class="w-4 h-4" />
-              </button>
-            </Show>
-            <SyncButton />
             </div>
           </div>
 
