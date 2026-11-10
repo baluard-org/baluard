@@ -10826,6 +10826,8 @@ impl VaultHandle {
                         if let Some(k) = pk.prf_key.as_mut() {
                             k.zeroize();
                         }
+                        // BW imports keep the PKCS#8 private key in key_value.
+                        pk.key_value.zeroize();
                     }
                 }
             }

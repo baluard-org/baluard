@@ -16,6 +16,9 @@ fn redact_kind_secrets(mut kind: serde_json::Value) -> serde_json::Value {
             if let Some(obj) = cred.as_object_mut() {
                 obj.remove("private_key");
                 obj.remove("prf_key");
+                // BW imports keep the original PKCS#8 (private) keyValue at
+                // rest for Bitwarden round trips; it never crosses IPC.
+                obj.remove("key_value");
             }
         }
     }
@@ -161,4 +164,83 @@ pub fn cipher_to_json(c: &Cipher) -> serde_json::Value {
         crate::types::CipherKind::SecureNote => {}
     }
     json
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn bw_imported_key_value_never_reaches_the_wire() {
+        // BW imports store the original PKCS#8 (private) keyValue at rest;
+        // neither the nested kind shape nor the flat projection may carry it.
+        let pkcs8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg2UkAd0oqMTcegX2G7JW8NhKKiuWHaA6qAD1LOx86TN6hRANCAATyrNkx0gqTGnqyGb2wB50N03YWwu7Zf8ZavArw8-KLcXgeg7-9j_Yl1X2TR0ZARe-IEmSMGEn0X6HeIMZYR2qx";
+        let cipher = Cipher {
+            id: Uuid::nil(),
+            name: "Imported".into(),
+            folder_id: None,
+            kind: CipherKind::Login(LoginData {
+                username: None,
+                password: None,
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+                fido2_credentials: Some(vec![PasskeyData {
+                    credential_id: "6NiHiekW4ZY8vYHa-ucbvA".into(),
+                    key_type: "public-key".into(),
+                    key_algorithm: "ECDSA".into(),
+                    key_curve: "P-256".into(),
+                    key_value: pkcs8.into(),
+                    rp_id: "amazon.com".into(),
+                    rp_name: None,
+                    user_handle: None,
+                    user_name: None,
+                    user_display_name: None,
+                    counter: 0,
+                    aaguid: Uuid::nil(),
+                    prf_key: None,
+                    private_key: Some(vec![0u8; 32]),
+                    private_key_missing: false,
+                    linked_login_id: None,
+                    creation_date: 0,
+                    name: None,
+                }]),
+                favicon: None,
+            }),
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            key_epoch: 0,
+            update_seq: 0,
+            tier: Tier::Xs,
+            created_at: 0,
+            updated_at: 0,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+        };
+
+        let json = cipher_to_json(&cipher);
+        assert!(
+            !json.to_string().contains(pkcs8),
+            "PKCS#8 keyValue leaked to the wire"
+        );
+        let cred = &json["kind"]["data"]["fido2_credentials"][0];
+        assert!(
+            cred.get("key_value").is_none(),
+            "nested kind carries key_value"
+        );
+        assert!(cred.get("private_key").is_none());
+        assert!(cred.get("prf_key").is_none());
+        let flat = &json["fido2_credentials"][0];
+        assert!(
+            flat.get("key_value").is_none(),
+            "flat projection carries key_value"
+        );
+    }
 }
