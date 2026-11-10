@@ -73,10 +73,10 @@ struct BwLogin {
     password_revision_date: Option<String>,
     /// Typed FIDO2/WebAuthn credentials. BW stores passkeys on Login ciphers
     /// (per BW type 1 model) with this optional array. We emit one
-    /// `fido2_credentials` array on the Login data.
-    /// The imported passkey is view-only (`private_key_missing: true`) because
-    /// BW exports do not include the credential's private key — the user
-    /// must re-register with the relying party to obtain a usable passkey.
+    /// `fido2_credentials` array on the Login data. `keyValue` carries the
+    /// credential's private key (PKCS#8) and decodes into
+    /// `PasskeyData::private_key`; credentials whose `keyValue` is absent or
+    /// undecodable stay view-only (`private_key_missing: true`).
     #[serde(default)]
     fido2_credentials: Option<Vec<BwFido2Credential>>,
 }
@@ -105,9 +105,11 @@ struct BwFido2Credential {
 
 /// Convert a BW FIDO2 credential into a `PasskeyData`.
 ///
-/// The result is **view-only**: `private_key_missing` is `true` because the
-/// BW export does not include the credential's private key. The user must
-/// re-register the passkey with the relying party to obtain a usable one.
+/// `keyValue` carries the credential's private key as base64url PKCS#8 DER
+/// (Bitwarden is a software authenticator and exports the full key pair),
+/// decoded into `private_key` so the credential signs like a vault-created
+/// one. `private_key_missing` stays `true` only when the key is absent or
+/// undecodable (metadata-only, view-only).
 /// Per docs/adr/0095-passkey-support.md §4.1, `discoverable` is not stored (it's
 /// an invariant, enforced via `residentKey: "required"`).
 ///
@@ -136,12 +138,21 @@ fn bw_fido2_to_passkey(fc: &BwFido2Credential) -> PasskeyData {
         .and_then(parse_iso8601_to_unix)
         .unwrap_or(0);
 
+    let key_value = fc.key_value.clone().unwrap_or_default();
+    #[cfg(feature = "passkey-ceremony")]
+    let (private_key, private_key_missing) = match decode_bw_private_key(&key_value) {
+        Some(bytes) => (Some(bytes), false),
+        None => (None, true),
+    };
+    #[cfg(not(feature = "passkey-ceremony"))]
+    let (private_key, private_key_missing) = (None, true);
+
     PasskeyData {
         credential_id: fc.credential_id.clone().unwrap_or_default(),
         key_type: fc.key_type.clone().unwrap_or_else(|| "public-key".into()),
         key_algorithm: fc.key_algorithm.clone().unwrap_or_default(),
         key_curve: fc.key_curve.clone().unwrap_or_default(),
-        key_value: fc.key_value.clone().unwrap_or_default(),
+        key_value,
         rp_id: fc.rp_id.clone().unwrap_or_default(),
         rp_name: fc.rp_name.clone(),
         user_handle,
@@ -150,12 +161,51 @@ fn bw_fido2_to_passkey(fc: &BwFido2Credential) -> PasskeyData {
         counter,
         aaguid: Uuid::nil(),
         prf_key: None,
-        private_key: None,
-        private_key_missing: true,
+        private_key,
+        private_key_missing,
         linked_login_id: None,
         creation_date,
         name: None,
     }
+}
+
+/// Decode BW's `keyValue` (base64url PKCS#8 DER) into the private COSE key
+/// bytes stored in `PasskeyData::private_key`. `None` falls back to the
+/// metadata-only view-only import: malformed or non-P-256 keys never block
+/// the import, they just cannot sign.
+#[cfg(feature = "passkey-ceremony")]
+fn decode_bw_private_key(b64: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    use coset::cbor::value::Value;
+    use coset::iana::{Algorithm, KeyType};
+    use coset::{CborSerializable, CoseKey, Label, RegisteredLabel, RegisteredLabelWithPrivate};
+    use p256::elliptic_curve::pkcs8::DecodePrivateKey;
+    use p256::elliptic_curve::sec1::ToEncodedPoint;
+
+    if b64.is_empty() {
+        return None;
+    }
+    let der = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(b64)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(b64))
+        .ok()?;
+    let secret = p256::SecretKey::from_pkcs8_der(&der).ok()?;
+
+    let point = secret.public_key().to_encoded_point(false);
+    // SEC1 uncompressed point: 0x04 || x (32) || y (32).
+    let (x, y) = point.as_bytes().split_at(33);
+    let key = CoseKey {
+        kty: RegisteredLabel::Assigned(KeyType::EC2),
+        alg: Some(RegisteredLabelWithPrivate::Assigned(Algorithm::ES256)),
+        params: vec![
+            (Label::Int(-1), Value::from(1i64)),             // crv: P-256
+            (Label::Int(-2), Value::Bytes(x[1..].to_vec())), // x
+            (Label::Int(-3), Value::Bytes(y.to_vec())),      // y
+            (Label::Int(-4), Value::Bytes(secret.to_bytes().to_vec())), // d
+        ],
+        ..Default::default()
+    };
+    key.to_vec().ok()
 }
 
 /// Minimal ISO 8601 (e.g. `"2024-06-12T10:00:00Z"` or
@@ -930,6 +980,106 @@ mod tests {
                 assert_eq!(fido2[0].credential_id, "cred1");
                 assert_eq!(fido2[1].credential_id, "cred2");
                 assert_ne!(fido2[0].counter, fido2[1].counter);
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    // Synthetic throwaway P-256 key (generated for this fixture, not used
+    // anywhere). BW stores the credential key pair as base64url PKCS#8 DER
+    // in `keyValue`; the DER's scalar is the assertion target.
+    const TEST_PKCS8_B64URL: &str = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg2UkAd0oqMTcegX2G7JW8NhKKiuWHaA6qAD1LOx86TN6hRANCAATyrNkx0gqTGnqyGb2wB50N03YWwu7Zf8ZavArw8-KLcXgeg7-9j_Yl1X2TR0ZARe-IEmSMGEn0X6HeIMZYR2qx";
+    const TEST_SCALAR_HEX: &str =
+        "d94900774a2a31371e817d86ec95bc36128a8ae587680eaa003d4b3b1f3a4cde";
+
+    fn passkey_fixture(key_value: Option<&str>) -> String {
+        let kv = match key_value {
+            Some(v) => format!("\"keyValue\": \"{v}\","),
+            None => String::new(),
+        };
+        format!(
+            r#"{{
+                "items": [{{
+                    "name": "GitHub",
+                    "type": 1,
+                    "login": {{
+                        "username": "user@example.com",
+                        "fido2Credentials": [{{
+                            "credentialId": "cred1",
+                            "keyType": "public-key",
+                            "keyAlgorithm": "ECDSA",
+                            "keyCurve": "P-256",
+                            {kv}
+                            "rpId": "github.com",
+                            "userName": "user@example.com",
+                            "counter": "3",
+                            "discoverable": "true",
+                            "creationDate": "2024-01-01T00:00:00Z"
+                        }}]
+                    }}
+                }}]
+            }}"#
+        )
+    }
+
+    #[test]
+    #[cfg(feature = "passkey-ceremony")]
+    fn passkey_import_decodes_private_key_from_key_value() {
+        // BW exports carry the credential's private key in keyValue (PKCS#8).
+        // It must decode into `private_key` as a private COSE key (the format
+        // the ceremony path parses) with `private_key_missing` false.
+        use coset::cbor::value::Value;
+        use coset::{CborSerializable, Label};
+
+        let result = parse(&passkey_fixture(Some(TEST_PKCS8_B64URL)));
+        assert_eq!(result.ciphers.len(), 1, "skips: {:?}", result.errors);
+        match &result.ciphers[0].kind {
+            CipherKind::Login(data) => {
+                let fido2 = data.fido2_credentials.as_ref().unwrap();
+                assert_eq!(fido2.len(), 1);
+                let pk = &fido2[0];
+                assert!(!pk.private_key_missing);
+                let cose = coset::CoseKey::from_slice(pk.private_key.as_ref().unwrap())
+                    .expect("private_key must parse as a COSE key (ceremony-path format)");
+
+                let expected_d = hex::decode(TEST_SCALAR_HEX).unwrap();
+                let mut d = None;
+                for (k, v) in &cose.params {
+                    if *k == Label::Int(-4) {
+                        d = Some(match v {
+                            Value::Bytes(b) => b.clone(),
+                            other => panic!("d param is not bytes: {other:?}"),
+                        });
+                    }
+                }
+                assert_eq!(d.as_deref(), Some(expected_d.as_slice()));
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    fn passkey_import_malformed_key_value_stays_metadata_only() {
+        // Fail closed: garbage in keyValue keeps today's view-only behavior.
+        let result = parse(&passkey_fixture(Some("AQCAgIA")));
+        match &result.ciphers[0].kind {
+            CipherKind::Login(data) => {
+                let pk = &data.fido2_credentials.as_ref().unwrap()[0];
+                assert!(pk.private_key.is_none());
+                assert!(pk.private_key_missing);
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    fn passkey_import_absent_key_value_stays_metadata_only() {
+        let result = parse(&passkey_fixture(None));
+        match &result.ciphers[0].kind {
+            CipherKind::Login(data) => {
+                let pk = &data.fido2_credentials.as_ref().unwrap()[0];
+                assert!(pk.private_key.is_none());
+                assert!(pk.private_key_missing);
             }
             _ => panic!("expected Login"),
         }

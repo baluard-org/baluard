@@ -909,10 +909,11 @@ pub struct PassportData {
 /// passkey can sign on desktop, mobile, and extension — we are a software
 /// authenticator, not a hardware-bound one.
 ///
-/// On BW import the private key is not present in the export, so
-/// `private_key_missing` is `true` and the cipher is view-only; the user must
-/// re-register the passkey with the RP. See Phase 0 of
-/// `docs/adr/0095-passkey-support.md`.
+/// On BW import `keyValue` carries the private key (base64url PKCS#8, see
+/// `bw_json.rs`), decoded into `private_key`, so imported credentials sign
+/// like vault-created ones. `private_key_missing` is `true` only when that
+/// key is absent or undecodable, leaving the cipher view-only until the user
+/// re-registers the passkey with the RP. See `docs/adr/0095-passkey-support.md`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PasskeyData {
     /// Opaque credential ID assigned by the authenticator at registration,
@@ -957,14 +958,14 @@ pub struct PasskeyData {
     #[serde(default)]
     pub prf_key: Option<Vec<u8>>,
     /// Credential's private key, encrypted as part of the cipher envelope
-    /// (under the item key). 32 bytes for Ed25519, 32 bytes for ES256 scalar.
-    /// `None` for imported BW passkeys (see `private_key_missing`).
+    /// (under the item key). Private COSE key encoded as CBOR for ES256;
+    /// `None` when the key is unavailable (see `private_key_missing`).
     #[serde(default)]
     pub private_key: Option<Vec<u8>>,
-    /// `true` when the credential was imported from Bitwarden JSON (which
-    /// does not include private key material). Such ciphers are view-only
-    /// until the user re-registers the passkey with the RP. The desktop UI
-    /// surfaces a "Re-register" call-to-action.
+    /// `true` when no usable private key material is available (e.g. an
+    /// import whose `keyValue` is absent or failed to parse). Such ciphers
+    /// are view-only until the user re-registers the passkey with the RP.
+    /// The desktop UI surfaces a "Re-register" call-to-action.
     #[serde(default)]
     pub private_key_missing: bool,
     /// Optional pointer to a `CipherKind::Login` cipher for the same RP, set
