@@ -484,7 +484,7 @@ internal val EN: Map<String, String> = mapOf(
     "settings.categorySecuritySubtitle" to "Auto-lock, biometrics, privacy, and devices",
     "settings.categoryAutofillSubtitle" to "Autofill, passkeys, and browser integration",
     "settings.categorySharingSubtitle" to "People, shared folders, and activity",
-    "settings.categorySpaceSubtitle" to "Space recovery, approvals, and policies",
+    "settings.categorySpaceSubtitle" to "Team mode, sharing, and recovery policies",
     "settings.categoryDataSubtitle" to "Import, export, backups, and recovery",
     "settings.categoryVaultSubtitle" to "Profile, avatar, and this device's vault",
     "settings.categoryAboutSubtitle" to "Version and application information",
@@ -867,7 +867,7 @@ internal val EN: Map<String, String> = mapOf(
         "collections.catalogPublishedToast" to "Ask catalog updated",
 
     // S3-9b: Space policy (admin card on Settings).
-    "space.title" to "Vault",
+    "space.title" to "Space",
     "space.inviteAuthorityLabel" to "Who may invite members",
     "space.inviteAuthorityDesc" to "Admins and owner, or the owner only. Does not affect reset invitations.",
     "space.authorityAdmins" to "Admins + owner",
