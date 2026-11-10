@@ -1,6 +1,6 @@
 {
   "name": "baluard-desktop",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Baluard desktop app",
   "type": "module",
   "scripts": {
