@@ -1,5 +1,6 @@
-import { onSettled, Show, createSignal, createEffect } from "solid-js";
+import { onSettled, onCleanup, Show, createSignal, createEffect } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { initDeepLink, flushPendingEntry } from "./lib/deepLink.js";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon, showWindow, getDesktopPrefs } from "./lib/daemon.js";
@@ -166,6 +167,19 @@ export default function App() {
         } catch {
           // Storage or prefs unavailable (tests, private mode): skip the hint.
         }
+
+        // Linux only, GNOME only, emitted once per session by the ksni tray
+        // when no StatusNotifier host is reachable: without a shell extension
+        // GNOME renders no tray icons at all, so the user needs the pointer.
+        let unListenHostOffline;
+        try {
+          unListenHostOffline = await listen("tray://host-offline", () => {
+            toastInfo(t("app.trayHostMissing"));
+          });
+        } catch {
+          // Non-Tauri contexts (tests): skip.
+        }
+        onCleanup(() => unListenHostOffline && unListenHostOffline());
       }
     })();
   });

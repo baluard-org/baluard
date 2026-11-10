@@ -59,6 +59,13 @@ windows-sys = { version = "0.59", features = [
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSPasteboard"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSString", "NSData"] }
 
+# Linux tray: pure-Rust SNI over DBus. tauri's own tray is pinned to
+# tray-icon 0.24 whose only Linux backend is the deprecated libayatana
+# appindicator (deprecation warnings + Gtk-CRITICALs under Wayland), so the
+# Linux tray is built directly on ksni instead of tauri::tray.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = "0.3"
+
 [features]
 default = []
 smoke = ["dep:tauri-plugin-wdio-webdriver"]

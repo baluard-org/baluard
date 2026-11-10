@@ -10,18 +10,31 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
+#[cfg(not(target_os = "linux"))]
 use tauri::menu::MenuBuilder;
 #[cfg(target_os = "macos")]
 use tauri::menu::{AboutMetadata, MenuItemBuilder, SubmenuBuilder};
+#[cfg(not(target_os = "linux"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use zeroize::Zeroize;
 
 mod daemon_ctl;
 mod deep_link;
+#[cfg(target_os = "linux")]
+mod tray_linux;
 mod updater;
 mod window_geometry;
 use updater::{updater_check, updater_install, updater_status};
+
+/// Shared tray id across platform backends.
+#[cfg(target_os = "linux")]
+const MAIN_TRAY_ID: &str = "main";
+
+/// Linux: handle to the ksni tray service so the theme listener can swap the
+/// icon after the setup closure is gone.
+#[cfg(target_os = "linux")]
+struct LinuxTrayState(Mutex<Option<ksni::Handle<tray_linux::LinuxTray>>>);
 
 /// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -960,7 +973,22 @@ async fn clipboard_mark_concealed(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn update_tray_icon(_app: AppHandle, _is_dark: bool) -> Result<(), String> {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let handle = _app
+            .state::<LinuxTrayState>()
+            .0
+            .lock()
+            .ok()
+            .and_then(|g| g.clone());
+        if let Some(handle) = handle {
+            tauri::async_runtime::spawn(async move {
+                handle.update(|t| t.set_dark(_is_dark)).await;
+            });
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
     {
         if let Some(tray) = _app.tray_by_id("main") {
             let icon_bytes = if _is_dark {
@@ -971,8 +999,8 @@ fn update_tray_icon(_app: AppHandle, _is_dark: bool) -> Result<(), String> {
             let icon = tauri::image::Image::from_bytes(icon_bytes).map_err(|e| e.to_string())?;
             tray.set_icon(Some(icon)).map_err(|e| e.to_string())?;
         }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Stored session tokens obtained from daemon at unlock/create, keyed by
@@ -1678,49 +1706,81 @@ pub fn run() {
             }
 
             // System tray
-            let show = tauri::menu::MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
-            let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = MenuBuilder::new(app)
-                .item(&show)
-                .separator()
-                .item(&quit)
-                .build()?;
-
-            let tray_icon = tauri::image::Image::from_bytes(
-                include_bytes!("../icons/tray_black.png")
-            )?;
-
-            let _tray = TrayIconBuilder::with_id("main")
-                .icon(tray_icon)
-                .icon_as_template(true)
-                .tooltip("Baluard")
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
-                    }
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
+            #[cfg(target_os = "linux")]
+            {
+                use ksni::TrayMethods;
+                use tray_linux::LinuxTray;
+                app.manage(LinuxTrayState(Mutex::new(None)));
+                let app_handle = app.handle().clone();
+                // SNI has no reliable light/dark signal on most hosts; start
+                // on the dark icon (matches the old default). The theme
+                // listener still swaps it via update_tray_icon.
+                let is_dark = true;
+                tauri::async_runtime::spawn(async move {
+                    // assume_sni_available routes a missing StatusNotifier
+                    // host to watcher_offline instead of failing the spawn,
+                    // so installing an extension later lights the icon up
+                    // without restarting Baluard.
+                    match LinuxTray::new(app_handle.clone(), is_dark)
+                        .assume_sni_available(true)
+                        .spawn()
+                        .await
                     {
-                        let app = tray.app_handle();
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
+                        Ok(handle) => {
+                            if let Ok(mut g) = app_handle.state::<LinuxTrayState>().0.lock() {
+                                *g = Some(handle);
+                            }
                         }
+                        Err(e) => log::warn!("[desktop] linux tray failed: {e}"),
                     }
-                })
-                .build(app)?;
+                });
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let show = tauri::menu::MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+                let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+                let menu = MenuBuilder::new(app)
+                    .item(&show)
+                    .separator()
+                    .item(&quit)
+                    .build()?;
+
+                let tray_icon = tauri::image::Image::from_bytes(
+                    include_bytes!("../icons/tray_black.png")
+                )?;
+
+                let _tray = TrayIconBuilder::with_id("main")
+                    .icon(tray_icon)
+                    .icon_as_template(true)
+                    .tooltip("Baluard")
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "show" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            let app = tray.app_handle();
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    })
+                    .build(app)?;
+            }
 
             // Native macOS Application Menu
             #[cfg(target_os = "macos")]

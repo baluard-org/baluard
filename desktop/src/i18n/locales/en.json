@@ -1,7 +1,8 @@
 {
   "app": {
     "name": "Baluard",
-    "trayHint": "Closing the window keeps Baluard running in the system tray. Quit fully from the tray menu, or press Ctrl+Q."
+    "trayHint": "Closing the window keeps Baluard running in the system tray. Quit fully from the tray menu, or press Ctrl+Q.",
+    "trayHostMissing": "GNOME hides tray icons by default. Install a tray extension, such as AppIndicator Support, to see Baluard in the top bar."
   },
   "common": {
     "back": "Back",
