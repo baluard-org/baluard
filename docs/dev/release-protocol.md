@@ -85,7 +85,7 @@ Stage order, fail-fast (any failure stops the pipeline):
 1. `ext-package`: rebuilds both extension dists, refuses drift against the committed dists, writes the store zips.
 2. `fdroid-stage`: verifies the APK (application ID, signing certificate, `versionName`), signs it into `repo-out/fdroid/repo`, regenerates the F-Droid indexes.
 3. `release-sign`: minisign sidecars plus signed `SHA256SUMS` over `./dist` (covers `.AppImage`, `.deb`, `.rpm`, `.tar.gz`, `.zip`).
-4. `repo-stage`: builds the apt and dnf trees into `repo-out` (GPG-signed metadata; already-signed RPMs are not signed twice; package history persists in `~/.baluard/linux-repo-history/`).
+4. `repo-stage`: builds the apt, dnf, and Arch (pacman) trees into `repo-out` (GPG-signed metadata; already-signed RPMs are not signed twice; package history persists in `~/.baluard/linux-repo-history/`). The Arch leg rebuilds the pacman database from scratch each run and refreshes `aur/` (PKGBUILD version, checksum, .SRCINFO) for the AUR submission.
 5. `repo-sync`: mirrors `repo-out` into `../baluard-org`, removing stale generated files and leaving unrelated website changes untouched.
 
 Publishing is a manual review, commit, and push of the `baluard-org` diff. The pipeline never commits or pushes. The Linux trees map to `repo/`, the F-Droid tree to the site root `fdroid/`; a push of `baluard-org` main is what updates `baluard.app` and both Linux repositories.

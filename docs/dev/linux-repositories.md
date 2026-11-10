@@ -31,6 +31,22 @@ sudo dnf install baluard
 
 dnf checks the repository metadata signature (`repo_gpgcheck`) and the package signature (`gpgcheck`), and shows the key fingerprint for you to confirm on first use.
 
+## Arch Linux (pacman)
+
+```sh
+curl -s https://baluard.app/repo/baluard-release.asc | sudo pacman-key --add -
+sudo pacman-key --lsign-key 223310EABF1AB6FEE6BDDF3E2A531D54E6D74804
+sudo tee /etc/pacman.d/baluard.conf <<'EOF'
+[baluard]
+SigLevel = Required DatabaseOptional
+Server = https://baluard.app/repo/arch/x86_64
+EOF
+grep -q baluard.conf /etc/pacman.conf || echo "Include = /etc/pacman.d/baluard.conf" | sudo tee -a /etc/pacman.conf
+sudo pacman -Syu baluard
+```
+
+Pacman verifies the database and package signatures against the imported release key before installing. The repository also feeds the AUR package `baluard-bin`, which repackages the same upstream artifacts.
+
 ## Direct downloads
 
 Every artifact on GitHub Releases carries a `.sig` sidecar made with the updater signing key, and the release directory contains `SHA256SUMS` with its own `.sig`:
@@ -53,7 +69,7 @@ Build the desktop and Android release artifacts first, then run:
 just release-repositories
 ```
 
-This command first rebuilds the browser extension bundles and packages the store zips into `./dist` (`baluard-extension-<version>-chrome.zip` / `-firefox.zip`), failing if the rebuild drifts from the committed dists. It then verifies the APK, signs `./dist`, regenerates the apt, dnf, and F-Droid trees in `./repo-out`, and mirrors them into `../baluard-org`. Each step stops the pipeline on failure. Synchronization removes stale generated files, preserves the repository directory guards, and does not touch other website files. Linux package history persists in `~/.baluard/linux-repo-history/`, so deleting `repo-out` does not remove older packages from the next build. The served repos keep only the newest three package versions (`BALUARD_LINUX_REPO_KEEP` overrides the count); the history directory itself stays complete. Already-signed RPMs are not signed again.
+This command first rebuilds the browser extension bundles and packages the store zips into `./dist` (`baluard-extension-<version>-chrome.zip` / `-firefox.zip`), failing if the rebuild drifts from the committed dists. It then verifies the APK, signs `./dist`, regenerates the apt, dnf, Arch, and F-Droid trees in `./repo-out`, and mirrors them into `../baluard-org`. Each step stops the pipeline on failure. Synchronization removes stale generated files, preserves the repository directory guards, and does not touch other website files. Linux package history persists in `~/.baluard/linux-repo-history/`, so deleting `repo-out` does not remove older packages from the next build. The served repos keep only the newest three package versions (`BALUARD_LINUX_REPO_KEEP` overrides the count); the history directory itself stays complete. Already-signed RPMs are not signed again.
 
 Review the resulting diff in `baluard-org`, then commit and push it to publish. The pipeline never commits or pushes automatically. The Linux trees map to `repo/`; the F-Droid tree maps to the site root at `fdroid/`. See `docs/dev/fdroid-repository.md`.
 
