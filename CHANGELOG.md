@@ -11,6 +11,7 @@ Notable user-facing changes per release.
 - Update notifications show more of the release notes and carry a View changelog link that opens the release page in your browser.
 
 ## [UNRELEASED]
+- Linux: the tray icon is rebuilt on the modern StatusNotifierItem protocol, so GNOME users with a tray extension (AppIndicator Support, Tray Icons Reloaded, Tray Icons, or Status Icons) get a working icon again, and it appears without restarting the app once an extension is installed. The deprecated tray library behind the startup warnings is gone.
 - Closing the window now follows the new Run in the background setting: on (the default), Baluard keeps running in the tray so browser autofill stays working; off, closing quits Baluard. The old hide-from-Dock toggle is gone.
 
 ## 0.3.0 - 2026-11-10

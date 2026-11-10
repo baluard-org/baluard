@@ -1,7 +1,8 @@
 {
   "app": {
     "name": "Baluard",
-    "trayHint": "Fermer la fenêtre laisse Baluard actif dans la zone de notification. Pour quitter complètement, passez par le menu de la zone ou appuyez sur Ctrl+Q."
+    "trayHint": "Fermer la fenêtre laisse Baluard actif dans la zone de notification. Pour quitter complètement, passez par le menu de la zone ou appuyez sur Ctrl+Q.",
+    "trayHostMissing": "GNOME masque les icônes de la zone de notification par défaut. Installez une extension de zone de notification, comme AppIndicator Support, pour voir Baluard dans la barre supérieure."
   },
   "common": {
     "back": "Retour",

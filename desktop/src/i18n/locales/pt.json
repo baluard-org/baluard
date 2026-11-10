@@ -1,7 +1,8 @@
 {
   "app": {
     "name": "Baluard",
-    "trayHint": "Fechar a janela mantém o Baluard ativo na bandeja do sistema. Para sair totalmente, use o menu da bandeja ou pressione Ctrl+Q."
+    "trayHint": "Fechar a janela mantém o Baluard ativo na bandeja do sistema. Para sair totalmente, use o menu da bandeja ou pressione Ctrl+Q.",
+    "trayHostMissing": "O GNOME oculta os ícones da bandeja por padrão. Instale uma extensão de bandeja, como AppIndicator Support, para ver o Baluard na barra superior."
   },
   "common": {
     "back": "Voltar",
