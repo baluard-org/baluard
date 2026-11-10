@@ -124,7 +124,7 @@ ARCHDIR="$SB/repo-out/arch/x86_64"
 if [[ -L "$ARCHDIR/baluard.db" ]]; then die "baluard.db must be a real copy, not a symlink"; fi
 cmp -s "$ARCHDIR/baluard.db" "$ARCHDIR/baluard.db.tar.zst" || die "baluard.db copy drift"
 [[ -f "$ARCHDIR/baluard.db.sig" ]] || die "database signature missing"
-grep -q "Server = https://baluard.app/repo/arch/x86_64" "$SB/repo-out/arch/baluard.conf" \
+grep -q "Server = https://packages.baluard.app/arch/x86_64" "$SB/repo-out/arch/baluard.conf" \
   || die "served baluard.conf missing or wrong"
 grep -q "^pkgver=0.2.5$" "$SB/aur/PKGBUILD" || die "aur pkgver not bumped"
 grep -q "sha256sums=('$DEB_SHA')" "$SB/aur/PKGBUILD" || die "aur checksum not bumped"
