@@ -6,7 +6,11 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 SRC="$TMP/repo-out"
 SITE="$TMP/baluard-org"
-mkdir -p "$SRC/dists/stable" "$SRC/rpms/repodata" "$SRC/fdroid/repo" "$SRC/arch/x86_64" "$SITE/repo/dists" "$SITE/fdroid/repo"
+PKG_REPO="$TMP/baluard-org-repo"
+PKG_FDROID="$TMP/baluard-org-fdroid"
+mkdir -p "$SRC/dists/stable" "$SRC/rpms/repodata" "$SRC/fdroid/repo" "$SRC/arch/x86_64" "$SITE/repo/dists" "$SITE/fdroid/repo" "$PKG_REPO" "$PKG_FDROID"
+printf 'keep-dotfile
+' > "$PKG_FDROID/.gitignore"
 printf 'release\n' > "$SRC/dists/stable/InRelease"
 printf 'rpm\n' > "$SRC/rpms/repodata/repomd.xml.asc"
 printf 'fdroid\n' > "$SRC/fdroid/repo/index-v2.json"
@@ -28,7 +32,7 @@ printf 'keep\n' > "$SITE/index.html"
 printf 'baluard.app\n' > "$SITE/CNAME"
 git -C "$SITE" init -q
 
-"$ROOT/scripts/sync-site-repos.sh" "$SRC" "$SITE"
+"$ROOT/scripts/sync-site-repos.sh" "$SRC" "$SITE" "$PKG_REPO" "$PKG_FDROID"
 
 test ! -e "$SITE/repo/dists/stale"
 test ! -e "$SITE/fdroid/repo/stale.apk"
@@ -37,6 +41,17 @@ test "$(cat "$SITE/repo/baluard.repo")" = "[baluard]"
 test "$(cat "$SITE/repo/baluard.sources")" = "Types: deb"
 test "$(cat "$SITE/repo/arch/x86_64/baluard.db")" = archdb
 test "$(cat "$SITE/repo/arch/x86_64/baluard.db.sig")" = archdbsig
+test -f "$PKG_REPO/.nojekyll"
+test -f "$PKG_FDROID/.nojekyll"
+test "$(cat "$PKG_FDROID/.gitignore")" = keep-dotfile
+test "$(cat "$PKG_REPO/arch/x86_64/baluard.db")" = archdb
+test "$(cat "$PKG_FDROID/repo/index-v2.json")" = fdroid
+rm -rf "$PKG_FDROID"
+if "$ROOT/scripts/sync-site-repos.sh" "$SRC" "$SITE" "$PKG_REPO" "$PKG_FDROID" 2>/dev/null; then
+  echo 'expected a missing package fdroid site clone to fail' >&2
+  exit 1
+fi
+mkdir -p "$PKG_FDROID"
 test "$(cat "$SITE/fdroid/index.html")" = landing
 test "$(cat "$SITE/index.html")" = keep
 test -f "$SITE/.nojekyll"
