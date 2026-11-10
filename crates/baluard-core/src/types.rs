@@ -926,7 +926,9 @@ pub struct PasskeyData {
     /// Curve name. `"P-256"` or `"ED25519"`.
     pub key_curve: String,
     /// COSE-encoded public key, base64url. Produced by the authenticator
-    /// at registration, verified by the RP on every assertion.
+    /// at registration, verified by the RP on every assertion. BW imports
+    /// instead store the original PKCS#8 `keyValue` (private-carrying) for
+    /// Bitwarden round trips; the wire projection redacts this field.
     pub key_value: String,
     /// Relying Party identifier (domain string). Scopes the credential.
     pub rp_id: String,
@@ -992,6 +994,8 @@ impl Zeroize for PasskeyData {
         if let Some(k) = self.private_key.as_mut() {
             k.zeroize();
         }
+        // BW-imported key_value carries the PKCS#8 private key at rest.
+        self.key_value.zeroize();
     }
 }
 

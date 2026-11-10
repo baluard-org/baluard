@@ -138,6 +138,7 @@ fn bw_fido2_to_passkey(fc: &BwFido2Credential) -> PasskeyData {
         .and_then(parse_iso8601_to_unix)
         .unwrap_or(0);
 
+    let credential_id = normalize_bw_credential_id(&fc.credential_id.clone().unwrap_or_default());
     let key_value = fc.key_value.clone().unwrap_or_default();
     #[cfg(feature = "passkey-ceremony")]
     let (private_key, private_key_missing) = match decode_bw_private_key(&key_value) {
@@ -148,7 +149,7 @@ fn bw_fido2_to_passkey(fc: &BwFido2Credential) -> PasskeyData {
     let (private_key, private_key_missing) = (None, true);
 
     PasskeyData {
-        credential_id: fc.credential_id.clone().unwrap_or_default(),
+        credential_id,
         key_type: fc.key_type.clone().unwrap_or_else(|| "public-key".into()),
         key_algorithm: fc.key_algorithm.clone().unwrap_or_default(),
         key_curve: fc.key_curve.clone().unwrap_or_default(),
@@ -172,7 +173,8 @@ fn bw_fido2_to_passkey(fc: &BwFido2Credential) -> PasskeyData {
 /// Decode BW's `keyValue` (base64url PKCS#8 DER) into the private COSE key
 /// bytes stored in `PasskeyData::private_key`. `None` falls back to the
 /// metadata-only view-only import: malformed or non-P-256 keys never block
-/// the import, they just cannot sign.
+/// the import, they just cannot sign. BW emits unpadded base64url; the
+/// padded variant is tolerated, standard-alphabet input is rejected.
 #[cfg(feature = "passkey-ceremony")]
 fn decode_bw_private_key(b64: &str) -> Option<Vec<u8>> {
     use base64::Engine;
@@ -181,19 +183,24 @@ fn decode_bw_private_key(b64: &str) -> Option<Vec<u8>> {
     use coset::{CborSerializable, CoseKey, Label, RegisteredLabel, RegisteredLabelWithPrivate};
     use p256::elliptic_curve::pkcs8::DecodePrivateKey;
     use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use zeroize::Zeroizing;
 
     if b64.is_empty() {
         return None;
     }
-    let der = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(b64)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(b64))
-        .ok()?;
+    let der = Zeroizing::new(
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(b64)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(b64))
+            .ok()?,
+    );
     let secret = p256::SecretKey::from_pkcs8_der(&der).ok()?;
 
     let point = secret.public_key().to_encoded_point(false);
-    // SEC1 uncompressed point: 0x04 || x (32) || y (32).
+    // SEC1 uncompressed points are always 65 bytes (0x04 || x || y) for a
+    // valid P-256 key, so this split cannot fail.
     let (x, y) = point.as_bytes().split_at(33);
+    let d = Zeroizing::new(secret.to_bytes().to_vec());
     let key = CoseKey {
         kty: RegisteredLabel::Assigned(KeyType::EC2),
         alg: Some(RegisteredLabelWithPrivate::Assigned(Algorithm::ES256)),
@@ -201,11 +208,30 @@ fn decode_bw_private_key(b64: &str) -> Option<Vec<u8>> {
             (Label::Int(-1), Value::from(1i64)),             // crv: P-256
             (Label::Int(-2), Value::Bytes(x[1..].to_vec())), // x
             (Label::Int(-3), Value::Bytes(y.to_vec())),      // y
-            (Label::Int(-4), Value::Bytes(secret.to_bytes().to_vec())), // d
+            (Label::Int(-4), Value::Bytes(d.to_vec())),      // d
         ],
         ..Default::default()
     };
     key.to_vec().ok()
+}
+
+/// BW exports `credentialId` as a dashed UUID; WebAuthn wants the 16 raw
+/// credential bytes as base64url. Only the exact dashed shape converts so
+/// base64url IDs (Baluard round trips) pass through; without it the UUID
+/// string decodes as base64url into garbage bytes no RP would accept.
+fn normalize_bw_credential_id(id: &str) -> String {
+    use base64::Engine;
+
+    let b = id.as_bytes();
+    let dashed_uuid = b.len() == 36
+        && (b[8], b[13], b[18], b[23]) == (b'-', b'-', b'-', b'-')
+        && id.chars().all(|c| c == '-' || c.is_ascii_hexdigit());
+    if dashed_uuid {
+        if let Ok(bytes) = hex::decode(id.replace('-', "")) {
+            return base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+        }
+    }
+    id.to_string()
 }
 
 /// Minimal ISO 8601 (e.g. `"2024-06-12T10:00:00Z"` or
@@ -991,6 +1017,12 @@ mod tests {
     const TEST_PKCS8_B64URL: &str = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg2UkAd0oqMTcegX2G7JW8NhKKiuWHaA6qAD1LOx86TN6hRANCAATyrNkx0gqTGnqyGb2wB50N03YWwu7Zf8ZavArw8-KLcXgeg7-9j_Yl1X2TR0ZARe-IEmSMGEn0X6HeIMZYR2qx";
     const TEST_SCALAR_HEX: &str =
         "d94900774a2a31371e817d86ec95bc36128a8ae587680eaa003d4b3b1f3a4cde";
+    const TEST_X_HEX: &str = "f2acd931d20a931a7ab219bdb0079d0dd37616c2eed97fc65abc0af0f3e28b71";
+    const TEST_Y_HEX: &str = "781e83bfbd8ff625d57d9347464045ef8812648c1849f45fa1de20c658476ab1";
+    // Synthetic throwaway Ed25519 PKCS#8: the wrong curve for the P-256
+    // parser, exercising the view-only fallback.
+    const TEST_ED25519_PKCS8_B64URL: &str =
+        "MC4CAQAwBQYDK2VwBCIEIP7-eC3ZXBqMt7uMPDtBJlycrVM-ANw3IA9SusKcx8Gm";
 
     fn passkey_fixture(key_value: Option<&str>) -> String {
         let kv = match key_value {
@@ -1005,7 +1037,7 @@ mod tests {
                     "login": {{
                         "username": "user@example.com",
                         "fido2Credentials": [{{
-                            "credentialId": "cred1",
+                            "credentialId": "6NiHiekW4ZY8vYHa-ucbvA",
                             "keyType": "public-key",
                             "keyAlgorithm": "ECDSA",
                             "keyCurve": "P-256",
@@ -1042,17 +1074,99 @@ mod tests {
                 let cose = coset::CoseKey::from_slice(pk.private_key.as_ref().unwrap())
                     .expect("private_key must parse as a COSE key (ceremony-path format)");
 
+                assert_eq!(
+                    cose.kty,
+                    coset::RegisteredLabel::Assigned(coset::iana::KeyType::EC2)
+                );
+                assert_eq!(
+                    cose.alg,
+                    Some(coset::RegisteredLabelWithPrivate::Assigned(
+                        coset::iana::Algorithm::ES256
+                    ))
+                );
+
                 let expected_d = hex::decode(TEST_SCALAR_HEX).unwrap();
+                let expected_x = hex::decode(TEST_X_HEX).unwrap();
+                let expected_y = hex::decode(TEST_Y_HEX).unwrap();
                 let mut d = None;
+                let mut x = None;
+                let mut y = None;
                 for (k, v) in &cose.params {
-                    if *k == Label::Int(-4) {
-                        d = Some(match v {
-                            Value::Bytes(b) => b.clone(),
-                            other => panic!("d param is not bytes: {other:?}"),
-                        });
+                    if let Value::Bytes(b) = v {
+                        match k {
+                            Label::Int(-2) => x = Some(b.clone()),
+                            Label::Int(-3) => y = Some(b.clone()),
+                            Label::Int(-4) => d = Some(b.clone()),
+                            _ => {}
+                        }
                     }
                 }
                 assert_eq!(d.as_deref(), Some(expected_d.as_slice()));
+                assert_eq!(x.as_deref(), Some(expected_x.as_slice()));
+                assert_eq!(y.as_deref(), Some(expected_y.as_slice()));
+
+                // The ceremony path must accept the imported credential end
+                // to end: it parses private_key as a COSE key and the
+                // credential_id as base64url.
+                assert!(crate::crypto::webauthn::store::passkey_data_to_passkey(pk).is_some());
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    fn passkey_import_normalizes_bw_uuid_credential_ids() {
+        // BW exports credentialId as a dashed UUID; the stored ID must be
+        // the 16 raw credential bytes as base64url or no RP recognizes it.
+        let json = passkey_fixture(Some(TEST_PKCS8_B64URL)).replace(
+            "\"credentialId\": \"6NiHiekW4ZY8vYHa-ucbvA\"",
+            "\"credentialId\": \"e8d88789-e916-e196-3cbd-81dafae71bbc\"",
+        );
+        let result = parse(&json);
+        match &result.ciphers[0].kind {
+            CipherKind::Login(data) => {
+                let pk = &data.fido2_credentials.as_ref().unwrap()[0];
+                assert_eq!(pk.credential_id, "6NiHiekW4ZY8vYHa-ucbvA");
+                // The normalized ID must survive the ceremony path's
+                // base64url decode (real UUIDs used to decode as garbage).
+                #[cfg(feature = "passkey-ceremony")]
+                assert!(
+                    crate::crypto::webauthn::store::passkey_data_to_passkey(pk).is_some(),
+                    "normalized credential id must decode as base64url"
+                );
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "passkey-ceremony")]
+    fn passkey_import_non_p256_key_value_stays_metadata_only() {
+        let result = parse(&passkey_fixture(Some(TEST_ED25519_PKCS8_B64URL)));
+        match &result.ciphers[0].kind {
+            CipherKind::Login(data) => {
+                let pk = &data.fido2_credentials.as_ref().unwrap()[0];
+                assert!(pk.private_key.is_none());
+                assert!(pk.private_key_missing);
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "passkey-ceremony")]
+    fn passkey_import_trusts_der_over_metadata_strings() {
+        // The DER is authoritative: a P-256 key imports even when the
+        // algorithm/curve metadata strings disagree.
+        let json = passkey_fixture(Some(TEST_PKCS8_B64URL))
+            .replace("\"keyAlgorithm\": \"ECDSA\"", "\"keyAlgorithm\": \"RSA\"")
+            .replace("\"keyCurve\": \"P-256\"", "\"keyCurve\": \"ED25519\"");
+        let result = parse(&json);
+        match &result.ciphers[0].kind {
+            CipherKind::Login(data) => {
+                let pk = &data.fido2_credentials.as_ref().unwrap()[0];
+                assert!(pk.private_key.is_some());
+                assert!(!pk.private_key_missing);
             }
             _ => panic!("expected Login"),
         }
