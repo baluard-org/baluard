@@ -111,6 +111,7 @@ class BaluardAutofillService : AutofillService() {
                             form.fields,
                             form.target,
                             form.ignoredIds,
+                            inline,
                         )
                     } else {
                         AutofillResponseBuilder.authenticationResponse(
