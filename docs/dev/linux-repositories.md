@@ -47,6 +47,10 @@ sudo pacman -Syu baluard
 
 Pacman verifies the database and package signatures against the imported release key before installing. The repository also feeds the AUR package `baluard-bin`, which repackages the same upstream artifacts.
 
+### AUR (parked, do not retry yet)
+
+The `baluard-bin` submission is prepared but parked: aur.archlinux.org has closed new-account registration while it deals with a wave of automated account creation (no manual queue; reopening is announced on the aur-general mailing list and the Arch news feed). Everything else works normally, and the pacman repository above fully serves Arch users in the meantime. When registration reopens: create the account, add an SSH key under My Account, then import the three files the pipeline keeps fresh in `aur/` (PKGBUILD, .SRCINFO, LICENSE) per the submission recipe — a clone of `ssh://aur@aur.archlinux.org/baluard-bin.git` expecting the empty-repository warning, copy, commit, push. Until that blocker resolves, do not retry registration or script checks against it.
+
 ## Direct downloads
 
 Every artifact on GitHub Releases carries a `.sig` sidecar made with the updater signing key, and the release directory contains `SHA256SUMS` with its own `.sig`:
