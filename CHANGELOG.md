@@ -2,15 +2,15 @@
 
 Notable user-facing changes per release.
 
-## [UNRELEASED]
+## 0.3.1 - 2026-11-10
+
 - The keyboard's autofill chips now end with an Open Baluard chip that opens the full login picker, and keyboard chips are capped so crowded keyboards stay stable.
-- The mobile vault header now orders sync, generator, and the new-entry button left to right, matching the desktop.
+- The vault header orders sync, the generator, and the new-entry button left to right, on desktop and mobile.
 - The mobile vault settings page separates its sections with dividers and breathing room, and the recovery-kit row keeps its label instead of collapsing.
 - The settings page no longer shows two entries named Vault: the family-space section is now called Space.
 - Update notifications show more of the release notes and carry a View changelog link that opens the release page in your browser.
-- The vault header orders sync, the generator, and the new-entry button left to right, with the generator beside the button it complements.
 
-- No user-facing changes yet.
+## [UNRELEASED]
 
 ## 0.3.0 - 2026-11-10
 
