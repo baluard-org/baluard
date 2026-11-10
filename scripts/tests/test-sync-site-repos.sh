@@ -8,9 +8,11 @@ SRC="$TMP/repo-out"
 SITE="$TMP/baluard-org"
 PKG_SITE="$TMP/baluard-packages"
 
-mkdir -p "$SRC/dists/stable" "$SRC/rpms/repodata" "$SRC/fdroid/repo" "$SRC/arch/x86_64" "$PKG_SITE/arch/x86_64" "$PKG_SITE/dists" "$PKG_SITE/fdroid/repo" "$SITE"
+mkdir -p "$SRC/dists/stable" "$SRC/rpms/repodata" "$SRC/fdroid/repo" "$SRC/arch/x86_64" "$PKG_SITE/arch/x86_64" "$PKG_SITE/dists" "$PKG_SITE/fdroid/repo" "$PKG_SITE/.github/workflows" "$SITE"
 printf 'keep-dotfile
 ' > "$PKG_SITE/.gitignore"
+printf 'deploy-marker
+' > "$PKG_SITE/.github/workflows/deploy-pages.yml"
 printf 'release
 ' > "$SRC/dists/stable/InRelease"
 printf 'rpm
@@ -72,6 +74,7 @@ test "$(cat "$PKG_SITE/baluard.sources")" = "Types: deb"
 test "$(cat "$PKG_SITE/index.html")" = landing
 test "$(cat "$PKG_SITE/.gitignore")" = keep-dotfile
 test -f "$PKG_SITE/.nojekyll"
+test "$(cat "$PKG_SITE/.github/workflows/deploy-pages.yml")" = deploy-marker
 # F-Droid project site: same contract.
 test "$(cat "$PKG_SITE/fdroid/repo/index-v2.json")" = fdroid
 test "$(cat "$PKG_SITE/fdroid/repo/entry.jar")" = entry
