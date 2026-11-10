@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SRC="${1:?usage: sync-site-repos.sh <repo-out-dir> <baluard-org-dir> [pkg-repo-site] [pkg-fdroid-site]}"
-SITE="${2:?usage: sync-site-repos.sh <repo-out-dir> <baluard-org-dir> [pkg-repo-site] [pkg-fdroid-site]}"
-PKG_REPO_SITE="${3:-$(dirname "$SITE")/baluard-org-repo}"
-PKG_FDROID_SITE="${4:-$(dirname "$SITE")/baluard-org-fdroid}"
+SRC="${1:?usage: sync-site-repos.sh <repo-out-dir> <baluard-org-dir> [packages-site]}"
+SITE="${2:?usage: sync-site-repos.sh <repo-out-dir> <baluard-org-dir> [packages-site]}"
+PKG_SITE="${3:-$(dirname "$SITE")/baluard-packages}"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 command -v rsync >/dev/null 2>&1 || fail "rsync is required"
 required=(
@@ -24,29 +23,25 @@ done
 compgen -G "$SRC/fdroid/repo/*.apk" >/dev/null || fail "incomplete staging tree; no APK found"
 [[ "$(<"$SITE/CNAME")" == "baluard.app" ]] || fail "site marker is missing or invalid: $SITE/CNAME"
 git -C "$SITE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "site is not a git worktree: $SITE"
-[[ ! -e "$SITE/repo/fdroid" ]] || fail "unexpected nested F-Droid tree: $SITE/repo/fdroid"
-[[ -d "$PKG_REPO_SITE" ]] || fail "package repo site clone missing: $PKG_REPO_SITE (git clone baluard-org/repo)"
-[[ -d "$PKG_FDROID_SITE" ]] || fail "package F-Droid site clone missing: $PKG_FDROID_SITE (git clone baluard-org/fdroid)"
+# The site repo no longer carries the package trees; packages.baluard.app
+# serves them from the baluard-packages repository. Recreating the trees in
+# the site would bloat every deploy with hundreds of megabytes of bytes.
+[[ ! -e "$SITE/repo" && ! -e "$SITE/fdroid" ]] || fail "site still carries package trees: remove repo/ and fdroid/ from the site repo (packages publish to baluard-packages)"
+[[ -d "$PKG_SITE" ]] || fail "package site clone missing: $PKG_SITE (git clone baluard-org/baluard-packages)"
 
-mkdir -p "$SITE/repo" "$SITE/fdroid/repo"
-# baluard.repo and baluard.sources are site-authored repo definitions the
-# install instructions fetch; staging never produces them.
-rsync -a --delete --exclude=/fdroid/ --exclude=index.html \
-  --exclude=/baluard.repo --exclude=/baluard.sources "$SRC/" "$SITE/repo/"
-rsync -a --delete "$SRC/fdroid/repo/" "$SITE/fdroid/repo/"
-touch "$SITE/.nojekyll"
-
-# The package site clones back the org site's /repo and /fdroid subpaths on
-# their own github.io hostnames; they are the offload backend if the custom
-# domain ever routes there. Their dotfiles are author-owned, not mirrored.
+# Packages publish straight from staging. The clone's dotfiles plus the
+# author-owned install definitions (baluard.repo, baluard.sources,
+# index.html) are not mirrored; the CNAME binds the custom domain.
+rsync -a --delete --exclude=/fdroid/ --exclude=/index.html \
+  --exclude=/baluard.repo --exclude=/baluard.sources \
+  --exclude=.git --exclude=.gitignore --exclude=.nojekyll --exclude=/CNAME \
+  "$SRC/" "$PKG_SITE/"
+mkdir -p "$PKG_SITE/fdroid/repo"
 rsync -a --delete --exclude=.git --exclude=.gitignore --exclude=.nojekyll \
-  "$SITE/repo/" "$PKG_REPO_SITE/"
-rsync -a --delete --exclude=.git --exclude=.gitignore --exclude=.nojekyll \
-  "$SITE/fdroid/" "$PKG_FDROID_SITE/"
-touch "$PKG_REPO_SITE/.nojekyll" "$PKG_FDROID_SITE/.nojekyll"
-[[ -s "$PKG_REPO_SITE/arch/x86_64/baluard.db" ]] || fail "package repo site mirror incomplete"
-[[ -s "$PKG_FDROID_SITE/repo/index-v2.json" ]] || fail "package fdroid site mirror incomplete"
+  "$SRC/fdroid/repo/" "$PKG_SITE/fdroid/repo/"
+touch "$PKG_SITE/.nojekyll"
+[[ -s "$PKG_SITE/arch/x86_64/baluard.db" ]] || fail "package site mirror incomplete"
+[[ -s "$PKG_SITE/fdroid/repo/index-v2.json" ]] || fail "package fdroid mirror incomplete"
 
-echo "Repositories synchronized into $SITE"
-echo "Package mirrors synchronized into $PKG_REPO_SITE and $PKG_FDROID_SITE"
-echo "Review the site diff, then commit and push to publish."
+echo "Packages synchronized into $PKG_SITE"
+echo "Review the diff, then commit and push to publish."

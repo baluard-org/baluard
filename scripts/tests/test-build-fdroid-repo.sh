@@ -61,7 +61,7 @@ mkdir -p "$ANDROID_HOME"
 "$ROOT/scripts/build-fdroid-repo.sh" "$TMP/androidApp-release.apk" "$TMP/out"
 
 grep -q "AllowedAPKSigningKeys: '9cdf3df5ef4a228d51cc5bfabaa303d65bd534c306c12aa0a8857cea223130ff'" "$TMP/work/metadata/app.baluard.mobile.yml"
-grep -q 'https://baluard.app/fdroid/repo' "$TMP/work/config.yml"
+grep -q 'https://packages.baluard.app/fdroid/repo' "$TMP/work/config.yml"
 grep -q 'keystorepass: secret' "$TMP/work/config.yml"
 grep -q 'repo_url: old' "$TMP/work/config.yml.backup"
 grep -q 'keydname: CN=Baluard, O=Baluard Org, C=CL' "$TMP/work/config.yml"

@@ -1,6 +1,6 @@
 # F-Droid repository
 
-Baluard operates a simple binary F-Droid repository at `https://baluard.app/fdroid/repo/`. Users can add that URL in F-Droid under Settings, Repositories, or open it on a device with F-Droid installed.
+Baluard operates a simple binary F-Droid repository at `https://packages.baluard.app/fdroid/repo/`. Users can add that URL in F-Droid under Settings, Repositories, or open it on a device with F-Droid installed.
 
 The repository signing-key SHA-256 fingerprint is `1CE90DCFE0FB1003F2F66999257B5E6F074E46EE453FB0D44F8CF8E13E6EEAAB`. Confirm this fingerprint when adding the repository.
 

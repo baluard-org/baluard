@@ -98,7 +98,7 @@ from pathlib import Path
 
 path = Path(os.environ["WORK"]) / "config.yml"
 updates = {
-    "repo_url": "https://baluard.app/fdroid/repo",
+    "repo_url": "https://packages.baluard.app/fdroid/repo",
     "repo_name": "Baluard",
     "repo_icon": "fdroid-icon.png",
     "repo_description": "Official Baluard Android releases.",

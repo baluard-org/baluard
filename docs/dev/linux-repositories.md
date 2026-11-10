@@ -7,8 +7,8 @@ Baluard ships Linux packages through its own apt and dnf repository, signed with
 Run these commands as yourself; only the two write steps need sudo, and you run them:
 
 ```sh
-curl -fsSL https://baluard.app/repo/baluard-release.asc | sudo gpg --dearmor -o /usr/share/keyrings/baluard-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/baluard-archive-keyring.gpg] https://baluard.app/repo stable main" | sudo tee /etc/apt/sources.list.d/baluard.list
+curl -fsSL https://packages.baluard.app/baluard-release.asc | sudo gpg --dearmor -o /usr/share/keyrings/baluard-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/baluard-archive-keyring.gpg] https://packages.baluard.app stable main" | sudo tee /etc/apt/sources.list.d/baluard.list
 sudo apt update && sudo apt install baluard
 ```
 
@@ -20,11 +20,11 @@ The key fingerprint is `223310EA BF1A B6FE E6BD DF3E 2A53 1D54 E6D7 4804` (Balua
 sudo tee /etc/yum.repos.d/baluard.repo <<'EOF'
 [baluard]
 name=Baluard
-baseurl=https://baluard.app/repo/rpms
+baseurl=https://packages.baluard.app/rpms
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
-gpgkey=https://baluard.app/repo/baluard-release.asc
+gpgkey=https://packages.baluard.app/baluard-release.asc
 EOF
 sudo dnf install baluard
 ```
@@ -34,12 +34,12 @@ dnf checks the repository metadata signature (`repo_gpgcheck`) and the package s
 ## Arch Linux (pacman)
 
 ```sh
-curl -s https://baluard.app/repo/baluard-release.asc | sudo pacman-key --add -
+curl -s https://packages.baluard.app/baluard-release.asc | sudo pacman-key --add -
 sudo pacman-key --lsign-key 223310EABF1AB6FEE6BDDF3E2A531D54E6D74804
 sudo tee /etc/pacman.d/baluard.conf <<'EOF'
 [baluard]
 SigLevel = Required DatabaseOptional
-Server = https://baluard.app/repo/arch/x86_64
+Server = https://packages.baluard.app/arch/x86_64
 EOF
 grep -q baluard.conf /etc/pacman.conf || echo "Include = /etc/pacman.d/baluard.conf" | sudo tee -a /etc/pacman.conf
 sudo pacman -Syu baluard
@@ -69,7 +69,7 @@ Build the desktop and Android release artifacts first, then run:
 just release-repositories
 ```
 
-This command first rebuilds the browser extension bundles and packages the store zips into `./dist` (`baluard-extension-<version>-chrome.zip` / `-firefox.zip`), failing if the rebuild drifts from the committed dists. It then verifies the APK, signs `./dist`, regenerates the apt, dnf, Arch, and F-Droid trees in `./repo-out`, and mirrors them into `../baluard-org` plus the two package mirror checkouts `../baluard-org-repo` and `../baluard-org-fdroid` (clones of the `baluard-org/repo` and `baluard-org/fdroid` repositories, which serve the same trees on their own hostnames and are the offload backend for the custom domain). Each step stops the pipeline on failure. Synchronization removes stale generated files, preserves the repository directory guards, and does not touch other website files. Linux package history persists in `~/.baluard/linux-repo-history/`, so deleting `repo-out` does not remove older packages from the next build. The served repos keep only the newest three package versions (`BALUARD_LINUX_REPO_KEEP` overrides the count); the history directory itself stays complete. Already-signed RPMs are not signed again.
+This command first rebuilds the browser extension bundles and packages the store zips into `./dist` (`baluard-extension-<version>-chrome.zip` / `-firefox.zip`), failing if the rebuild drifts from the committed dists. It then verifies the APK, signs `./dist`, regenerates the apt, dnf, Arch, and F-Droid trees in `./repo-out`, and publishes them to the package site checkout `../baluard-packages` (the `baluard-org/baluard-packages` repository, which `packages.baluard.app` serves as a custom domain). The main site carries no package bytes. Each step stops the pipeline on failure. Synchronization removes stale generated files, preserves the repository directory guards, and does not touch other website files. Linux package history persists in `~/.baluard/linux-repo-history/`, so deleting `repo-out` does not remove older packages from the next build. The served repos keep only the newest three package versions (`BALUARD_LINUX_REPO_KEEP` overrides the count); the history directory itself stays complete. Already-signed RPMs are not signed again.
 
 Review the resulting diff in `baluard-org`, then commit and push it to publish. The pipeline never commits or pushes automatically. The Linux trees map to `repo/`; the F-Droid tree maps to the site root at `fdroid/`. See `docs/dev/fdroid-repository.md`.
 

@@ -121,7 +121,7 @@ done
 cat > "$OUT/arch/baluard.conf" <<EOF
 [baluard]
 SigLevel = Required DatabaseOptional
-Server = https://baluard.app/repo/arch/x86_64
+Server = https://packages.baluard.app/arch/x86_64
 EOF
 
 echo "arch repo written to $ARCH (baluard $VER)"
