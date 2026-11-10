@@ -1312,7 +1312,7 @@
   },
   "update": {
     "availableTitle": "Version {version} is available",
-    "installNow": "Install and restart",
+    "installNow": "Install update",
     "installing": "Installing version {version}…",
     "dismiss": "Dismiss",
     "checkFailed": "Could not check for updates.",
@@ -1326,7 +1326,9 @@
     "settingsDesc": "Channel: {channel}",
     "managed": "Updates for this installation are managed externally.",
     "versionMismatchTitle": "Baluard's background service is out of date",
-    "versionMismatchBody": "The app and its background service are different versions.\nQuit Baluard completely and start it again."
+    "versionMismatchBody": "The app and its background service are different versions.\nQuit Baluard completely and start it again.",
+    "viewChangelog": "View changelog",
+    "notNow": "Not now"
   },
   "agents": {
     "title": "Credential request",
