@@ -4,7 +4,13 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-- Baluard now ships an Arch Linux pacman repository at baluard.app and an AUR package (`baluard-bin`), both GPG-signed with the release key.
+- No user-facing changes yet.
+
+## 0.3.0 - 2026-11-10
+
+- The Linux and F-Droid package repositories moved to packages.baluard.app; the site's install instructions point there, and the served repositories keep the newest three versions of each package.
+
+- Baluard now ships an Arch Linux pacman repository at packages.baluard.app and an AUR package (`baluard-bin`), both GPG-signed with the release key.
 
 - Relaunching Baluard while it is already running now brings the window back to the front instead of doing nothing, and Ctrl+Q quits on Linux and Windows.
 - The desktop window remembers where you left it and is pulled back on screen at startup even if it was dragged off the edge of a monitor.
