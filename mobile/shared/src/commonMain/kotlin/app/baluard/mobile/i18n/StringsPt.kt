@@ -446,7 +446,7 @@ internal val PT: Map<String, String> = mapOf(
     "settings.categorySecuritySubtitle" to "Bloqueio automático, biometria, privacidade e dispositivos",
     "settings.categoryAutofillSubtitle" to "Preenchimento automático, passkeys e integração com o navegador",
     "settings.categorySharingSubtitle" to "Pessoas, pastas compartilhadas e atividade",
-    "settings.categorySpaceSubtitle" to "Recuperação, aprovações e políticas do espaço",
+    "settings.categorySpaceSubtitle" to "Modo equipe, compartilhamento e políticas de recuperação",
     "settings.categoryDataSubtitle" to "Importação, exportação, backups e recuperação",
     "settings.categoryVaultSubtitle" to "Perfil, avatar e cofre deste dispositivo",
     "settings.categoryAboutSubtitle" to "Versão e informações do aplicativo",
@@ -834,7 +834,7 @@ internal val PT: Map<String, String> = mapOf(
         "collections.catalogPublishedToast" to "Catálogo atualizado",
 
     // S3-9b: Space policy (admin card on Settings).
-    "space.title" to "Cofre",
+    "space.title" to "Espaço",
     "space.inviteAuthorityLabel" to "Quem pode convidar membros",
     "space.inviteAuthorityDesc" to "Administradores e proprietário, ou apenas o proprietário. Não afeta convites de redefinição.",
     "space.authorityAdmins" to "Admins. + proprietário",

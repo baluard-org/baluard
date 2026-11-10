@@ -475,7 +475,7 @@ internal val FR: Map<String, String> = mapOf(
     "settings.categorySecuritySubtitle" to "Verrouillage automatique, biométrie, confidentialité et appareils",
     "settings.categoryAutofillSubtitle" to "Remplissage automatique, clés d'accès et intégration au navigateur",
     "settings.categorySharingSubtitle" to "Personnes, dossiers partagés et activité",
-    "settings.categorySpaceSubtitle" to "Récupération, approbations et règles de l'espace",
+    "settings.categorySpaceSubtitle" to "Mode équipe, partage et règles de récupération",
     "settings.categoryDataSubtitle" to "Importation, exportation, sauvegardes et récupération",
     "settings.categoryVaultSubtitle" to "Profil, avatar et coffre de cet appareil",
     "settings.categoryAboutSubtitle" to "Version et informations sur l'application",
@@ -858,7 +858,7 @@ internal val FR: Map<String, String> = mapOf(
     "collections.catalogPublishedToast" to "Catalogue mis à jour",
 
     // S3-9b: Space policy (admin card on Settings).
-    "space.title" to "Espace de travail",
+    "space.title" to "Espace",
     "space.inviteAuthorityLabel" to "Qui peut inviter des membres",
     "space.inviteAuthorityDesc" to "Administrateurs et propriétaire, ou propriétaire uniquement.",
     "space.authorityAdmins" to "Admins + propriétaire",
