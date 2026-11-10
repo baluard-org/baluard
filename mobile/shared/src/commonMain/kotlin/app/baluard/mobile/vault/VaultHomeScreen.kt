@@ -189,12 +189,12 @@ fun VaultHomeScreen(
                 },
                 actions = {
                     SyncIconButton(phase = syncPhase, onClick = onSyncClick)
+                    TopBarActionIcon(Icons.Default.Password, t("generator.title"), onOpenGenerator)
                     TopBarActionIcon(
                     Icons.Default.Add, t("vault.addEntry"), onAddEntry,
                     highlight = true,
                     modifier = Modifier.testTag(E2eTags.LIST_ADD),
                 )
-                    TopBarActionIcon(Icons.Default.Password, t("generator.title"), onOpenGenerator)
                     TopBarActionIcon(
                         Icons.Default.Settings, t("settings.title"), onOpenSettings,
                         modifier = Modifier.testTag(E2eTags.HOME_SETTINGS),

@@ -4,6 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 - The keyboard's autofill chips now end with an Open Baluard chip that opens the full login picker, and keyboard chips are capped so crowded keyboards stay stable.
+- The mobile vault header now orders sync, generator, and the new-entry button left to right, matching the desktop.
 - Update notifications show more of the release notes and carry a View changelog link that opens the release page in your browser.
 - The vault header orders sync, the generator, and the new-entry button left to right, with the generator beside the button it complements.
 
