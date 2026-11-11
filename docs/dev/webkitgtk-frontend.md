@@ -12,6 +12,7 @@
 - **The engine floor is WebKitGTK 2.44** (Ubuntu 24.04 as shipped). Feature support verified on that floor: cascade layers, `@property`, `color-mix()`, `oklch()`, logical property longhands and shorthands, `translate`/`scale` properties. The floor is not the risk; the GPU and Wayland compositor paths above it are (see incident below).
 - **The global `*:focus-visible` outline uses `!important`** (app.css) and cannot be suppressed per element. A focus ring on a composite field is drawn with `focus-within:` on the wrapper; the inner input still draws its own outline inside it.
 - **Tailwind v4 utilities assume browsers at Safari 16.4+ / Chrome 111+ / Firefox 128+.** WebKitGTK 2.44 meets that bar. Upgrading Tailwind or adding plugins re-raises the emitted-CSS floor; re-run the probe rig (below) before shipping.
+- **Cross-engine floors live in [WebView Compatibility](webview-compatibility.md).** This document owns Linux layout rules; that one owns the WebView2 and WKWebView support floors and the Tailwind v4 verdict.
 
 ---
 
