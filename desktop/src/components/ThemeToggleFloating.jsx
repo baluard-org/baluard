@@ -12,7 +12,11 @@ export default function ThemeToggleFloating() {
   return (
     <button
       onClick={toggleTheme}
-      class="theme-toggle-floating absolute top-4 right-4 p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer bg-[var(--color-card)] z-10"
+      // fixed, not absolute: a positioned ancestor is this engine's
+      // mis-resolution target (WebKit 26 anchored the button against a
+      // collapsed containing block, half off the window's left edge), and
+      // a fixed box always resolves against the viewport.
+      class="theme-toggle-floating fixed top-4 right-4 p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer bg-[var(--color-card)] z-10"
       title={t(target() === "light" ? "settings.switchToLight" : "settings.switchToDark")}
       aria-label={t(target() === "light" ? "settings.switchToLight" : "settings.switchToDark")}
     >

@@ -454,9 +454,8 @@ mod tests {
 
     /// Sandbox the pairing file into a temp dir for each test. Sets
     /// `BALUARD_DATA_DIR` (read by `baluard_core::paths::data_dir`) and holds
-    /// a guard for the test's lifetime. Serialised by a mutex because env
-    /// vars are process-global.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// a guard for the test's lifetime. Serialised by the crate-shared env
+    /// lock (env vars are process-global; see `test_support` in lib.rs).
 
     struct Sandbox {
         _dir: tempfile::TempDir,
@@ -464,7 +463,7 @@ mod tests {
     }
 
     fn sandbox() -> Sandbox {
-        let guard = ENV_LOCK.lock().unwrap();
+        let guard = crate::test_support::lock_env();
         // Leak the tempdir so it outlives the function; the path is what
         // matters and we clean up via env var reset.
         let dir = tempfile::tempdir().expect("tmpdir");

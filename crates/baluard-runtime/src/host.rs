@@ -284,30 +284,20 @@ impl VaultHost {
             (guard.active.clone(), guard.vaults.clone())
         };
 
-        // Read the registry without holding the host lock.
-        let mut reg =
-            baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
-
-        // Self-heal: if the registry lost entries (e.g. a crash wrote an
-        // empty index while vault files are intact), re-discover orphaned
-        // vaults from the default vaults directory and persist them so the
-        // user never has to know the path or touch a hidden folder.
-        if reg.vaults.is_empty() {
-            let orphans = reg.discover_orphans();
-            if !orphans.is_empty() {
-                for entry in orphans {
-                    // add() validates the slug + dedupes; ignore a failure on
-                    // one entry and keep going (best-effort recovery).
-                    let _ = reg.add(entry);
-                }
-                if reg.save_locked().is_ok() {
-                    log::info!(
-                        "[host] registry self-healed: recovered {} vault(s) from disk",
-                        reg.vaults.len()
-                    );
-                }
+        // Read the registry without holding the host lock. The self-heal
+        // must fire only when the registry file was LOST or corrupt — a
+        // deliberate detach always leaves a valid (possibly empty) file
+        // behind, and re-adopting from that state silently undoes the
+        // detach (2026-11-11 Mac incident: a detached vault came back from
+        // its backup directory on the next list poll).
+        let reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+            Ok(reg) if !reg.vaults.is_empty() => reg,
+            Ok(reg) if baluard_core::vault::registry::VaultRegistry::path().exists() => {
+                // Valid, empty, present: the user detached their vaults.
+                reg
             }
-        }
+            Ok(_) | Err(_) => self_heal_registry().await,
+        };
 
         let mut rows = Vec::with_capacity(reg.vaults.len());
         for entry in reg.vaults.values() {
@@ -594,6 +584,28 @@ impl VaultHost {
     }
 }
 
+/// Crash recovery for a lost or corrupt registry file: re-discover
+/// orphaned vaults from the default vaults directory and persist them so
+/// the user never has to know the path or touch a hidden folder.
+async fn self_heal_registry() -> baluard_core::vault::registry::VaultRegistry {
+    let mut reg = baluard_core::vault::registry::VaultRegistry::default();
+    let orphans = reg.discover_orphans();
+    if !orphans.is_empty() {
+        for entry in orphans {
+            // add() validates the slug + dedupes; ignore a failure on
+            // one entry and keep going (best-effort recovery).
+            let _ = reg.add(entry);
+        }
+        if reg.save_locked().is_ok() {
+            log::info!(
+                "[host] registry self-healed: recovered {} vault(s) from disk",
+                reg.vaults.len()
+            );
+        }
+    }
+    reg
+}
+
 impl Default for VaultHost {
     fn default() -> Self {
         Self::new()
@@ -651,6 +663,54 @@ pub struct VaultListRow {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// A deliberate detach must stay detached. `list()` self-heals the
+    /// registry only when the FILE is missing or corrupt (the crash case);
+    /// a parsed-but-empty registry is the post-detach state and must be
+    /// respected (2026-11-11 Mac incident: a detached vault was silently
+    /// re-adopted from its backup directory on the next list poll).
+    #[tokio::test]
+    async fn list_respects_a_deliberately_emptied_registry() {
+        let _env = crate::test_support::lock_env();
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: env mutation serialized by the crate-shared lock.
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", dir.path().to_string_lossy().to_string());
+        }
+
+        // Seed a real vault directory (marker included) under vaults_dir —
+        // the orphan the self-heal would want to re-adopt.
+        let vaults_dir = baluard_core::paths::data_dir().join("vaults");
+        std::fs::create_dir_all(&vaults_dir).unwrap();
+        let vpath = vaults_dir.join("baluard-orphan");
+        let password = format!("orphan-list-pass-{}", std::process::id());
+        let _handle = baluard_core::vault::creation::VaultCreator::new(&vpath, &password, "device")
+            .execute()
+            .unwrap()
+            .0;
+        // Post-detach state: the registry file exists, parses, and is empty.
+        baluard_core::vault::registry::VaultRegistry::default()
+            .save_locked()
+            .unwrap();
+
+        let host = VaultHost::new();
+        let rows = host.list().await;
+        assert!(
+            rows.is_empty(),
+            "a deliberately emptied registry must not self-heal: got {rows:?}"
+        );
+
+        // Crash case still recovers: remove the file, the next list()
+        // re-adopts the orphaned vault directory.
+        std::fs::remove_file(baluard_core::paths::data_dir().join("registry.json")).unwrap();
+        let rows = host.list().await;
+        assert_eq!(
+            rows.len(),
+            1,
+            "a missing registry file still recovers orphans"
+        );
+        assert_eq!(rows[0].slug, "baluard-orphan");
+    }
 
     #[tokio::test]
     async fn switch_to_unknown_slug_errors() {
