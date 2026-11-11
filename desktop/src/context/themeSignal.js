@@ -3,8 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 
 const mql = typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: light)") : null;
 
+// Reactive mirror of the OS preference so resolvedTheme()-driven UI (icon,
+// tooltip) re-renders on scheme flips, not only on stored-theme changes.
+const [systemLight, setSystemLight] = createSignal(mql ? mql.matches : false);
+
 function systemIsLight() {
-  return mql ? mql.matches : false;
+  return systemLight();
 }
 
 function resolveEffective(t) {
@@ -17,19 +21,13 @@ export function resolvedTheme() {
 }
 
 /**
- * Two-state toggle semantics: switch to the opposite of what is on screen.
- * Storing the target is skipped when it equals the OS preference, so the
- * second press returns control to the system instead of pinning a value that
- * happens to match it. Evaluated only at user interaction.
- */
-/**
  * Pure decision behind the two-state toggle: the next stored value for a
  * given stored value and OS preference. The target (opposite of what is on
  * screen) is returned as an override only when it differs from what the OS
  * already provides; otherwise the stored value releases to "system".
  */
-export function nextStoredTheme(stored, systemIsLight) {
-  const systemPref = systemIsLight ? "light" : "dark";
+export function nextStoredTheme(stored, osIsLight) {
+  const systemPref = osIsLight ? "light" : "dark";
   const resolved = stored === "system" ? systemPref : stored;
   const target = resolved === "light" ? "dark" : "light";
   return target === systemPref ? "system" : target;
@@ -75,7 +73,5 @@ createRoot(() => {
 });
 
 if (mql) {
-  mql.addEventListener("change", () => {
-    if (theme() === "system") applyTheme();
-  });
+  mql.addEventListener("change", (e) => setSystemLight(e.matches));
 }
