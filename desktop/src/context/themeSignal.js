@@ -1,7 +1,7 @@
 import { createSignal, createEffect, createRoot } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 
-const mql = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: light)") : null;
+const mql = typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: light)") : null;
 
 function systemIsLight() {
   return mql ? mql.matches : false;
@@ -9,6 +9,34 @@ function systemIsLight() {
 
 function resolveEffective(t) {
   return t === "system" ? (systemIsLight() ? "light" : "dark") : t;
+}
+
+/** The theme currently displayed: the stored override, or what the OS prefers. */
+export function resolvedTheme() {
+  return resolveEffective(theme());
+}
+
+/**
+ * Two-state toggle semantics: switch to the opposite of what is on screen.
+ * Storing the target is skipped when it equals the OS preference, so the
+ * second press returns control to the system instead of pinning a value that
+ * happens to match it. Evaluated only at user interaction.
+ */
+/**
+ * Pure decision behind the two-state toggle: the next stored value for a
+ * given stored value and OS preference. The target (opposite of what is on
+ * screen) is returned as an override only when it differs from what the OS
+ * already provides; otherwise the stored value releases to "system".
+ */
+export function nextStoredTheme(stored, systemIsLight) {
+  const systemPref = systemIsLight ? "light" : "dark";
+  const resolved = stored === "system" ? systemPref : stored;
+  const target = resolved === "light" ? "dark" : "light";
+  return target === systemPref ? "system" : target;
+}
+
+export function toggleTheme() {
+  setTheme(nextStoredTheme(theme(), systemIsLight()));
 }
 
 export const [theme, setTheme] = createSignal(

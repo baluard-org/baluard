@@ -464,7 +464,9 @@
     "runInBackgroundLabel": "Run in the background",
     "runInBackgroundDesc": "Keep Baluard running in the system tray after you close the window, so browser autofill keeps working. Turn off to quit Baluard on close.",
     "runInBackgroundEnabled": "Baluard keeps running when you close the window",
-    "runInBackgroundDisabled": "Baluard now quits when you close the window"
+    "runInBackgroundDisabled": "Baluard now quits when you close the window",
+    "switchToLight": "Switch to light theme",
+    "switchToDark": "Switch to dark theme"
   },
   "sync": {
     "title": "Vault Sync",

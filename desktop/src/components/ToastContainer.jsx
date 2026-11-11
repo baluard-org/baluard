@@ -47,7 +47,9 @@ const ICON_ACCENT = {
 export default function ToastContainer() {
   return (
     <Show when={toasts().length > 0}>
-      <div class="toast-container fixed top-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none" style="max-width: 380px;">
+      {/* Bottom-right: the top-right corner hosts the theme toggle, and a
+           pointer-events-auto toast there swallowed its clicks. */}
+      <div class="toast-container fixed bottom-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none" style="max-width: 380px;">
         <For each={toasts()}>
           {(t) => (
             <div

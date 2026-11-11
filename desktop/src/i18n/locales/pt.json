@@ -464,7 +464,9 @@
     "runInBackgroundLabel": "Executar em segundo plano",
     "runInBackgroundDesc": "Mantém o Baluard executando na bandeja do sistema após fechar a janela, para que o preenchimento automático do navegador continue funcionando. Desative para encerrar o Baluard ao fechar.",
     "runInBackgroundEnabled": "O Baluard continua executando ao fechar a janela",
-    "runInBackgroundDisabled": "O Baluard agora é encerrado ao fechar a janela"
+    "runInBackgroundDisabled": "O Baluard agora é encerrado ao fechar a janela",
+    "switchToLight": "Mudar para o tema claro",
+    "switchToDark": "Mudar para o tema escuro"
   },
   "sync": {
     "title": "Sincronização do Cofre",
