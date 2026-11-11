@@ -31,6 +31,22 @@ pub mod legacy;
 pub mod pin;
 pub mod providers;
 pub mod rate_limit;
+
+/// Serializes tests that sandbox process-global env vars (`BALUARD_DATA_DIR`
+/// and friends). Env mutation is process-global, so every test that redirects
+/// a path env var must hold this lock for its whole body — two such tests
+/// running in parallel would otherwise write into each other's temp dirs.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Hold for the entire test body while any path env var is redirected.
+    pub(crate) fn lock_env() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
 pub mod state;
 
 pub use agents::{

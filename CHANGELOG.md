@@ -3,6 +3,8 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
+- Detaching a vault now stays detached. Previously the app could quietly re-adopt a forgotten vault from its folder on the next launch.
+- The theme toggle on the unlock, setup, and recovery screens stays pinned to its corner on macOS; it could jump and half-clip when pressed.
 
 No user-facing changes yet.
 
