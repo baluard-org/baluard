@@ -9,9 +9,9 @@ import CloneFromProviderScreen from "./CloneFromProviderScreen.jsx";
 import { IconDownload, IconFolder, IconLock, IconPlus, IconBaluardLogo } from "./Icon.jsx";
 
 // Phase 4 wizard first screen: three entry points.
-//   New vault            -> existing create flow (status "init")
-//   Open local vault     -> native dir picker -> vaults.register_local -> login
+//   New vault              -> existing create flow (status "init")
 //   Download from provider -> CloneFromProviderScreen (clone + unlock)
+//   Open local vault       -> advanced: native dir picker -> vaults.register_local -> login
 export default function WelcomeScreen() {
 	const { t } = useI18n();
 	const auth = useAuth();
@@ -63,20 +63,28 @@ export default function WelcomeScreen() {
 
 							<button
 								type="button"
-								onClick={openLocal}
-								class="welcome-screen__btn-open w-full px-4 py-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)] text-[var(--color-text)] font-medium transition-all flex items-center gap-3 cursor-pointer"
-							>
-								<IconFolder class="w-5 h-5" />
-								<span>{t("welcome.openLocal")}</span>
-							</button>
-
-							<button
-								type="button"
 								onClick={() => setView("clone")}
 								class="welcome-screen__btn-download w-full px-4 py-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)] text-[var(--color-text)] font-medium transition-all flex items-center gap-3 cursor-pointer"
 							>
 								<IconDownload class="w-5 h-5" />
 								<span>{t("welcome.downloadFromProvider")}</span>
+							</button>
+
+							<div class="welcome-screen__advanced-divider flex items-center gap-3 mt-2">
+								<div class="h-px flex-1 bg-[var(--color-border)]" />
+								<span class="text-xs uppercase tracking-wide text-[var(--color-muted)]">
+									{t("welcome.advanced")}
+								</span>
+								<div class="h-px flex-1 bg-[var(--color-border)]" />
+							</div>
+
+							<button
+								type="button"
+								onClick={openLocal}
+								class="welcome-screen__btn-open w-full px-4 py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)] text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] font-medium transition-all flex items-center gap-3 cursor-pointer"
+							>
+								<IconFolder class="w-5 h-5" />
+								<span>{t("welcome.openLocal")}</span>
 							</button>
 						</div>
 

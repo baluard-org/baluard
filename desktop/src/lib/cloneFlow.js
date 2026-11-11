@@ -64,6 +64,32 @@ export async function startClone(
 	};
 }
 
+// The daemon refuses a clone whose target slug already exists on disk or in
+// the registry. The clone dialog turns that refusal into a choice: wipe the
+// local copy and re-import, or open the existing vault.
+export function isCloneClashError(message) {
+	const m = String(message ?? "");
+	return (
+		m.includes("Target directory already exists") ||
+		/A vault '.+' is already registered/.test(m)
+	);
+}
+
+// Delete a local vault copy. The daemon re-verifies the master password
+// against the KEK canary and rate-limits wrong answers; this call is intent,
+// not the security boundary.
+export async function wipeLocalVault(slug, password) {
+	await daemon(
+		"vaults.detach",
+		JSON.stringify({
+			slug,
+			delete_from_disk: true,
+			force: true,
+			confirm: { kind: "password", value: password },
+		}),
+	);
+}
+
 // Register an existing local vault directory (no copy). Resolves { slug }.
 export async function registerLocalVault(path) {
 	const result = JSON.parse(

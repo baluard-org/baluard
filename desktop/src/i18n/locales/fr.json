@@ -39,7 +39,8 @@
     "newVault": "Créer un nouveau coffre",
     "openLocal": "Ouvrir un coffre local existant",
     "downloadFromProvider": "Ouvrir un coffre enregistré en ligne",
-    "backToLogin": "Retour à la connexion"
+    "backToLogin": "Retour à la connexion",
+    "advanced": "Avancé"
   },
   "clone": {
     "title": "Télécharger un coffre",
@@ -54,7 +55,13 @@
     "webOAuthOpened": "Votre navigateur s'est ouvert pour vous connecter.",
     "webOAuthRelink": "Rouvrir la page de connexion",
     "timeout": "Délai de téléchargement dépassé.",
-    "failed": "Échec du téléchargement."
+    "failed": "Échec du téléchargement.",
+    "clashTitle": "Un coffre existe déjà",
+    "clashBody": "Un coffre nommé « {slug} » existe déjà sur cet appareil.",
+    "clashOpenExisting": "Ouvrir le coffre existant",
+    "clashReimport": "Supprimer la copie locale et importer à nouveau",
+    "clashVerifyHint": "Saisissez le mot de passe maître du coffre existant pour le supprimer de cet appareil.",
+    "clashWipeConfirm": "Supprimer et importer à nouveau"
   },
   "create": {
     "title": "Créer un coffre",

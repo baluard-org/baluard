@@ -13,7 +13,12 @@ vi.mock("../lib/daemon.js", () => ({
 	},
 }));
 
-import { registerLocalVault, startClone } from "../lib/cloneFlow.js";
+import {
+	isCloneClashError,
+	registerLocalVault,
+	startClone,
+	wipeLocalVault,
+} from "../lib/cloneFlow.js";
 
 const t = (k) => k; // pass-through translator
 
@@ -154,5 +159,51 @@ describe("registerLocalVault", () => {
 		const last = calls[calls.length - 1];
 		expect(last.action).toBe("vaults.register_local");
 		expect(JSON.parse(last.payload).path).toBe("/home/me/vault");
+	});
+});
+
+describe("isCloneClashError", () => {
+	it("matches both daemon refusal shapes", () => {
+		expect(
+			isCloneClashError(
+				"Target directory already exists: /data/vaults/my-vault. Pick a different slug or remove it.",
+			),
+		).toBe(true);
+		expect(
+			isCloneClashError("A vault 'my-vault' is already registered. Remove it first."),
+		).toBe(true);
+	});
+
+	it("rejects unrelated errors", () => {
+		expect(isCloneClashError("network unreachable")).toBe(false);
+		expect(isCloneClashError("Cloned repository has no .baluard marker")).toBe(
+			false,
+		);
+		expect(isCloneClashError(undefined)).toBe(false);
+	});
+});
+
+describe("wipeLocalVault", () => {
+	it("sends the password-gated destructive detach", async () => {
+		responses["vaults.detach"] = JSON.stringify({ ok: true });
+		await wipeLocalVault("my-vault", "pw");
+		const last = calls[calls.length - 1];
+		expect(last.action).toBe("vaults.detach");
+		const payload = JSON.parse(last.payload);
+		expect(payload).toEqual({
+			slug: "my-vault",
+			delete_from_disk: true,
+			force: true,
+			confirm: { kind: "password", value: "pw" },
+		});
+	});
+
+	it("propagates the daemon refusal (wrong password)", async () => {
+		responses["vaults.detach"] = new Error(
+			"verification failed: master password incorrect",
+		);
+		await expect(wipeLocalVault("my-vault", "wrong")).rejects.toThrow(
+			/password incorrect/,
+		);
 	});
 });

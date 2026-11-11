@@ -39,7 +39,8 @@
     "newVault": "Create a new vault",
     "openLocal": "Open an existing local vault",
     "downloadFromProvider": "Open a vault saved online",
-    "backToLogin": "Back to login"
+    "backToLogin": "Back to login",
+    "advanced": "Advanced"
   },
   "clone": {
     "title": "Download Vault",
@@ -54,7 +55,13 @@
     "webOAuthOpened": "Your browser opened to sign in.",
     "webOAuthRelink": "Reopen sign-in page",
     "timeout": "Download timed out.",
-    "failed": "Download failed."
+    "failed": "Download failed.",
+    "clashTitle": "Vault already exists",
+    "clashBody": "A vault named \"{slug}\" already exists on this device.",
+    "clashOpenExisting": "Open the existing vault",
+    "clashReimport": "Delete the local copy and import again",
+    "clashVerifyHint": "Enter the master password of the existing vault to delete it from this device.",
+    "clashWipeConfirm": "Delete and re-import"
   },
   "create": {
     "title": "Create Vault",

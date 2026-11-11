@@ -2,13 +2,19 @@ import { createSignal, For, onCleanup, Show } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
-import { startClone } from "../lib/cloneFlow.js";
+import {
+	isCloneClashError,
+	startClone,
+	wipeLocalVault,
+} from "../lib/cloneFlow.js";
 import { daemon } from "../lib/daemon.js";
 import { providerLabel as providerLabelT } from "../lib/providers.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
 import CopyButton from "./CopyButton.jsx";
 import ExternalLink from "./ExternalLink.jsx";
+import FocusTrap from "./FocusTrap.jsx";
+import { Button } from "./Primitives.jsx";
 import { IconAlert, IconArrowLeft, IconDownload, IconLock, IconGitHub, IconGitLab, IconCodeberg } from "./Icon.jsx";
 
 const PROVIDERS = [
@@ -38,6 +44,15 @@ export default function CloneFromProviderScreen(props) {
 		bytes: 0,
 	});
 	const [chosenRepo, setChosenRepo] = createSignal(null);
+	// Clone-clash dialog: the daemon refused because this slug already exists
+	// on disk or in the registry. Offers open-existing or wipe-and-reimport.
+	const [clash, setClash] = createSignal(null); // { slug } | null
+	const [clashWipe, setClashWipe] = createSignal(false);
+	const [clashPw, setClashPw] = createSignal("");
+	const [clashError, setClashError] = createSignal(null);
+	const [clashBusy, setClashBusy] = createSignal(false);
+	let clashPwRef;
+	let dialogRef;
 	let passwordRef;
 
 	const conn = createProviderConnect({
@@ -127,8 +142,70 @@ export default function CloneFromProviderScreen(props) {
 			toastSuccess(t("clone.cloned"));
 			setStep("unlock");
 		} catch (e) {
-			setError(sanitizeError(e, t));
+			const raw = String(e?.message ?? e);
+			if (isCloneClashError(raw)) {
+				setClash({ slug: repo.vault_slug || repo.name });
+				setClashWipe(false);
+				setClashPw("");
+				setClashError(null);
+			} else {
+				setError(sanitizeError(e, t));
+			}
 			setStep("repos");
+		}
+	}
+
+	function clashDismiss() {
+		if (clashBusy()) return;
+		setClash(null);
+		setClashWipe(false);
+		setClashPw("");
+		setClashError(null);
+	}
+
+	// Arm (b): keep the local copy, drop into the normal unlock flow for it.
+	async function clashOpenExisting() {
+		const slug = clash()?.slug;
+		if (!slug) return;
+		setClash(null);
+		setClashWipe(false);
+		setClashPw("");
+		setClashError(null);
+		try {
+			await auth.refreshActiveVault();
+			auth.setSwitchTarget(slug);
+			auth.setStatus("locked");
+		} catch (e) {
+			toastError(sanitizeError(e, t));
+		}
+	}
+
+	// Arm (a): master-password-gated local wipe, then re-run the clone.
+	async function clashConfirmWipe() {
+		const slug = clash()?.slug;
+		const repo = chosenRepo();
+		if (!slug || !repo) return;
+		// The DOM field is the source of truth for what the user typed; the
+		// signal mirrors it for the disabled states.
+		const pw = clashPwRef?.value || clashPw();
+		if (!pw) {
+			setClashError(t("vault.vaultSwitcher.verifyRequired"));
+			return;
+		}
+		setClashError(null);
+		setClashBusy(true);
+		try {
+			await wipeLocalVault(slug, pw);
+			// Never leave the master password live in the DOM.
+			if (clashPwRef) clashPwRef.value = "";
+			setClashBusy(false);
+			setClash(null);
+			setClashWipe(false);
+			setClashPw("");
+			await pickRepo(repo);
+		} catch (e) {
+			setClashBusy(false);
+			setClashError(String(e?.message ?? e));
 		}
 	}
 
@@ -372,6 +449,98 @@ export default function CloneFromProviderScreen(props) {
 					</div>
 				</Show>
 			</div>
+
+			{/* Clone-clash dialog: this vault already exists on this device. */}
+			<Show when={clash()}>
+				<div
+					ref={dialogRef}
+					role="dialog"
+					aria-modal="true"
+					aria-labelledby="clone-clash-title"
+					class="clone-screen__clash fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+				>
+					<FocusTrap containerRef={dialogRef} onEscape={clashDismiss} />
+					<div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
+						<h3
+							id="clone-clash-title"
+							class="text-lg font-bold text-[var(--color-text)] mb-2"
+						>
+							{t("clone.clashTitle")}
+						</h3>
+						<p class="text-sm text-[var(--color-muted)] mb-4">
+							{t("clone.clashBody", { slug: clash()?.slug })}
+						</p>
+
+						<Show
+							when={clashWipe()}
+							fallback={
+								<div class="flex flex-col gap-2">
+									<Button
+										onClick={clashOpenExisting}
+										class="w-full py-2.5"
+									>
+										{t("clone.clashOpenExisting")}
+									</Button>
+									<Button
+										onClick={() => setClashWipe(true)}
+										variant="danger"
+										class="w-full py-2.5"
+									>
+										{t("clone.clashReimport")}
+									</Button>
+									<Button
+										onClick={clashDismiss}
+										class="w-full py-2.5"
+									>
+										{t("common.cancel")}
+									</Button>
+								</div>
+							}
+						>
+							<div class="border border-[var(--color-danger)]/40 rounded-xl p-4 mb-3">
+								<p class="text-sm text-[var(--color-text)] mb-2">
+									{t("clone.clashVerifyHint")}
+								</p>
+								<input
+									ref={(el) => {
+										clashPwRef = el;
+									}}
+									type="password"
+									autocomplete="current-password"
+									placeholder={t("login.passwordPlaceholder")}
+									value={clashPw()}
+									onInput={(e) => setClashPw(e.currentTarget.value)}
+									class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)]"
+								/>
+							</div>
+							<Show when={clashError()}>
+								<p class="text-sm text-[var(--color-danger)] mb-3">
+									{clashError()}
+								</p>
+							</Show>
+							<div class="flex gap-3">
+								<Button
+									onClick={clashDismiss}
+									disabled={clashBusy()}
+									class="flex-1 py-2.5"
+								>
+									{t("common.cancel")}
+								</Button>
+								<Button
+									onClick={clashConfirmWipe}
+									disabled={clashBusy()}
+									variant="danger"
+									class="flex-1 py-2.5"
+								>
+									{clashBusy()
+										? t("vault.vaultSwitcher.working")
+										: t("clone.clashWipeConfirm")}
+								</Button>
+							</div>
+						</Show>
+					</div>
+				</div>
+			</Show>
 		</div>
 	);
 }
