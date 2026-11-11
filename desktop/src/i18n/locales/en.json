@@ -629,7 +629,9 @@
     "backfillDisabled": "Fetching icons is off. Enable \"Show website icons\" in Settings to use this.",
     "noVault": "Open or create a vault first.",
     "providerSignin": "The provider's sign-in service rejected the request. An access token works instead.",
-    "cloneFailed": "Downloading the vault failed. Check your connection and try again."
+    "cloneFailed": "Downloading the vault failed. Check your connection and try again.",
+    "network": "Check your internet connection and try again.",
+    "hostKey": "The server's host key changed or is not trusted. Verify it before continuing."
   },
   "categories": {
     "allItems": "All items",

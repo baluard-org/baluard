@@ -597,7 +597,9 @@
     "backfillDisabled": "Traer iconos está desactivado. Activa \"Mostrar iconos de sitios\" en Ajustes para usar esto.",
     "noVault": "Abre o crea una bóveda primero.",
     "providerSignin": "El servicio de inicio de sesión del proveedor rechazó la solicitud. Un token de acceso funciona en su lugar.",
-    "cloneFailed": "No se pudo descargar la bóveda. Revisa tu conexión e inténtalo de nuevo."
+    "cloneFailed": "No se pudo descargar la bóveda. Revisa tu conexión e inténtalo de nuevo.",
+    "network": "Revisa tu conexión a internet e inténtalo de nuevo.",
+    "hostKey": "La clave de host del servidor cambió o no es de confianza. Verifícala antes de continuar."
   },
   "categories": {
     "allItems": "Todos los elementos",

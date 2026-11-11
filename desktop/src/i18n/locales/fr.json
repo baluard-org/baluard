@@ -353,7 +353,9 @@
     "backfillDisabled": "La récupération d'icônes est désactivée. Activez « Afficher les icônes de sites » dans les réglages.",
     "noVault": "Ouvrez ou créez d'abord un coffre.",
     "providerSignin": "Le service de connexion du fournisseur a rejeté la demande. Un jeton d'accès fonctionne à la place.",
-    "cloneFailed": "Le téléchargement du coffre a échoué. Vérifiez votre connexion et réessayez."
+    "cloneFailed": "Le téléchargement du coffre a échoué. Vérifiez votre connexion et réessayez.",
+    "network": "Vérifiez votre connexion internet et réessayez.",
+    "hostKey": "La clé d'hôte du serveur a changé ou n'est pas fiable. Vérifiez-la avant de continuer."
   },
   "sync": {
     "title": "Synchronisation du coffre",
