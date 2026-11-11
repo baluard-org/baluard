@@ -325,6 +325,13 @@ const TOKEN_EXEMPT_ACTIONS: &[&str] = &[
     "provider.disconnect",
     "provider.repos",
     "provider.vault_repos",
+    // OAuth start/status and remote repo creation ride the SAME trust
+    // class as the routes above (global keyring + providers.json, no
+    // vault data) — and the clone wizard calls them from the welcome
+    // screen where no vault exists to gate a session token against.
+    "provider.oauth_start_web",
+    "provider.oauth_status_web",
+    "provider.create_repo",
 ];
 
 /// Actions the host dispatcher forwards through the tokenless sentinel
@@ -341,6 +348,9 @@ const SENTINEL_FORWARDED_ACTIONS: &[&str] = &[
     "provider.disconnect",
     "provider.repos",
     "provider.vault_repos",
+    "provider.oauth_start_web",
+    "provider.oauth_status_web",
+    "provider.create_repo",
 ];
 
 /// Host-only lifecycle actions. They are intercepted by
@@ -1643,12 +1653,12 @@ async fn route_host_request_inner(
         // gated action forwarded here would be rejected "Vault is locked"
         // on every call. Enforced by `sentinel_forwarded_actions_are_exempt`.
         //
-        // The TOKEN-GATED provider routes (oauth_start_web / oauth_status_web
-        // / create_repo) DO require a vault — default-deny checks the
-        // session token. Routing them through the tokenless sentinel would
-        // always reject them (NEW-1 regression). They fall through to
-        // snapshot_target so they resolve a real vault and check against ITS
-        // token.
+        // provider.oauth_start_web / oauth_status_web / create_repo are in
+        // the sentinel set too: they touch the global keyring and
+        // providers.json, never vault data, and the clone wizard calls them
+        // from the welcome screen where no vault exists to check a session
+        // token against (NEW-1; the old fall-through 404'd the wizard's
+        // first call with "No active vault").
         a if SENTINEL_FORWARDED_ACTIONS.contains(&a) => {
             let sentinel = std::sync::Arc::new(VaultState::new(std::path::PathBuf::new()));
             return route_request(req, &sentinel).await;
@@ -8076,7 +8086,10 @@ mod tests {
             "provider.connect_pat",
             "provider.connect_poll",
             "provider.connect_start",
+            "provider.create_repo",
             "provider.list",
+            "provider.oauth_start_web",
+            "provider.oauth_status_web",
             "provider.repos",
             "provider.status",
             "provider.disconnect",

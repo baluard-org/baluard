@@ -350,7 +350,10 @@
     "hwKeyMissing": "Branchez votre clé de sécurité.",
     "backfillBusy": "Une récupération d'icônes est déjà en cours.",
     "backfillStopped": "La récupération d'icônes s'est arrêtée parce que le coffre s'est verrouillé ou a changé.",
-    "backfillDisabled": "La récupération d'icônes est désactivée. Activez « Afficher les icônes de sites » dans les réglages."
+    "backfillDisabled": "La récupération d'icônes est désactivée. Activez « Afficher les icônes de sites » dans les réglages.",
+    "noVault": "Ouvrez ou créez d'abord un coffre.",
+    "providerSignin": "Le service de connexion du fournisseur a rejeté la demande. Un jeton d'accès fonctionne à la place.",
+    "cloneFailed": "Le téléchargement du coffre a échoué. Vérifiez votre connexion et réessayez."
   },
   "sync": {
     "title": "Synchronisation du coffre",

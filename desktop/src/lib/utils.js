@@ -14,6 +14,12 @@ export const ERROR_PATTERNS = [
   { pattern: /Commit failed|UnsignedCommitRefused/i, key: "errors.syncCommit" },
   { pattern: /Git open failed|Git init failed|Status check failed/i, key: "errors.syncLocal" },
   { pattern: /vault registry could not be (loaded|updated)/i, key: "errors.syncRegistry" },
+  // Provider sign-in and clone-download outcomes (daemon strings). The
+  // clone wizard runs with no vault open, so these surface on the
+  // welcome screen.
+  { pattern: /No active vault/i, key: "errors.noVault" },
+  { pattern: /Device flow start failed|oauth_start failed|Token validation failed/i, key: "errors.providerSignin" },
+  { pattern: /Clone failed|clone failed/i, key: "errors.cloneFailed" },
   // Site-icon backfill outcomes (daemon strings from the batch job).
   { pattern: /Fetching site icons is turned off/i, key: "errors.backfillDisabled" },
   { pattern: /An icon fetch is already running/i, key: "errors.backfillBusy" },
