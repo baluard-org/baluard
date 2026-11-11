@@ -2,6 +2,12 @@
 
 Notable user-facing changes per release.
 
+## [UNRELEASED]
+
+- Fixed adding new entries from the desktop app, which failed with a generic error message since the 0.1.0 release.
+- Linux: the tray icon is rebuilt on the modern StatusNotifierItem protocol, so GNOME users with a tray extension (AppIndicator Support, Tray Icons Reloaded, Tray Icons, or Status Icons) get a working icon again, and it appears without restarting the app once an extension is installed. The deprecated tray library behind the startup warnings is gone, and on GNOME without any tray extension, Baluard now says so and points at installing one; closing the window there minimizes it (reachable from the Activities overview) instead of hiding it into a tray that does not exist.
+- Closing the window now follows the new Run in the background setting: on (the default), Baluard keeps running in the tray so browser autofill stays working; off, closing quits Baluard. The old hide-from-Dock toggle is gone.
+
 ## 0.3.1 - 2026-11-10
 
 - The keyboard's autofill chips now end with an Open Baluard chip that opens the full login picker, and keyboard chips are capped so crowded keyboards stay stable.
@@ -9,10 +15,6 @@ Notable user-facing changes per release.
 - The mobile vault settings page separates its sections with dividers and breathing room, and the recovery-kit row keeps its label instead of collapsing.
 - The settings page no longer shows two entries named Vault: the family-space section is now called Space.
 - Update notifications show more of the release notes and carry a View changelog link that opens the release page in your browser.
-
-## [UNRELEASED]
-- Linux: the tray icon is rebuilt on the modern StatusNotifierItem protocol, so GNOME users with a tray extension (AppIndicator Support, Tray Icons Reloaded, Tray Icons, or Status Icons) get a working icon again, and it appears without restarting the app once an extension is installed. The deprecated tray library behind the startup warnings is gone, and on GNOME without any tray extension, Baluard now says so and points at installing one; closing the window there minimizes it (reachable from the Activities overview) instead of hiding it into a tray that does not exist.
-- Closing the window now follows the new Run in the background setting: on (the default), Baluard keeps running in the tray so browser autofill stays working; off, closing quits Baluard. The old hide-from-Dock toggle is gone.
 
 ## 0.3.0 - 2026-11-10
 

@@ -109,6 +109,19 @@ describe("login fields the edit form does not render", () => {
     expect(kind.data.autofill_on_page_load).toBe(true);
   });
 
+  it("a fresh add omits autofill_on_page_load instead of sending null", async () => {
+    const { getSchema } = await import("../lib/cipherSchema.js");
+    const schema = getSchema("login");
+    const kind = schema.toKind({ username: "u", password: "p", uris: [] });
+    expect(kind.data.autofill_on_page_load).toBeUndefined();
+    const kind2 = schema.toKind({
+      username: "u", password: "p", uris: [],
+      autofill_on_page_load: false, password_revision_date: 42,
+    });
+    expect(kind2.data.autofill_on_page_load).toBe(false);
+    expect(kind2.data.password_revision_date).toBe(42);
+  });
+
   describe("signingKey", () => {
     it("round-trips key material and splits the certificate chain", () => {
       const s = CIPHER_SCHEMAS.signingKey;

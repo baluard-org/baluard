@@ -40,8 +40,10 @@ export const CIPHER_SCHEMAS = {
         uris: flat.uris?.length ? flat.uris : [],
         totp_uri: flat.totp_uri || null,
         password_revision_date: flat.password_revision_date ?? null,
-        autofill_on_page_load: flat.autofill_on_page_load ?? null,
       };
+      // autofill_on_page_load is a plain bool on the daemon: an explicit
+      // null fails CipherInput deserialization on every fresh add.
+      if (flat.autofill_on_page_load != null) data.autofill_on_page_load = flat.autofill_on_page_load;
       // Persist favicon only when present (opt-in fetch at add/edit time).
       if (flat.favicon) data.favicon = flat.favicon;
       return { type: "login", data };
