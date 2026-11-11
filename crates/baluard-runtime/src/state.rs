@@ -10896,6 +10896,38 @@ mod pin_hw_escrow_tests {
         }
     }
 
+    /// Twin of HwEnvGuard for the keyring gate: a direct `cargo test`
+    /// run (not via `just test`) lacks BALUARD_DISABLE_KEYRING, and
+    /// core's keyring_disabled() then reads false for the runtime crate,
+    /// so the pin paths reach the real Secret Service and block forever
+    /// on an unlock prompt. Forces the hermetic posture for the module.
+    pub(super) struct KeyringEnvGuard {
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl KeyringEnvGuard {
+        pub(super) fn set() -> Self {
+            let old = std::env::var_os("BALUARD_DISABLE_KEYRING");
+            // SAFETY: env mutation is serialized by TEST_STORE_LOCK, held
+            // for the whole test body (same discipline as HwEnvGuard).
+            unsafe {
+                std::env::set_var("BALUARD_DISABLE_KEYRING", "1");
+            }
+            Self { old }
+        }
+    }
+
+    impl Drop for KeyringEnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.old {
+                    Some(v) => std::env::set_var("BALUARD_DISABLE_KEYRING", v),
+                    None => std::env::remove_var("BALUARD_DISABLE_KEYRING"),
+                }
+            }
+        }
+    }
+
     impl Drop for HwEnvGuard {
         fn drop(&mut self) {
             unsafe {
@@ -10964,6 +10996,7 @@ mod pin_hw_escrow_tests {
     async fn pin_unlock_keeps_the_escrow_on_hardware_errors() {
         let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let _env = HwEnvGuard::clear();
+        let _keyring = KeyringEnvGuard::set();
         let (_dir, state) = sealed_pin_vault(false).await;
 
         // Chip gone: the unlock fails with the typed chip-unavailable
@@ -11003,6 +11036,7 @@ mod pin_hw_escrow_tests {
     async fn pin_unlock_tap_runs_off_the_runtime_worker() {
         let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let _env = HwEnvGuard::clear();
+        let _keyring = KeyringEnvGuard::set();
         TAP_OFF_WORKER.store(false, Ordering::SeqCst);
         let (_dir, state) = sealed_pin_vault(false).await;
         baluard_core::hwkey::install(Arc::new(PinHwMock {
@@ -11024,6 +11058,7 @@ mod pin_hw_escrow_tests {
     async fn password_rechecks_keep_the_live_signing_cache_without_tapping() {
         let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let _env = HwEnvGuard::clear();
+        let _keyring = KeyringEnvGuard::set();
         let (dir, state) = sealed_pin_vault(false).await;
         baluard_core::hwkey::install(Arc::new(PinHwMock {
             probe_blocking_thread: false,

@@ -412,6 +412,12 @@ pub enum Availability {
 
 /// Availability with reason (single keyring probe per call).
 pub fn availability() -> Availability {
+    // The keyring gate exists so tests (BALUARD_DISABLE_KEYRING, or core
+    // under cfg(test)) never reach the real Secret Service, which blocks
+    // forever on a locked-collection prompt.
+    if crate::keyring_disabled() {
+        return Availability::Unavailable;
+    }
     platform::availability()
 }
 
@@ -444,18 +450,27 @@ pub fn read_gated() -> bool {
 /// UUID (`VaultHandle::resolve_vault_id`) so the entry is stable across
 /// restarts and unique per vault.
 pub fn enable(vault_id: &str, master_password: &str) -> Result<(), String> {
+    if crate::keyring_disabled() {
+        return Err("biometric unlock unavailable: keyring disabled".into());
+    }
     platform::enable(&account_for(vault_id), master_password)
 }
 
 /// Disable biometric unlock for `vault_id`. Must be called on master password
 /// change to invalidate the stale secret for that vault only.
 pub fn disable(vault_id: &str) -> Result<(), String> {
+    if crate::keyring_disabled() {
+        return Ok(());
+    }
     platform::disable(&account_for(vault_id))
 }
 
 /// Check if biometric unlock is enabled for `vault_id` (secret exists).
 /// Does NOT trigger biometric prompt on macOS.
 pub fn is_enabled(vault_id: &str) -> bool {
+    if crate::keyring_disabled() {
+        return false;
+    }
     platform::is_enabled(&account_for(vault_id))
 }
 
@@ -464,6 +479,9 @@ pub fn is_enabled(vault_id: &str) -> bool {
 /// On other platforms: may trigger OS credential prompt.
 /// Returns the raw master password for vault unlock (daemon-internal only).
 pub fn unlock(vault_id: &str) -> Result<String, String> {
+    if crate::keyring_disabled() {
+        return Err("biometric unlock unavailable: keyring disabled".into());
+    }
     platform::unlock(&account_for(vault_id))
 }
 
