@@ -3,7 +3,7 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
-- Detaching your last vault now opens the screen for creating or opening a vault, instead of a login form that could never succeed.
+- The app now opens on the chooser between creating a vault, downloading one from your Git provider, and opening a local vault when there are no vaults on the device - on a fresh install and after detaching your last vault alike.
 - Pressing the theme toggle on the login screen no longer knocks it out of its corner. A shared button-effect stylesheet was quietly overriding the position of every pressed button.
 - Detaching a vault now stays detached. Previously the app could quietly re-adopt a forgotten vault from its folder on the next launch.
 - The theme toggle on the unlock, setup, and recovery screens stays pinned to its corner on macOS; it could jump and half-clip when pressed.

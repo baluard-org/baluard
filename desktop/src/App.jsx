@@ -136,12 +136,13 @@ export default function App() {
 
         if (!daemonUp) return; // daemon down: stay on default (locked) screen
 
-        // Decide create-vs-login by whether ANY vault is registered. The create
-        // screen is only for a genuinely empty install.
+        // Decide create-vs-login by whether ANY vault is registered. An empty
+        // install opens on the welcome chooser (create / open online / open
+        // local) — the same decision surface a last-vault detach lands on.
         try {
           const data = JSON.parse(await daemon("vaults.list"));
           const count = Array.isArray(data.vaults) ? data.vaults.length : 0;
-          if (count === 0) auth.setStatus("init");
+          if (count === 0) auth.setStatus("welcome");
         } catch {
           // Could not read the registry — stay on the login screen rather than
           // risk clobbering an existing install with the create flow.
