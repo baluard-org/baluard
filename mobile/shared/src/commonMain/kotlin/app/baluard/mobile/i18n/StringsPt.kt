@@ -567,6 +567,8 @@ internal val PT: Map<String, String> = mapOf(
     "home.emptyTrash" to "A lixeira está vazia",
     "home.emptyTotp" to "Nenhum código TOTP configurado",
     "sync.synced" to "Sincronizado",
+    "sync.upToDate" to "Já está atualizado.",
+    "sync.keptLocal" to "Um conflito foi resolvido usando suas alterações locais.",
     "sync.offline" to "Offline",
     "sync.noRemote" to "Ainda não há sincronização configurada para este cofre.",
     "sync.blocked" to "A sincronização não pôde ser executada. Pode haver um conflito aguardando ou outra sincronização em andamento.",

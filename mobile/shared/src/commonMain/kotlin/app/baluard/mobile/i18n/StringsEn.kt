@@ -603,6 +603,8 @@ internal val EN: Map<String, String> = mapOf(
     "home.emptyTrash" to "Trash is empty. Deleted entries land here and can be restored.",
     "home.emptyTotp" to "No entries with verification codes. Add a TOTP seed to one of your entries.",
     "sync.synced" to "Synced",
+    "sync.upToDate" to "Already up to date.",
+    "sync.keptLocal" to "A conflict was resolved using your local changes.",
     "sync.offline" to "Offline",
     "sync.noRemote" to "No sync is set up for this vault yet.",
     "sync.blocked" to "Sync could not run right now. A conflict may be waiting or another sync is in progress.",

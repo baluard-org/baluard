@@ -27,7 +27,7 @@ suspend fun runSyncCycle(
     setPhase(SyncPhase.Syncing)
     val mark = TimeSource.Monotonic.markNow()
     val tag = runCatching { doPull() }.getOrNull()
-    val ok = tag == "pulled"
+    val ok = tag == "pulled" || tag == "up_to_date" || tag == "kept_local"
     runCatching { afterPull() }
     val hold = MIN_SPIN - mark.elapsedNow()
     if (hold.isPositive()) delay(hold)
@@ -39,13 +39,16 @@ suspend fun runSyncCycle(
 }
 
 /**
- * Toast for the Rust pull report tag (see PullReport). Only "pulled" says
- * Synced: idle, paused, busy, skipped and transport failures all get their
- * own honest copy instead of a blanket success.
+ * Toast for the Rust pull report tag (see PullReport). Each outcome gets
+ * its own honest copy: pulled/up-to-date/kept-local succeed, idle means no
+ * sync is configured, paused/busy/skipped mean the pull did not run, and
+ * offline/denied are failures.
  */
 fun syncOutcomeToast(tag: String?, t: (String) -> String) {
     when (tag) {
         "pulled" -> Toast.success(t("sync.synced"))
+        "up_to_date" -> Toast.info(t("sync.upToDate"))
+        "kept_local" -> Toast.info(t("sync.keptLocal"))
         "idle" -> Toast.info(t("sync.noRemote"))
         "paused", "busy", "skipped" -> Toast.info(t("sync.blocked"))
         "offline", null -> Toast.error(t("sync.offline"))
