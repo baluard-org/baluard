@@ -8,7 +8,7 @@ No user-facing changes yet.
 
 ## 0.4.1 - 2026-11-11
 
-- On the welcome screen, opening a vault saved online comes second and opening a local vault moved under an Advanced divider. When a downloaded vault already exists on this device, a dialog now offers opening the existing copy or deleting it (master password required) and importing again.
+- On the welcome screen, opening a vault saved online comes second and opening a local vault moved under an Advanced divider. When a downloaded vault already exists on this device, a dialog now offers opening the existing copy or deleting it (master password required) and importing again; a leftover folder without a vault entry can be adopted directly.
 - Pressing the theme toggle on the unlock and setup screens no longer stretches it into a tall strip; the button stays in its corner.
 
 ## 0.4.0 - 2026-11-11

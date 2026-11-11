@@ -60,8 +60,10 @@
     "clashBody": "Já existe um cofre chamado \"{slug}\" neste dispositivo.",
     "clashOpenExisting": "Abrir o cofre existente",
     "clashReimport": "Apagar a cópia local e importar novamente",
-    "clashVerifyHint": "Digite a senha mestra do cofre existente para apagá-lo deste dispositivo.",
-    "clashWipeConfirm": "Apagar e importar novamente"
+    "clashVerifyHint": "Digite a senha mestra do cofre existente para apagá-lo deste dispositivo. Alterações que nunca foram sincronizadas serão perdidas.",
+    "clashWipeConfirm": "Apagar e importar novamente",
+    "clashOrphanBody": "Já existe uma pasta chamada \"{slug}\" neste dispositivo, mas ela não está configurada no Baluard.",
+    "clashUseExisting": "Usar a pasta existente"
   },
   "create": {
     "title": "Criar Cofre",

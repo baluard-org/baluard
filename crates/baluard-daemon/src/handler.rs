@@ -4177,6 +4177,12 @@ fn registry_vault_path(slug: &str) -> Option<std::path::PathBuf> {
     if path.exists() { Some(path) } else { None }
 }
 
+/// Frontend contract: desktop/src/lib/cloneFlow.js parseCloneClash matches
+/// these substrings to turn the refusal into the clash dialog. Changing the
+/// wording without updating the matcher silently degrades to a raw error.
+const CLONE_REFUSAL_DIR_EXISTS: &str = "Target directory already exists";
+const CLONE_REFUSAL_ALREADY_REGISTERED: &str = "is already registered";
+
 async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) -> GatewayResponse {
     if req.payload.is_empty() {
         return err_response("Missing clone JSON in payload".to_string());
@@ -4295,14 +4301,14 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
     let target = baluard_core::paths::vaults_dir().join(&slug);
     if target.exists() {
         return err_response(format!(
-            "Target directory already exists: {}. Pick a different slug or remove it.",
+            "{CLONE_REFUSAL_DIR_EXISTS}: {}. Pick a different slug or remove it.",
             target.display()
         ));
     }
     if let Ok(reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
         if reg.exists(&slug) {
             return err_response(format!(
-                "A vault '{slug}' is already registered. Remove it first."
+                "A vault '{slug}' {CLONE_REFUSAL_ALREADY_REGISTERED}. Remove it first."
             ));
         }
     }
@@ -7912,6 +7918,14 @@ fn verify_peer_uid_unix(stream: &UnixStream) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Tripwire for the frontend clash-dialog matcher: if one of these changes,
+/// update desktop/src/lib/cloneFlow.js parseCloneClash in the same commit.
+#[test]
+fn clone_refusal_prefixes_match_the_frontend_matcher() {
+    assert_eq!(CLONE_REFUSAL_DIR_EXISTS, "Target directory already exists");
+    assert_eq!(CLONE_REFUSAL_ALREADY_REGISTERED, "is already registered");
 }
 
 #[cfg(test)]

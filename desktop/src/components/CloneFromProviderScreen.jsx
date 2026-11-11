@@ -3,7 +3,8 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import {
-	isCloneClashError,
+	parseCloneClash,
+	registerLocalVault,
 	startClone,
 	wipeLocalVault,
 } from "../lib/cloneFlow.js";
@@ -44,9 +45,13 @@ export default function CloneFromProviderScreen(props) {
 		bytes: 0,
 	});
 	const [chosenRepo, setChosenRepo] = createSignal(null);
-	// Clone-clash dialog: the daemon refused because this slug already exists
-	// on disk or in the registry. Offers open-existing or wipe-and-reimport.
-	const [clash, setClash] = createSignal(null); // { slug } | null
+	// Clone-clash dialog: the daemon refused because this slug already exists.
+	// kind "registered" = live registry entry (open it, or wipe with the master
+	// password and re-import); kind "orphan" = unregistered folder on disk
+	// (safe-detach leftover: adopt it, or nothing — deletion goes through the
+	// vault switcher after opening).
+	const [clash, setClash] = createSignal(null);
+	const [clashPath, setClashPath] = createSignal(null);
 	const [clashWipe, setClashWipe] = createSignal(false);
 	const [clashPw, setClashPw] = createSignal("");
 	const [clashError, setClashError] = createSignal(null);
@@ -142,12 +147,27 @@ export default function CloneFromProviderScreen(props) {
 			toastSuccess(t("clone.cloned"));
 			setStep("unlock");
 		} catch (e) {
-			const raw = String(e?.message ?? e);
-			if (isCloneClashError(raw)) {
-				setClash({ slug: repo.vault_slug || repo.name });
+			const parsed = parseCloneClash(String(e?.message ?? e));
+			if (parsed) {
+				setClash(parsed);
+				setClashPath(null);
 				setClashWipe(false);
 				setClashPw("");
 				setClashError(null);
+				if (parsed.kind === "registered") {
+					// Surface the folder the wipe would delete, wherever it was
+					// registered from (imported folders need not live in the
+					// default vaults directory).
+					daemon("vaults.list", "")
+						.then((raw) => JSON.parse(raw))
+						.then((rows) => {
+							const row = Array.isArray(rows)
+								? rows.find((r) => r.slug === parsed.slug)
+								: null;
+							if (row?.path) setClashPath(row.path);
+						})
+						.catch(() => {});
+				}
 			} else {
 				setError(sanitizeError(e, t));
 			}
@@ -158,9 +178,39 @@ export default function CloneFromProviderScreen(props) {
 	function clashDismiss() {
 		if (clashBusy()) return;
 		setClash(null);
+		setClashPath(null);
 		setClashWipe(false);
 		setClashPw("");
 		setClashError(null);
+	}
+
+	function armWipe() {
+		setClashWipe(true);
+		// The FocusTrap focuses once on mount; switching arms swaps the focused
+		// button out, so put the cursor in the password field ourselves.
+		queueMicrotask(() => clashPwRef?.focus());
+	}
+
+	// Adopt an unregistered leftover folder and drop into the unlock flow.
+	async function clashAdoptFolder() {
+		const c = clash();
+		if (!c?.path) return;
+		setClashBusy(true);
+		try {
+			const { slug } = await registerLocalVault(c.path);
+			setClashBusy(false);
+			clashDismiss();
+			try {
+				await auth.refreshActiveVault();
+				auth.setSwitchTarget(slug);
+				auth.setStatus("locked");
+			} catch (e) {
+				toastError(sanitizeError(e, t));
+			}
+		} catch (e) {
+			setClashBusy(false);
+			setClashError(String(e?.message ?? e));
+		}
 	}
 
 	// Arm (b): keep the local copy, drop into the normal unlock flow for it.
@@ -168,6 +218,7 @@ export default function CloneFromProviderScreen(props) {
 		const slug = clash()?.slug;
 		if (!slug) return;
 		setClash(null);
+		setClashPath(null);
 		setClashWipe(false);
 		setClashPw("");
 		setClashError(null);
@@ -200,6 +251,7 @@ export default function CloneFromProviderScreen(props) {
 			if (clashPwRef) clashPwRef.value = "";
 			setClashBusy(false);
 			setClash(null);
+			setClashPath(null);
 			setClashWipe(false);
 			setClashPw("");
 			await pickRepo(repo);
@@ -457,6 +509,7 @@ export default function CloneFromProviderScreen(props) {
 					role="dialog"
 					aria-modal="true"
 					aria-labelledby="clone-clash-title"
+					aria-describedby="clone-clash-desc"
 					class="clone-screen__clash fixed inset-0 bg-black/50 flex items-center justify-center z-50"
 				>
 					<FocusTrap containerRef={dialogRef} onEscape={clashDismiss} />
@@ -467,10 +520,41 @@ export default function CloneFromProviderScreen(props) {
 						>
 							{t("clone.clashTitle")}
 						</h3>
-						<p class="text-sm text-[var(--color-muted)] mb-4">
-							{t("clone.clashBody", { slug: clash()?.slug })}
+						<p
+							id="clone-clash-desc"
+							class="text-sm text-[var(--color-muted)] mb-2"
+						>
+							{clash()?.kind === "orphan"
+								? t("clone.clashOrphanBody", { slug: clash()?.slug })
+								: t("clone.clashBody", { slug: clash()?.slug })}
 						</p>
+						<Show when={clashPath()}>
+							<p class="text-[10px] font-mono text-[var(--color-muted)] mb-3 break-all">
+								{clashPath()}
+							</p>
+						</Show>
 
+						<Show
+							when={clash()?.kind === "registered"}
+							fallback={
+								<div class="flex flex-col gap-2">
+									<Button
+										onClick={clashAdoptFolder}
+										disabled={clashBusy()}
+										class="w-full py-2.5"
+									>
+										{t("clone.clashUseExisting")}
+									</Button>
+									<Button
+										onClick={clashDismiss}
+										disabled={clashBusy()}
+										class="w-full py-2.5"
+									>
+										{t("common.cancel")}
+									</Button>
+								</div>
+							}
+						>
 						<Show
 							when={clashWipe()}
 							fallback={
@@ -482,7 +566,7 @@ export default function CloneFromProviderScreen(props) {
 										{t("clone.clashOpenExisting")}
 									</Button>
 									<Button
-										onClick={() => setClashWipe(true)}
+										onClick={armWipe}
 										variant="danger"
 										class="w-full py-2.5"
 									>
@@ -510,6 +594,12 @@ export default function CloneFromProviderScreen(props) {
 									placeholder={t("login.passwordPlaceholder")}
 									value={clashPw()}
 									onInput={(e) => setClashPw(e.currentTarget.value)}
+									onKeyDown={(e) => {
+										if (e.key === "Enter") {
+											e.preventDefault();
+											clashConfirmWipe();
+										}
+									}}
 									class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)]"
 								/>
 							</div>
@@ -537,6 +627,12 @@ export default function CloneFromProviderScreen(props) {
 										: t("clone.clashWipeConfirm")}
 								</Button>
 							</div>
+						</Show>
+						</Show>
+						<Show when={clash()?.kind === "orphan" && clashError()}>
+							<p class="text-sm text-[var(--color-danger)] mt-3">
+								{clashError()}
+							</p>
 						</Show>
 					</div>
 				</div>
