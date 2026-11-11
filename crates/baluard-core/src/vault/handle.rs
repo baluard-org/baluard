@@ -68,6 +68,18 @@ fn cipher_id_of_envelope(path: &std::path::Path) -> Option<Uuid> {
         .and_then(|s| Uuid::parse_str(s).ok())
 }
 
+/// Personal-vault fresh start: permanently remove every entry (live,
+/// archived, trashed) plus folders and the tag store. Semantic meta
+/// (settings, devices, collections, members, KDF, canaries) survives;
+/// caches (index, integrity) update as usual. Refuses flipped (team)
+/// spaces — entry-level delete is the space surface.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EmptyReport {
+    pub entries: usize,
+    pub folders: usize,
+    pub tags: usize,
+}
+
 pub struct VaultHandle {
     /// Path to the vault directory on disk.
     pub path: PathBuf,
@@ -8909,9 +8921,25 @@ impl VaultHandle {
     /// Delete a cipher by ID. By default, moves it to trash.
     /// If it is already in trash, deletes it permanently.
     pub fn delete_cipher(&self, cipher_id: Uuid) -> Result<(), BaluardError> {
+        self.delete_cipher_inner(cipher_id, true)
+    }
+
+    /// rebuild=false defers the per-delete index rescan to the caller
+    /// (an N-entry empty loop is O(N) instead of O(N²); same trade
+    /// add_cipher_batch makes for imports).
+    pub(crate) fn delete_cipher_inner(
+        &self,
+        cipher_id: Uuid,
+        rebuild: bool,
+    ) -> Result<(), BaluardError> {
         if !self.device_manager.writes_allowed() {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
+        // Legacy (pre-S1a) personal vaults carry no member directory: the
+        // founding device is the admin by construction (same rule
+        // assert_collection_write applies). Without this fallback every
+        // flat delete on such a vault refuses.
+        let legacy_founder = !self.path.join("meta/members").is_dir();
 
         // S3-7c: trash preserves the origin layout, so restore is always
         // same-domain (a collection cipher stays CK-keyed inside
@@ -8944,7 +8972,7 @@ impl VaultHandle {
                     }
                     self.assert_collection_write(&cid)?;
                 }
-                CipherDomain::Flat if !is_admin => {
+                CipherDomain::Flat if !is_admin && !legacy_founder => {
                     return Err(BaluardError::from(VaultError::InvalidOperation(
                         "this operation requires a managing device (team members hold no group key)"
                             .into(),
@@ -8969,7 +8997,9 @@ impl VaultHandle {
             super::write_vault_file(&trash_path, &envelope_bytes)?;
             std::fs::remove_file(&active_path)?;
             self.remove_integrity(&cipher_id.to_string());
-            self.rebuild_index()?;
+            if rebuild {
+                self.rebuild_index()?;
+            }
             Ok(())
         } else if let Some(trash_path) = self.trash_file_path(cipher_id) {
             // §4.4 "restore/purge admin": permanent deletion of a trashed
@@ -8994,7 +9024,7 @@ impl VaultHandle {
                         )));
                     }
                 }
-                CipherDomain::TrashFlat if !is_admin => {
+                CipherDomain::TrashFlat if !is_admin && !legacy_founder => {
                     return Err(BaluardError::from(VaultError::InvalidOperation(
                         "this operation requires a managing device (team members hold no group key)"
                             .into(),
@@ -9011,7 +9041,9 @@ impl VaultHandle {
             if attach_dir.is_dir() {
                 std::fs::remove_dir_all(&attach_dir)?;
             }
-            self.rebuild_index()?;
+            if rebuild {
+                self.rebuild_index()?;
+            }
             Ok(())
         } else {
             Err(VaultError::CipherNotFound(cipher_id.to_string()).into())
@@ -9232,6 +9264,22 @@ impl VaultHandle {
 
     /// Purge deleted entries from trash that were deleted more than `days` ago.
     pub fn purge_old_trash(&self, days: u32) -> Result<usize, BaluardError> {
+        let limit =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(days as u64 * 86400);
+        self.purge_trash_impl(Some(limit))
+    }
+
+    /// Permanent purge. `None` cutoff = everything, ignoring mtimes —
+    /// [Self::empty_entries] must not let a future-dated trash file
+    /// survive the wipe. Checkpoints ride along with each purged
+    /// envelope: a purged object keeps its checkpoint out of the
+    /// manifest, or every future open reports a permanent rollback
+    /// warning (the sync layer admits the drop because the object is
+    /// gone).
+    fn purge_trash_impl(
+        &self,
+        cutoff: Option<std::time::SystemTime>,
+    ) -> Result<usize, BaluardError> {
         // §4.4 "restore/purge admin": time-based purge is admin-surface on
         // team vaults. The daemon's best-effort unlock-time call swallows
         // the member refusal, so member devices simply no-op.
@@ -9256,8 +9304,6 @@ impl VaultHandle {
         }
 
         let mut count = 0;
-        let limit =
-            std::time::SystemTime::now() - std::time::Duration::from_secs(days as u64 * 86400);
 
         for entry in std::fs::read_dir(&trash_dir)? {
             let entry = entry?;
@@ -9266,39 +9312,105 @@ impl VaultHandle {
                 // S3-7c: collection trash subdirs — recurse one level.
                 for inner in std::fs::read_dir(&path)?.flatten() {
                     let ipath = inner.path();
-                    if let Ok(metadata) = std::fs::metadata(&ipath) {
-                        if let Ok(modified) = metadata.modified() {
-                            if modified < limit {
-                                if let Some(id) = cipher_id_of_envelope(&ipath) {
-                                    let attach_dir = self.path.join("entries").join(id.to_string());
-                                    if attach_dir.is_dir() {
-                                        std::fs::remove_dir_all(&attach_dir)?;
-                                    }
-                                }
-                                std::fs::remove_file(&ipath)?;
-                                count += 1;
-                            }
-                        }
-                    }
-                }
-                continue;
-            }
-            if let Ok(metadata) = std::fs::metadata(&path) {
-                if let Ok(modified) = metadata.modified() {
-                    if modified < limit {
-                        if let Some(id) = cipher_id_of_envelope(&path) {
+                    let due = match cutoff {
+                        Some(limit) => std::fs::metadata(&ipath)
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .map(|modified| modified < limit)
+                            .unwrap_or(false),
+                        None => true,
+                    };
+                    if due {
+                        let purged_id = cipher_id_of_envelope(&ipath);
+                        if let Some(id) = purged_id {
                             let attach_dir = self.path.join("entries").join(id.to_string());
                             if attach_dir.is_dir() {
                                 std::fs::remove_dir_all(&attach_dir)?;
                             }
                         }
-                        std::fs::remove_file(&path)?;
+                        std::fs::remove_file(&ipath)?;
+                        if let Some(id) = purged_id {
+                            self.remove_integrity(&id.to_string());
+                        }
                         count += 1;
                     }
                 }
+                continue;
+            }
+            let due = match cutoff {
+                Some(limit) => std::fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .map(|modified| modified < limit)
+                    .unwrap_or(false),
+                None => true,
+            };
+            if due {
+                let purged_id = cipher_id_of_envelope(&path);
+                if let Some(id) = purged_id {
+                    let attach_dir = self.path.join("entries").join(id.to_string());
+                    if attach_dir.is_dir() {
+                        std::fs::remove_dir_all(&attach_dir)?;
+                    }
+                }
+                std::fs::remove_file(&path)?;
+                if let Some(id) = purged_id {
+                    self.remove_integrity(&id.to_string());
+                }
+                count += 1;
             }
         }
         Ok(count)
+    }
+
+    /// Personal-vault fresh start: permanently remove every entry (live,
+    /// archived, trashed) plus folders and the tag store. Semantic meta
+    /// (settings, devices, collections, members, KDF, canaries) survives;
+    /// caches (index, integrity) update as usual. Refuses flipped (team)
+    /// spaces — entry-level delete is the space surface.
+    pub fn empty_entries(&self) -> Result<EmptyReport, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
+        }
+        if crate::vault::space_meta::shape_flipped(&self.path) {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "empty is limited to personal vaults; use entry-level delete on a space".into(),
+            )));
+        }
+
+        // Enumerate first, mutate second: a failure mid-loop cannot
+        // leave a half-counted report.
+        let live_ids = self.list_cipher_ids()?;
+        let trash_ids = self.list_trash_ids()?;
+        let folders = self.list_folders()?;
+        let tags = self.list_tags()?;
+
+        for id in &live_ids {
+            self.delete_cipher_inner(*id, false)?;
+        }
+        // No mtime cutoff: a future-dated trash file must not survive the
+        // wipe. Then prove emptiness — the report is a promise.
+        self.purge_trash_impl(None)?;
+        if !self.list_cipher_ids()?.is_empty() || !self.list_trash_ids()?.is_empty() {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "some entries could not be purged; re-run the empty".into(),
+            )));
+        }
+        self.save_folders(&[])?;
+        self.save_tags_enc(&crate::vault::manifest::TagIndex {
+            tags: vec![],
+            updated_at: 0,
+        })?;
+        self.rebuild_index()?;
+
+        Ok(EmptyReport {
+            entries: live_ids.len() + trash_ids.len(),
+            folders: folders.len(),
+            tags: tags.len(),
+        })
     }
 
     /// Add a cipher (requires unlocked vault).
@@ -15416,6 +15528,161 @@ mod tests {
         let count = handle.purge_old_trash(0).unwrap();
         assert_eq!(count, 1);
         assert!(handle.list_trash_ids().unwrap().is_empty());
+    }
+
+    fn login_cipher_input(name: &str) -> CipherInput {
+        CipherInput {
+            name: name.into(),
+            folder_id: None,
+            collection_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: None,
+                password: Some("val".into()),
+                uris: vec![],
+                totp_uri: None,
+                fido2_credentials: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+                favicon: None,
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        }
+    }
+
+    #[test]
+    fn verify_recovery_phrase_accepts_only_the_vault_phrase() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let phrase = handle.rotate_recovery_phrase(&password).unwrap();
+
+        crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &phrase).unwrap();
+
+        let wrong = crate::recovery::RecoveryPhrase::generate()
+            .unwrap()
+            .phrase();
+        let err =
+            crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &wrong).unwrap_err();
+        assert!(err.to_string().contains("does not match this vault"));
+
+        // A valid 12-word mnemonic is a shape error, not a mismatch.
+        let mut ent = [0u8; 16];
+        use rand::RngCore;
+        rand::rngs::OsRng.fill_bytes(&mut ent);
+        let twelve = bip39::Mnemonic::from_entropy(&ent).unwrap().to_string();
+        let err =
+            crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &twelve).unwrap_err();
+        assert!(err.to_string().contains("invalid recovery phrase"));
+    }
+
+    #[test]
+    fn verify_recovery_phrase_reports_stale_escrow_after_root_rotation() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let phrase = handle.rotate_recovery_phrase(&password).unwrap();
+
+        // Downgrade to the legacy escrow shape (no pubkey field): rotate-root
+        // then skips the re-wrap, leaving the phrase wrapped to the OLD root.
+        let escrow = dir.path().join("meta/recovery.json");
+        let mut json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&escrow).unwrap()).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .remove("recovery_x25519_pubkey");
+        std::fs::write(&escrow, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+
+        handle.rotate_root_key().unwrap();
+
+        let err =
+            crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &phrase).unwrap_err();
+        assert!(err.to_string().contains("stale"));
+    }
+
+    #[test]
+    fn empty_entries_wipes_entries_folders_tags_and_keeps_meta() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let a = handle.add_cipher(&login_cipher_input("A")).unwrap();
+        handle.add_cipher(&login_cipher_input("B")).unwrap();
+        let c = handle.add_cipher(&login_cipher_input("C")).unwrap();
+        handle.archive_cipher(c).unwrap();
+        let d = handle.add_cipher(&login_cipher_input("D")).unwrap();
+        handle.delete_cipher(d).unwrap(); // pre-existing trash
+
+        handle
+            .save_folders(&[crate::vault::manifest::Folder {
+                id: uuid::Uuid::new_v4(),
+                name: "Work".into(),
+                parent_id: None,
+                icon: None,
+            }])
+            .unwrap();
+        handle
+            .save_tags_enc(&crate::vault::manifest::TagIndex {
+                tags: vec!["work".into()],
+                updated_at: 0,
+            })
+            .unwrap();
+
+        let attach_dir = dir.path().join("entries").join(a.to_string());
+        std::fs::create_dir_all(&attach_dir).unwrap();
+        std::fs::write(attach_dir.join("blob.bin"), b"x").unwrap();
+
+        let report = handle.empty_entries().unwrap();
+        assert_eq!(report.entries, 4);
+        assert_eq!(report.folders, 1);
+        assert_eq!(report.tags, 1);
+
+        assert!(handle.list_cipher_ids().unwrap().is_empty());
+        assert!(handle.list_trash_ids().unwrap().is_empty());
+        assert!(handle.list_folders().unwrap().is_empty());
+        assert!(handle.list_tags().unwrap().is_empty());
+        assert!(!attach_dir.exists());
+
+        // Semantic meta survives.
+        assert!(handle.get_settings().is_ok());
+        // No stale checkpoints: pre-existing trash must not linger in
+        // the manifest, or every future open reports rollback warnings.
+        let manifest = crate::integrity::IntegrityManifest::load(dir.path()).unwrap();
+        assert!(manifest.checkpoints.is_empty());
+    }
+
+    #[test]
+    fn empty_entries_refuses_flipped_space() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        std::fs::write(
+            dir.path().join("meta/space-shape.json"),
+            serde_json::json!({"mode": "team", "flipped_at": 0, "flipped_epoch": 0}).to_string(),
+        )
+        .unwrap();
+        let err = handle.empty_entries().unwrap_err();
+        assert!(err.to_string().contains("personal"));
+    }
+
+    #[test]
+    fn empty_entries_works_on_legacy_vault_without_member_directory() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        handle.add_cipher(&login_cipher_input("A")).unwrap();
+        std::fs::remove_dir_all(dir.path().join("meta/members")).unwrap();
+
+        let report = handle.empty_entries().unwrap();
+        assert_eq!(report.entries, 1);
+        assert!(handle.list_cipher_ids().unwrap().is_empty());
     }
 
     #[test]

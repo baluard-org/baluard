@@ -24,6 +24,8 @@ use base64::Engine;
 /// Git sync engine wrapping git2-rs operations.
 /// Device roster for one commit: device UUID → Ed25519 verifying key bytes.
 type DeviceRoster = std::collections::BTreeMap<String, [u8; 32]>;
+/// One fleet-panel row: (device id, last commit oid, last push RFC3339).
+pub type FleetActivityRow = (String, git2::Oid, String);
 /// S1a: resolved member state per commit: device UUID -> role, plus
 /// device UUID -> member id (drives {member} path segments).
 #[derive(Debug, Clone)]
@@ -702,7 +704,13 @@ impl SyncEngine {
 
         let roster = self.staging_roster(repo, Some(&head_tree));
 
-        let mut skipped: Vec<(String, git2::Status)> = Vec::new();
+        // Pass 1: decide admission for everything EXCEPT the integrity
+        // manifest. Its drop rule depends on which objects the committed
+        // tree will actually contain — including deletions this pass
+        // SKIPS and restores — so it is evaluated last, with the final
+        // restore set in hand (statuses arrive in arbitrary order).
+        let mut decisions: Vec<(String, git2::Status, bool, bool)> = Vec::new();
+        let mut integrity_entry: Option<(String, git2::Status)> = None;
         for entry in statuses.iter() {
             // A non-UTF-8 path can never be authorized; leave it dirty.
             let Some(path) = entry.path() else { continue };
@@ -731,6 +739,10 @@ impl SyncEngine {
             if !deletion && !written {
                 continue;
             }
+            if path == "meta/integrity.json" {
+                integrity_entry = Some((path.to_string(), s));
+                continue;
+            }
             let admitted = !tombstoned
                 && self.path_admitted(
                     repo,
@@ -742,23 +754,69 @@ impl SyncEngine {
                     &scope,
                     &roster,
                 );
-            if admitted {
-                self.stage_one(&mut index, path, deletion)?;
-            } else {
-                skipped.push((path.to_string(), s));
-            }
+            decisions.push((path.to_string(), s, deletion, admitted));
         }
-        // A file this device may not author cannot sit in the vault's
-        // worktree: it would stay dirty forever (stuck sync badge, an
-        // empty commit pushed on every autosync tick). Tracked files
-        // are restored to their committed content — exactly what the
-        // next pull's force-checkout would do — and untracked files are
-        // removed. Peers never see them either way. Device-local secret
-        // files (device-privkey.json, device-id, git-credentials.json,
-        // kdf-attempts.json) are exempt: they are this clone's own
-        // material, and deleting them on an admission glitch would lock
-        // the device out of its own vault.
-        for (path, s) in &skipped {
+        // Deletions that pass 1 skipped will be restored from HEAD, so
+        // the committed tree still carries those objects: a checkpoint
+        // drop for them is laundering, not a purge.
+        let restored_objects: Vec<String> = decisions
+            .iter()
+            .filter(|(p, s, deletion, admitted)| {
+                !admitted
+                    && *deletion
+                    && s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED)
+                    && (p.starts_with("ciphers/") || p.starts_with("trash/"))
+                    && p.ends_with(".enc")
+            })
+            .map(|(p, _, _, _)| p.clone())
+            .collect();
+
+        if let Some((path, s)) = integrity_entry {
+            let deletion = s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED);
+            // Same structural rule path_admitted applies, evaluated with
+            // the final restore set: a checkpoint drop is honest only
+            // when the purged object is gone from both the worktree and
+            // the restore set.
+            let head_blob = |p: &str| -> Option<Vec<u8>> {
+                let entry = head_tree.get_path(std::path::Path::new(p)).ok()?;
+                repo.find_blob(entry.id())
+                    .ok()
+                    .map(|b| b.content().to_vec())
+            };
+            let disk_bytes =
+                |p: &str| -> Option<Vec<u8>> { std::fs::read(self.vault_path.join(p)).ok() };
+            let admitted = !tombstoned
+                && Self::integrity_delta_ok(
+                    head_blob(&path).as_deref(),
+                    disk_bytes(&path).as_deref(),
+                    &roster,
+                    &self.device_id,
+                    &|id| {
+                        !Self::worktree_object_exists(&self.vault_path, id)
+                            && !restored_objects.iter().any(|p| {
+                                p == &format!("{id}.enc") || p.ends_with(&format!("/{id}.enc"))
+                            })
+                    },
+                )
+                .is_ok();
+            decisions.push((path, s, deletion, admitted));
+        }
+
+        // Pass 2: stage the admitted set, restore the skipped set. A file
+        // this device may not author cannot sit in the vault's worktree:
+        // it would stay dirty forever (stuck sync badge, an empty commit
+        // pushed on every autosync tick). Tracked files are restored to
+        // their committed content — exactly what the next pull's
+        // force-checkout would do — and untracked files are removed.
+        // Peers never see them either way. Device-local secret files are
+        // exempt from the restore: they are this clone's own material,
+        // and deleting them on an admission glitch would lock the device
+        // out of its own vault.
+        for (path, s, deletion, admitted) in &decisions {
+            if *admitted {
+                self.stage_one(&mut index, path, *deletion)?;
+                continue;
+            }
             if Self::DEVICE_LOCAL_PATHS.iter().any(|p| path == *p) {
                 eprintln!("staged-path-set: kept device-local file out of the commit: {path}");
                 continue;
@@ -868,13 +926,15 @@ impl SyncEngine {
             }
         }
         // Structural rule 2: the integrity manifest is
-        // self-authenticating (role-irrelevant).
+        // self-authenticating (role-irrelevant). A checkpoint drop is
+        // honest only when the purged object is gone from the worktree.
         if path == "meta/integrity.json" {
             return Self::integrity_delta_ok(
                 head_blob(path).as_deref(),
                 disk_bytes(path).as_deref(),
                 roster,
                 &self.device_id,
+                &|id| !Self::worktree_object_exists(&self.vault_path, id),
             )
             .is_ok();
         }
@@ -1586,6 +1646,79 @@ impl SyncEngine {
         }
     }
 
+    /// Derive per-device last-push from the synced history (fleet panel).
+    /// The activity index is gitignored local-only state that only ever
+    /// records the LOCAL device, so cross-device rows must be attributed
+    /// from commits: each signed commit binds to a roster device via its
+    /// Ed25519 signature, and the newest commit per roster device is that
+    /// device's last push. Returns (device_id, commit oid, commit time as
+    /// RFC 3339 UTC), newest device first. Ok(None) when the vault has no
+    /// git repo or no roster at HEAD (pre-enrollment) — callers fall back
+    /// to the local activity index. Unsigned/grandfathered commits are
+    /// skipped; each commit verifies against its own first-parent roster
+    /// (pull-side semantics), so pre-rotation commits attribute under the
+    /// key that signed them. Commit time is the author-controlled git
+    /// timestamp: offline commits show the commit date, not the push
+    /// date, and skewed clocks make the ordering best effort. Devices
+    /// whose newest commit falls outside `max_commits` are not
+    /// attributed — callers surface them as never-synced.
+    pub fn fleet_activity_from_history(
+        vault_path: &std::path::Path,
+        max_commits: usize,
+    ) -> Result<Option<Vec<FleetActivityRow>>, BaluardError> {
+        let repo = match git2::Repository::open(vault_path) {
+            Ok(repo) => repo,
+            Err(_) => return Ok(None),
+        };
+        let head = match repo.head().and_then(|h| h.peel_to_commit()) {
+            Ok(head) => head,
+            Err(_) => return Ok(None),
+        };
+        let mut cache = std::collections::HashMap::new();
+        let Some(head_roster) = Self::roster_for_commit(&repo, &head, &mut cache)? else {
+            return Ok(None);
+        };
+        if head_roster.is_empty() {
+            return Ok(None);
+        }
+        let mut revwalk = repo
+            .revwalk()
+            .map_err(|e| SyncError::Git(format!("revwalk: {e}")))?;
+        revwalk
+            .set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)
+            .map_err(|e| SyncError::Git(format!("revwalk sort: {e}")))?;
+        revwalk
+            .push_head()
+            .map_err(|e| SyncError::Git(format!("revwalk head: {e}")))?;
+        let mut found: std::collections::BTreeMap<String, (git2::Oid, String)> =
+            std::collections::BTreeMap::new();
+        for oid in revwalk.take(max_commits) {
+            if found.len() >= head_roster.len() {
+                break;
+            }
+            let oid = oid.map_err(|e| SyncError::Git(format!("revwalk next: {e}")))?;
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| SyncError::Git(format!("commit: {e}")))?;
+            let Some(roster) = Self::roster_for_commit(&repo, &commit, &mut cache)? else {
+                continue;
+            };
+            let Ok(signer) = Self::verify_commit_against_roster_static(&repo, oid, &roster) else {
+                continue;
+            };
+            if found.contains_key(&signer) {
+                continue;
+            }
+            let when = crate::device_manager::format_rfc3339(commit.time().seconds().max(0) as u64);
+            found.insert(signer, (oid, when));
+        }
+        let rows: Vec<FleetActivityRow> = found
+            .into_iter()
+            .map(|(device, (oid, when))| (device, oid, when))
+            .collect();
+        Ok(Some(rows))
+    }
+
     /// Check for abort markers after pulling from another device.
     /// Returns the aborted epoch if a marker was found, None otherwise.
     /// Caller (daemon) should check this after pull and surface to user.
@@ -1794,6 +1927,134 @@ impl SyncEngine {
             eprintln!("warning: gossip announce failed: {e}");
         }
 
+        Ok(())
+    }
+
+    /// Create the rewrite targets WITHOUT moving any ref: one orphan main
+    /// commit carrying the current (emptied) tree, signed by this device,
+    /// and one empty-tree gossip orphan. Announcement commits parent the
+    /// announced main heads, so resetting the gossip branch is what makes
+    /// pre-rewrite blobs unreachable on the remote, fresh clones, and
+    /// local gc alike. Pre-rewrite announcements are inert for
+    /// enforcement either way: they bind the vault tag (the old root
+    /// oid), which no longer verifies under the new root. Callers push
+    /// these by object id via [Self::push_rewritten] and only then move
+    /// local refs — a failed push must leave the device on its old,
+    /// still-pullable lineage instead of wedging it between divergent
+    /// roots. Returns (new_main_root, new_gossip_tip).
+    pub fn rewrite_history_squash(&self, repo: &Repository) -> Result<(Oid, Oid), BaluardError> {
+        // One clean snapshot of the emptied worktree (deletions included).
+        // This commit stays on the OLD lineage (normal parent), so its
+        // root still matches the remote and pulls keep working until the
+        // push lands.
+        self.commit_all(repo, "")?;
+
+        let mut index = repo
+            .index()
+            .map_err(|e| SyncError::Git(format!("index: {e}")))?;
+        let tree_id = index
+            .write_tree()
+            .map_err(|e| SyncError::Git(format!("write_tree: {e}")))?;
+        let tree = repo
+            .find_tree(tree_id)
+            .map_err(|e| SyncError::Git(format!("find_tree: {e}")))?;
+        let sig = Signature::now("Baluard User", "vault@baluard.local")
+            .map_err(|e| SyncError::Git(format!("signature: {e}")))?;
+        let root_oid = self.create_signed_commit(
+            repo,
+            &sig,
+            "vault: history rewritten (vault emptied)",
+            &tree,
+            &[],
+        )?;
+
+        // Gossip reset: orphan commit with an EMPTY tree — no heads/ dir,
+        // nothing announced, nothing anchored.
+        let tb = repo
+            .treebuilder(None)
+            .map_err(|e| SyncError::Git(format!("gossip treebuilder: {e}")))?;
+        let empty_tree_id = tb
+            .write()
+            .map_err(|e| SyncError::Git(format!("gossip tree write: {e}")))?;
+        let empty_tree = repo
+            .find_tree(empty_tree_id)
+            .map_err(|e| SyncError::Git(format!("gossip find tree: {e}")))?;
+        let gossip_sig = Signature::now("baluard-gossip", "gossip@baluard.local")
+            .map_err(|e| SyncError::Git(format!("gossip sig: {e}")))?;
+        let gossip_oid = self.create_signed_commit(
+            repo,
+            &gossip_sig,
+            "gossip: reset (history rewritten)",
+            &empty_tree,
+            &[],
+        )?;
+        Ok((root_oid, gossip_oid))
+    }
+
+    /// Push the squash targets by OBJECT ID and only then move local
+    /// refs. A sha-source refspec lets the remote move while this clone
+    /// stays on its old lineage, so a rejected push (branch protection,
+    /// network) leaves a retryable state instead of a device that refuses
+    /// its own pulls under the HistoryRewritten guard. After the push
+    /// lands: force main + gossip to the pushed ids, set HEAD, refresh
+    /// the tracking refs (announce_head seeds from the tracking gossip
+    /// ref and pushes non-force, so the stale pre-rewrite tip must not
+    /// survive there).
+    pub fn push_rewritten(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        root_oid: Oid,
+        gossip_oid: Oid,
+    ) -> Result<(), BaluardError> {
+        use super::gossip::GOSSIP_BRANCH;
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        let branch = Self::resolve_default_branch(repo);
+        let refspecs = [
+            format!("+{root_oid}:refs/heads/{branch}"),
+            format!("+{gossip_oid}:refs/heads/{GOSSIP_BRANCH}"),
+        ];
+        let refs: Vec<&str> = refspecs.iter().map(String::as_str).collect();
+        let cfg = self
+            .credential_config
+            .clone()
+            .with_url_hint(remote.url().unwrap_or(""));
+        let callbacks = crate::sync::credentials::build_callbacks(&cfg);
+        let mut push_options = PushOptions::new();
+        push_options.remote_callbacks(callbacks);
+        remote
+            .push(&refs, Some(&mut push_options))
+            .map_err(|e| classify_remote_err("push", &e))?;
+
+        // Push landed: move this clone onto the rewritten line.
+        repo.reference(
+            &format!("refs/heads/{branch}"),
+            root_oid,
+            true,
+            "history rewrite",
+        )
+        .map_err(|e| SyncError::Git(format!("update HEAD: {e}")))?;
+        repo.set_head(&format!("refs/heads/{branch}"))
+            .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
+        repo.reference(
+            &format!("refs/heads/{GOSSIP_BRANCH}"),
+            gossip_oid,
+            true,
+            "gossip reset",
+        )
+        .map_err(|e| SyncError::Git(format!("gossip ref: {e}")))?;
+        for (refname, oid) in [
+            (format!("refs/remotes/{remote_name}/{branch}"), root_oid),
+            (
+                format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}"),
+                gossip_oid,
+            ),
+        ] {
+            repo.reference(&refname, oid, true, "history rewrite tracking")
+                .map_err(|e| SyncError::Git(format!("tracking ref: {e}")))?;
+        }
         Ok(())
     }
 
@@ -2292,6 +2553,24 @@ impl SyncEngine {
                 &e.to_string(),
             );
             return Err(e);
+        }
+
+        // History-rewrite guard: a remote tip rooted on a different commit
+        // means the lineage was squashed (vault empty --rewrite-history) or
+        // force-pushed by a foreign device. Merging would resurrect the
+        // discarded history, so refuse. migrate_remote pushes full history
+        // and preserves the root, so migrations pass. When the oids are
+        // equal the roots are equal too, so the up-to-date path below is
+        // unaffected.
+        if Self::root_commit_oid_from(repo, remote_oid)?
+            != Self::root_commit_oid_from(repo, local_oid)?
+        {
+            Self::record_refusal(
+                &self.vault_path,
+                &remote_oid.to_string()[..12],
+                "vault history was rewritten on the remote",
+            );
+            return Err(SyncError::HistoryRewritten.into());
         }
 
         // Already up to date?
@@ -5774,6 +6053,7 @@ impl SyncEngine {
                     member_id,
                     role,
                     &scope,
+                    &tree,
                     bootstrap_key,
                 )?;
             }
@@ -5896,6 +6176,7 @@ impl SyncEngine {
                     member_id,
                     role,
                     &scope,
+                    &tree,
                     bootstrap_key,
                 )?;
             }
@@ -5917,6 +6198,7 @@ impl SyncEngine {
         member: Option<&str>,
         role: crate::sync::policy::CommitRole,
         scope: &crate::sync::policy::CollectionScope,
+        new_tree: &git2::Tree,
         bootstrap_key: Option<[u8; 32]>,
     ) -> Result<(), BaluardError> {
         let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) else {
@@ -5980,6 +6262,7 @@ impl SyncEngine {
                 blob_bytes(delta.new_file().id()).as_deref(),
                 roster,
                 signer,
+                &|id| !Self::tree_object_exists(repo, new_tree, id),
             );
         }
         if path == "meta/devices.json"
@@ -6010,16 +6293,79 @@ impl SyncEngine {
             .map_err(BaluardError::from)
     }
 
+    /// Does any blob named "<id>.enc" survive under ciphers/ or trash/
+    /// (collection subdirs included)? Checkpoint drops ride on the
+    /// absence of the tracked object (permanent purge). Same scope as
+    /// [Self::worktree_object_exists] so staging and peer verification
+    /// can never disagree.
+    fn tree_object_exists(repo: &Repository, tree: &git2::Tree, id: &str) -> bool {
+        let needle = format!("{id}.enc");
+        for sub in ["ciphers", "trash"] {
+            let Ok(entry) = tree.get_path(Path::new(sub)) else {
+                continue;
+            };
+            let Ok(obj) = entry.to_object(repo) else {
+                continue;
+            };
+            let Some(subtree) = obj.as_tree() else {
+                continue;
+            };
+            let mut found = false;
+            let _ = subtree.walk(git2::TreeWalkMode::PreOrder, |_, e| {
+                if found {
+                    return 1;
+                }
+                if e.kind() == Some(git2::ObjectType::Blob) && e.name() == Some(needle.as_str()) {
+                    found = true;
+                    return 1;
+                }
+                0
+            });
+            if found {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Worktree counterpart of [Self::tree_object_exists] for the
+    /// staging filter: scan ciphers/ and trash/ (collection subdirs
+    /// included) for the tracked object file. entry.file_type() is
+    /// symlink-neutral: a symlinked directory is not traversed, so a
+    /// planted symlink cannot loop the walk or shadow a real object.
+    fn worktree_object_exists(vault_path: &Path, id: &str) -> bool {
+        let needle = format!("{id}.enc");
+        let mut stack = vec![vault_path.join("ciphers"), vault_path.join("trash")];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    stack.push(p);
+                } else if p.file_name().and_then(|n| n.to_str()) == Some(needle.as_str()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Pure integrity-manifest delta predicate (P5 explicit staged path
     /// sets): shared by the verification walk (blob-resolved) and the
     /// staging filter (worktree bytes). The new manifest must parse,
     /// every checkpoint must verify against the roster in force, and an
-    /// honest update never drops or downgrades a known checkpoint.
+    /// honest update never downgrades a known checkpoint. A dropped
+    /// checkpoint is honest only when the object it tracks is gone from
+    /// the tree (permanent purge): dropping a checkpoint while the object
+    /// survives would launder a rollback.
     fn integrity_delta_ok(
         old: Option<&[u8]>,
         new: Option<&[u8]>,
         roster: &DeviceRoster,
         signer: &str,
+        dropped_object_ok: &dyn Fn(&str) -> bool,
     ) -> Result<(), BaluardError> {
         let deny = || {
             SyncError::PolicyViolation {
@@ -6057,6 +6403,7 @@ impl SyncEngine {
                             return Err(deny());
                         }
                         Some(_) => {}
+                        None if dropped_object_ok(object_id) => {}
                         None => return Err(deny()),
                     }
                 }
@@ -7950,6 +8297,79 @@ mod tests {
             &uuid::Uuid::parse_str("00000000-0000-0000-0000-00000000000a").unwrap(),
             signing_key,
         );
+    }
+
+    /// Fleet panel regression: cross-device last-push rows must come from
+    /// the synced history. The activity index is gitignored local-only
+    /// state that only ever records the local device, so a panel fed from
+    /// it can only ever show "this device" — the phone never appeared on
+    /// the desktop's Devices tab (user report 2026-11-10).
+    #[test]
+    fn fleet_activity_attributes_commits_to_roster_devices() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_b = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let id_b = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        {
+            let mut reg: crate::devices::DeviceRegistry = serde_json::from_str(
+                &std::fs::read_to_string(dir.path().join("meta/devices.json")).unwrap(),
+            )
+            .unwrap();
+            let verifying = ed25519_dalek::VerifyingKey::from(&key_b);
+            reg.devices.insert(
+                id_b,
+                crate::vault::manifest::DeviceEntry {
+                    device_id: id_b,
+                    name: String::new(),
+                    encryption_public_key: hex::encode([0u8; 32]),
+                    signing_public_key: hex::encode(verifying.to_bytes()),
+                    enrolled_at: 1,
+                    enrolled_by: Some(id_a),
+                    last_seen_epoch: 0,
+                },
+            );
+            std::fs::write(
+                dir.path().join("meta/devices.json"),
+                serde_json::to_string_pretty(&reg).unwrap(),
+            )
+            .unwrap();
+        }
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo = engine_a.init_repo().unwrap();
+        std::fs::write(dir.path().join("a.enc"), b"SECRET-A-V1").unwrap();
+        engine_a.commit_all(&repo, "c1").unwrap();
+        let a_last = repo.head().unwrap().peel_to_commit().unwrap().id();
+
+        // B's turn: the shared device-privkey.json holds one key at a time,
+        // so swap it to B before committing as B.
+        let privkey = serde_json::json!({
+            "x25519_private": hex::encode([0u8; 32]),
+            "ed25519_private": hex::encode(key_b.to_bytes()),
+        });
+        std::fs::write(
+            dir.path().join("meta/device-privkey.json"),
+            serde_json::to_string_pretty(&privkey).unwrap(),
+        )
+        .unwrap();
+        let engine_b = SyncEngine::new(dir.path(), &id_b.to_string(), None);
+        std::fs::write(dir.path().join("b.enc"), b"SECRET-B-V1").unwrap();
+        engine_b.commit_all(&repo, "c2").unwrap();
+        let b_last = repo.head().unwrap().peel_to_commit().unwrap().id();
+
+        let fleet = SyncEngine::fleet_activity_from_history(dir.path(), 500)
+            .unwrap()
+            .expect("roster at HEAD");
+        assert_eq!(fleet.len(), 2, "exactly the two roster devices");
+        let find = |id: &uuid::Uuid| {
+            fleet
+                .iter()
+                .find(|(d, _, _)| d == &id.to_string())
+                .map(|(_, oid, _)| *oid)
+        };
+        assert_eq!(find(&id_b), Some(b_last));
+        assert_eq!(find(&id_a), Some(a_last));
     }
 
     #[test]
@@ -10186,6 +10606,349 @@ mod tests {
         let vengine = SyncEngine::new(&vpath, "victim", None);
         let vrepo = vengine.open_repo().unwrap();
         vengine.pull(&vrepo, "origin").unwrap();
+    }
+
+    /// Shared rewrite fixture: a 2-commit signed vault pushed to a bare
+    /// remote with a forged-but-rostered gossip announcement (the
+    /// production shape: the announcement commit parents the announced
+    /// head, anchoring the old lineage), plus an old-line clone.
+    #[allow(clippy::type_complexity)]
+    fn rewrite_fixture() -> Result<
+        (
+            tempfile::TempDir,
+            SyncEngine,
+            Repository,
+            tempfile::TempDir,
+            tempfile::TempDir,
+            SyncEngine,
+            Repository,
+            String,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo()?;
+        std::fs::write(dir.path().join("a.enc"), b"SECRET-A-V1").unwrap();
+        engine_a.commit_all(&repo_a, "c1")?;
+        std::fs::write(dir.path().join("b.enc"), b"SECRET-B-V1").unwrap();
+        engine_a.commit_all(&repo_a, "c2")?;
+
+        let remote_dir = tempfile::tempdir()?;
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .map_err(|e| SyncError::Git(format!("bare init: {e}")))?;
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url)?;
+        engine_a.push(&repo_a, "origin")?;
+
+        // Rostered announcement over the pre-rewrite state: binds the old
+        // vault tag, parents the old head (old blobs reachable from gossip).
+        // Scoped so the Commit borrow of repo_a drops before the move out.
+        {
+            let bare = Repository::open(&remote_path)?;
+            let old_head = repo_a.head()?.peel_to_commit()?;
+            let vault_tag = SyncEngine::root_commit_oid_from(&repo_a, old_head.id())?;
+            let ann = crate::sync::gossip::HeadAnnouncement::sign(
+                &vault_tag,
+                &id_a.to_string(),
+                &old_head.id().to_string(),
+                1,
+                &key_a,
+            );
+            let blob_id = bare
+                .blob(serde_json::to_vec(&ann).unwrap().as_slice())
+                .map_err(|e| SyncError::Git(format!("gossip blob: {e}")))?;
+            let mut heads_tb = bare
+                .treebuilder(None)
+                .map_err(|e| SyncError::Git(format!("gossip treebuilder: {e}")))?;
+            heads_tb
+                .insert(
+                    format!("{}.json", id_a),
+                    blob_id,
+                    git2::FileMode::Blob.into(),
+                )
+                .map_err(|e| SyncError::Git(format!("gossip insert: {e}")))?;
+            let heads_id = heads_tb
+                .write()
+                .map_err(|e| SyncError::Git(format!("gossip heads write: {e}")))?;
+            let mut outer = bare
+                .treebuilder(None)
+                .map_err(|e| SyncError::Git(format!("gossip outer: {e}")))?;
+            outer
+                .insert("heads", heads_id, git2::FileMode::Tree.into())
+                .map_err(|e| SyncError::Git(format!("gossip outer insert: {e}")))?;
+            let tree = bare
+                .find_tree(
+                    outer
+                        .write()
+                        .map_err(|e| SyncError::Git(format!("gossip tree write: {e}")))?,
+                )
+                .map_err(|e| SyncError::Git(format!("gossip find tree: {e}")))?;
+            let sig = git2::Signature::now("gossip", "g@b.local")
+                .map_err(|e| SyncError::Git(format!("gossip sig: {e}")))?;
+            let gossip_oid = bare
+                .commit(None, &sig, &sig, "announce", &tree, &[&old_head])
+                .map_err(|e| SyncError::Git(format!("gossip commit: {e}")))?;
+            bare.reference("refs/heads/baluard-gossip", gossip_oid, true, "announce")
+                .map_err(|e| SyncError::Git(format!("gossip ref: {e}")))?;
+        }
+
+        let clone_dir = tempfile::tempdir()?;
+        let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device", None);
+        let cloned = Repository::clone(&remote_url, clone_dir.path())?;
+        Ok((
+            dir,
+            engine_a,
+            repo_a,
+            remote_dir,
+            clone_dir,
+            clone_engine,
+            cloned,
+            remote_url,
+        ))
+    }
+
+    /// Reachable blob ids across EVERY fetched ref tip (the erasure
+    /// assertion must hold on the gossip branch too, not just main).
+    fn reachable_blob_ids(repo: &Repository) -> std::collections::HashSet<git2::Oid> {
+        let mut seen = std::collections::HashSet::new();
+        for reference in repo.references().unwrap() {
+            let reference = reference.unwrap();
+            let Ok(tip) = reference.peel_to_commit() else {
+                continue;
+            };
+            let mut revwalk = repo.revwalk().unwrap();
+            revwalk.push(tip.id()).unwrap();
+            for oid in revwalk.flatten() {
+                let Ok(commit) = repo.find_commit(oid) else {
+                    continue;
+                };
+                commit
+                    .tree()
+                    .unwrap()
+                    .walk(git2::TreeWalkMode::PreOrder, |_, entry| {
+                        if entry.kind() == Some(git2::ObjectType::Blob) {
+                            seen.insert(entry.id());
+                        }
+                        0
+                    })
+                    .unwrap();
+            }
+        }
+        seen
+    }
+
+    #[test]
+    fn rewrite_squash_erases_blobs_and_old_clones_refuse() {
+        let (_dir, engine_a, repo_a, _remote_dir, clone_dir, clone_engine, cloned, remote_url) =
+            rewrite_fixture().unwrap();
+
+        // Empty the vault, rewrite, force-push.
+        let workdir = repo_a.workdir().unwrap().to_path_buf();
+        std::fs::remove_file(workdir.join("a.enc")).unwrap();
+        std::fs::remove_file(workdir.join("b.enc")).unwrap();
+        let old_root = SyncEngine::root_commit_oid_from(
+            &repo_a,
+            repo_a.head().unwrap().peel_to_commit().unwrap().id(),
+        )
+        .unwrap();
+        let (root_oid, gossip_oid) = engine_a.rewrite_history_squash(&repo_a).unwrap();
+        // Squash only MINTS the targets: this clone stays on its old
+        // lineage until the push lands (no wedge on rejection).
+        let live_root = SyncEngine::root_commit_oid_from(
+            &repo_a,
+            repo_a.head().unwrap().peel_to_commit().unwrap().id(),
+        )
+        .unwrap();
+        assert_eq!(live_root, old_root, "squash must not move local refs");
+        engine_a
+            .push_rewritten(&repo_a, "origin", root_oid, gossip_oid)
+            .unwrap();
+
+        // Main is one parentless signed commit carrying the emptied tree.
+        let branch = SyncEngine::resolve_default_branch(&repo_a);
+        let main_tip = repo_a
+            .find_reference(&format!("refs/heads/{branch}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        assert_eq!(main_tip.id(), root_oid);
+        assert_eq!(main_tip.parent_count(), 0);
+        let tree_names: Vec<String> = main_tip
+            .tree()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e.name().map(str::to_string))
+            .collect();
+        assert!(!tree_names.iter().any(|n| n.ends_with(".enc")));
+
+        // A fresh clone: no fetched ref keeps the pre-rewrite blobs
+        // reachable, and its pull passes the gossip + rewrite guards.
+        let fresh_dir = tempfile::tempdir().unwrap();
+        let fresh = Repository::clone(&remote_url, fresh_dir.path()).unwrap();
+        let old_blobs = ["SECRET-A-V1", "SECRET-B-V1"]
+            .iter()
+            .map(|c| git2::Oid::hash_object(git2::ObjectType::Blob, c.as_bytes()).unwrap())
+            .collect::<Vec<_>>();
+        let reachable = reachable_blob_ids(&fresh);
+        for old in old_blobs {
+            assert!(
+                !reachable.contains(&old),
+                "pre-rewrite blob still reachable from a fetched ref"
+            );
+        }
+        let fresh_engine = SyncEngine::new(fresh_dir.path(), "fresh", None);
+        let result = fresh_engine.pull(&fresh, "origin").unwrap();
+        assert!(matches!(result, PullResult::AlreadyUpToDate));
+
+        // The old-line clone refuses: merging would resurrect the
+        // discarded history.
+        let err = clone_engine.pull(&cloned, "origin").unwrap_err();
+        assert!(err.to_string().contains("rewritten"), "got: {err}");
+        let _ = clone_dir;
+    }
+
+    /// A checkpoint drop stages and verifies only when the tracked
+    /// object is gone (permanent purge); dropping one while the object
+    /// survives is reverted, not committed.
+    #[test]
+    fn integrity_checkpoint_drops_commit_only_when_the_object_is_gone() {
+        let signing_key = crate::crypto::signature::generate_ed25519_keypair().0;
+        let dir = tempfile::tempdir().unwrap();
+        setup_signing_keys_with(dir.path(), &signing_key);
+        let engine = SyncEngine::new(dir.path(), TEST_DEVICE, None);
+        let repo = engine.init_repo().unwrap();
+
+        let exists_id = "11111111-1111-1111-1111-111111111111";
+        let gone_id = "22222222-2222-2222-2222-222222222222";
+        std::fs::create_dir_all(dir.path().join("ciphers")).unwrap();
+        std::fs::write(
+            dir.path().join("ciphers").join(format!("{exists_id}.enc")),
+            b"alive",
+        )
+        .unwrap();
+
+        let mut manifest = crate::integrity::IntegrityManifest {
+            checkpoints: Default::default(),
+            last_writer: TEST_DEVICE.into(),
+        };
+        manifest
+            .record(exists_id, 1, TEST_DEVICE, &signing_key)
+            .unwrap();
+        manifest
+            .record(gone_id, 1, TEST_DEVICE, &signing_key)
+            .unwrap();
+        manifest.save(dir.path()).unwrap();
+        engine.commit_all(&repo, "seed manifest").unwrap();
+
+        // Drop the purged object's checkpoint: object absent → admitted.
+        let mut manifest = crate::integrity::IntegrityManifest {
+            checkpoints: Default::default(),
+            last_writer: TEST_DEVICE.into(),
+        };
+        manifest
+            .record(exists_id, 1, TEST_DEVICE, &signing_key)
+            .unwrap();
+        manifest.save(dir.path()).unwrap();
+        engine.commit_all(&repo, "purge gone object").unwrap();
+        let head_manifest = crate::integrity::IntegrityManifest::load(dir.path()).unwrap();
+        assert!(!head_manifest.checkpoints.contains_key(gone_id));
+        assert!(head_manifest.checkpoints.contains_key(exists_id));
+
+        // Drop the surviving object's checkpoint: reverted, not committed.
+        let laundered = crate::integrity::IntegrityManifest {
+            checkpoints: Default::default(),
+            last_writer: TEST_DEVICE.into(),
+        };
+        laundered.save(dir.path()).unwrap();
+        engine.commit_all(&repo, "launder").unwrap();
+        let disk = crate::integrity::IntegrityManifest::load(dir.path()).unwrap();
+        assert!(
+            disk.checkpoints.contains_key(exists_id),
+            "revert must restore the surviving checkpoint"
+        );
+    }
+
+    #[test]
+    fn push_rewritten_failure_leaves_refs_on_the_old_lineage() {
+        let (_dir, engine_a, repo_a, _remote_dir, _clone_dir, _clone_engine, _cloned, _url) =
+            rewrite_fixture().unwrap();
+        let workdir = repo_a.workdir().unwrap().to_path_buf();
+        std::fs::remove_file(workdir.join("a.enc")).unwrap();
+        std::fs::remove_file(workdir.join("b.enc")).unwrap();
+        let old_root = SyncEngine::root_commit_oid_from(
+            &repo_a,
+            repo_a.head().unwrap().peel_to_commit().unwrap().id(),
+        )
+        .unwrap();
+        let (root_oid, gossip_oid) = engine_a.rewrite_history_squash(&repo_a).unwrap();
+
+        // Persistent rejection: origin points at no repository at all.
+        repo_a
+            .remote_set_url("origin", "file:///nonexistent/nope.git")
+            .unwrap();
+        assert!(
+            engine_a
+                .push_rewritten(&repo_a, "origin", root_oid, gossip_oid)
+                .is_err()
+        );
+
+        // No wedge: the clone still sits on the old lineage, so its own
+        // pulls keep working and a retry is a plain re-run.
+        let live_root = SyncEngine::root_commit_oid_from(
+            &repo_a,
+            repo_a.head().unwrap().peel_to_commit().unwrap().id(),
+        )
+        .unwrap();
+        assert_eq!(live_root, old_root);
+    }
+
+    #[test]
+    fn migrate_after_rewrite_serves_fresh_peers() {
+        let (_dir, engine_a, repo_a, _remote_dir, _clone_dir, _clone_engine, _cloned, _url) =
+            rewrite_fixture().unwrap();
+        let workdir = repo_a.workdir().unwrap().to_path_buf();
+        std::fs::remove_file(workdir.join("a.enc")).unwrap();
+        std::fs::remove_file(workdir.join("b.enc")).unwrap();
+        let (root_oid, gossip_oid) = engine_a.rewrite_history_squash(&repo_a).unwrap();
+        engine_a
+            .push_rewritten(&repo_a, "origin", root_oid, gossip_oid)
+            .unwrap();
+
+        // Absolute-erasure fallback: re-point sync at a fresh repo.
+        let new_remote_dir = tempfile::tempdir().unwrap();
+        let new_remote = new_remote_dir.path().join("vault2.git");
+        Repository::init_opts(
+            &new_remote,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let report = engine_a
+            .migrate_remote(&repo_a, &format!("file://{}", new_remote.display()))
+            .unwrap();
+
+        let peer_dir = tempfile::tempdir().unwrap();
+        let peer = Repository::clone(&report.to, peer_dir.path()).unwrap();
+        let peer_engine = SyncEngine::new(peer_dir.path(), "peer", None);
+        let result = peer_engine.pull(&peer, "origin").unwrap();
+        assert!(matches!(result, PullResult::AlreadyUpToDate));
+        let tip_root = SyncEngine::root_commit_oid_from(
+            &peer,
+            peer.head().unwrap().peel_to_commit().unwrap().id(),
+        )
+        .unwrap();
+        assert_eq!(tip_root, root_oid.to_string());
     }
 
     /// S1b-3: the PRODUCTION clone path (engine.clone) refuses a

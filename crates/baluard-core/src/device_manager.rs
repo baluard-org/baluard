@@ -24,7 +24,7 @@ use crate::vault::manifest::DeviceEntry;
 
 /// Format a Unix timestamp as RFC 3339 (UTC, second precision).
 /// Avoids chrono dependency.
-fn format_rfc3339(secs: u64) -> String {
+pub(crate) fn format_rfc3339(secs: u64) -> String {
     // Days from epoch
     let days = secs / 86400;
     let time_secs = (secs % 86400) as u32;

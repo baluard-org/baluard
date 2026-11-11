@@ -2952,6 +2952,246 @@ pub fn handle_trash_purge(
     }
 }
 
+// ── Vault empty ──
+
+/// Old-object prune after a history rewrite: libgit2 cannot gc, so the
+/// CLI shells out to system git. Returns the manual command for the user
+/// when git is missing or a step fails.
+#[cfg(feature = "git-sync")]
+fn prune_local_history(vault_path: &str) -> Option<String> {
+    let run = |args: &[&str]| -> bool {
+        std::process::Command::new("git")
+            .current_dir(vault_path)
+            .args(args)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    if run(&["reflog", "expire", "--expire=now", "--all"]) && run(&["gc", "--prune=now", "--quiet"])
+    {
+        None
+    } else {
+        Some("git reflog expire --expire=now --all && git gc --prune=now".to_string())
+    }
+}
+
+const EMPTY_RECLONE_NOTICE: &str = "History rewritten. Other devices must NOT pull this vault; they will refuse with a rewritten-history message. On every other device, detach and re-add the vault from your git provider (desktop: remove + re-add; mobile: remove + re-add). Enrollment survives.";
+
+fn resolve_empty_phrase(
+    flag: Option<&str>,
+) -> Result<zeroize::Zeroizing<String>, Box<dyn std::error::Error>> {
+    let inner = match flag {
+        Some(p) => {
+            warn_argv_secret("--phrase");
+            p.to_string()
+        }
+        None => match std::env::var("BALUARD_RECOVERY_PHRASE") {
+            Ok(p) => {
+                warn_argv_secret("BALUARD_RECOVERY_PHRASE");
+                p
+            }
+            Err(_) => {
+                println!("Type the vault's 24 recovery words to confirm. This cannot be undone.");
+                prompt_password("Recovery phrase (24 words): ")?
+                    .trim()
+                    .to_string()
+            }
+        },
+    };
+    if inner.split_whitespace().count() != 24 {
+        return Err("Recovery phrase must be exactly 24 words".into());
+    }
+    Ok(zeroize::Zeroizing::new(inner))
+}
+
+#[cfg(feature = "git-sync")]
+fn vault_empty_direct(
+    vault_path: &str,
+    phrase_flag: Option<&str>,
+    rewrite_history: bool,
+    yes: bool,
+) -> Result<(usize, usize, usize, usize, String), Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    // P2: the wipe and any rewrite commit need the signing key.
+    let handle = unlock_vault_direct(vault_path)?;
+    if !handle.is_unlocked() {
+        return Err("vault is locked; unlock first".into());
+    }
+
+    let live = handle.list_cipher_ids()?.len();
+    let trash = handle.list_trash_ids()?.len();
+    let folders = handle.list_folders()?.len();
+    let tags = handle.list_tags()?.len();
+    if !yes {
+        println!("Removes: {live} entries ({trash} in trash), {folders} folders, {tags} tags");
+        println!("Keeps: settings, devices, collections, members, sync setup");
+    }
+    if live + trash + folders + tags == 0 && !rewrite_history {
+        return Ok((0, 0, 0, 0, "already empty".into()));
+    }
+
+    let phrase = resolve_empty_phrase(phrase_flag)?;
+    baluard_core::vault::recovery_kit::verify_recovery_phrase(path, &phrase)
+        .map_err(|e| format!("{e}"))?;
+
+    let report = handle.empty_entries().map_err(|e| format!("{e}"))?;
+
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        path,
+        &first_device_id(vault_path),
+        handle.devkey_seal().as_ref(),
+    );
+    let note = match engine.open_repo() {
+        Err(_) => "no git repository; entries removed locally".to_string(),
+        Ok(repo) => {
+            let has_origin = repo.find_remote("origin").is_ok();
+            if rewrite_history {
+                let (root, gossip) = engine
+                    .rewrite_history_squash(&repo)
+                    .map_err(|e| format!("{e}"))?;
+                if !has_origin {
+                    "no git remote; history rewritten locally".to_string()
+                } else {
+                    engine
+                        .push_rewritten(&repo, "origin", root, gossip)
+                        .map_err(|e| {
+                            format!(
+                                "{}\nLocal history is already rewritten; re-run `baluard vault empty --rewrite-history` to retry the push, or re-point sync at a fresh repo.",
+                                baluard_core::sync::credentials::format_sync_error(&e)
+                            )
+                        })?;
+                    String::new()
+                }
+            } else {
+                let status = engine.status(&repo)?;
+                if status.is_dirty() {
+                    engine.commit_all(&repo, "")?;
+                }
+                if !has_origin {
+                    "no git remote; changes committed locally".to_string()
+                } else {
+                    match engine.push(&repo, "origin") {
+                        Ok(()) => String::new(),
+                        Err(e) => format!(
+                            "push pending: {}",
+                            baluard_core::sync::credentials::format_sync_error(&e)
+                        ),
+                    }
+                }
+            }
+        }
+    };
+    Ok((report.entries, report.folders, report.tags, trash, note))
+}
+
+pub fn handle_vault_empty(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    rewrite_history: bool,
+    phrase_flag: Option<&str>,
+    yes: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+
+            // Banner counts, best-effort: the phrase gate is the real
+            // lock, and an already-empty vault exits before prompting.
+            let counts = client::request_to("vault.list_full", "", socket)
+                .ok()
+                .filter(|r| r.success)
+                .and_then(|r| serde_json::from_str::<serde_json::Value>(&r.payload).ok())
+                .map(|v| {
+                    (
+                        v["ciphers"].as_array().map(|a| a.len()).unwrap_or(0),
+                        v["trash"].as_array().map(|a| a.len()).unwrap_or(0),
+                        v["folders"].as_array().map(|a| a.len()).unwrap_or(0),
+                        client::request_to("tag.list", "", socket)
+                            .ok()
+                            .filter(|r| r.success)
+                            .and_then(|r| {
+                                serde_json::from_str::<serde_json::Value>(&r.payload).ok()
+                            })
+                            .map(|t| {
+                                t.as_array()
+                                    .map(|a| a.len())
+                                    .or_else(|| t["tags"].as_array().map(|a| a.len()))
+                                    .unwrap_or(0)
+                            })
+                            .unwrap_or(0),
+                    )
+                });
+            if let Some((c, t, f, tags)) = counts {
+                if !yes {
+                    println!("Removes: {c} entries ({t} in trash), {f} folders, {tags} tags");
+                    println!("Keeps: settings, devices, collections, members, sync setup");
+                }
+                if c + t + f + tags == 0 && !rewrite_history {
+                    println!("Vault is already empty.");
+                    return Ok(());
+                }
+            }
+            let phrase = resolve_empty_phrase(phrase_flag)?;
+            let payload = serde_json::json!({
+                "phrase": &*phrase,
+                "rewrite_history": rewrite_history,
+            })
+            .to_string();
+            let resp = client::request_to("vault.empty", &payload, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            let v: serde_json::Value = serde_json::from_str(&resp.payload)?;
+            println!(
+                "Removed {} entries, {} folders, {} tags.",
+                v["entries"], v["folders"], v["tags"]
+            );
+            if let Some(note) = v["note"].as_str().filter(|s| !s.is_empty()) {
+                println!("{note}");
+            }
+            if rewrite_history && v["pushed"].as_bool().unwrap_or(false) {
+                println!("{EMPTY_RECLONE_NOTICE}");
+            }
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            #[cfg(feature = "git-sync")]
+            {
+                let (entries, folders, tags, _trash, note) =
+                    vault_empty_direct(vault_path, phrase_flag, rewrite_history, yes)?;
+                // The retry path for a failed rewrite push re-runs on an
+                // already-emptied vault: only skip when there is no
+                // rewrite pending.
+                if entries + folders + tags == 0 && !rewrite_history {
+                    println!("Vault is already empty.");
+                    return Ok(());
+                }
+                println!("Removed {entries} entries, {folders} folders, {tags} tags.");
+                if !note.is_empty() {
+                    println!("{note}");
+                }
+                if rewrite_history {
+                    // Local prune always: it is the only erasure the
+                    // no-remote case has. No concurrent autosync runs in
+                    // direct mode, so the gc cannot race a sync cycle.
+                    if let Some(fallback) = prune_local_history(vault_path) {
+                        println!("Local prune not run automatically; run: {fallback}");
+                    }
+                    if note.is_empty() {
+                        println!("{EMPTY_RECLONE_NOTICE}");
+                    }
+                }
+                Ok(())
+            }
+            #[cfg(not(feature = "git-sync"))]
+            {
+                Err("this build has no git-sync; empty requires it".into())
+            }
+        }
+    }
+}
+
 // ── Delete cipher ──
 
 pub fn handle_delete(

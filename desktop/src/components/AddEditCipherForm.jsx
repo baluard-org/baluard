@@ -1,4 +1,4 @@
-import { createSignal, Show, For, onSettled, onCleanup } from "solid-js";
+import { createSignal, createMemo, Show, For, onSettled, onCleanup } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, formatCardNumber } from "../lib/utils.js";
 import { FIELD_LABEL, handleCardInput } from "../lib/helpers.js";
@@ -48,7 +48,6 @@ export default function AddEditCipherForm(props) {
   const cancel = () => (props.onCancel || (() => {}))();
 
   const cipherType = () => newCipher().cipherType || "login";
-  const schema = () => getSchema(cipherType());
 
   // Favicon fetch is opt-in (settings.fetch_favicons, default off). Read
   // once on mount; the daemon double-checks the flag on every favicon.get.
@@ -95,13 +94,20 @@ export default function AddEditCipherForm(props) {
     setNewCipher({ ...newCipher(), tags: tagsRef });
   }
 
-  // Schema-driven layout rows (reactive)
-  const layoutRows = () => {
+  // Schema-driven layout rows. cipherKind is a primitive gate: it
+  // re-evaluates on every newCipher write but stays equal, so layoutRows
+  // does not re-run per keystroke. Solid 2's <For> recreates all row DOM
+  // when `each` yields new item identities, and these arrays are rebuilt
+  // per call — an unmemoized layoutRows dropped input focus after every
+  // typed character.
+  const cipherKind = createMemo(() => newCipher().cipherType || "login");
+  const schema = () => getSchema(cipherKind());
+  const layoutRows = createMemo(() => {
     const s = schema();
     if (s.layout && s.layout.length) return s.layout.map(row => row.map(k => s.fields.find(f => f.key === k)).filter(Boolean));
     if (s.fields.length) return s.fields.map(f => [f]);
     return [];
-  };
+  });
 
   function addTag() {
     const val = tagInput().trim().toLowerCase().replace(/,$/, "");

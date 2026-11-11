@@ -270,6 +270,11 @@ pub enum SyncError {
     #[error("rollback detected on object {0}")]
     RollbackDetected(String),
 
+    #[error(
+        "vault history was rewritten on the remote (different root commit); re-clone this vault (detach and re-add it from your git provider) to continue syncing"
+    )]
+    HistoryRewritten,
+
     #[error("revocation manifest invalid: {0}")]
     RevocationInvalid(String),
 
