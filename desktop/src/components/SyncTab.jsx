@@ -547,8 +547,16 @@ const [customError, setCustomError] = createSignal(null);
     setSubState("syncing");
     setError(null);
     try {
-      await daemon("sync.push");
-      toastSuccess(t("sync.push"));
+      // The daemon returns the engine's own outcome message ("Pushed to
+      // origin."); surface it instead of a generic success line.
+      const pushRes = await daemon("sync.push");
+      let pushMsg = null;
+      try {
+        pushMsg = JSON.parse(pushRes);
+      } catch {
+        // payload was not JSON
+      }
+      toastSuccess(typeof pushMsg === "string" && pushMsg ? pushMsg : t("sync.push"));
       await loadState();
       setSubState("idle");
     } catch (e) {
@@ -561,8 +569,14 @@ const [customError, setCustomError] = createSignal(null);
     setSubState("syncing");
     setError(null);
     try {
-      await daemon("sync.pull");
-      toastSuccess(t("sync.pull"));
+      const pullRes = await daemon("sync.pull");
+      let pullMsg = null;
+      try {
+        pullMsg = JSON.parse(pullRes);
+      } catch {
+        // payload was not JSON
+      }
+      toastSuccess(typeof pullMsg === "string" && pullMsg ? pullMsg : t("sync.pull"));
       await loadState();
       setSubState("idle");
     } catch (e) {

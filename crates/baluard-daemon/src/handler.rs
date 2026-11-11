@@ -5509,6 +5509,45 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "vault.empty" => {
+            // Phrase-gated destructive op: rate-limit like the enroll
+            // route (a failure burns an attempt, a success commits).
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
+                crate::rate_limit::ClaimResult::Allowed(p) => p,
+                crate::rate_limit::ClaimResult::Backoff(d) => {
+                    return err_response(format!(
+                        "Too many failed attempts. Wait {}s before retrying.",
+                        d.as_secs()
+                    ));
+                }
+                crate::rate_limit::ClaimResult::LockedOut(d) => {
+                    return err_response(format!(
+                        "Vault locked due to too many failed attempts. Wait {}s.",
+                        d.as_secs()
+                    ));
+                }
+            };
+            match state.vault_empty(&req.payload).await {
+                Ok(json) => {
+                    permit.commit_success();
+                    ok_resp(json, token_str)
+                }
+                Err(e) => {
+                    // Burn an attempt only for phrase rejections. A failed
+                    // push or a timeout after the wipe is not an auth
+                    // failure: locking vault.unlock for it would strand
+                    // the recovery the command exists to document.
+                    if let Some(stripped) = e.strip_prefix("phrase rejected: ") {
+                        permit.commit_failure();
+                        err_response(stripped.to_string())
+                    } else {
+                        err_response(e)
+                    }
+                }
+            }
+        }
+
         "vault.archive" => {
             if req.payload.is_empty() {
                 return err_response("Missing cipher UUID in payload");
@@ -5629,7 +5668,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             )
             .await;
             match joined {
-                Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
+                Ok(Ok(Ok(msg))) => {
+                    baluard_runtime::autosync::stamp_last_synced(&state.vault_path);
+                    ok_resp(msg, token_str)
+                }
                 Ok(Ok(Err(e))) => err_response(e),
                 Ok(Err(e)) => err_response(format!("Task join: {e}")),
                 Err(_) => err_response("sync.push timed out".to_string()),
@@ -5654,7 +5696,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             )
             .await;
             match joined {
-                Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
+                Ok(Ok(Ok(msg))) => {
+                    baluard_runtime::autosync::stamp_last_synced(&state.vault_path);
+                    ok_resp(msg, token_str)
+                }
                 Ok(Ok(Err(e))) => err_response(e),
                 Ok(Err(e)) => err_response(format!("Task join: {e}")),
                 Err(_) => err_response("sync.pull timed out".to_string()),
@@ -5714,10 +5759,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(e) => err_response(e),
             }
         }
-        "sync.status_json" => match sync_status_json(&state.vault_path) {
-            Ok(json) => ok_resp(json, token_str),
-            Err(e) => err_response(e),
-        },
+        "sync.status_json" => {
+            match sync_status_json(&state.vault_path, state.autosync.last_sync_secs().await) {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
         "sync.autosync_status" => {
             // M2 handles activation in VaultState::unlock; this route is just a
             // status reader. But as a backstop (e.g. provider connected AFTER
@@ -7231,7 +7278,10 @@ fn infer_provider_from_url(url: &str) -> Option<String> {
 }
 
 #[cfg(feature = "git-sync")]
-fn sync_status_json(vault_path: &std::path::Path) -> Result<String, String> {
+fn sync_status_json(
+    vault_path: &std::path::Path,
+    in_memory_last_sync: Option<u64>,
+) -> Result<String, String> {
     let engine =
         baluard_core::sync::engine::SyncEngine::new(vault_path, &first_device_id(vault_path), None);
     let repo = match engine.open_repo() {
@@ -7274,6 +7324,9 @@ fn sync_status_json(vault_path: &std::path::Path) -> Result<String, String> {
                 .and_then(|reg| reg.get(&m.slug).and_then(|e| e.last_synced))
         });
 
+    // A cycle landing in this process is fresher than the throttled
+    // registry stamp the label otherwise reads.
+    let last_synced = std::cmp::max(last_synced, in_memory_last_sync);
     let resp = serde_json::json!({
         "initialized": true,
         "has_remote": remote_url.is_some(),
