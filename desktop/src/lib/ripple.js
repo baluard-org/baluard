@@ -17,6 +17,14 @@ export function initRipple() {
       target.setAttribute("data-ripple", "");
     }
 
+    // The ripple span is absolutely positioned and needs the target as its
+    // containing block. Only give UNPOSITIONED targets one — overriding a
+    // fixed or absolute button demotes it to relative and its insets become
+    // relative shifts (the theme toggle lost its corner on first press).
+    if (getComputedStyle(target).position === "static") {
+      target.style.position = "relative";
+    }
+
     const rect = target.getBoundingClientRect();
     const size = Math.max(rect.width, rect.height);
     const x = e.clientX - rect.left - size / 2;

@@ -241,8 +241,12 @@ body {
 }
 
 /* Tactile Material Ripple Feedback */
+/* No position here: the ripple span needs the target as its containing
+   block, and ripple.js supplies that (inline relative) ONLY for static
+   targets. A CSS position in this rule demoted every pressed button —
+   unlayered rules beat layered Tailwind utilities, so fixed/absolute
+   floating buttons lost their anchor after the first click. */
 [data-ripple] {
-  position: relative;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
   isolation: isolate;

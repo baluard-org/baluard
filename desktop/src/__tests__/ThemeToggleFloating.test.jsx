@@ -49,4 +49,50 @@ describe("ThemeToggleFloating", () => {
     await Promise.resolve();
     expect(toggleSpy).toHaveBeenCalledTimes(1);
   });
+
+  // Regression (2026-11-11 Mac): a real pointerdown stamped data-ripple on
+  // this button and the unlayered [data-ripple] CSS rule demoted it from
+  // fixed to relative, so its insets became relative shifts and the button
+  // landed half-clipped on the left edge. Two guards pin the fix.
+  it("ripple styling never carries a position rule for [data-ripple]", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    // vitest transforms import.meta.url, so anchor on the process cwd
+    // (tests run from desktop/) instead.
+    const css = fs.readFileSync(
+      path.resolve(process.cwd(), "src/app.css"),
+      "utf8",
+    );
+    const start = css.indexOf("[data-ripple] {");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = css.indexOf("}", start);
+    const block = css.slice(start, end);
+    expect(block).not.toMatch(/position\s*:/);
+  });
+
+  it("a real pointerdown leaves a positioned button positioned", async () => {
+    const { initRipple } = await import("../lib/ripple.js");
+    initRipple();
+    themeMock.current = "dark";
+    const { container } = render(() => <ThemeToggleFloating />);
+    const btn = container.querySelector(".theme-toggle-floating");
+    // Stand in for the stylesheet's fixed utility: the guard in ripple.js
+    // keys on the computed position, so a positioned target must be left
+    // alone entirely.
+    btn.style.position = "fixed";
+    btn.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, button: 0 }),
+    );
+    expect(btn.hasAttribute("data-ripple")).toBe(true);
+    expect(btn.style.position).toBe("fixed");
+    // A static button still gets a positioning context for the ripple span.
+    // It must be in the document: the capture listener lives there.
+    const plain = document.createElement("button");
+    document.body.appendChild(plain);
+    plain.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, button: 0 }),
+    );
+    expect(plain.style.position).toBe("relative");
+    plain.remove();
+  });
 });
