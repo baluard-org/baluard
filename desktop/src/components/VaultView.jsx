@@ -598,10 +598,13 @@ export default function VaultView() {
             </div>
           </div>
 
-          {/* Search Input bar */}
+          {/* Search Input bar — plain flex, no absolute overlay: WebKitGTK's
+             abspos+inset-block path mis-lays the overlay icons on some Linux
+             GPU/Wayland stacks (Arch report); flex centers them on every
+             engine down to the WebKitGTK 2.44 floor without any positioning */}
           <div class="px-6 pb-4 shrink-0">
-            <div class="relative">
-              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[var(--color-muted)]">
+            <div class="flex items-center rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] transition-all focus-within:border-[var(--color-primary)]" data-testid="vault-search">
+              <span class="pl-3.5 shrink-0 flex items-center pointer-events-none text-[var(--color-muted)]">
                 <IconSearch class="w-4 h-4" />
               </span>
               <input
@@ -613,12 +616,12 @@ export default function VaultView() {
                 placeholder={t("vault.searchPlaceholder")}
                 value={vault.searchQuery()}
                 onInput={(e) => vault.setSearchQuery(e.target.value)}
-                class="w-full pl-9 pr-4 py-2.5 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] placeholder-slate-500 outline-none focus:border-[var(--color-primary)] transition-all"
+                class="flex-1 min-w-0 pl-1.5 pr-4 py-2.5 bg-transparent border-0 text-xs text-[var(--color-text)] placeholder-slate-500 outline-none"
               />
               <Show when={vault.searchQuery()}>
                 <button
                   onClick={() => vault.setSearchQuery("")}
-                  class="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-muted)] hover:text-[var(--color-text)]"
+                  class="pr-3 shrink-0 flex items-center text-[var(--color-muted)] hover:text-[var(--color-text)]"
                 >
                   ✕
                 </button>
