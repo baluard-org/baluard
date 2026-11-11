@@ -78,7 +78,7 @@ open class StubVault(
         kek: ByteArray,
         transport: MobileHardwareTransport,
     ) = err()
-    override suspend fun syncPullNow() { calls += "syncPullNow" }
+    override suspend fun syncPullNow(): String { calls += "syncPullNow"; return "pulled" }
     override suspend fun syncOfflineTick() { calls += "syncOfflineTick" }
     override suspend fun archiveCipher(id: String) { calls += "archiveCipher" }
     override suspend fun unarchiveCipher(id: String) { calls += "unarchiveCipher" }

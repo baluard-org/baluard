@@ -92,6 +92,44 @@ pub enum PullOutcome {
     Skipped,
 }
 
+/// What a user-triggered pull actually did. Surfaced through the FFI so a
+/// "Synced" toast can never mean "nothing happened": the silent no-op arms
+/// (inactive coordinator, conflict-paused, busy cycle) become outcomes the
+/// UI can name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullReport {
+    Pulled,
+    /// No active sync (no remote configured), or the vault switched or
+    /// locked while the pull ran.
+    Idle,
+    /// A conflict is paused for manual resolution.
+    Paused,
+    /// Another sync cycle owns the vault, or the pull is still finishing.
+    Busy,
+    /// Uncommitted local content refused the pull.
+    Skipped,
+    Offline,
+    AccessDenied,
+    /// The pull ran and failed; details are in the daemon log.
+    Error,
+}
+
+impl PullReport {
+    /// Stable wire tag for the FFI and the mobile toast matrix.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::Pulled => "pulled",
+            Self::Idle => "idle",
+            Self::Paused => "paused",
+            Self::Busy => "busy",
+            Self::Skipped => "skipped",
+            Self::Offline => "offline",
+            Self::AccessDenied => "access_denied",
+            Self::Error => "error",
+        }
+    }
+}
+
 /// Snapshot of coordinator status, returned by the `sync.autosync_status` route.
 #[derive(Debug, Clone, Serialize)]
 pub struct AutoSyncStatus {
@@ -354,7 +392,7 @@ impl AutoSyncHandle {
     /// on another device land before the user starts working. Mirrors the
     /// daemon's `VaultState::unlock` → `pull_only` hook.
     pub async fn on_unlock(&self, device_id: String) {
-        self.pull_only(device_id).await;
+        let _ = self.pull_only(device_id).await;
     }
 
     /// **`on_mutation`** — arm (or re-arm) the 5s debounced push after a CRUD
@@ -414,8 +452,8 @@ impl AutoSyncHandle {
 
     /// **`pull_now`** — user-initiated pull (pull-to-refresh, "Sync now"). No
     /// debounce, no commit/push: just reconcile remote changes.
-    pub async fn pull_now(&self, device_id: String) {
-        self.pull_only(device_id).await;
+    pub async fn pull_now(&self, device_id: String) -> PullReport {
+        self.pull_only(device_id).await
     }
 
     /// **`offline_tick`** — host-scheduled 30s connectivity probe while the
@@ -431,7 +469,7 @@ impl AutoSyncHandle {
             g.active && g.state == AutoSyncState::Offline
         };
         if offline {
-            self.pull_only(device_id).await;
+            let _ = self.pull_only(device_id).await;
         }
     }
 
@@ -549,11 +587,11 @@ impl AutoSyncHandle {
     /// unlock path to reconcile remote changes the moment the vault opens, and
     /// as the shared body of the focus trigger. Respects the cycle_lock so it
     /// can't race a debounce push. No-op if inactive or a cycle is in flight.
-    pub async fn pull_only(&self, device_id: String) {
+    pub async fn pull_only(&self, device_id: String) -> PullReport {
         let (generation, devkey_seal, enroll_vk) = {
             let g = self.inner.lock().await;
             if !g.active {
-                return;
+                return PullReport::Idle;
             }
             // NeedsDecision guard (peer review 2026-07-23):
             // `nudge` and `background_loop` both refuse to touch the repo while
@@ -565,7 +603,7 @@ impl AutoSyncHandle {
             // the exposure. Same guard as the other two repo-touching paths.
             if g.state == AutoSyncState::NeedsDecision {
                 log::debug!("[autosync] pull_only skipped: conflict paused (NeedsDecision)");
-                return;
+                return PullReport::Paused;
             }
             (g.generation, g.devkey_seal, g.enroll_vk)
         };
@@ -576,7 +614,7 @@ impl AutoSyncHandle {
         // while the un-cancellable git pull is still running.
         let lock_guard = match Arc::clone(&self.cycle_lock).try_lock_owned() {
             Ok(g) => g,
-            Err(_) => return,
+            Err(_) => return PullReport::Busy,
         };
         let mut fresh = false;
         let outcome = tokio::time::timeout(
@@ -595,10 +633,12 @@ impl AutoSyncHandle {
         .await;
         let mut g = self.inner.lock().await;
         if !g.active || g.generation != generation {
-            return;
+            return PullReport::Idle;
         }
+        let mut report = PullReport::Error;
         match outcome {
             Ok(Ok(Ok(PullOutcome::Fresh))) => {
+                report = PullReport::Pulled;
                 fresh = true;
                 g.access_denied_streak = 0;
                 g.last_sync = Some(now_secs());
@@ -613,8 +653,12 @@ impl AutoSyncHandle {
                     }
                 }
             }
-            Ok(Ok(Ok(PullOutcome::Offline))) => g.state = AutoSyncState::Offline,
+            Ok(Ok(Ok(PullOutcome::Offline))) => {
+                report = PullReport::Offline;
+                g.state = AutoSyncState::Offline;
+            }
             Ok(Ok(Ok(PullOutcome::AccessDenied))) => {
+                report = PullReport::AccessDenied;
                 // The remote refuses this device's credentials. Keep the
                 // state machine calm (Offline-like cadence) and let the
                 // streak feed the removal-notice surface.
@@ -622,16 +666,28 @@ impl AutoSyncHandle {
                 g.state = AutoSyncState::Offline;
             }
             Ok(Ok(Ok(PullOutcome::Skipped))) => {
+                report = PullReport::Skipped;
                 log::debug!("[autosync] pull_only skipped: dirty or ineligible worktree");
             }
-            Ok(Ok(Err(ref e))) => log::warn!("[autosync] pull failed: {e}"),
-            Ok(Err(ref e)) => log::warn!("[autosync] pull task failed: {e}"),
-            Err(_) => {} // SYNC_OP_TIMEOUT: the next tick retries
+            Ok(Ok(Err(ref e))) => {
+                report = PullReport::Error;
+                log::warn!("[autosync] pull failed: {e}")
+            }
+            Ok(Err(ref e)) => {
+                report = PullReport::Error;
+                log::warn!("[autosync] pull task failed: {e}")
+            }
+            Err(_) => {
+                // SYNC_OP_TIMEOUT: the pull is still running; the next
+                // tick retries once the cycle lock frees.
+                report = PullReport::Busy;
+            }
         }
         drop(g);
         if fresh {
             self.record_success().await;
         }
+        report
     }
 
     /// Focus-triggered pull. Silently skips if the last sync was within
@@ -653,7 +709,7 @@ impl AutoSyncHandle {
         if skip {
             return;
         }
-        self.pull_only(device_id).await;
+        let _ = self.pull_only(device_id).await;
     }
 
     /// Arm (or re-arm) the push debounce. Called after every successful vault
@@ -1305,8 +1361,10 @@ mod tests {
         h.force_state_for_test(AutoSyncState::NeedsDecision).await;
         assert_eq!(h.status().await.state, AutoSyncState::NeedsDecision);
 
-        // Every public event that delegates to pull_only must be gated.
-        h.pull_now("test-device".to_string()).await;
+        // Every public event that delegates to pull_only must be gated, and
+        // the user-facing one must report the pause instead of a pull.
+        let report = h.pull_now("test-device".to_string()).await;
+        assert_eq!(report, PullReport::Paused, "pull_now must report the pause");
         h.offline_tick("test-device".to_string()).await;
         h.on_unlock("test-device".to_string()).await;
         h.on_foreground("test-device".to_string()).await; // -> nudge_focus_pull -> pull_only

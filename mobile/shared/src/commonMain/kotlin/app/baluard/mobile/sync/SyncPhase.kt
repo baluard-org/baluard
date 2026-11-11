@@ -1,5 +1,6 @@
 package app.baluard.mobile.sync
 
+import app.baluard.mobile.ui.toast.Toast
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
@@ -18,20 +19,37 @@ private val RESULT_BEAT = 2500.milliseconds
  * beat is set (toasts land there) and before the settle.
  */
 suspend fun runSyncCycle(
-    doPull: suspend () -> Unit,
+    doPull: suspend () -> String?,
     afterPull: suspend () -> Unit = {},
     setPhase: (SyncPhase) -> Unit,
-    onResult: (Boolean) -> Unit = {},
+    onResult: (Boolean, String?) -> Unit = { _, _ -> },
 ): Boolean {
     setPhase(SyncPhase.Syncing)
     val mark = TimeSource.Monotonic.markNow()
-    val ok = runCatching { doPull() }.isSuccess
+    val tag = runCatching { doPull() }.getOrNull()
+    val ok = tag == "pulled"
     runCatching { afterPull() }
     val hold = MIN_SPIN - mark.elapsedNow()
     if (hold.isPositive()) delay(hold)
     setPhase(if (ok) SyncPhase.Synced else SyncPhase.Offline)
-    onResult(ok)
+    onResult(ok, tag)
     delay(RESULT_BEAT)
     setPhase(SyncPhase.Idle)
     return ok
+}
+
+/**
+ * Toast for the Rust pull report tag (see PullReport). Only "pulled" says
+ * Synced: idle, paused, busy, skipped and transport failures all get their
+ * own honest copy instead of a blanket success.
+ */
+fun syncOutcomeToast(tag: String?, t: (String) -> String) {
+    when (tag) {
+        "pulled" -> Toast.success(t("sync.synced"))
+        "idle" -> Toast.info(t("sync.noRemote"))
+        "paused", "busy", "skipped" -> Toast.info(t("sync.blocked"))
+        "offline", null -> Toast.error(t("sync.offline"))
+        "access_denied" -> Toast.error(t("sync.denied"))
+        else -> Unit
+    }
 }

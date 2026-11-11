@@ -112,6 +112,7 @@ import app.baluard.mobile.platform.setSecureFlag
 import app.baluard.mobile.platform.clipboardClearLabel
 import app.baluard.mobile.platform.clipboardClearPresets
 import app.baluard.mobile.sync.SyncCoordinator
+import app.baluard.mobile.sync.syncOutcomeToast
 import app.baluard.mobile.sync.SyncPhase
 import app.baluard.mobile.sync.runSyncCycle
 import app.baluard.mobile.ui.components.BaluardCard
@@ -317,6 +318,7 @@ val entitlement by Entitlements.state.collectAsState()
                                     doPull = { coordinator.pullNow(vault) },
                                     afterPull = { runCatching { viewModel.refresh(vault, coordinator) } },
                                     setPhase = { syncPhase = it },
+                                    onResult = { _, tag -> syncOutcomeToast(tag) { t(it) } },
                                 )
                             }
                         }

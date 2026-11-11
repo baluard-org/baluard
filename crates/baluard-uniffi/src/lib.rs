@@ -1037,10 +1037,13 @@ impl MobileVault {
         self.state.autosync.on_background().await;
     }
 
-    /// User pull-to-refresh / "Sync now".
-    pub async fn sync_pull_now(&self) {
+    /// User pull-to-refresh / "Sync now". Returns the pull report tag
+    /// (pulled, idle, paused, busy, skipped, offline, access_denied, error)
+    /// so the UI can toast what actually happened instead of a blanket
+    /// success.
+    pub async fn sync_pull_now(&self) -> String {
         let dn = self.device_id().await;
-        self.state.autosync.pull_now(dn).await;
+        self.state.autosync.pull_now(dn).await.tag().to_string()
     }
 
     /// Host-scheduled 30s probe while Offline + foregrounded (the one piece of
