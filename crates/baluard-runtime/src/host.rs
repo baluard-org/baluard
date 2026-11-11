@@ -285,18 +285,41 @@ impl VaultHost {
         };
 
         // Read the registry without holding the host lock. The self-heal
-        // must fire only when the registry file was LOST or corrupt — a
+        // must fire only when the registry file was LOST or unreadable — a
         // deliberate detach always leaves a valid (possibly empty) file
         // behind, and re-adopting from that state silently undoes the
         // detach (2026-11-11 Mac incident: a detached vault came back from
-        // its backup directory on the next list poll).
+        // its backup directory on the next list poll). A transient I/O
+        // error heals nothing: showing an empty list for one poll is safer
+        // than overwriting a registry we merely failed to read.
         let reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
             Ok(reg) if !reg.vaults.is_empty() => reg,
             Ok(reg) if baluard_core::vault::registry::VaultRegistry::path().exists() => {
                 // Valid, empty, present: the user detached their vaults.
                 reg
             }
-            Ok(_) | Err(_) => self_heal_registry().await,
+            Ok(_) => self_heal_registry().await,
+            Err(
+                e @ (baluard_core::vault::registry::RegistryError::Corrupt(_)
+                | baluard_core::vault::registry::RegistryError::Version(..)),
+            ) => {
+                // Move the unreadable file aside before healing so its bytes
+                // are never silently overwritten by the recovery save.
+                let path = baluard_core::vault::registry::VaultRegistry::path();
+                let aside = path.with_extension(format!(
+                    "json.bad.{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0)
+                ));
+                let _ = std::fs::rename(&path, &aside);
+                log::warn!(
+                    "[host] registry unreadable ({e:?}); moved aside, re-scanning vault folders"
+                );
+                self_heal_registry().await
+            }
+            Err(_) => baluard_core::vault::registry::VaultRegistry::default(),
         };
 
         let mut rows = Vec::with_capacity(reg.vaults.len());
@@ -596,6 +619,13 @@ async fn self_heal_registry() -> baluard_core::vault::registry::VaultRegistry {
             // one entry and keep going (best-effort recovery).
             let _ = reg.add(entry);
         }
+        // Another process may have written a real registry between our read
+        // and this save; if one appeared, keep it instead of clobbering it.
+        if let Ok(fresh) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+            if !fresh.vaults.is_empty() {
+                return fresh;
+            }
+        }
         if reg.save_locked().is_ok() {
             log::info!(
                 "[host] registry self-healed: recovered {} vault(s) from disk",
@@ -673,7 +703,9 @@ mod tests {
     async fn list_respects_a_deliberately_emptied_registry() {
         let _env = crate::test_support::lock_env();
         let dir = tempfile::tempdir().unwrap();
-        // SAFETY: env mutation serialized by the crate-shared lock.
+        // SAFETY: env mutation serialized by the crate-shared lock; the
+        // previous value is restored so sibling tests never see a dead path.
+        let prev_data_dir = std::env::var("BALUARD_DATA_DIR").ok();
         unsafe {
             std::env::set_var("BALUARD_DATA_DIR", dir.path().to_string_lossy().to_string());
         }
@@ -700,16 +732,29 @@ mod tests {
             "a deliberately emptied registry must not self-heal: got {rows:?}"
         );
 
-        // Crash case still recovers: remove the file, the next list()
-        // re-adopts the orphaned vault directory.
-        std::fs::remove_file(baluard_core::paths::data_dir().join("registry.json")).unwrap();
+        // A corrupt file heals the same way, but its bytes are moved aside
+        // instead of being overwritten by the recovery save.
+        let reg_path = baluard_core::vault::registry::VaultRegistry::path();
+        std::fs::remove_file(&reg_path).unwrap();
+        std::fs::write(&reg_path, "{ not json at all").unwrap();
         let rows = host.list().await;
-        assert_eq!(
-            rows.len(),
-            1,
-            "a missing registry file still recovers orphans"
-        );
-        assert_eq!(rows[0].slug, "baluard-orphan");
+        assert_eq!(rows.len(), 1, "a corrupt registry still recovers orphans");
+        let aside_name = std::fs::read_dir(reg_path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .find(|n| n.starts_with("registry.json.bad."))
+            .expect("corrupt registry bytes must be moved aside, not deleted");
+        let aside_bytes = std::fs::read(reg_path.parent().unwrap().join(&aside_name)).unwrap();
+        assert_eq!(aside_bytes, b"{ not json at all");
+
+        // Restore the process env for sibling tests.
+        unsafe {
+            match &prev_data_dir {
+                Some(v) => std::env::set_var("BALUARD_DATA_DIR", v),
+                None => std::env::remove_var("BALUARD_DATA_DIR"),
+            }
+        }
     }
 
     #[tokio::test]
