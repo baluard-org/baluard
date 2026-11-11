@@ -124,6 +124,8 @@ struct Inner {
     conflicts_resolved: u32,
     /// Consecutive access-denied pulls (see [`PullOutcome::AccessDenied`]).
     access_denied_streak: u32,
+    /// Unix ms of the last throttled registry `last_synced` persist.
+    stamp_persist_ms: Option<u64>,
     /// Phase 2b: conflicts paused for field-level resolution. Populated when
     /// `run_sync_cycle` returns `NeedsDecision`; drained by `sync.conflict`
     /// (read) and `sync.conflict.resolve` (consume + finalize). Empty in all
@@ -162,6 +164,50 @@ pub struct AutoSyncHandle {
     cycle_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
+/// Throttle window for persisting the registry `last_synced` stamp: the
+/// registry file takes a global lock shared by every vault, so background
+/// cycles may not rewrite it per pull.
+const STAMP_PERSIST_GAP_MS: u64 = 60_000;
+
+/// `true` when a registry persist is due (first ever, or the gap elapsed).
+fn stamp_due(last_persist_ms: Option<u64>, now_ms: u64) -> bool {
+    last_persist_ms.map_or(true, |t| now_ms.saturating_sub(t) >= STAMP_PERSIST_GAP_MS)
+}
+
+/// Pure over the passed registry so tests avoid the machine-global file.
+/// Sets `last_synced = now` on `slug`'s entry; false when the slug is
+/// unknown.
+fn stamp_registry_entry(
+    reg: &mut baluard_core::vault::registry::VaultRegistry,
+    slug: &str,
+) -> bool {
+    let Some(entry) = reg.get_mut(slug) else {
+        return false;
+    };
+    entry.last_synced = Some(now_secs());
+    true
+}
+
+/// Best-effort registry stamp for a successful sync at `vault_path`: read
+/// the vault's marker for the slug, set the machine-local registry entry's
+/// `last_synced`, save. Returns whether the stamp landed. This is the
+/// field the desktop sync-settings "Last synced" label reads; nothing else
+/// writes it after setup.
+pub fn stamp_last_synced(vault_path: &Path) -> bool {
+    let marker = match baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path) {
+        Ok(Some(m)) => m,
+        _ => return false,
+    };
+    let mut reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    if !stamp_registry_entry(&mut reg, &marker.slug) {
+        return false;
+    }
+    reg.save_locked().is_ok()
+}
+
 impl AutoSyncHandle {
     pub fn new(vault_path: &Path) -> Self {
         Self {
@@ -173,6 +219,7 @@ impl AutoSyncHandle {
                 pending: 0,
                 conflicts_resolved: 0,
                 access_denied_streak: 0,
+                stamp_persist_ms: None,
                 pending_conflicts: Vec::new(),
                 device_id: String::new(),
                 devkey_seal: None,
@@ -203,6 +250,34 @@ impl AutoSyncHandle {
     /// blocking has_remote probe once activation has happened.
     pub async fn is_active(&self) -> bool {
         self.inner.lock().await.active
+    }
+
+    /// Unix seconds of the last sync that landed in THIS process. None
+    /// until one does — `sync_status_json` maxes this against the persisted
+    /// registry stamp so the label is right immediately and after restart.
+    pub async fn last_sync_secs(&self) -> Option<u64> {
+        self.inner.lock().await.last_sync
+    }
+
+    /// Stamp a successful sync: advance the in-memory `last_sync` clock
+    /// and, throttled, persist the registry `last_synced`. Best-effort —
+    /// a registry failure never fails the cycle that earned the stamp.
+    async fn record_success(&self) {
+        let now_ms = now_secs() * 1000;
+        let persist = {
+            let mut g = self.inner.lock().await;
+            g.last_sync = Some(now_ms / 1000);
+            if stamp_due(g.stamp_persist_ms, now_ms) {
+                g.stamp_persist_ms = Some(now_ms);
+                true
+            } else {
+                false
+            }
+        };
+        if persist {
+            let p = self.vault_path.clone();
+            let _ = tokio::task::spawn_blocking(move || stamp_last_synced(&p)).await;
+        }
     }
 
     /// Phase 2b: number of conflicts currently paused for user decision.
@@ -503,6 +578,7 @@ impl AutoSyncHandle {
             Ok(g) => g,
             Err(_) => return,
         };
+        let mut fresh = false;
         let outcome = tokio::time::timeout(
             SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || {
@@ -523,6 +599,7 @@ impl AutoSyncHandle {
         }
         match outcome {
             Ok(Ok(Ok(PullOutcome::Fresh))) => {
+                fresh = true;
                 g.access_denied_streak = 0;
                 g.last_sync = Some(now_secs());
                 // Don't clobber Dirty/Syncing; only settle to Idle from
@@ -544,7 +621,16 @@ impl AutoSyncHandle {
                 g.access_denied_streak = g.access_denied_streak.saturating_add(1);
                 g.state = AutoSyncState::Offline;
             }
-            _ => {}
+            Ok(Ok(Ok(PullOutcome::Skipped))) => {
+                log::debug!("[autosync] pull_only skipped: dirty or ineligible worktree");
+            }
+            Ok(Ok(Err(ref e))) => log::warn!("[autosync] pull failed: {e}"),
+            Ok(Err(ref e)) => log::warn!("[autosync] pull task failed: {e}"),
+            Err(_) => {} // SYNC_OP_TIMEOUT: the next tick retries
+        }
+        drop(g);
+        if fresh {
+            self.record_success().await;
         }
     }
 
@@ -649,6 +735,7 @@ impl AutoSyncHandle {
             }
         };
 
+        let mut synced = false;
         let outcome = tokio::time::timeout(
             timeout,
             tokio::task::spawn_blocking({
@@ -673,6 +760,7 @@ impl AutoSyncHandle {
         }
         match outcome {
             Ok(Ok(Ok(SyncOutcome::Synced { conflicts }))) => {
+                synced = true;
                 // A successful full cycle (manual sync, mutation push) is
                 // proof the remote accepts this device: clear the streak
                 // here too, not only on background pulls (review F6).
@@ -701,17 +789,23 @@ impl AutoSyncHandle {
                 g.pending_conflicts = pending;
                 g.state = AutoSyncState::NeedsDecision;
             }
+            Ok(Ok(Err(ref e))) => log::warn!("[autosync] sync cycle failed: {e}"),
+            Ok(Err(ref e)) => log::warn!("[autosync] sync task failed: {e}"),
             _ => {
-                // Op error, join error, or SYNC_OP_TIMEOUT: do not go offline
-                // unless run_sync_cycle mapped it to Offline (handled above).
-                // Stay Idle so the next mutation retries. L1 fix: do NOT
-                // advance last_sync on error, or the UI would falsely show
-                // "All synced". The timeout case is what stops a hung git2 op
-                // (no libgit2 transport timeout) from leaking the pool thread.
+                // SYNC_OP_TIMEOUT: do not go offline unless run_sync_cycle
+                // mapped it to Offline (handled above). Stay Idle so the next
+                // mutation retries. L1 fix: do NOT advance last_sync on
+                // error, or the UI would falsely show "All synced". The
+                // timeout case stops a hung git2 op (no libgit2 transport
+                // timeout) from leaking the pool thread.
                 if g.pending == 0 {
                     g.state = AutoSyncState::Idle;
                 }
             }
+        }
+        drop(g);
+        if synced {
+            self.record_success().await;
         }
     }
 
@@ -795,6 +889,7 @@ impl AutoSyncHandle {
             };
             let vault_path = self.vault_path.clone();
             let dn = device_id.clone();
+            let mut fresh = false;
             let outcome = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
@@ -814,6 +909,7 @@ impl AutoSyncHandle {
             }
             match outcome {
                 Ok(Ok(Ok(PullOutcome::Fresh))) => {
+                    fresh = true;
                     g.access_denied_streak = 0;
                     g.last_sync = Some(now_secs());
                     // A mutation may be sitting unpushed (its push went
@@ -833,7 +929,16 @@ impl AutoSyncHandle {
                     g.access_denied_streak = g.access_denied_streak.saturating_add(1);
                     g.state = AutoSyncState::Offline;
                 }
-                _ => {}
+                Ok(Ok(Ok(PullOutcome::Skipped))) => {
+                    log::debug!("[autosync] background pull skipped: dirty or ineligible");
+                }
+                Ok(Ok(Err(ref e))) => log::warn!("[autosync] background pull failed: {e}"),
+                Ok(Err(ref e)) => log::warn!("[autosync] background pull task failed: {e}"),
+                Err(_) => {}
+            }
+            drop(g);
+            if fresh {
+                self.record_success().await;
             }
         }
     }
@@ -996,6 +1101,21 @@ fn now_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_entry(slug: &str) -> baluard_core::vault::registry::VaultEntry {
+        baluard_core::vault::registry::VaultEntry {
+            slug: slug.to_string(),
+            display_name: slug.to_string(),
+            path: std::path::PathBuf::from("/tmp"),
+            provider: None,
+            remote_url: None,
+            last_synced: None,
+            last_opened: None,
+            vault_id: uuid::Uuid::new_v4(),
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
+        }
+    }
 
     // Phase 2b holistic review fix #1 regression: deactivate() must clear
     // pending_conflicts so state and the queue never disagree. Pre-fix, a
@@ -1200,5 +1320,38 @@ mod tests {
         );
 
         h.deactivate().await;
+    }
+
+    #[test]
+    fn stamp_registry_entry_sets_last_synced_on_the_known_slug() {
+        let mut reg = baluard_core::vault::registry::VaultRegistry::default();
+        reg.add(test_entry("baluard-a")).unwrap();
+        assert!(stamp_registry_entry(&mut reg, "baluard-a"));
+        assert!(reg.get("baluard-a").unwrap().last_synced.is_some());
+    }
+
+    #[test]
+    fn stamp_registry_entry_refuses_unknown_slugs() {
+        let mut reg = baluard_core::vault::registry::VaultRegistry::default();
+        assert!(!stamp_registry_entry(&mut reg, "baluard-missing"));
+    }
+
+    #[test]
+    fn stamp_due_enforces_the_persist_throttle() {
+        assert!(stamp_due(None, 1_000));
+        assert!(!stamp_due(Some(0), 59_999));
+        assert!(stamp_due(Some(0), 60_000));
+        assert!(!stamp_due(Some(30_000), 89_999));
+        assert!(stamp_due(Some(30_000), 90_000));
+    }
+
+    #[tokio::test]
+    async fn record_success_advances_the_in_memory_clock_without_a_registry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let h = AutoSyncHandle::new(tmp.path());
+        assert_eq!(h.last_sync_secs().await, None);
+        // No .baluard marker in the tempdir: the registry persist no-ops.
+        h.record_success().await;
+        assert!(h.last_sync_secs().await.is_some());
     }
 }

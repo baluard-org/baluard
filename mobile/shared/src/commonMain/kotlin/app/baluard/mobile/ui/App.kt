@@ -159,6 +159,9 @@ fun App(
 
         var showCreate by remember { mutableStateOf(false) }
         var showOpen by remember { mutableStateOf(false) }
+        // ADR 0102: the hub/list Sync buttons gate like the Settings one.
+        var showSyncUpgrade by remember { mutableStateOf(false) }
+        val entitlement by Entitlements.state.collectAsState()
         var unlocked by remember { mutableStateOf(false) }
         // Where the create ceremony writes. Set by the switcher's create row
         // (fresh directory) or first-run staging (the default vault path); the
@@ -268,7 +271,12 @@ fun App(
         // Shared sync runner: guarantees a visible spin, then reports the
         // outcome phase. Used by the hub and the filtered entry lists.
         val startSync: (MobileVault, (SyncPhase) -> Unit) -> Unit = { vault, setPhase ->
-            scope.launch {
+            // ADR 0102: sync is gated on store builds; the button opens the
+            // upgrade sheet instead of running a pull that reports success
+            // while doing nothing.
+            if (!entitlement.syncUnlocked) {
+                showSyncUpgrade = true
+            } else scope.launch {
                 runSyncCycle(
                     doPull = { sync.pullNow(vault) },
                     afterPull = {
@@ -921,6 +929,10 @@ fun App(
                 Modifier
                     .align(Alignment.TopCenter)
                     .statusBarsPadding(),
+            )
+            app.baluard.mobile.ui.components.UpgradeSheet(
+                shown = showSyncUpgrade,
+                onDismiss = { showSyncUpgrade = false },
             )
         } // Box
         } // Surface

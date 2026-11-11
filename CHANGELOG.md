@@ -4,6 +4,11 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- New command `baluard vault empty`: deletes every entry in a personal vault in one step, optionally scrubbing them from the synced git history as well, confirmed with your 24 recovery words. See ADR 0105.
+- The entry editor no longer loses focus after every keystroke on the desktop.
+- Sync toasts on the desktop now show the real result of each operation (for example "Already up to date." or "Pushed to origin.") instead of a generic success line.
+- The Last synced time in Sync settings now advances with every successful sync, not only when a vault is first connected.
+- On Android, the Sync buttons on the vault and list screens now respect your subscription state and open the upgrade sheet instead of reporting success without syncing.
 - Fixed adding new entries from the desktop app, which failed with a generic error message since the 0.1.0 release.
 - Linux: the tray icon is rebuilt on the modern StatusNotifierItem protocol, so GNOME users with a tray extension (AppIndicator Support, Tray Icons Reloaded, Tray Icons, or Status Icons) get a working icon again, and it appears without restarting the app once an extension is installed. The deprecated tray library behind the startup warnings is gone, and on GNOME without any tray extension, Baluard now says so and points at installing one; closing the window there minimizes it (reachable from the Activities overview) instead of hiding it into a tray that does not exist.
 - Closing the window now follows the new Run in the background setting: on (the default), Baluard keeps running in the tray so browser autofill stays working; off, closing quits Baluard. The old hide-from-Dock toggle is gone.
