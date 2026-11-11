@@ -68,6 +68,11 @@ cp target/debug/baluard-daemon desktop/src-tauri/target/debug/baluard-daemon
 # The desktop crate sits outside the workspace, so the build above never
 # refreshes the app binary. A stale one fails the daemon version
 # handshake at startup and every flow times out on the login field.
+# tauri-build embeds frontendDist into the binary at build-script time and
+# its rerun fingerprint does not reliably track dist changes, so a stale
+# embedded asset set (an older index-*.js) can serve in place of current
+# source. Purge the cached build-script output so the embed is rebuilt.
+rm -rf desktop/src-tauri/target/debug/build/tauri-*/output
 PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-/usr/lib64/pkgconfig}" cargo build --manifest-path desktop/src-tauri/Cargo.toml > /dev/null 2>&1 || {
   echo "desktop build failed"; exit 1;
 }

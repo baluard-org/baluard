@@ -240,9 +240,12 @@ export default function LoginScreen() {
   }
 
   return (
-    <div class="login-screen flex justify-center h-full overflow-y-auto bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 py-8 relative">
+    // The toggle lives outside the flex scroller so an engine bug that drops
+    // its positioning degrades to a small static button, never a stretched
+    // flex item (the WebKitGTK search-bar failure class).
+    <div class="relative h-full">
       <ThemeToggleFloating />
-
+    <div class="login-screen flex justify-center h-full overflow-y-auto bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 py-8 relative">
       <div class="login-screen__card w-full max-w-md my-auto p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast motion-fade-up">
         {/* Static gradient accents (contained glow, replaces expensive blur-3xl for GPU performance) */}
         <div class="login-screen__glow-top absolute -top-10 -left-10 w-40 h-40 rounded-full opacity-10 pointer-events-none" style={{"background": "radial-gradient(circle, var(--color-primary) 0%, transparent 70%)"}}></div>
@@ -514,6 +517,7 @@ export default function LoginScreen() {
           <LegacyContactOpen onClose={() => setShowLegacyOpen(false)} />
         </Show>
       </div>
+    </div>
     </div>
   );
 }

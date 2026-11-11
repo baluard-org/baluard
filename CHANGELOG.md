@@ -4,7 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-No user-facing changes yet.
+- Pressing the theme toggle on the unlock and setup screens no longer stretches it into a tall strip; the button stays in its corner.
 
 ## 0.4.0 - 2026-11-11
 

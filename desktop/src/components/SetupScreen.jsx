@@ -142,8 +142,10 @@ export default function SetupScreen() {
   }
 
   return (
-    <div class="flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 relative overflow-y-auto py-8">
+    // See LoginScreen: the toggle must sit outside the flex scroller.
+    <div class="relative h-full">
       <ThemeToggleFloating />
+    <div class="flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 relative overflow-y-auto py-8">
       <div class="flex items-center justify-center min-h-full w-full">
         <FocusTrap containerRef={cardRef} />
         <div ref={cardRef} class="w-full max-w-lg p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast">
@@ -302,6 +304,7 @@ export default function SetupScreen() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }
