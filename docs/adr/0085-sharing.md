@@ -189,7 +189,7 @@ Rotation re-encrypts affected ciphers and attachments, updates wraps, and propag
 
 ### IPC and locking
 
-Daemon IPC is default-deny. Only explicitly enumerated pre-token host actions are exempt, and an exact-set test pins the exempt set (13 entries in source at the time of writing). Sentinel-forwarded actions must be a subset of the exempt set, which catches a gated action routed through a tokenless sentinel. Host-only actions are rejected by a tripwire before the token gate. Host routes such as `vaults.*` and the bridge ceremony stay pre-token by design because a per-vault token cannot exist before unlock.
+Daemon IPC is default-deny. Only explicitly enumerated pre-token host actions are exempt, and an exact-set test pins the exempt set (15 entries in source at the time of writing). Sentinel-forwarded actions must be a subset of the exempt set, which catches a gated action routed through a tokenless sentinel. Host-only actions are rejected by a tripwire before the token gate. Host routes such as `vaults.*` and the bridge ceremony stay pre-token by design because a per-vault token cannot exist before unlock.
 
 `VaultState::lock` is host-private. Locking bumps a session generation first, every token mint site stamps the mint generation, and verification rejects a mismatched generation, so a stale token dies even if a future lock path forgets to clear it. The host lock is acquired before per-vault locks and released before cascading locks. Lock never awaits the sync cycle lock, because that lock is held across a network call whose timeout does not cancel the blocking task.
 

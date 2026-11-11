@@ -14,12 +14,17 @@ export const ERROR_PATTERNS = [
   { pattern: /Commit failed|UnsignedCommitRefused/i, key: "errors.syncCommit" },
   { pattern: /Git open failed|Git init failed|Status check failed/i, key: "errors.syncLocal" },
   { pattern: /vault registry could not be (loaded|updated)/i, key: "errors.syncRegistry" },
-  // Provider sign-in and clone-download outcomes (daemon strings). The
-  // clone wizard runs with no vault open, so these surface on the
-  // welcome screen.
+  // Transport failures carry reqwest's "error sending request" text;
+  // this row must precede the provider rows so an offline sign-in reads
+  // as a connection problem, not a rejection.
+  { pattern: /error sending request|connection refused|timed out/i, key: "errors.network" },
+  // Clone wizard runs with no vault open; these daemon strings surface
+  // on the welcome screen.
   { pattern: /No active vault/i, key: "errors.noVault" },
-  { pattern: /Device flow start failed|oauth_start failed|Token validation failed/i, key: "errors.providerSignin" },
-  { pattern: /Clone failed|clone failed/i, key: "errors.cloneFailed" },
+  { pattern: /Token validation failed|invalid_client/i, key: "errors.providerSignin" },
+  { pattern: /Cloned repository has no .baluard marker/i, key: "errors.cloneFailed" },
+  { pattern: /Cloned, but storing the credentials failed/i, key: "errors.cloneFailed" },
+  { pattern: /host_key_untrusted/i, key: "errors.hostKey" },
   // Site-icon backfill outcomes (daemon strings from the batch job).
   { pattern: /Fetching site icons is turned off/i, key: "errors.backfillDisabled" },
   { pattern: /An icon fetch is already running/i, key: "errors.backfillBusy" },

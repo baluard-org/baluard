@@ -69,6 +69,27 @@ describe("sanitizeError", () => {
     expect(sanitizeError("incorrect password", t)).toBe("errors.invalidPassword");
   });
 
+  test("maps the clone wizard's pre-vault failures to real copy", () => {
+    expect(
+      sanitizeError("No active vault. Open or unlock one first, or pass a slug.", t),
+    ).toBe("errors.noVault");
+    expect(
+      sanitizeError("Device flow start failed: API error: token validation failed: invalid_client", t),
+    ).toBe("errors.providerSignin");
+    expect(
+      sanitizeError("oauth_start failed: error sending request for url (https://github.com)", t),
+    ).toBe("errors.network");
+    expect(
+      sanitizeError("Cloned repository has no .baluard marker (not a Baluard vault)", t),
+    ).toBe("errors.cloneFailed");
+    expect(
+      sanitizeError("Cloned, but storing the credentials failed: no keyring backend", t),
+    ).toBe("errors.cloneFailed");
+    expect(sanitizeError('sync error: {"error":"host_key_untrusted"}', t)).toBe(
+      "errors.hostKey",
+    );
+  });
+
   test("matches security-key touch outcomes with specific copy", () => {
     expect(
       sanitizeError("the security key was not tapped in time; try again", t),

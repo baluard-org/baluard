@@ -303,8 +303,10 @@ fn ipc_version_refusal(client: u32) -> Option<String> {
 ///   keyring + providers.json operations used by the pre-unlock
 ///   add-existing-vault flow (PAT connect, repo listing for clone/download,
 ///   disconnect). They touch provider token state in the OS keyring, never
-///   vault secrets. These eight are exactly what the host dispatcher
-///   forwards through the tokenless sentinel (`SENTINEL_FORWARDED_ACTIONS`)
+///   vault secrets. These ten (the six listed above plus
+///   provider.oauth_start_web and provider.oauth_status_web) are exactly
+///   what the host dispatcher forwards through the tokenless sentinel
+///   (`SENTINEL_FORWARDED_ACTIONS`)
 ///   — see that const's invariant.
 ///
 /// Unlock primitives (`vault.biometric_unlock`, `vault.pin_unlock`) never
@@ -325,13 +327,14 @@ const TOKEN_EXEMPT_ACTIONS: &[&str] = &[
     "provider.disconnect",
     "provider.repos",
     "provider.vault_repos",
-    // OAuth start/status and remote repo creation ride the SAME trust
-    // class as the routes above (global keyring + providers.json, no
-    // vault data) — and the clone wizard calls them from the welcome
-    // screen where no vault exists to gate a session token against.
+    // OAuth start/status ride the SAME trust class as the routes above
+    // (global keyring + providers.json, no vault data) — and the clone
+    // wizard calls them from the welcome screen where no vault exists to
+    // gate a session token against. create_repo stays gated: it writes to
+    // the provider's account, and all of its callers (onboarding setup,
+    // sync settings, CLI) run with a vault unlocked.
     "provider.oauth_start_web",
     "provider.oauth_status_web",
-    "provider.create_repo",
 ];
 
 /// Actions the host dispatcher forwards through the tokenless sentinel
@@ -350,7 +353,6 @@ const SENTINEL_FORWARDED_ACTIONS: &[&str] = &[
     "provider.vault_repos",
     "provider.oauth_start_web",
     "provider.oauth_status_web",
-    "provider.create_repo",
 ];
 
 /// Host-only lifecycle actions. They are intercepted by
@@ -1653,19 +1655,20 @@ async fn route_host_request_inner(
         // gated action forwarded here would be rejected "Vault is locked"
         // on every call. Enforced by `sentinel_forwarded_actions_are_exempt`.
         //
-        // provider.oauth_start_web / oauth_status_web / create_repo are in
-        // the sentinel set too: they touch the global keyring and
-        // providers.json, never vault data, and the clone wizard calls them
-        // from the welcome screen where no vault exists to check a session
-        // token against (NEW-1; the old fall-through 404'd the wizard's
-        // first call with "No active vault").
+        // provider.oauth_start_web / oauth_status_web are in the sentinel
+        // set too: they touch the global keyring and providers.json, never
+        // vault data, and the clone wizard calls them from the welcome
+        // screen where no vault exists to check a session token against
+        // (NEW-1; the old fall-through 404'd the wizard's first call with
+        // "No active vault").
         a if SENTINEL_FORWARDED_ACTIONS.contains(&a) => {
             let sentinel = std::sync::Arc::new(VaultState::new(std::path::PathBuf::new()));
             return route_request(req, &sentinel).await;
         }
 
-        // provider.oauth_start_web / oauth_status_web / create_repo
-        // → fall through to the vault-snapshot path below.
+        // provider.create_repo stays vault-scoped (it writes to the
+        // provider's account and every caller runs with a vault unlocked)
+        // → falls through to the vault-snapshot path below.
         _ => {}
     }
 
@@ -8086,7 +8089,6 @@ mod tests {
             "provider.connect_pat",
             "provider.connect_poll",
             "provider.connect_start",
-            "provider.create_repo",
             "provider.list",
             "provider.oauth_start_web",
             "provider.oauth_status_web",

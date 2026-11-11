@@ -1008,3 +1008,40 @@ async fn oauth_start_web_answers_without_any_vault() {
         "auth_url must be an https authorize URL, got: {url}"
     );
 }
+
+/// Companion to the test above: the wizard's poll leg must also answer
+/// with no vault registered (same sentinel class), whatever the session
+/// state happens to be — process-global OAUTH_SESSIONS may hold entries
+/// from sibling tests.
+#[tokio::test]
+async fn oauth_status_web_answers_without_any_vault() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(&[], None);
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "provider.oauth_status_web",
+        serde_json::json!({ "provider": "github" }),
+    );
+
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        route_host_request(req, &host),
+    )
+    .await
+    .expect("oauth status must answer, never hang");
+    // With no session in flight the arm answers the honest no-session
+    // error; either way it must NEVER hit the old snapshot gate.
+    assert!(
+        resp.success || resp.error_message.contains("No web-OAuth session"),
+        "oauth status must route past the vault gate, got: {}",
+        resp.error_message
+    );
+    assert!(
+        !resp.error_message.contains("No active vault"),
+        "oauth status must not demand a vault"
+    );
+}

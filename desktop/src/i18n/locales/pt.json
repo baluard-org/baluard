@@ -629,7 +629,9 @@
     "backfillDisabled": "Buscar ícones está desativado. Ative \"Mostrar ícones de sites\" nas Configurações para usar isto.",
     "noVault": "Abra ou crie um cofre primeiro.",
     "providerSignin": "O serviço de login do provedor rejeitou a solicitação. Um token de acesso funciona no lugar.",
-    "cloneFailed": "Falha ao baixar o cofre. Verifique sua conexão e tente novamente."
+    "cloneFailed": "Falha ao baixar o cofre. Verifique sua conexão e tente novamente.",
+    "network": "Verifique sua conexão com a internet e tente novamente.",
+    "hostKey": "A chave de host do servidor mudou ou não é confiável. Verifique-a antes de continuar."
   },
   "categories": {
     "allItems": "Todos os itens",
