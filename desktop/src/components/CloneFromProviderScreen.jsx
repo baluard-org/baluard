@@ -158,8 +158,8 @@ export default function CloneFromProviderScreen(props) {
 	const providerLabel = (key) => providerLabelT(t, key);
 
 	return (
-		<div class="clone-screen flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4">
-			<div class="clone-screen__card w-full max-w-lg p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl motion-fade-up">
+		<div class="clone-screen flex justify-center h-full overflow-y-auto bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 py-8">
+			<div class="clone-screen__card w-full max-w-lg my-auto p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl motion-fade-up">
 				<div class="flex items-center gap-3 mb-6">
 					<button
 						type="button"
