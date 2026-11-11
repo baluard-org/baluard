@@ -4,6 +4,12 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+No user-facing changes yet.
+
+## 0.4.0 - 2026-11-11
+
+- Passkeys imported from Bitwarden JSON exports now include their private key, so they work after import, and passkey secrets are no longer shown in plain text when an entry is viewed as JSON.
+- On Linux, the search field icons stay put instead of drifting out of the search box.
 - The floating theme button now shows what the next press does (a sun to go light, a moon to go dark), and when your choice matches what your system already provides it hands control back to the system preference.
 - Notification popups now appear in the bottom-right corner instead of the top-right, where they covered the theme button.
 - Fixed top-and-bottom clipping on the unlock, join, welcome, and download screens when the window is not maximized: content now scrolls instead of being cut off.
