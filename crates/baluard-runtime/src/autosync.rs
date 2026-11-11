@@ -79,26 +79,19 @@ pub enum AutoSyncState {
 /// persistence across cycles is the kicked signal.
 pub const ACCESS_DENIED_STREAK_FOR_REMOVAL: u32 = 3;
 
-/// Outcome of a background pull. `AccessDenied` means the remote refused
-/// THIS device's credentials (seat strike / revoked token) — distinct
-/// from `Offline` (transport failure) so the removal notice can fire.
-pub enum PullOutcome {
-    Fresh,
-    Offline,
-    AccessDenied,
-    /// The pull refused to overwrite uncommitted local content; the
-    /// debounced commit will clear it and the next tick retries. Not a
-    /// failure: no state change, no last_sync advance.
-    Skipped,
-}
-
 /// What a user-triggered pull actually did. Surfaced through the FFI so a
 /// "Synced" toast can never mean "nothing happened": the silent no-op arms
 /// (inactive coordinator, conflict-paused, busy cycle) become outcomes the
 /// UI can name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullReport {
+    /// The fetch applied new remote content (fast-forward or merge).
     Pulled,
+    /// Nothing new on the remote.
+    UpToDate,
+    /// A divergence was resolved by keeping this device's local content;
+    /// the merge commit pushes on the next cycle.
+    KeptLocal,
     /// No active sync (no remote configured), or the vault switched or
     /// locked while the pull ran.
     Idle,
@@ -119,6 +112,8 @@ impl PullReport {
     pub fn tag(&self) -> &'static str {
         match self {
             Self::Pulled => "pulled",
+            Self::UpToDate => "up_to_date",
+            Self::KeptLocal => "kept_local",
             Self::Idle => "idle",
             Self::Paused => "paused",
             Self::Busy => "busy",
@@ -160,7 +155,7 @@ struct Inner {
     last_sync: Option<u64>,
     pending: u32,
     conflicts_resolved: u32,
-    /// Consecutive access-denied pulls (see [`PullOutcome::AccessDenied`]).
+    /// Consecutive access-denied pulls (see [`PullReport::AccessDenied`]).
     access_denied_streak: u32,
     /// Unix ms of the last throttled registry `last_synced` persist.
     stamp_persist_ms: Option<u64>,
@@ -637,37 +632,36 @@ impl AutoSyncHandle {
         }
         let mut report = PullReport::Error;
         match outcome {
-            Ok(Ok(Ok(PullOutcome::Fresh))) => {
-                report = PullReport::Pulled;
-                fresh = true;
-                g.access_denied_streak = 0;
-                g.last_sync = Some(now_secs());
-                // Don't clobber Dirty/Syncing; only settle to Idle from
-                // Offline — and never report Idle while mutations sit
-                // unpushed (their push went Offline earlier).
-                if g.state == AutoSyncState::Offline {
-                    if g.pending > 0 {
-                        g.state = AutoSyncState::Dirty;
-                    } else {
-                        g.state = AutoSyncState::Idle;
+            Ok(Ok(Ok(r))) => {
+                report = r;
+                if matches!(
+                    r,
+                    PullReport::Pulled | PullReport::UpToDate | PullReport::KeptLocal
+                ) {
+                    fresh = true;
+                    g.access_denied_streak = 0;
+                    g.last_sync = Some(now_secs());
+                    // Don't clobber Dirty/Syncing; only settle to Idle from
+                    // Offline — and never report Idle while mutations sit
+                    // unpushed (their push went Offline earlier).
+                    if g.state == AutoSyncState::Offline {
+                        if g.pending > 0 {
+                            g.state = AutoSyncState::Dirty;
+                        } else {
+                            g.state = AutoSyncState::Idle;
+                        }
                     }
+                } else if r == PullReport::Offline {
+                    g.state = AutoSyncState::Offline;
+                } else if r == PullReport::AccessDenied {
+                    // The remote refuses this device's credentials. Keep the
+                    // state machine calm (Offline-like cadence) and let the
+                    // streak feed the removal-notice surface.
+                    g.access_denied_streak = g.access_denied_streak.saturating_add(1);
+                    g.state = AutoSyncState::Offline;
+                } else if r == PullReport::Skipped {
+                    log::debug!("[autosync] pull_only skipped: dirty or ineligible worktree");
                 }
-            }
-            Ok(Ok(Ok(PullOutcome::Offline))) => {
-                report = PullReport::Offline;
-                g.state = AutoSyncState::Offline;
-            }
-            Ok(Ok(Ok(PullOutcome::AccessDenied))) => {
-                report = PullReport::AccessDenied;
-                // The remote refuses this device's credentials. Keep the
-                // state machine calm (Offline-like cadence) and let the
-                // streak feed the removal-notice surface.
-                g.access_denied_streak = g.access_denied_streak.saturating_add(1);
-                g.state = AutoSyncState::Offline;
-            }
-            Ok(Ok(Ok(PullOutcome::Skipped))) => {
-                report = PullReport::Skipped;
-                log::debug!("[autosync] pull_only skipped: dirty or ineligible worktree");
             }
             Ok(Ok(Err(ref e))) => {
                 report = PullReport::Error;
@@ -964,29 +958,31 @@ impl AutoSyncHandle {
                 return;
             }
             match outcome {
-                Ok(Ok(Ok(PullOutcome::Fresh))) => {
-                    fresh = true;
-                    g.access_denied_streak = 0;
-                    g.last_sync = Some(now_secs());
-                    // A mutation may be sitting unpushed (its push went
-                    // Offline; the local commit already landed). Going
-                    // Idle would report "synced" while ahead — go Dirty
-                    // so the loop's next slice runs a push cycle.
-                    if g.pending > 0 {
-                        g.state = AutoSyncState::Dirty;
-                    } else {
-                        g.state = AutoSyncState::Idle;
+                Ok(Ok(Ok(r))) => {
+                    if matches!(
+                        r,
+                        PullReport::Pulled | PullReport::UpToDate | PullReport::KeptLocal
+                    ) {
+                        fresh = true;
+                        g.access_denied_streak = 0;
+                        g.last_sync = Some(now_secs());
+                        // A mutation may be sitting unpushed (its push went
+                        // Offline; the local commit already landed). Going
+                        // Idle would report "synced" while ahead — go Dirty
+                        // so the loop's next slice runs a push cycle.
+                        if g.pending > 0 {
+                            g.state = AutoSyncState::Dirty;
+                        } else {
+                            g.state = AutoSyncState::Idle;
+                        }
+                    } else if r == PullReport::Offline {
+                        g.state = AutoSyncState::Offline;
+                    } else if r == PullReport::AccessDenied {
+                        g.access_denied_streak = g.access_denied_streak.saturating_add(1);
+                        g.state = AutoSyncState::Offline;
+                    } else if r == PullReport::Skipped {
+                        log::debug!("[autosync] background pull skipped: dirty or ineligible");
                     }
-                }
-                Ok(Ok(Ok(PullOutcome::Offline))) => {
-                    g.state = AutoSyncState::Offline;
-                }
-                Ok(Ok(Ok(PullOutcome::AccessDenied))) => {
-                    g.access_denied_streak = g.access_denied_streak.saturating_add(1);
-                    g.state = AutoSyncState::Offline;
-                }
-                Ok(Ok(Ok(PullOutcome::Skipped))) => {
-                    log::debug!("[autosync] background pull skipped: dirty or ineligible");
                 }
                 Ok(Ok(Err(ref e))) => log::warn!("[autosync] background pull failed: {e}"),
                 Ok(Err(ref e)) => log::warn!("[autosync] background pull task failed: {e}"),
@@ -1072,7 +1068,7 @@ fn run_pull_only(
     device_id: &str,
     devkey_seal: Option<&[u8; 32]>,
     enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
-) -> Result<PullOutcome, String> {
+) -> Result<PullReport, String> {
     use baluard_core::sync::engine::{
         PullResult, SyncEngine, is_access_denied_error, is_network_error,
     };
@@ -1086,8 +1082,8 @@ fn run_pull_only(
         // Access-denied FIRST: a provider strike surfaces as an HTTP
         // status inside a Network-class error, so the network arm would
         // shadow it if it came first (review F1).
-        Err(ref e) if is_access_denied_error(e) => return Ok(PullOutcome::AccessDenied),
-        Err(ref e) if is_network_error(e) => return Ok(PullOutcome::Offline),
+        Err(ref e) if is_access_denied_error(e) => return Ok(PullReport::AccessDenied),
+        Err(ref e) if is_network_error(e) => return Ok(PullReport::Offline),
         Err(e) => return Err(format_sync_err(&e)),
     };
     match engine.pull(&repo, "origin") {
@@ -1105,7 +1101,7 @@ fn run_pull_only(
             // next cycle retries instead of pushing a corrupt tree.
             engine
                 .resolve_conflict_keep_local(&repo, local_oid, remote_oid, &files)
-                .map(|_| PullOutcome::Fresh)
+                .map(|_| PullReport::KeptLocal)
                 .map_err(|e| format!("conflict resolution failed: {e}"))
         }
         // P5b: the pull wrote cipher files through the engine, bypassing
@@ -1115,12 +1111,12 @@ fn run_pull_only(
         // force a full O(N) re-decrypt at the next list.
         Ok(PullResult::FastForward) | Ok(PullResult::Merged) => {
             SyncEngine::invalidate_local_index(vault_path);
-            Ok(PullOutcome::Fresh)
+            Ok(PullReport::Pulled)
         }
-        Ok(_) => Ok(PullOutcome::Fresh),
+        Ok(PullResult::AlreadyUpToDate) => Ok(PullReport::UpToDate),
         // Access-denied before network: same shadowing rule as above.
-        Err(ref e) if is_access_denied_error(e) => Ok(PullOutcome::AccessDenied),
-        Err(ref e) if is_network_error(e) => Ok(PullOutcome::Offline),
+        Err(ref e) if is_access_denied_error(e) => Ok(PullReport::AccessDenied),
+        Err(ref e) if is_network_error(e) => Ok(PullReport::Offline),
         // A dirty-worktree refusal is transient: the debounced commit
         // clears it and the next tick retries. Not a sync failure.
         Err(ref e)
@@ -1131,7 +1127,7 @@ fn run_pull_only(
                 )
             ) =>
         {
-            Ok(PullOutcome::Skipped)
+            Ok(PullReport::Skipped)
         }
         Err(e) => Err(format_sync_err(&e)),
     }
@@ -1143,8 +1139,8 @@ fn run_pull_only(
     _device_name: &str,
     _devkey_seal: Option<&[u8; 32]>,
     _enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
-) -> Result<PullOutcome, String> {
-    Ok(PullOutcome::Fresh)
+) -> Result<PullReport, String> {
+    Ok(PullReport::Pulled)
 }
 
 fn now_secs() -> u64 {

@@ -620,6 +620,8 @@ internal val ES: Map<String, String> = mapOf(
     "home.emptyTrash" to "La papelera está vacía. Las entradas eliminadas llegan aquí y se pueden restaurar.",
     "home.emptyTotp" to "No hay entradas con códigos de verificación. Agrega una semilla TOTP a una de tus entradas.",
     "sync.synced" to "Sincronizada",
+    "sync.upToDate" to "Ya está al día.",
+    "sync.keptLocal" to "Se resolvió un conflicto usando tus cambios locales.",
     "sync.offline" to "Sin conexión",
     "sync.noRemote" to "Todavía no hay sincronización configurada para esta bóveda.",
     "sync.blocked" to "La sincronización no pudo ejecutarse. Puede haber un conflicto esperando u otra sincronización en curso.",

@@ -594,6 +594,8 @@ internal val FR: Map<String, String> = mapOf(
     "home.emptyTrash" to "La corbeille est vide.",
     "home.emptyTotp" to "Aucun code 2FA configuré.",
     "sync.synced" to "Synchronisé",
+    "sync.upToDate" to "Déjà à jour.",
+    "sync.keptLocal" to "Un conflit a été résolu en utilisant vos modifications locales.",
     "sync.offline" to "Hors ligne",
     "sync.noRemote" to "Aucune synchronisation n'est configurée pour ce coffre pour le moment.",
     "sync.blocked" to "La synchronisation n'a pas pu s'exécuter. Un conflit attend peut-être ou une autre synchronisation est en cours.",

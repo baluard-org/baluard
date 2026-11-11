@@ -1038,7 +1038,8 @@ impl MobileVault {
     }
 
     /// User pull-to-refresh / "Sync now". Returns the pull report tag
-    /// (pulled, idle, paused, busy, skipped, offline, access_denied, error)
+    /// (pulled, up_to_date, kept_local, idle, paused, busy, skipped,
+    /// offline, access_denied, error)
     /// so the UI can toast what actually happened instead of a blanket
     /// success.
     pub async fn sync_pull_now(&self) -> String {
