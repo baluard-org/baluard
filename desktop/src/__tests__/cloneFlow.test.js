@@ -14,7 +14,7 @@ vi.mock("../lib/daemon.js", () => ({
 }));
 
 import {
-	isCloneClashError,
+	parseCloneClash,
 	registerLocalVault,
 	startClone,
 	wipeLocalVault,
@@ -162,24 +162,42 @@ describe("registerLocalVault", () => {
 	});
 });
 
-describe("isCloneClashError", () => {
-	it("matches both daemon refusal shapes", () => {
+describe("parseCloneClash", () => {
+	const REGISTERED =
+		"A vault 'my-vault' is already registered. Remove it first.";
+	const ORPHAN =
+		"Target directory already exists: /data/vaults/my-vault. Pick a different slug or remove it.";
+
+	it("classifies the registered refusal and captures the slug", () => {
+		expect(parseCloneClash(REGISTERED)).toEqual({
+			kind: "registered",
+			slug: "my-vault",
+			path: null,
+		});
+	});
+
+	it("classifies the orphan-directory refusal and captures the path", () => {
+		expect(parseCloneClash(ORPHAN)).toEqual({
+			kind: "orphan",
+			slug: "my-vault",
+			path: "/data/vaults/my-vault",
+		});
+	});
+
+	it("isCloneClashError wraps the classifier", async () => {
+		const { isCloneClashError } = await import("../lib/cloneFlow.js");
+		expect(isCloneClashError(REGISTERED)).toBe(true);
+		expect(isCloneClashError(ORPHAN)).toBe(true);
+		expect(isCloneClashError("network unreachable")).toBe(false);
 		expect(
-			isCloneClashError(
-				"Target directory already exists: /data/vaults/my-vault. Pick a different slug or remove it.",
-			),
-		).toBe(true);
-		expect(
-			isCloneClashError("A vault 'my-vault' is already registered. Remove it first."),
-		).toBe(true);
+			isCloneClashError("Cloned repository has no .baluard marker"),
+		).toBe(false);
+		expect(isCloneClashError(undefined)).toBe(false);
 	});
 
 	it("rejects unrelated errors", () => {
-		expect(isCloneClashError("network unreachable")).toBe(false);
-		expect(isCloneClashError("Cloned repository has no .baluard marker")).toBe(
-			false,
-		);
-		expect(isCloneClashError(undefined)).toBe(false);
+		expect(parseCloneClash("network unreachable")).toBeNull();
+		expect(parseCloneClash(undefined)).toBeNull();
 	});
 });
 

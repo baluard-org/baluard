@@ -60,8 +60,10 @@
     "clashBody": "Un coffre nommé « {slug} » existe déjà sur cet appareil.",
     "clashOpenExisting": "Ouvrir le coffre existant",
     "clashReimport": "Supprimer la copie locale et importer à nouveau",
-    "clashVerifyHint": "Saisissez le mot de passe maître du coffre existant pour le supprimer de cet appareil.",
-    "clashWipeConfirm": "Supprimer et importer à nouveau"
+    "clashVerifyHint": "Saisissez le mot de passe maître du coffre existant pour le supprimer de cet appareil. Les modifications jamais synchronisées seront perdues.",
+    "clashWipeConfirm": "Supprimer et importer à nouveau",
+    "clashOrphanBody": "Un dossier nommé « {slug} » existe déjà sur cet appareil, mais il n’est pas configuré dans Baluard.",
+    "clashUseExisting": "Utiliser le dossier existant"
   },
   "create": {
     "title": "Créer un coffre",

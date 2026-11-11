@@ -65,14 +65,25 @@ export async function startClone(
 }
 
 // The daemon refuses a clone whose target slug already exists on disk or in
-// the registry. The clone dialog turns that refusal into a choice: wipe the
-// local copy and re-import, or open the existing vault.
+// the registry. The refusal text carries which: "Target directory already
+// exists: <path>" means an unregistered folder (safe detach leftover), while
+// "A vault '<slug>' is already registered" means a live registry entry. The
+// dialog branches on it because the two shapes support different arms.
 export function isCloneClashError(message) {
+	return parseCloneClash(message) !== null;
+}
+
+export function parseCloneClash(message) {
 	const m = String(message ?? "");
-	return (
-		m.includes("Target directory already exists") ||
-		/A vault '.+' is already registered/.test(m)
-	);
+	const reg = m.match(/A vault '([^']+)' is already registered/);
+	if (reg) return { kind: "registered", slug: reg[1], path: null };
+	const dir = m.match(/Target directory already exists: (.+?)\./);
+	if (dir) {
+		const path = dir[1];
+		const slug = path.split("/").pop() || path.split("\\").pop() || path;
+		return { kind: "orphan", slug, path };
+	}
+	return null;
 }
 
 // Delete a local vault copy. The daemon re-verifies the master password
