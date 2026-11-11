@@ -45,5 +45,4 @@ echo "deb [trusted=yes] http://snapshot.debian.org/archive/debian/20240101T00000
 # Sandbox note: WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 is required in containers.
 ```
 
-- The real-app check is the e2e harness: `run-e2e-desktop.sh` seeds a sandbox vault, serves the frontend with vite, and drives the actual WebKitGTK webview through tauri-driver under Xvfb.
-- Watch for the harness's own staleness trap: it rebuilds the daemon and CLI but not the desktop binary. A stale binary dies with "Daemon version mismatch" and every flow times out on the login field. `cargo build --manifest-path desktop/src-tauri/Cargo.toml` clears it.
+- The real-app check is the e2e harness: `run-e2e-desktop.sh` seeds a sandbox vault, serves the frontend with vite, and drives the actual WebKitGTK webview through tauri-driver under Xvfb. It rebuilds the daemon, CLI, and desktop binary before each run; if the desktop build fails, build it by hand with `cargo build --manifest-path desktop/src-tauri/Cargo.toml`.

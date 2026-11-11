@@ -47,6 +47,7 @@ trap cleanup EXIT
 
 [[ -x "$CLI" ]] || { echo "missing $CLI (cargo build -p baluard-cli)"; exit 1; }
 [[ -x "$APP" ]] || { echo "missing $APP (PKG_CONFIG_PATH=/usr/lib64/pkgconfig cargo build --manifest-path desktop/src-tauri/Cargo.toml)"; exit 1; }
+cd "$ROOT"
 # The app spawns its own sidecar daemon — and NOT from target/debug: it
 # runs the STAGED COPY at desktop/src-tauri/binaries/baluard-daemon-<triple>
 # (lib.rs's sidecar spawn). A stale copy serves old wire shapes (the
@@ -64,6 +65,12 @@ cp target/debug/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPL
 # target dir (the justfile's desktop recipes stage it the same way).
 mkdir -p desktop/src-tauri/target/debug
 cp target/debug/baluard-daemon desktop/src-tauri/target/debug/baluard-daemon
+# The desktop crate sits outside the workspace, so the build above never
+# refreshes the app binary. A stale one fails the daemon version
+# handshake at startup and every flow times out on the login field.
+PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-/usr/lib64/pkgconfig}" cargo build --manifest-path desktop/src-tauri/Cargo.toml > /dev/null 2>&1 || {
+  echo "desktop build failed"; exit 1;
+}
 command -v tauri-driver > /dev/null || { echo "missing tauri-driver (cargo install tauri-driver --locked)"; exit 1; }
 command -v Xvfb > /dev/null || { echo "missing Xvfb"; exit 1; }
 
