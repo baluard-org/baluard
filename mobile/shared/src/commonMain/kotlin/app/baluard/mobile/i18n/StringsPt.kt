@@ -582,7 +582,7 @@ internal val PT: Map<String, String> = mapOf(
     "settings.active" to "Ativo",
     "settings.idle" to "Atualizado",
     "settings.aboutTitle" to "Sobre o Baluard",
-    "settings.version" to "Baluard Mobile v0.4.0",
+    "settings.version" to "Baluard Mobile v0.4.1",
     "settings.aboutSubtitle" to "Gerenciador de senhas com git nativo e criptografia ponta a ponta.",
     "conflict.title" to "Conflito de sincronização",
     "conflict.body" to "\"{0}\" foi alterado em dois dispositivos. Escolha qual versão deseja manter.",
