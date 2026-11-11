@@ -573,6 +573,7 @@ internal val PT: Map<String, String> = mapOf(
     "sync.noRemote" to "Ainda não há sincronização configurada para este cofre.",
     "sync.blocked" to "A sincronização não pôde ser executada. Pode haver um conflito aguardando ou outra sincronização em andamento.",
     "sync.denied" to "O servidor rejeitou o acesso deste dispositivo.",
+    "sync.error" to "Falha na sincronização.",
     "settings.status" to "Status: {0}{1}",
     "settings.inactiveSuffix" to " (inativo)",
     "settings.pending" to "Pendentes: {0}",

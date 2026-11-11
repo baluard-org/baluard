@@ -90,7 +90,8 @@ pub enum PullReport {
     /// Nothing new on the remote.
     UpToDate,
     /// A divergence was resolved by keeping this device's local content;
-    /// the merge commit pushes on the next cycle.
+    /// the success classification marks the vault Dirty so the next cycle
+    /// pushes the merge commit nothing has pushed yet.
     KeptLocal,
     /// No active sync (no remote configured), or the vault switched or
     /// locked while the pull ran.
@@ -643,8 +644,12 @@ impl AutoSyncHandle {
                     g.last_sync = Some(now_secs());
                     // Don't clobber Dirty/Syncing; only settle to Idle from
                     // Offline — and never report Idle while mutations sit
-                    // unpushed (their push went Offline earlier).
-                    if g.state == AutoSyncState::Offline {
+                    // unpushed (their push went Offline earlier). KeptLocal
+                    // always goes Dirty: its merge commit awaits a push and
+                    // pending counts mutation nudges, not resolutions.
+                    if r == PullReport::KeptLocal && g.state != AutoSyncState::Syncing {
+                        g.state = AutoSyncState::Dirty;
+                    } else if g.state == AutoSyncState::Offline {
                         if g.pending > 0 {
                             g.state = AutoSyncState::Dirty;
                         } else {
@@ -967,10 +972,12 @@ impl AutoSyncHandle {
                         g.access_denied_streak = 0;
                         g.last_sync = Some(now_secs());
                         // A mutation may be sitting unpushed (its push went
-                        // Offline; the local commit already landed). Going
-                        // Idle would report "synced" while ahead — go Dirty
-                        // so the loop's next slice runs a push cycle.
-                        if g.pending > 0 {
+                        // Offline; the local commit already landed), and a
+                        // kept-local resolution leaves a merge commit that
+                        // pending never counted. Going Idle would report
+                        // "synced" while ahead — go Dirty so the loop's next
+                        // slice runs a push cycle.
+                        if g.pending > 0 || r == PullReport::KeptLocal {
                             g.state = AutoSyncState::Dirty;
                         } else {
                             g.state = AutoSyncState::Idle;
@@ -1061,7 +1068,8 @@ fn run_sync_cycle(
 }
 
 /// Pull-only (no commit/push). Used by the background loop to catch remote
-/// edits. Returns Ok(true) on success, Ok(false) on network failure (offline).
+/// edits and by the manual sync button. Returns the detailed PullReport;
+/// Err(String) is an unexpected transport failure.
 #[cfg(feature = "git-sync")]
 fn run_pull_only(
     vault_path: &Path,
