@@ -78,8 +78,10 @@ export default function CreateVaultScreen() {
   };
 
   return (
-    <div class="create-vault-screen flex justify-center h-full overflow-y-auto bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 py-8 relative">
+    // See LoginScreen: the toggle must sit outside the flex scroller.
+    <div class="relative h-full">
       <ThemeToggleFloating />
+    <div class="create-vault-screen flex justify-center h-full overflow-y-auto bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 py-8 relative">
       <div class="create-vault-screen__card w-full max-w-md my-auto p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast">
 
         <div class="create-vault-screen__header text-center mb-8">
@@ -210,6 +212,7 @@ export default function CreateVaultScreen() {
           </button>
         </div>
       </div>
+    </div>
     </div>
   );
 }

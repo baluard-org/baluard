@@ -12,7 +12,7 @@ export default function ThemeToggleFloating() {
   return (
     <button
       onClick={toggleTheme}
-      class="theme-toggle-floating absolute top-4 right-4 p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)] z-10"
+      class="theme-toggle-floating absolute top-4 right-4 p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer bg-[var(--color-card)] z-10"
       title={t(target() === "light" ? "settings.switchToLight" : "settings.switchToDark")}
       aria-label={t(target() === "light" ? "settings.switchToLight" : "settings.switchToDark")}
     >
