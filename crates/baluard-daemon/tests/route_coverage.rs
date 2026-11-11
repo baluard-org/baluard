@@ -155,6 +155,134 @@ async fn list_full_returns_folders_and_archived() {
     assert!(v["archived"].is_array(), "list_all includes archived array");
 }
 
+// ── Devices tab fleet (vault.device_activity) ─────────────────────
+
+#[tokio::test]
+async fn device_activity_lists_enrolled_never_synced_devices() {
+    let (_dir, path) = make_vault("fleet");
+    // Inject a second roster device that has never committed. The fleet
+    // must be a full roster inventory: the activity index is local-only
+    // state that only ever records this device, so a panel fed from it
+    // alone could never show the phone (user report 2026-11-10).
+    let reg_path = path.join("meta/devices.json");
+    let mut reg: baluard_core::devices::DeviceRegistry =
+        serde_json::from_str(&std::fs::read_to_string(&reg_path).unwrap()).unwrap();
+    let id_b = uuid::Uuid::new_v4();
+    reg.devices.insert(
+        id_b,
+        baluard_core::vault::manifest::DeviceEntry {
+            device_id: id_b,
+            name: "Test Phone".into(),
+            encryption_public_key: hex::encode([0u8; 32]),
+            signing_public_key: hex::encode([7u8; 32]),
+            enrolled_at: 1,
+            enrolled_by: None,
+            last_seen_epoch: 0,
+        },
+    );
+    std::fs::write(&reg_path, serde_json::to_string_pretty(&reg).unwrap()).unwrap();
+
+    // First unlock runs the C5 fold-and-strip migration: names move into
+    // the encrypted settings map and meta/devices.json is stripped on
+    // disk. Re-open from the stripped file so the in-memory registry no
+    // longer carries the phone's name — resolution must go through the
+    // settings map or the panel shows a blank name next to a Revoke
+    // button.
+    {
+        let state = Arc::new(VaultState::new(path.clone()));
+        state.open().await.expect("open");
+        state.unlock(MASTER).await.expect("unlock");
+        state.lock().await.expect("lock");
+    }
+    let state = Arc::new(VaultState::new(path.clone()));
+    state.open().await.expect("reopen");
+    state.unlock(MASTER).await.expect("reunlock");
+    let json = state.device_activity().await.expect("device_activity");
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let devices = v["devices"].as_array().expect("devices array");
+    assert_eq!(
+        devices.len(),
+        2,
+        "roster inventory: self + never-synced phone"
+    );
+    let phone = devices
+        .iter()
+        .find(|d| d["id"] == id_b.to_string())
+        .expect("phone row present");
+    assert_eq!(
+        phone["name"], "Test Phone",
+        "name resolved from the settings map after migration"
+    );
+    assert!(
+        phone["last_push"].is_null(),
+        "never-synced device has no last_push"
+    );
+    let self_row = devices
+        .iter()
+        .find(|d| d["id"] == v["self_device_id"])
+        .expect("self row present");
+    assert_eq!(
+        self_row["name"], "route-fleet",
+        "self name resolved from the settings map"
+    );
+    assert!(
+        !self_row["last_commit"].is_null(),
+        "self derives last commit from git history"
+    );
+}
+
+// ── vault.empty ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn vault_empty_route_phrase_gated_and_wipes_entries() {
+    // Build directly so the ceremony secrets (the phrase) stay in hand.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().to_path_buf();
+    let (_handle, secrets) = VaultCreator::new(&path, MASTER, "route-empty")
+        .execute()
+        .expect("vault creation");
+    let phrase = secrets.recovery_phrase.phrase();
+
+    let state = Arc::new(VaultState::new(path));
+    state.open().await.expect("vault open");
+    state.unlock(MASTER).await.expect("vault unlock");
+
+    let added = state
+        .add_cipher(
+            r#"{"name":"GitHub","kind":{"type":"login","data":{"username":"u","password":"p"}}}"#,
+        )
+        .await
+        .expect("add cipher");
+
+    // A different valid 24-word phrase opens nothing and changes nothing.
+    let wrong = baluard_core::recovery::RecoveryPhrase::generate()
+        .unwrap()
+        .phrase();
+    let bad = serde_json::json!({ "phrase": wrong, "rewrite_history": false }).to_string();
+    let err = state.vault_empty(&bad).await.unwrap_err();
+    assert!(err.contains("does not match this vault"), "got: {err}");
+    let after_bad: serde_json::Value =
+        serde_json::from_str(&state.list_all().await.unwrap()).unwrap();
+    assert_eq!(after_bad["ciphers"].as_array().unwrap().len(), 1);
+
+    // The vault's own phrase empties it. This fixture has no git repo,
+    // so the note reports a local-only wipe.
+    let payload = serde_json::json!({ "phrase": phrase, "rewrite_history": false }).to_string();
+    let out: serde_json::Value =
+        serde_json::from_str(&state.vault_empty(&payload).await.expect("vault_empty")).unwrap();
+    assert_eq!(out["entries"], 1);
+    assert_eq!(out["rewritten"], false);
+    let list: serde_json::Value = serde_json::from_str(&state.list_all().await.unwrap()).unwrap();
+    assert!(list["ciphers"].as_array().unwrap().is_empty());
+    assert!(list["trash"].as_array().unwrap().is_empty());
+    assert!(list["archived"].as_array().unwrap().is_empty());
+
+    // Locked vault refuses the wipe (unlock is the route precondition).
+    state.lock().await.expect("lock");
+    let payload = serde_json::json!({ "phrase": phrase, "rewrite_history": false }).to_string();
+    assert!(state.vault_empty(&payload).await.is_err());
+}
+
 // ── Settings ──────────────────────────────────────────────────────────
 
 #[tokio::test]

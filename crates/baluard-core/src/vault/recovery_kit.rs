@@ -399,6 +399,72 @@ pub fn recover_root_from_kit(
     Ok(root)
 }
 
+/// Prove `phrase` opens THIS vault: unwrap the personal recovery escrow
+/// (`meta/recovery.json`, HPKE `recovery-keywrap`), falling back to the
+/// Space kit escrow when the personal file is absent, then verify the
+/// recovered key against `meta/rk-canary.enc`. Failure modes stay
+/// distinct on purpose: unknown words report a phrase mismatch; an
+/// unwrap that succeeds against a stale post-rotation legacy escrow
+/// reports the stale-escrow message, so the user refreshes the escrow
+/// instead of hunting a typo.
+pub fn verify_recovery_phrase(vault_path: &Path, phrase: &str) -> Result<(), BaluardError> {
+    let parsed = RecoveryPhrase::from_phrase(phrase)
+        .map_err(|e| VaultError::Metadata(format!("invalid recovery phrase: {e}")))?;
+    let secret = phrase_to_secret(&parsed);
+
+    let recovery_json_path = vault_path.join("meta/recovery.json");
+    let root = if recovery_json_path.exists() {
+        let json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&recovery_json_path)
+                .map_err(|e| VaultError::Metadata(format!("reading recovery.json: {e}")))?,
+        )
+        .map_err(|e| VaultError::Metadata(format!("parsing recovery.json: {e}")))?;
+        let eph_pub = hex::decode(json["ephemeral_public"].as_str().unwrap_or(""))
+            .map_err(|e| VaultError::Corrupt(format!("recovery eph_public hex: {e}")))?;
+        let ct = hex::decode(json["encrypted_key"].as_str().unwrap_or(""))
+            .map_err(|e| VaultError::Corrupt(format!("recovery encrypted_key hex: {e}")))?;
+        let tag_bytes = hex::decode(json["tag"].as_str().unwrap_or(""))
+            .map_err(|e| VaultError::Corrupt(format!("recovery tag hex: {e}")))?;
+        if tag_bytes.len() != 16 {
+            return Err(VaultError::Corrupt("invalid recovery tag length".into()).into());
+        }
+        let mut tag = [0u8; 16];
+        tag.copy_from_slice(&tag_bytes);
+
+        let mut unwrapped = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &secret, "recovery-keywrap")
+            .map_err(|_| {
+                BaluardError::from(VaultError::InvalidOperation(
+                    "recovery phrase does not match this vault".into(),
+                ))
+            })?;
+        let root_bytes: Zeroizing<[u8; 64]> = Zeroizing::new(
+            unwrapped
+                .as_slice()
+                .try_into()
+                .map_err(|_| VaultError::Corrupt("recovered root key is invalid length".into()))?,
+        );
+        zeroize::Zeroize::zeroize(&mut unwrapped);
+        RootKey::from_bytes(*root_bytes)
+    } else {
+        let vault_id = crate::vault::handle::VaultHandle::vault_id_for_path(vault_path)?;
+        recover_root_from_kit(vault_path, vault_id, phrase)?
+    };
+
+    let canary_data =
+        std::fs::read(vault_path.join("meta/rk-canary.enc")).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => VaultError::Corrupt(
+                "this vault has no root canary; phrase verification cannot complete".into(),
+            ),
+            _ => VaultError::Metadata(format!("reading root canary: {e}")),
+        })?;
+    crate::vault::canary::verify_rk_canary(&root, &canary_data).map_err(|_| {
+        BaluardError::from(VaultError::Corrupt(
+            "recovery escrow is stale after a root-key rotation; re-enroll with the phrase to refresh it"
+                .into(),
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

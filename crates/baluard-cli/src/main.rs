@@ -189,6 +189,12 @@ enum Commands {
         action: SettingsAction,
     },
 
+    /// Active-vault operations.
+    Vault {
+        #[command(subcommand)]
+        action: VaultSubAction,
+    },
+
     /// Manage the trash.
     Trash {
         #[command(subcommand)]
@@ -609,6 +615,27 @@ enum SettingsAction {
     SpaceSet {
         /// Knob key and value (e.g., guest_enabled=true).
         kv: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum VaultSubAction {
+    /// Permanently remove every entry, folder and tag from the active
+    /// vault (settings, devices and collections survive). Confirmed with
+    /// the vault's 24 recovery words.
+    Empty {
+        /// Also rewrite git history: squash to one signed commit and
+        /// force-push, leaving no entry blobs in any commit. Other
+        /// devices must re-clone afterwards.
+        #[arg(long)]
+        rewrite_history: bool,
+        /// Recovery phrase (24 words). Prefer the masked prompt; scripts
+        /// can use BALUARD_RECOVERY_PHRASE.
+        #[arg(long)]
+        phrase: Option<String>,
+        /// Quiet scripting run: no banner. The phrase is still required.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -2177,6 +2204,21 @@ fn main() {
         Commands::Contacts { action } => {
             commands::handle_contacts(mode, cli.socket.as_deref(), &action)
         }
+
+        Commands::Vault { action } => match action {
+            VaultSubAction::Empty {
+                rewrite_history,
+                phrase,
+                yes,
+            } => commands::handle_vault_empty(
+                mode,
+                &vault_path,
+                cli.socket.as_deref(),
+                rewrite_history,
+                phrase.as_deref(),
+                yes,
+            ),
+        },
 
         Commands::Trash { action } => match action {
             TrashAction::List => {

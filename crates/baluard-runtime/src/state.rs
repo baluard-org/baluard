@@ -7530,6 +7530,196 @@ impl VaultState {
         handle.purge_old_trash(days).map_err(|e| format!("{e}"))
     }
 
+    /// vault.empty: recovery-phrase-gated fresh start. Removes every entry
+    /// (live, archived, trashed) plus folders and the tag store; semantic
+    /// meta (settings, devices, collections) survives. With
+    /// `rewrite_history`, squash main into one signed orphan, reset the
+    /// gossip branch, and force-push both. Payload:
+    /// `{ "phrase": "...", "rewrite_history": bool }`. Serialized
+    /// against the autosync cycle: the wipe's deletions are exactly what
+    /// nudges the debounce, and the squash-to-push window is a divergence
+    /// window.
+    pub async fn vault_empty(&self, payload: &str) -> Result<String, String> {
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let phrase = match v["phrase"].as_str() {
+            Some(p) => p.to_string(),
+            None => return Err("missing phrase".to_string()),
+        };
+        let rewrite = v["rewrite_history"].as_bool().unwrap_or(false);
+
+        let out = self.vault_empty_inner(&phrase, rewrite).await;
+        use zeroize::Zeroize;
+        let mut phrase = phrase;
+        phrase.zeroize();
+        out
+    }
+
+    async fn vault_empty_inner(&self, phrase: &str, rewrite: bool) -> Result<String, String> {
+        use baluard_core::sync::engine::SyncEngine;
+
+        // Phrase proof reads meta/ only; run it BEFORE the cycle lock so a
+        // wrong phrase never blocks a running cycle. The closure owns and
+        // zeroizes its copy.
+        {
+            let vault_path = self.vault_path.clone();
+            let mut phrase = phrase.to_string();
+            let verified = tokio::task::spawn_blocking(move || {
+                let r =
+                    baluard_core::vault::recovery_kit::verify_recovery_phrase(&vault_path, &phrase)
+                        .map_err(|e| e.to_string());
+                use zeroize::Zeroize;
+                phrase.zeroize();
+                r
+            })
+            .await
+            .map_err(|e| format!("phrase verify task: {e}"))?;
+            // Sentinel prefix: the route burns a rate-limit attempt ONLY
+            // for these; post-wipe failures (push, timeouts) must never
+            // lock vault.unlock.
+            verified.map_err(|e| format!("phrase rejected: {e}"))?;
+        }
+
+        let _cycle_guard = self.autosync.cycle_lock_guard().await;
+
+        let report = {
+            let mut guard = self.inner.write().await;
+            let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+            handle.empty_entries().map_err(|e| e.to_string())?
+        };
+
+        let device_id = {
+            let guard = self.inner.read().await;
+            guard
+                .as_ref()
+                .map(|h| h.device_id.to_string())
+                .unwrap_or_default()
+        };
+        let devkey_seal = self.devkey_seal().await;
+        let vault_path = self.vault_path.clone();
+
+        // Generous ceiling: squash + force-push of a large repo is the
+        // biggest git op this surface runs (SYNC_OP_TIMEOUT targets cycles).
+        let sync_budget = std::time::Duration::from_secs(600);
+
+        let (root_oid, note, pushed) = tokio::time::timeout(
+            sync_budget,
+            tokio::task::spawn_blocking(move || -> Result<(String, String, bool), String> {
+                let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
+                let Ok(repo) = engine.open_repo() else {
+                    // Never-synced vault: entries are gone locally, and
+                    // there is nothing to publish or rewrite.
+                    return Ok((
+                        String::new(),
+                        "no git repository; entries removed locally".to_string(),
+                        false,
+                    ));
+                };
+                let has_origin = repo.find_remote("origin").is_ok();
+                if rewrite {
+                    let (root, gossip) = engine
+                        .rewrite_history_squash(&repo)
+                        .map_err(|e| e.to_string())?;
+                    if !has_origin {
+                        // Still prune: local gc is the only erasure this
+                        // case has.
+                        let prune = Self::run_local_gc(&vault_path);
+                        return Ok((
+                            root.to_string(),
+                            match prune {
+                                None => "no git remote; history rewritten locally".to_string(),
+                                Some(cmd) => {
+                                    format!("no git remote; history rewritten locally; local prune not run, run: {cmd}")
+                                }
+                            },
+                            false,
+                        ));
+                    }
+                    engine
+                        .push_rewritten(&repo, "origin", root, gossip)
+                        .map_err(|e| {
+                            format!(
+                                "{}\nNothing was rewritten yet: local refs still sit on the old lineage; re-run `baluard vault empty --rewrite-history` to retry the push, or re-point sync at a fresh repo.",
+                                baluard_core::sync::credentials::format_sync_error(&e)
+                            )
+                        })?;
+                    // Under the cycle lock: `git gc --prune=now` racing an
+                    // announce that wrote an object but has not yet updated
+                    // its ref would corrupt the repo.
+                    let prune = Self::run_local_gc(&vault_path);
+                    Ok((
+                        root.to_string(),
+                        match prune {
+                            None => String::new(),
+                            Some(cmd) => format!("local prune not run, run: {cmd}"),
+                        },
+                        true,
+                    ))
+                } else {
+                    let status = engine.status(&repo).map_err(|e| e.to_string())?;
+                    if status.is_dirty() {
+                        engine.commit_all(&repo, "").map_err(|e| e.to_string())?;
+                    }
+                    if !has_origin {
+                        return Ok((
+                            String::new(),
+                            "no git remote; changes committed locally".to_string(),
+                            false,
+                        ));
+                    }
+                    match engine.push(&repo, "origin") {
+                        Ok(()) => Ok((String::new(), String::new(), true)),
+                        Err(e) => Ok((
+                            String::new(),
+                            format!(
+                                "push pending: {}",
+                                baluard_core::sync::credentials::format_sync_error(&e)
+                            ),
+                            false,
+                        )),
+                    }
+                }
+            }),
+        )
+        .await
+        .map_err(|_| "empty sync timed out".to_string())?
+        .map_err(|e| format!("empty sync task: {e}"))??;
+
+        Ok(serde_json::json!({
+            "entries": report.entries,
+            "folders": report.folders,
+            "tags": report.tags,
+            "rewritten": rewrite,
+            "root": root_oid,
+            "pushed": pushed,
+            "note": note,
+        })
+        .to_string())
+    }
+
+    /// Local old-object prune after a rewrite (libgit2 cannot gc). Runs
+    /// inside the autosync cycle lock: `git gc --prune=now` racing an
+    /// announce that has written an object but not yet updated its ref
+    /// would corrupt the repo. Returns the manual command when git is
+    /// missing or a step fails.
+    fn run_local_gc(vault_path: &std::path::Path) -> Option<String> {
+        let run = |args: &[&str]| -> bool {
+            std::process::Command::new("git")
+                .current_dir(vault_path)
+                .args(args)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+        if run(&["reflog", "expire", "--expire=now", "--all"])
+            && run(&["gc", "--prune=now", "--quiet"])
+        {
+            None
+        } else {
+            Some("git reflog expire --expire=now --all && git gc --prune=now".to_string())
+        }
+    }
+
     /// Archive a cipher (hide from main list).
     pub async fn archive_cipher(&self, id_str: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;
@@ -9008,38 +9198,129 @@ impl VaultState {
     /// Return device fleet activity data.
     /// Reads encrypted activity.enc and cross-references with the device registry.
     pub async fn device_activity(&self) -> Result<String, String> {
-        let guard = self.inner.read().await;
-        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        // Guard scope holds only the cheap reads: the history walk below is
+        // synchronous git IO plus signature verifies and must not pin the
+        // read lock or the executor thread (spawn_blocking, matching the
+        // sync-path precedent).
+        let (index, registry, names, vault_path, self_device_id) = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault not opened")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked".into());
+            }
+            let index = handle.load_activity_enc().map_err(|e| format!("{e}"))?;
+            let registry = handle.device_manager.registry().clone();
+            let names = handle.device_display_names();
+            (
+                index,
+                registry,
+                names,
+                self.vault_path.clone(),
+                handle.device_id.to_string(),
+            )
+        };
 
-        if !handle.is_unlocked() {
-            return Err("Vault is locked".into());
-        }
+        // C5: device names live in the encrypted settings map after the
+        // unlock migration strips them from meta/devices.json; the registry
+        // entry name is the pre-migration fallback only.
+        let resolve_name = |uuid_str: &str, fallback: &str| -> String {
+            names
+                .get(uuid_str)
+                .filter(|n| !n.is_empty())
+                .cloned()
+                .unwrap_or_else(|| fallback.to_string())
+        };
 
-        let index = handle.load_activity_enc().map_err(|e| format!("{e}"))?;
-        let registry = handle.device_manager.registry();
-
-        let mut devices = Vec::new();
+        // The activity index is gitignored local-only state that only ever
+        // records THIS device, so cross-device rows are derived from the
+        // synced history instead (SyncEngine::fleet_activity_from_history).
+        // Index rows remain as fallback (pre-enrollment vaults, commits
+        // older than the attribution bound).
+        // Enrolled vaults never surface devices that are no longer on the
+        // roster, even when a stale local index row survives.
+        let enrolled = !registry.devices.is_empty();
+        let mut rows: std::collections::BTreeMap<String, serde_json::Value> =
+            std::collections::BTreeMap::new();
         for (uuid_str, entry) in &index.devices {
             let uuid: uuid::Uuid = match uuid_str.parse() {
                 Ok(u) => u,
                 Err(_) => continue,
             };
+            if enrolled && !registry.devices.contains_key(&uuid) {
+                continue;
+            }
             let name = registry
                 .devices
                 .get(&uuid)
-                .map(|d| d.name.clone())
+                .map(|d| resolve_name(uuid_str, &d.name))
                 .unwrap_or_else(|| "Unknown".into());
-            devices.push(serde_json::json!({
-                "id": uuid_str,
-                "name": name,
-                "last_push": entry.last_push,
-                "last_commit": entry.last_commit,
-                "epoch": entry.epoch,
-            }));
+            rows.insert(
+                uuid_str.clone(),
+                serde_json::json!({
+                    "id": uuid_str,
+                    "name": name,
+                    "last_push": entry.last_push,
+                    "last_commit": entry.last_commit,
+                    "epoch": entry.epoch,
+                }),
+            );
         }
 
-        serde_json::to_string(&serde_json::json!({ "devices": devices, "self_device_id": handle.device_id.to_string() }))
-            .map_err(|e| format!("{e}"))
+        if enrolled {
+            let derived = tokio::task::spawn_blocking(move || {
+                baluard_core::sync::engine::SyncEngine::fleet_activity_from_history(
+                    &vault_path,
+                    500,
+                )
+            })
+            .await;
+            if let Ok(Ok(Some(fleet))) = derived {
+                for (device_id, oid, when) in fleet {
+                    let uuid: uuid::Uuid = match device_id.parse() {
+                        Ok(u) => u,
+                        Err(_) => continue,
+                    };
+                    // History carries commits from devices since revoked
+                    // off the roster; the fleet shows the current roster only.
+                    let Some(entry) = registry.devices.get(&uuid) else {
+                        continue;
+                    };
+                    rows.insert(
+                        device_id.clone(),
+                        serde_json::json!({
+                            "id": device_id,
+                            "name": resolve_name(&device_id, &entry.name),
+                            "last_push": when,
+                            "last_commit": oid.to_string(),
+                            "epoch": entry.last_seen_epoch,
+                        }),
+                    );
+                }
+            }
+            // Enrolled devices with no attributable commit sync as "never"
+            // so the fleet is a full roster inventory — this must run even
+            // when the history walk yields nothing (no repo, walk error),
+            // or a local-only enrolled device would vanish from the panel.
+            for (id, entry) in &registry.devices {
+                let key = id.to_string();
+                rows.entry(key.clone()).or_insert_with(|| {
+                    serde_json::json!({
+                        "id": key,
+                        "name": resolve_name(&key, &entry.name),
+                        "last_push": serde_json::Value::Null,
+                        "last_commit": serde_json::Value::Null,
+                        "epoch": entry.last_seen_epoch,
+                    })
+                });
+            }
+        }
+
+        let devices: Vec<serde_json::Value> = rows.into_values().collect();
+
+        serde_json::to_string(
+            &serde_json::json!({ "devices": devices, "self_device_id": self_device_id }),
+        )
+        .map_err(|e| format!("{e}"))
     }
 
     /// Revoke a device by UUID. Removes it from the registry and rotates keys.
