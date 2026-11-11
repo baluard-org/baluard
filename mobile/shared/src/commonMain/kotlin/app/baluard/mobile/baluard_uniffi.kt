@@ -2683,7 +2683,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_on_unlock() != 40414.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
-  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_pull_now() != 53661.toShort()) {
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_pull_now() != 25933.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_status() != 496.toShort()) {
@@ -4970,7 +4970,8 @@ public interface MobileVaultInterface {
 
   /**
    * User pull-to-refresh / "Sync now". Returns the pull report tag
-   * (pulled, idle, paused, busy, skipped, offline, access_denied, error)
+   * (pulled, up_to_date, kept_local, idle, paused, busy, skipped,
+   * offline, access_denied, error)
    * so the UI can toast what actually happened instead of a blanket
    * success.
    */
@@ -8635,7 +8636,8 @@ open class MobileVault :
 
   /**
    * User pull-to-refresh / "Sync now". Returns the pull report tag
-   * (pulled, idle, paused, busy, skipped, offline, access_denied, error)
+   * (pulled, up_to_date, kept_local, idle, paused, busy, skipped,
+   * offline, access_denied, error)
    * so the UI can toast what actually happened instead of a blanket
    * success.
    */
