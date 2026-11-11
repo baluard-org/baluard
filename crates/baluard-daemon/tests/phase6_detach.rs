@@ -968,3 +968,43 @@ async fn web_oauth_poll_with_empty_payload_fails_fast_not_hang() {
         resp.error_message
     );
 }
+
+/// The clone wizard's first call runs from the welcome screen where NO
+/// vault exists — oauth_start_web must answer through the tokenless
+/// sentinel instead of falling to snapshot_target ("No active vault"),
+/// which is exactly the shipped 0.3.1 "unexpected error" on Open-a-vault-
+/// saved-online (reproduced on a pristine 0.3.1 daemon over the wire).
+#[tokio::test]
+async fn oauth_start_web_answers_without_any_vault() {
+    let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(&[], None);
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "provider.oauth_start_web",
+        serde_json::json!({ "provider": "github" }),
+    );
+
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        route_host_request(req, &host),
+    )
+    .await
+    .expect("oauth start must answer, never hang");
+    assert!(
+        resp.success,
+        "oauth start must work with no vault: {}",
+        resp.error_message
+    );
+    let payload = response_payload(&resp);
+    let url = payload["auth_url"]
+        .as_str()
+        .expect("oauth start must return auth_url");
+    assert!(
+        url.starts_with("https://"),
+        "auth_url must be an https authorize URL, got: {url}"
+    );
+}
