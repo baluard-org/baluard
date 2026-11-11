@@ -31,7 +31,9 @@
     "quickUnlock": "Desbloqueio Rápido",
     "pinUnlock": "Desbloquear com PIN",
     "pinPlaceholder": "PIN de 6 dígitos",
-    "renderRecoveryNotice": "Da última vez o Baluard fechou de forma inesperada, então esta sessão desenha a janela em um modo mais seguro. Você pode mudar isso em Configurações depois de desbloquear."
+    "renderRecoveryNotice": "Da última vez o Baluard fechou de forma inesperada, então esta sessão desenha a janela em um modo mais seguro. Você pode mudar isso em Configurações depois de desbloquear.",
+    "noVaultsTitle": "Ainda não há cofres neste dispositivo. Crie um ou abra um cofre existente para começar.",
+    "noVaultsAction": "Criar ou abrir um cofre"
   },
   "welcome": {
     "title": "Boas-vindas ao Baluard",

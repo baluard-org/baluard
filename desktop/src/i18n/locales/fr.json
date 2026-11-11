@@ -31,7 +31,9 @@
     "quickUnlock": "Déverrouillage rapide",
     "pinUnlock": "Déverrouiller avec le PIN",
     "pinPlaceholder": "Code PIN à 6 chiffres",
-    "renderRecoveryNotice": "Baluard s'est fermé de manière inattendue la dernière fois. Cette session affiche donc la fenêtre dans un mode plus sûr. Vous pourrez modifier cela dans les Paramètres après déverrouillage."
+    "renderRecoveryNotice": "Baluard s'est fermé de manière inattendue la dernière fois. Cette session affiche donc la fenêtre dans un mode plus sûr. Vous pourrez modifier cela dans les Paramètres après déverrouillage.",
+    "noVaultsTitle": "Aucun coffre sur cet appareil pour le moment. Créez-en un ou ouvrez un coffre existant pour commencer.",
+    "noVaultsAction": "Créer ou ouvrir un coffre"
   },
   "welcome": {
     "title": "Bienvenue sur Baluard",

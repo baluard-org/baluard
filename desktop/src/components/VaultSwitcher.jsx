@@ -109,8 +109,15 @@ export default function VaultSwitcher(props) {
     // Detaching the vault being viewed drops the daemon's active
     // pointer: the shell must leave the (now phantom) unlocked session.
     if (wasActive && auth.status() === "unlocked") {
-      auth.setStatus("locked");
       auth.setVaultInfo(null);
+      // vaults() is post-refresh here. An emptied registry has nothing to
+      // unlock, so the login screen would be a dead end — hand the user to
+      // the welcome screen (create / open online / open local) instead.
+      if (switcher.vaults().length === 0) {
+        auth.setStatus("welcome");
+      } else {
+        auth.setStatus("locked");
+      }
     }
     // The remote delete is best-effort on the daemon side: a failure
     // still detaches, so warn instead of celebrating.

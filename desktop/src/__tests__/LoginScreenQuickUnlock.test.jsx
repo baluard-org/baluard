@@ -37,10 +37,16 @@ const authMock = {
   finishQuickUnlock: vi.fn(),
 };
 
+const switcherState = {
+  vaultsLoaded: true,
+  vaults: [{ slug: "baluard-x", display_name: "X" }],
+};
+
 const switcherMock = {
   activeSlug: () => "baluard-x",
   switchTo: vi.fn(),
-  vaults: () => [],
+  vaultsLoaded: () => switcherState.vaultsLoaded,
+  vaults: () => switcherState.vaults,
 };
 
 vi.mock("../context/AuthContext.jsx", () => ({
@@ -187,5 +193,25 @@ describe("LoginScreen Quick Unlock auto-prompt", () => {
     await waitFor(() => expect(biometryPrompt).toHaveBeenCalledTimes(1));
     await new Promise(r => setTimeout(r, 20));
     expect(biometryPrompt).toHaveBeenCalledTimes(1);
+  });
+  test("empty registry shows the decision state, never the unlock form", async () => {
+    switcherState.vaultsLoaded = true;
+    switcherState.vaults = [];
+    const { container, getByText, queryByText } = render(() => (
+      <LoginScreen />
+    ));
+    await waitFor(() =>
+      expect(getByText("login.noVaultsTitle")).toBeTruthy(),
+    );
+    // No unlock form to fail against a phantom vault.
+    expect(queryByText("login.unlock")).toBeNull();
+    // The action button hands the user to the welcome decision screen.
+    const btn = container.querySelector("button");
+    expect(btn && btn.textContent.includes("login.noVaultsAction")).toBe(true);
+    btn.click();
+    await Promise.resolve();
+    expect(authMock.setStatus).toHaveBeenCalledWith("welcome");
+    // restore for sibling tests
+    switcherState.vaults = [{ slug: "baluard-x", display_name: "X" }];
   });
 });

@@ -31,7 +31,9 @@
     "quickUnlock": "Quick Unlock",
     "pinUnlock": "Unlock with PIN",
     "pinPlaceholder": "6-digit PIN",
-    "renderRecoveryNotice": "Baluard closed unexpectedly last time, so this session draws the window in a safer mode. You can change this in Settings after you unlock."
+    "renderRecoveryNotice": "Baluard closed unexpectedly last time, so this session draws the window in a safer mode. You can change this in Settings after you unlock.",
+    "noVaultsTitle": "No vaults on this device yet. Create one or open an existing vault to get started.",
+    "noVaultsAction": "Create or open a vault"
   },
   "welcome": {
     "title": "Welcome to Baluard",
