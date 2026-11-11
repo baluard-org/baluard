@@ -4,7 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-- The Android Sync button now reports what actually happened: Already up to date when nothing was new, an honest message when no sync is set up, a conflict is waiting, another sync is running, or the server rejected this device, instead of always showing Synced.
+- The Android Sync button now reports what actually happened: Already up to date when nothing was new, an honest message when no sync is set up, a conflict is waiting, another sync is running, or the server rejected this device, instead of always showing Synced. A conflict resolved by keeping your local changes is pushed automatically on the next sync.
 - New command `baluard vault empty`: deletes every entry in a personal vault in one step, optionally scrubbing them from the synced git history as well, confirmed with your 24 recovery words. See ADR 0105.
 - The entry editor no longer loses focus after every keystroke on the desktop.
 - Sync toasts on the desktop now show the real result of each operation (for example "Already up to date." or "Pushed to origin.") instead of a generic success line.

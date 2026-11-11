@@ -600,6 +600,7 @@ internal val FR: Map<String, String> = mapOf(
     "sync.noRemote" to "Aucune synchronisation n'est configurée pour ce coffre pour le moment.",
     "sync.blocked" to "La synchronisation n'a pas pu s'exécuter. Un conflit attend peut-être ou une autre synchronisation est en cours.",
     "sync.denied" to "Le serveur a refusé l'accès de cet appareil.",
+    "sync.error" to "Échec de la synchronisation.",
     "settings.status" to "Statut",
     "settings.inactiveSuffix" to "(inactif)",
     "settings.pending" to "En attente",

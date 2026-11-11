@@ -28,10 +28,16 @@ suspend fun runSyncCycle(
     val mark = TimeSource.Monotonic.markNow()
     val tag = runCatching { doPull() }.getOrNull()
     val ok = tag == "pulled" || tag == "up_to_date" || tag == "kept_local"
+    val failed = tag == null || tag == "offline" || tag == "access_denied" || tag == "error"
     runCatching { afterPull() }
     val hold = MIN_SPIN - mark.elapsedNow()
     if (hold.isPositive()) delay(hold)
-    setPhase(if (ok) SyncPhase.Synced else SyncPhase.Offline)
+    // Success flashes Synced and failures flash Offline; did-not-run tags
+    // (idle/paused/busy/skipped) flash nothing — nothing happened.
+    when {
+        ok -> setPhase(SyncPhase.Synced)
+        failed -> setPhase(SyncPhase.Offline)
+    }
     onResult(ok, tag)
     delay(RESULT_BEAT)
     setPhase(SyncPhase.Idle)
@@ -42,7 +48,8 @@ suspend fun runSyncCycle(
  * Toast for the Rust pull report tag (see PullReport). Each outcome gets
  * its own honest copy: pulled/up-to-date/kept-local succeed, idle means no
  * sync is configured, paused/busy/skipped mean the pull did not run, and
- * offline/denied are failures.
+ * offline/denied/error are failures. "locked" is deliberately silent: the
+ * entitlement gate that produced it opens the upgrade sheet itself.
  */
 fun syncOutcomeToast(tag: String?, t: (String) -> String) {
     when (tag) {
@@ -53,6 +60,7 @@ fun syncOutcomeToast(tag: String?, t: (String) -> String) {
         "paused", "busy", "skipped" -> Toast.info(t("sync.blocked"))
         "offline", null -> Toast.error(t("sync.offline"))
         "access_denied" -> Toast.error(t("sync.denied"))
+        "error" -> Toast.error(t("sync.error"))
         else -> Unit
     }
 }

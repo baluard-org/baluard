@@ -626,6 +626,7 @@ internal val ES: Map<String, String> = mapOf(
     "sync.noRemote" to "Todavía no hay sincronización configurada para esta bóveda.",
     "sync.blocked" to "La sincronización no pudo ejecutarse. Puede haber un conflicto esperando u otra sincronización en curso.",
     "sync.denied" to "El servidor rechazó el acceso de este dispositivo.",
+    "sync.error" to "Falló la sincronización.",
     "detail.customFields" to "Campos personalizados",
     "detail.booleanYes" to "Sí",
     "detail.booleanNo" to "No",
