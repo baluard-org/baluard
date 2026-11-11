@@ -14,7 +14,6 @@ vi.mock("../context/themeSignal.js", () => ({
 vi.mock("../components/Icon.jsx", () => ({
   IconSun: (props) => <svg data-icon="sun" class={props.class} />,
   IconMoon: (props) => <svg data-icon="moon" class={props.class} />,
-  IconMonitor: (props) => <svg data-icon="monitor" class={props.class} />,
 }));
 
 vi.mock("../i18n/index.jsx", () => ({

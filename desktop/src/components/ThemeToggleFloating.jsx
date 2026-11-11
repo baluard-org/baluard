@@ -1,5 +1,5 @@
 import { Show } from "solid-js";
-import { IconMonitor, IconMoon, IconSun } from "./Icon.jsx";
+import { IconMoon, IconSun } from "./Icon.jsx";
 import { resolvedTheme, toggleTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 
