@@ -44,6 +44,7 @@ See [the ADR index](adr/index.md) for the full numbered list.
 | [Dev Setup & Workflow](dev/dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing, troubleshooting |
 | [Mobile Dev Setup](dev/dev-setup-mobile.md) | Android SDK, NDK, OpenJDK 17, and Gradle setup for mobile development |
 | [Translations & Localization](dev/translations.md) | Guide for adding and maintaining desktop and mobile language translations |
+| [WebKitGTK Frontend Constraints](dev/webkitgtk-frontend.md) | Desktop frontend layout rules for the WebKitGTK 2.44 floor: no abspos for critical layout, logical-inset shorthand hazards, the search-bar incident record, and the pinned-engine probe rig |
 | [Linux Repositories](dev/linux-repositories.md) | GPG-verified apt and dnf package repositories: user setup, key fingerprint, direct-download verification |
 | [Release Protocol](dev/release-protocol.md) | Shipping runbook for every variant: version bump, signing keys and store credentials, build matrix (Linux/macOS/Windows/extension/Android), the release pipeline, store publishing, update channels |
 | [Google Play](dev/google-play.md) | Play Console runbook: signing and version-code rules, testing tracks, console declarations, listing kit, the subscription model, and the per-release flow |

@@ -60,6 +60,7 @@
 - **macOS Ad-Hoc Signatures:** Binaries must be signed with stable bundle identifiers (`app.baluard.desktop.daemon`) via `just _sign-sidecar` so macOS Keychain access permissions persist across local rebuilds.
 - **Modal Accessibility:** Modals must use `<FocusTrap>` to maintain focus containment, Esc key dismissal, and proper ARIA dialog attributes.
 - **Internationalization:** User-facing strings must use `t("key")` and maintain key parity across `en.json`, `es.json`, and `pt.json`.
+- **No abspos for critical layout:** WebKitGTK (real-app GPU/Wayland paths) has mis-laid abspos children whose offsets resolve through Tailwind v4's logical inset shorthands (`inset-y-0` emits `inset-block`), dropping them to static flow inside the scale/filter-contained vault columns. Compose fields with flex children (search bar pattern); abspos is for true overlays only. Full rules, incident record, and the engine-floor probe rig: [WebKitGTK Frontend Constraints](webkitgtk-frontend.md).
 
 ---
 
