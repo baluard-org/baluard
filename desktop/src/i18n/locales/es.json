@@ -23,7 +23,9 @@
     "quickUnlock": "Desbloqueo rápido",
     "pinUnlock": "Desbloquear con PIN",
     "pinPlaceholder": "PIN de 6 dígitos",
-    "renderRecoveryNotice": "La última vez Baluard se cerró de forma inesperada, así que esta sesión dibuja la ventana en un modo más seguro. Puedes cambiarlo en Ajustes después de desbloquear."
+    "renderRecoveryNotice": "La última vez Baluard se cerró de forma inesperada, así que esta sesión dibuja la ventana en un modo más seguro. Puedes cambiarlo en Ajustes después de desbloquear.",
+    "noVaultsTitle": "Aún no hay bóvedas en este dispositivo. Crea una o abre una bóveda existente para empezar.",
+    "noVaultsAction": "Crea o abre una bóveda"
   },
   "create": {
     "title": "Crear bóveda",

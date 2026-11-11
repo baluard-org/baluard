@@ -20,6 +20,9 @@ const VaultSwitcherContext = createContext(null);
 
 function VaultSwitcherProvider(props) {
   const [vaults, setVaults] = createSignal([]);
+  // Distinguishes "list not read yet" from "read and genuinely empty" —
+  // screens must not treat a cold-start empty array as an empty registry.
+  const [vaultsLoaded, setVaultsLoaded] = createSignal(false);
   const [activeSlug, setActiveSlug] = createSignal(null);
   // G24 §4.7 v2: a pending browser unlock request, resolved to a vault row
   // for the banner. Null = no pending ask.
@@ -58,6 +61,7 @@ function VaultSwitcherProvider(props) {
       const data = JSON.parse(await daemon("vaults.list"));
       const rows = Array.isArray(data.vaults) ? data.vaults : [];
       setVaults(rows);
+      setVaultsLoaded(true);
       const active = rows.find((r) => r.active);
       setActiveSlug(active ? active.slug : null);
       try {
@@ -154,6 +158,7 @@ function VaultSwitcherProvider(props) {
 
   const store = {
     vaults,
+    vaultsLoaded,
     activeSlug,
     refresh,
     switchTo,

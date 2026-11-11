@@ -64,6 +64,12 @@ export default function LoginScreen() {
   );
   const [bruteLock, setBruteLock] = createSignal(false);
 
+  // An empty registry makes the unlock form a dead end (no vault to open,
+  // every submit fails daemon-side). The list must have actually loaded —
+  // a cold start starts with an empty array before vaults.list resolves.
+  const emptyRegistry = () =>
+    !joinMode() && switcher.vaultsLoaded() && switcher.vaults().length === 0;
+
   // One Quick Unlock at a time; the auto-prompt and the button share it so a
   // click cannot stack a second prompt on top of the running one. Tauri
   // invokes reject plugin errors as PLAIN STRINGS (the biometry plugin
@@ -246,6 +252,23 @@ export default function LoginScreen() {
     <div class="relative h-full">
       <ThemeToggleFloating />
     <div class="login-screen flex justify-center h-full overflow-y-auto bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 py-8 relative">
+      <Show
+        when={!emptyRegistry()}
+        fallback={
+          <div class="login-screen__card w-full max-w-md my-auto p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast motion-fade-up">
+            <div class="text-center space-y-5 py-4">
+              <IconBaluardLogo class="w-20 h-20 mx-auto object-contain logo-shadow" />
+              <p class="text-sm text-[var(--color-muted)]">{t("login.noVaultsTitle")}</p>
+              <button
+                onClick={() => auth.setStatus("welcome")}
+                class="w-full py-3 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all cursor-pointer"
+              >
+                {t("login.noVaultsAction")}
+              </button>
+            </div>
+          </div>
+        }
+      >
       <div class="login-screen__card w-full max-w-md my-auto p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast motion-fade-up">
         {/* Static gradient accents (contained glow, replaces expensive blur-3xl for GPU performance) */}
         <div class="login-screen__glow-top absolute -top-10 -left-10 w-40 h-40 rounded-full opacity-10 pointer-events-none" style={{"background": "radial-gradient(circle, var(--color-primary) 0%, transparent 70%)"}}></div>
@@ -517,6 +540,7 @@ export default function LoginScreen() {
           <LegacyContactOpen onClose={() => setShowLegacyOpen(false)} />
         </Show>
       </div>
+      </Show>
     </div>
     </div>
   );
