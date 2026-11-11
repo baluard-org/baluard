@@ -10,7 +10,8 @@
     "newVault": "Crear una nueva bóveda",
     "openLocal": "Abrir una bóveda local existente",
     "downloadFromProvider": "Abrir una bóveda guardada en línea",
-    "backToLogin": "Volver al inicio de sesión"
+    "backToLogin": "Volver al inicio de sesión",
+    "advanced": "Avanzado"
   },
   "login": {
     "title": "Baluard",
@@ -829,7 +830,13 @@
     "webOAuthOpened": "Se abrió tu navegador para iniciar sesión.",
     "webOAuthRelink": "Reabrir página de inicio de sesión",
     "timeout": "La descarga tardó demasiado.",
-    "failed": "Error en la descarga."
+    "failed": "Error en la descarga.",
+    "clashTitle": "Ya existe una bóveda",
+    "clashBody": "Ya existe una bóveda llamada \"{slug}\" en este dispositivo.",
+    "clashOpenExisting": "Abrir la bóveda existente",
+    "clashReimport": "Borrar la copia local e importar de nuevo",
+    "clashVerifyHint": "Ingresa la contraseña maestra de la bóveda existente para borrarla de este dispositivo.",
+    "clashWipeConfirm": "Borrar e importar de nuevo"
   },
   "gitWhat": {
     "link": "¿Qué es git?"

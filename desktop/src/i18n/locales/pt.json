@@ -39,7 +39,8 @@
     "newVault": "Criar um novo cofre",
     "openLocal": "Abrir um cofre local existente",
     "downloadFromProvider": "Abrir um cofre salvo online",
-    "backToLogin": "Voltar para o login"
+    "backToLogin": "Voltar para o login",
+    "advanced": "Avançado"
   },
   "clone": {
     "title": "Baixar Cofre",
@@ -54,7 +55,13 @@
     "webOAuthOpened": "Seu navegador abriu para fazer login.",
     "webOAuthRelink": "Reabrir página de login",
     "timeout": "Tempo limite de download esgotado.",
-    "failed": "Falha ao baixar."
+    "failed": "Falha ao baixar.",
+    "clashTitle": "Já existe um cofre",
+    "clashBody": "Já existe um cofre chamado \"{slug}\" neste dispositivo.",
+    "clashOpenExisting": "Abrir o cofre existente",
+    "clashReimport": "Apagar a cópia local e importar novamente",
+    "clashVerifyHint": "Digite a senha mestra do cofre existente para apagá-lo deste dispositivo.",
+    "clashWipeConfirm": "Apagar e importar novamente"
   },
   "create": {
     "title": "Criar Cofre",
