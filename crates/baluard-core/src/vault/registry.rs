@@ -334,20 +334,30 @@ impl VaultRegistry {
     /// Scans the default vaults directory (`<data_dir>/vaults/*`) for
     /// subdirectories containing a `.baluard` marker. Any marker whose slug is
     /// not already in this registry is returned as a `VaultEntry`, ready to
-    /// `add()`. This self-heals the registry if it is ever emptied while the
-    /// vault files are intact (e.g. after a crash that wrote an empty index),
-    /// so the user never has to know the vault path or touch a hidden folder.
+    /// `add()`.
     ///
     /// `display_name` falls back to the slug (the human-friendly name lives in
     /// the encrypted `profile.enc`, only readable after unlock); the UI
     /// refreshes it once the vault is opened.
+    /// Re-discover vault directories under the default vaults dir that no
+    /// registry entry references. Recovery only runs when the registry file
+    /// itself was lost or unreadable — a valid empty registry is a deliberate
+    /// detach and is never re-populated (see `VaultHost::list`).
+    ///
+    /// Backup copies of a vault (e.g. `myslug.bak.<epoch>`) share the
+    /// marker's slug with the real folder, so when a slug maps to several
+    /// directories exactly one directory whose NAME equals the slug wins;
+    /// if the choice stays ambiguous the slug is skipped rather than guessed.
     pub fn discover_orphans(&self) -> Vec<VaultEntry> {
         let vaults_dir = crate::paths::vaults_dir();
         let entries = match std::fs::read_dir(&vaults_dir) {
             Ok(rd) => rd,
             Err(_) => return Vec::new(), // dir missing — nothing to discover
         };
-        let mut found = Vec::new();
+        // Group candidate directories by their resolved slug so backup copies
+        // sharing a marker slug cannot win adoption by read_dir order.
+        let mut by_slug: std::collections::BTreeMap<String, Vec<PathBuf>> =
+            std::collections::BTreeMap::new();
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_dir() {
@@ -372,6 +382,25 @@ impl VaultRegistry {
             } else {
                 marker.slug.clone()
             };
+            by_slug.entry(slug).or_default().push(path);
+        }
+        let mut found = Vec::new();
+        for (slug, mut paths) in by_slug {
+            if paths.len() > 1 {
+                // Copies present: the directory named exactly after the slug
+                // is the live one; anything else is ambiguous, skip the slug.
+                let slug_dir = format!("{slug}");
+                paths.retain(|p| p.file_name().and_then(|n| n.to_str()) == Some(slug_dir.as_str()));
+                if paths.len() != 1 {
+                    continue;
+                }
+            }
+            let path = paths.remove(0);
+            let vault_id = BaluardMarker::read_from_vault(&path)
+                .ok()
+                .flatten()
+                .map(|m| m.vault_id)
+                .unwrap_or_default();
             found.push(VaultEntry {
                 slug: slug.clone(),
                 display_name: slug, // updated from profile.enc after first unlock
@@ -380,7 +409,7 @@ impl VaultRegistry {
                 remote_url: None,
                 last_synced: None,
                 last_opened: None,
-                vault_id: marker.vault_id,
+                vault_id,
                 merge_opt_in: None,
                 merge_ceiling_seen: false,
             });
@@ -455,6 +484,62 @@ fn is_space_conservative(vault_path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// Backup copies share the marker slug with the real folder; discovery
+    /// must adopt the directory NAMED after the slug and skip the slug when
+    /// the choice stays ambiguous (2026-11-11 Mac: a .bak copy was adopted
+    /// over the real vault by read_dir order).
+    #[test]
+    fn discover_prefers_the_slug_named_directory_and_skips_ambiguity() {
+        let _env = crate::test_support::lock_env();
+        let dir = tempfile::tempdir().unwrap();
+        let prev = std::env::var("BALUARD_DATA_DIR").ok();
+        // SAFETY: serialized by the crate-shared env lock.
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", dir.path().to_string_lossy().to_string());
+        }
+        let vaults_dir = crate::paths::vaults_dir();
+        std::fs::create_dir_all(&vaults_dir).unwrap();
+
+        let write_marker = |p: &Path, slug: &str| {
+            let marker = BaluardMarker {
+                version: 1,
+                vault_id: Uuid::new_v4(),
+                slug: slug.to_string(),
+            };
+            std::fs::create_dir_all(p).unwrap();
+            std::fs::write(p.join(".baluard"), serde_json::to_vec(&marker).unwrap()).unwrap();
+        };
+        write_marker(&vaults_dir.join("baluard-orph.bak.123"), "baluard-orph");
+        write_marker(&vaults_dir.join("baluard-orph"), "baluard-orph");
+
+        let reg = VaultRegistry::default();
+        let found = reg.discover_orphans();
+        assert_eq!(found.len(), 1, "one slug, one winner: {found:?}");
+        assert_eq!(
+            found[0].path.file_name().unwrap().to_str().unwrap(),
+            "baluard-orph",
+            "the slug-named directory must win over the backup copy"
+        );
+
+        // Ambiguous: two copies, neither named after the slug — skip, never
+        // guess between backups.
+        std::fs::remove_dir_all(vaults_dir.join("baluard-orph")).unwrap();
+        write_marker(&vaults_dir.join("baluard-orph.copy2"), "baluard-orph");
+        let found = VaultRegistry::default().discover_orphans();
+        assert!(
+            found.is_empty(),
+            "an ambiguous slug must be skipped, not guessed: {found:?}"
+        );
+
+        // Restore the process env for sibling tests.
+        unsafe {
+            match &prev {
+                Some(v) => std::env::set_var("BALUARD_DATA_DIR", v),
+                None => std::env::remove_var("BALUARD_DATA_DIR"),
+            }
+        }
+    }
+
     use super::*;
 
     // ── G24 merge eligibility (family-spaces step 7) ──
