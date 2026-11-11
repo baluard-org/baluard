@@ -75,6 +75,7 @@ import app.baluard.mobile.sync.ConflictViewModel
 import app.baluard.mobile.sync.SyncCoordinator
 import app.baluard.mobile.sync.SyncPhase
 import app.baluard.mobile.sync.runSyncCycle
+import app.baluard.mobile.sync.syncOutcomeToast
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -287,9 +288,7 @@ fun App(
                         saveRevision++
                     },
                     setPhase = setPhase,
-                    onResult = { ok ->
-                        if (ok) Toast.success(t("sync.synced")) else Toast.error(t("sync.offline"))
-                    },
+                    onResult = { _, tag -> syncOutcomeToast(tag, ::t) },
                 )
             }
         }

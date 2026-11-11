@@ -76,10 +76,11 @@ class SyncCoordinator(
         vault.syncOnBackground()
     }
 
-    /** User pull-to-refresh / "Sync now". */
-    suspend fun pullNow(vault: MobileVaultInterface): Unit {
-        if (gated()) return
-        vault.syncPullNow()
+    /** User pull-to-refresh / "Sync now". Returns the pull report tag, or
+     * null when the transport call threw ("locked" = subscription gate). */
+    suspend fun pullNow(vault: MobileVaultInterface): String? {
+        if (gated()) return "locked"
+        return runCatching { vault.syncPullNow() }.getOrNull()
     }
 
     /**

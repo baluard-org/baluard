@@ -2683,7 +2683,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_on_unlock() != 40414.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
-  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_pull_now() != 17037.toShort()) {
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_pull_now() != 53661.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_status() != 496.toShort()) {
@@ -4969,9 +4969,12 @@ public interface MobileVaultInterface {
   suspend fun `syncOnUnlock`()
 
   /**
-   * User pull-to-refresh / "Sync now".
+   * User pull-to-refresh / "Sync now". Returns the pull report tag
+   * (pulled, idle, paused, busy, skipped, offline, access_denied, error)
+   * so the UI can toast what actually happened instead of a blanket
+   * success.
    */
-  suspend fun `syncPullNow`()
+  suspend fun `syncPullNow`(): kotlin.String
 
   /**
    * Coordinator status snapshot for the sync indicator.
@@ -8631,21 +8634,30 @@ open class MobileVault :
     )
 
   /**
-   * User pull-to-refresh / "Sync now".
+   * User pull-to-refresh / "Sync now". Returns the pull report tag
+   * (pulled, idle, paused, busy, skipped, offline, access_denied, error)
+   * so the UI can toast what actually happened instead of a blanket
+   * success.
    */
   @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-  override suspend fun `syncPullNow`() =
+  override suspend fun `syncPullNow`(): kotlin.String =
     uniffiRustCallAsync(
       callWithPointer { thisPtr ->
         UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_pull_now(
           thisPtr,
         )
       },
-      { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
-      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
-      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
       // lift function
-      { Unit },
+      { FfiConverterString.lift(it) },
       // Error FFI converter
       UniffiNullRustCallStatusErrorHandler,
     )
