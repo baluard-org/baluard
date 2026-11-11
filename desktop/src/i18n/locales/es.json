@@ -432,7 +432,9 @@
     "runInBackgroundLabel": "Ejecutar en segundo plano",
     "runInBackgroundDesc": "Mantiene Baluard ejecutándose en la bandeja del sistema tras cerrar la ventana, para que el autocompletado del navegador siga funcionando. Desactívalo para salir de Baluard al cerrar.",
     "runInBackgroundEnabled": "Baluard sigue ejecutándose al cerrar la ventana",
-    "runInBackgroundDisabled": "Baluard ahora se cierra al cerrar la ventana"
+    "runInBackgroundDisabled": "Baluard ahora se cierra al cerrar la ventana",
+    "switchToLight": "Cambiar al tema claro",
+    "switchToDark": "Cambiar al tema oscuro"
   },
   "sync": {
     "title": "Sincronización de bóveda",

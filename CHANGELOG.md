@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- The floating theme button now shows what the next press does (a sun to go light, a moon to go dark), and when your choice matches what your system already provides it hands control back to the system preference.
+- Notification popups now appear in the bottom-right corner instead of the top-right, where they covered the theme button.
 - Fixed top-and-bottom clipping on the unlock, join, welcome, and download screens when the window is not maximized: content now scrolls instead of being cut off.
 - Opening a vault saved online from GitHub, GitLab, or Codeberg works again: the sign-in steps no longer require an unlocked vault first, and provider or download failures now explain themselves instead of a generic error.
 - The Android Sync button now reports what actually happened: Already up to date when nothing was new, an honest message when no sync is set up, a conflict is waiting, another sync is running, or the server rejected this device, instead of always showing Synced. A conflict resolved by keeping your local changes is pushed automatically on the next sync.
