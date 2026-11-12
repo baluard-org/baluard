@@ -17,7 +17,7 @@ import {
 	parseCloneClash,
 	registerLocalVault,
 	startClone,
-	wipeLocalVault,
+	discardOrphanVault,
 } from "../lib/cloneFlow.js";
 
 const t = (k) => k; // pass-through translator
@@ -201,27 +201,22 @@ describe("parseCloneClash", () => {
 	});
 });
 
-describe("wipeLocalVault", () => {
-	it("sends the password-gated destructive detach", async () => {
-		responses["vaults.detach"] = JSON.stringify({ ok: true });
-		await wipeLocalVault("my-vault", "pw");
+describe("discardOrphanVault", () => {
+	it("posts the slug with no credential", async () => {
+		responses["vaults.discard_orphan"] = JSON.stringify({ discarded: true });
+		const r = await discardOrphanVault("my-vault");
 		const last = calls[calls.length - 1];
-		expect(last.action).toBe("vaults.detach");
-		const payload = JSON.parse(last.payload);
-		expect(payload).toEqual({
-			slug: "my-vault",
-			delete_from_disk: true,
-			force: true,
-			confirm: { kind: "password", value: "pw" },
-		});
+		expect(last.action).toBe("vaults.discard_orphan");
+		expect(JSON.parse(last.payload)).toEqual({ slug: "my-vault" });
+		expect(r).toEqual({ discarded: true });
 	});
 
-	it("propagates the daemon refusal (wrong password)", async () => {
-		responses["vaults.detach"] = new Error(
-			"verification failed: master password incorrect",
+	it("propagates the daemon refusal", async () => {
+		responses["vaults.discard_orphan"] = new Error(
+			"The folder at this path has no .baluard marker",
 		);
-		await expect(wipeLocalVault("my-vault", "wrong")).rejects.toThrow(
-			/password incorrect/,
+		await expect(discardOrphanVault("my-vault")).rejects.toThrow(
+			/baluard marker/,
 		);
 	});
 });

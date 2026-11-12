@@ -840,8 +840,6 @@
     "clashBody": "Ya existe una bóveda llamada \"{slug}\" en este dispositivo.",
     "clashOpenExisting": "Abrir la bóveda existente",
     "clashReimport": "Borrar la copia local e importar de nuevo",
-    "clashVerifyHint": "Ingresa la contraseña maestra de la bóveda existente para borrarla de este dispositivo. Los cambios que nunca se sincronizaron se perderán.",
-    "clashWipeConfirm": "Borrar e importar de nuevo",
     "clashOrphanBody": "Ya existe una bóveda llamada \"{slug}\" en este dispositivo, pero no está configurada en Baluard.",
     "clashUseExisting": "Usar la copia local de la bóveda",
     "clashDiscard": "Eliminar la copia local y descargar de internet",

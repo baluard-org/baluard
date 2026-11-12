@@ -7,7 +7,6 @@ import {
   parseCloneClash,
   registerLocalVault,
   startClone,
-  wipeLocalVault,
 } from "../lib/cloneFlow.js";
 import { daemon } from "../lib/daemon.js";
 import { providerLabel as providerLabelT } from "../lib/providers.js";
@@ -51,17 +50,15 @@ export default function CloneFromProviderScreen(props) {
   });
   const [chosenRepo, setChosenRepo] = createSignal(null);
   // Clone-clash dialog: the daemon refused because this slug already exists.
-  // kind "registered" = live registry entry (open it, or wipe with the master
-  // password and re-import); kind "orphan" = unregistered folder on disk
-  // (safe-detach leftover: adopt it, or nothing — deletion goes through the
-  // vault switcher after opening).
+  // kind "registered" = live registry entry (open it, or delete it and pull
+  // the fresh copy); kind "orphan" = unregistered folder on disk (adopt it,
+  // or delete it). Deletion is credential-free: the user controls the
+  // machine, and the folder is a plain directory they could remove in a
+  // file manager.
   const [clash, setClash] = createSignal(null);
   const [clashPath, setClashPath] = createSignal(null);
-  const [clashWipe, setClashWipe] = createSignal(false);
-  const [clashPw, setClashPw] = createSignal("");
   const [clashError, setClashError] = createSignal(null);
   const [clashBusy, setClashBusy] = createSignal(false);
-  let clashPwRef;
   let dialogRef;
   let passwordRef;
   let phraseRef;
@@ -157,8 +154,6 @@ export default function CloneFromProviderScreen(props) {
       if (parsed) {
         setClash(parsed);
         setClashPath(null);
-        setClashWipe(false);
-        setClashPw("");
         setClashError(null);
         if (parsed.kind === "registered") {
           // Surface the folder the wipe would delete, wherever it was
@@ -185,16 +180,7 @@ export default function CloneFromProviderScreen(props) {
     if (clashBusy()) return;
     setClash(null);
     setClashPath(null);
-    setClashWipe(false);
-    setClashPw("");
     setClashError(null);
-  }
-
-  function armWipe() {
-    setClashWipe(true);
-    // The FocusTrap focuses once on mount; switching arms swaps the focused
-    // button out, so put the cursor in the password field ourselves.
-    queueMicrotask(() => clashPwRef?.focus());
   }
 
   // Adopt an unregistered leftover folder and drop into the unlock flow.
@@ -219,9 +205,10 @@ export default function CloneFromProviderScreen(props) {
     }
   }
 
-  // Destructive arm: delete the unregistered folder and re-download the
-  // selected vault in place. The daemon refuses registered / marker-less
-  // folders, so only a genuine orphan copy can go.
+  // Destructive arm: delete the local copy — registered vault or orphan
+  // alike — and re-download the selected vault in place. Credential-free:
+  // the user controls the machine, and the daemon's marker check prevents
+  // wrong-target deletes.
   async function clashDiscardFolder() {
     const c = clash();
     const repo = chosenRepo();
@@ -258,8 +245,6 @@ export default function CloneFromProviderScreen(props) {
     if (!slug) return;
     setClash(null);
     setClashPath(null);
-    setClashWipe(false);
-    setClashPw("");
     setClashError(null);
     try {
       await auth.refreshActiveVault();
@@ -267,36 +252,6 @@ export default function CloneFromProviderScreen(props) {
       auth.setStatus("locked");
     } catch (e) {
       toastError(sanitizeError(e, t));
-    }
-  }
-
-  // Arm (a): master-password-gated local wipe, then re-run the clone.
-  async function clashConfirmWipe() {
-    const slug = clash()?.slug;
-    const repo = chosenRepo();
-    if (!slug || !repo) return;
-    // The DOM field is the source of truth for what the user typed; the
-    // signal mirrors it for the disabled states.
-    const pw = clashPwRef?.value || clashPw();
-    if (!pw) {
-      setClashError(t("vault.vaultSwitcher.verifyRequired"));
-      return;
-    }
-    setClashError(null);
-    setClashBusy(true);
-    try {
-      await wipeLocalVault(slug, pw);
-      // Never leave the master password live in the DOM.
-      if (clashPwRef) clashPwRef.value = "";
-      setClashBusy(false);
-      setClash(null);
-      setClashPath(null);
-      setClashWipe(false);
-      setClashPw("");
-      await pickRepo(repo);
-    } catch (e) {
-      setClashBusy(false);
-      setClashError(String(e?.message ?? e));
     }
   }
 
@@ -621,84 +576,36 @@ export default function CloneFromProviderScreen(props) {
                   >
                     {clashBusy()
                       ? t("vault.vaultSwitcher.working")
-                      : t("clone.clashDiscard")}
+                      : t("clone.clashReimport")}
                   </Button>
-                  <Button
-                    onClick={clashExitToStart}
-                    disabled={clashBusy()}
-                    class="w-full py-2.5"
-                  >
+                  <Button onClick={clashExitToStart} class="w-full py-2.5">
                     {t("common.cancel")}
                   </Button>
                 </div>
               }
             >
-              <Show
-                when={clashWipe()}
-                fallback={
-                  <div class="flex flex-col gap-2">
-                    <Button onClick={clashOpenExisting} class="w-full py-2.5">
-                      {t("clone.clashOpenExisting")}
-                    </Button>
-                    <Button
-                      onClick={armWipe}
-                      variant="danger"
-                      class="w-full py-2.5"
-                    >
-                      {t("clone.clashReimport")}
-                    </Button>
-                    <Button onClick={clashDismiss} class="w-full py-2.5">
-                      {t("common.cancel")}
-                    </Button>
-                  </div>
-                }
-              >
-                <div class="border border-[var(--color-danger)]/40 rounded-xl p-4 mb-3">
-                  <p class="text-sm text-[var(--color-text)] mb-2">
-                    {t("clone.clashVerifyHint")}
-                  </p>
-                  <input
-                    ref={(el) => {
-                      clashPwRef = el;
-                    }}
-                    type="password"
-                    autocomplete="current-password"
-                    placeholder={t("login.passwordPlaceholder")}
-                    value={clashPw()}
-                    onInput={(e) => setClashPw(e.currentTarget.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        clashConfirmWipe();
-                      }
-                    }}
-                    class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)]"
-                  />
-                </div>
-                <Show when={clashError()}>
-                  <p class="text-sm text-[var(--color-danger)] mb-3">
-                    {clashError()}
-                  </p>
-                </Show>
-                <div class="flex gap-3">
-                  <Button
-                    onClick={clashDismiss}
-                    disabled={clashBusy()}
-                    class="flex-1 py-2.5"
-                  >
-                    {t("common.cancel")}
-                  </Button>
-                  <Button
-                    onClick={clashConfirmWipe}
-                    disabled={clashBusy()}
-                    variant="danger"
-                    class="flex-1 py-2.5"
-                  >
-                    {clashBusy()
-                      ? t("vault.vaultSwitcher.working")
-                      : t("clone.clashWipeConfirm")}
-                  </Button>
-                </div>
+              <div class="flex flex-col gap-2">
+                <Button onClick={clashOpenExisting} class="w-full py-2.5">
+                  {t("clone.clashOpenExisting")}
+                </Button>
+                <Button
+                  onClick={clashDiscardFolder}
+                  disabled={clashBusy()}
+                  variant="danger"
+                  class="w-full py-2.5"
+                >
+                  {clashBusy()
+                    ? t("vault.vaultSwitcher.working")
+                    : t("clone.clashReimport")}
+                </Button>
+                <Button onClick={clashDismiss} class="w-full py-2.5">
+                  {t("common.cancel")}
+                </Button>
+              </div>
+              <Show when={clashError()}>
+                <p class="text-sm text-[var(--color-danger)] mt-3">
+                  {clashError()}
+                </p>
               </Show>
             </Show>
             <Show when={clash()?.kind === "orphan" && clashError()}>
