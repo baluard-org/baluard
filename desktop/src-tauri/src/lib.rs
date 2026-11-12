@@ -440,15 +440,16 @@ fn payload_has_desktop_forbidden_keys(payload: &str) -> bool {
         .ok()
         .and_then(|v| {
             v.as_object().map(|o| {
-                // in_path/out_path: the path-based backup transport is a
-                // daemon/CLI capability. The webview uses the dedicated
-                // save/open Tauri commands, never raw paths — admitting
-                // them here would hand a compromised webview an arbitrary
-                // file write and read oracle.
-                o.contains_key("delete_from_disk")
-                    || o.contains_key("force")
-                    || o.contains_key("in_path")
-                    || o.contains_key("out_path")
+                // delete_from_disk/force deliberately pass now: the vault
+                // switcher and clone-clash wipe arms post them, and the
+                // daemon's confirm gate (master password, rate-limited) is
+                // the authorization — an XSS without the password gets
+                // nothing. in_path/out_path stay forbidden: the raw-path
+                // backup transport is a daemon/CLI capability, and admitting
+                // it would hand a compromised webview a file read/write
+                // oracle. The webview uses the dedicated save/open Tauri
+                // commands instead.
+                o.contains_key("in_path") || o.contains_key("out_path")
             })
         })
         .unwrap_or(false)
@@ -479,8 +480,8 @@ async fn daemon_request(
             error: format!("Action '{action}' is not available in the desktop app"),
         };
     }
-    // D2: the destructive detach params (delete_from_disk/force) are the
-    // CLI's escape hatch, never the webview's.
+    // D2: raw backup-transport paths are daemon/CLI-only; the webview uses
+    // the dedicated save/open Tauri commands.
     if payload_has_desktop_forbidden_keys(&payload) {
         #[cfg(debug_assertions)]
         log::warn!("[desktop] D2 deny: action={action} payload carries a forbidden key");
@@ -2171,16 +2172,18 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    // D2: the audit's acceptance test — the deliberately CLI-only destructive
-    // arm must be unreachable from the webview even though `vaults.detach`
-    // itself is allowed (the safe detach is a UI feature).
+    // D2: raw backup-transport paths stay unreachable from the webview even
+    // though `vaults.detach` is allowed. delete_from_disk/force pass now —
+    // the credential-gated wipe arms post them and the daemon's confirm
+    // gate owns the authorization (the old key-block silently broke both
+    // shipped destructive arms).
     #[test]
-    fn d2_destructive_detach_params_are_denied() {
+    fn d2_destructive_path_params_are_denied_but_wipe_params_pass() {
         assert!(desktop_action_allowed("vaults.detach"));
-        assert!(payload_has_desktop_forbidden_keys(
+        assert!(!payload_has_desktop_forbidden_keys(
             "{\"slug\":\"a\",\"delete_from_disk\":true}"
         ));
-        assert!(payload_has_desktop_forbidden_keys(
+        assert!(!payload_has_desktop_forbidden_keys(
             "{\"slug\":\"a\",\"force\":true}"
         ));
         assert!(payload_has_desktop_forbidden_keys(

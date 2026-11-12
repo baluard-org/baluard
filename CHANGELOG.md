@@ -3,6 +3,7 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
+- The "Delete from this device" and "Delete and re-import" actions work now: a security gate written before those screens existed was rejecting them.
 - Downloaded vaults now set up with the master password and the 24-word recovery phrase together, because the device key that opens a downloaded copy never syncs; the login screen offers the same setup when a downloaded vault refuses the password.
 - Downloading a vault whose name collides with a local folder now offers to delete that folder and download a fresh copy from online, and the dialog wording talks about vaults rather than folders.
 - The app now opens on the chooser between creating a vault, downloading one from your Git provider, and opening a local vault when there are no vaults on the device - on a fresh install and after detaching your last vault alike.
