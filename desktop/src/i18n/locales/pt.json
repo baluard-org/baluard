@@ -66,7 +66,7 @@
     "clashWipeConfirm": "Apagar e importar novamente",
     "clashOrphanBody": "Já existe um cofre chamado \"{slug}\" neste dispositivo, mas não está configurado no Baluard.",
     "clashUseExisting": "Usar a cópia local do cofre",
-    "clashDiscard": "Descartar a cópia local e baixar da internet"
+    "clashDiscard": "Eliminar a cópia local e baixar da internet"
   },
   "create": {
     "title": "Criar Cofre",

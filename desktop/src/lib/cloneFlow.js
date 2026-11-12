@@ -77,10 +77,13 @@ export function parseCloneClash(message) {
 	const m = String(message ?? "");
 	const reg = m.match(/A vault '([^']+)' is already registered/);
 	if (reg) return { kind: "registered", slug: reg[1], path: null };
-	const dir = m.match(/Target directory already exists: (.+?)\./);
+	// Greedy capture anchored on the trailing sentence: vault paths contain
+	// dots (~/.local/share) so a lazy match would truncate at the first one,
+	// and Windows paths use backslashes throughout.
+	const dir = m.match(/Target directory already exists: (.+)\. Pick a different/);
 	if (dir) {
 		const path = dir[1];
-		const slug = path.split("/").pop() || path.split("\\").pop() || path;
+		const slug = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 		return { kind: "orphan", slug, path };
 	}
 	return null;

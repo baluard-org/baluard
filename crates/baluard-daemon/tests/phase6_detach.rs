@@ -1153,3 +1153,120 @@ async fn route_discard_orphan_refuses_a_folder_without_a_marker() {
     );
     assert!(dir.exists(), "refusal must leave the folder on disk");
 }
+
+// ── review-fix coverage for vaults.discard_orphan ──
+
+#[tokio::test]
+async fn route_discard_orphan_refuses_when_the_registry_is_unreadable() {
+    let (data_dir, _guard) = sandboxed_data_dir().await;
+    let vaults = data_dir.path().join("vaults");
+    let dir = write_orphan_dir(&vaults, "baluard-corrupt");
+    // A corrupt registry file must fail the discard CLOSED: the handler
+    // cannot prove the slug is unregistered, so nothing may be deleted.
+    std::fs::write(data_dir.path().join("registry.json"), "{ not json at all")
+        .expect("corrupt registry");
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.discard_orphan",
+        serde_json::json!({ "slug": "baluard-corrupt" }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        !resp.success,
+        "an unreadable registry must refuse the discard"
+    );
+    assert!(dir.exists(), "fail-closed must leave the folder on disk");
+}
+
+#[tokio::test]
+async fn route_discard_orphan_refuses_a_marker_slug_mismatch() {
+    let (data_dir, _guard) = sandboxed_data_dir().await;
+    let vaults = data_dir.path().join("vaults");
+    let dir = write_orphan_dir(&vaults, "baluard-target");
+    // The folder carries ANOTHER vault's marker: discarding it under the
+    // requested slug would remove the wrong vault's data.
+    let marker = BaluardMarker {
+        version: 1,
+        vault_id: Uuid::new_v4(),
+        slug: "baluard-other".to_string(),
+    };
+    std::fs::write(
+        dir.join(".baluard"),
+        serde_json::to_string(&marker).expect("marker json"),
+    )
+    .expect("overwrite marker");
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.discard_orphan",
+        serde_json::json!({ "slug": "baluard-target" }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "a marker mismatch must refuse");
+    assert!(
+        resp.error_message.contains("baluard-other"),
+        "refusal must name the folder's real vault, got: {}",
+        resp.error_message
+    );
+    assert!(dir.exists(), "refusal must leave the folder on disk");
+}
+
+#[tokio::test]
+async fn route_discard_orphan_refuses_a_path_traversal_slug() {
+    let (data_dir, _guard) = sandboxed_data_dir().await;
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.discard_orphan",
+        serde_json::json!({ "slug": "../escaped" }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "a traversal slug must refuse");
+    assert!(
+        resp.error_message.contains("Invalid vault slug"),
+        "got: {}",
+        resp.error_message
+    );
+    // Nothing outside vaults_dir was touched: the sibling dir is intact.
+    assert!(!data_dir.path().join("escaped").exists());
+}
+
+#[tokio::test]
+async fn clone_start_reports_registered_over_dir_exists_for_default_dir_vaults() {
+    // Review risk: the dir-exists check used to fire first, so a REGISTERED
+    // vault living in the default vaults dir classified as an orphan and
+    // the wizard offered to discard a tracked vault. The registry check
+    // must win.
+    let (data_dir, _guard) = sandboxed_data_dir().await;
+    let vaults = data_dir.path().join("vaults");
+    let dir = write_orphan_dir(&vaults, "baluard-both");
+    let entry = make_entry("baluard-both", &dir, Uuid::new_v4());
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("baluard-both"));
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vault.clone_start",
+        serde_json::json!({
+            "clone_url": "https://github.com/me/baluard-both.git",
+            "provider": "github",
+            "slug": "baluard-both",
+            "display_name": "baluard-both",
+        }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.error_message.contains("already registered"),
+        "registered must win over dir-exists, got: {}",
+        resp.error_message
+    );
+    assert!(
+        !resp
+            .error_message
+            .contains("Target directory already exists"),
+        "the orphan classification must not fire for a registered vault"
+    );
+}

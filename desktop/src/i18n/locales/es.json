@@ -841,7 +841,7 @@
     "clashWipeConfirm": "Borrar e importar de nuevo",
     "clashOrphanBody": "Ya existe una bóveda llamada \"{slug}\" en este dispositivo, pero no está configurada en Baluard.",
     "clashUseExisting": "Usar la copia local de la bóveda",
-    "clashDiscard": "Descartar la copia local y descargar de internet"
+    "clashDiscard": "Eliminar la copia local y descargar de internet"
   },
   "gitWhat": {
     "link": "¿Qué es git?"

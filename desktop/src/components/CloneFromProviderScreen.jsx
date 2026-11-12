@@ -546,6 +546,9 @@ export default function CloneFromProviderScreen(props) {
 					aria-describedby="clone-clash-desc"
 					class="clone-screen__clash fixed inset-0 bg-black/50 flex items-center justify-center z-50"
 				>
+					{/* Escape dismisses back to the repo list; only the Cancel
+						button exits the whole wizard to the start screen — the
+						lighter gesture gets the lighter undo. */}
 					<FocusTrap containerRef={dialogRef} onEscape={clashDismiss} />
 					<div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
 						<h3

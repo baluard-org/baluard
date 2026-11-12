@@ -428,7 +428,10 @@ fn action_requires_session_token(action: &str) -> bool {
 /// `vaults.discard_orphan` are unauthenticated destructive-capable admin
 /// routes (their delete arms are protected by slug-retyping / marker
 /// checks + registered-slug refusal, not by a session token) — same
-/// socket-UID trust level.
+/// socket-UID trust level. `vaults.discard_orphan` is additionally
+/// reachable from the webview through the D2 allow-list, which is acceptable
+/// because a same-UID process could `rm -rf` the folder directly; the
+/// socket/webview boundary is the trust line, not these route guards.
 #[cfg(test)]
 const HOST_ACTIONS: &[&str] = &[
     "ping",
@@ -856,6 +859,28 @@ enum MarkerCheck {
 /// are served here; everything else resolves a target `Arc<VaultState>` and
 /// delegates to `route_request`. The snapshot is taken ONCE per request so a
 /// mid-request `switch` cannot re-route an in-flight operation.
+/// The registered-slug gate for `vaults.discard_orphan`, shared by the
+/// early check and the late pre-delete re-check. FAIL-CLOSED: an unreadable
+/// registry (corrupt file, wrong schema version, I/O error) refuses the
+/// delete — a skipped check here would let a registered vault's folder be
+/// removed without its credential gate.
+fn discard_orphan_registry_refusal(slug: &str) -> Option<String> {
+    match baluard_core::vault::registry::VaultRegistry::load_locked() {
+        Ok(reg) => {
+            if reg.exists(slug) {
+                Some(format!(
+                    "Vault '{slug}' is registered in Baluard; delete it from the vault switcher instead."
+                ))
+            } else {
+                None
+            }
+        }
+        Err(e) => Some(format!(
+            "Cannot read the vault registry, so the folder cannot be safely checked for an active registration. Try again, or remove the folder manually: {e}"
+        )),
+    }
+}
+
 pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
     route_host_request_with_peer(req, host, None).await
 }
@@ -1584,12 +1609,8 @@ async fn route_host_request_inner(
             if let Err(e) = baluard_core::vault::slug::validate_slug(slug) {
                 return err_response(format!("Invalid vault slug '{slug}': {e}"));
             }
-            if let Ok(reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
-                if reg.exists(slug) {
-                    return err_response(format!(
-                        "Vault '{slug}' is registered in Baluard; delete it from the vault switcher instead."
-                    ));
-                }
+            if let Some(msg) = discard_orphan_registry_refusal(slug) {
+                return err_response(msg);
             }
             let target = baluard_core::paths::vaults_dir().join(slug);
             if !target.exists() {
@@ -1611,6 +1632,13 @@ async fn route_host_request_inner(
                     "The folder holds vault '{}' and cannot be discarded as '{slug}'.",
                     marker.slug
                 ));
+            }
+            // Late re-check: shrink the check-to-delete window so a vault
+            // registered concurrently does not lose its folder. Fail-closed
+            // like the early check — an unreadable registry refuses the
+            // delete, it never waives it.
+            if let Some(msg) = discard_orphan_registry_refusal(slug) {
+                return err_response(msg);
             }
             if let Err(e) = tokio::fs::remove_dir_all(&target).await {
                 return err_response(format!("Failed to delete the local folder: {e}"));
@@ -4355,19 +4383,23 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
     if let Err(e) = baluard_core::vault::slug::validate_slug(&slug) {
         return err_response(format!("Invalid vault slug '{slug}': {e}"));
     }
-    let target = baluard_core::paths::vaults_dir().join(&slug);
-    if target.exists() {
-        return err_response(format!(
-            "{CLONE_REFUSAL_DIR_EXISTS}: {}. Pick a different slug or remove it.",
-            target.display()
-        ));
-    }
+    // Registered wins over folder-exists: a vault registered into the
+    // default vaults dir satisfies both checks, and the registered refusal
+    // is the honest one — the clone wizard routes it to the open-existing /
+    // wipe dialog instead of offering to discard a tracked vault.
     if let Ok(reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
         if reg.exists(&slug) {
             return err_response(format!(
                 "A vault '{slug}' {CLONE_REFUSAL_ALREADY_REGISTERED}. Remove it first."
             ));
         }
+    }
+    let target = baluard_core::paths::vaults_dir().join(&slug);
+    if target.exists() {
+        return err_response(format!(
+            "{CLONE_REFUSAL_DIR_EXISTS}: {}. Pick a different slug or remove it.",
+            target.display()
+        ));
     }
 
     // Ensure the provider token is fresh before the clone thread reads it
