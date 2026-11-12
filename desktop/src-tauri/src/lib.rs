@@ -369,6 +369,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "agents.set_yolo",
     "agents.audit",
     "vaults.register_local",
+    "vaults.discard_orphan",
     "vaults.switch",
     // clone from provider
     "vault.clone_finalize",

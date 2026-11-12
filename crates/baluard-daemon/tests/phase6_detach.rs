@@ -1045,3 +1045,111 @@ async fn oauth_status_web_answers_without_any_vault() {
         "oauth status must not demand a vault"
     );
 }
+
+// ── vaults.discard_orphan: the clone wizard's discard-local-copy arm ──
+
+/// Seed an unregistered orphan vault folder (marker + one payload file) in
+/// the sandbox vaults dir, the shape a safe detach or manual backup leaves
+/// behind.
+fn write_orphan_dir(vaults_dir: &Path, slug: &str) -> PathBuf {
+    let dir = vaults_dir.join(slug);
+    std::fs::create_dir_all(&dir).expect("mkdir orphan");
+    let marker = BaluardMarker {
+        version: 1,
+        vault_id: Uuid::new_v4(),
+        slug: slug.to_string(),
+    };
+    std::fs::write(
+        dir.join(".baluard"),
+        serde_json::to_string(&marker).expect("marker json"),
+    )
+    .expect("write marker");
+    std::fs::write(dir.join("cipher-1.enc"), "payload").expect("seed file");
+    dir
+}
+
+#[tokio::test]
+async fn route_discard_orphan_deletes_an_unregistered_marker_dir() {
+    let (data_dir, _guard) = sandboxed_data_dir().await;
+    let vaults = data_dir.path().join("vaults");
+    let dir = write_orphan_dir(&vaults, "baluard-orphan");
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.discard_orphan",
+        serde_json::json!({ "slug": "baluard-orphan" }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "discard failed: {}", resp.error_message);
+    let payload = response_payload(&resp);
+    assert_eq!(payload["discarded"], serde_json::json!(true));
+    assert!(!dir.exists(), "orphan dir must be gone");
+
+    // Idempotent: a second discard on the now-absent path still succeeds
+    // and reports nothing to discard.
+    let req = make_request(
+        "vaults.discard_orphan",
+        serde_json::json!({ "slug": "baluard-orphan" }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "second discard failed: {}",
+        resp.error_message
+    );
+    assert_eq!(
+        response_payload(&resp)["discarded"],
+        serde_json::json!(false)
+    );
+}
+
+#[tokio::test]
+async fn route_discard_orphan_refuses_a_registered_vault() {
+    let (data_dir, _guard) = sandboxed_data_dir().await;
+    let vaults = data_dir.path().join("vaults");
+    let dir = write_orphan_dir(&vaults, "baluard-regd");
+    let entry = make_entry("baluard-regd", &dir, Uuid::new_v4());
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("baluard-regd"));
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.discard_orphan",
+        serde_json::json!({ "slug": "baluard-regd" }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        !resp.success,
+        "a registered vault must never be discard_orphan'ed"
+    );
+    assert!(
+        resp.error_message.contains("registered"),
+        "refusal must point at the registration, got: {}",
+        resp.error_message
+    );
+    assert!(dir.exists(), "refusal must leave the folder on disk");
+}
+
+#[tokio::test]
+async fn route_discard_orphan_refuses_a_folder_without_a_marker() {
+    let (data_dir, _guard) = sandboxed_data_dir().await;
+    let dir = data_dir.path().join("vaults").join("baluard-junk");
+    std::fs::create_dir_all(&dir).expect("mkdir junk");
+    std::fs::write(dir.join("notes.txt"), "not a vault").expect("seed");
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.discard_orphan",
+        serde_json::json!({ "slug": "baluard-junk" }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "a marker-less folder must be refused");
+    assert!(
+        resp.error_message.contains(".baluard marker"),
+        "refusal must name the missing marker, got: {}",
+        resp.error_message
+    );
+    assert!(dir.exists(), "refusal must leave the folder on disk");
+}

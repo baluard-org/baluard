@@ -3,6 +3,7 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
+- Downloading a vault whose name collides with a local folder now offers to discard that folder and download a fresh copy from online, and the dialog wording talks about vaults rather than folders.
 - The app now opens on the chooser between creating a vault, downloading one from your Git provider, and opening a local vault when there are no vaults on the device - on a fresh install and after detaching your last vault alike.
 - Pressing the theme toggle on the login screen no longer knocks it out of its corner. A shared button-effect stylesheet was quietly overriding the position of every pressed button.
 - Detaching a vault now stays detached. Previously the app could quietly re-adopt a forgotten vault from its folder on the next launch.

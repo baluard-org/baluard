@@ -424,10 +424,11 @@ fn action_requires_session_token(action: &str) -> bool {
 /// bridge, its own pairing ceremony (desktop-token / approval / secret
 /// gated per route — see `handle_bridge_host_route`). `vaults.list` staying
 /// pre-token is a documented limitation (0085-sharing.md §9.8): a shared OS
-/// account is not a security boundary. NOTE: `vaults.detach` is an
-/// unauthenticated destructive-capable admin route (its delete-from-disk
-/// arm is protected by slug-retyping + the `.baluard` marker check, not by
-/// a session token) — same socket-UID trust level.
+/// account is not a security boundary. NOTE: `vaults.detach` and
+/// `vaults.discard_orphan` are unauthenticated destructive-capable admin
+/// routes (their delete arms are protected by slug-retyping / marker
+/// checks + registered-slug refusal, not by a session token) — same
+/// socket-UID trust level.
 #[cfg(test)]
 const HOST_ACTIONS: &[&str] = &[
     "ping",
@@ -455,6 +456,7 @@ const HOST_ACTIONS: &[&str] = &[
     "vaults.copy_items",
     "vaults.detach",
     "vaults.register_local",
+    "vaults.discard_orphan",
     "vaults.lock_all",
     "vaults.on_app_blur",
     "system.prepare_update",
@@ -1560,6 +1562,61 @@ async fn route_host_request_inner(
                 }
                 Err(e) => return err_response(format!("Registry load failed: {e}")),
             }
+        }
+
+        // vaults.discard_orphan: delete an UNREGISTERED vault folder that
+        // blocks a clone target — the clone wizard's "discard local copy"
+        // arm. The daemon derives the path from the slug (the client never
+        // supplies one, C11), and refuses anything registered, marker-less,
+        // or holding another vault's marker, so only a genuine orphan vault
+        // copy can be removed. Idempotent on an already-absent path: the
+        // caller may then clone straight away.
+        "vaults.discard_orphan" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let Some(slug) = payload["slug"].as_str() else {
+                return err_response("Missing 'slug' for vaults.discard_orphan");
+            };
+            // C11: same gate as vault.create / clone_start — the slug joins
+            // a filesystem path.
+            if let Err(e) = baluard_core::vault::slug::validate_slug(slug) {
+                return err_response(format!("Invalid vault slug '{slug}': {e}"));
+            }
+            if let Ok(reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+                if reg.exists(slug) {
+                    return err_response(format!(
+                        "Vault '{slug}' is registered in Baluard; delete it from the vault switcher instead."
+                    ));
+                }
+            }
+            let target = baluard_core::paths::vaults_dir().join(slug);
+            if !target.exists() {
+                return ok_resp(serde_json::json!({ "discarded": false }).to_string(), None);
+            }
+            let marker = match baluard_core::vault::registry::BaluardMarker::read_from_vault(
+                &target,
+            ) {
+                Ok(Some(m)) => m,
+                Ok(None) => {
+                    return err_response(
+                        "The folder at this path has no .baluard marker, so it may not be a Baluard vault. Remove it manually if it is not needed.",
+                    );
+                }
+                Err(e) => return err_response(format!("Failed to read the vault marker: {e}")),
+            };
+            if marker.slug != slug {
+                return err_response(format!(
+                    "The folder holds vault '{}' and cannot be discarded as '{slug}'.",
+                    marker.slug
+                ));
+            }
+            if let Err(e) = tokio::fs::remove_dir_all(&target).await {
+                return err_response(format!("Failed to delete the local folder: {e}"));
+            }
+            log::info!("[daemon] discard_orphan: removed {}", target.display());
+            return ok_resp(serde_json::json!({ "discarded": true }).to_string(), None);
         }
 
         // vaults.lock_all: lock every currently-unlocked vault (zeroize all

@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import {
+	discardOrphanVault,
 	parseCloneClash,
 	registerLocalVault,
 	startClone,
@@ -211,6 +212,39 @@ export default function CloneFromProviderScreen(props) {
 			setClashBusy(false);
 			setClashError(String(e?.message ?? e));
 		}
+	}
+
+	// Destructive arm: delete the unregistered folder and re-download the
+	// selected vault in place. The daemon refuses registered / marker-less
+	// folders, so only a genuine orphan copy can go.
+	async function clashDiscardFolder() {
+		const c = clash();
+		const repo = chosenRepo();
+		if (!c?.slug || !repo) return;
+		setClashError(null);
+		setClashBusy(true);
+		try {
+			await discardOrphanVault(c.slug);
+			setClashBusy(false);
+			setClash(null);
+			setClashPath(null);
+			setClashError(null);
+			await pickRepo(repo);
+		} catch (e) {
+			setClashBusy(false);
+			setClashError(String(e?.message ?? e));
+		}
+	}
+
+	// Cancel exits the whole clone wizard back to the start screen, not
+	// just back to the repo list.
+	function clashExitToStart() {
+		if (clashBusy()) return;
+		if (props?.onCancel) {
+			props.onCancel();
+			return;
+		}
+		clashDismiss();
 	}
 
 	// Arm (b): keep the local copy, drop into the normal unlock flow for it.
@@ -546,7 +580,17 @@ export default function CloneFromProviderScreen(props) {
 										{t("clone.clashUseExisting")}
 									</Button>
 									<Button
-										onClick={clashDismiss}
+										onClick={clashDiscardFolder}
+										disabled={clashBusy()}
+										variant="danger"
+										class="w-full py-2.5"
+									>
+										{clashBusy()
+											? t("vault.vaultSwitcher.working")
+											: t("clone.clashDiscard")}
+									</Button>
+									<Button
+										onClick={clashExitToStart}
 										disabled={clashBusy()}
 										class="w-full py-2.5"
 									>

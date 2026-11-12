@@ -64,8 +64,9 @@
     "clashReimport": "Delete the local copy and import again",
     "clashVerifyHint": "Enter the master password of the existing vault to delete it from this device. Changes that were never synced are lost.",
     "clashWipeConfirm": "Delete and re-import",
-    "clashOrphanBody": "A folder named \"{slug}\" already exists on this device, but it is not set up in Baluard.",
-    "clashUseExisting": "Use the existing folder"
+    "clashOrphanBody": "A vault named \"{slug}\" already exists on this device, but it is not set up in Baluard.",
+    "clashUseExisting": "Use local vault copy",
+    "clashDiscard": "Discard local copy and download from online"
   },
   "create": {
     "title": "Create Vault",

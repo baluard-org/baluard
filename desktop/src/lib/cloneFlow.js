@@ -101,6 +101,16 @@ export async function wipeLocalVault(slug, password) {
 	);
 }
 
+// Delete an UNREGISTERED vault folder blocking a clone target. The daemon
+// derives the path from the slug and refuses registered / marker-less
+// folders, so only a genuine orphan copy can be removed.
+export async function discardOrphanVault(slug) {
+	const result = JSON.parse(
+		await daemon("vaults.discard_orphan", JSON.stringify({ slug })),
+	);
+	return { discarded: result.discarded === true };
+}
+
 // Register an existing local vault directory (no copy). Resolves { slug }.
 export async function registerLocalVault(path) {
 	const result = JSON.parse(
