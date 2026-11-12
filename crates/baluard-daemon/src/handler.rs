@@ -3124,6 +3124,23 @@ async fn handle_vault_unlock(mut req: GatewayRequest, host: &SharedVaultHost) ->
                     return err_response(format!("Registry error: {e}"));
                 }
             };
+            // A downloaded (cloned) vault carries no device key:
+            // meta/device-privkey.json is device-local and deliberately never
+            // syncs, so the keywrap cannot be unwrapped and the master
+            // password alone can never unlock. Say so instead of letting the
+            // core surface a cryptic vault-not-found. Recovery.json must
+            // exist for the phrase path to be real; member devices carry
+            // member-unlock.json instead.
+            if !path.join("meta/device-privkey.json").exists()
+                && !path.join("meta/member-unlock.json").exists()
+                && path.join("meta/recovery.json").exists()
+            {
+                req.payload.zeroize();
+                return err_response(
+                    "This downloaded vault has no device key on this machine. Unlock with your 24-word recovery phrase to enroll it."
+                        .to_string(),
+                );
+            }
             let state = host
                 .get_or_insert_with(&s, move || {
                     // Runs at most once, under the host write lock. `path` is

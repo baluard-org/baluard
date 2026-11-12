@@ -1270,3 +1270,48 @@ async fn clone_start_reports_registered_over_dir_exists_for_default_dir_vaults()
         "the orphan classification must not fire for a registered vault"
     );
 }
+
+#[tokio::test]
+async fn route_unlock_on_a_downloaded_vault_names_the_recovery_phrase() {
+    let (data_dir, _guard) = sandboxed_data_dir().await;
+    let (_tmp, dir, vault_id) = make_real_vault("downloaded");
+    // Simulate a fresh clone: the device key and member unlock are
+    // device-local (gitignored) and never travel with the download.
+    std::fs::remove_file(dir.join("meta/device-privkey.json")).expect("remove privkey");
+    assert!(
+        dir.join("meta/recovery.json").exists(),
+        "fixture must carry the phrase-wrapped recovery key"
+    );
+
+    let entry = make_entry("baluard-downloaded", &dir, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("baluard-downloaded"));
+    }
+
+    let host = Arc::new(VaultHost::new());
+    // The CORRECT password: the red shape must be the real clone shape —
+    // canary passes, then the keywrap unwrap dies on the missing device
+    // key ("vault error: vault not found at device private key not found")
+    // exactly like the macOS field report — not the earlier wrong-password
+    // canary rejection.
+    let req = make_request(
+        "vault.unlock",
+        serde_json::json!({
+            "slug": "baluard-downloaded",
+            "password": "test-master-password-123",
+        }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success);
+    assert!(
+        resp.error_message.contains("24-word recovery phrase"),
+        "the refusal must point at phrase enrollment, got: {}",
+        resp.error_message
+    );
+    assert!(
+        !resp.error_message.contains("vault not found"),
+        "the cryptic core error must not leak, got: {}",
+        resp.error_message
+    );
+}

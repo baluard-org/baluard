@@ -33,7 +33,9 @@
     "pinPlaceholder": "PIN de 6 dígitos",
     "renderRecoveryNotice": "Da última vez o Baluard fechou de forma inesperada, então esta sessão desenha a janela em um modo mais seguro. Você pode mudar isso em Configurações depois de desbloquear.",
     "noVaultsTitle": "Ainda não há cofres neste dispositivo. Crie um ou abra um cofre existente para começar.",
-    "noVaultsAction": "Criar ou abrir um cofre"
+    "noVaultsAction": "Criar ou abrir um cofre",
+    "enrollBody": "Seu cofre baixado precisa ser configurado neste dispositivo. Digite sua senha mestra e sua frase de recuperação de 24 palavras.",
+    "enrollAction": "Configurar e desbloquear"
   },
   "welcome": {
     "title": "Boas-vindas ao Baluard",
@@ -66,7 +68,9 @@
     "clashWipeConfirm": "Apagar e importar novamente",
     "clashOrphanBody": "Já existe um cofre chamado \"{slug}\" neste dispositivo, mas não está configurado no Baluard.",
     "clashUseExisting": "Usar a cópia local do cofre",
-    "clashDiscard": "Eliminar a cópia local e baixar da internet"
+    "clashDiscard": "Eliminar a cópia local e baixar da internet",
+    "enrollBody": "Um cofre baixado precisa da sua senha mestra e da sua frase de recuperação de 24 palavras para configurar este dispositivo.",
+    "phrasePlaceholder": "Frase de recuperação de 24 palavras"
   },
   "create": {
     "title": "Criar Cofre",
@@ -645,7 +649,8 @@
     "providerSignin": "O serviço de login do provedor rejeitou a solicitação. Um token de acesso funciona no lugar.",
     "cloneFailed": "Falha ao baixar o cofre. Verifique sua conexão e tente novamente.",
     "network": "Verifique sua conexão com a internet e tente novamente.",
-    "hostKey": "A chave de host do servidor mudou ou não é confiável. Verifique-a antes de continuar."
+    "hostKey": "A chave de host do servidor mudou ou não é confiável. Verifique-a antes de continuar.",
+    "phraseEnrollRequired": "Este cofre baixado não tem chave de dispositivo nesta máquina. Digite sua frase de recuperação de 24 palavras para configurá-lo."
   },
   "categories": {
     "allItems": "Todos os itens",

@@ -327,3 +327,82 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 	});
 });
 
+
+describe("CloneFromProviderScreen enroll-and-unlock step", () => {
+	it("enrolls with phrase + password, then unlocks", async () => {
+		responses["vault.clone_start"] = JSON.stringify({ job_id: "J1" });
+		responses["vault.clone_progress"] = JSON.stringify({ phase: "done", pct: 100, objects_received: 4, total_objects: 4, bytes_received: 256, done: true });
+		responses["vault.clone_finalize"] = JSON.stringify({
+			slug: "baluard-vault",
+			path: "/data/vaults/baluard-vault",
+			objects: 4,
+			bytes: 256,
+		});
+		responses["vaults.register_local"] = JSON.stringify({ slug: "baluard-vault" });
+
+		const { container } = await renderToRepoList();
+		fireEvent.click(container.querySelector(".clone-screen__repo"));
+		await waitFor(() =>
+			expect(container.querySelector('input[type="password"]')).not.toBeNull(),
+		);
+
+		const password = container.querySelector('input[type="password"]');
+		const phrase = container.querySelector("textarea");
+		fireEvent.input(password, { target: { value: "master-pw" } });
+		await Promise.resolve();
+		fireEvent.input(phrase, { target: { value: "word one through twenty four" } });
+		await Promise.resolve();
+		fireEvent.click(container.querySelector('button[type="submit"]'));
+
+		let enroll;
+		await waitFor(() => {
+			enroll = calls.find((c) => c.action === "vault.enroll_with_phrase");
+			expect(enroll).toBeTruthy();
+		});
+		const enrollPayload = JSON.parse(enroll.payload);
+		expect(enrollPayload).toMatchObject({
+			slug: "baluard-vault",
+			phrase: "word one through twenty four",
+			master_password: "master-pw",
+		});
+		const unlock = calls.find((c) => c.action === "vault.unlock");
+		expect(unlock).toBeTruthy();
+		expect(JSON.parse(unlock.payload)).toMatchObject({
+			slug: "baluard-vault",
+			password: "master-pw",
+		});
+		// enroll must precede unlock
+		expect(calls.indexOf(enroll)).toBeLessThan(calls.indexOf(unlock));
+		// secrets scrubbed from the DOM after the attempt
+		await waitFor(() => {
+			expect(container.querySelector('input[type="password"]').value).toBe("");
+			expect(container.querySelector("textarea").value).toBe("");
+		});
+		expect(authSpies.setStatus).toHaveBeenCalledWith("unlocked");
+	});
+
+	it("requires the phrase: an empty phrase never contacts the daemon", async () => {
+		responses["vault.clone_start"] = JSON.stringify({ job_id: "J2" });
+		responses["vault.clone_progress"] = JSON.stringify({ phase: "done", pct: 100, objects_received: 0, total_objects: 0, bytes_received: 0, done: true });
+		responses["vault.clone_finalize"] = JSON.stringify({
+			slug: "baluard-vault",
+			path: "/data/vaults/baluard-vault",
+			objects: 0,
+			bytes: 0,
+		});
+		responses["vaults.register_local"] = JSON.stringify({ slug: "baluard-vault" });
+
+		const { container } = await renderToRepoList();
+		fireEvent.click(container.querySelector(".clone-screen__repo"));
+		await waitFor(() =>
+			expect(container.querySelector('input[type="password"]')).not.toBeNull(),
+		);
+		const password = container.querySelector('input[type="password"]');
+		fireEvent.input(password, { target: { value: "master-pw" } });
+		await Promise.resolve();
+		fireEvent.click(container.querySelector('button[type="submit"]'));
+
+		expect(calls.some((c) => c.action === "vault.enroll_with_phrase")).toBe(false);
+		expect(calls.some((c) => c.action === "vault.unlock")).toBe(false);
+	});
+});
