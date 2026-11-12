@@ -1,14 +1,18 @@
 //! S1b-3 signed head gossip — rollback detection (plan security note 10).
 //!
 //! Each device announces the newest main-branch head it produced or
-//! observed on a dedicated `baluard-gossip` branch. The branch is a side
-//! channel: force-rewinding main does NOT touch it, so the evidence of a
-//! discarded head survives the rollback that destroyed it. Every
-//! announcement is Ed25519-signed by the announcing device's key and
-//! carries the announced commit as a second parent, so the announced
-//! history stays REACHABLE from the gossip branch — a fresh clone of a
-//! rolled-back vault receives both the rewound main AND the proof that a
-//! later head existed.
+//! observed on the gossip channel, the notes ref `refs/notes/baluard-gossip`,
+//! which git forges keep out of the branch and tag lists so the user's
+//! repository carries exactly one branch. The channel is a side channel:
+//! force-rewinding main does NOT touch it, so the evidence of a discarded
+//! head survives the rollback that destroyed it. Every announcement is
+//! Ed25519-signed by the announcing device's key and carries the announced
+//! commit as a second parent, so the announced history stays REACHABLE
+//! from the gossip channel — a fresh clone of a rolled-back vault receives
+//! both the rewound main AND the proof that a later head existed.
+//! Repos written before the notes relocation carry the channel as a
+//! `baluard-gossip` heads branch; the first sync consumes it and retires
+//! the branch (SyncEngine::consume_legacy_channel).
 //!
 //! Enforcement runs on every pull and every clone: an announcement whose
 //! head exists in the object store but is NOT contained in the fetched
@@ -18,13 +22,13 @@
 //! Gossip is a DENY-ONLY channel: it can refuse a pull, never admit
 //! content. Only a signature verifying against a roster key grants any
 //! refusal power — unparseable and unverifiable files are equally inert
-//! (the branch is writable by any device, so treating junk as
+//! (the channel is writable by any device, so treating junk as
 //! authoritative would be a one-file pull DoS).
 //!
 //! Boundaries (documented, priced in the plan): an attacker with full
-//! push access can force-push the gossip branch too — that escalation is
+//! push access can force-push the gossip ref too — that escalation is
 //! quorum-signed rewind territory (P8c/S4), not this layer. Concurrent
-//! gossip publishers race on the branch push; the loser retries on the
+//! gossip publishers race on the channel push; the loser retries on the
 //! next sync cycle (announcements are advisory telemetry — a missed one
 //! only delays detection).
 
