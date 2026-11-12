@@ -47,12 +47,42 @@ suspend fun runSyncCycle(
 /**
  * Terminal beat for a background (debounce-driven) push whose result the UI
  * observed by polling runtime status: runSyncCycle never drives that path,
- * so the button reads the same whichever mechanism synced.
+ * so the button reads the same whichever mechanism synced. The [phase]
+ * reader guards the settle: a manual cycle or a newer flash that took over
+ * the button during the beat is never stomped back to Idle.
  */
-suspend fun flashPushResult(ok: Boolean, setPhase: (SyncPhase) -> Unit) {
-    setPhase(if (ok) SyncPhase.Synced else SyncPhase.Offline)
+suspend fun flashPushResult(
+    ok: Boolean,
+    setPhase: (SyncPhase) -> Unit,
+    phase: () -> SyncPhase,
+) {
+    val result = if (ok) SyncPhase.Synced else SyncPhase.Offline
+    setPhase(result)
     delay(RESULT_BEAT)
-    setPhase(SyncPhase.Idle)
+    if (phase() == result) setPhase(SyncPhase.Idle)
+}
+
+/** Outcome of one poll tick of the pending-push watcher (ui/App.kt). Pure so
+ * commonTest can pin it: the runtime returns to Idle after a FAILED cycle
+ * (error/timeout arms leave the state unchanged or reset it without touching
+ * last_sync), so Idle alone never means success. */
+enum class PendingPushAction { Keep, Success, Failure, Clear }
+
+fun pendingPushAction(
+    state: String,
+    sawQueued: Boolean,
+    sawFlight: Boolean,
+    lastSyncAdvanced: Boolean,
+): PendingPushAction = when (state) {
+    "syncing" -> PendingPushAction.Keep
+    "idle" -> when {
+        sawQueued || sawFlight ->
+            if (lastSyncAdvanced) PendingPushAction.Success else PendingPushAction.Failure
+        else -> PendingPushAction.Keep
+    }
+    "offline" -> if (sawQueued) PendingPushAction.Failure else PendingPushAction.Keep
+    "needsdecision" -> PendingPushAction.Clear
+    else -> PendingPushAction.Keep // dirty, or anything unknown: keep watching
 }
 
 /**

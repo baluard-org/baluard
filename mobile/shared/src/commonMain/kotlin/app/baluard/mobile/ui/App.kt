@@ -73,11 +73,16 @@ import app.baluard.mobile.generator.GeneratorViewModel
 import app.baluard.mobile.totp.TotpViewModel
 import app.baluard.mobile.sync.ConflictViewModel
 import app.baluard.mobile.sync.SyncCoordinator
+import app.baluard.mobile.sync.PendingPushAction
 import app.baluard.mobile.sync.SyncPhase
 import app.baluard.mobile.sync.flashPushResult
+import app.baluard.mobile.sync.pendingPushAction
 import app.baluard.mobile.sync.runSyncCycle
 import app.baluard.mobile.sync.syncOutcomeToast
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlin.time.TimeSource
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -157,8 +162,13 @@ fun App(
         var listSyncPhase by remember { mutableStateOf(SyncPhase.Idle) }
         // True while a debounced push sits in the runtime's queue; shown as
         // a muted upload icon on the sync buttons and cleared from polled
-        // runtime status, never from a UI timer.
+        // runtime status, never from a UI timer. Each new mutation bumps
+        // [pushArmEpoch], restarting the watcher with a fresh budget; the
+        // baseline is the last_sync stamp at arm time, because a FAILED
+        // cycle returns to Idle without advancing it.
         var pushPending by remember { mutableStateOf(false) }
+        var pushArmEpoch by remember { mutableStateOf(0) }
+        var pendingBaselineSync by remember { mutableStateOf<ULong?>(null) }
         var detailOrigin by remember { mutableStateOf<Nav?>(null) }
         // Clone-in-progress target: chosen at repo pick, consumed at enroll.
         var pendingVaultPath by remember { mutableStateOf<String?>(null) }
@@ -448,49 +458,61 @@ fun App(
             auth.vault()?.let { v ->
                 scope.launch {
                     val armed = runCatching { sync.onMutation(v) }.getOrDefault(false)
-                    // Only an active remote is a truthful "waiting" state:
-                    // the runtime no-ops the nudge without one.
-                    pushPending = armed &&
-                        runCatching { sync.status(v).active }.getOrDefault(false)
-                    runCatching { conflictVm.refresh(v) }
+                    val st = runCatching { sync.status(v) }.getOrNull()
+                    // Only an active remote is a truthful "waiting" state, and
+                    // a conflict-paused vault queues the edit without arming a
+                    // push, so neither may light the icon. Never write false
+                    // here: a second mutation must not clear the first one's
+                    // still-armed push.
+                    if (armed && st != null && st.active &&
+                        !st.state.equals("needsdecision", true)
+                    ) {
+                        pendingBaselineSync = st.lastSync
+                        pushPending = true
+                        pushArmEpoch++
+                    }
+                    conflictVm.refresh(v)
                 }
             }
         }
 
         // Watch the runtime while a debounced push is queued. The cycle is
         // invisible to runSyncCycle (which only drives manual syncs), so the
-        // end of the wait and its outcome are read from polled status.
-        LaunchedEffect(pushPending) {
+        // end of the wait and its outcome are read from polled status. The
+        // wall-clock cap only backs a wedged runtime (SYNC_OP_TIMEOUT is 60s);
+        // every new mutation restarts the watcher with a fresh budget.
+        LaunchedEffect(pushPending, pushArmEpoch) {
             if (!pushPending) return@LaunchedEffect
+            val startMark = TimeSource.Monotonic.markNow()
             var sawQueued = false
             var sawFlight = false
-            var ticks = 0
-            while (ticks < 15) {
+            while (startMark.elapsedNow() < 75.seconds) {
                 val v = auth.vault() ?: break
-                val st = runCatching { sync.status(v) }.getOrNull() ?: break
+                val st = try {
+                    sync.status(v)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                } ?: break
                 if (st.pending > 0u || st.state.equals("dirty", true)) sawQueued = true
-                when (st.state.lowercase()) {
-                    "syncing" -> sawFlight = true
-                    "idle" -> if (sawQueued || sawFlight) {
+                if (st.state.equals("syncing", true)) sawFlight = true
+                val advanced = st.lastSync != null && st.lastSync != pendingBaselineSync
+                when (pendingPushAction(st.state, sawQueued, sawFlight, advanced)) {
+                    PendingPushAction.Keep -> Unit
+                    PendingPushAction.Success -> {
                         pushPending = false
-                        scope.launch { flashPushResult(true) { homeSyncPhase = it } }
-                        scope.launch { flashPushResult(true) { listSyncPhase = it } }
-                        break
+                        scope.launch { flashPushResult(true, { homeSyncPhase = it }, { homeSyncPhase }) }
+                        scope.launch { flashPushResult(true, { listSyncPhase = it }, { listSyncPhase }) }
                     }
-                    "offline" -> if (sawQueued) {
+                    PendingPushAction.Failure -> {
                         pushPending = false
-                        scope.launch { flashPushResult(false) { homeSyncPhase = it } }
-                        scope.launch { flashPushResult(false) { listSyncPhase = it } }
-                        break
+                        scope.launch { flashPushResult(false, { homeSyncPhase = it }, { homeSyncPhase }) }
+                        scope.launch { flashPushResult(false, { listSyncPhase = it }, { listSyncPhase }) }
                     }
-                    // Conflict paused the cycle mid-merge; the upgrade-free
-                    // button reverts and the conflict sheet takes over.
-                    "needsdecision" -> {
-                        pushPending = false
-                        break
-                    }
+                    PendingPushAction.Clear -> pushPending = false
                 }
-                ticks++
+                if (!pushPending) break
                 delay(1_000)
             }
             pushPending = false
