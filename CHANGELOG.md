@@ -3,6 +3,11 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
+
+No user-facing changes yet.
+
+## 0.4.5 - 2026-11-12
+
 - Downloading a vault over an existing local copy no longer asks for a password to delete the local copy, and the folder is fully removed, with a warning that unsynced local changes are lost and a check that the folder really is that vault. Setting up a downloaded vault on a new device works instead of failing.
 - The "Delete from this device" and "Delete and re-import" actions work now: a security gate written before those screens existed was rejecting them.
 - Downloaded vaults now set up with the master password and the 24-word recovery phrase together, because the device key that opens a downloaded copy never syncs; the login screen offers the same setup when a downloaded vault refuses the password.
@@ -11,9 +16,6 @@ Notable user-facing changes per release.
 - Pressing the theme toggle on the login screen no longer knocks it out of its corner. A shared button-effect stylesheet was quietly overriding the position of every pressed button.
 - Detaching a vault now stays detached. Previously the app could quietly re-adopt a forgotten vault from its folder on the next launch.
 - The theme toggle on the unlock, setup, and recovery screens stays pinned to its corner on macOS; it could jump and half-clip when pressed.
-
-No user-facing changes yet.
-
 ## 0.4.1 - 2026-11-11
 
 - On the welcome screen, opening a vault saved online comes second and opening a local vault moved under an Advanced divider. When a downloaded vault already exists on this device, a dialog now offers opening the existing copy or deleting it (master password required) and importing again; a leftover folder without a vault entry can be adopted directly.
