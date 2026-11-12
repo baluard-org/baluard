@@ -100,6 +100,7 @@ fun VaultHomeScreen(
     vault: MobileVault,
     listViewModel: VaultListViewModel,
     syncPhase: SyncPhase,
+    pending: Boolean = false,
     onSyncClick: () -> Unit,
     onAddEntry: () -> Unit = {},
     onOpenGenerator: () -> Unit = {},
@@ -188,7 +189,11 @@ fun VaultHomeScreen(
                     }
                 },
                 actions = {
-                    SyncIconButton(phase = syncPhase, onClick = onSyncClick)
+                    SyncIconButton(
+                        phase = syncPhase,
+                        onClick = onSyncClick,
+                        pending = pending,
+                    )
                     TopBarActionIcon(Icons.Default.Password, t("generator.title"), onOpenGenerator)
                     TopBarActionIcon(
                     Icons.Default.Add, t("vault.addEntry"), onAddEntry,

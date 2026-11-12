@@ -623,6 +623,7 @@ internal val ES: Map<String, String> = mapOf(
     "sync.upToDate" to "Ya está al día.",
     "sync.keptLocal" to "Se resolvió un conflicto usando tus cambios locales.",
     "sync.offline" to "Sin conexión",
+    "sync.pending" to "Cambios pendientes de sincronizar",
     "sync.noRemote" to "Todavía no hay sincronización configurada para esta bóveda.",
     "sync.blocked" to "La sincronización no pudo ejecutarse. Puede haber un conflicto esperando u otra sincronización en curso.",
     "sync.denied" to "El servidor rechazó el acceso de este dispositivo.",

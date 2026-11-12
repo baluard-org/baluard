@@ -606,6 +606,7 @@ internal val EN: Map<String, String> = mapOf(
     "sync.upToDate" to "Already up to date.",
     "sync.keptLocal" to "A conflict was resolved using your local changes.",
     "sync.offline" to "Offline",
+    "sync.pending" to "Changes waiting to sync",
     "sync.noRemote" to "No sync is set up for this vault yet.",
     "sync.blocked" to "Sync could not run right now. A conflict may be waiting or another sync is in progress.",
     "sync.denied" to "The server rejected this device's access.",

@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Description
@@ -884,7 +885,12 @@ fun CipherRowCard(
  * offline, resting sync icon otherwise.
  */
 @Composable
-fun SyncIconButton(phase: SyncPhase, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun SyncIconButton(
+    phase: SyncPhase,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    pending: Boolean = false,
+) {
     Box(
         modifier = modifier
             .padding(horizontal = 3.dp)
@@ -916,12 +922,23 @@ fun SyncIconButton(phase: SyncPhase, onClick: () -> Unit, modifier: Modifier = M
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(18.dp),
             )
-            else -> Icon(
-                imageVector = Icons.Default.Sync,
-                contentDescription = t("settings.syncNow"),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
+            else ->
+                if (pending) {
+                    // Debounce window: the change is queued, nothing runs yet.
+                    Icon(
+                        imageVector = Icons.Default.CloudUpload,
+                        contentDescription = t("sync.pending"),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Sync,
+                        contentDescription = t("settings.syncNow"),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
         }
     }
 }

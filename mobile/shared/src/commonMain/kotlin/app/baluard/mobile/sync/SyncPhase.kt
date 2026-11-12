@@ -45,6 +45,17 @@ suspend fun runSyncCycle(
 }
 
 /**
+ * Terminal beat for a background (debounce-driven) push whose result the UI
+ * observed by polling runtime status: runSyncCycle never drives that path,
+ * so the button reads the same whichever mechanism synced.
+ */
+suspend fun flashPushResult(ok: Boolean, setPhase: (SyncPhase) -> Unit) {
+    setPhase(if (ok) SyncPhase.Synced else SyncPhase.Offline)
+    delay(RESULT_BEAT)
+    setPhase(SyncPhase.Idle)
+}
+
+/**
  * Toast for the Rust pull report tag (see PullReport). Each outcome gets
  * its own honest copy: pulled/up-to-date/kept-local succeed, idle means no
  * sync is configured, paused/busy/skipped mean the pull did not run, and

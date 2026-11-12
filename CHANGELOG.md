@@ -4,6 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- On mobile, the sync button now shows a muted upload icon while your latest changes are queued to sync (about five seconds), then a brief check or offline mark when that push finishes, so leaving the app right after an edit no longer feels silent.
 - The hidden `baluard-gossip` branch that syncing added to your Git repository is gone: the bookkeeping channel moved to a ref that Git hosting sites do not show, and syncing once removes the old branch from your repository. Your repository now shows a single branch.
 
 ## 0.4.5 - 2026-11-12
