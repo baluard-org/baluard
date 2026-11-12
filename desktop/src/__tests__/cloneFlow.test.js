@@ -225,3 +225,37 @@ describe("wipeLocalVault", () => {
 		);
 	});
 });
+
+describe("parseCloneClash real-world paths (review blocker B1)", () => {
+	// The daemon's refusal is `Target directory already exists: <path>. Pick
+	// a different slug or remove it.` — real data dirs contain dots
+	// (~/.local/share) or backslashes (Windows), so the capture must anchor
+	// on the trailing sentence, not the first period.
+	const LINUX = "Target directory already exists: /home/u/.local/share/baluard/vaults/baluard-x. Pick a different slug or remove it.";
+	const LINUX_DOT_USER = "Target directory already exists: /home/john.doe/Library/Application Support/baluard/vaults/my-vault. Pick a different slug or remove it.";
+	const WINDOWS = "Target directory already exists: C:\\Users\\u\\AppData\\Local\\baluard\\vaults\\baluard-x. Pick a different slug or remove it.";
+
+	it("parses a dotted Linux path without truncating at the first dot", () => {
+		expect(parseCloneClash(LINUX)).toEqual({
+			kind: "orphan",
+			slug: "baluard-x",
+			path: "/home/u/.local/share/baluard/vaults/baluard-x",
+		});
+	});
+
+	it("parses a path whose username contains a dot", () => {
+		expect(parseCloneClash(LINUX_DOT_USER)).toEqual({
+			kind: "orphan",
+			slug: "my-vault",
+			path: "/home/john.doe/Library/Application Support/baluard/vaults/my-vault",
+		});
+	});
+
+	it("parses a Windows backslash path", () => {
+		expect(parseCloneClash(WINDOWS)).toEqual({
+			kind: "orphan",
+			slug: "baluard-x",
+			path: "C:\\Users\\u\\AppData\\Local\\baluard\\vaults\\baluard-x",
+		});
+	});
+});
