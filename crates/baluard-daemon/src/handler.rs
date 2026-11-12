@@ -427,14 +427,16 @@ fn action_requires_session_token(action: &str) -> bool {
 /// account is not a security boundary. NOTE: `vaults.detach` and
 /// `vaults.discard_orphan` are unauthenticated destructive-capable admin
 /// routes — same socket-UID trust level. `vaults.discard_orphan` is
-/// credential-free by design (local folder deletion is machine-level
-/// control; the guards are slug validation, the daemon-derived path, and
-/// the marker check) and additionally reachable from the webview through
-/// the D2 allow-list, which is acceptable because a same-UID process could
-/// `rm -rf` the folder directly. `vaults.detach` keeps its credential
+/// credential-free BY PRODUCT DECISION (local folder deletion is machine-
+/// level control the user already has) and reachable from the webview
+/// through the D2 allow-list, so a compromised webview CAN delete any
+/// registered vault's local copy and detach it without a credential —
+/// that widening is accepted, not denied. Its guards prevent WRONG-TARGET
+/// deletes, not unauthorized ones: slug validation, the daemon-derived
+/// path, the marker's slug AND vault_id matching the registered entry,
+/// and a fail-closed registry read. `vaults.detach` keeps its credential
 /// gates: master password for the device-only arm, recovery phrase
-/// whenever a remote is deleted. The socket/webview boundary is the trust
-/// line, not these route guards.
+/// whenever a remote is deleted.
 #[cfg(test)]
 const HOST_ACTIONS: &[&str] = &[
     "ping",
@@ -856,6 +858,19 @@ enum MarkerCheck {
     Mismatch {
         on_disk: uuid::Uuid,
     },
+}
+
+/// The Quick Unlock keychain entry holds the vault's master password; it
+/// must not outlive the vault's data directory. Purge only when this
+/// discard removes the last registration of the vault_id — the same vault
+/// registered twice shares one key. Mirrors vaults.detach's purge.
+fn purge_quick_unlock(reg: &baluard_core::vault::registry::VaultRegistry, vault_id: &uuid::Uuid) {
+    if baluard_core::keyring_disabled() || reg.vaults.values().any(|e| &e.vault_id == vault_id) {
+        return;
+    }
+    if let Err(e) = baluard_core::biometric::disable(&vault_id.to_string()) {
+        log::warn!("quick-unlock entry for {vault_id} left in the keychain: {e}");
+    }
 }
 
 /// The registry-read guard for `vaults.discard_orphan`: FAIL-CLOSED on an
@@ -1627,10 +1642,17 @@ async fn route_host_request_inner(
                 None => baluard_core::paths::vaults_dir().join(slug),
             };
             if !target.exists() {
-                if let Some(_entry) = &peeked {
+                if let Some(entry) = &peeked {
                     // Registered but the folder is already gone: drop the
                     // stale entry so the slug is free, mirroring detach's
-                    // stale-entry idempotency.
+                    // stale-entry idempotency. Lock and close any handle
+                    // that outlived the folder.
+                    if let Some(state) = host.get(slug).await {
+                        if let Err(e) = state.lock().await {
+                            log::warn!("could not lock {slug} before discard: {e}");
+                        }
+                    }
+                    let _ = host.close(slug).await;
                     let mut reg = match baluard_core::vault::registry::VaultRegistry::load_locked()
                     {
                         Ok(reg) => reg,
@@ -1639,9 +1661,10 @@ async fn route_host_request_inner(
                     if reg.remove(slug).is_some() {
                         if let Err(e) = reg.save_locked() {
                             return err_response(format!(
-                                "Deleted entry could not be persisted: {e}"
+                                "Registry save failed: {e}. Nothing was changed."
                             ));
                         }
+                        purge_quick_unlock(&reg, &entry.vault_id);
                     }
                     return ok_resp(serde_json::json!({ "discarded": true }).to_string(), None);
                 }
@@ -1664,12 +1687,44 @@ async fn route_host_request_inner(
                     marker.slug
                 ));
             }
+            // The registered entry must point at THIS vault copy, not at a
+            // same-slug sibling (a restored backup, a swapped folder).
+            // vaults.detach refuses a vault_id mismatch for the same reason.
+            if let Some(entry) = &peeked {
+                if marker.vault_id != entry.vault_id {
+                    return err_response(
+                        "The folder holds a different vault than the one registered under this name. Remove it manually if it is not needed.",
+                    );
+                }
+            }
+            // Re-peek: the registration must not have changed while the
+            // marker was being checked (a concurrent register_local or
+            // re-attach would otherwise dangle or lose its folder).
+            let repeeked = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                Ok(reg) => reg.get(slug).cloned(),
+                Err(e) => return err_response(format!("Registry load failed: {e}")),
+            };
+            match (&peeked, &repeeked) {
+                (Some(entry), Some(now))
+                    if now.vault_id == entry.vault_id && now.path == entry.path => {}
+                (None, None) => {}
+                (Some(_), _) => {
+                    return err_response(
+                        "This vault's registration changed while it was being checked. Try again.",
+                    );
+                }
+                (None, Some(_)) => {
+                    return err_response(
+                        "A vault with this name was just registered. Discard it from the vault switcher instead.",
+                    );
+                }
+            }
             // Registered case: detach the entry first (persist before the
             // dir delete, so a failed delete leaves an orphan folder the
             // app can re-adopt rather than a dangling entry), and close the
             // host handle so an unlocked vault does not keep living over a
             // deleted directory.
-            if peeked.is_some() {
+            if let Some(entry) = &peeked {
                 let mut reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
                     Ok(reg) => reg,
                     Err(e) => return err_response(format!("Registry load failed: {e}")),
@@ -1677,16 +1732,50 @@ async fn route_host_request_inner(
                 if reg.remove(slug).is_some() {
                     if let Err(e) = reg.save_locked() {
                         return err_response(format!(
-                            "The vault was detached but the registry could not be saved: {e}"
+                            "Registry save failed: {e}. Nothing was changed."
                         ));
+                    }
+                    purge_quick_unlock(&reg, &entry.vault_id);
+                }
+                // Lock first: the cover-commit timer holds an Arc clone, so
+                // dropping the map entry alone would leave an unlocked
+                // state (with keys) alive for hours, able to commit into a
+                // re-cloned folder at the same path. lock() stops the
+                // timer and zeroizes.
+                if let Some(state) = host.get(slug).await {
+                    if let Err(e) = state.lock().await {
+                        log::warn!("could not lock {slug} before discard: {e}");
                     }
                 }
                 let _ = host.close(slug).await;
             }
-            if let Err(e) = tokio::fs::remove_dir_all(&target).await {
-                return err_response(format!("Failed to delete the local folder: {e}"));
+            // Rename first: an atomic rename frees the clone target even
+            // when the recursive delete fails (Windows open handles), so a
+            // retry of the clone is not blocked by a half-deleted folder.
+            let trash = target.with_file_name(format!(
+                "{}.trash-{}",
+                target.file_name().and_then(|n| n.to_str()).unwrap_or(slug),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            ));
+            let (doomed, renamed) = match tokio::fs::rename(&target, &trash).await {
+                Ok(()) => (trash.clone(), true),
+                Err(_) => (target.clone(), false),
+            };
+            if let Err(e) = tokio::fs::remove_dir_all(&doomed).await {
+                let state_note = if renamed || peeked.is_some() {
+                    "The vault is detached, but"
+                } else {
+                    "Discard failed:"
+                };
+                return err_response(format!(
+                    "{state_note} the folder could not be fully removed ({e}). Delete {} manually, then download again.",
+                    doomed.display()
+                ));
             }
-            log::info!("[daemon] discard_orphan: removed {}", target.display());
+            log::info!("[daemon] discard_orphan: removed {}", doomed.display());
             return ok_resp(serde_json::json!({ "discarded": true }).to_string(), None);
         }
 

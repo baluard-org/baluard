@@ -441,13 +441,16 @@ fn payload_has_desktop_forbidden_keys(payload: &str) -> bool {
         .ok()
         .and_then(|v| {
             v.as_object().map(|o| {
-                // delete_from_disk/force deliberately pass now: the vault
-                // switcher and clone-clash wipe arms post them, and the
-                // daemon's confirm gate (master password, rate-limited) is
-                // the authorization — an XSS without the password gets
-                // nothing. in_path/out_path stay forbidden: the raw-path
-                // backup transport is a daemon/CLI capability, and admitting
-                // it would hand a compromised webview a file read/write
+                // delete_from_disk/force pass because the daemon's confirm
+                // gate (master password, rate-limited) authorizes detach's
+                // destructive arms. A compromised webview CAN still delete
+                // a vault's local folder without a credential through
+                // vaults.discard_orphan — an accepted product decision
+                // (local folder deletion is machine-level control), with
+                // the daemon guarding wrong-target deletes only.
+                // in_path/out_path stay forbidden: the raw-path backup
+                // transport is a daemon/CLI capability, and admitting it
+                // would hand a compromised webview a file read/write
                 // oracle. The webview uses the dedicated save/open Tauri
                 // commands instead.
                 o.contains_key("in_path") || o.contains_key("out_path")

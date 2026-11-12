@@ -607,7 +607,10 @@
     "cloneFailed": "No se pudo descargar la bóveda. Revisa tu conexión e inténtalo de nuevo.",
     "network": "Revisa tu conexión a internet e inténtalo de nuevo.",
     "hostKey": "La clave de host del servidor cambió o no es de confianza. Verifícala antes de continuar.",
-    "phraseEnrollRequired": "Esta bóveda descargada no tiene clave de dispositivo en esta máquina. Ingresa tu frase de recuperación de 24 palabras para configurarla."
+    "phraseEnrollRequired": "Esta bóveda descargada no tiene clave de dispositivo en esta máquina. Ingresa tu frase de recuperación de 24 palabras para configurarla.",
+    "cloneGuard": "Esa carpeta no es la bóveda que Baluard esperaba, así que se dejó intacta.",
+    "cloneDeleteFailed": "Baluard no pudo eliminar por completo la carpeta local. Elimínala manualmente y descarga de nuevo.",
+    "cloneRetry": "Baluard no pudo verificar esta bóveda de forma segura. Inténtalo de nuevo o elimina la carpeta manualmente."
   },
   "categories": {
     "allItems": "Todos los elementos",
@@ -842,9 +845,9 @@
     "clashReimport": "Borrar la copia local e importar de nuevo",
     "clashOrphanBody": "Ya existe una bóveda llamada \"{slug}\" en este dispositivo, pero no está configurada en Baluard.",
     "clashUseExisting": "Usar la copia local de la bóveda",
-    "clashDiscard": "Eliminar la copia local y descargar de internet",
     "enrollBody": "Una bóveda descargada necesita tu contraseña maestra y tu frase de recuperación de 24 palabras para configurar este dispositivo.",
-    "phrasePlaceholder": "Frase de recuperación de 24 palabras"
+    "phrasePlaceholder": "Frase de recuperación de 24 palabras",
+    "clashLosesUnsynced": "Los cambios locales que nunca se sincronizaron se perderán."
   },
   "gitWhat": {
     "link": "¿Qué es git?"

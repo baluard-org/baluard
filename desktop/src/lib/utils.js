@@ -25,6 +25,10 @@ export const ERROR_PATTERNS = [
   { pattern: /Token validation failed|invalid_client/i, key: "errors.providerSignin" },
   { pattern: /Cloned repository has no .baluard marker/i, key: "errors.cloneFailed" },
   { pattern: /Cloned, but storing the credentials failed/i, key: "errors.cloneFailed" },
+  // Discard-arm refusals: wrong-target guards, delete failures, races.
+  { pattern: /has no \.baluard marker|holds vault '|holds a different vault/i, key: "errors.cloneGuard" },
+  { pattern: /could not be fully removed|Failed to delete the local folder|Registry save failed/i, key: "errors.cloneDeleteFailed" },
+  { pattern: /cannot read the vault registry|registration changed while it was being checked|was just registered/i, key: "errors.cloneRetry" },
   { pattern: /host_key_untrusted/i, key: "errors.hostKey" },
   // Site-icon backfill outcomes (daemon strings from the batch job).
   { pattern: /Fetching site icons is turned off/i, key: "errors.backfillDisabled" },
