@@ -1923,7 +1923,7 @@ impl SyncEngine {
             .peel_to_commit()
             .map_err(|e| SyncError::Git(format!("peel: {e}")))?
             .id();
-        // S1b-3: announce the pushed head on the gossip side branch.
+        // S1b-3: announce the pushed head on the gossip notes channel.
         // Best-effort by contract: a missed announcement only delays
         // rollback detection, and the next push re-announces (the announce
         // skips when the remote tip already carries this head). Failing the
@@ -2021,11 +2021,6 @@ impl SyncEngine {
             .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
         let branch = Self::resolve_default_branch(repo);
-        let refspecs = [
-            format!("+{root_oid}:refs/heads/{branch}"),
-            format!("+{gossip_oid}:{GOSSIP_REF}"),
-        ];
-        let refs: Vec<&str> = refspecs.iter().map(String::as_str).collect();
         let cfg = self
             .credential_config
             .clone()
@@ -2033,9 +2028,22 @@ impl SyncEngine {
         let callbacks = crate::sync::credentials::build_callbacks(&cfg);
         let mut push_options = PushOptions::new();
         push_options.remote_callbacks(callbacks);
+        // Main is the critical leg and pushes alone: mixing it with the
+        // notes refspec let a forge that rejects the notes ref report
+        // failure while main had already moved remotely (multi-ref pushes
+        // are not atomic), the exact wedged state the by-object push
+        // design exists to avoid. The channel reset and the legacy
+        // branch cleanup below are best-effort telemetry, not erasure
+        // gates: pre-rewrite announcements fail verification under the
+        // new root and stay inert until the next sync cleans them up.
+        let main_spec = format!("+{root_oid}:refs/heads/{branch}");
         remote
-            .push(&refs, Some(&mut push_options))
+            .push(&[&main_spec], Some(&mut push_options))
             .map_err(|e| classify_remote_err("push", &e))?;
+        let notes_spec = format!("+{gossip_oid}:{GOSSIP_REF}");
+        if let Err(e) = remote.push(&[&notes_spec], Some(&mut push_options)) {
+            eprintln!("warning: gossip channel reset failed: {}", e.message());
+        }
 
         // Push landed: move this clone onto the rewritten line.
         repo.reference(
@@ -2067,7 +2075,21 @@ impl SyncEngine {
             let _ = legacy.delete();
         }
         let delete_spec = format!(":refs/heads/{GOSSIP_BRANCH}");
-        let _ = remote.push(&[&delete_spec], Some(&mut push_options));
+        match remote.push(&[&delete_spec], Some(&mut push_options)) {
+            Ok(()) => {
+                if let Ok(mut t) =
+                    repo.find_reference(&format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}"))
+                {
+                    let _ = t.delete();
+                }
+            }
+            Err(e) => {
+                let msg = e.message();
+                if !(msg.contains("find remote ref") || msg.contains("not found")) {
+                    eprintln!("warning: legacy gossip branch delete failed: {msg}");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2100,13 +2122,17 @@ impl SyncEngine {
                 .credential_config
                 .clone()
                 .with_url_hint(remote.url().unwrap_or(""));
-            let callbacks = crate::sync::credentials::build_callbacks(&cfg);
-            let mut fetch_opts = FetchOptions::new();
-            fetch_opts.remote_callbacks(callbacks);
+            // A fresh callbacks object per fetch: the credential attempt
+            // counters live in the callbacks, and sharing one across two
+            // fetches spends the retry budget on the first call.
             let notes_spec = format!("{GOSSIP_REF}:{new_tracking}");
-            let _ = remote.fetch(&[&notes_spec], Some(&mut fetch_opts), None);
+            let mut notes_opts = FetchOptions::new();
+            notes_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            let _ = remote.fetch(&[&notes_spec], Some(&mut notes_opts), None);
             let legacy_spec = format!("refs/heads/{GOSSIP_BRANCH}:{legacy_tracking}");
-            let _ = remote.fetch(&[&legacy_spec], Some(&mut fetch_opts), None);
+            let mut legacy_opts = FetchOptions::new();
+            legacy_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            let _ = remote.fetch(&[&legacy_spec], Some(&mut legacy_opts), None);
         }
 
         let head_commit = repo
@@ -2138,10 +2164,14 @@ impl SyncEngine {
             (new_tip, legacy_tip) => new_tip.or(legacy_tip),
         };
 
-        // Already announced this head? Nothing to do.
+        // Already announced this head? Nothing to announce — but the
+        // legacy branch must still be consumed and retired: an upgraded
+        // read-mostly vault (no head change) hits exactly this path, and
+        // skipping migration here keeps the second branch alive forever.
         if let Some(tip) = &tip {
             if let Ok(existing) = Self::gossip_own_announcement(repo, tip, &self.device_id) {
                 if existing.head == head_commit.id().to_string() {
+                    self.consume_legacy_channel(repo, remote_name)?;
                     return Ok(());
                 }
             }
@@ -2258,30 +2288,261 @@ impl SyncEngine {
         repo.reference(&new_tracking, oid, true, "gossip announce tracking")
             .map_err(|e| SyncError::Git(format!("gossip tracking: {e}")))?;
 
-        // Migration: the announcement just pushed parents the seeded
-        // tip, so everything the legacy branch carried is reachable
-        // from the notes ref — the legacy heads branch can go, locally
-        // and on the remote, leaving the user's repository with exactly
-        // one branch. Best-effort: a failed delete retries next cycle,
-        // and an old-version device may recreate the branch until it
-        // updates; the next announce consumes and deletes it again.
+        // Migration: consume the legacy channel and retire the branch.
+        // Best-effort — a failed push or delete retries next cycle, and
+        // an old-version device may recreate the branch until it
+        // updates; the next sync consumes and deletes it again.
+        self.consume_legacy_channel(repo, remote_name)?;
+        Ok(())
+    }
+
+    /// Consume the legacy heads channel and retire it so the repository
+    /// keeps exactly one branch. Runs after every announce AND on the
+    /// own-announcement skip path. Best-effort: a failed step retries on
+    /// the next sync cycle.
+    fn consume_legacy_channel(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+    ) -> Result<(), BaluardError> {
+        use super::gossip::{GOSSIP_BRANCH, GOSSIP_REF, GOSSIP_TRACKING};
+        let legacy_tracking = format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
+        let new_tracking = format!("refs/remotes/{remote_name}/{GOSSIP_TRACKING}");
+        let read_tip = |refname: &str| -> Option<git2::Commit<'_>> {
+            repo.find_reference(refname)
+                .ok()
+                .and_then(|r| r.peel_to_commit().ok())
+        };
+        let Some(legacy_tip) = read_tip(&legacy_tracking) else {
+            return Ok(()); // no legacy channel (fresh repo or already retired)
+        };
+        // Notes side of the comparison: the local notes ref when present,
+        // else the fetched remote view (on the skip path the local notes
+        // ref may not exist yet even though the remote one does).
+        let notes_tip = read_tip(GOSSIP_REF).or_else(|| read_tip(&new_tracking));
+        match notes_tip {
+            // Notes already carries every legacy announcement: retire.
+            Some(n)
+                if repo
+                    .graph_descendant_of(n.id(), legacy_tip.id())
+                    .unwrap_or(false) =>
+            {
+                self.retire_legacy_channel(repo, remote_name, &legacy_tracking)
+            }
+            // Legacy descends from notes (an old device announced on the
+            // branch after migration, or this repo never had notes):
+            // promote the legacy tip onto the notes channel, then retire.
+            Some(n)
+                if repo
+                    .graph_descendant_of(legacy_tip.id(), n.id())
+                    .unwrap_or(false) =>
+            {
+                repo.reference(GOSSIP_REF, legacy_tip.id(), true, "gossip adopt legacy")
+                    .map_err(|e| SyncError::Git(format!("gossip ref: {e}")))?;
+                self.push_notes_channel(repo, remote_name, legacy_tip.id(), &new_tracking)?;
+                self.retire_legacy_channel(repo, remote_name, &legacy_tracking)
+            }
+            // Diverged channels: fold both announcement sets into one
+            // consume commit parented on both tips, so no announcement is
+            // lost when the branch goes.
+            Some(n) => {
+                let oid = self.merged_consume_commit(repo, &n, &legacy_tip)?;
+                repo.reference(GOSSIP_REF, oid, true, "gossip consume legacy")
+                    .map_err(|e| SyncError::Git(format!("gossip ref: {e}")))?;
+                self.push_notes_channel(repo, remote_name, oid, &new_tracking)?;
+                self.retire_legacy_channel(repo, remote_name, &legacy_tracking)
+            }
+            // No notes channel at all: adopt the legacy tip as the channel.
+            None => {
+                repo.reference(GOSSIP_REF, legacy_tip.id(), true, "gossip adopt legacy")
+                    .map_err(|e| SyncError::Git(format!("gossip ref: {e}")))?;
+                self.push_notes_channel(repo, remote_name, legacy_tip.id(), &new_tracking)?;
+                self.retire_legacy_channel(repo, remote_name, &legacy_tracking)
+            }
+        }
+    }
+
+    /// Push the notes ref (non-force: a concurrent publisher wins and the
+    /// next cycle retries) and refresh the local tracking view.
+    fn push_notes_channel(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        oid: Oid,
+        new_tracking: &str,
+    ) -> Result<(), BaluardError> {
+        use super::gossip::GOSSIP_REF;
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        let cfg = self
+            .credential_config
+            .clone()
+            .with_url_hint(remote.url().unwrap_or(""));
+        let mut push_options = PushOptions::new();
+        push_options.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+        remote
+            .push(
+                &[&format!("{GOSSIP_REF}:{GOSSIP_REF}")],
+                Some(&mut push_options),
+            )
+            .map_err(|e| classify_remote_err("gossip push", &e))?;
+        repo.reference(new_tracking, oid, true, "gossip tracking")
+            .map_err(|e| SyncError::Git(format!("gossip tracking: {e}")))?;
+        Ok(())
+    }
+
+    /// Delete the legacy heads branch locally and on the remote, and drop
+    /// its tracking view. Caller guarantees the notes ref carries the
+    /// legacy line; the descent re-check is defense in depth. Never
+    /// silent on a remote failure.
+    fn retire_legacy_channel(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        legacy_tracking: &str,
+    ) -> Result<(), BaluardError> {
+        use super::gossip::{GOSSIP_BRANCH, GOSSIP_REF};
+        let notes_ok = repo
+            .find_reference(GOSSIP_REF)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+            .map(|c| c.id());
+        let legacy_ok = repo
+            .find_reference(legacy_tracking)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+            .map(|c| c.id());
+        // Equality counts as carrying: the adopt path points the notes
+        // ref at the legacy tip itself (graph_descendant_of is false for
+        // identical commits).
+        let carries = match (notes_ok, legacy_ok) {
+            (Some(n), Some(l)) => n == l || repo.graph_descendant_of(n, l).unwrap_or(false),
+            _ => false,
+        };
+        if !carries {
+            return Ok(()); // leave the branch; the next cycle re-consumes
+        }
         if let Ok(mut legacy) = repo.find_reference(&format!("refs/heads/{GOSSIP_BRANCH}")) {
             let _ = legacy.delete();
         }
-        if repo.find_reference(&legacy_tracking).is_ok() {
-            if let Ok(mut remote) = repo.find_remote(remote_name) {
-                let cfg = self
-                    .credential_config
-                    .clone()
-                    .with_url_hint(remote.url().unwrap_or(""));
-                let callbacks = crate::sync::credentials::build_callbacks(&cfg);
-                let mut push_options = PushOptions::new();
-                push_options.remote_callbacks(callbacks);
-                let delete_spec = format!(":refs/heads/{GOSSIP_BRANCH}");
-                let _ = remote.push(&[&delete_spec], Some(&mut push_options));
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        let cfg = self
+            .credential_config
+            .clone()
+            .with_url_hint(remote.url().unwrap_or(""));
+        let mut push_options = PushOptions::new();
+        push_options.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+        let delete_spec = format!(":refs/heads/{GOSSIP_BRANCH}");
+        match remote.push(&[&delete_spec], Some(&mut push_options)) {
+            Ok(()) => {
+                // Drop the stale tracking view so future scans and local
+                // gc stop seeing the dead line.
+                if let Ok(mut t) = repo.find_reference(legacy_tracking) {
+                    let _ = t.delete();
+                }
+            }
+            Err(e) => {
+                let msg = e.message();
+                // An absent remote branch is a finished retirement; a
+                // real failure (ruleset, network) must stay audible.
+                if msg.contains("find remote ref") || msg.contains("not found") {
+                    if let Ok(mut t) = repo.find_reference(legacy_tracking) {
+                        let _ = t.delete();
+                    }
+                } else {
+                    eprintln!("warning: legacy gossip branch delete failed: {msg}");
+                }
             }
         }
         Ok(())
+    }
+
+    /// Build one signed consume commit whose tree is the union of both
+    /// channels' announcement files (a device file present on both sides
+    /// keeps whichever carries the newer `at`) and whose parents are both
+    /// tips, so the notes line descends from the legacy line and the
+    /// branch can be retired without losing an announcement.
+    fn merged_consume_commit(
+        &self,
+        repo: &Repository,
+        notes_tip: &git2::Commit<'_>,
+        legacy_tip: &git2::Commit<'_>,
+    ) -> Result<Oid, BaluardError> {
+        use super::gossip::{GOSSIP_DIR, HeadAnnouncement};
+        let heads_of = |c: &git2::Commit<'_>| -> Option<git2::Tree<'_>> {
+            c.tree()
+                .ok()
+                .and_then(|t| t.get_path(Path::new(GOSSIP_DIR)).ok())
+                .and_then(|e| repo.find_tree(e.id()).ok())
+        };
+        let new_heads = heads_of(notes_tip);
+        let legacy_heads = heads_of(legacy_tip);
+        let mut tb = match new_heads.as_ref() {
+            Some(t) => repo
+                .treebuilder(Some(t))
+                .map_err(|e| SyncError::Git(format!("gossip heads treebuilder: {e}")))?,
+            None => repo
+                .treebuilder(None)
+                .map_err(|e| SyncError::Git(format!("gossip heads treebuilder: {e}")))?,
+        };
+        if let Some(legacy) = legacy_heads.as_ref() {
+            for entry in legacy.iter() {
+                let name = entry.name().unwrap_or("").to_string();
+                let take_legacy = match new_heads.as_ref().and_then(|t| t.get_name(&name)) {
+                    None => true,
+                    Some(cur) => match (
+                        repo.find_blob(entry.id())
+                            .ok()
+                            .and_then(|b| {
+                                serde_json::from_slice::<HeadAnnouncement>(b.content()).ok()
+                            })
+                            .map(|a| a.at),
+                        repo.find_blob(cur.id())
+                            .ok()
+                            .and_then(|b| {
+                                serde_json::from_slice::<HeadAnnouncement>(b.content()).ok()
+                            })
+                            .map(|a| a.at),
+                    ) {
+                        (Some(l), Some(c)) => l > c,
+                        _ => false, // unparseable either side keeps the notes side
+                    },
+                };
+                if take_legacy {
+                    tb.insert(&name, entry.id(), entry.filemode())
+                        .map_err(|e| SyncError::Git(format!("gossip merge insert: {e}")))?;
+                }
+            }
+        }
+        let heads_id = tb
+            .write()
+            .map_err(|e| SyncError::Git(format!("gossip heads write: {e}")))?;
+        let outer_tree = notes_tip.tree().ok();
+        let mut outer = repo
+            .treebuilder(outer_tree.as_ref())
+            .map_err(|e| SyncError::Git(format!("gossip treebuilder: {e}")))?;
+        outer
+            .insert(GOSSIP_DIR, heads_id, git2::FileMode::Tree.into())
+            .map_err(|e| SyncError::Git(format!("gossip outer insert: {e}")))?;
+        let tree_id = outer
+            .write()
+            .map_err(|e| SyncError::Git(format!("gossip tree write: {e}")))?;
+        let tree = repo
+            .find_tree(tree_id)
+            .map_err(|e| SyncError::Git(format!("gossip find tree: {e}")))?;
+        let parents: Vec<&git2::Commit<'_>> = vec![notes_tip, legacy_tip];
+        let sig = git2::Signature::now("baluard-gossip", "gossip@baluard.local")
+            .map_err(|e| SyncError::Git(format!("gossip sig: {e}")))?;
+        self.create_signed_commit(
+            repo,
+            &sig,
+            "gossip: consume the legacy channel",
+            &tree,
+            &parents,
+        )
     }
 
     /// S1b-3: rollback detection — every head announcement on the gossip
@@ -4025,20 +4286,30 @@ impl SyncEngine {
             return Err(e);
         }
         // S1b-3: rollback detection — a fresh clone is exactly the victim a
-        // rollback targets; the gossip branch rides the wildcard fetch.
-        // The gossip channel rides refs/notes, which the clone's
-        // wildcard heads fetch does not carry; pull it explicitly
-        // best-effort (clone URLs carry their credentials inline, so a
-        // plain fetch works on https and file transports; an SSH-sourced
-        // clone resumes gossip detection at its first pull).
+        // rollback targets. The gossip channel rides refs/notes, which the
+        // clone's wildcard heads fetch does not carry, so fetch it
+        // explicitly with the clone's own credentials: clone URLs carry no
+        // inline userinfo (validate_git_url rejects it), so an
+        // unauthenticated fetch would 401 on private remotes and silently
+        // skip clone-time detection. A missing remote notes ref is normal
+        // (fresh or pre-relocation repos); anything else degrades
+        // clone-time detection to the first pull and must stay audible.
         if let Ok(mut remote) = repo.find_remote("origin") {
+            // hinted must outlive fetch_opts (the callbacks borrow it).
+            let hinted = cred_config.clone().with_url_hint(url);
             let mut fetch_opts = FetchOptions::new();
+            fetch_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&hinted));
             let spec = format!(
                 "{}:refs/remotes/origin/{}",
                 crate::sync::gossip::GOSSIP_REF,
                 crate::sync::gossip::GOSSIP_TRACKING
             );
-            let _ = remote.fetch(&[&spec], Some(&mut fetch_opts), None);
+            if let Err(e) = remote.fetch(&[&spec], Some(&mut fetch_opts), None) {
+                let msg = e.message();
+                if !(msg.contains("find remote ref") || msg.contains("not found")) {
+                    eprintln!("warning: gossip channel fetch failed at clone: {msg}");
+                }
+            }
         }
         if let Err(e) = Self::check_head_gossip(&repo, "origin", cloned_head_oid(&repo)?) {
             let _ = std::fs::remove_dir_all(target);
@@ -4238,20 +4509,31 @@ impl SyncEngine {
             let _ = std::fs::remove_dir_all(target);
             return Err(e);
         }
-        // S1b-3: rollback detection on the provider-clone path too.
-        // The gossip channel rides refs/notes, which the clone's
-        // wildcard heads fetch does not carry; pull it explicitly
-        // best-effort (clone URLs carry their credentials inline, so a
-        // plain fetch works on https and file transports; an SSH-sourced
-        // clone resumes gossip detection at its first pull).
+        // S1b-3: rollback detection on the provider-clone path too. Same
+        // contract as the plain clone: the notes fetch rides the clone's
+        // own credentials (no inline userinfo in clone URLs), and a
+        // non-ref-absent failure stays audible instead of silently
+        // skipping clone-time rollback detection.
         if let Ok(mut remote) = repo.find_remote("origin") {
+            // hinted must outlive fetch_opts (the callbacks borrow it), so
+            // it is declared first.
+            let hinted = creds
+                .clone()
+                .unwrap_or_else(|| CredentialConfig::load_with_hint(target, provider))
+                .with_url_hint(url);
             let mut fetch_opts = FetchOptions::new();
+            fetch_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&hinted));
             let spec = format!(
                 "{}:refs/remotes/origin/{}",
                 crate::sync::gossip::GOSSIP_REF,
                 crate::sync::gossip::GOSSIP_TRACKING
             );
-            let _ = remote.fetch(&[&spec], Some(&mut fetch_opts), None);
+            if let Err(e) = remote.fetch(&[&spec], Some(&mut fetch_opts), None) {
+                let msg = e.message();
+                if !(msg.contains("find remote ref") || msg.contains("not found")) {
+                    eprintln!("warning: gossip channel fetch failed at clone: {msg}");
+                }
+            }
         }
         if let Err(e) = Self::check_head_gossip(&repo, "origin", cloned_head_oid(&repo)?) {
             let _ = std::fs::remove_dir_all(target);
@@ -11282,12 +11564,23 @@ mod tests {
         let remote_url = format!("file://{}", remote_path.display());
         engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
 
-        // Simulate a pre-upgrade remote: a legacy gossip branch with one
-        // announcement-shaped commit.
+        // Simulate a pre-upgrade remote: a legacy gossip branch carrying
+        // one announcement-shaped file, so the adoption proves content
+        // survival, not just ref bookkeeping.
         let legacy_oid = {
             let bare = Repository::open(&remote_path).unwrap();
             let sig = git2::Signature::now("old-version", "old@b.local").unwrap();
-            let tree_id = bare.treebuilder(None).unwrap().write().unwrap();
+            let blob_id = bare.blob(br#"{"device_id":"old-device"}"#).unwrap();
+            let mut heads_tb = bare.treebuilder(None).unwrap();
+            heads_tb
+                .insert("old-device.json", blob_id, git2::FileMode::Blob.into())
+                .unwrap();
+            let heads_id = heads_tb.write().unwrap();
+            let mut outer_tb = bare.treebuilder(None).unwrap();
+            outer_tb
+                .insert("heads", heads_id, git2::FileMode::Tree.into())
+                .unwrap();
+            let tree_id = outer_tb.write().unwrap();
             let tree = bare.find_tree(tree_id).unwrap();
             let oid = bare
                 .commit(None, &sig, &sig, "legacy gossip", &tree, &[])
@@ -11332,6 +11625,330 @@ mod tests {
                     crate::sync::gossip::GOSSIP_TRACKING
                 ))
                 .is_ok()
+        );
+        assert!(
+            notes_tip
+                .tree()
+                .unwrap()
+                .get_path(Path::new("heads/old-device.json"))
+                .is_ok(),
+            "the legacy announcement file must survive into the notes tree"
+        );
+    }
+
+    /// B1 regression: a device whose own announcement already matches
+    /// HEAD (the upgraded read-mostly vault) takes the skip path, and
+    /// the skip path must still consume the legacy branch. Before the
+    /// fix the skip returned early and the second branch survived
+    /// indefinitely for exactly the users who reported it.
+    #[test]
+    fn skip_path_still_migrates_the_legacy_gossip_branch() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        let head = repo_a.head().unwrap().peel_to_commit().unwrap().id();
+
+        // Pre-upgrade remote: the legacy branch carries THIS device's own
+        // announcement for the current head.
+        let legacy_tip = {
+            let bare = Repository::open(&remote_path).unwrap();
+            let ann = crate::sync::gossip::HeadAnnouncement::sign(
+                &engine_a.root_commit_oid(&repo_a).unwrap(),
+                "device-a",
+                &head.to_string(),
+                1,
+                &key_a,
+            );
+            let blob_id = bare
+                .blob(serde_json::to_vec(&ann).unwrap().as_slice())
+                .unwrap();
+            let mut heads_tb = bare.treebuilder(None).unwrap();
+            heads_tb
+                .insert("device-a.json", blob_id, git2::FileMode::Blob.into())
+                .unwrap();
+            let heads_id = heads_tb.write().unwrap();
+            let mut outer_tb = bare.treebuilder(None).unwrap();
+            outer_tb
+                .insert("heads", heads_id, git2::FileMode::Tree.into())
+                .unwrap();
+            let tree = bare.find_tree(outer_tb.write().unwrap()).unwrap();
+            let sig = git2::Signature::now("old-version", "old@b.local").unwrap();
+            let oid = bare
+                .commit(None, &sig, &sig, "legacy gossip", &tree, &[])
+                .unwrap();
+            bare.reference("refs/heads/baluard-gossip", oid, true, "legacy")
+                .unwrap();
+            oid
+        };
+
+        // The push announces nothing new (own announcement == head) -- the
+        // skip path. Migration must still adopt and retire.
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let bare = Repository::open(&remote_path).unwrap();
+        assert!(
+            bare.find_reference("refs/heads/baluard-gossip").is_err(),
+            "the legacy branch must be deleted even on the skip path"
+        );
+        let notes = bare
+            .find_reference(crate::sync::gossip::GOSSIP_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        // The adopt path points the notes ref AT the legacy tip, so
+        // equality (not strict descent) is the carrying proof here.
+        assert!(
+            notes.id() == legacy_tip
+                || repo_a
+                    .graph_descendant_of(notes.id(), legacy_tip)
+                    .unwrap_or(false),
+            "the notes channel must carry the legacy announcement"
+        );
+        let mut heads: Vec<String> = bare
+            .references()
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .map(|r| r.name().unwrap_or("").to_string())
+            .filter(|n| n.starts_with("refs/heads/"))
+            .collect();
+        heads.sort();
+        assert_eq!(
+            heads,
+            vec!["refs/heads/main".to_string()],
+            "the remote must carry exactly one branch, got: {heads:?}"
+        );
+    }
+
+    /// A1 regression: diverged channels -- an old-version device announced
+    /// on the legacy branch after this device migrated -- must merge, not
+    /// discard. The consume commit parents both tips and unions the
+    /// announcement files, so retiring the branch loses nothing.
+    #[test]
+    fn diverged_legacy_channel_is_merged_not_discarded() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        let first_head = repo_a.head().unwrap().peel_to_commit().unwrap().id();
+        engine_a.push(&repo_a, "origin").unwrap(); // notes exists (device-a @ now)
+
+        // Old-version device announces on the legacy branch: this
+        // device's file with an OLDER `at`, plus a device the notes tree
+        // has never seen. The branch tip shares no history with notes.
+        let legacy_tip = {
+            let bare = Repository::open(&remote_path).unwrap();
+            let ann = crate::sync::gossip::HeadAnnouncement::sign(
+                &engine_a.root_commit_oid(&repo_a).unwrap(),
+                "device-a",
+                &first_head.to_string(),
+                1,
+                &key_a,
+            );
+            let blob_id = bare
+                .blob(serde_json::to_vec(&ann).unwrap().as_slice())
+                .unwrap();
+            let other_id = bare
+                .blob(br#"{"device_id":"old-device","head":"deadbeef"}"#)
+                .unwrap();
+            let mut heads_tb = bare.treebuilder(None).unwrap();
+            heads_tb
+                .insert("device-a.json", blob_id, git2::FileMode::Blob.into())
+                .unwrap();
+            heads_tb
+                .insert("old-device.json", other_id, git2::FileMode::Blob.into())
+                .unwrap();
+            let heads_id = heads_tb.write().unwrap();
+            let mut outer_tb = bare.treebuilder(None).unwrap();
+            outer_tb
+                .insert("heads", heads_id, git2::FileMode::Tree.into())
+                .unwrap();
+            let tree = bare.find_tree(outer_tb.write().unwrap()).unwrap();
+            let sig = git2::Signature::now("old-version", "old@b.local").unwrap();
+            let oid = bare
+                .commit(None, &sig, &sig, "legacy gossip", &tree, &[])
+                .unwrap();
+            bare.reference("refs/heads/baluard-gossip", oid, true, "legacy")
+                .unwrap();
+            oid
+        };
+
+        std::fs::write(dir.path().join("two.enc"), b"\x02").unwrap();
+        engine_a.commit_all(&repo_a, "c2").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let bare = Repository::open(&remote_path).unwrap();
+        assert!(
+            bare.find_reference("refs/heads/baluard-gossip").is_err(),
+            "the legacy branch must be retired after the merge"
+        );
+        let notes = bare
+            .find_reference(crate::sync::gossip::GOSSIP_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        assert!(
+            repo_a
+                .graph_descendant_of(notes.id(), legacy_tip)
+                .unwrap_or(false),
+            "the notes line must descend from the legacy tip"
+        );
+        let heads_entry = notes.tree().unwrap().get_path(Path::new("heads")).unwrap();
+        let heads = repo_a.find_tree(heads_entry.id()).unwrap();
+        assert!(heads.get_name("device-a.json").is_some());
+        assert!(
+            heads.get_name("old-device.json").is_some(),
+            "the legacy-only announcement file must survive the merge"
+        );
+    }
+
+    /// Clone-time rollback detection reads the NOTES channel: a rostered
+    /// announcement on refs/notes/baluard-gossip must be fetched by the
+    /// clone's explicit notes fetch and refuse the clone outright.
+    #[test]
+    fn clone_refuses_rollback_announced_on_the_notes_channel() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        std::fs::write(dir.path().join("two.enc"), b"\x02").unwrap();
+        engine_a.commit_all(&repo_a, "c2").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let branch = SyncEngine::resolve_default_branch(&repo_a);
+        let h2 = repo_a.head().unwrap().peel_to_commit().unwrap().id();
+        let h1 = repo_a
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .parent(0)
+            .unwrap()
+            .id();
+
+        // Forge the notes channel: a rostered key announces H2, the head
+        // the rollback below is about to discard.
+        let bare = Repository::open(&remote_path).unwrap();
+        let ann = crate::sync::gossip::HeadAnnouncement::sign(
+            &engine_a.root_commit_oid(&repo_a).unwrap(),
+            "device-a",
+            &h2.to_string(),
+            1,
+            &key_a,
+        );
+        let blob_id = bare
+            .blob(serde_json::to_vec(&ann).unwrap().as_slice())
+            .unwrap();
+        let mut heads_tb = bare.treebuilder(None).unwrap();
+        heads_tb
+            .insert("device-a.json", blob_id, git2::FileMode::Blob.into())
+            .unwrap();
+        let heads_id = heads_tb.write().unwrap();
+        let mut outer_tb = bare.treebuilder(None).unwrap();
+        outer_tb
+            .insert("heads", heads_id, git2::FileMode::Tree.into())
+            .unwrap();
+        let tree = bare.find_tree(outer_tb.write().unwrap()).unwrap();
+        let sig = git2::Signature::now("ghost", "g@b.local").unwrap();
+        let notes_tip = bare
+            .find_reference(crate::sync::gossip::GOSSIP_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let forged = bare
+            .commit(None, &sig, &sig, "forged notes", &tree, &[&notes_tip])
+            .unwrap();
+        bare.reference(crate::sync::gossip::GOSSIP_REF, forged, true, "forge")
+            .unwrap();
+
+        // Roll the remote back to H1.
+        repo_a
+            .reference(
+                &format!("refs/heads/{branch}"),
+                h1,
+                true,
+                "simulated rollback",
+            )
+            .unwrap();
+        let mut remote = repo_a.find_remote("origin").unwrap();
+        let mut push_opts = PushOptions::new();
+        push_opts.remote_callbacks(crate::sync::credentials::build_callbacks(
+            &engine_a.credential_config,
+        ));
+        remote
+            .push(
+                &[&format!("+refs/heads/{branch}:refs/heads/{branch}")],
+                Some(&mut push_opts),
+            )
+            .unwrap();
+
+        // A Baluard clone must fetch the notes channel and refuse.
+        let vdir = tempfile::tempdir().unwrap();
+        let vpath = vdir.path().join("victim");
+        let err = match SyncEngine::clone_unchecked(&remote_url, &vpath) {
+            Ok(_) => panic!("clone of a rolled-back vault must refuse"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("rollback detected"),
+            "expected rollback refusal at clone, got: {err}"
+        );
+        assert!(
+            !vpath.exists(),
+            "a refused clone must not leave a checked-out copy on disk"
         );
     }
 
