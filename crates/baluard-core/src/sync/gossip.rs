@@ -50,7 +50,7 @@ pub const GOSSIP_REF: &str = "refs/notes/baluard-gossip";
 /// Tracking-ref short name under refs/remotes/<remote>/.
 pub const GOSSIP_TRACKING: &str = "gossip";
 
-/// Directory inside the gossip branch tree.
+/// Directory inside the gossip channel tree.
 pub const GOSSIP_DIR: &str = "heads";
 
 /// Domain separator for announcement signatures.
