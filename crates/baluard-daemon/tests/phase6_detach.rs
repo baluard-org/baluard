@@ -1104,7 +1104,11 @@ async fn route_discard_orphan_deletes_an_unregistered_marker_dir() {
 }
 
 #[tokio::test]
-async fn route_discard_orphan_refuses_a_registered_vault() {
+async fn route_discard_orphan_detaches_a_registered_vault_too() {
+    // Credential-free by design: local folder deletion is machine-level
+    // control (the user could rm -rf the folder), so a registered vault is
+    // detached and its folder removed in one step — the clone wizard's
+    // "delete local copy and download from online" arm.
     let (data_dir, _guard) = sandboxed_data_dir().await;
     let vaults = data_dir.path().join("vaults");
     let dir = write_orphan_dir(&vaults, "baluard-regd");
@@ -1121,15 +1125,54 @@ async fn route_discard_orphan_refuses_a_registered_vault() {
     );
     let resp = route_host_request(req, &host).await;
     assert!(
-        !resp.success,
-        "a registered vault must never be discard_orphan'ed"
-    );
-    assert!(
-        resp.error_message.contains("registered"),
-        "refusal must point at the registration, got: {}",
+        resp.success,
+        "registered discard failed: {}",
         resp.error_message
     );
-    assert!(dir.exists(), "refusal must leave the folder on disk");
+    let payload: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(payload["discarded"], serde_json::json!(true));
+    assert!(!dir.exists(), "the folder must be gone");
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap();
+        assert!(!reg.exists("baluard-regd"), "the entry must be detached");
+    }
+}
+
+#[tokio::test]
+async fn route_discard_orphan_on_a_registered_vault_with_no_folder_drops_the_entry() {
+    let (_data_dir, _guard) = sandboxed_data_dir().await;
+    let entry = make_entry(
+        "baluard-vanished",
+        std::path::Path::new("/nonexistent/baluard-vanished"),
+        Uuid::new_v4(),
+    );
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("baluard-vanished"));
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.discard_orphan",
+        serde_json::json!({ "slug": "baluard-vanished" }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "stale-entry discard failed: {}",
+        resp.error_message
+    );
+    let payload: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(payload["discarded"], serde_json::json!(true));
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap();
+        assert!(
+            !reg.exists("baluard-vanished"),
+            "the stale entry must be dropped so the slug is free"
+        );
+    }
 }
 
 #[tokio::test]

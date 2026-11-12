@@ -89,24 +89,11 @@ export function parseCloneClash(message) {
 	return null;
 }
 
-// Delete a local vault copy. The daemon re-verifies the master password
-// against the KEK canary and rate-limits wrong answers; this call is intent,
-// not the security boundary.
-export async function wipeLocalVault(slug, password) {
-	await daemon(
-		"vaults.detach",
-		JSON.stringify({
-			slug,
-			delete_from_disk: true,
-			force: true,
-			confirm: { kind: "password", value: password },
-		}),
-	);
-}
-
-// Delete an UNREGISTERED vault folder blocking a clone target. The daemon
-// derives the path from the slug and refuses registered / marker-less
-// folders, so only a genuine orphan copy can be removed.
+// Delete a local vault folder blocking a clone target — registered vault or
+// orphan alike. The daemon derives the path from the slug and requires a
+// matching .baluard marker, so only a genuine Baluard vault copy can be
+// removed. Credential-free by design: local folder deletion is machine-level
+// control the user already has.
 export async function discardOrphanVault(slug) {
 	const result = JSON.parse(
 		await daemon("vaults.discard_orphan", JSON.stringify({ slug })),

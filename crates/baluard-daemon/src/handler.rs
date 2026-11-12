@@ -426,12 +426,15 @@ fn action_requires_session_token(action: &str) -> bool {
 /// pre-token is a documented limitation (0085-sharing.md §9.8): a shared OS
 /// account is not a security boundary. NOTE: `vaults.detach` and
 /// `vaults.discard_orphan` are unauthenticated destructive-capable admin
-/// routes (their delete arms are protected by slug-retyping / marker
-/// checks + registered-slug refusal, not by a session token) — same
-/// socket-UID trust level. `vaults.discard_orphan` is additionally
-/// reachable from the webview through the D2 allow-list, which is acceptable
-/// because a same-UID process could `rm -rf` the folder directly; the
-/// socket/webview boundary is the trust line, not these route guards.
+/// routes — same socket-UID trust level. `vaults.discard_orphan` is
+/// credential-free by design (local folder deletion is machine-level
+/// control; the guards are slug validation, the daemon-derived path, and
+/// the marker check) and additionally reachable from the webview through
+/// the D2 allow-list, which is acceptable because a same-UID process could
+/// `rm -rf` the folder directly. `vaults.detach` keeps its credential
+/// gates: master password for the device-only arm, recovery phrase
+/// whenever a remote is deleted. The socket/webview boundary is the trust
+/// line, not these route guards.
 #[cfg(test)]
 const HOST_ACTIONS: &[&str] = &[
     "ping",
@@ -855,22 +858,13 @@ enum MarkerCheck {
     },
 }
 
-/// The registered-slug gate for `vaults.discard_orphan`, shared by the
-/// early check and the late pre-delete re-check. FAIL-CLOSED: an unreadable
-/// registry (corrupt file, wrong schema version, I/O error) refuses the
-/// delete — a skipped check here would let a registered vault's folder be
-/// removed without its credential gate.
-fn discard_orphan_registry_refusal(slug: &str) -> Option<String> {
+/// The registry-read guard for `vaults.discard_orphan`: FAIL-CLOSED on an
+/// unreadable registry (corrupt file, wrong schema version, I/O error) —
+/// the delete never proceeds on a registry we cannot inspect, because the
+/// registered/orphan split that picks the delete target depends on it.
+fn discard_orphan_registry_error() -> Option<String> {
     match baluard_core::vault::registry::VaultRegistry::load_locked() {
-        Ok(reg) => {
-            if reg.exists(slug) {
-                Some(format!(
-                    "Vault '{slug}' is registered in Baluard; delete it from the vault switcher instead."
-                ))
-            } else {
-                None
-            }
-        }
+        Ok(_) => None,
         Err(e) => Some(format!(
             "Cannot read the vault registry, so the folder cannot be safely checked for an active registration. Try again, or remove the folder manually: {e}"
         )),
@@ -1589,13 +1583,18 @@ async fn route_host_request_inner(
             }
         }
 
-        // vaults.discard_orphan: delete an UNREGISTERED vault folder that
-        // blocks a clone target — the clone wizard's "discard local copy"
-        // arm. The daemon derives the path from the slug (the client never
-        // supplies one, C11), and refuses anything registered, marker-less,
-        // or holding another vault's marker, so only a genuine orphan vault
-        // copy can be removed. Idempotent on an already-absent path: the
-        // caller may then clone straight away.
+        // vaults.discard_orphan: remove a local vault folder so a fresh
+        // download can take its place — the clone wizard's "delete local
+        // copy and download from online" arm. Works for a REGISTERED vault
+        // (the entry is detached, its folder deleted) and for an
+        // unregistered orphan blocking the clone target. No credential:
+        // local folder deletion is machine-level control the user already
+        // has (the folder is a plain directory any file manager can
+        // remove); the phrase gate stays on REMOTE deletion (vaults.detach
+        // with delete_remote). Wrong-target deletes stay impossible: the
+        // slug is validated (C11), the path is derived here, never
+        // client-supplied, and a .baluard marker for the same slug must be
+        // present. Idempotent on an already-absent path.
         "vaults.discard_orphan" => {
             let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
                 Ok(v) => v,
@@ -1609,11 +1608,43 @@ async fn route_host_request_inner(
             if let Err(e) = baluard_core::vault::slug::validate_slug(slug) {
                 return err_response(format!("Invalid vault slug '{slug}': {e}"));
             }
-            if let Some(msg) = discard_orphan_registry_refusal(slug) {
+            if let Some(msg) = discard_orphan_registry_error() {
                 return err_response(msg);
             }
-            let target = baluard_core::paths::vaults_dir().join(slug);
+            // The registered/orphan split picks the target: a registered
+            // vault's entry path is authoritative (imported folders need
+            // not live in the default vaults directory).
+            let peeked = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                Ok(reg) => reg.get(slug).cloned(),
+                Err(e) => {
+                    return err_response(format!(
+                        "Cannot read the vault registry, so the folder cannot be safely checked for an active registration. Try again, or remove the folder manually: {e}"
+                    ));
+                }
+            };
+            let target = match &peeked {
+                Some(entry) => entry.path.clone(),
+                None => baluard_core::paths::vaults_dir().join(slug),
+            };
             if !target.exists() {
+                if let Some(_entry) = &peeked {
+                    // Registered but the folder is already gone: drop the
+                    // stale entry so the slug is free, mirroring detach's
+                    // stale-entry idempotency.
+                    let mut reg = match baluard_core::vault::registry::VaultRegistry::load_locked()
+                    {
+                        Ok(reg) => reg,
+                        Err(e) => return err_response(format!("Registry load failed: {e}")),
+                    };
+                    if reg.remove(slug).is_some() {
+                        if let Err(e) = reg.save_locked() {
+                            return err_response(format!(
+                                "Deleted entry could not be persisted: {e}"
+                            ));
+                        }
+                    }
+                    return ok_resp(serde_json::json!({ "discarded": true }).to_string(), None);
+                }
                 return ok_resp(serde_json::json!({ "discarded": false }).to_string(), None);
             }
             let marker = match baluard_core::vault::registry::BaluardMarker::read_from_vault(
@@ -1633,12 +1664,24 @@ async fn route_host_request_inner(
                     marker.slug
                 ));
             }
-            // Late re-check: shrink the check-to-delete window so a vault
-            // registered concurrently does not lose its folder. Fail-closed
-            // like the early check — an unreadable registry refuses the
-            // delete, it never waives it.
-            if let Some(msg) = discard_orphan_registry_refusal(slug) {
-                return err_response(msg);
+            // Registered case: detach the entry first (persist before the
+            // dir delete, so a failed delete leaves an orphan folder the
+            // app can re-adopt rather than a dangling entry), and close the
+            // host handle so an unlocked vault does not keep living over a
+            // deleted directory.
+            if peeked.is_some() {
+                let mut reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                    Ok(reg) => reg,
+                    Err(e) => return err_response(format!("Registry load failed: {e}")),
+                };
+                if reg.remove(slug).is_some() {
+                    if let Err(e) = reg.save_locked() {
+                        return err_response(format!(
+                            "The vault was detached but the registry could not be saved: {e}"
+                        ));
+                    }
+                }
+                let _ = host.close(slug).await;
             }
             if let Err(e) = tokio::fs::remove_dir_all(&target).await {
                 return err_response(format!("Failed to delete the local folder: {e}"));

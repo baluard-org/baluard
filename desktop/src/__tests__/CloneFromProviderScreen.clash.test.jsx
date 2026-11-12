@@ -131,36 +131,25 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 		expect(authSpies.setStatus).toHaveBeenCalledWith("locked");
 	});
 
-	it("wipe arm detaches with the password, then re-runs the clone", async () => {
+	it("discard deletes the local copy without a credential, then re-runs the clone", async () => {
 		responses["vault.clone_start"] = CLASH_ERR;
+		responses["vaults.discard_orphan"] = JSON.stringify({ discarded: true });
 		const { getByText, container } = await renderToRepoList();
 
 		fireEvent.click(container.querySelector(".clone-screen__repo"));
 		await waitFor(() =>
 			expect(container.querySelector(".clone-screen__clash")).not.toBeNull(),
 		);
-		fireEvent.click(getByText("clone.clashReimport"));
-		await waitFor(() =>
-			expect(
-				container.querySelector(".clone-screen__clash input[type=password]"),
-			).not.toBeNull(),
-		);
+		// No password arm anywhere in the dialog.
+		expect(
+			container.querySelector(".clone-screen__clash input[type=password]"),
+		).toBeNull();
 
-		const input = container.querySelector(
-			".clone-screen__clash input[type=password]",
-		);
-		fireEvent.input(input, { target: { value: "master-pw" } });
-		fireEvent.click(getByText("clone.clashWipeConfirm"));
-		await Promise.resolve();
+		fireEvent.click(getByText("clone.clashReimport"));
 		await waitFor(() => {
-			const detach = calls.find((c) => c.action === "vaults.detach");
-			expect(detach).toBeTruthy();
-			expect(JSON.parse(detach.payload)).toEqual({
-				slug: "baluard-vault",
-				delete_from_disk: true,
-				force: true,
-				confirm: { kind: "password", value: "master-pw" },
-			});
+			const discard = calls.find((c) => c.action === "vaults.discard_orphan");
+			expect(discard).toBeTruthy();
+			expect(JSON.parse(discard.payload)).toEqual({ slug: "baluard-vault" });
 		});
 		// The clone re-runs: two clone_start calls (refused, then the retry).
 		await waitFor(() => {
@@ -193,7 +182,7 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 		// The discard arm needs no password: the daemon refuses anything
 		// registered or marker-less server-side.
 		expect(container.querySelector("input[type=password]")).toBeNull();
-		expect(getByText("clone.clashDiscard")).toBeTruthy();
+		expect(getByText("clone.clashReimport")).toBeTruthy();
 
 		fireEvent.click(getByText("clone.clashUseExisting"));
 		await waitFor(() => {
@@ -205,10 +194,10 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 		});
 	});
 
-	it("wipe refusal keeps the dialog open and surfaces the error", async () => {
+	it("discard refusal keeps the dialog open and surfaces the error", async () => {
 		responses["vault.clone_start"] = CLASH_ERR;
-		responses["vaults.detach"] = new Error(
-			"verification failed: master password incorrect",
+		responses["vaults.discard_orphan"] = new Error(
+			"The folder at this path has no .baluard marker",
 		);
 		const { getByText, container } = await renderToRepoList();
 
@@ -217,43 +206,23 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 			expect(container.querySelector(".clone-screen__clash")).not.toBeNull(),
 		);
 		fireEvent.click(getByText("clone.clashReimport"));
-		await waitFor(() =>
-			expect(
-				container.querySelector(".clone-screen__clash input[type=password]"),
-			).not.toBeNull(),
-		);
-		const input = container.querySelector(
-			".clone-screen__clash input[type=password]",
-		);
-		fireEvent.input(input, { target: { value: "wrong" } });
-		fireEvent.click(getByText("clone.clashWipeConfirm"));
 
 		await waitFor(() =>
 			expect(container.textContent).toContain(
-				"verification failed: master password incorrect",
+				"The folder at this path has no .baluard marker",
 			),
 		);
 		// The dialog stays open so the user can retry.
 		expect(container.querySelector(".clone-screen__clash")).not.toBeNull();
 	});
 
-	it("cancel dismisses the dialog and clears the password", async () => {
+	it("cancel dismisses the dialog", async () => {
 		responses["vault.clone_start"] = CLASH_ERR;
 		const { getByText, container } = await renderToRepoList();
 
 		fireEvent.click(container.querySelector(".clone-screen__repo"));
 		await waitFor(() =>
 			expect(container.querySelector(".clone-screen__clash")).not.toBeNull(),
-		);
-		fireEvent.click(getByText("clone.clashReimport"));
-		await waitFor(() =>
-			expect(
-				container.querySelector(".clone-screen__clash input[type=password]"),
-			).not.toBeNull(),
-		);
-		fireEvent.input(
-			container.querySelector(".clone-screen__clash input[type=password]"),
-			{ target: { value: "typed" } },
 		);
 		fireEvent.click(getByText("common.cancel").closest("button"));
 		await waitFor(() =>
@@ -279,7 +248,7 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 		await waitFor(() =>
 			expect(container.querySelector(".clone-screen__clash")).not.toBeNull(),
 		);
-		fireEvent.click(getByText("clone.clashDiscard"));
+		fireEvent.click(getByText("clone.clashReimport"));
 		await waitFor(() => {
 			const discard = calls.find((c) => c.action === "vaults.discard_orphan");
 			expect(discard).toBeTruthy();
@@ -303,7 +272,7 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 		await waitFor(() =>
 			expect(container.querySelector(".clone-screen__clash")).not.toBeNull(),
 		);
-		fireEvent.click(getByText("clone.clashDiscard"));
+		fireEvent.click(getByText("clone.clashReimport"));
 		await waitFor(() =>
 			expect(container.textContent).toContain(".baluard marker"),
 		);

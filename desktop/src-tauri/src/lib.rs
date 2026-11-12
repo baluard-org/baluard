@@ -370,6 +370,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "agents.audit",
     "vaults.register_local",
     "vaults.discard_orphan",
+    "vault.enroll_with_phrase",
     "vaults.switch",
     // clone from provider
     "vault.clone_finalize",
@@ -2180,6 +2181,7 @@ mod tests {
     #[test]
     fn d2_destructive_path_params_are_denied_but_wipe_params_pass() {
         assert!(desktop_action_allowed("vaults.detach"));
+        assert!(desktop_action_allowed("vault.enroll_with_phrase"));
         assert!(!payload_has_desktop_forbidden_keys(
             "{\"slug\":\"a\",\"delete_from_disk\":true}"
         ));
