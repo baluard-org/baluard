@@ -3,7 +3,7 @@
 Notable user-facing changes per release.
 
 ## [UNRELEASED]
-- Downloading a vault over an existing local copy no longer asks for a password to delete the local copy, and the folder is fully removed. Setting up a downloaded vault on a new device works instead of failing.
+- Downloading a vault over an existing local copy no longer asks for a password to delete the local copy, and the folder is fully removed, with a warning that unsynced local changes are lost and a check that the folder really is that vault. Setting up a downloaded vault on a new device works instead of failing.
 - The "Delete from this device" and "Delete and re-import" actions work now: a security gate written before those screens existed was rejecting them.
 - Downloaded vaults now set up with the master password and the 24-word recovery phrase together, because the device key that opens a downloaded copy never syncs; the login screen offers the same setup when a downloaded vault refuses the password.
 - Downloading a vault whose name collides with a local folder now offers to delete that folder and download a fresh copy from online, and the dialog wording talks about vaults rather than folders.

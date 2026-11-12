@@ -207,10 +207,10 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 		);
 		fireEvent.click(getByText("clone.clashReimport"));
 
+		// The raw daemon refusal maps through sanitizeError to the localized
+		// guard key; the pass-through translator renders the key itself.
 		await waitFor(() =>
-			expect(container.textContent).toContain(
-				"The folder at this path has no .baluard marker",
-			),
+			expect(container.textContent).toContain("errors.cloneGuard"),
 		);
 		// The dialog stays open so the user can retry.
 		expect(container.querySelector(".clone-screen__clash")).not.toBeNull();
@@ -274,7 +274,7 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 		);
 		fireEvent.click(getByText("clone.clashReimport"));
 		await waitFor(() =>
-			expect(container.textContent).toContain(".baluard marker"),
+			expect(container.textContent).toContain("errors.cloneGuard"),
 		);
 		expect(container.querySelector(".clone-screen__clash")).not.toBeNull();
 		// The clone must NOT retry after a failed discard.

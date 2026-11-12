@@ -66,9 +66,9 @@
     "clashReimport": "Delete the local copy and import again",
     "clashOrphanBody": "A vault named \"{slug}\" already exists on this device, but it is not set up in Baluard.",
     "clashUseExisting": "Use local vault copy",
-    "clashDiscard": "Delete local copy and download from online",
     "enrollBody": "A downloaded vault needs both your master password and your 24-word recovery phrase to set up this device.",
-    "phrasePlaceholder": "24-word recovery phrase"
+    "phrasePlaceholder": "24-word recovery phrase",
+    "clashLosesUnsynced": "Local changes that were never synced are lost."
   },
   "create": {
     "title": "Create Vault",
@@ -648,7 +648,10 @@
     "cloneFailed": "Downloading the vault failed. Check your connection and try again.",
     "network": "Check your internet connection and try again.",
     "hostKey": "The server's host key changed or is not trusted. Verify it before continuing.",
-    "phraseEnrollRequired": "This downloaded vault has no device key on this machine. Unlock with your 24-word recovery phrase to set up this device."
+    "phraseEnrollRequired": "This downloaded vault has no device key on this machine. Unlock with your 24-word recovery phrase to set up this device.",
+    "cloneGuard": "That folder is not the vault Baluard expected, so it was left alone.",
+    "cloneDeleteFailed": "Baluard could not fully remove the local folder. Delete it manually, then download again.",
+    "cloneRetry": "Baluard could not check this vault safely. Try again, or remove the folder manually."
   },
   "categories": {
     "allItems": "All items",

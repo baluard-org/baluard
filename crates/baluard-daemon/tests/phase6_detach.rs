@@ -1051,12 +1051,12 @@ async fn oauth_status_web_answers_without_any_vault() {
 /// Seed an unregistered orphan vault folder (marker + one payload file) in
 /// the sandbox vaults dir, the shape a safe detach or manual backup leaves
 /// behind.
-fn write_orphan_dir(vaults_dir: &Path, slug: &str) -> PathBuf {
+fn write_orphan_dir(vaults_dir: &Path, slug: &str, vault_id: Uuid) -> PathBuf {
     let dir = vaults_dir.join(slug);
     std::fs::create_dir_all(&dir).expect("mkdir orphan");
     let marker = BaluardMarker {
         version: 1,
-        vault_id: Uuid::new_v4(),
+        vault_id,
         slug: slug.to_string(),
     };
     std::fs::write(
@@ -1072,7 +1072,8 @@ fn write_orphan_dir(vaults_dir: &Path, slug: &str) -> PathBuf {
 async fn route_discard_orphan_deletes_an_unregistered_marker_dir() {
     let (data_dir, _guard) = sandboxed_data_dir().await;
     let vaults = data_dir.path().join("vaults");
-    let dir = write_orphan_dir(&vaults, "baluard-orphan");
+    let orphan_id = Uuid::new_v4();
+    let dir = write_orphan_dir(&vaults, "baluard-orphan", orphan_id);
 
     let host = Arc::new(VaultHost::new());
     let req = make_request(
@@ -1111,8 +1112,9 @@ async fn route_discard_orphan_detaches_a_registered_vault_too() {
     // "delete local copy and download from online" arm.
     let (data_dir, _guard) = sandboxed_data_dir().await;
     let vaults = data_dir.path().join("vaults");
-    let dir = write_orphan_dir(&vaults, "baluard-regd");
-    let entry = make_entry("baluard-regd", &dir, Uuid::new_v4());
+    let regd_id = Uuid::new_v4();
+    let dir = write_orphan_dir(&vaults, "baluard-regd", regd_id);
+    let entry = make_entry("baluard-regd", &dir, regd_id);
     {
         let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
         write_global_registry(std::slice::from_ref(&entry), Some("baluard-regd"));
@@ -1137,6 +1139,36 @@ async fn route_discard_orphan_detaches_a_registered_vault_too() {
         let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap();
         assert!(!reg.exists("baluard-regd"), "the entry must be detached");
     }
+}
+
+#[tokio::test]
+async fn route_discard_orphan_refuses_when_the_folder_holds_a_different_vault() {
+    // The registered entry must point at THIS vault copy: a same-slug
+    // sibling (a restored backup, a swapped folder) must not be deletable
+    // through the clone wizard's discard arm.
+    let (data_dir, _guard) = sandboxed_data_dir().await;
+    let vaults = data_dir.path().join("vaults");
+    let regd_id = Uuid::new_v4();
+    let dir = write_orphan_dir(&vaults, "baluard-regd", Uuid::new_v4()); // marker id != entry id
+    let entry = make_entry("baluard-regd", &dir, regd_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("baluard-regd"));
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.discard_orphan",
+        serde_json::json!({ "slug": "baluard-regd" }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "a vault_id mismatch must refuse the discard");
+    assert!(
+        resp.error_message.contains("different vault"),
+        "refusal must name the mismatch, got: {}",
+        resp.error_message
+    );
+    assert!(dir.exists(), "refusal must leave the folder on disk");
 }
 
 #[tokio::test]
@@ -1203,7 +1235,7 @@ async fn route_discard_orphan_refuses_a_folder_without_a_marker() {
 async fn route_discard_orphan_refuses_when_the_registry_is_unreadable() {
     let (data_dir, _guard) = sandboxed_data_dir().await;
     let vaults = data_dir.path().join("vaults");
-    let dir = write_orphan_dir(&vaults, "baluard-corrupt");
+    let dir = write_orphan_dir(&vaults, "baluard-corrupt", Uuid::new_v4());
     // A corrupt registry file must fail the discard CLOSED: the handler
     // cannot prove the slug is unregistered, so nothing may be deleted.
     std::fs::write(data_dir.path().join("registry.json"), "{ not json at all")
@@ -1226,7 +1258,7 @@ async fn route_discard_orphan_refuses_when_the_registry_is_unreadable() {
 async fn route_discard_orphan_refuses_a_marker_slug_mismatch() {
     let (data_dir, _guard) = sandboxed_data_dir().await;
     let vaults = data_dir.path().join("vaults");
-    let dir = write_orphan_dir(&vaults, "baluard-target");
+    let dir = write_orphan_dir(&vaults, "baluard-target", Uuid::new_v4());
     // The folder carries ANOTHER vault's marker: discarding it under the
     // requested slug would remove the wrong vault's data.
     let marker = BaluardMarker {
@@ -1283,7 +1315,7 @@ async fn clone_start_reports_registered_over_dir_exists_for_default_dir_vaults()
     // must win.
     let (data_dir, _guard) = sandboxed_data_dir().await;
     let vaults = data_dir.path().join("vaults");
-    let dir = write_orphan_dir(&vaults, "baluard-both");
+    let dir = write_orphan_dir(&vaults, "baluard-both", Uuid::new_v4());
     let entry = make_entry("baluard-both", &dir, Uuid::new_v4());
     {
         let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());

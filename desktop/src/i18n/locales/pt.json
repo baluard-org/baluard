@@ -66,9 +66,9 @@
     "clashReimport": "Apagar a cópia local e importar novamente",
     "clashOrphanBody": "Já existe um cofre chamado \"{slug}\" neste dispositivo, mas não está configurado no Baluard.",
     "clashUseExisting": "Usar a cópia local do cofre",
-    "clashDiscard": "Eliminar a cópia local e baixar da internet",
     "enrollBody": "Um cofre baixado precisa da sua senha mestra e da sua frase de recuperação de 24 palavras para configurar este dispositivo.",
-    "phrasePlaceholder": "Frase de recuperação de 24 palavras"
+    "phrasePlaceholder": "Frase de recuperação de 24 palavras",
+    "clashLosesUnsynced": "Alterações locais que nunca foram sincronizadas serão perdidas."
   },
   "create": {
     "title": "Criar Cofre",
@@ -648,7 +648,10 @@
     "cloneFailed": "Falha ao baixar o cofre. Verifique sua conexão e tente novamente.",
     "network": "Verifique sua conexão com a internet e tente novamente.",
     "hostKey": "A chave de host do servidor mudou ou não é confiável. Verifique-a antes de continuar.",
-    "phraseEnrollRequired": "Este cofre baixado não tem chave de dispositivo nesta máquina. Digite sua frase de recuperação de 24 palavras para configurá-lo."
+    "phraseEnrollRequired": "Este cofre baixado não tem chave de dispositivo nesta máquina. Digite sua frase de recuperação de 24 palavras para configurá-lo.",
+    "cloneGuard": "Essa pasta não é o cofre que o Baluard esperava, então foi deixada como está.",
+    "cloneDeleteFailed": "O Baluard não conseguiu remover totalmente a pasta local. Elimine-a manualmente e baixe de novo.",
+    "cloneRetry": "O Baluard não conseguiu verificar este cofre com segurança. Tente de novo ou remova a pasta manualmente."
   },
   "categories": {
     "allItems": "Todos os itens",

@@ -66,9 +66,9 @@
     "clashReimport": "Supprimer la copie locale et importer à nouveau",
     "clashOrphanBody": "Un coffre nommé \"{slug}\" existe déjà sur cet appareil, mais il n'est pas configuré dans Baluard.",
     "clashUseExisting": "Utiliser la copie locale du coffre",
-    "clashDiscard": "Supprimer la copie locale et télécharger depuis internet",
     "enrollBody": "Un coffre téléchargé nécessite ton mot de passe maître et ta phrase de récupération de 24 mots pour configurer cet appareil.",
-    "phrasePlaceholder": "Phrase de récupération de 24 mots"
+    "phrasePlaceholder": "Phrase de récupération de 24 mots",
+    "clashLosesUnsynced": "Les modifications locales jamais synchronisées seront perdues."
   },
   "create": {
     "title": "Créer un coffre",
@@ -370,7 +370,10 @@
     "cloneFailed": "Le téléchargement du coffre a échoué. Vérifiez votre connexion et réessayez.",
     "network": "Vérifiez votre connexion internet et réessayez.",
     "hostKey": "La clé d'hôte du serveur a changé ou n'est pas fiable. Vérifiez-la avant de continuer.",
-    "phraseEnrollRequired": "Ce coffre téléchargé n'a pas de clé d'appareil sur cette machine. Saisis ta phrase de récupération de 24 mots pour le configurer."
+    "phraseEnrollRequired": "Ce coffre téléchargé n'a pas de clé d'appareil sur cette machine. Saisis ta phrase de récupération de 24 mots pour le configurer.",
+    "cloneGuard": "Ce dossier n'est pas le coffre attendu par Baluard, il a donc été laissé intact.",
+    "cloneDeleteFailed": "Baluard n'a pas pu supprimer entièrement le dossier local. Supprimez-le manuellement, puis retéléchargez.",
+    "cloneRetry": "Baluard n'a pas pu vérifier ce coffre en toute sécurité. Réessayez ou supprimez le dossier manuellement."
   },
   "sync": {
     "title": "Synchronisation du coffre",

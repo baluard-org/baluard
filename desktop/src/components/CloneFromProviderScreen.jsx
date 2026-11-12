@@ -201,7 +201,7 @@ export default function CloneFromProviderScreen(props) {
       }
     } catch (e) {
       setClashBusy(false);
-      setClashError(String(e?.message ?? e));
+      setClashError(sanitizeError(e, t));
     }
   }
 
@@ -224,7 +224,7 @@ export default function CloneFromProviderScreen(props) {
       await pickRepo(repo);
     } catch (e) {
       setClashBusy(false);
-      setClashError(String(e?.message ?? e));
+      setClashError(sanitizeError(e, t));
     }
   }
 
@@ -556,6 +556,9 @@ export default function CloneFromProviderScreen(props) {
                 {clashPath()}
               </p>
             </Show>
+            <p class="text-xs text-[var(--color-muted)] mb-3">
+              {t("clone.clashLosesUnsynced")}
+            </p>
 
             <Show
               when={clash()?.kind === "registered"}
@@ -598,17 +601,15 @@ export default function CloneFromProviderScreen(props) {
                     ? t("vault.vaultSwitcher.working")
                     : t("clone.clashReimport")}
                 </Button>
+                {/* Deliberate asymmetry: an orphan copy is a dead end, so
+                    Cancel exits the wizard; a registered vault can still be
+                    opened, so Cancel returns to the repo list. */}
                 <Button onClick={clashDismiss} class="w-full py-2.5">
                   {t("common.cancel")}
                 </Button>
               </div>
-              <Show when={clashError()}>
-                <p class="text-sm text-[var(--color-danger)] mt-3">
-                  {clashError()}
-                </p>
-              </Show>
             </Show>
-            <Show when={clash()?.kind === "orphan" && clashError()}>
+            <Show when={clashError()}>
               <p class="text-sm text-[var(--color-danger)] mt-3">
                 {clashError()}
               </p>
