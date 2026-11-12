@@ -58,6 +58,12 @@ describe("sanitizeError", () => {
 
   test("matches vault locked", () => {
     expect(sanitizeError("Vault not opened", t)).toBe("errors.vaultNotUnlocked");
+    expect(
+      sanitizeError(
+        "This downloaded vault has no device key on this machine. Unlock with your 24-word recovery phrase to enroll it.",
+        t,
+      ),
+    ).toBe("errors.phraseEnrollRequired");
   });
 
   test("matches timeout", () => {

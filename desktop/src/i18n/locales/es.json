@@ -25,7 +25,9 @@
     "pinPlaceholder": "PIN de 6 dígitos",
     "renderRecoveryNotice": "La última vez Baluard se cerró de forma inesperada, así que esta sesión dibuja la ventana en un modo más seguro. Puedes cambiarlo en Ajustes después de desbloquear.",
     "noVaultsTitle": "Aún no hay bóvedas en este dispositivo. Crea una o abre una bóveda existente para empezar.",
-    "noVaultsAction": "Crea o abre una bóveda"
+    "noVaultsAction": "Crea o abre una bóveda",
+    "enrollBody": "Tu bóveda descargada necesita configurarse en este dispositivo. Ingresa tu contraseña maestra y tu frase de recuperación de 24 palabras.",
+    "enrollAction": "Configurar y abrir"
   },
   "create": {
     "title": "Crear bóveda",
@@ -604,7 +606,8 @@
     "providerSignin": "El servicio de inicio de sesión del proveedor rechazó la solicitud. Un token de acceso funciona en su lugar.",
     "cloneFailed": "No se pudo descargar la bóveda. Revisa tu conexión e inténtalo de nuevo.",
     "network": "Revisa tu conexión a internet e inténtalo de nuevo.",
-    "hostKey": "La clave de host del servidor cambió o no es de confianza. Verifícala antes de continuar."
+    "hostKey": "La clave de host del servidor cambió o no es de confianza. Verifícala antes de continuar.",
+    "phraseEnrollRequired": "Esta bóveda descargada no tiene clave de dispositivo en esta máquina. Ingresa tu frase de recuperación de 24 palabras para configurarla."
   },
   "categories": {
     "allItems": "Todos los elementos",
@@ -841,7 +844,9 @@
     "clashWipeConfirm": "Borrar e importar de nuevo",
     "clashOrphanBody": "Ya existe una bóveda llamada \"{slug}\" en este dispositivo, pero no está configurada en Baluard.",
     "clashUseExisting": "Usar la copia local de la bóveda",
-    "clashDiscard": "Eliminar la copia local y descargar de internet"
+    "clashDiscard": "Eliminar la copia local y descargar de internet",
+    "enrollBody": "Una bóveda descargada necesita tu contraseña maestra y tu frase de recuperación de 24 palabras para configurar este dispositivo.",
+    "phrasePlaceholder": "Frase de recuperación de 24 palabras"
   },
   "gitWhat": {
     "link": "¿Qué es git?"

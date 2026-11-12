@@ -7,6 +7,7 @@
 // strings, which is the shape the cancel check must survive.
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@solidjs/testing-library";
+import { fireEvent } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 
 // A REAL Solid signal: the auto-prompt effect tracks auth.biometricAvailable,
@@ -17,12 +18,13 @@ const [biometricAvailable, setBiometricAvailable] = createSignal(false);
 const authState = {
   status: "locked",
   switchTarget: null, // null = the switcher's activeSlug is the real target
+  lastUnlockError: null,
 };
 
 const authMock = {
   status: () => authState.status,
   activeVault: () => null,
-  lastUnlockError: () => null,
+  lastUnlockError: () => authState.lastUnlockError,
   switchTarget: () => authState.switchTarget,
   setSwitchTarget: vi.fn(),
   biometricAvailable,
@@ -98,6 +100,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   authState.status = "locked";
   authState.switchTarget = null;
+  authState.lastUnlockError = null;
   setBiometricAvailable(false);
   biometryAvailable.mockResolvedValue(true);
 });
@@ -214,4 +217,60 @@ describe("LoginScreen Quick Unlock auto-prompt", () => {
     // restore for sibling tests
     switcherState.vaults = [{ slug: "baluard-x", display_name: "X" }];
   });
+});
+describe("LoginScreen downloaded-vault enrollment", () => {
+	const PHRASE_ERROR =
+		"This downloaded vault has no device key on this machine. Unlock with your 24-word recovery phrase to enroll it.";
+
+	test("the typed phrase-enroll refusal swaps the form to password + phrase", async () => {
+		authMock.unlock.mockResolvedValue(false);
+		authState.lastUnlockError = PHRASE_ERROR;
+		render(() => <LoginScreen />);
+		const pw = await screen.findByTestId("login-password");
+		fireEvent.input(pw, { target: { value: "master-pw" } });
+		await Promise.resolve();
+		fireEvent.click(screen.getAllByTestId("login-unlock")[0]);
+
+		await screen.findByTestId("login-enroll-phrase");
+		expect(screen.getByTestId("login-enroll-password")).toBeTruthy();
+		// The normal unlock form is gone, so retry loops cannot re-burn it.
+		expect(screen.queryByTestId("login-password")).toBeNull();
+	});
+
+	test("enroll submit calls enroll_with_phrase then auth.unlock", async () => {
+		daemon.mockResolvedValue("");
+		// First unlock fails with the typed refusal (drives the swap); the
+		// post-enroll unlock succeeds.
+		authMock.unlock.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+		authState.lastUnlockError = PHRASE_ERROR;
+		render(() => <LoginScreen />);
+		const pw = await screen.findByTestId("login-password");
+		fireEvent.input(pw, { target: { value: "master-pw" } });
+		await Promise.resolve();
+		fireEvent.click(screen.getAllByTestId("login-unlock")[0]);
+
+		const phrase = await screen.findByTestId("login-enroll-phrase");
+		fireEvent.input(phrase, { target: { value: "twenty four words here" } });
+		await Promise.resolve();
+		fireEvent.input(screen.getByTestId("login-enroll-password"), {
+			target: { value: "master-pw" },
+		});
+		await Promise.resolve();
+		fireEvent.click(screen.getByTestId("login-enroll-submit"));
+
+		await waitFor(() => {
+			const enroll = daemon.mock.calls.find(
+				([a]) => a === "vault.enroll_with_phrase",
+			);
+			expect(enroll).toBeTruthy();
+			const payload = JSON.parse(enroll[1]);
+			expect(payload).toMatchObject({
+				slug: "baluard-x",
+				phrase: "twenty four words here",
+				master_password: "master-pw",
+			});
+			expect(enroll[2]).toBe("baluard-x");
+			expect(authMock.unlock).toHaveBeenCalled();
+		});
+	});
 });

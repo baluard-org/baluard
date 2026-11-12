@@ -33,7 +33,9 @@
     "pinPlaceholder": "Code PIN à 6 chiffres",
     "renderRecoveryNotice": "Baluard s'est fermé de manière inattendue la dernière fois. Cette session affiche donc la fenêtre dans un mode plus sûr. Vous pourrez modifier cela dans les Paramètres après déverrouillage.",
     "noVaultsTitle": "Aucun coffre sur cet appareil pour le moment. Créez-en un ou ouvrez un coffre existant pour commencer.",
-    "noVaultsAction": "Créer ou ouvrir un coffre"
+    "noVaultsAction": "Créer ou ouvrir un coffre",
+    "enrollBody": "Ton coffre téléchargé doit être configuré sur cet appareil. Saisis ton mot de passe maître et ta phrase de récupération de 24 mots.",
+    "enrollAction": "Configurer et déverrouiller"
   },
   "welcome": {
     "title": "Bienvenue sur Baluard",
@@ -66,7 +68,9 @@
     "clashWipeConfirm": "Supprimer et importer à nouveau",
     "clashOrphanBody": "Un coffre nommé \"{slug}\" existe déjà sur cet appareil, mais il n'est pas configuré dans Baluard.",
     "clashUseExisting": "Utiliser la copie locale du coffre",
-    "clashDiscard": "Supprimer la copie locale et télécharger depuis internet"
+    "clashDiscard": "Supprimer la copie locale et télécharger depuis internet",
+    "enrollBody": "Un coffre téléchargé nécessite ton mot de passe maître et ta phrase de récupération de 24 mots pour configurer cet appareil.",
+    "phrasePlaceholder": "Phrase de récupération de 24 mots"
   },
   "create": {
     "title": "Créer un coffre",
@@ -367,7 +371,8 @@
     "providerSignin": "Le service de connexion du fournisseur a rejeté la demande. Un jeton d'accès fonctionne à la place.",
     "cloneFailed": "Le téléchargement du coffre a échoué. Vérifiez votre connexion et réessayez.",
     "network": "Vérifiez votre connexion internet et réessayez.",
-    "hostKey": "La clé d'hôte du serveur a changé ou n'est pas fiable. Vérifiez-la avant de continuer."
+    "hostKey": "La clé d'hôte du serveur a changé ou n'est pas fiable. Vérifiez-la avant de continuer.",
+    "phraseEnrollRequired": "Ce coffre téléchargé n'a pas de clé d'appareil sur cette machine. Saisis ta phrase de récupération de 24 mots pour le configurer."
   },
   "sync": {
     "title": "Synchronisation du coffre",
