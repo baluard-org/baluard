@@ -55,10 +55,13 @@ class SyncCoordinator(
         vault.syncOnUnlock()
     }
 
-    /** CRUD mutation → arm the 5s debounced push (if enabled). */
-    suspend fun onMutation(vault: MobileVaultInterface) {
-        if (gated() || !config.syncAfterChange || blockedByNetwork()) return
+    /** CRUD mutation → arm the 5s debounced push (if enabled). Returns true
+     * only when the runtime was actually invoked, so the UI can show a
+     * truthful "changes waiting" state instead of guessing. */
+    suspend fun onMutation(vault: MobileVaultInterface): Boolean {
+        if (gated() || !config.syncAfterChange || blockedByNetwork()) return false
         vault.syncOnMutation()
+        return true
     }
 
     /** App foreground → pull with the runtime's 10-min guard (if enabled). */

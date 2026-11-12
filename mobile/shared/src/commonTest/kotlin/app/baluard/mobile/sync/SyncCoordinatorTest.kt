@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import app.baluard.mobile.monetization.CachedEntitlement
 import app.baluard.mobile.monetization.EntitlementPhase
@@ -46,7 +47,7 @@ class SyncCoordinatorTest {
         val vault = StubVault()
         val sync = SyncCoordinator(isMeteredNetwork = { false })
         sync.onUnlock(vault)
-        sync.onMutation(vault)
+        assertFalse(sync.onMutation(vault))
         sync.onForeground(vault)
         sync.onBackground(vault)
         sync.pullNow(vault)
@@ -59,7 +60,7 @@ class SyncCoordinatorTest {
         val vault = StubVault()
         val sync = SyncCoordinator(isMeteredNetwork = { false })
         sync.onUnlock(vault)
-        sync.onMutation(vault)
+        assertTrue(sync.onMutation(vault))
         sync.onForeground(vault)
         sync.onBackground(vault)
         sync.pullNow(vault)
@@ -81,7 +82,7 @@ class SyncCoordinatorTest {
             isMeteredNetwork = { false },
         )
         sync.onUnlock(vault)
-        sync.onMutation(vault)
+        assertFalse(sync.onMutation(vault))
         sync.onForeground(vault)
         // onBackground is NOT gated: flushing the debounce on background is
         // mandatory (the OS drops the 5s timer on suspension).
@@ -94,7 +95,7 @@ class SyncCoordinatorTest {
         val vault = StubVault()
         val sync = SyncCoordinator(isMeteredNetwork = { true })
         sync.onUnlock(vault)
-        sync.onMutation(vault)
+        assertFalse(sync.onMutation(vault))
         sync.onForeground(vault)
         sync.offlineTick(vault)
         // Explicit gesture + mandatory flush are NOT gated by Wi-Fi-only.

@@ -73,6 +73,7 @@ fun EntryListScreen(
     vault: MobileVault,
     listViewModel: VaultListViewModel,
     syncPhase: SyncPhase,
+    pending: Boolean = false,
     onSyncClick: () -> Unit,
     onCipherClick: (String) -> Unit,
     onBack: () -> Unit = {},
@@ -150,7 +151,11 @@ fun EntryListScreen(
                 title = title,
                 onBack = onBack,
                 actions = {
-                    SyncIconButton(phase = syncPhase, onClick = onSyncClick)
+                    SyncIconButton(
+                        phase = syncPhase,
+                        onClick = onSyncClick,
+                        pending = pending,
+                    )
                 },
             )
             }

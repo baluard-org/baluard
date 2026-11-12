@@ -74,6 +74,7 @@ import app.baluard.mobile.totp.TotpViewModel
 import app.baluard.mobile.sync.ConflictViewModel
 import app.baluard.mobile.sync.SyncCoordinator
 import app.baluard.mobile.sync.SyncPhase
+import app.baluard.mobile.sync.flashPushResult
 import app.baluard.mobile.sync.runSyncCycle
 import app.baluard.mobile.sync.syncOutcomeToast
 import kotlinx.coroutines.delay
@@ -154,6 +155,10 @@ fun App(
         // from (back goes there).
         var homeSyncPhase by remember { mutableStateOf(SyncPhase.Idle) }
         var listSyncPhase by remember { mutableStateOf(SyncPhase.Idle) }
+        // True while a debounced push sits in the runtime's queue; shown as
+        // a muted upload icon on the sync buttons and cleared from polled
+        // runtime status, never from a UI timer.
+        var pushPending by remember { mutableStateOf(false) }
         var detailOrigin by remember { mutableStateOf<Nav?>(null) }
         // Clone-in-progress target: chosen at repo pick, consumed at enroll.
         var pendingVaultPath by remember { mutableStateOf<String?>(null) }
@@ -249,6 +254,7 @@ fun App(
                     nav = Nav.List
                     homeSyncPhase = SyncPhase.Idle
                     listSyncPhase = SyncPhase.Idle
+                    pushPending = false
                     auth.vault()?.let { v ->
                         runCatching { sync.onUnlock(v) }
                         conflictVm.refresh(v)
@@ -264,6 +270,7 @@ fun App(
                     nav = Nav.List
                     homeSyncPhase = SyncPhase.Idle
                     listSyncPhase = SyncPhase.Idle
+                    pushPending = false
                 }
             }
         }
@@ -440,10 +447,53 @@ fun App(
         fun notifyMutation() {
             auth.vault()?.let { v ->
                 scope.launch {
-                    runCatching { sync.onMutation(v) }
-                    conflictVm.refresh(v)
+                    val armed = runCatching { sync.onMutation(v) }.getOrDefault(false)
+                    // Only an active remote is a truthful "waiting" state:
+                    // the runtime no-ops the nudge without one.
+                    pushPending = armed &&
+                        runCatching { sync.status(v).active }.getOrDefault(false)
+                    runCatching { conflictVm.refresh(v) }
                 }
             }
+        }
+
+        // Watch the runtime while a debounced push is queued. The cycle is
+        // invisible to runSyncCycle (which only drives manual syncs), so the
+        // end of the wait and its outcome are read from polled status.
+        LaunchedEffect(pushPending) {
+            if (!pushPending) return@LaunchedEffect
+            var sawQueued = false
+            var sawFlight = false
+            var ticks = 0
+            while (ticks < 15) {
+                val v = auth.vault() ?: break
+                val st = runCatching { sync.status(v) }.getOrNull() ?: break
+                if (st.pending > 0u || st.state.equals("dirty", true)) sawQueued = true
+                when (st.state.lowercase()) {
+                    "syncing" -> sawFlight = true
+                    "idle" -> if (sawQueued || sawFlight) {
+                        pushPending = false
+                        scope.launch { flashPushResult(true) { homeSyncPhase = it } }
+                        scope.launch { flashPushResult(true) { listSyncPhase = it } }
+                        break
+                    }
+                    "offline" -> if (sawQueued) {
+                        pushPending = false
+                        scope.launch { flashPushResult(false) { homeSyncPhase = it } }
+                        scope.launch { flashPushResult(false) { listSyncPhase = it } }
+                        break
+                    }
+                    // Conflict paused the cycle mid-merge; the upgrade-free
+                    // button reverts and the conflict sheet takes over.
+                    "needsdecision" -> {
+                        pushPending = false
+                        break
+                    }
+                }
+                ticks++
+                delay(1_000)
+            }
+            pushPending = false
         }
 
         val currentRoot = when {
@@ -510,6 +560,7 @@ fun App(
                                     vault = vault,
                                     listViewModel = listVm,
                                     syncPhase = homeSyncPhase,
+                                    pending = pushPending,
                                     onSyncClick = { startSync(vault) { homeSyncPhase = it } },
                                     onAddEntry = { nav = Nav.Edit(null) },
                                     onOpenGenerator = { nav = Nav.Generator },
@@ -583,6 +634,7 @@ fun App(
                                     vault = vault,
                                     listViewModel = listVm,
                                     syncPhase = listSyncPhase,
+                                    pending = pushPending,
                                     onSyncClick = { startSync(vault) { listSyncPhase = it } },
                                     onCipherClick = {
                                         detailOrigin = nav
