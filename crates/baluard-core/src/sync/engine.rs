@@ -1807,6 +1807,15 @@ impl SyncEngine {
         remote
             .fetch(&[&refspec], Some(&mut fetch_opts), None)
             .map_err(|e| classify_remote_err("fetch", &e))?;
+        // The gossip channel rides refs/notes, which the wildcard heads
+        // fetch does not carry; pull it explicitly best-effort (the
+        // legacy branch, while it exists, rides the wildcard).
+        let gossip_spec = format!(
+            "{}:refs/remotes/{remote_name}/{}",
+            crate::sync::gossip::GOSSIP_REF,
+            crate::sync::gossip::GOSSIP_TRACKING
+        );
+        let _ = remote.fetch(&[&gossip_spec], Some(&mut fetch_opts), None);
 
         // Up-to-date check on refs only (no graph walk of the worktree).
         let remote_branch = Self::resolve_remote_branch(repo, remote_name);
@@ -2007,14 +2016,14 @@ impl SyncEngine {
         root_oid: Oid,
         gossip_oid: Oid,
     ) -> Result<(), BaluardError> {
-        use super::gossip::GOSSIP_BRANCH;
+        use super::gossip::{GOSSIP_BRANCH, GOSSIP_REF, GOSSIP_TRACKING};
         let mut remote = repo
             .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
         let branch = Self::resolve_default_branch(repo);
         let refspecs = [
             format!("+{root_oid}:refs/heads/{branch}"),
-            format!("+{gossip_oid}:refs/heads/{GOSSIP_BRANCH}"),
+            format!("+{gossip_oid}:{GOSSIP_REF}"),
         ];
         let refs: Vec<&str> = refspecs.iter().map(String::as_str).collect();
         let cfg = self
@@ -2038,44 +2047,54 @@ impl SyncEngine {
         .map_err(|e| SyncError::Git(format!("update HEAD: {e}")))?;
         repo.set_head(&format!("refs/heads/{branch}"))
             .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
-        repo.reference(
-            &format!("refs/heads/{GOSSIP_BRANCH}"),
-            gossip_oid,
-            true,
-            "gossip reset",
-        )
-        .map_err(|e| SyncError::Git(format!("gossip ref: {e}")))?;
+        repo.reference(GOSSIP_REF, gossip_oid, true, "gossip reset")
+            .map_err(|e| SyncError::Git(format!("gossip ref: {e}")))?;
         for (refname, oid) in [
             (format!("refs/remotes/{remote_name}/{branch}"), root_oid),
             (
-                format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}"),
+                format!("refs/remotes/{remote_name}/{GOSSIP_TRACKING}"),
                 gossip_oid,
             ),
         ] {
             repo.reference(&refname, oid, true, "history rewrite tracking")
                 .map_err(|e| SyncError::Git(format!("tracking ref: {e}")))?;
         }
+        // The rewrite replaces the whole announcement line: the fresh
+        // gossip orphan carries no pre-rewrite heads, so the legacy
+        // heads branch must not survive either (locally or remotely) —
+        // the repository keeps exactly one branch.
+        if let Ok(mut legacy) = repo.find_reference(&format!("refs/heads/{GOSSIP_BRANCH}")) {
+            let _ = legacy.delete();
+        }
+        let delete_spec = format!(":refs/heads/{GOSSIP_BRANCH}");
+        let _ = remote.push(&[&delete_spec], Some(&mut push_options));
         Ok(())
     }
 
-    /// S1b-3: announce the current main head on the `baluard-gossip`
-    /// side branch (rollback detection, plan security note 10). Requires
+    /// S1b-3: announce the current main head on the gossip notes
+    /// channel (`refs/notes/baluard-gossip`, invisible to the forge
+    /// branch list; rollback detection, plan security note 10). Requires
     /// a signing key — pre-enrollment vaults skip silently. The gossip
     /// commit carries the announced head as a second parent so the
-    /// announced history stays reachable from the branch: a fresh clone
+    /// announced history stays reachable from the channel: a fresh clone
     /// of a rolled-back vault receives the rewound main AND the proof a
     /// later head existed. Never touches HEAD or the worktree.
     fn announce_head(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {
-        use super::gossip::{GOSSIP_BRANCH, GOSSIP_DIR, HeadAnnouncement};
+        use super::gossip::{
+            GOSSIP_BRANCH, GOSSIP_DIR, GOSSIP_REF, GOSSIP_TRACKING, HeadAnnouncement,
+        };
         let Some(signing_key) = self.effective_signing_key(repo) else {
             return Ok(());
         };
-        let branch_ref = format!("refs/heads/{GOSSIP_BRANCH}");
-        let remote_ref = format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
+        let new_tracking = format!("refs/remotes/{remote_name}/{GOSSIP_TRACKING}");
+        let legacy_tracking = format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
 
-        // Refresh the remote gossip view best-effort (absent branch =
+        // Refresh the remote gossip view best-effort: the notes channel
+        // (current) and the legacy heads branch (mixed-version fleets
+        // still publish there until migration deletes it). Absent refs =
         // first announcement ever; network failure = stale tip, the push
-        // below fails non-ff and the next cycle retries).
+        // below fails non-ff and the next cycle retries. Two calls so a
+        // missing legacy ref cannot kill the notes fetch.
         if let Ok(mut remote) = repo.find_remote(remote_name) {
             let cfg = self
                 .credential_config
@@ -2084,9 +2103,10 @@ impl SyncEngine {
             let callbacks = crate::sync::credentials::build_callbacks(&cfg);
             let mut fetch_opts = FetchOptions::new();
             fetch_opts.remote_callbacks(callbacks);
-            let refspec =
-                format!("refs/heads/{GOSSIP_BRANCH}:refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
-            let _ = remote.fetch(&[&refspec], Some(&mut fetch_opts), None);
+            let notes_spec = format!("{GOSSIP_REF}:{new_tracking}");
+            let _ = remote.fetch(&[&notes_spec], Some(&mut fetch_opts), None);
+            let legacy_spec = format!("refs/heads/{GOSSIP_BRANCH}:{legacy_tracking}");
+            let _ = remote.fetch(&[&legacy_spec], Some(&mut fetch_opts), None);
         }
 
         let head_commit = repo
@@ -2094,10 +2114,29 @@ impl SyncEngine {
             .map_err(|e| SyncError::Git(format!("head: {e}")))?
             .peel_to_commit()
             .map_err(|e| SyncError::Git(format!("peel: {e}")))?;
-        let tip = repo
-            .find_reference(&remote_ref)
-            .ok()
-            .and_then(|r| r.peel_to_commit().ok());
+        // Seed the tip from the most advanced of the two channels: the
+        // notes ref (current) or the legacy branch (pre-upgrade devices
+        // publish there). Taking the descendant keeps the announce push
+        // a fast-forward and consumes legacy announcements before the
+        // branch is deleted below.
+        let read_tip = |refname: &str| -> Option<git2::Commit<'_>> {
+            repo.find_reference(refname)
+                .ok()
+                .and_then(|r| r.peel_to_commit().ok())
+        };
+        let tip = match (read_tip(&new_tracking), read_tip(&legacy_tracking)) {
+            (Some(new_tip), Some(legacy_tip)) => {
+                if repo
+                    .graph_descendant_of(legacy_tip.id(), new_tip.id())
+                    .unwrap_or(false)
+                {
+                    Some(legacy_tip)
+                } else {
+                    Some(new_tip)
+                }
+            }
+            (new_tip, legacy_tip) => new_tip.or(legacy_tip),
+        };
 
         // Already announced this head? Nothing to do.
         if let Some(tip) = &tip {
@@ -2191,7 +2230,7 @@ impl SyncEngine {
             &tree,
             &parents,
         )?;
-        repo.reference(&branch_ref, oid, true, "gossip announce")
+        repo.reference(GOSSIP_REF, oid, true, "gossip announce")
             .map_err(|e| SyncError::Git(format!("gossip ref: {e}")))?;
 
         // Fast-forward push of the side branch (non-force: a concurrent
@@ -2208,10 +2247,40 @@ impl SyncEngine {
         push_options.remote_callbacks(callbacks);
         remote
             .push(
-                &[&format!("{branch_ref}:{branch_ref}")],
+                &[&format!("{GOSSIP_REF}:{GOSSIP_REF}")],
                 Some(&mut push_options),
             )
             .map_err(|e| classify_remote_err("gossip push", &e))?;
+
+        // Keep the local tracking ref current even when the pre-push
+        // fetch could not (first-ever announce has no remote notes ref
+        // to fetch yet); the next announce seeds from it directly.
+        repo.reference(&new_tracking, oid, true, "gossip announce tracking")
+            .map_err(|e| SyncError::Git(format!("gossip tracking: {e}")))?;
+
+        // Migration: the announcement just pushed parents the seeded
+        // tip, so everything the legacy branch carried is reachable
+        // from the notes ref — the legacy heads branch can go, locally
+        // and on the remote, leaving the user's repository with exactly
+        // one branch. Best-effort: a failed delete retries next cycle,
+        // and an old-version device may recreate the branch until it
+        // updates; the next announce consumes and deletes it again.
+        if let Ok(mut legacy) = repo.find_reference(&format!("refs/heads/{GOSSIP_BRANCH}")) {
+            let _ = legacy.delete();
+        }
+        if repo.find_reference(&legacy_tracking).is_ok() {
+            if let Ok(mut remote) = repo.find_remote(remote_name) {
+                let cfg = self
+                    .credential_config
+                    .clone()
+                    .with_url_hint(remote.url().unwrap_or(""));
+                let callbacks = crate::sync::credentials::build_callbacks(&cfg);
+                let mut push_options = PushOptions::new();
+                push_options.remote_callbacks(callbacks);
+                let delete_spec = format!(":refs/heads/{GOSSIP_BRANCH}");
+                let _ = remote.push(&[&delete_spec], Some(&mut push_options));
+            }
+        }
         Ok(())
     }
 
@@ -2230,87 +2299,94 @@ impl SyncEngine {
         remote_name: &str,
         target_oid: Oid,
     ) -> Result<(), BaluardError> {
-        use super::gossip::{GOSSIP_BRANCH, GOSSIP_DIR, HeadAnnouncement};
-        let remote_ref = format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
-        let Ok(reference) = repo.find_reference(&remote_ref) else {
-            return Ok(()); // no gossip yet (bootstrap)
-        };
-        let Ok(tip) = reference.peel_to_commit() else {
-            return Ok(());
-        };
-        let tree = tip
-            .tree()
-            .map_err(|e| SyncError::Git(format!("gossip tip tree: {e}")))?;
-        let Ok(heads_entry) = tree.get_path(Path::new(GOSSIP_DIR)) else {
-            return Ok(());
-        };
-        let heads_tree = repo
-            .find_tree(heads_entry.id())
-            .map_err(|e| SyncError::Git(format!("gossip heads: {e}")))?;
-
-        let target_commit = repo
-            .find_commit(target_oid)
-            .map_err(|e| SyncError::Git(format!("gossip target: {e}")))?;
-        let vault_tag = Self::root_commit_oid_from(repo, target_oid)?;
-        let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
-            std::collections::HashMap::new();
-        let roster =
-            Self::roster_tree_lookup(repo, &target_commit, &mut roster_cache)?.unwrap_or_default();
-
-        for entry in heads_tree.iter() {
-            let Ok(blob) = repo.find_blob(entry.id()) else {
-                continue; // non-file entry
+        use super::gossip::{GOSSIP_BRANCH, GOSSIP_DIR, GOSSIP_TRACKING, HeadAnnouncement};
+        // Scan both channels: the notes ref (current) and the legacy
+        // branch (mixed-version fleets publish there until migration).
+        let new_tracking = format!("refs/remotes/{remote_name}/{GOSSIP_TRACKING}");
+        let legacy_tracking = format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
+        let scan = |remote_ref: &str| -> Result<(), BaluardError> {
+            let Ok(reference) = repo.find_reference(remote_ref) else {
+                return Ok(()); // no gossip on this channel yet (bootstrap)
             };
-            // Unparseable = unverifiable = INERT (same deny-only rule as
-            // a bad signature): the gossip branch is writable by any
-            // device, so parsing before authentication would let an
-            // attacker wedge every pull with one junk file.
-            let Ok(ann) = serde_json::from_slice::<HeadAnnouncement>(blob.content()) else {
-                continue;
+            let Ok(tip) = reference.peel_to_commit() else {
+                return Ok(());
             };
-            // Identity = whichever roster key verifies the signature (the
-            // announcing device string is display-only). No roster key
-            // verifies → unenforceable, skip: a removed device's stale
-            // true announcements must not wedge survivors, and an
-            // unverifiable file carries zero enforcement power anyway
-            // (gossip is deny-only — it can refuse a pull, never admit
-            // content).
-            let mut verified_device: Option<String> = None;
-            for (device, pubkey) in &roster {
-                if ann.verify(&vault_tag, pubkey).is_ok() {
-                    verified_device = Some(device.clone());
-                    break;
+            let tree = tip
+                .tree()
+                .map_err(|e| SyncError::Git(format!("gossip tip tree: {e}")))?;
+            let Ok(heads_entry) = tree.get_path(Path::new(GOSSIP_DIR)) else {
+                return Ok(());
+            };
+            let heads_tree = repo
+                .find_tree(heads_entry.id())
+                .map_err(|e| SyncError::Git(format!("gossip heads: {e}")))?;
+
+            let target_commit = repo
+                .find_commit(target_oid)
+                .map_err(|e| SyncError::Git(format!("gossip target: {e}")))?;
+            let vault_tag = Self::root_commit_oid_from(repo, target_oid)?;
+            let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
+                std::collections::HashMap::new();
+            let roster = Self::roster_tree_lookup(repo, &target_commit, &mut roster_cache)?
+                .unwrap_or_default();
+
+            for entry in heads_tree.iter() {
+                let Ok(blob) = repo.find_blob(entry.id()) else {
+                    continue; // non-file entry
+                };
+                // Unparseable = unverifiable = INERT (same deny-only rule as
+                // a bad signature): the gossip branch is writable by any
+                // device, so parsing before authentication would let an
+                // attacker wedge every pull with one junk file.
+                let Ok(ann) = serde_json::from_slice::<HeadAnnouncement>(blob.content()) else {
+                    continue;
+                };
+                // Identity = whichever roster key verifies the signature (the
+                // announcing device string is display-only). No roster key
+                // verifies → unenforceable, skip: a removed device's stale
+                // true announcements must not wedge survivors, and an
+                // unverifiable file carries zero enforcement power anyway
+                // (gossip is deny-only — it can refuse a pull, never admit
+                // content).
+                let mut verified_device: Option<String> = None;
+                for (device, pubkey) in &roster {
+                    if ann.verify(&vault_tag, pubkey).is_ok() {
+                        verified_device = Some(device.clone());
+                        break;
+                    }
                 }
-            }
-            let Some(device) = verified_device else {
-                continue;
-            };
-            let Ok(oid) = git2::Oid::from_str(&ann.head) else {
-                return Err(SyncError::Git(format!(
-                    "gossip: device {device} announced malformed oid"
+                let Some(device) = verified_device else {
+                    continue;
+                };
+                let Ok(oid) = git2::Oid::from_str(&ann.head) else {
+                    return Err(SyncError::Git(format!(
+                        "gossip: device {device} announced malformed oid"
+                    ))
+                    .into());
+                };
+                // Announced head absent from the object store: pruned by a
+                // migrate or never fetched — cannot judge, skip.
+                let Ok(announced) = repo.find_commit(oid) else {
+                    continue;
+                };
+                if announced.id() == target_oid
+                    || repo
+                        .graph_descendant_of(target_oid, announced.id())
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
+                return Err(SyncError::RollbackDetected(format!(
+                    "device {} announced head {} which is missing from the fetched history",
+                    device,
+                    &ann.head[..12]
                 ))
                 .into());
-            };
-            // Announced head absent from the object store: pruned by a
-            // migrate or never fetched — cannot judge, skip.
-            let Ok(announced) = repo.find_commit(oid) else {
-                continue;
-            };
-            if announced.id() == target_oid
-                || repo
-                    .graph_descendant_of(target_oid, announced.id())
-                    .unwrap_or(false)
-            {
-                continue;
             }
-            return Err(SyncError::RollbackDetected(format!(
-                "device {} announced head {} which is missing from the fetched history",
-                device,
-                &ann.head[..12]
-            ))
-            .into());
-        }
-        Ok(())
+            Ok(())
+        };
+        scan(&new_tracking)?;
+        scan(&legacy_tracking)
     }
 
     /// Read this device's own announcement file from a gossip tip.
@@ -2515,6 +2591,15 @@ impl SyncEngine {
             remote
                 .fetch(&[&refspec], Some(&mut fetch_opts), None)
                 .map_err(|e| classify_remote_err("fetch", &e))?;
+            // The gossip channel rides refs/notes, which the wildcard
+            // heads fetch does not carry; pull it explicitly best-effort
+            // so rollback detection sees post-migration announcements.
+            let gossip_spec = format!(
+                "{}:refs/remotes/{remote_name}/{}",
+                crate::sync::gossip::GOSSIP_REF,
+                crate::sync::gossip::GOSSIP_TRACKING
+            );
+            let _ = remote.fetch(&[&gossip_spec], Some(&mut fetch_opts), None);
 
             // Resolve remote branch dynamically
             let remote_branch = Self::resolve_remote_branch(repo, remote_name);
@@ -3941,6 +4026,20 @@ impl SyncEngine {
         }
         // S1b-3: rollback detection — a fresh clone is exactly the victim a
         // rollback targets; the gossip branch rides the wildcard fetch.
+        // The gossip channel rides refs/notes, which the clone's
+        // wildcard heads fetch does not carry; pull it explicitly
+        // best-effort (clone URLs carry their credentials inline, so a
+        // plain fetch works on https and file transports; an SSH-sourced
+        // clone resumes gossip detection at its first pull).
+        if let Ok(mut remote) = repo.find_remote("origin") {
+            let mut fetch_opts = FetchOptions::new();
+            let spec = format!(
+                "{}:refs/remotes/origin/{}",
+                crate::sync::gossip::GOSSIP_REF,
+                crate::sync::gossip::GOSSIP_TRACKING
+            );
+            let _ = remote.fetch(&[&spec], Some(&mut fetch_opts), None);
+        }
         if let Err(e) = Self::check_head_gossip(&repo, "origin", cloned_head_oid(&repo)?) {
             let _ = std::fs::remove_dir_all(target);
             return Err(e);
@@ -4140,6 +4239,20 @@ impl SyncEngine {
             return Err(e);
         }
         // S1b-3: rollback detection on the provider-clone path too.
+        // The gossip channel rides refs/notes, which the clone's
+        // wildcard heads fetch does not carry; pull it explicitly
+        // best-effort (clone URLs carry their credentials inline, so a
+        // plain fetch works on https and file transports; an SSH-sourced
+        // clone resumes gossip detection at its first pull).
+        if let Ok(mut remote) = repo.find_remote("origin") {
+            let mut fetch_opts = FetchOptions::new();
+            let spec = format!(
+                "{}:refs/remotes/origin/{}",
+                crate::sync::gossip::GOSSIP_REF,
+                crate::sync::gossip::GOSSIP_TRACKING
+            );
+            let _ = remote.fetch(&[&spec], Some(&mut fetch_opts), None);
+        }
         if let Err(e) = Self::check_head_gossip(&repo, "origin", cloned_head_oid(&repo)?) {
             let _ = std::fs::remove_dir_all(target);
             return Err(e);
@@ -10461,10 +10574,10 @@ mod tests {
         engine_a.commit_all(&repo_a, "c2").unwrap();
         engine_a.push(&repo_a, "origin").unwrap();
 
-        // The gossip branch now exists on the remote and names H2 (the
+        // The gossip channel now exists on the remote and names H2 (the
         // current main head).
         let bare = Repository::open(&remote_path).unwrap();
-        assert!(bare.find_reference("refs/heads/baluard-gossip").is_ok());
+        assert!(bare.find_reference(crate::sync::gossip::GOSSIP_REF).is_ok());
         let h2 = repo_a.head().unwrap().peel_to_commit().unwrap().id();
 
         // Attack: force-rewind REMOTE main to H1 (HEAD~1). The gossip
@@ -11071,7 +11184,7 @@ mod tests {
         // The gossip tree on the remote carries BOTH devices' files.
         let bare = Repository::open(&remote_path).unwrap();
         let tip = bare
-            .find_reference("refs/heads/baluard-gossip")
+            .find_reference(crate::sync::gossip::GOSSIP_REF)
             .unwrap()
             .peel_to_commit()
             .unwrap();
@@ -11094,6 +11207,132 @@ mod tests {
             result,
             PullResult::FastForward | PullResult::Merged | PullResult::AlreadyUpToDate
         ));
+    }
+
+    /// Product invariant: the user's repository carries exactly one
+    /// branch (main, or master on older setups). The rollback-gossip
+    /// channel lives under refs/notes, invisible to forge branch lists.
+    #[test]
+    fn sync_never_creates_a_second_head_on_the_remote() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let bare = Repository::open(&remote_path).unwrap();
+        let mut heads: Vec<String> = bare
+            .references()
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .map(|r| r.name().unwrap_or("").to_string())
+            .filter(|n| n.starts_with("refs/heads/"))
+            .collect();
+        heads.sort();
+        assert_eq!(
+            heads,
+            vec!["refs/heads/main".to_string()],
+            "the remote must carry exactly one branch, got: {heads:?}"
+        );
+        assert!(bare.find_reference(crate::sync::gossip::GOSSIP_REF).is_ok());
+        assert!(repo_a.find_reference("refs/heads/baluard-gossip").is_err());
+    }
+
+    /// Repos written by older versions carry the gossip channel as a
+    /// heads branch; the first sync on this version consumes its
+    /// announcements into the notes ref (the announcement parents the
+    /// seeded legacy tip) and deletes the branch locally and remotely.
+    #[test]
+    fn legacy_gossip_branch_is_migrated_and_deleted() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+
+        // Simulate a pre-upgrade remote: a legacy gossip branch with one
+        // announcement-shaped commit.
+        let legacy_oid = {
+            let bare = Repository::open(&remote_path).unwrap();
+            let sig = git2::Signature::now("old-version", "old@b.local").unwrap();
+            let tree_id = bare.treebuilder(None).unwrap().write().unwrap();
+            let tree = bare.find_tree(tree_id).unwrap();
+            let oid = bare
+                .commit(None, &sig, &sig, "legacy gossip", &tree, &[])
+                .unwrap();
+            bare.reference("refs/heads/baluard-gossip", oid, true, "legacy")
+                .unwrap();
+            oid
+        };
+
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let bare = Repository::open(&remote_path).unwrap();
+        assert!(
+            bare.find_reference(crate::sync::gossip::GOSSIP_REF).is_ok(),
+            "the notes channel must exist after migration"
+        );
+        assert!(
+            bare.find_reference("refs/heads/baluard-gossip").is_err(),
+            "the legacy branch must be deleted on the remote"
+        );
+        assert!(
+            repo_a.find_reference("refs/heads/baluard-gossip").is_err(),
+            "the legacy branch must be deleted locally"
+        );
+        let notes_tip = bare
+            .find_reference(crate::sync::gossip::GOSSIP_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        assert!(
+            repo_a
+                .graph_descendant_of(notes_tip.id(), legacy_oid)
+                .unwrap_or(false),
+            "the notes tip must descend from the legacy tip so no announcement was lost"
+        );
+        assert!(
+            repo_a
+                .find_reference(&format!(
+                    "refs/remotes/origin/{}",
+                    crate::sync::gossip::GOSSIP_TRACKING
+                ))
+                .is_ok()
+        );
     }
 
     // A user's ambient `url.*.insteadOf` rewrite must never change the

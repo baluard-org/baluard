@@ -7534,7 +7534,7 @@ impl VaultState {
     /// (live, archived, trashed) plus folders and the tag store; semantic
     /// meta (settings, devices, collections) survives. With
     /// `rewrite_history`, squash main into one signed orphan, reset the
-    /// gossip branch, and force-push both. Payload:
+    /// gossip notes channel, and force-push both. Payload:
     /// `{ "phrase": "...", "rewrite_history": bool }`. Serialized
     /// against the autosync cycle: the wipe's deletions are exactly what
     /// nudges the debounce, and the squash-to-push window is a divergence

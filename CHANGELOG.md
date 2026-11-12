@@ -4,7 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-No user-facing changes yet.
+- The hidden `baluard-gossip` branch that syncing added to your Git repository is gone: the bookkeeping channel moved to a ref that Git hosting sites do not show, and syncing once removes the old branch from your repository. Your repository now shows a single branch.
 
 ## 0.4.5 - 2026-11-12
 

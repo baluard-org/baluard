@@ -32,9 +32,19 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
 use crate::error::SyncError;
 
-/// The side-channel branch. Fetched by the wildcard refspec like any
-/// other branch; never checked out.
+/// LEGACY side branch written by pre notes-ref versions. New code never
+/// creates it; the constant names the ref so the migration can find,
+/// consume, and delete it on repos upgraded in place.
 pub const GOSSIP_BRANCH: &str = "baluard-gossip";
+
+/// The gossip channel: a ref under refs/notes, invisible to the forge
+/// branch and tag lists, so the user's repository carries exactly one
+/// branch (main, or master on older setups). Notes refs fetch and push
+/// through explicit refspecs like any other ref.
+pub const GOSSIP_REF: &str = "refs/notes/baluard-gossip";
+
+/// Tracking-ref short name under refs/remotes/<remote>/.
+pub const GOSSIP_TRACKING: &str = "gossip";
 
 /// Directory inside the gossip branch tree.
 pub const GOSSIP_DIR: &str = "heads";
