@@ -83,9 +83,9 @@ afterEach(() => {
 	cleanup();
 });
 
-async function renderToRepoList() {
+async function renderToRepoList(onCancel) {
 	const { getByText, container } = render(() => (
-		<CloneFromProviderScreen onCancel={() => {}} />
+		<CloneFromProviderScreen onCancel={onCancel ?? (() => {})} />
 	));
 	fireEvent.click(container.querySelector(".clone-screen__provider"));
 	await waitFor(() =>
@@ -190,8 +190,10 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 		);
 		expect(getByText("clone.clashOrphanBody")).toBeTruthy();
 		expect(getByText("clone.clashUseExisting")).toBeTruthy();
-		// Nothing registered to delete: no destructive arm in this mode.
+		// The discard arm needs no password: the daemon refuses anything
+		// registered or marker-less server-side.
 		expect(container.querySelector("input[type=password]")).toBeNull();
+		expect(getByText("clone.clashDiscard")).toBeTruthy();
 
 		fireEvent.click(getByText("clone.clashUseExisting"));
 		await waitFor(() => {
@@ -266,6 +268,62 @@ describe("CloneFromProviderScreen clone-clash dialog", () => {
 		expect(
 			container.querySelector(".clone-screen__clash input[type=password]"),
 		).toBeNull();
+	});
+
+	it("discard arm deletes the orphan folder and re-runs the clone", async () => {
+		responses["vault.clone_start"] = ORPHAN_ERR;
+		responses["vaults.discard_orphan"] = JSON.stringify({ discarded: true });
+		const { getByText, container } = await renderToRepoList();
+
+		fireEvent.click(container.querySelector(".clone-screen__repo"));
+		await waitFor(() =>
+			expect(container.querySelector(".clone-screen__clash")).not.toBeNull(),
+		);
+		fireEvent.click(getByText("clone.clashDiscard"));
+		await waitFor(() => {
+			const discard = calls.find((c) => c.action === "vaults.discard_orphan");
+			expect(discard).toBeTruthy();
+			expect(JSON.parse(discard.payload).slug).toBe("baluard-vault");
+		});
+		// The clone re-runs in place: two clone_start calls (refused, retry).
+		await waitFor(() => {
+			const starts = calls.filter((c) => c.action === "vault.clone_start");
+			expect(starts.length).toBe(2);
+		});
+	});
+
+	it("discard refusal keeps the dialog open with the inline error", async () => {
+		responses["vault.clone_start"] = ORPHAN_ERR;
+		responses["vaults.discard_orphan"] = new Error(
+			"The folder at this path has no .baluard marker, so it may not be a Baluard vault. Remove it manually if it is not needed.",
+		);
+		const { getByText, container } = await renderToRepoList();
+
+		fireEvent.click(container.querySelector(".clone-screen__repo"));
+		await waitFor(() =>
+			expect(container.querySelector(".clone-screen__clash")).not.toBeNull(),
+		);
+		fireEvent.click(getByText("clone.clashDiscard"));
+		await waitFor(() =>
+			expect(container.textContent).toContain(".baluard marker"),
+		);
+		expect(container.querySelector(".clone-screen__clash")).not.toBeNull();
+		// The clone must NOT retry after a failed discard.
+		expect(calls.filter((c) => c.action === "vault.clone_start").length).toBe(1);
+	});
+
+	it("cancel exits the whole wizard back to the start screen", async () => {
+		responses["vault.clone_start"] = ORPHAN_ERR;
+		const onCancel = vi.fn();
+		const { getByText, container } = await renderToRepoList(onCancel);
+
+		fireEvent.click(container.querySelector(".clone-screen__repo"));
+		await waitFor(() =>
+			expect(container.querySelector(".clone-screen__clash")).not.toBeNull(),
+		);
+		fireEvent.click(getByText("common.cancel"));
+		await Promise.resolve();
+		expect(onCancel).toHaveBeenCalledTimes(1);
 	});
 });
 
