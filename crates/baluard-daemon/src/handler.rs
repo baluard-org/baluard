@@ -855,10 +855,6 @@ enum MarkerCheck {
     },
 }
 
-/// Top-level Phase 6 dispatcher. Host-level routes (no target vault needed)
-/// are served here; everything else resolves a target `Arc<VaultState>` and
-/// delegates to `route_request`. The snapshot is taken ONCE per request so a
-/// mid-request `switch` cannot re-route an in-flight operation.
 /// The registered-slug gate for `vaults.discard_orphan`, shared by the
 /// early check and the late pre-delete re-check. FAIL-CLOSED: an unreadable
 /// registry (corrupt file, wrong schema version, I/O error) refuses the
@@ -881,6 +877,10 @@ fn discard_orphan_registry_refusal(slug: &str) -> Option<String> {
     }
 }
 
+/// Top-level Phase 6 dispatcher. Host-level routes (no target vault needed)
+/// are served here; everything else resolves a target `Arc<VaultState>` and
+/// delegates to `route_request`. The snapshot is taken ONCE per request so a
+/// mid-request `switch` cannot re-route an in-flight operation.
 pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
     route_host_request_with_peer(req, host, None).await
 }
@@ -4386,11 +4386,20 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
     // Registered wins over folder-exists: a vault registered into the
     // default vaults dir satisfies both checks, and the registered refusal
     // is the honest one — the clone wizard routes it to the open-existing /
-    // wipe dialog instead of offering to discard a tracked vault.
-    if let Ok(reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
-        if reg.exists(&slug) {
+    // wipe dialog instead of offering to discard a tracked vault. An
+    // unreadable registry refuses the clone: finalize must register into
+    // that registry, so proceeding would be a doomed operation.
+    match baluard_core::vault::registry::VaultRegistry::load_locked() {
+        Ok(reg) => {
+            if reg.exists(&slug) {
+                return err_response(format!(
+                    "A vault '{slug}' {CLONE_REFUSAL_ALREADY_REGISTERED}. Remove it first."
+                ));
+            }
+        }
+        Err(e) => {
             return err_response(format!(
-                "A vault '{slug}' {CLONE_REFUSAL_ALREADY_REGISTERED}. Remove it first."
+                "Cannot read the vault registry, so the clone cannot start safely. Try again: {e}"
             ));
         }
     }
