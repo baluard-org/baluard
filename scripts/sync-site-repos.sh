@@ -30,13 +30,15 @@ git -C "$SITE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "site is 
 [[ -d "$PKG_SITE" ]] || fail "package site clone missing: $PKG_SITE (git clone baluard-org/baluard-packages)"
 
 # Packages publish straight from staging. The clone's dotfiles, the GitHub
-# workflow that deploys it, and the author-owned install definitions
-# author-owned install definitions (baluard.repo, baluard.sources,
-# index.html) are not mirrored; the CNAME binds the custom domain.
-rsync -a --delete --exclude=/fdroid/ --exclude=/index.html \
-  --exclude=/baluard.repo --exclude=/baluard.sources \
-  --exclude=.git --exclude=.gitignore --exclude=.nojekyll --exclude=/CNAME \
-  --exclude=/.github/ \
+# workflow that deploys it, and the author-owned install definitions are
+# clone-only content the rsync must never mirror over; the CNAME binds the
+# custom domain. Anything lost here fails the sync (a silently deleted
+# deploy workflow once killed every push deploy with no error signal).
+AUTHOR_OWNED_EXCLUDED=(baluard.repo baluard.sources index.html CNAME .nojekyll .gitignore .github)
+AUTHOR_OWNED_SYNCED=(arch/baluard.conf)
+excludes=()
+for f in "${AUTHOR_OWNED_EXCLUDED[@]}"; do excludes+=("--exclude=/$f"); done
+rsync -a --delete "${excludes[@]}" --exclude=.git \
   "$SRC/" "$PKG_SITE/"
 mkdir -p "$PKG_SITE/fdroid/repo"
 rsync -a --delete --exclude=.git --exclude=.gitignore --exclude=.nojekyll \
@@ -44,6 +46,11 @@ rsync -a --delete --exclude=.git --exclude=.gitignore --exclude=.nojekyll \
 touch "$PKG_SITE/.nojekyll"
 [[ -s "$PKG_SITE/arch/x86_64/baluard.db" ]] || fail "package site mirror incomplete"
 [[ -s "$PKG_SITE/fdroid/repo/index-v2.json" ]] || fail "package fdroid mirror incomplete"
+for f in "${AUTHOR_OWNED_EXCLUDED[@]}" "${AUTHOR_OWNED_SYNCED[@]}"; do
+  path="$f"
+  [[ "$f" == ".github" ]] && path=".github/workflows/deploy-pages.yml"
+  [[ -e "$PKG_SITE/$path" ]] || fail "author-owned file lost in sync: $PKG_SITE/$path"
+done
 
 echo "Packages synchronized into $PKG_SITE"
 echo "Review the diff, then commit and push to publish."
