@@ -27,4 +27,28 @@ if grep -q "No user-facing changes yet." <<<"$body" \
   fail "the UNRELEASED placeholder coexists with real bullets; sweep the placeholder"
 fi
 
+# Junction invariant: every heading that opens a bulleted section must sit
+# exactly one blank line above its first bullet. A cut that relocates a
+# bullets block can double the separator (the moved block carries its own
+# leading blank line) or glue the bullet to the heading, and no other
+# invariant reads separator whitespace.
+mapfile -t lines < "$FILE"
+for i in "${!lines[@]}"; do
+  [[ "${lines[$i]}" == "## "* ]] || continue
+  has_bullet=0
+  for (( j = i + 1; j < ${#lines[@]}; j++ )); do
+    if [[ "${lines[$j]}" == "## "* ]]; then break; fi
+    if [[ "${lines[$j]}" == "- "* || "${lines[$j]}" == "* " ]]; then has_bullet=1; break; fi
+  done
+  [[ "$has_bullet" -eq 1 ]] || continue
+  next1="${lines[$((i + 1))]:-}"
+  next2="${lines[$((i + 2))]:-}"
+  if [[ -n "$next1" ]]; then
+    fail "the section '${lines[$i]}' must be followed by one blank line before its first bullet"
+  fi
+  if [[ -z "$next2" ]]; then
+    fail "the section '${lines[$i]}' is separated from its bullets by more than one blank line"
+  fi
+done
+
 echo "changelog: invariants hold for $TAG"
