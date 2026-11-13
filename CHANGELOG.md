@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+## 0.5.0 - 2026-11-13
+
 - The sync status dot now sits in the window's top-right corner on Windows and Linux, matching macOS, instead of hanging below the header row.
 - Clicking sync now shows Syncing in the corner dot while it runs and returns to the green up-to-date mark when it finishes, instead of getting stuck on Changes pending.
 - The tag field in the entry editor now shows the same rounded focus border as every other field instead of a sharp box around the input.
