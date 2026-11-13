@@ -4,8 +4,10 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-- Desktop: Settings now has an About tab showing the installed version.
+## 0.5.5 - 2026-11-13
 
+- Desktop: Settings now has an About tab showing the installed version.
+- Desktop: sidebar rows and list transitions got a visual pass. Selected folders read as cards, and the entry list animates when you switch views.
 - Mobile: a failed sync now says why. The toast carries the real error from the sync engine instead of a bare "Sync failed.", and a skipped pull (blocked by uncommitted local changes) says so too.
 
 ## 0.5.2 - 2026-11-13
