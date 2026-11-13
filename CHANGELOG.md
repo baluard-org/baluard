@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Mobile: a biometric or security-key unlock now arms background sync again, so the vault no longer claims sync is missing when it is configured.
+
 ## 0.5.1 - 2026-11-13
 
 - Desktop: the generate-password button now shows the same password icon as the mobile app.

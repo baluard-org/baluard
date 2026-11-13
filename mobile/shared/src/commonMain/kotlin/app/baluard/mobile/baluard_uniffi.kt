@@ -968,6 +968,8 @@ internal interface UniffiLib : Library {
     uniffi_out_err: UniffiRustCallStatus,
   ): Unit
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_activate_autosync_after_remote(`ptr`: Pointer): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_activity_events(
     `ptr`: Pointer,
     `limit`: Long,
@@ -1922,6 +1924,8 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_shutdown(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_activate_autosync_after_remote(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_activity_events(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_activity_refusals(): Short
@@ -2312,6 +2316,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilehardwaretransport_shutdown() != 4916.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_activate_autosync_after_remote() != 31614.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_activity_events() != 26452.toShort()) {
@@ -4127,6 +4134,15 @@ public object FfiConverterTypeMobileHardwareTransport : FfiConverter<MobileHardw
  */
 public interface MobileVaultInterface {
   /**
+   * Activate the autosync coordinator when the vault has a remote. The
+   * KEK unlock landing skips the unlock-time sync tail because the
+   * memory-capped autofill process shares it, so the main app calls this
+   * after a biometric or security-key KEK unlock — the password unlock's
+   * tail performs the same activation.
+   */
+  suspend fun `activateAutosyncAfterRemote`()
+
+  /**
    * This device's local share-event log (S1b-1), in chronological
    * order (oldest first, per the core contract; the client reverses
    * for display). The wrapper clamps the limit (max 500).
@@ -5127,6 +5143,30 @@ open class MobileVault :
     uniffiRustCall { status ->
       UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_clone_mobilevault(pointer!!, status)
     }
+
+  /**
+   * Activate the autosync coordinator when the vault has a remote. The
+   * KEK unlock landing skips the unlock-time sync tail because the
+   * memory-capped autofill process shares it, so the main app calls this
+   * after a biometric or security-key KEK unlock — the password unlock's
+   * tail performs the same activation.
+   */
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `activateAutosyncAfterRemote`() =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_activate_autosync_after_remote(
+          thisPtr,
+        )
+      },
+      { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+      // lift function
+      { Unit },
+      // Error FFI converter
+      UniffiNullRustCallStatusErrorHandler,
+    )
 
   /**
    * This device's local share-event log (S1b-1), in chronological
