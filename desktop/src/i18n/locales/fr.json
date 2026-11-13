@@ -651,7 +651,9 @@
     "runInBackgroundEnabled": "Baluard reste actif à la fermeture de la fenêtre",
     "runInBackgroundDisabled": "Baluard se ferme désormais à la fermeture de la fenêtre",
     "switchToLight": "Passer au thème clair",
-    "switchToDark": "Passer au thème sombre"
+    "switchToDark": "Passer au thème sombre",
+    "tabAbout": "À propos",
+    "aboutSubtitle": "Gestionnaire de mots de passe souverain, chiffré de bout en bout et sans serveur centralisé."
   },
   "categories": {
     "allItems": "Tous les éléments",

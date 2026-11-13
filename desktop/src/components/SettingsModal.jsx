@@ -14,6 +14,7 @@ import { buildImportPayload } from "../lib/payload.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 import { biometryAvailable } from "../lib/biometry.js";
 import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy, IconCog, IconShield, IconUsers, IconFolder, IconIdentity, IconInbox, IconLinkSimple, IconClock } from "./Icon.jsx";
+import IconInfo from "./IconInfo.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import UpdateSettingsRow from "./UpdateSettingsRow.jsx";
 import AgentSettingsRow from "./AgentSettingsRow.jsx";
@@ -28,6 +29,7 @@ import OutboxesTab from "./OutboxesTab.jsx";
 import BridgeTab from "./BridgeTab.jsx";
 import RecoveryPhraseCard from "./RecoveryPhraseCard.jsx";
 import LegacyTab from "./LegacyTab.jsx";
+import AboutTab from "./AboutTab.jsx";
 
 function TabButton(props) {
   const Icon = props.icon;
@@ -767,6 +769,7 @@ export default function SettingsModal() {
                 <TabButton id="devices" icon={IconMonitor} label={t("settings.tabDevices")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="bridge" icon={IconLinkSimple} label={t("settings.tabBridge")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="legacy" icon={IconClock} label={t("settings.tabLegacy")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="about" icon={IconInfo} label={t("settings.tabAbout")} active={activeTab()} setActiveTab={handleTabChange} />
               </nav>
 
               {/* Content */}
@@ -1307,6 +1310,9 @@ export default function SettingsModal() {
               </Show>
               <Show when={activeTab() === "legacy"}>
                 <LegacyTab />
+              </Show>
+              <Show when={activeTab() === "about"}>
+                <AboutTab />
               </Show>
               <Show when={activeTab() === "bridge"}>
                 <BridgeTab />

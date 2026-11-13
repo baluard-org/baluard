@@ -480,7 +480,9 @@
     "runInBackgroundEnabled": "Baluard keeps running when you close the window",
     "runInBackgroundDisabled": "Baluard now quits when you close the window",
     "switchToLight": "Switch to light theme",
-    "switchToDark": "Switch to dark theme"
+    "switchToDark": "Switch to dark theme",
+    "tabAbout": "About",
+    "aboutSubtitle": "Git-native password manager • GPL-3.0"
   },
   "sync": {
     "title": "Vault Sync",
