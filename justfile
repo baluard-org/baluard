@@ -230,6 +230,9 @@ test-release-scripts:
 	./scripts/tests/test-bump-version.sh
 	./scripts/tests/test-generate-updates-manifest.sh
 	./scripts/tests/test-publish-updates-manifest.sh
+	./scripts/tests/test-verify-release-live.sh
+	./scripts/tests/test-check-changelog.sh
+	./scripts/tests/test-android-launcher-icons.sh
 	./scripts/tests/test-sign-updater-sigs.sh
 	./scripts/tests/test-stage-release-assets.sh
 	./scripts/tests/test-upload-play-release.sh
@@ -243,6 +246,44 @@ updates-publish tag:
 	#!/usr/bin/env bash
 	set -euo pipefail
 	scripts/publish-updates-manifest.sh {{ tag }}
+
+# Read-only sweep: every workspace repo settled before cutting a release.
+release-preflight:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	rc=0
+	for r in . ../baluard-org ../baluard-packages ../baluard-docs; do
+	  git -C "$r" fetch origin -q 2>/dev/null || true
+	  ahead=$(git -C "$r" rev-list --count origin/main..HEAD 2>/dev/null || echo "?")
+	  behind=$(git -C "$r" rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
+	  dirty=$(git -C "$r" status --porcelain | wc -l)
+	  echo "$r: AHEAD=$ahead BEHIND=$behind DIRTY=$dirty"
+	  [[ "$ahead" == 0 && "$behind" == 0 && "$dirty" == 0 ]] || { echo "not settled: $r"; rc=1; }
+	done
+	exit $rc
+
+changelog-check tag="":
+	#!/usr/bin/env bash
+	set -euo pipefail
+	scripts/check-changelog.sh {{ tag }}
+
+# Post-publish gate: changelog invariants, package-site survival, and the
+# live sweep in one table. Pass the baluard-packages republish SHA so the
+# deploy run is gated too. --report mode (read-only verdicts, exit 0):
+# just release-status <tag>
+release-verify tag packages-sha="":
+	#!/usr/bin/env bash
+	set -euo pipefail
+	scripts/check-changelog.sh {{ tag }}
+	source scripts/release-common.sh
+	check_author_owned_files "${BALUARD_PACKAGES_SITE:-../baluard-packages}" \
+		|| { echo "package site survival gate failed; see above"; exit 1; }
+	scripts/verify-release-live.sh {{ tag }} --packages-sha "{{ packages-sha }}"
+
+release-status tag packages-sha="":
+	#!/usr/bin/env bash
+	set -euo pipefail
+	scripts/verify-release-live.sh {{ tag }} --report --packages-sha "{{ packages-sha }}"
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
@@ -1204,11 +1245,12 @@ cross-compile:
 release-stage dist-dir="dist":
 	#!/usr/bin/env bash
 	set -euo pipefail
-	version="$(grep -A1 '^\[workspace.package\]' Cargo.toml | grep '^version' | sed 's/.*= *"\(.*\)".*$/\1/')"
-	code="$(printf %s "$version" | awk -F. '{print $1*1000000+$2*1000+$3}')"
+	source scripts/release-common.sh
+	version="$(version_from_cargo "$PWD")"
+	code="$(version_code "$version")"
 	scripts/stage-release-assets.sh --version "$version" \
 		--apk "$HOME/.baluard/fdroid/repo/app.baluard.mobile_${code}.apk" \
-		--require "Baluard-amd64.AppImage,Baluard-amd64.AppImage.sig,Baluard-amd64.deb,Baluard-amd64.rpm,Baluard-cli-amd64.tar.gz,Baluard-extension-chrome.zip,Baluard-extension-firefox.zip,Baluard-amd64-setup.exe,Baluard-amd64-setup.exe.sig,Baluard-macos-aarch64-non-notarized.zip,Baluard-arm64.app.tar.gz,Baluard-arm64.app.tar.gz.sig,Baluard-android.apk,updater.pub" \
+		--require "$(IFS=,; echo "${STABLE_REQUIRE[*]}")" \
 		"{{ dist-dir }}"
 	# Version-stamped updater signatures: requireSignedVersion clients
 	# refuse signatures without a version comment.
