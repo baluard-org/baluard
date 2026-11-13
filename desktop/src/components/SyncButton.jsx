@@ -15,14 +15,18 @@ export default function SyncButton() {
   async function doSync() {
     if (syncing()) return;
     setSyncing(true);
-    // Arm the titlebar indicator's waiting phase so it tracks this cycle.
-    window.dispatchEvent(new CustomEvent("baluard:local-mutation"));
+    // Drive the titlebar indicator directly: the polled state never changes
+    // on a manual sync with nothing pending, so a poll-driven reconciliation
+    // would freeze the dot at "Changes pending" forever.
+    window.dispatchEvent(new CustomEvent("baluard:manual-sync", { detail: "start" }));
     try {
       await daemon("sync.pull");
       await daemon("sync.push");
       toastSuccess(t("sync.statusActive"));
+      window.dispatchEvent(new CustomEvent("baluard:manual-sync", { detail: "success" }));
     } catch (e) {
       toastError(sanitizeError(e, t));
+      window.dispatchEvent(new CustomEvent("baluard:manual-sync", { detail: "failure" }));
     } finally {
       setSyncing(false);
     }

@@ -54,3 +54,40 @@ describe("SyncButton", () => {
     expect(toastSuccessMock).not.toHaveBeenCalled();
   });
 });
+
+describe("SyncButton indicator events", () => {
+  beforeEach(() => {
+    daemonMock.mockReset();
+    toastSuccessMock.mockClear();
+    toastErrorMock.mockClear();
+    cleanup();
+  });
+
+  // The titlebar indicator cannot reconcile a manual sync from polled state:
+  // with nothing pending the runtime stays "idle", the polled value never
+  // changes, and the dot froze at "Changes pending" forever. The button must
+  // drive the indicator's phases directly.
+  it("drives the indicator with manual-sync start/success events", async () => {
+    daemonMock.mockResolvedValue("{}");
+    const seen = [];
+    const listener = (e) => seen.push([e.type, e.detail]);
+    window.addEventListener("baluard:manual-sync", listener);
+    const { container } = render(() => <SyncButton />);
+    fireEvent.click(container.querySelector("[data-testid='sync-now']"));
+    await waitFor(() => expect(toastSuccessMock).toHaveBeenCalled(), { timeout: 3000 });
+    window.removeEventListener("baluard:manual-sync", listener);
+    expect(seen).toEqual([["baluard:manual-sync", "start"], ["baluard:manual-sync", "success"]]);
+  });
+
+  it("reports failure to the indicator instead of success", async () => {
+    daemonMock.mockRejectedValue(new Error("offline"));
+    const seen = [];
+    const listener = (e) => seen.push(e.detail);
+    window.addEventListener("baluard:manual-sync", listener);
+    const { container } = render(() => <SyncButton />);
+    fireEvent.click(container.querySelector("[data-testid='sync-now']"));
+    await waitFor(() => expect(toastErrorMock).toHaveBeenCalled(), { timeout: 3000 });
+    window.removeEventListener("baluard:manual-sync", listener);
+    expect(seen).toEqual(["start", "failure"]);
+  });
+});
