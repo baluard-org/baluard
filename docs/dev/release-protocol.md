@@ -69,6 +69,7 @@ BALUARD_CODEBERG_CLIENT_ID=<codeberg client id>
 | Target | Command | Notes |
 |---|---|---|
 | Core + CLI + daemon | `just build-release` | daemon and CLI carry the `fido2` feature |
+| Launching release legs | `just build-linux` / `build-windows` / `build-android` / `build-macos` | detached wrappers owning each leg's env bundle; logs and exit codes land in `/tmp/leg-<leg>.{log,rc}`, `just legs-status` polls. The recipes wrap the commands the build matrix names below; the env bundles live there, so a relaunch cannot silently drop half of one |
 | Desktop Linux | `just desktop-build` | rebuilds sidecars unconditionally (a version bump that edits only manifests defeats mtime staleness checks; the 0.2.0 release shipped stale 0.1.12 sidecars this way), then deb/rpm/AppImage and NMH manifest regeneration in one recipe |
 | Desktop macOS | Dev-smoke on a macOS host (`just desktop-build`, `just build-signed`; dmg/app, ad-hoc). Releases and the smoke VM bundle come off Linux: `scripts/build-macos-aarch64-deliverable.sh` (aarch64 deliverable zip + updater payload) and `scripts/build-macos-app.sh [--smoke]` (x86_64 VM debug bundle), both cargo-zigbuild against the local SDK with the shim steps each script header documents |
 | Desktop Windows | `just desktop-windows` | cargo-xwin cross-compile of the sidecars plus NSIS bundling |
@@ -77,6 +78,8 @@ BALUARD_CODEBERG_CLIENT_ID=<codeberg client id>
 | CLI archives | `just release` | `tar.gz` + checksums into `./dist` |
 
 ## Release pipeline
+
+Start every release with `just release-preflight`: all four workspace repos (baluard, baluard-org, baluard-packages, baluard-docs) must read AHEAD=0, BEHIND=0, DIRTY=0 before anything runs. Then sweep `git log <last-tag>..HEAD` against the changelog, and cut only when `just changelog-check <tag>` passes after the cut.
 
 Build the desktop packages and the APK first, then run one command:
 
@@ -107,6 +110,8 @@ just release-stage
 ```
 
 `scripts/stage-release-assets.sh` copies `./dist` artifacts into `release-upload/` under the stable mapping (Baluard-amd64.AppImage, Baluard-amd64.deb, Baluard-amd64.rpm, Baluard-amd64-setup.exe, Baluard-cli-amd64.tar.gz, Baluard-android.apk, Baluard-extension-chrome.zip, Baluard-extension-firefox.zip, Baluard-macos-aarch64-non-notarized.zip), signs `SHA256SUMS` with the updater minisign key, and fails loudly on target collisions, unmapped files, wrong-arch or stale-version strays, or a missing `--require` entry. Note there are two signed `SHA256SUMS` files by design: `dist/` carries the versioned-name set the apt/dnf repo build consumes, while `release-upload/` carries this stable-name set for the GitHub release; the site and the repo trees each publish their own. Only the updater payloads keep per-asset `.sig` files (AppImage, setup exe, app.tar.gz); everything else is covered by the signed `SHA256SUMS`. The staging also carries the committed `updater.pub` so the README's manual checksum-verification flow works against the release page. Upload with `gh release upload <tag> --clobber release-upload/*` and keep versioned names out of the release. The versioned names stay required locally: the apt/dnf pools, the extension submit flow, and the CI artifacts all consume them.
+
+Release notes are drafted in esteban-voice and approved verbatim through the ask_user gate before `gh release create`. Every release body ends with one blank line and then exactly `As always, thanks for trying Baluard :)` on its own line. No leading word, no variants; the phrase lives in release bodies only.
 
 ## Store publishing
 
