@@ -441,6 +441,7 @@
     "switchToLight": "Cambiar al tema claro",
     "switchToDark": "Cambiar al tema oscuro",
     "tabAbout": "Acerca de",
+    "aboutTitle": "Acerca de Baluard",
     "aboutSubtitle": "Gestor de contraseñas nativo git • GPL-3.0"
   },
   "sync": {

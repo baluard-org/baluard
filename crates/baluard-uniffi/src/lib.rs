@@ -176,9 +176,6 @@ pub fn set_token_encryption_key(key: Vec<u8>) -> Result<(), BaluardError> {
     Ok(())
 }
 
-/// A 24-word BIP-39 recovery phrase. Mirrors `baluard_core::recovery::RecoveryPhrase`
-/// but flattened to a plain String for the FFI boundary (the internal type
-/// holds zeroized entropy that UniFFI can't cross with the zeroize guarantee).
 /// Outcome of a user-triggered pull: the stable tag the toast matrix
 /// classifies, plus the scrubbed failure cause when one exists.
 #[derive(uniffi::Record)]
@@ -187,6 +184,9 @@ pub struct SyncPullOutcome {
     pub detail: Option<String>,
 }
 
+/// A 24-word BIP-39 recovery phrase. Mirrors `baluard_core::recovery::RecoveryPhrase`
+/// but flattened to a plain String for the FFI boundary (the internal type
+/// holds zeroized entropy that UniFFI can't cross with the zeroize guarantee).
 #[derive(uniffi::Record)]
 pub struct MobileRecoveryPhrase {
     /// Space-separated 24 words.

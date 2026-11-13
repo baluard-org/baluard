@@ -482,6 +482,7 @@
     "switchToLight": "Mudar para o tema claro",
     "switchToDark": "Mudar para o tema escuro",
     "tabAbout": "Sobre",
+    "aboutTitle": "Sobre o Baluard",
     "aboutSubtitle": "Gerenciador de senhas com git nativo e criptografia ponta a ponta."
   },
   "sync": {
