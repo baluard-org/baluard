@@ -229,11 +229,20 @@ test-release-scripts:
 	./scripts/tests/test-build-nmh-manifests.sh
 	./scripts/tests/test-bump-version.sh
 	./scripts/tests/test-generate-updates-manifest.sh
+	./scripts/tests/test-publish-updates-manifest.sh
 	./scripts/tests/test-sign-updater-sigs.sh
 	./scripts/tests/test-stage-release-assets.sh
 	./scripts/tests/test-upload-play-release.sh
 	./scripts/tests/test-build-arch-repo.sh
 	./scripts/tests/test-build-apt-repo.sh
+
+# Publish the desktop updater channel manifest with rollback safety:
+# generate from release-upload (stable names), verify the version read-back,
+# back up the live manifest, upload, API-verify, and poll the served bytes.
+updates-publish tag:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	scripts/publish-updates-manifest.sh {{ tag }}
 
 # Run all tests
 # BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
