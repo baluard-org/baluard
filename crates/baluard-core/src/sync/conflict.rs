@@ -691,14 +691,21 @@ fn merge_attachment_set(
                 if att.filename == r.filename
                     && att.size == r.size
                     && att.encrypted_size == r.encrypted_size
+                    && att.blob_sha256 == r.blob_sha256
                 {
                     result.push(att.clone());
                 } else {
                     let base_att = base.attachments.iter().find(|b| b.id == att.id);
-                    let base_matches_remote =
-                        base_att.is_some_and(|b| b.filename == r.filename && b.size == r.size);
-                    let base_matches_local =
-                        base_att.is_some_and(|b| b.filename == att.filename && b.size == att.size);
+                    let base_matches_remote = base_att.is_some_and(|b| {
+                        b.filename == r.filename
+                            && b.size == r.size
+                            && b.blob_sha256 == r.blob_sha256
+                    });
+                    let base_matches_local = base_att.is_some_and(|b| {
+                        b.filename == att.filename
+                            && b.size == att.size
+                            && b.blob_sha256 == att.blob_sha256
+                    });
                     if base_matches_remote {
                         result.push(r.clone());
                     } else if base_matches_local {
@@ -719,6 +726,7 @@ fn merge_attachment_set(
                         && b.filename == att.filename
                         && b.size == att.size
                         && b.encrypted_size == att.encrypted_size
+                        && b.blob_sha256 == att.blob_sha256
                 });
                 if unchanged_from_base {
                     continue; // remote deleted it, local kept the base value
@@ -736,6 +744,7 @@ fn merge_attachment_set(
                 && b.filename == att.filename
                 && b.size == att.size
                 && b.encrypted_size == att.encrypted_size
+                && b.blob_sha256 == att.blob_sha256
         });
         if unchanged_from_base {
             continue; // local deleted it while remote kept the base value

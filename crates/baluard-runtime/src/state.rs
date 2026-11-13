@@ -8893,10 +8893,17 @@ impl VaultState {
             .parse()
             .map_err(|e| format!("invalid cipher_id: {e}"))?;
         let filename = req["filename"].as_str().ok_or("missing filename")?;
-        let data_b64 = req["data_base64"].as_str().ok_or("missing data_base64")?;
+        // Own the base64 buffer so it can be zeroized: the decoded
+        // plaintext is zeroized below (M8), but the b64 string itself
+        // would otherwise survive in heap inside the parsed payload.
+        let mut data_b64 = req["data_base64"]
+            .as_str()
+            .ok_or("missing data_base64")?
+            .to_string();
         let mut plaintext = base64::engine::general_purpose::STANDARD
-            .decode(data_b64)
+            .decode(data_b64.as_bytes())
             .map_err(|e| format!("base64 decode: {e}"))?;
+        data_b64.zeroize();
 
         if plaintext.len() > baluard_core::vault::attachment::MAX_ATTACHMENT_SIZE {
             return Err(format!(
@@ -8975,6 +8982,7 @@ impl VaultState {
             encrypted_size,
             mime_type: baluard_core::vault::attachment::detect_mime(filename),
             created_at: now,
+            blob_sha256: baluard_core::vault::attachment::blob_sha256(&encrypted),
         };
 
         let mut attachments = cipher.attachments.clone();
