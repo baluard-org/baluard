@@ -33,6 +33,13 @@ pub struct AttachmentMeta {
     pub mime_type: String,
     /// Creation timestamp (epoch seconds).
     pub created_at: u64,
+    /// SHA-256 (hex) of the ENCRYPTED envelope bytes. Pins the off-main
+    /// blob line's content-addressed path to exactly the ciphertext the
+    /// uploader produced: a forged or divergent line entry can never
+    /// satisfy metadata the reader decrypts. Key rotation legitimately
+    /// changes the ciphertext, so rotation recomputes this pin.
+    #[serde(default)]
+    pub blob_sha256: String,
 }
 
 /// Encrypt attachment content for storage (audit C4).
@@ -171,6 +178,15 @@ pub fn detect_mime(filename: &str) -> String {
 /// padded size so the encrypted envelope (padded content + tag + header)
 /// stays under 2 MB on disk and inside the envelope budget.
 pub const MAX_ATTACHMENT_SIZE: usize = 1_900_000; // 1.9 MB
+
+/// Hex SHA-256 of an attachment's encrypted envelope bytes. The hash is
+/// over the CIPHERTEXT (what travels on the blob line), never plaintext:
+/// the line is content-addressed by this value and downloads verify
+/// against it before decryption.
+pub fn blob_sha256(blob: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(blob))
+}
 
 #[cfg(test)]
 mod tests {
@@ -323,5 +339,41 @@ mod tests {
         let key = [1u8; 32];
         assert!(decrypt_attachment(vault_id, cipher_id, attach_id, &key, &[0u8; 20]).is_err());
         assert!(decrypt_attachment(vault_id, cipher_id, attach_id, &key, &[0u8; 5]).is_err());
+    }
+
+    /// Legacy metadata (pre-pin vaults) deserializes with an empty pin;
+    /// the line consumer treats empty as "grandfathered on main".
+    #[test]
+    fn legacy_meta_without_pin_deserializes() {
+        let legacy = serde_json::json!({
+            "id": "0f8e2b1a-1111-4222-8333-444455556666",
+            "filename": "old.txt",
+            "size": 5,
+            "encrypted_size": 512,
+            "mime_type": "text/plain",
+            "created_at": 0,
+        });
+        let meta: AttachmentMeta = serde_json::from_value(legacy).unwrap();
+        assert_eq!(meta.blob_sha256, "");
+    }
+
+    /// The pin is a stable hex SHA-256 of the exact envelope bytes.
+    #[test]
+    fn blob_pin_is_stable_hex_sha256() {
+        let (vault_id, cipher_id, attach_id) = ids();
+        let key = [9u8; 32];
+        let enc =
+            encrypt_attachment(vault_id, cipher_id, attach_id, &key, b"pin me", 1, 1).unwrap();
+        let pin = blob_sha256(&enc);
+        assert_eq!(pin.len(), 64);
+        assert_eq!(pin, blob_sha256(&enc), "same bytes must pin identically");
+        let mut flipped = enc.clone();
+        let last = flipped.len() - 1;
+        flipped[last] ^= 0xFF;
+        assert_ne!(
+            blob_sha256(&flipped),
+            pin,
+            "any byte flip must change the pin"
+        );
     }
 }

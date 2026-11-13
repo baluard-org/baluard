@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Attachment metadata now pins the SHA-256 of each encrypted file, key rotation updates the pin, and large uploads scrub their encoded copy from memory. This is the groundwork for storing attachment files outside the vault's main history.
+
 ## 0.5.5 - 2026-11-13
 
 - Desktop: Settings now has an About tab showing the installed version.

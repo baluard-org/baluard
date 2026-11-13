@@ -3031,7 +3031,7 @@ impl VaultHandle {
         schema_guard?;
         let mut existing =
             crate::vault::cipher::decrypt_cipher(self.vault_id, cipher_id, &file, &old_item)?;
-        let input = CipherInput {
+        let mut input = CipherInput {
             name: existing.name.clone(),
             folder_id: existing.folder_id,
             collection_id: None,
@@ -3054,7 +3054,7 @@ impl VaultHandle {
         // Attachment blobs are encrypted with the cipher's item key, so
         // they ride the same CK rotation (the mirror of the rotation
         // twins' attachment block — without this every blob is stranded).
-        for attach_meta in &existing.attachments {
+        for (attach_idx, attach_meta) in existing.attachments.iter().enumerate() {
             let attach_path = self
                 .path
                 .join("entries")
@@ -3080,6 +3080,10 @@ impl VaultHandle {
                 new_item.as_bytes(),
                 &enc_blob,
             ) {
+                // Blob already re-carried by a crashed prior pass: its
+                // bytes are current, so the pin tracks them too (B3).
+                input.attachments[attach_idx].blob_sha256 =
+                    crate::vault::attachment::blob_sha256(&enc_blob);
                 probe.zeroize();
                 continue;
             }
@@ -3100,6 +3104,8 @@ impl VaultHandle {
                 existing.update_seq,
             )?;
             plaintext.zeroize();
+            input.attachments[attach_idx].blob_sha256 =
+                crate::vault::attachment::blob_sha256(&new_enc);
             let attach_tmp = attach_path.with_extension("enc.tmp");
             std::fs::write(&attach_tmp, &new_enc)?;
             std::fs::rename(&attach_tmp, &attach_path)?;
@@ -10521,7 +10527,8 @@ impl VaultHandle {
             // P4: re-encrypt attachment blobs with the new item key (mirrors
             // revoke_device_and_rekey). Attachments live outside the cipher
             // envelope; skipping them strands every blob at the old epoch.
-            for attach_meta in &existing.attachments {
+            let mut pin_updates: Vec<(usize, String)> = Vec::new();
+            for (attach_idx, attach_meta) in existing.attachments.iter().enumerate() {
                 // Validate the id before it touches a path: meta rides
                 // the shared sync row, so a traversal-shaped id must
                 // fail here, not probe the filesystem.
@@ -10556,9 +10563,17 @@ impl VaultHandle {
                     existing.update_seq,
                 )?;
                 plaintext.zeroize();
+                pin_updates.push((attach_idx, crate::vault::attachment::blob_sha256(&new_enc)));
                 let attach_tmp = attach_path.with_extension("enc.tmp");
                 std::fs::write(&attach_tmp, &new_enc)?;
                 staged_renames.push((attach_tmp, attach_path));
+            }
+
+            // B3: key rotation is a hash-pin update event — the rotated
+            // ciphertext bytes are new, so the pin must track them or
+            // every later download fails verification.
+            for (i, pin) in pin_updates {
+                existing.attachments[i].blob_sha256 = pin;
             }
 
             let input = CipherInput {
@@ -11222,7 +11237,8 @@ impl VaultHandle {
                     continue;
                 }
             };
-            for attach_meta in &existing.attachments {
+            let mut pin_updates: Vec<(usize, String)> = Vec::new();
+            for (attach_idx, attach_meta) in existing.attachments.iter().enumerate() {
                 // Validate the id before it touches a path: meta rides
                 // the shared sync row, so a traversal-shaped id must
                 // fail here, not probe the filesystem.
@@ -11257,9 +11273,17 @@ impl VaultHandle {
                     existing.update_seq,
                 )?;
                 plaintext.zeroize();
+                pin_updates.push((attach_idx, crate::vault::attachment::blob_sha256(&new_enc)));
                 let attach_tmp = attach_path.with_extension("enc.tmp");
                 std::fs::write(&attach_tmp, &new_enc)?;
                 staged_renames.push((attach_tmp, attach_path));
+            }
+
+            // B3: key rotation is a hash-pin update event — the rotated
+            // ciphertext bytes are new, so the pin must track them or
+            // every later download fails verification.
+            for (i, pin) in pin_updates {
+                existing.attachments[i].blob_sha256 = pin;
             }
 
             let input = CipherInput {
@@ -14182,6 +14206,7 @@ mod tests {
                     encrypted_size: 0,
                     mime_type: "text/plain".into(),
                     created_at: 0,
+                    blob_sha256: String::new(),
                 }],
                 archived: false,
                 tags: vec![],
@@ -14310,6 +14335,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plaintext.as_slice(), b"filedata");
+
+        // B3: the hash pin tracks the ROTATED ciphertext — metadata at
+        // the new epoch must pin exactly the bytes now on disk.
+        let rotated = handle.get_cipher(cipher_id).unwrap();
+        let crate::vault::handle::CipherRead::Decrypted(rotated_cipher) = rotated else {
+            panic!("expected a decrypted cipher after rotation");
+        };
+        let rotated_meta = rotated_cipher
+            .attachments
+            .iter()
+            .find(|a| a.id == attach_uuid.to_string())
+            .unwrap();
+        assert_eq!(
+            rotated_meta.blob_sha256,
+            crate::vault::attachment::blob_sha256(&enc_blob)
+        );
 
         // The legacy layer opens under the NEW root at the new epoch, the
         // record was re-signed with a bumped seq, and the store re-sealed.
@@ -20512,6 +20553,7 @@ mod tests {
                 encrypted_size: 0, // informational only (C4: blobs are tier-padded)
                 mime_type: "text/plain".into(),
                 created_at: 1000,
+                blob_sha256: String::new(),
             }],
             archived: false,
             tags: vec![],
