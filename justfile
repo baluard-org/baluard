@@ -601,10 +601,10 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 
 # Release build legs: each launches detached, logs to /tmp/leg-<leg>.log and
 # writes the exit code to /tmp/leg-<leg>.rc. A missing rc file means the leg
-# is still running. The env bundles are the recorded release recipes; they
-# live here so a leg relaunch cannot silently drop half of one. Secrets are
-# extracted per variable from ~/.secrets, never sourced wholesale, and each
-# leg asserts the variables it needs before any long work starts.
+# is still running. The inner script is written verbatim from a heredoc, so
+# it carries no nested quoting. Startup files provide PATH, JAVA_HOME, and
+# the SDK env; secrets are extracted per variable from ~/.secrets, never
+# sourced wholesale, and the ext-submit secrets are unset before any build.
 build-linux:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -614,19 +614,22 @@ build-linux:
 	fi
 	cat > /tmp/leg-linux-inner.sh <<'INNER'
 	set -euo pipefail
-	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E 's/^"(.*)"$/\\1/; s/^\'(.*)\'\$/\\1/'; }
+	unset BALUARD_CHROME_CLIENT_ID BALUARD_CHROME_CLIENT_SECRET BALUARD_CHROME_REFRESH_TOKEN BALUARD_AMO_JWT_KEY BALUARD_AMO_JWT_SECRET
+	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E "s/^\"(.*)\"\$/\1/; s/^'(.*)'\$/\1/"; }
 	export BALUARD_GITLAB_CLIENT_ID="$(sec BALUARD_GITLAB_CLIENT_ID)"
 	export BALUARD_CODEBERG_CLIENT_ID="$(sec BALUARD_CODEBERG_CLIENT_ID)"
-	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing from ~/.secrets"; exit 1; }
+	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing or empty in ~/.secrets"; exit 1; }
 	set -a; source ~/.config/environment.d/baluard.conf; set +a
 	export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/baluard-updater.key)"
+	[[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]] || { echo "updater signing key missing"; exit 1; }
 	export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
 	just desktop-build
+	grep -aq "$BALUARD_GITLAB_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-x86_64-unknown-linux-gnu
+	grep -aq "$BALUARD_CODEBERG_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-x86_64-unknown-linux-gnu
 	INNER
 	rm -f /tmp/leg-linux.rc
-	setsid bash -c 'bash /tmp/leg-linux-inner.sh > /tmp/leg-linux.log 2>&1 </dev/null; echo $? > /tmp/leg-linux.rc' </dev/null >/dev/null 2>&1 &
+	setsid bash -c 'bash -ic "bash /tmp/leg-linux-inner.sh > /tmp/leg-linux.log 2>&1 </dev/null; echo \$? > /tmp/leg-linux.rc"' </dev/null >/dev/null 2>&1 &
 	echo "linux leg launched: poll /tmp/leg-linux.rc (tail /tmp/leg-linux.log)"
-
 build-windows:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -636,20 +639,23 @@ build-windows:
 	fi
 	cat > /tmp/leg-windows-inner.sh <<'INNER'
 	set -euo pipefail
-	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E 's/^"(.*)"$/\\1/; s/^\'(.*)\'\$/\\1/'; }
-	export PATH="$HOME/.cargo/bin:/home/linuxbrew/.linuxbrew/bin:$PATH"
+	unset BALUARD_CHROME_CLIENT_ID BALUARD_CHROME_CLIENT_SECRET BALUARD_CHROME_REFRESH_TOKEN BALUARD_AMO_JWT_KEY BALUARD_AMO_JWT_SECRET
+	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E "s/^\"(.*)\"\$/\1/; s/^'(.*)'\$/\1/"; }
 	export BALUARD_GITLAB_CLIENT_ID="$(sec BALUARD_GITLAB_CLIENT_ID)"
 	export BALUARD_CODEBERG_CLIENT_ID="$(sec BALUARD_CODEBERG_CLIENT_ID)"
-	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing from ~/.secrets"; exit 1; }
-	source ~/.config/environment.d/baluard.conf
+	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing or empty in ~/.secrets"; exit 1; }
+	export PATH="$HOME/.cargo/bin:/home/linuxbrew/.linuxbrew/bin:$PATH"
+	set -a; source ~/.config/environment.d/baluard.conf; set +a
 	export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/baluard-updater.key)"
+	[[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]] || { echo "updater signing key missing"; exit 1; }
 	export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
 	just desktop-windows
+	grep -aq "$BALUARD_GITLAB_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-x86_64-pc-windows-msvc.exe
+	grep -aq "$BALUARD_CODEBERG_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-x86_64-pc-windows-msvc.exe
 	INNER
 	rm -f /tmp/leg-windows.rc
-	setsid bash -c 'bash /tmp/leg-windows-inner.sh > /tmp/leg-windows.log 2>&1 </dev/null; echo $? > /tmp/leg-windows.rc' </dev/null >/dev/null 2>&1 &
+	setsid bash -c 'bash -ic "bash /tmp/leg-windows-inner.sh > /tmp/leg-windows.log 2>&1 </dev/null; echo \$? > /tmp/leg-windows.rc"' </dev/null >/dev/null 2>&1 &
 	echo "windows leg launched: poll /tmp/leg-windows.rc (tail /tmp/leg-windows.log)"
-
 build-android:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -659,19 +665,22 @@ build-android:
 	fi
 	cat > /tmp/leg-android-inner.sh <<'INNER'
 	set -euo pipefail
-	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E 's/^"(.*)"$/\\1/; s/^\'(.*)\'\$/\\1/'; }
+	unset BALUARD_CHROME_CLIENT_ID BALUARD_CHROME_CLIENT_SECRET BALUARD_CHROME_REFRESH_TOKEN BALUARD_AMO_JWT_KEY BALUARD_AMO_JWT_SECRET
+	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E "s/^\"(.*)\"\$/\1/; s/^'(.*)'\$/\1/"; }
+	export BALUARD_GITLAB_CLIENT_ID="$(sec BALUARD_GITLAB_CLIENT_ID)"
+	export BALUARD_CODEBERG_CLIENT_ID="$(sec BALUARD_CODEBERG_CLIENT_ID)"
+	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing or empty in ~/.secrets"; exit 1; }
 	mkdir -p "$HOME/.cache/baluard-tmp"
 	export TMPDIR="$HOME/.cache/baluard-tmp"
-	export BALUARD_ANDROID_STORE_PASSWORD="$(sec BALUARD_ANDROID_STORE_PASSWORD)"
-	export BALUARD_ANDROID_KEY_PASSWORD="$(sec BALUARD_ANDROID_KEY_PASSWORD)"
-	[[ -n "$BALUARD_ANDROID_STORE_PASSWORD" && -n "$BALUARD_ANDROID_KEY_PASSWORD" ]] || { echo "android signing passwords missing from ~/.secrets"; exit 1; }
 	set -a; source ~/.config/environment.d/baluard.conf; set +a
+	export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/baluard-updater.key)"
+	[[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]] || { echo "updater signing key missing"; exit 1; }
+	export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
 	just android-apk-release
 	INNER
 	rm -f /tmp/leg-android.rc
-	setsid bash -c 'bash /tmp/leg-android-inner.sh > /tmp/leg-android.log 2>&1 </dev/null; echo $? > /tmp/leg-android.rc' </dev/null >/dev/null 2>&1 &
+	setsid bash -c 'bash -ic "bash /tmp/leg-android-inner.sh > /tmp/leg-android.log 2>&1 </dev/null; echo \$? > /tmp/leg-android.rc"' </dev/null >/dev/null 2>&1 &
 	echo "android leg launched: poll /tmp/leg-android.rc (tail /tmp/leg-android.log)"
-
 build-macos:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -681,37 +690,23 @@ build-macos:
 	fi
 	cat > /tmp/leg-macos-inner.sh <<'INNER'
 	set -euo pipefail
-	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E 's/^"(.*)"$/\\1/; s/^\'(.*)\'\$/\\1/'; }
-	source ~/.config/environment.d/baluard.conf
+	unset BALUARD_CHROME_CLIENT_ID BALUARD_CHROME_CLIENT_SECRET BALUARD_CHROME_REFRESH_TOKEN BALUARD_AMO_JWT_KEY BALUARD_AMO_JWT_SECRET
+	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E "s/^\"(.*)\"\$/\1/; s/^'(.*)'\$/\1/"; }
 	export BALUARD_GITLAB_CLIENT_ID="$(sec BALUARD_GITLAB_CLIENT_ID)"
 	export BALUARD_CODEBERG_CLIENT_ID="$(sec BALUARD_CODEBERG_CLIENT_ID)"
-	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing from ~/.secrets"; exit 1; }
+	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing or empty in ~/.secrets"; exit 1; }
+	set -a; source ~/.config/environment.d/baluard.conf; set +a
 	export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/baluard-updater.key)"
+	[[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]] || { echo "updater signing key missing"; exit 1; }
 	export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
 	scripts/build-macos-aarch64-deliverable.sh
 	grep -aq "$BALUARD_GITLAB_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-aarch64-apple-darwin
 	grep -aq "$BALUARD_CODEBERG_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-aarch64-apple-darwin
 	INNER
 	rm -f /tmp/leg-macos.rc
-	setsid bash -c 'bash /tmp/leg-macos-inner.sh > /tmp/leg-macos.log 2>&1 </dev/null; echo $? > /tmp/leg-macos.rc' </dev/null >/dev/null 2>&1 &
+	setsid bash -c 'bash -ic "bash /tmp/leg-macos-inner.sh > /tmp/leg-macos.log 2>&1 </dev/null; echo \$? > /tmp/leg-macos.rc"' </dev/null >/dev/null 2>&1 &
 	echo "macos leg launched: poll /tmp/leg-macos.rc (tail /tmp/leg-macos.log)"
 
-legs-status:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	FAILED=0
-	for leg in linux windows android macos; do
-	  rc="/tmp/leg-$leg.rc"; logf="/tmp/leg-$leg.log"
-	  if [[ -f "$rc" ]]; then
-	    echo "$leg: rc=$(cat "$rc")"
-	    [[ "$(cat "$rc")" == "0" ]] || FAILED=1
-	  elif [[ -f "$logf" ]]; then
-	    echo "$leg: running (log $(wc -c < "$logf") bytes)"
-	  else
-	    echo "$leg: not launched"
-	  fi
-	done
-	exit "$FAILED"
 
 # Build desktop app (production bundle)
 # _sidecar-force (not _sidecar) because the staleness check keys on Rust
