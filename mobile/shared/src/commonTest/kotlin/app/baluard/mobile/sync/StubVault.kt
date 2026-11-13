@@ -39,6 +39,21 @@ open class StubVault(
         return "[]"
     }
 
+    override suspend fun attachUpload(payload: String): String {
+        calls += "attachUpload"
+        return "{}"
+    }
+
+    override suspend fun attachDownload(payload: String): String {
+        calls += "attachDownload"
+        return "{}"
+    }
+
+    override suspend fun attachDelete(payload: String): String {
+        calls += "attachDelete"
+        return "{}"
+    }
+
     override suspend fun autofillAppTrust(packageName: String, domain: String) {
         calls += "autofillAppTrust"
     }

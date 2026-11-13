@@ -6,10 +6,13 @@ import app.baluard.mobile.MobileSyncStatus
 import app.baluard.mobile.MobileCreateResult
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.detail.str
+import kotlin.io.encoding.Base64
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import app.baluard.mobile.MobileRecoveryPhrase
 import app.baluard.mobile.openVault as uniffiOpenVault
 import app.baluard.mobile.createVaultWithRecovery as uniffiCreateVaultWithRecovery
@@ -249,6 +252,53 @@ class VaultRepository {
     suspend fun updateCipher(vault: MobileVault, payload: String): Unit = vault.updateCipher(payload)
     suspend fun deleteCipher(vault: MobileVault, id: String): Unit = vault.deleteCipher(id)
     suspend fun totpCode(vault: MobileVault, id: String): String = vault.totpCode(id)
+
+    suspend fun attachUpload(
+        vault: MobileVault,
+        cipherId: String,
+        filename: String,
+        bytes: ByteArray,
+    ): String {
+        val payload = buildJsonObject {
+            put("cipher_id", cipherId)
+            put("filename", filename)
+            put("data_base64", Base64.encode(bytes))
+        }.toString()
+        return vault.attachUpload(payload)
+    }
+
+    suspend fun attachDownload(
+        vault: MobileVault,
+        cipherId: String,
+        attachmentId: String,
+    ): AttachmentDownloadResult {
+        val payload = buildJsonObject {
+            put("cipher_id", cipherId)
+            put("attachment_id", attachmentId)
+        }.toString()
+        val raw = vault.attachDownload(payload)
+        val obj = Json.parseToJsonElement(raw).jsonObject
+        val filename = obj["filename"]?.jsonPrimitive?.content ?: "attachment"
+        val mimeType = obj["mime_type"]?.jsonPrimitive?.content ?: "application/octet-stream"
+        val b64 = obj["data_base64"]?.jsonPrimitive?.content.orEmpty()
+        return AttachmentDownloadResult(
+            filename = filename,
+            mimeType = mimeType,
+            bytes = Base64.decode(b64),
+        )
+    }
+
+    suspend fun attachDelete(
+        vault: MobileVault,
+        cipherId: String,
+        attachmentId: String,
+    ) {
+        val payload = buildJsonObject {
+            put("cipher_id", cipherId)
+            put("attachment_id", attachmentId)
+        }.toString()
+        vault.attachDelete(payload)
+    }
 
     /** Generate an SSH keypair (ed25519 | ecdsa256). JSON {public_key,
      * fingerprint, private_key}. Formatted strings only. */
@@ -1169,3 +1219,9 @@ suspend fun vaultTimeoutToken(vault: MobileVault): String {
 fun vaultTimeoutLabel(token: String): String =
     VaultRepository.vaultTimeoutPresets.firstOrNull { it.token == token }?.labelKey
         ?: "settings.autoLock.15m"
+
+data class AttachmentDownloadResult(
+    val filename: String,
+    val mimeType: String,
+    val bytes: ByteArray,
+)

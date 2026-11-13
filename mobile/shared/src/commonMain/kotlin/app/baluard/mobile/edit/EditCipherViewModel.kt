@@ -162,6 +162,33 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         _form.value = _form.value.copy(tags = _form.value.tags - tag)
     }
 
+    // ── Attachments ──
+
+    /** Queue a new attachment; returns false when [bytes] exceeds 1.9 MB. */
+    fun addPendingAttachment(filename: String, bytes: ByteArray): Boolean {
+        if (bytes.size > MAX_ATTACHMENT_SIZE) return false
+        _form.value = _form.value.copy(
+            pendingAttachments = _form.value.pendingAttachments + PendingAttachment(filename, bytes),
+        )
+        return true
+    }
+
+    fun removeExistingAttachment(id: String) {
+        _form.value = _form.value.copy(
+            removedAttachmentIds = _form.value.removedAttachmentIds + id,
+        )
+    }
+
+    fun removePendingAttachment(index: Int) {
+        _form.value = _form.value.copy(
+            pendingAttachments = _form.value.pendingAttachments.filterIndexed { i, _ -> i != index },
+        )
+    }
+
+    companion object {
+        const val MAX_ATTACHMENT_SIZE = 1_900_000
+    }
+
     /** Blank the form for a new entry (shared VM instance across screens). */
     fun reset() {
         existingId = null
@@ -257,15 +284,33 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         val f = _form.value
         val payload = buildPayload(f, existingId, originalData)
         return runCatching {
-            if (existingId != null) {
+            val cipherId = if (existingId != null) {
                 repo.updateCipher(vault, payload)
                 if (collectionTouched) {
                     repo.setCollection(vault, existingId!!, _form.value.collectionId?.takeIf { it.isNotEmpty() })
                 }
                 existingId!!
             } else {
-                repo.addCipher(vault, payload)
+                val createdId = repo.addCipher(vault, payload)
+                // Capture id immediately so a retry after a partial attachment
+                // failure updates this entry instead of creating a duplicate.
+                existingId = createdId
+                createdId
             }
+            for (attachId in f.removedAttachmentIds) {
+                repo.attachDelete(vault, cipherId, attachId)
+                _form.value = _form.value.copy(
+                    removedAttachmentIds = _form.value.removedAttachmentIds - attachId,
+                    existingAttachments = _form.value.existingAttachments.filterNot { it.id == attachId },
+                )
+            }
+            for (att in f.pendingAttachments) {
+                repo.attachUpload(vault, cipherId, att.filename, att.bytes)
+                _form.value = _form.value.copy(
+                    pendingAttachments = _form.value.pendingAttachments.filterNot { it === att },
+                )
+            }
+            cipherId
         }
     }
 
@@ -397,6 +442,10 @@ data class CustomFieldEdit(
     val isHidden: Boolean get() = !isLinked && fieldType == "Hidden"
 }
 
+data class ExistingAttachment(val id: String, val filename: String, val size: Long)
+
+class PendingAttachment(val filename: String, val bytes: ByteArray)
+
 data class EditForm(
     val name: String = "",
     val typeTag: String = "login",
@@ -423,6 +472,9 @@ data class EditForm(
     * value, so edits keep it unless the picker is touched); "" = explicitly
     * none; an id = assign. */
     val collectionId: String? = null,
+    val existingAttachments: List<ExistingAttachment> = emptyList(),
+    val removedAttachmentIds: Set<String> = emptySet(),
+    val pendingAttachments: List<PendingAttachment> = emptyList(),
 )
 
 /** Parse a decrypted get_cipher response into the edit form. Wire shape
@@ -462,6 +514,14 @@ internal fun parseLoadedCipher(raw: String): EditForm {
         )
     }.orEmpty()
 
+    val existingAttachments = (obj["attachments"] as? JsonArray)?.mapNotNull { el ->
+        val o = el as? JsonObject ?: return@mapNotNull null
+        val attId = o.str("id") ?: return@mapNotNull null
+        val filename = o.str("filename") ?: return@mapNotNull null
+        val size = (o["size"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
+        ExistingAttachment(id = attId, filename = filename, size = size)
+    }.orEmpty()
+
     return EditForm(
         name = obj.str("name").orEmpty(),
         typeTag = tag,
@@ -484,6 +544,7 @@ internal fun parseLoadedCipher(raw: String): EditForm {
         customFields = customFields,
         tags = (obj["tags"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
         folderId = obj.str("folder_id"),
+        existingAttachments = existingAttachments,
     )
 }
 

@@ -56,6 +56,7 @@ import app.baluard.mobile.ui.components.ConflictResolutionPanel
 import app.baluard.mobile.ui.theme.BaluardTheme
 import app.baluard.mobile.ui.toast.Toast
 import app.baluard.mobile.ui.toast.ToastHost
+import app.baluard.mobile.vault.CategoryListScreen
 import app.baluard.mobile.vault.EntryListKind
 import app.baluard.mobile.vault.ForeignHits
 import app.baluard.mobile.vault.EntryListScreen
@@ -98,12 +99,13 @@ private sealed interface Nav {
     data object Activity : Nav
     data object GitBackup : Nav
     data class EntryList(val kind: EntryListKind) : Nav
+    data object CategoryList : Nav
     data object TagList : Nav
 }
 
 private fun navDepth(nav: Nav): Int = when (nav) {
     is Nav.List -> 0
-    is Nav.Detail, Nav.Generator, Nav.Settings, is Nav.EntryList, Nav.TagList -> 1
+    is Nav.Detail, Nav.Generator, Nav.Settings, is Nav.EntryList, Nav.CategoryList, Nav.TagList -> 1
     // Settings sub-pages sit one level below Settings: back animates a pop.
     Nav.People, Nav.Collections, Nav.Activity, Nav.GitBackup -> 2
     is Nav.Edit -> 2
@@ -594,6 +596,7 @@ fun App(
                                         }
                                     },
                                     onOpenKind = { nav = Nav.EntryList(it) },
+                                    onOpenCategories = { nav = Nav.CategoryList },
                                     onOpenTags = { nav = Nav.TagList },
                                     onCipherClick = {
                                         detailOrigin = null
@@ -664,6 +667,12 @@ fun App(
                                     },
                                     onBack = { nav = Nav.List },
                                     revision = saveRevision,
+                                )
+
+                                Nav.CategoryList -> CategoryListScreen(
+                                    listViewModel = listVm,
+                                    onCategory = { nav = Nav.EntryList(EntryListKind.Type(it)) },
+                                    onBack = { nav = Nav.List },
                                 )
 
                                 Nav.TagList -> TagListScreen(

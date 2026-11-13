@@ -7,7 +7,7 @@ import { toastError } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import BridgeUnlockBanner from "./BridgeUnlockBanner.jsx";
 import { daemon } from "../lib/daemon.js";
-import { buildFolderCreatePayload } from "../lib/payload.js";
+import { buildFolderCreatePayload, buildAttachUploadPayload, buildAttachDeletePayload } from "../lib/payload.js";
 import { categoriesCollapsed as readCategoriesCollapsed, setCategoriesCollapsed, visibleCategories } from "../lib/categories.js";
 import { selectSource, filterByCategory, filterByFolder, filterByTag, filterByCollection, cipherCollectionId, searchCiphers } from "../lib/filters.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -214,6 +214,31 @@ export default function VaultView() {
     });
     vault.setActivePane("add");
     setShowAddMenu(false);
+  }
+
+  async function applyAttachmentChanges(cipherId, changes) {
+    const removed = changes?.removedAttachmentIds || [];
+    const pending = changes?.pendingAttachments || [];
+    if (!removed.length && !pending.length) return false;
+    let changed = false;
+    for (const attachId of removed) {
+      try {
+        await daemon("vault.attach_delete", JSON.stringify(buildAttachDeletePayload(cipherId, attachId)));
+        changed = true;
+      } catch (e) {
+        toastError(`${t("entry.attachmentDeleteFailed")}: ${sanitizeError(e, t)}`);
+      }
+    }
+    for (const attach of pending) {
+      try {
+        await daemon("vault.attach_upload", JSON.stringify(buildAttachUploadPayload(cipherId, attach.filename, attach.data_base64)));
+        changed = true;
+      } catch (e) {
+        toastError(`${t("entry.attachmentUploadFailed")}: ${sanitizeError(e, t)}`);
+      }
+    }
+    if (changed) await vault.refreshCiphers(t);
+    return changed;
   }
 
   return (
@@ -433,8 +458,8 @@ export default function VaultView() {
               </Show>
               <button
                 onClick={() => vault.setSelectedFolder(null)}
-                class={`flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors border ${!vault.selectedFolder() ? "bg-[var(--color-card)] border-[var(--color-border)] text-[var(--color-text)] shadow-sm" : "border-transparent text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
-                style={{ "padding-left": "14px", "padding-right": "6px" }}
+                class={`w-full flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold text-left cursor-pointer transition-colors min-h-[30px] border ${!vault.selectedFolder() ? "bg-[var(--color-card)] border-[var(--color-border)] text-[var(--color-text)] shadow-sm" : "border-transparent text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
+                style={{ "padding-left": "14px", "padding-right": "14px" }}
               >
                 <IconFolder filled={!vault.selectedFolder()} class={`w-3.5 h-3.5 shrink-0 transition-colors ${!vault.selectedFolder() ? "text-[var(--color-primary)]" : ""}`} />
                 <span>{t("entry.noFolder")}</span>
@@ -684,9 +709,10 @@ export default function VaultView() {
                 setNewCipher={setNewCipher}
                 folders={vault.folders()}
                 tags={vault.tags()}
-                onSave={async () => {
+                onSave={async (attachChanges) => {
                   const id = await vault.addCipher(newCipher(), t);
                   if (id) {
+                    await applyAttachmentChanges(id, attachChanges);
                     const added = await vault.getCipher(id, t);
                     if (added) {
                       setViewCipher(added); vault.setActivePane("detail");
@@ -704,10 +730,14 @@ export default function VaultView() {
                 setNewCipher={setNewCipher}
                 folders={vault.folders()}
                 tags={vault.tags()}
-                onSave={async () => {
-                  const updated = await vault.updateCipher(viewCipher().id, newCipher(), t);
+                onSave={async (attachChanges) => {
+                  const cipherId = viewCipher().id;
+                  const updated = await vault.updateCipher(cipherId, newCipher(), t);
                   if (updated) {
-                    setViewCipher(updated); vault.setActivePane("detail");
+                    const changed = await applyAttachmentChanges(cipherId, attachChanges);
+                    const fresh = changed ? await vault.getCipher(cipherId, t) : updated;
+                    setViewCipher(fresh || updated);
+                    vault.setActivePane("detail");
                   }
                 }}
                 onCancel={() => vault.setActivePane("detail")}

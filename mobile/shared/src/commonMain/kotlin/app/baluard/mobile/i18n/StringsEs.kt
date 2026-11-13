@@ -295,6 +295,11 @@ internal val ES: Map<String, String> = mapOf(
     "edit.username" to "Usuario",
     "edit.password" to "Contraseña",
     "edit.notes" to "Notas",
+    "edit.attachments" to "Adjuntos",
+    "edit.addAttachment" to "Añadir adjunto",
+    "edit.attachmentTooLarge" to "El archivo supera el límite de 1.9 MB",
+    "edit.pendingAttachment" to "Pendiente de subida",
+    "edit.removeAttachment" to "Eliminar adjunto",
     "edit.notesPlaceholder" to "Notas privadas adicionales...",
     "edit.favorite" to "Favorito",
     "edit.reprompt" to "Pedir contraseña para ver",
@@ -578,7 +583,8 @@ internal val ES: Map<String, String> = mapOf(
     "home.totp" to "TOTP",
     "home.totpRow" to "Códigos de verificación",
     "home.favorites" to "Favoritos",
-    "home.types" to "Tipos",
+    "home.types" to "Categorías",
+    "home.viewAllCategories" to "Ver todas",
     "home.folders" to "Carpetas",
     "home.tags" to "Etiquetas",
     "home.hidden" to "Elementos ocultos",
@@ -637,6 +643,9 @@ internal val ES: Map<String, String> = mapOf(
     "detail.passkey.created" to "Creado",
     "detail.passkey.missingKey" to "Este pase se importó sin su clave privada. Inicia sesión en el sitio para registrarlo de nuevo.",
     "detail.attachments" to "Adjuntos",
+    "detail.downloadAttachment" to "Descargar",
+    "detail.downloadFailed" to "Error al descargar",
+    "detail.attachmentSaved" to "Adjunto guardado",
 
     // Android autofill picker + trampoline (Phase 6). El título del prompt
     // biométrico reutiliza login.biometricTitle.

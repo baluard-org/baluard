@@ -29,13 +29,13 @@ actual fun rememberImportFilePicker(): ImportFilePicker {
         ActivityResultContracts.OpenDocument(),
     ) { uri -> pending?.invoke(uri) }
     return remember {
-        ImportFilePicker { mimeTypes, onResult ->
+        ImportFilePicker { mimeTypes, maxBytes, onResult ->
             pending = { uri ->
                 if (uri == null) {
                     onResult(null)
                 } else {
                     scope.launch {
-                        val file = withContext(Dispatchers.IO) { readFromUri(uri) }
+                        val file = withContext(Dispatchers.IO) { readFromUri(uri, maxBytes) }
                         onResult(file)
                     }
                 }
@@ -45,15 +45,12 @@ actual fun rememberImportFilePicker(): ImportFilePicker {
     }
 }
 
-private fun readFromUri(uri: Uri): PickedFile? {
+private fun readFromUri(uri: Uri, maxBytes: Long): PickedFile? {
     return try {
         val ctx = AppContextHolder.require()
         val stream = ctx.contentResolver.openInputStream(uri)
         val bytes = if (stream != null) {
             stream.use { input ->
-                // 300 MB cap, matching the desktop container limit: a huge
-                // SAF document must OOM-refuse, not OOM the app.
-                val cap = 300L * 1024 * 1024
                 val out = java.io.ByteArrayOutputStream()
                 val buf = ByteArray(64 * 1024)
                 var total = 0L
@@ -61,7 +58,17 @@ private fun readFromUri(uri: Uri): PickedFile? {
                     val n = input.read(buf)
                     if (n < 0) break
                     total += n
-                    if (total > cap) return null
+                    if (total > maxBytes) {
+                        // When a caller sets a tight cap (e.g. attachments),
+                        // stop reading early and return the over-cap prefix
+                        // so the caller can surface a size-limit error.
+                        if (maxBytes < 300L * 1024 * 1024) {
+                            val rem = (maxBytes + 1 - out.size()).toInt().coerceAtLeast(0).coerceAtMost(n)
+                            if (rem > 0) out.write(buf, 0, rem)
+                            break
+                        }
+                        return null
+                    }
                     out.write(buf, 0, n)
                 }
                 out.toByteArray()

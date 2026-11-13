@@ -992,6 +992,21 @@ internal interface UniffiLib : Library {
     `id`: RustBuffer.ByValue,
   ): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_delete(
+    `ptr`: Pointer,
+    `payload`: RustBuffer.ByValue,
+  ): Long
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_download(
+    `ptr`: Pointer,
+    `payload`: RustBuffer.ByValue,
+  ): Long
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_upload(
+    `ptr`: Pointer,
+    `payload`: RustBuffer.ByValue,
+  ): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_autofill_app_reject(
     `ptr`: Pointer,
     `package`: RustBuffer.ByValue,
@@ -1936,6 +1951,12 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_delete(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_download(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_upload(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_app_reject(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_app_trust(): Short
@@ -2334,6 +2355,15 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher() != 4306.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_delete() != 56681.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_download() != 46864.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_upload() != 17305.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_app_reject() != 56312.toShort()) {
@@ -4174,6 +4204,24 @@ public interface MobileVaultInterface {
   suspend fun `archiveCipher`(`id`: kotlin.String)
 
   /**
+   * Delete an attachment from a cipher.
+   * Payload: `{ cipher_id, attachment_id }`.
+   */
+  suspend fun `attachDelete`(`payload`: kotlin.String): kotlin.String
+
+  /**
+   * Download and decrypt an attachment from a cipher.
+   * Payload: `{ cipher_id, attachment_id }`.
+   */
+  suspend fun `attachDownload`(`payload`: kotlin.String): kotlin.String
+
+  /**
+   * Upload an attachment to a cipher.
+   * Payload: `{ cipher_id, filename, data_base64 }`.
+   */
+  suspend fun `attachUpload`(`payload`: kotlin.String): kotlin.String
+
+  /**
    * Record a user REJECTION for a (package, domain) pairing: the picker
    * never suggests the pairing again.
    */
@@ -5303,6 +5351,93 @@ open class MobileVault :
       { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
       // lift function
       { Unit },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Delete an attachment from a cipher.
+   * Payload: `{ cipher_id, attachment_id }`.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `attachDelete`(`payload`: kotlin.String): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_attach_delete(
+          thisPtr,
+          FfiConverterString.lower(`payload`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Download and decrypt an attachment from a cipher.
+   * Payload: `{ cipher_id, attachment_id }`.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `attachDownload`(`payload`: kotlin.String): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_attach_download(
+          thisPtr,
+          FfiConverterString.lower(`payload`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Upload an attachment to a cipher.
+   * Payload: `{ cipher_id, filename, data_base64 }`.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `attachUpload`(`payload`: kotlin.String): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_attach_upload(
+          thisPtr,
+          FfiConverterString.lower(`payload`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
       // Error FFI converter
       BaluardException.ErrorHandler,
     )

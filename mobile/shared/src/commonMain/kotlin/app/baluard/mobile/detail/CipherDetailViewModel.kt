@@ -165,7 +165,7 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
             }
             .orEmpty()
 
-    /** Attachment metadata under attachments: [{filename, size, ...}]. */
+    /** Attachment metadata under attachments: [{id, filename, size, ...}]. */
     private fun parseAttachments(data: JsonObject?): List<AttachmentRow> =
         (data?.get("attachments") as? kotlinx.serialization.json.JsonArray)
             ?.mapNotNull { el ->
@@ -173,11 +173,20 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
                 val filename = (o["filename"] as? JsonPrimitive)?.content
                     ?: return@mapNotNull null
                 AttachmentRow(
+                    id = (o["id"] as? JsonPrimitive)?.content.orEmpty(),
                     filename = filename,
                     sizeLabel = formatBytes((o["size"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L),
                 )
             }
             .orEmpty()
+
+    suspend fun downloadAttachment(
+        vault: MobileVault,
+        cipherId: String,
+        attachmentId: String,
+    ): Result<app.baluard.mobile.data.AttachmentDownloadResult> = runCatching {
+        repo.attachDownload(vault, cipherId, attachmentId)
+    }
 }
 
 data class DetailState(
@@ -223,8 +232,9 @@ data class PasskeyRow(
     val missingKey: Boolean,
 )
 
-/** Attachment metadata row (download lands with the mobile attachment FFI). */
+/** Attachment metadata row. */
 data class AttachmentRow(
+    val id: String = "",
     val filename: String,
     val sizeLabel: String,
 )

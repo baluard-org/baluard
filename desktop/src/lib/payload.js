@@ -97,6 +97,20 @@ export function buildAttachDownloadPayload(cipherId, attachmentId) {
 }
 
 /**
+ * Build vault.attach_upload payload.
+ */
+export function buildAttachUploadPayload(cipherId, filename, dataBase64) {
+  return { cipher_id: cipherId, filename, data_base64: dataBase64 };
+}
+
+/**
+ * Build vault.attach_delete payload.
+ */
+export function buildAttachDeletePayload(cipherId, attachmentId) {
+  return { cipher_id: cipherId, attachment_id: attachmentId };
+}
+
+/**
  * Build folder.create payload.
  */
 export function buildFolderCreatePayload(name, parentId) {

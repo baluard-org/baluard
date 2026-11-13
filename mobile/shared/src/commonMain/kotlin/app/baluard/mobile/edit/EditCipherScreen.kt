@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragHandle
@@ -35,6 +36,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
@@ -77,8 +79,10 @@ import app.baluard.mobile.data.MobileFolderInfo
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.detail.FieldSpec
 import app.baluard.mobile.detail.fieldsFor
+import app.baluard.mobile.detail.formatBytes
 import app.baluard.mobile.detail.typeLabelKey
 import app.baluard.mobile.i18n.t
+import app.baluard.mobile.platform.rememberImportFilePicker
 import app.baluard.mobile.ui.toast.Toast
 import app.baluard.mobile.ui.components.BaluardCard
 import app.baluard.mobile.ui.components.BaluardOutlinedButton
@@ -115,6 +119,8 @@ fun EditCipherScreen(
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var attachmentError by remember { mutableStateOf<String?>(null) }
+    val attachPicker = rememberImportFilePicker()
     // Password generator knobs (desktop parity: 8-64 slider + 3 toggles).
     var genLen by remember { mutableStateOf(16) }
     var genUpper by remember { mutableStateOf(true) }
@@ -469,6 +475,102 @@ fun EditCipherScreen(
                     minLines = 3,
                     enabled = !saving,
                 )
+            }
+
+            // Attachments Section
+            SectionCard(title = t("edit.attachments")) {
+                val visibleExisting = form.existingAttachments.filterNot { it.id in form.removedAttachmentIds }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    visibleExisting.forEach { att ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = att.filename,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = formatBytes(att.size),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.removeExistingAttachment(att.id) },
+                                enabled = !saving,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = t("edit.removeAttachment"),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    form.pendingAttachments.forEachIndexed { index, att ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = att.filename,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = "${formatBytes(att.bytes.size.toLong())} · ${t("edit.pendingAttachment")}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.removePendingAttachment(index) },
+                                enabled = !saving,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = t("edit.removeAttachment"),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    attachmentError?.let {
+                        Text(
+                            text = it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    AddButton(t("edit.addAttachment"), !saving) {
+                        attachmentError = null
+                        attachPicker(listOf("*/*"), EditCipherViewModel.MAX_ATTACHMENT_SIZE.toLong()) { picked ->
+                            if (picked != null) {
+                                if (!viewModel.addPendingAttachment(picked.name, picked.bytes)) {
+                                    attachmentError = t("edit.attachmentTooLarge")
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             error?.let {

@@ -9,6 +9,8 @@ import {
   buildCreatePayload,
   buildImportPayload,
   buildAttachDownloadPayload,
+  buildAttachUploadPayload,
+  buildAttachDeletePayload,
 } from "../lib/payload.js";
 
 // ── buildUris ──
@@ -286,6 +288,25 @@ describe("buildImportPayload", () => {
 describe("buildAttachDownloadPayload", () => {
   test("structure", () => {
     expect(buildAttachDownloadPayload("cipher-1", "attach-2")).toEqual({
+      cipher_id: "cipher-1",
+      attachment_id: "attach-2",
+    });
+  });
+});
+
+describe("buildAttachUploadPayload", () => {
+  test("structure", () => {
+    expect(buildAttachUploadPayload("cipher-1", "key.txt", "AQID")).toEqual({
+      cipher_id: "cipher-1",
+      filename: "key.txt",
+      data_base64: "AQID",
+    });
+  });
+});
+
+describe("buildAttachDeletePayload", () => {
+  test("structure", () => {
+    expect(buildAttachDeletePayload("cipher-1", "attach-2")).toEqual({
       cipher_id: "cipher-1",
       attachment_id: "attach-2",
     });

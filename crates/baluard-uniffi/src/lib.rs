@@ -998,6 +998,24 @@ impl MobileVault {
         Ok(self.state.delete_cipher(&id).await?)
     }
 
+    /// Upload an attachment to a cipher.
+    /// Payload: `{ cipher_id, filename, data_base64 }`.
+    pub async fn attach_upload(&self, payload: String) -> Result<String, BaluardError> {
+        Ok(self.state.attach_upload(&payload).await?)
+    }
+
+    /// Download and decrypt an attachment from a cipher.
+    /// Payload: `{ cipher_id, attachment_id }`.
+    pub async fn attach_download(&self, payload: String) -> Result<String, BaluardError> {
+        Ok(self.state.attach_download(&payload).await?)
+    }
+
+    /// Delete an attachment from a cipher.
+    /// Payload: `{ cipher_id, attachment_id }`.
+    pub async fn attach_delete(&self, payload: String) -> Result<String, BaluardError> {
+        Ok(self.state.attach_delete(&payload).await?)
+    }
+
     /// Current TOTP code for a cipher (6 digits + seconds-until-rollover).
     /// The TOTP seed NEVER crosses the FFI boundary; only the derived code.
     pub async fn totp_code(&self, id: String) -> Result<String, BaluardError> {
