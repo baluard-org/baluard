@@ -4,6 +4,8 @@ set -euo pipefail
 SRC="${1:?usage: sync-site-repos.sh <repo-out-dir> <baluard-org-dir> [packages-site]}"
 SITE="${2:?usage: sync-site-repos.sh <repo-out-dir> <baluard-org-dir> [packages-site]}"
 PKG_SITE="${3:-$(dirname "$SITE")/baluard-packages}"
+# shellcheck source=release-common.sh disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/release-common.sh"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 command -v rsync >/dev/null 2>&1 || fail "rsync is required"
 required=(
@@ -31,11 +33,8 @@ git -C "$SITE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "site is 
 
 # Packages publish straight from staging. The clone's dotfiles, the GitHub
 # workflow that deploys it, and the author-owned install definitions are
-# clone-only content the rsync must never mirror over; the CNAME binds the
-# custom domain. Anything lost here fails the sync (a silently deleted
-# deploy workflow once killed every push deploy with no error signal).
-AUTHOR_OWNED_EXCLUDED=(baluard.repo baluard.sources index.html CNAME .nojekyll .gitignore .github)
-AUTHOR_OWNED_SYNCED=(arch/baluard.conf)
+# clone-only content the rsync must never mirror over (see release-common.sh);
+# the CNAME binds the custom domain.
 excludes=()
 for f in "${AUTHOR_OWNED_EXCLUDED[@]}"; do excludes+=("--exclude=/$f"); done
 rsync -a --delete "${excludes[@]}" --exclude=.git \
@@ -46,11 +45,7 @@ rsync -a --delete --exclude=.git --exclude=.gitignore --exclude=.nojekyll \
 touch "$PKG_SITE/.nojekyll"
 [[ -s "$PKG_SITE/arch/x86_64/baluard.db" ]] || fail "package site mirror incomplete"
 [[ -s "$PKG_SITE/fdroid/repo/index-v2.json" ]] || fail "package fdroid mirror incomplete"
-for f in "${AUTHOR_OWNED_EXCLUDED[@]}" "${AUTHOR_OWNED_SYNCED[@]}"; do
-  path="$f"
-  [[ "$f" == ".github" ]] && path=".github/workflows/deploy-pages.yml"
-  [[ -e "$PKG_SITE/$path" ]] || fail "author-owned file lost in sync: $PKG_SITE/$path"
-done
+check_author_owned_files "$PKG_SITE" || fail "the sync would publish a broken package site; restore the clone files above (git -C $PKG_SITE checkout .) and investigate the exclusion list"
 
 echo "Packages synchronized into $PKG_SITE"
 echo "Review the diff, then commit and push to publish."
