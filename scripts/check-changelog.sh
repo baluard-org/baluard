@@ -27,27 +27,39 @@ if grep -q "No user-facing changes yet." <<<"$body" \
   fail "the UNRELEASED placeholder coexists with real bullets; sweep the placeholder"
 fi
 
-# Junction invariant: every heading that opens a bulleted section must sit
-# exactly one blank line above its first bullet. A cut that relocates a
-# bullets block can double the separator (the moved block carries its own
-# leading blank line) or glue the bullet to the heading, and no other
-# invariant reads separator whitespace.
+# Junction invariants, both directions of the cut splice damage: a heading
+# that opens a bulleted section must sit exactly one blank line above its
+# first content line (a relocated bullets block carries its own leading
+# blank line and doubles the separator), and every heading must open on a
+# blank line after the previous section's bullets. No other invariant
+# reads separator whitespace.
 mapfile -t lines < "$FILE"
+is_bullet() { [[ "$1" == "- "* || "$1" == "* "* ]]; }
+# Intro prose may sit above the first heading; the reverse invariant is
+# section separation, so it applies from the second heading on.
+first_heading=-1
+for i in "${!lines[@]}"; do
+  if [[ "${lines[$i]}" == "## "* ]]; then first_heading="$i"; break; fi
+done
 for i in "${!lines[@]}"; do
   [[ "${lines[$i]}" == "## "* ]] || continue
   has_bullet=0
   for (( j = i + 1; j < ${#lines[@]}; j++ )); do
     if [[ "${lines[$j]}" == "## "* ]]; then break; fi
-    if [[ "${lines[$j]}" == "- "* || "${lines[$j]}" == "* " ]]; then has_bullet=1; break; fi
+    if is_bullet "${lines[$j]}"; then has_bullet=1; break; fi
   done
-  [[ "$has_bullet" -eq 1 ]] || continue
-  next1="${lines[$((i + 1))]:-}"
-  next2="${lines[$((i + 2))]:-}"
-  if [[ -n "$next1" ]]; then
-    fail "the section '${lines[$i]}' must be followed by one blank line before its first bullet"
+  if [[ "$has_bullet" -eq 1 ]]; then
+    next1="${lines[$((i + 1))]:-}"
+    next2="${lines[$((i + 2))]:-}"
+    if [[ -n "$next1" ]]; then
+      fail "the section '${lines[$i]}' must be followed by one blank line before its first bullet"
+    fi
+    if [[ -z "$next2" ]]; then
+      fail "the section '${lines[$i]}' is separated from its bullets by more than one blank line"
+    fi
   fi
-  if [[ -z "$next2" ]]; then
-    fail "the section '${lines[$i]}' is separated from its bullets by more than one blank line"
+  if [[ "$i" -gt 0 && -n "${lines[$((i - 1))]}" && "$i" -ne "$first_heading" ]]; then
+    fail "the heading '${lines[$i]}' must open on a blank line after the previous section"
   fi
 done
 

@@ -34,6 +34,7 @@ cat >> "$TMP/good.md" <<'EOF'
 ## 0.4.6 - 2026-11-12
 
 - shipped thing
+
 ## 0.4.5 - 2026-11-10
 
 - older
@@ -92,7 +93,7 @@ cat > "$TMP/double-blank.md" <<'EOF'
 
 - shipped thing
 EOF
-expect double-blank-junction 1 "$TMP/double-blank.md" "one blank line"
+expect double-blank-junction 1 "$TMP/double-blank.md" "more than one blank line"
 
 # The inverse splice damage: the bullet glued straight onto the heading.
 cat > "$TMP/glued.md" <<'EOF'
@@ -103,10 +104,40 @@ cat > "$TMP/glued.md" <<'EOF'
 ## 0.4.6 - 2026-11-12
 - shipped thing
 EOF
-expect glued-junction 1 "$TMP/glued.md" "one blank line"
+expect glued-junction 1 "$TMP/glued.md" "must be followed"
+
+# Star bullets are bullets too: the detector must see them or the whole
+# section silently skips the junction scan.
+cat > "$TMP/star-double-blank.md" <<'EOF'
+## [UNRELEASED]
+
+- next thing
+
+## 0.4.6 - 2026-11-12
+
+
+* shipped thing
+EOF
+expect star-bullet-junction 1 "$TMP/star-double-blank.md" "more than one blank line"
+
+# The reverse splice damage: the section's last bullet glued onto the NEXT
+# heading. Every heading must open on a blank line.
+cat > "$TMP/next-heading-glued.md" <<'EOF'
+## [UNRELEASED]
+
+- next thing
+
+## 0.4.6 - 2026-11-12
+
+- shipped thing
+## 0.4.5 - 2026-11-10
+
+- older
+EOF
+expect next-heading-glued 1 "$TMP/next-heading-glued.md" "must open on a blank line"
 
 if [[ "$FAILED" -gt 0 ]]; then
   log "FAIL: $FAILED failing assertions"
   exit 1
 fi
-log "PASS (7 cases)"
+log "PASS (9 cases)"
