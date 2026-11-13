@@ -155,6 +155,84 @@ async fn list_full_returns_folders_and_archived() {
     assert!(v["archived"].is_array(), "list_all includes archived array");
 }
 
+#[tokio::test]
+async fn list_full_page_paginates_ciphers_and_keeps_metadata_on_page_zero() {
+    let (_dir, path) = make_vault("list-full-page");
+    let state = Arc::new(VaultState::new(path));
+    state.open().await.unwrap();
+    state.unlock(MASTER).await.unwrap();
+    for name in ["Alpha", "Beta", "Gamma"] {
+        state
+            .add_cipher(&serde_json::to_string(&login_input(name, "u")).unwrap())
+            .await
+            .unwrap();
+    }
+    let host = Arc::new(VaultHost::new());
+    host.insert("list-full-page".into(), state.clone()).await;
+    host.switch("list-full-page").await.unwrap();
+    let token = state.get_session_token().await.unwrap();
+
+    // Page 0: limit 2 -> 2 ciphers + folders/trash/archived/tags + has_more=true
+    let p0_req = GatewayRequest {
+        action: "vault.list_full".into(),
+        payload: r#"{"offset":0,"limit":2}"#.into(),
+        session_token: token.clone(),
+        slug: String::new(),
+        ipc_version: 1,
+    };
+    let p0_resp = route_host_request(p0_req, &host).await;
+    assert!(p0_resp.success, "p0 err: {}", p0_resp.error_message);
+    let p0: serde_json::Value = serde_json::from_str(&p0_resp.payload).unwrap();
+    assert_eq!(p0["ciphers"].as_array().unwrap().len(), 2);
+    assert_eq!(p0["total_ciphers"], 3);
+    assert_eq!(p0["has_more"], true);
+    assert_eq!(p0["next_offset"], 2);
+    assert!(p0["folders"].is_array());
+    assert!(p0["trash"].is_array());
+    assert!(p0["archived"].is_array());
+
+    // Page 1: offset 2, limit 2 -> 1 cipher + has_more=false
+    let p1_req = GatewayRequest {
+        action: "vault.list_full".into(),
+        payload: r#"{"offset":2,"limit":2}"#.into(),
+        session_token: token.clone(),
+        slug: String::new(),
+        ipc_version: 1,
+    };
+    let p1_resp = route_host_request(p1_req, &host).await;
+    assert!(p1_resp.success, "p1 err: {}", p1_resp.error_message);
+    let p1: serde_json::Value = serde_json::from_str(&p1_resp.payload).unwrap();
+    assert_eq!(p1["ciphers"].as_array().unwrap().len(), 1);
+    assert_eq!(p1["total_ciphers"], 3);
+    assert_eq!(p1["has_more"], false);
+    assert!(p1["next_offset"].is_null());
+
+    // Verify all 3 distinct names arrived across pages
+    let mut names: Vec<String> = p0["ciphers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(p1["ciphers"].as_array().unwrap().iter())
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["Alpha", "Beta", "Gamma"]);
+
+    // Out-of-bounds offset returns empty slice with has_more=false
+    let p2_req = GatewayRequest {
+        action: "vault.list_full".into(),
+        payload: r#"{"offset":10,"limit":2}"#.into(),
+        session_token: token,
+        slug: String::new(),
+        ipc_version: 1,
+    };
+    let p2_resp = route_host_request(p2_req, &host).await;
+    assert!(p2_resp.success);
+    let p2: serde_json::Value = serde_json::from_str(&p2_resp.payload).unwrap();
+    assert_eq!(p2["ciphers"].as_array().unwrap().len(), 0);
+    assert_eq!(p2["has_more"], false);
+}
+
 // ── Devices tab fleet (vault.device_activity) ─────────────────────
 
 #[tokio::test]
@@ -656,6 +734,30 @@ async fn vaults_list_full_all_merges_and_gates_on_active_token() {
     };
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success, "sibling token must be refused");
+
+    // Optional exclude_active skips active vault's envelope while keeping siblings.
+    let req = GatewayRequest {
+        action: "vaults.list_full_all".into(),
+        payload: r#"{"exclude_active":true}"#.into(),
+        session_token: token_a,
+        slug: String::new(),
+        ipc_version: 1,
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    let rows = parsed["vaults"].as_array().unwrap();
+    let row_a = rows.iter().find(|r| r["slug"] == "fullall-a").unwrap();
+    assert!(
+        row_a.get("ciphers").is_none(),
+        "exclude_active omits active vault ciphers"
+    );
+    let row_b = rows.iter().find(|r| r["slug"] == "fullall-b").unwrap();
+    assert_eq!(
+        row_b["ciphers"].as_array().unwrap().len(),
+        1,
+        "exclude_active keeps sibling unlocked vault ciphers"
+    );
 
     let _ = (dir_a, dir_b, dir_c);
 }

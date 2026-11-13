@@ -37,8 +37,9 @@ struct LinuxTrayState {
     host_offline: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
-const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
+/// Maximum response size (32MB — bounds allocation against bogus frames
+/// while leaving headroom for large multi-vault or unpaginated responses).
+const MAX_RESPONSE_SIZE: u64 = 32 * 1024 * 1024;
 
 /// Generated Protobuf types
 mod proto {

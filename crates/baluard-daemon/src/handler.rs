@@ -1005,10 +1005,19 @@ async fn route_host_request_inner(
             // active vault through vault.list_full, so nothing is
             // lost, and the exemption must NOT live in the shared
             // helper (it would leak org items into bridge.match).
+            let exclude_active = serde_json::from_str::<serde_json::Value>(&req.payload)
+                .ok()
+                .and_then(|v| v.get("exclude_active").and_then(|b| b.as_bool()))
+                .unwrap_or(false);
             let rows = merge_fanout_rows(host).await;
             let mut merged = Vec::with_capacity(rows.len());
             for row in rows {
                 let mut obj = row.meta;
+                let is_active = obj["active"].as_bool().unwrap_or(false);
+                if exclude_active && is_active {
+                    merged.push(obj);
+                    continue;
+                }
                 if let Some(state) = row.state {
                     match state.full_envelope().await {
                         Ok(env) => {
@@ -5032,10 +5041,23 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
-        "vault.list_full" => match state.list_all().await {
-            Ok(json) => ok_resp(json, token_str),
-            Err(e) => err_response(e),
-        },
+        "vault.list_full" => {
+            let page = serde_json::from_str::<serde_json::Value>(&req.payload)
+                .ok()
+                .and_then(|v| {
+                    let limit = v.get("limit").and_then(|n| n.as_u64())? as usize;
+                    let offset = v.get("offset").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+                    Some((offset, limit))
+                });
+            let res = match page {
+                Some((offset, limit)) => state.list_all_page(offset, limit).await,
+                None => state.list_all().await,
+            };
+            match res {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
 
         "vault.get" => {
             if req.payload.is_empty() {
