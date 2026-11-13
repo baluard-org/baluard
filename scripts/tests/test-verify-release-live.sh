@@ -74,17 +74,17 @@ case "$url" in
   *) exit 7 ;;
 esac
 EOF
-  # curl's exit code 7 (connection failed) becomes HTTP 000 via || echo 000.
+  # curl's exit code 7 (connection failed) becomes HTTP 000 via || true.
   chmod +x "$dir/bin/gh" "$dir/bin/curl"
+  # git init alone: no fixture revision (the sweep reads the tag, not the
+  # tree, and recording one would inherit the user's signing config).
   git -C "$dir" init -q
-  git -C "$dir" config user.email t@t && git -C "$dir" config user.name t
-  # A Cargo.toml stub so version_from_cargo reads the fixture version.
-  printf '[workspace.package]\nversion = "0.4.6"\n' > "$dir/Cargo.toml"
-  git -C "$dir" add -A && git -C "$dir" commit -qm init
   echo "$FULLSHA" > "$dir/.fixture-sha"
 }
 
 UNSET=(SUB_LATEST_TAG SUB_RUN_STATUS SUB_RUN_CONCLUSION SUB_FDROID_MODE SUB_CHANNEL_VERSION SUB_STATE)
+for _v in "${UNSET[@]}"; do eval "$_v="; done
+LAST_REPO=""
 run_case() {
   local name="$1" expect_rc="$2"; shift 2
   local repo="$TMP/$name"
@@ -97,20 +97,22 @@ run_case() {
   set +e
   ( cd "$repo" && env "${UNSET[@]/#/-u}" SUB_STATE="$repo/state" \
       FULLSHA_VALUE="$FULLSHA" \
+      BALUARD_VERIFY_SLEEP=0 \
       "${knob_args[@]}" \
       PATH="$repo/bin:$PATH" \
       bash scripts/verify-release-live.sh "$@" ) > "$repo/out.log" 2> "$repo/err.log"
   local rc=$?
   set -e
+  LAST_REPO="$repo"
   if [[ "$rc" != "$expect_rc" ]]; then
     log "FAIL $name: expected rc=$expect_rc got rc=$rc"
     head -5 "$repo/out.log" | sed 's/^/    /'; head -3 "$repo/err.log" | sed 's/^/    /'
     FAILED=$((FAILED + 1))
   fi
-  echo "$repo"
 }
 
-r=$(run_case happy 0 0.4.6 --packages-sha "$FULLSHA")
+run_case happy 0 0.4.6 --packages-sha "$FULLSHA"
+r="$LAST_REPO"
 grep -q "release-verify: .* 0 failed, 0 warned" "$r/out.log" \
   || { log "FAIL happy: not all green"; FAILED=$((FAILED + 1)); }
 grep -qF "$FULLSHA" "$r/state/gh.log" \
@@ -120,19 +122,24 @@ grep -q "PASS fdroid-versioncode" "$r/out.log" \
 PASS=$((PASS + 1))
 
 export SUB_FDROID_MODE=attr
-r=$(run_case fdroid-attr 1 0.4.6)
+run_case fdroid-attr 1 0.4.6
+r="$LAST_REPO"
 unset SUB_FDROID_MODE
 grep -q "FAIL fdroid-versioncode" "$r/out.log" \
   || { log "FAIL fdroid-attr: attribute-only index did not fail"; FAILED=$((FAILED + 1)); }
 PASS=$((PASS + 1))
 
 SUB_FDROID_MODE=missing
-r=$(run_case fdroid-missing 1 0.4.6)
+run_case fdroid-missing 1 0.4.6
+r="$LAST_REPO"
 unset SUB_FDROID_MODE
+grep -q "FAIL fdroid-versioncode" "$r/out.log" \
+  || { log "FAIL fdroid-missing: codeless index not caught"; FAILED=$((FAILED + 1)); }
 PASS=$((PASS + 1))
 
 export SUB_LATEST_TAG=0.4.5
-r=$(run_case latest-mismatch 1 0.4.6)
+run_case latest-mismatch 1 0.4.6
+r="$LAST_REPO"
 unset SUB_LATEST_TAG
 grep -q "FAIL releases/latest" "$r/out.log" \
   || { log "FAIL latest-mismatch: no latest failure"; FAILED=$((FAILED + 1)); }
@@ -141,12 +148,16 @@ PASS=$((PASS + 1))
 # --latest pins the expectation for prerelease cuts; the channel still reads
 # the cut tag.
 export SUB_LATEST_TAG=0.4.5
-r=$(run_case latest-pinned 0 0.4.6 --latest 0.4.5)
+run_case latest-pinned 0 0.4.6 --latest 0.4.5 --packages-sha "$FULLSHA"
+r="$LAST_REPO"
 unset SUB_LATEST_TAG
+grep -q "PASS releases/latest" "$r/out.log" \
+  || { log "FAIL latest-pinned: pinned expectation did not pass"; FAILED=$((FAILED + 1)); }
 PASS=$((PASS + 1))
 
 export SUB_FDROID_MODE=attr
-r=$(run_case report-mode 0 0.4.6 --report)
+run_case report-mode 0 0.4.6 --report
+r="$LAST_REPO"
 unset SUB_FDROID_MODE
 grep -q "FAIL fdroid-versioncode" "$r/out.log" \
   || { log "FAIL report-mode: failures not reported"; FAILED=$((FAILED + 1)); }
@@ -154,13 +165,19 @@ grep -q "exiting 0 despite failures" "$r/out.log" \
   || { log "FAIL report-mode: no report exit note"; FAILED=$((FAILED + 1)); }
 PASS=$((PASS + 1))
 
-r=$(run_case no-sha-warn 0 0.4.6)
-grep -q "WARN packages-deploy" "$r/out.log" \
-  || { log "FAIL no-sha-warn: missing packages-sha did not warn"; FAILED=$((FAILED + 1)); }
+run_case no-sha-gate 1 0.4.6
+grep -q "FAIL packages-deploy" "$LAST_REPO/out.log" \
+  || { log "FAIL no-sha-gate: gate mode did not refuse a missing SHA"; FAILED=$((FAILED + 1)); }
+PASS=$((PASS + 1))
+
+run_case no-sha-report 0 0.4.6 --report
+grep -q "WARN packages-deploy" "$LAST_REPO/out.log" \
+  || { log "FAIL no-sha-report: report mode lost its WARN"; FAILED=$((FAILED + 1)); }
 PASS=$((PASS + 1))
 
 export SUB_CHANNEL_VERSION=0.4.5
-r=$(run_case channel-stale 1 0.4.6)
+run_case channel-stale 1 0.4.6
+r="$LAST_REPO"
 unset SUB_CHANNEL_VERSION
 grep -q "FAIL updates-channel" "$r/out.log" \
   || { log "FAIL channel-stale: stale channel not caught"; FAILED=$((FAILED + 1)); }

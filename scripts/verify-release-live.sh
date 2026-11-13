@@ -27,12 +27,21 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$TAG" ]] || { echo "usage: $0 <tag> [--report] [--latest X] [--packages-sha <full-sha>]" >&2; exit 1; }
 [[ -n "$EXPECTED_LATEST" ]] || EXPECTED_LATEST="$TAG"
+[[ -z "$PACKAGES_SHA" || "$PACKAGES_SHA" =~ ^[0-9a-f]{40}$ ]] \
+  || { echo "ERROR: --packages-sha wants a full 40-char commit SHA" >&2; exit 1; }
 cd "$ROOT"
+command -v gh >/dev/null 2>&1 || { echo "ERROR: gh is required" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required" >&2; exit 1; }
+command -v curl >/dev/null 2>&1 || { echo "ERROR: curl is required" >&2; exit 1; }
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo baluard-org/baluard)"
 CHANNEL="updates-stable"
 [[ "$TAG" == *-* ]] && CHANNEL="updates-beta"
-VERSION="$(version_from_cargo "$ROOT")"
+# The tag is the source of truth: a checkout mid-bump must still verify the
+# cut version's artifacts.
+VERSION="${TAG%%-*}"
 VCODE="$(version_code "$VERSION")"
+VERIFY_TRIES="${BALUARD_VERIFY_TRIES:-3}"
+VERIFY_SLEEP="${BALUARD_VERIFY_SLEEP:-5}"
 
 PASS=0; FAIL=0; WARN=0; FAILED_NAMES=()
 check() {  # check <name> <ok-result> <detail>
@@ -44,48 +53,100 @@ check() {  # check <name> <ok-result> <detail>
     echo "FAIL $1 ($3)"; FAIL=$((FAIL + 1)); FAILED_NAMES+=("$1")
   fi
 }
-http_code() { curl -s -o /dev/null -w '%{http_code}' -L "$1" 2>/dev/null || echo 000; }
+# A range probe keeps the sweep from downloading whole release assets;
+# GitHub's asset redirects serve 206 for ranges (200 when they do not).
+http_code() { curl -s -o /dev/null -w '%{http_code}' -L -r 0-0 --max-time 20 "$1" 2>/dev/null || true; }
+# shellcheck disable=SC2329  # invoked via retry_ok
+asset_ok() { local c; c="$(http_code "$1")"; [[ "$c" == 200 || "$c" == 206 ]]; }
+
+# A bounded retry so a verdict is stable right after a publish: CDN and
+# Pages propagation lag single-shot probes.
+retry_ok() {  # retry_ok <probe-fn> <args...>
+  local i
+  for i in $(seq 1 "$VERIFY_TRIES"); do
+    "$@" && return 0
+    [[ "$i" -lt "$VERIFY_TRIES" ]] && sleep "$VERIFY_SLEEP"
+  done
+  return 1
+}
 
 # 1. releases/latest resolves to the expected tag (prerelease cuts keep the
 #    previous latest; pass --latest to pin the expectation).
 got="$(gh api "repos/$REPO/releases/latest" -q .tag_name 2>/dev/null || echo unreachable)"
 if [[ "$got" == "$EXPECTED_LATEST" ]]; then check "releases/latest" ok; else check "releases/latest" fail "got $got, expected $EXPECTED_LATEST"; fi
 
-# 2. Twelve stable-name tag-scoped assets answer 200.
+# 2. Twelve stable-name tag-scoped assets answer 200 (range probes).
 for n in "${STABLE_ASSETS[@]}"; do
-  code="$(http_code "https://github.com/$REPO/releases/download/$TAG/$n")"
-  if [[ "$code" == 200 ]]; then check "asset/$n" ok; else check "asset/$n" fail "HTTP $code"; fi
+  if retry_ok asset_ok "https://github.com/$REPO/releases/download/$TAG/$n"; then
+    check "asset/$n" ok
+  else
+    check "asset/$n" fail "HTTP $(http_code "https://github.com/$REPO/releases/download/$TAG/$n")"
+  fi
 done
 
 # 3. The packages-site deploy for the republish SHA landed. GitHub evaluates
 #    --commit against the full head SHA; a short prefix matches nothing.
+#    A still-running deploy is retried, not failed outright.
+# shellcheck disable=SC2329  # invoked via retry_ok
+deploy_ok() {
+  local run_json st cc
+  run_json="$(gh run list --repo baluard-org/baluard-packages --workflow deploy-pages.yml \
+      --commit "$PACKAGES_SHA" --limit 1 --json status,conclusion 2>/dev/null || echo '[]')"
+  st="$(jq -r '.[0].status // "none"' <<<"$run_json" 2>/dev/null || echo none)"
+  cc="$(jq -r '.[0].conclusion // "none"' <<<"$run_json" 2>/dev/null || echo none)"
+  [[ "$st" == completed && "$cc" == success ]]
+}
+deploy_detail() {
+  local run_json st cc
+  run_json="$(gh run list --repo baluard-org/baluard-packages --workflow deploy-pages.yml \
+      --commit "$PACKAGES_SHA" --limit 1 --json status,conclusion 2>/dev/null || echo '[]')"
+  st="$(jq -r '.[0].status // "none"' <<<"$run_json" 2>/dev/null || echo none)"
+  cc="$(jq -r '.[0].conclusion // "none"' <<<"$run_json" 2>/dev/null || echo none)"
+  echo "status=$st conclusion=$cc"
+}
 if [[ -n "$PACKAGES_SHA" ]]; then
-  run_json="$(gh run list --repo baluard-org/baluard-packages --commit "$PACKAGES_SHA" --limit 1 --json status,conclusion 2>/dev/null || echo '[]')"
-  st="$(jq -r '.[0].status // "none"' <<<"$run_json")"
-  cc="$(jq -r '.[0].conclusion // "none"' <<<"$run_json")"
-  if [[ "$st" == completed && "$cc" == success ]]; then check "packages-deploy" ok; else check "packages-deploy" fail "status=$st conclusion=$cc"; fi
-else
+  if retry_ok deploy_ok; then check "packages-deploy" ok
+  else check "packages-deploy" fail "$(deploy_detail)"; fi
+elif $REPORT; then
   check "packages-deploy" warn "pass --packages-sha <republish-sha> to check the deploy run"
+else
+  check "packages-deploy" fail "the deploy run is not gated without --packages-sha <republish-sha>"
 fi
 
 # 4. F-Droid index carries the new versionCode as a CHILD ELEMENT (the
 #    attribute form reads nothing).
-fdroid="$(curl -sfL "https://packages.baluard.app/fdroid/repo/index.xml" 2>/dev/null || true)"
-if grep -q "<versioncode>$VCODE</versioncode>" <<<"$fdroid"; then
+# shellcheck disable=SC2329  # invoked via retry_ok
+fdroid_ok() {
+  fdroid="$(curl -sfL "https://packages.baluard.app/fdroid/repo/index.xml" 2>/dev/null || true)"
+  grep -q "<versioncode>$VCODE</versioncode>" <<<"$fdroid"
+}
+if retry_ok fdroid_ok; then
   check "fdroid-versioncode" ok
 else
   check "fdroid-versioncode" fail "served index lacks versioncode $VCODE"
 fi
 
 # 5. apt InRelease and the PascalCase pool deb answer 200.
-code="$(http_code "https://packages.baluard.app/dists/stable/InRelease")"
-if [[ "$code" == 200 ]]; then check "apt-InRelease" ok; else check "apt-InRelease" fail "HTTP $code"; fi
-code="$(http_code "https://packages.baluard.app/pool/main/b/baluard/Baluard_${VERSION}_amd64.deb")"
-if [[ "$code" == 200 ]]; then check "pool-deb" ok; else check "pool-deb" fail "HTTP $code"; fi
+if retry_ok asset_ok "https://packages.baluard.app/dists/stable/InRelease"; then
+  check "apt-InRelease" ok
+else
+  check "apt-InRelease" fail "HTTP $(http_code "https://packages.baluard.app/dists/stable/InRelease")"
+fi
+if retry_ok asset_ok "https://packages.baluard.app/pool/main/b/baluard/Baluard_${VERSION}_amd64.deb"; then
+  check "pool-deb" ok
+else
+  check "pool-deb" fail "HTTP $(http_code "https://packages.baluard.app/pool/main/b/baluard/Baluard_${VERSION}_amd64.deb")"
+fi
 
 # 6. The updates channel serves this release's manifest version.
-served="$(served_manifest_version "$REPO" "$CHANNEL")"
-if [[ "$served" == "$TAG" ]]; then check "updates-channel" ok; else check "updates-channel" fail "served ${served:-nothing}, expected $TAG"; fi
+# shellcheck disable=SC2329  # invoked via retry_ok
+channel_ok() { [[ "$(served_manifest_version "$REPO" "$CHANNEL")" == "$TAG" ]]; }
+if retry_ok channel_ok; then
+  check "updates-channel" ok
+else
+  served="$(served_manifest_version "$REPO" "$CHANNEL")"
+  check "updates-channel" fail "served ${served:-nothing}, expected $TAG"
+fi
 
 # 7. The author-owned package-site content survived (re-check without a sync).
 owned_err="$(check_author_owned_files "${BALUARD_PACKAGES_SITE:-$ROOT/../baluard-packages}" 2>&1 || true)"
