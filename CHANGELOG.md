@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+## 0.5.1 - 2026-11-13
+
 - Desktop: the generate-password button now shows the same password icon as the mobile app.
 
 ## 0.5.0 - 2026-11-13
