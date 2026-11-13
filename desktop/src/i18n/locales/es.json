@@ -439,7 +439,9 @@
     "runInBackgroundEnabled": "Baluard sigue ejecutándose al cerrar la ventana",
     "runInBackgroundDisabled": "Baluard ahora se cierra al cerrar la ventana",
     "switchToLight": "Cambiar al tema claro",
-    "switchToDark": "Cambiar al tema oscuro"
+    "switchToDark": "Cambiar al tema oscuro",
+    "tabAbout": "Acerca de",
+    "aboutSubtitle": "Gestor de contraseñas nativo git • GPL-3.0"
   },
   "sync": {
     "title": "Sincronización de bóveda",

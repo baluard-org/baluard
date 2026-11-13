@@ -480,7 +480,9 @@
     "runInBackgroundEnabled": "O Baluard continua executando ao fechar a janela",
     "runInBackgroundDisabled": "O Baluard agora é encerrado ao fechar a janela",
     "switchToLight": "Mudar para o tema claro",
-    "switchToDark": "Mudar para o tema escuro"
+    "switchToDark": "Mudar para o tema escuro",
+    "tabAbout": "Sobre",
+    "aboutSubtitle": "Gerenciador de senhas com git nativo e criptografia ponta a ponta."
   },
   "sync": {
     "title": "Sincronização do Cofre",
