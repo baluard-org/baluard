@@ -6,6 +6,7 @@ Notable user-facing changes per release.
 
 - The sync status dot now sits in the window's top-right corner on Windows and Linux, matching macOS, instead of hanging below the header row.
 - Clicking sync now shows Syncing in the corner dot while it runs and returns to the green up-to-date mark when it finishes, instead of getting stuck on Changes pending.
+- The tag field in the entry editor now shows the same rounded focus border as every other field instead of a sharp box around the input.
 - Focusing the vault search no longer draws a second, sharp-cornered box around the input; the rounded border around the whole field (magnifier included) is the single highlight.
 
 ## 0.4.6 - 2026-11-12

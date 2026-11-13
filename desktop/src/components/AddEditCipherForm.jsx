@@ -460,7 +460,7 @@ export default function AddEditCipherForm(props) {
           {/* Tags */}
           <div>
             <label class={FIELD_LABEL}>{t("entry.tags")}</label>
-            <div class="flex flex-wrap gap-1.5 p-2 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] min-h-[46px]">
+            <div class="vault-tags flex flex-wrap gap-1.5 p-2 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] min-h-[46px] transition-all focus-within:border-[var(--color-primary)]">
               <For each={newCipher().tags || []}>
                 {tag => (
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20 motion-fade">

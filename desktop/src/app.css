@@ -234,7 +234,8 @@
 /* The vault search wrapper's focus-within border is the single focus
    indicator for that field (it covers the magnifier too); the global
    outline would draw a second, sharp-cornered box around just the input. */
-.vault-search input:focus-visible {
+.vault-search input:focus-visible,
+.vault-tags input:focus-visible {
   outline: none !important;
 }
 
