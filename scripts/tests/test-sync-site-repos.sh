@@ -9,10 +9,12 @@ SITE="$TMP/baluard-org"
 PKG_SITE="$TMP/baluard-packages"
 
 mkdir -p "$SRC/dists/stable" "$SRC/rpms/repodata" "$SRC/fdroid/repo" "$SRC/arch/x86_64" "$PKG_SITE/arch/x86_64" "$PKG_SITE/dists" "$PKG_SITE/fdroid/repo" "$PKG_SITE/.github/workflows" "$SITE"
-printf 'keep-dotfile
-' > "$PKG_SITE/.gitignore"
 printf 'deploy-marker
 ' > "$PKG_SITE/.github/workflows/deploy-pages.yml"
+printf 'keep-dotfile
+' > "$PKG_SITE/.gitignore"
+printf 'cname
+' > "$PKG_SITE/CNAME"
 printf 'release
 ' > "$SRC/dists/stable/InRelease"
 printf 'rpm
@@ -31,6 +33,8 @@ printf 'key
 ' > "$SRC/baluard-release.asc"
 printf 'archdb
 ' > "$SRC/arch/x86_64/baluard.db"
+printf 'conf
+' > "$SRC/arch/baluard.conf"
 printf 'archdbsig
 ' > "$SRC/arch/x86_64/baluard.db.sig"
 touch "$SRC/.nojekyll"
@@ -75,6 +79,8 @@ test "$(cat "$PKG_SITE/index.html")" = landing
 test "$(cat "$PKG_SITE/.gitignore")" = keep-dotfile
 test -f "$PKG_SITE/.nojekyll"
 test "$(cat "$PKG_SITE/.github/workflows/deploy-pages.yml")" = deploy-marker
+test "$(cat "$PKG_SITE/CNAME")" = cname
+test "$(cat "$PKG_SITE/arch/baluard.conf")" = conf
 # F-Droid project site: same contract.
 test "$(cat "$PKG_SITE/fdroid/repo/index-v2.json")" = fdroid
 test "$(cat "$PKG_SITE/fdroid/repo/entry.jar")" = entry
@@ -82,6 +88,18 @@ test "$(cat "$PKG_SITE/fdroid/repo/app.baluard.mobile_1.apk")" = apk
 test ! -e "$PKG_SITE/fdroid/repo/stale.apk"
 test "$(cat "$PKG_SITE/.gitignore")" = keep-dotfile
 test -f "$PKG_SITE/.nojekyll"
+
+# Negative: a lost author-owned file must fail the sync. The deploy workflow
+# is excluded from the rsync, so once it is gone the sync cannot restore it
+# and the post-sync gate is the only defense (the 0.3.0 outage class).
+rm "$PKG_SITE/.github/workflows/deploy-pages.yml"
+if "$ROOT/scripts/sync-site-repos.sh" "$SRC" "$SITE" "$PKG_SITE" 2> "$TMP/neg.err"; then
+  echo 'expected a lost author-owned file to fail the sync' >&2
+  exit 1
+fi
+grep -q "author-owned file lost" "$TMP/neg.err" \
+  || { echo 'negative case lacked the author-owned diagnosis' >&2; exit 1; }
+test -f "$PKG_SITE/baluard.repo"   # the refusal left the rest intact
 
 rm -rf "$PKG_SITE"
 if "$ROOT/scripts/sync-site-repos.sh" "$SRC" "$SITE" 2>/dev/null; then
