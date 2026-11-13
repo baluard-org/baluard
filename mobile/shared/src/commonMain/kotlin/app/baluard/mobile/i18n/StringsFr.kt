@@ -610,7 +610,7 @@ internal val FR: Map<String, String> = mapOf(
     "settings.active" to "Actif",
     "settings.idle" to "Inactif",
     "settings.aboutTitle" to "À propos de Baluard",
-    "settings.version" to "Baluard Mobile v0.4.6",
+    "settings.version" to "Baluard Mobile v0.5.0",
     "settings.aboutSubtitle" to "Gestionnaire de mots de passe souverain, chiffré de bout en bout et sans serveur centralisé.",
     "conflict.title" to "Conflit de synchronisation",
     "conflict.body" to "« {0} » a été modifié sur deux appareils. Choisissez la version à conserver.",
