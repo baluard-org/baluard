@@ -21,9 +21,12 @@ import { daemon } from "../lib/daemon.js";
 //
 // Phase flow (user activity):
 //   waiting  — armed immediately on CRUD (before the daemon even debounces)
-//   syncing  — polled state catches the push in flight
-//   synced   — polled state returns to idle; shown for 10s, then fades out
-//   offline  — polled state offline; shown persistently
+//   syncing  — polled state catches the push in flight (or a manual run starts)
+//   synced   — polled state returns to idle, or a manual run reports success;
+//              shown for 10s, then fades out
+//   offline  — polled state offline, or a manual run failed; shown persistently
+//
+// Manual syncs never rely on the poll: see syncPhase below.
 // Background sync (initial unlock pull, periodic 30-min idle pulls) never arms the
 // local phase, so the top-right stays empty at rest.
 export default function AutoSyncIndicator() {
@@ -56,6 +59,28 @@ export default function AutoSyncIndicator() {
     armed = true;
     clearHide();
     setLocalPhase("waiting");
+  }
+
+  // Manual syncs (toolbar button, native menu) report their own completion:
+  // a manual run with nothing pending leaves the runtime state at "idle",
+  // the polled value never changes, and poll-driven reconciliation would
+  // never advance the phase. "start" shows the honest "Syncing" state;
+  // "success" announces up-to-date and disarms; "failure" shows offline but
+  // stays armed so a later polled transition still heals the dot.
+  function syncPhase(phase) {
+    if (phase === "start") {
+      armed = true;
+      clearHide();
+      setLocalPhase("syncing");
+    } else if (phase === "success") {
+      armed = false;
+      clearHide();
+      setLocalPhase("synced");
+      hideTimer = setTimeout(() => setLocalPhase(null), 10_000);
+    } else if (phase === "failure") {
+      clearHide();
+      setLocalPhase("offline");
+    }
   }
 
   // Polled state reconciles the armed cycle forward. Non-armed background
@@ -120,15 +145,13 @@ export default function AutoSyncIndicator() {
   async function manualSync() {
     if (!canManualSync()) return;
     lastManualSync = Date.now();
-    armed = true;
-    clearHide();
-    setLocalPhase("waiting");
+    syncPhase("start");
     try {
       await daemon("sync.pull");
       await daemon("sync.push");
+      syncPhase("success");
     } catch {
-      // The next status poll surfaces offline/failure through the dot; the
-      // armed flag resets there so the cycle does not stick.
+      syncPhase("failure");
     }
   }
 
@@ -136,8 +159,13 @@ export default function AutoSyncIndicator() {
     const handleMenuSync = () => {
       void manualSync();
     };
+    const handleManualPhase = (e) => syncPhase(e.detail);
     window.addEventListener("baluard:sync-vault", handleMenuSync);
-    return () => window.removeEventListener("baluard:sync-vault", handleMenuSync);
+    window.addEventListener("baluard:manual-sync", handleManualPhase);
+    return () => {
+      window.removeEventListener("baluard:sync-vault", handleMenuSync);
+      window.removeEventListener("baluard:manual-sync", handleManualPhase);
+    };
   });
 
   // Dot color: phase-driven while a cycle is active, else idle emerald.
