@@ -35,6 +35,18 @@ git -C "$SITE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "site is 
 # workflow that deploys it, and the author-owned install definitions are
 # clone-only content the rsync must never mirror over (see release-common.sh);
 # the CNAME binds the custom domain.
+# Excluded files are never touched by the mirror, so a pre-existing loss
+# is refused before any mutation; the post-sync gate still re-checks both
+# classes in case the exclusion list itself ever regresses.
+pre_rc=0
+for f in "${AUTHOR_OWNED_EXCLUDED[@]}"; do
+  # .nojekyll is created by this script after the mirror, so its absence in
+  # a fresh clone is not a loss.
+  [[ "$f" == ".nojekyll" ]] && continue
+  path="$f"; [[ "$f" == ".github" ]] && path=".github/workflows/deploy-pages.yml"
+  [[ -e "$PKG_SITE/$path" ]] || { echo "author-owned file lost in sync: $PKG_SITE/$path" >&2; pre_rc=1; }
+done
+[[ "$pre_rc" -eq 0 ]] || fail "clone is missing author-owned files before the sync; restore with git -C $PKG_SITE checkout -- <the paths above>"
 excludes=()
 for f in "${AUTHOR_OWNED_EXCLUDED[@]}"; do excludes+=("--exclude=/$f"); done
 rsync -a --delete "${excludes[@]}" --exclude=.git \
@@ -45,7 +57,7 @@ rsync -a --delete --exclude=.git --exclude=.gitignore --exclude=.nojekyll \
 touch "$PKG_SITE/.nojekyll"
 [[ -s "$PKG_SITE/arch/x86_64/baluard.db" ]] || fail "package site mirror incomplete"
 [[ -s "$PKG_SITE/fdroid/repo/index-v2.json" ]] || fail "package fdroid mirror incomplete"
-check_author_owned_files "$PKG_SITE" || fail "the sync would publish a broken package site; restore the clone files above (git -C $PKG_SITE checkout .) and investigate the exclusion list"
+check_author_owned_files "$PKG_SITE" || fail "the sync would publish a broken package site; restore the clone files above (git -C $PKG_SITE checkout -- <paths>) and investigate the exclusion list"
 
 echo "Packages synchronized into $PKG_SITE"
 echo "Review the diff, then commit and push to publish."
