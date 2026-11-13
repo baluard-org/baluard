@@ -349,12 +349,15 @@ input:not([type="checkbox"]):not([type="radio"]), textarea {
 }
 
 @keyframes motionDropdown {
-  from { opacity: 0; transform: translateY(-4px) scale(0.99); }
+  from { opacity: 0; transform: translateY(-10px) scale(0.94); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .motion-dropdown {
   transform-origin: top;
-  animation: motionDropdown var(--motion-duration-fast) var(--motion-ease-emphasized) both;
+  animation: motionDropdown var(--motion-duration-normal) var(--motion-ease-emphasized) both;
+}
+.motion-dropdown-right {
+  transform-origin: top right;
 }
 
 @keyframes motionModal {
@@ -371,6 +374,14 @@ input:not([type="checkbox"]):not([type="radio"]), textarea {
 }
 .motion-fade-up {
   animation: motionFadeUp var(--motion-duration-slow) var(--motion-ease-emphasized) both;
+}
+
+@keyframes motionListEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.motion-list-enter {
+  animation: motionListEnter 180ms var(--motion-ease-emphasized) both;
 }
 
 /* Custom premium select styling */
@@ -484,6 +495,7 @@ select option {
   .motion-dropdown,
   .motion-modal,
   .motion-fade-up,
+  .motion-list-enter,
   .vault-enter,
   .toast-enter,
   .animate-conflict-panel,

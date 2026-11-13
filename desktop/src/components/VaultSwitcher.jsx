@@ -226,7 +226,7 @@ export default function VaultSwitcher(props) {
         <div
           role="listbox"
           aria-label={t("vault.vaultSwitcher.listLabel")}
-          class="absolute left-0 z-50 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto top-full mt-1 w-full"
+          class="motion-dropdown absolute left-0 z-50 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto top-full mt-1 w-full"
         >
           <For each={switcher.vaults()}>
             {(row, index) => (
