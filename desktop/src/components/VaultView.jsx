@@ -14,7 +14,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
 import AskAccessModal from "./AskAccessModal.jsx";
 import OpenSharedModal from "./OpenSharedModal.jsx";
-import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconSwitch, IconBaluardLogo, IconUsers, IconClock } from "./Icon.jsx";
+import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconPassword, IconInbox, IconSwitch, IconBaluardLogo, IconUsers, IconClock } from "./Icon.jsx";
 import ConflictBanner from "./ConflictBanner.jsx";
 import LegacyBanner from "./LegacyBanner.jsx";
 import RemovalBanner from "./RemovalBanner.jsx";
@@ -545,7 +545,7 @@ export default function VaultView() {
                 class="p-2 rounded-xl bg-[var(--color-sidebar)] hover:bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-sm transition-all cursor-pointer"
                 title={t("generator.title")}
               >
-                <IconBolt class="w-4 h-4" />
+                <IconPassword class="w-4 h-4" />
               </button>
             </Show>
             <Show when={vault.selectedCategory() === "Trash"} fallback={

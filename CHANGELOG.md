@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Desktop: the generate-password button now shows the same password icon as the mobile app.
+
 ## 0.5.0 - 2026-11-13
 
 - The sync status dot now sits in the window's top-right corner on Windows and Linux, matching macOS, instead of hanging below the header row.
