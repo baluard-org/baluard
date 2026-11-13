@@ -1279,10 +1279,25 @@ impl VaultState {
         serde_json::to_string(&result).map_err(|e| format!("Serialization: {e}"))
     }
 
+    /// Paginated variant of `list_all` for large vaults so each IPC frame
+    /// stays bounded. Page 0 (`offset == 0`) carries folders, trash, archived,
+    /// and tags; subsequent pages carry only the next slice of `ciphers`.
+    pub async fn list_all_page(&self, offset: usize, limit: usize) -> Result<String, String> {
+        let result = self.full_envelope_range(Some((offset, limit))).await?;
+        serde_json::to_string(&result).map_err(|e| format!("Serialization: {e}"))
+    }
+
     /// The `vault.list_full` payload as a structured Value. Shared by the
     /// single-vault route and the merged multi-vault `vaults.list_full_all`
     /// host route (S2-5).
     pub async fn full_envelope(&self) -> Result<serde_json::Value, String> {
+        self.full_envelope_range(None).await
+    }
+
+    async fn full_envelope_range(
+        &self,
+        page: Option<(usize, usize)>,
+    ) -> Result<serde_json::Value, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
 
@@ -1290,8 +1305,14 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
 
+        let include_meta_lists = page.map(|(offset, _)| offset == 0).unwrap_or(true);
+
         // Folders
-        let folders = handle.list_folders().map_err(|e| format!("{e}"))?;
+        let folders = if include_meta_lists {
+            handle.list_folders().map_err(|e| format!("{e}"))?
+        } else {
+            Vec::new()
+        };
 
         // Main ciphers (excludes archived). The unreadable count covers
         // entries this build cannot decrypt (newer kind, foreign epoch,
@@ -1300,8 +1321,21 @@ impl VaultState {
         let (metas, unreadable) = handle
             .list_cipher_meta_full_with_skipped()
             .map_err(|e| format!("{e}"))?;
-        let mut ciphers = Vec::with_capacity(metas.len());
-        for meta in &metas {
+        let total_ciphers = metas.len();
+        let (slice, has_more, next_offset) = match page {
+            Some((offset, limit)) => {
+                if offset >= total_ciphers || limit == 0 {
+                    (&metas[0..0], false, None)
+                } else {
+                    let end = offset.saturating_add(limit).min(total_ciphers);
+                    let more = end < total_ciphers;
+                    (&metas[offset..end], more, more.then_some(end))
+                }
+            }
+            None => (metas.as_slice(), false, None),
+        };
+        let mut ciphers = Vec::with_capacity(slice.len());
+        for meta in slice {
             match handle.get_cipher(meta.id) {
                 Ok(CipherRead::Decrypted(ref c)) => {
                     let mut json = cipher_to_json(c);
@@ -1319,64 +1353,75 @@ impl VaultState {
             }
         }
 
-        // Trash
-        let trash_entries = handle.list_trash_entries().map_err(|e| format!("{e}"))?;
-        let mut trash = Vec::with_capacity(trash_entries.len());
-        for (id, collection_id) in &trash_entries {
-            match handle.get_cipher(*id) {
-                Ok(CipherRead::Decrypted(ref c)) => {
-                    let mut json = cipher_to_json(c);
-                    let username = match &c.kind {
-                        baluard_core::types::CipherKind::Login(data) => data.username.clone(),
-                        _ => None,
-                    };
-                    json["_meta"] = serde_json::json!({
-                        "id": id.to_string(),
-                        "name": c.name,
-                        "cipher_type": c.kind.cipher_type(),
-                        "favorite": c.favorite,
-                        "username": username,
-                        "collection_id": collection_id,
-                    });
-                    trash.push(json);
+        // Trash & Archived (page 0 or unpaginated only)
+        let mut trash = Vec::new();
+        let mut archived = Vec::new();
+        let tags = if include_meta_lists {
+            let trash_entries = handle.list_trash_entries().map_err(|e| format!("{e}"))?;
+            trash.reserve(trash_entries.len());
+            for (id, collection_id) in &trash_entries {
+                match handle.get_cipher(*id) {
+                    Ok(CipherRead::Decrypted(ref c)) => {
+                        let mut json = cipher_to_json(c);
+                        let username = match &c.kind {
+                            baluard_core::types::CipherKind::Login(data) => data.username.clone(),
+                            _ => None,
+                        };
+                        json["_meta"] = serde_json::json!({
+                            "id": id.to_string(),
+                            "name": c.name,
+                            "cipher_type": c.kind.cipher_type(),
+                            "favorite": c.favorite,
+                            "username": username,
+                            "collection_id": collection_id,
+                        });
+                        trash.push(json);
+                    }
+                    _ => continue,
                 }
-                _ => continue,
             }
-        }
 
-        // Archived
-        let archived_metas = handle.list_archived_meta().map_err(|e| format!("{e}"))?;
-        let mut archived = Vec::with_capacity(archived_metas.len());
-        for meta in &archived_metas {
-            match handle.get_cipher(meta.id) {
-                Ok(CipherRead::Decrypted(ref c)) => {
-                    let mut json = cipher_to_json(c);
-                    json["_meta"] = serde_json::json!({
-                        "id": meta.id.to_string(),
-                        "name": meta.name,
-                        "cipher_type": meta.cipher_type,
-                        "favorite": meta.favorite,
-                        "username": meta.username,
-                        "collection_id": meta.collection_id,
-                    });
-                    archived.push(json);
+            let archived_metas = handle.list_archived_meta().map_err(|e| format!("{e}"))?;
+            archived.reserve(archived_metas.len());
+            for meta in &archived_metas {
+                match handle.get_cipher(meta.id) {
+                    Ok(CipherRead::Decrypted(ref c)) => {
+                        let mut json = cipher_to_json(c);
+                        json["_meta"] = serde_json::json!({
+                            "id": meta.id.to_string(),
+                            "name": meta.name,
+                            "cipher_type": meta.cipher_type,
+                            "favorite": meta.favorite,
+                            "username": meta.username,
+                            "collection_id": meta.collection_id,
+                        });
+                        archived.push(json);
+                    }
+                    _ => continue,
                 }
-                _ => continue,
             }
-        }
 
-        // Rebuild tag index from decrypted cipher data
-        let _ = handle.rebuild_tag_index();
-        let tags = handle.list_tags().unwrap_or_default();
+            // Rebuild tag index from decrypted cipher data
+            let _ = handle.rebuild_tag_index();
+            handle.list_tags().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
 
-        Ok(serde_json::json!({
+        let mut env = serde_json::json!({
             "ciphers": ciphers,
             "folders": folders,
             "trash": trash,
             "archived": archived,
             "tags": tags,
             "unreadable": unreadable,
-        }))
+        });
+        if page.is_some() {
+            env["total_ciphers"] = serde_json::json!(total_ciphers);
+            env["has_more"] = serde_json::json!(has_more);
+            env["next_offset"] = serde_json::json!(next_offset);
+        }
+        Ok(env)
     }
 
     /// Autofill credential query (Phase 6, plan D1/D2/D4).

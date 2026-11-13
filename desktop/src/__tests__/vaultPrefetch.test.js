@@ -14,15 +14,19 @@ vi.mock("../lib/daemon.js", () => ({
 }));
 
 import { daemon } from "../lib/daemon.js";
-import { startVaultPrefetch, consumeVaultPrefetch } from "../lib/vaultPrefetch.js";
+import {
+  fetchVaultFull,
+  startVaultPrefetch,
+  consumeVaultPrefetch,
+} from "../lib/vaultPrefetch.js";
 
 describe("vaultPrefetch", () => {
   beforeEach(() => {
     vi.mocked(daemon).mockReset();
   });
 
-  it("start fires vault.list_full and consume returns the parsed promise", async () => {
-    const parsed = { ciphers: [], folders: [] };
+  it("start fires paginated vault.list_full and consume returns the parsed promise", async () => {
+    const parsed = { ciphers: [], folders: [], has_more: false };
     vi.mocked(daemon).mockResolvedValue(JSON.stringify(parsed));
 
     startVaultPrefetch();
@@ -30,7 +34,56 @@ describe("vaultPrefetch", () => {
     expect(promise).not.toBeNull();
     const result = await promise;
     expect(result).toEqual(parsed);
-    expect(daemon).toHaveBeenCalledWith("vault.list_full");
+    expect(daemon).toHaveBeenCalledWith(
+      "vault.list_full",
+      JSON.stringify({ offset: 0, limit: 200 })
+    );
+  });
+
+  it("fetchVaultFull merges multiple pages until has_more is false", async () => {
+    vi.mocked(daemon)
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          ciphers: [{ id: "1" }, { id: "2" }],
+          folders: [{ id: "f1" }],
+          trash: [{ id: "t1" }],
+          archived: [{ id: "a1" }],
+          tags: ["work"],
+          unreadable: 1,
+          has_more: true,
+          next_offset: 2,
+        })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          ciphers: [{ id: "3" }],
+          folders: [],
+          trash: [],
+          archived: [],
+          tags: [],
+          unreadable: 0,
+          has_more: false,
+          next_offset: null,
+        })
+      );
+
+    const result = await fetchVaultFull(2);
+    expect(result.ciphers).toEqual([{ id: "1" }, { id: "2" }, { id: "3" }]);
+    expect(result.folders).toEqual([{ id: "f1" }]);
+    expect(result.trash).toEqual([{ id: "t1" }]);
+    expect(result.archived).toEqual([{ id: "a1" }]);
+    expect(result.tags).toEqual(["work"]);
+    expect(result.unreadable).toBe(1);
+    expect(daemon).toHaveBeenNthCalledWith(
+      1,
+      "vault.list_full",
+      JSON.stringify({ offset: 0, limit: 2 })
+    );
+    expect(daemon).toHaveBeenNthCalledWith(
+      2,
+      "vault.list_full",
+      JSON.stringify({ offset: 2, limit: 2 })
+    );
   });
 
   it("consume with no prefetch started returns null", () => {

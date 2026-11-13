@@ -129,12 +129,10 @@ export default function CipherDetail(props) {
         cipher_id: id,
         collection_id: colId === "" ? null : colId,
       });
-      await vault.refreshCiphers(t);
+      const updated = await vault.refreshCipher(id, t, {
+        collection_id: colId === "" ? null : colId,
+      });
       await vault.refreshCollections();
-      // Review F2: archived entries live in their own list.
-      const updated =
-        vault.ciphers().find((c) => (c.id || c._meta?.id) === id) ||
-        vault.archivedCiphers().find((c) => (c.id || c._meta?.id) === id);
       if (updated) props.setViewCipher(updated);
       toastSuccess(t("entry.movedToast"));
     } catch (e) {
@@ -162,9 +160,7 @@ export default function CipherDetail(props) {
     try {
       await daemon("passkey.delete", JSON.stringify({ id: pk.cipher_id, credential_id: pk.credential_id }));
       setShowPasskeyDelete(null);
-      await vault.refreshCiphers(t);
-      // Re-sync the detail view with the updated cipher
-      const updated = vault.ciphers().find(c => (c.id || c._meta?.id) === pk.cipher_id);
+      const updated = await vault.refreshCipher(pk.cipher_id, t);
       if (updated) props.setViewCipher(updated);
     } catch (e) {
       toastError(t("passkey.deleteError"));
@@ -182,11 +178,7 @@ export default function CipherDetail(props) {
     try {
       await daemon("passkey.rename", JSON.stringify({ id: c.id || c._meta?.id, credential_id: r.credential_id, name }));
       setRenamingPk(null);
-      await vault.refreshCiphers(t);
-      // Archived entries live in their own list (Review F2 pattern).
-      const updated =
-        vault.ciphers().find((cc) => (cc.id || cc._meta?.id) === (c.id || c._meta?.id)) ||
-        vault.archivedCiphers().find((cc) => (cc.id || cc._meta?.id) === (c.id || c._meta?.id));
+      const updated = await vault.refreshCipher(c.id || c._meta?.id, t);
       if (updated) props.setViewCipher(updated);
     } catch (e) {
       toastError(t("passkey.renameError"));

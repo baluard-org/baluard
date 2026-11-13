@@ -7,8 +7,9 @@
 use anyhow::{Context, Result, bail};
 use baluard_core::ipc::IpcStream;
 
-/// Matches the daemon's MAX_FRAME_SIZE.
-const MAX_RESPONSE: usize = 4 * 1024 * 1024;
+/// Response frame ceiling (32MB — bounds allocation against bogus frames
+/// while allowing large vaults in CLI commands like `trash list`).
+const MAX_RESPONSE: usize = 32 * 1024 * 1024;
 use prost::Message;
 use std::io::{Read, Write};
 use std::path::PathBuf;

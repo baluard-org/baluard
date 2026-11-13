@@ -2,7 +2,7 @@ import { createSignal, createContext, useContext, onSettled } from "solid-js";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildAddPayload, buildUpdatePayload, buildGetPayload } from "../lib/payload.js";
-import { consumeVaultPrefetch } from "../lib/vaultPrefetch.js";
+import { fetchVaultFull, consumeVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { toastError, toastWarning } from "./toastSignal.js";
 import { setTheme as setAppTheme } from "./themeSignal.js";
 import { makeTransitionGuard } from "../lib/transitionGuard.js";
@@ -104,7 +104,7 @@ function VaultProvider(props) {
       // instead of erroring out.
       const data =
         (prefetch ? await prefetch : null) ||
-        JSON.parse(await daemon("vault.list_full"));
+        (await fetchVaultFull());
       if (!data) throw new Error("empty response");
       setCiphers(data.ciphers || []);
       setFolders(Array.isArray(data.folders) ? data.folders : []);
@@ -147,7 +147,9 @@ function VaultProvider(props) {
   // source vault for the list badge + read-only detail.
   async function refreshOtherVaults() {
     try {
-      const data = JSON.parse(await daemon("vaults.list_full_all"));
+      const data = JSON.parse(
+        await daemon("vaults.list_full_all", JSON.stringify({ exclude_active: true }))
+      );
       const rows = (data.vaults || []).filter(
         (v) => !v.active && v.presence === "unlocked" && Array.isArray(v.ciphers)
       );
@@ -225,11 +227,69 @@ function VaultProvider(props) {
   // These accept viewCipher/setViewCipher/newCipher/setNewCipher as args
   // because those are local state in VaultView, not global context.
 
+  function withMergedMeta(cipher, existingMeta = null, metaPatch = null) {
+    if (!cipher) return cipher;
+    const id = cipher.id || existingMeta?.id || "";
+    const meta = {
+      ...(existingMeta || {}),
+      id,
+      name: cipher.name ?? existingMeta?.name ?? "",
+      cipher_type: cipher.type ?? existingMeta?.cipher_type ?? "login",
+      favorite: Boolean(cipher.favorite),
+      username: cipher.username ?? null,
+      collection_id: existingMeta?.collection_id ?? null,
+      ...(metaPatch || {}),
+    };
+    return { ...cipher, _meta: meta };
+  }
+
+  function syncTagsFromLists(activeList, archivedList, trashList) {
+    const unique = new Set();
+    for (const list of [activeList, archivedList, trashList]) {
+      for (const c of list) {
+        if (!Array.isArray(c?.tags)) continue;
+        for (const tag of c.tags) {
+          if (tag) unique.add(tag);
+        }
+      }
+    }
+    setTags(Array.from(unique).sort());
+  }
+
+  async function refreshCipher(id, t, metaPatch = null) {
+    const fresh = await getCipher(id, t);
+    if (!fresh) return null;
+    const existingActive = ciphers().find((c) => (c.id || c._meta?.id) === id);
+    const existingArchived = archivedCiphers().find((c) => (c.id || c._meta?.id) === id);
+    const existing = existingActive || existingArchived;
+    const updated = withMergedMeta(fresh, existing?._meta, metaPatch);
+    let nextActive = ciphers();
+    let nextArchived = archivedCiphers();
+    if (existingArchived && !existingActive) {
+      nextArchived = nextArchived.map((c) => ((c.id || c._meta?.id) === id ? updated : c));
+      setArchivedCiphers(nextArchived);
+    } else if (existingActive) {
+      nextActive = nextActive.map((c) => ((c.id || c._meta?.id) === id ? updated : c));
+      setCiphers(nextActive);
+    } else {
+      nextActive = [updated, ...nextActive];
+      setCiphers(nextActive);
+    }
+    syncTagsFromLists(nextActive, nextArchived, trashCiphers());
+    return updated;
+  }
+
   async function addCipher(cipherData, t) {
     if (!cipherData.name) { toastWarning(t("entry.nameRequired")); return null; }
     try {
       const id = await daemon("vault.add", JSON.stringify(buildAddPayload(cipherData)));
-      await refreshCiphers(t);
+      const fresh = await getCipher(id, t);
+      if (fresh) {
+        const entry = withMergedMeta(fresh);
+        const nextActive = [entry, ...ciphers()];
+        setCiphers(nextActive);
+        syncTagsFromLists(nextActive, archivedCiphers(), trashCiphers());
+      }
       return id; // new cipher ID as string
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -241,13 +301,7 @@ function VaultProvider(props) {
     if (!cipherData.name) { toastWarning(t("entry.nameRequired")); return; }
     try {
       await daemon("vault.update", JSON.stringify(buildUpdatePayload(id, cipherData)));
-      await refreshCiphers(t);
-      // list_full already carries the fresh cipher (K3): skip the extra
-      // vault.get round-trip and serve the updated item from the list.
-      // Archived edits update from the archive list, not the active one.
-      return ciphers().find((c) => c.id === id)
-        || archivedCiphers().find((c) => c.id === id)
-        || null;
+      return await refreshCipher(id, t);
     } catch (e) {
       toastError(sanitizeError(e, t));
       return null;
@@ -267,7 +321,20 @@ function VaultProvider(props) {
     try {
       await daemon("vault.delete", id);
       guardPane(activePane(), "welcome", setActivePane);
-      await refreshCiphers(t);
+      const fromActive = ciphers().find((c) => (c.id || c._meta?.id) === id);
+      const fromArchived = archivedCiphers().find((c) => (c.id || c._meta?.id) === id);
+      const target = fromActive || fromArchived;
+      if (fromActive) {
+        setCiphers((prev) => prev.filter((c) => (c.id || c._meta?.id) !== id));
+      }
+      if (fromArchived) {
+        setArchivedCiphers((prev) => prev.filter((c) => (c.id || c._meta?.id) !== id));
+      }
+      if (target) {
+        setTrashCiphers((prev) => [target, ...prev.filter((c) => (c.id || c._meta?.id) !== id)]);
+      } else {
+        setTrashCiphers((prev) => prev.filter((c) => (c.id || c._meta?.id) !== id));
+      }
       return true;
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -279,7 +346,13 @@ function VaultProvider(props) {
     try {
       await daemon("vault.trash.restore", id);
       guardPane(activePane(), "welcome", setActivePane);
-      await refreshCiphers(t);
+      const target = trashCiphers().find((c) => (c.id || c._meta?.id) === id);
+      setTrashCiphers((prev) => prev.filter((c) => (c.id || c._meta?.id) !== id));
+      if (target) {
+        setCiphers((prev) => [target, ...prev]);
+      } else {
+        await refreshCipher(id, t);
+      }
       return true;
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -291,7 +364,11 @@ function VaultProvider(props) {
     try {
       await daemon("vault.archive", id);
       guardPane(activePane(), "welcome", setActivePane);
-      await refreshCiphers(t);
+      const target = ciphers().find((c) => (c.id || c._meta?.id) === id);
+      setCiphers((prev) => prev.filter((c) => (c.id || c._meta?.id) !== id));
+      if (target) {
+        setArchivedCiphers((prev) => [target, ...prev]);
+      }
       return true;
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -303,7 +380,16 @@ function VaultProvider(props) {
     try {
       await daemon("tag.delete", name);
       if (selectedTag() === name) setSelectedTag(null);
-      await refreshCiphers(t);
+      setTags((prev) => prev.filter((tag) => tag !== name));
+      const stripTag = (list) =>
+        list.map((c) =>
+          Array.isArray(c.tags) && c.tags.includes(name)
+            ? { ...c, tags: c.tags.filter((tag) => tag !== name) }
+            : c
+        );
+      setCiphers(stripTag);
+      setArchivedCiphers(stripTag);
+      setTrashCiphers(stripTag);
       return true;
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -315,7 +401,11 @@ function VaultProvider(props) {
     try {
       await daemon("vault.unarchive", id);
       guardPane(activePane(), "welcome", setActivePane);
-      await refreshCiphers(t);
+      const target = archivedCiphers().find((c) => (c.id || c._meta?.id) === id);
+      setArchivedCiphers((prev) => prev.filter((c) => (c.id || c._meta?.id) !== id));
+      if (target) {
+        setCiphers((prev) => [target, ...prev]);
+      }
       return true;
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -349,7 +439,7 @@ function VaultProvider(props) {
     // Profile
     displayName, profileSubtitle, avatarB64, avatarExt,
     // Actions
-    refreshCiphers, refreshDeviceFleet, refreshProfile,
+    refreshCiphers, refreshCipher, refreshDeviceFleet, refreshProfile,
     resetNavigation,
     addCipher, updateCipher, getCipher,
     deleteCipher, restoreCipher, archiveCipher, unarchiveCipher, deleteTag,
