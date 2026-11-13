@@ -422,6 +422,18 @@ select option {
   transform: scale(0.99) translateY(-4px);
 }
 
+/* Update banner — slides down from top edge on open, back up on dismiss */
+.update-banner-enter-active,
+.update-banner-exit-active {
+  will-change: transform, opacity;
+  transition: opacity var(--motion-duration-normal) var(--motion-ease-emphasized), transform var(--motion-duration-normal) var(--motion-ease-emphasized);
+}
+.update-banner-enter,
+.update-banner-exit-to {
+  opacity: 0;
+  transform: translateY(-16px) scale(0.98);
+}
+
 /* Vault entrance — slides up into view, no exit animation needed */
 @keyframes vaultEnter {
   from {
@@ -506,6 +518,8 @@ select option {
   .motion-vault-switch,
   .fade-enter-active,
   .fade-exit-active,
+  .update-banner-enter-active,
+  .update-banner-exit-active,
   .slide-enter-active,
   .slide-exit-active,
   .sync-status-enter-active,

@@ -3,6 +3,7 @@
 // directly; lib/update.js is mocked to isolate the banner from Tauri.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { render, fireEvent, cleanup } from "@solidjs/testing-library";
 
 vi.mock("../i18n/index.jsx", () => ({
@@ -115,5 +116,44 @@ describe("UpdateBanner", () => {
     expect(getByTestId("update-banner").textContent).toContain("Download failed: boom");
     fireEvent.click(getByTestId("update-error-dismiss"));
     expect(store.clearError).toHaveBeenCalledTimes(1);
+  });
+
+  it("animates the modal when it opens for a new version", async () => {
+    const [avail, setAvail] = createSignal(null);
+    store.available = avail;
+    const { container } = render(() => <UpdateBanner />);
+    expect(container.querySelector("[data-testid=update-banner]")).toBeNull();
+
+    setAvail({ version: "0.2.0", notes: "Fixes", date: null, current_version: "0.1.0" });
+    await Promise.resolve();
+    const banner = container.querySelector("[data-testid=update-banner]");
+    expect(banner).not.toBeNull();
+    expect(banner.classList.contains("update-banner-enter")).toBe(true);
+    expect(banner.classList.contains("update-banner-enter-active")).toBe(true);
+  });
+
+  it("transitions between the offer and installing views when install is clicked", async () => {
+    const [installing, setInstalling] = createSignal(false);
+    store.available = () => ({ version: "0.2.0", notes: "Fixes", date: null, current_version: "0.1.0" });
+    store.installing = installing;
+    store.install = vi.fn(() => setInstalling(true));
+
+    const { container, getByTestId } = render(() => <UpdateBanner />);
+    const banner = container.querySelector("[data-testid=update-banner]");
+    const offerEl = getByTestId("update-install").closest(".flex.items-start");
+
+    fireEvent.click(getByTestId("update-install"));
+    expect(store.install).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+
+    // out-in mode exits the offer view first before mounting the installing view
+    expect(offerEl.classList.contains("fade-exit-active")).toBe(true);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    fireEvent(offerEl, new Event("transitionend"));
+    await Promise.resolve();
+
+    expect(banner.textContent).toContain("update.installing");
+    const installingEl = banner.querySelector(".flex.items-center");
+    expect(installingEl.classList.contains("fade-enter-active")).toBe(true);
   });
 });

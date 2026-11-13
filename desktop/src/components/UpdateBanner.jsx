@@ -3,6 +3,7 @@
 // app-level, above auth screens and the vault alike.
 
 import { Show, Switch, Match } from "solid-js";
+import { Transition } from "../lib/transition";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toastError } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
@@ -26,13 +27,15 @@ export default function UpdateBanner() {
   );
 
   return (
-    <Show when={visible()}>
-      <div
-        data-testid="update-banner"
-        role="status"
-        class="fixed top-3 left-1/2 -translate-x-1/2 z-[60] w-[min(560px,calc(100vw-2rem))] rounded-2xl border border-[var(--color-border)] bg-[var(--color-sidebar)] shadow-xl px-4 py-3"
-      >
-        <Switch>
+    <Transition name="update-banner" appear>
+      <Show when={visible()}>
+        <div
+          data-testid="update-banner"
+          role="status"
+          class="fixed top-3 left-1/2 -translate-x-1/2 z-[60] w-[min(560px,calc(100vw-2rem))] rounded-2xl border border-[var(--color-border)] bg-[var(--color-sidebar)] shadow-xl px-4 py-3"
+        >
+          <Transition name="fade" mode="out-in">
+            <Switch>
           {/* Install in progress: progress bar, no dismiss — the app will
               restart into the new version on its own. */}
           <Match when={u.installing()}>
@@ -146,8 +149,10 @@ export default function UpdateBanner() {
               </button>
             </div>
           </Match>
-        </Switch>
-      </div>
-    </Show>
+            </Switch>
+          </Transition>
+        </div>
+      </Show>
+    </Transition>
   );
 }
