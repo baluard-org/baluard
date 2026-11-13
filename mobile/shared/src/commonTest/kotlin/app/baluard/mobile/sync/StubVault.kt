@@ -5,6 +5,7 @@ import app.baluard.mobile.MobileCatalogInput
 import app.baluard.mobile.MobileSyncStatus
 import app.baluard.mobile.MobileProvider
 import app.baluard.mobile.MobileVaultInterface
+import app.baluard.mobile.SyncPullOutcome
 import app.baluard.mobile.MobileHardwareTransport
 
 /**
@@ -78,7 +79,10 @@ open class StubVault(
         kek: ByteArray,
         transport: MobileHardwareTransport,
     ) = err()
-    override suspend fun syncPullNow(): String { calls += "syncPullNow"; return "pulled" }
+    override suspend fun syncPullNow(): SyncPullOutcome {
+        calls += "syncPullNow"
+        return SyncPullOutcome(tag = "pulled", detail = null)
+    }
     override suspend fun syncOfflineTick() { calls += "syncOfflineTick" }
     override suspend fun archiveCipher(id: String) { calls += "archiveCipher" }
     override suspend fun unarchiveCipher(id: String) { calls += "unarchiveCipher" }

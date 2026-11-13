@@ -3,6 +3,7 @@ package app.baluard.mobile.sync
 import app.baluard.mobile.ui.toast.Toast
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
+import app.baluard.mobile.SyncPullOutcome
 import kotlin.time.TimeSource
 
 /** Sync button feedback phases (desktop AutoSyncIndicator parity). */
@@ -19,14 +20,16 @@ private val RESULT_BEAT = 2500.milliseconds
  * beat is set (toasts land there) and before the settle.
  */
 suspend fun runSyncCycle(
-    doPull: suspend () -> String?,
+    doPull: suspend () -> SyncPullOutcome?,
     afterPull: suspend () -> Unit = {},
     setPhase: (SyncPhase) -> Unit,
-    onResult: (Boolean, String?) -> Unit = { _, _ -> },
+    onResult: (Boolean, String?, String?) -> Unit = { _, _, _ -> },
 ): Boolean {
     setPhase(SyncPhase.Syncing)
     val mark = TimeSource.Monotonic.markNow()
-    val tag = runCatching { doPull() }.getOrNull()
+    val outcome = runCatching { doPull() }.getOrNull()
+    val tag = outcome?.tag
+    val detail = outcome?.detail
     val ok = tag == "pulled" || tag == "up_to_date" || tag == "kept_local"
     val failed = tag == null || tag == "offline" || tag == "access_denied" || tag == "error"
     runCatching { afterPull() }
@@ -38,7 +41,7 @@ suspend fun runSyncCycle(
         ok -> setPhase(SyncPhase.Synced)
         failed -> setPhase(SyncPhase.Offline)
     }
-    onResult(ok, tag)
+    onResult(ok, tag, detail)
     delay(RESULT_BEAT)
     setPhase(SyncPhase.Idle)
     return ok
@@ -92,16 +95,19 @@ fun pendingPushAction(
  * offline/denied/error are failures. "locked" is deliberately silent: the
  * entitlement gate that produced it opens the upgrade sheet itself.
  */
-fun syncOutcomeToast(tag: String?, t: (String) -> String) {
+fun syncOutcomeToast(tag: String?, detail: String?, t: (String) -> String) {
     when (tag) {
         "pulled" -> Toast.success(t("sync.synced"))
         "up_to_date" -> Toast.info(t("sync.upToDate"))
         "kept_local" -> Toast.info(t("sync.keptLocal"))
         "idle" -> Toast.info(t("sync.noRemote"))
-        "paused", "busy", "skipped" -> Toast.info(t("sync.blocked"))
+        "paused", "busy" -> Toast.info(t("sync.blocked"))
+        // The runtime's skipped detail names the real blocker; without it the
+        // generic blocked copy would mislead ("another sync is in progress").
+        "skipped" -> Toast.info(detail ?: t("sync.blocked"))
         "offline", null -> Toast.error(t("sync.offline"))
         "access_denied" -> Toast.error(t("sync.denied"))
-        "error" -> Toast.error(t("sync.error"))
+        "error" -> Toast.error(detail ?: t("sync.error"))
         else -> Unit
     }
 }

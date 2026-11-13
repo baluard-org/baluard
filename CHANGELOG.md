@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Mobile: a failed sync now says why. The toast carries the real error from the sync engine instead of a bare "Sync failed.", and a skipped pull (blocked by uncommitted local changes) says so too.
+
 ## 0.5.2 - 2026-11-13
 
 - Mobile: a biometric or security-key unlock now arms background sync again, so the vault no longer claims sync is missing when it is configured.

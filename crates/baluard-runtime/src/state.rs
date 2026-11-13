@@ -10537,6 +10537,38 @@ mod activate_autosync_tests {
             "the KEK path plus the explicit activate call must arm sync"
         );
     }
+
+    /// The FFI pull report must carry the real failure text, or the mobile
+    /// toast can never say why a sync failed (2026-11-13 phone incident:
+    /// every pull died with only a bare "error" tag). A vault whose git
+    /// directory vanished makes open_repo fail through the generic error
+    /// arm, exercising the detail capture end to end.
+    #[tokio::test]
+    async fn pull_error_carries_a_detail_message() {
+        if !baluard_core::keyring_disabled() {
+            eprintln!("skipping: set BALUARD_DISABLE_KEYRING=1 to run hermetically");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bare = tempfile::tempdir().unwrap();
+        let state = unlocked_state(&dir).await;
+        attach_bare_remote(dir.path(), bare.path());
+        state.activate_autosync_after_remote().await;
+        assert!(state.autosync.is_active().await);
+
+        std::fs::remove_dir_all(dir.path().join(".git")).unwrap();
+
+        let (report, detail) = state
+            .autosync
+            .pull_now_detailed("test-device".to_string())
+            .await;
+        assert_eq!(report, crate::autosync::PullReport::Error);
+        let d = detail.expect("an error pull must carry a detail message");
+        assert!(
+            d.to_lowercase().contains("git") || d.len() > 8,
+            "detail should carry the real failure text, got: {d}"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -126,6 +126,10 @@ impl PullReport {
     }
 }
 
+/// Fixed cause for the Skipped tag: the dirty-worktree refusal surfaces no
+/// paths through the runtime seam, so the toast carries this sentence.
+const SKIPPED_DETAIL: &str = "Pull skipped: uncommitted local changes are blocking the vault sync.";
+
 /// Snapshot of coordinator status, returned by the `sync.autosync_status` route.
 #[derive(Debug, Clone, Serialize)]
 pub struct AutoSyncStatus {
@@ -449,7 +453,13 @@ impl AutoSyncHandle {
     /// **`pull_now`** — user-initiated pull (pull-to-refresh, "Sync now"). No
     /// debounce, no commit/push: just reconcile remote changes.
     pub async fn pull_now(&self, device_id: String) -> PullReport {
-        self.pull_only(device_id).await
+        self.pull_now_detailed(device_id).await.0
+    }
+
+    /// Pull with the scrubbed failure cause, for surfaces that show the
+    /// user why a sync failed instead of a bare tag.
+    pub async fn pull_now_detailed(&self, device_id: String) -> (PullReport, Option<String>) {
+        self.pull_only_detailed(device_id).await
     }
 
     /// **`offline_tick`** — host-scheduled 30s connectivity probe while the
@@ -583,11 +593,11 @@ impl AutoSyncHandle {
     /// unlock path to reconcile remote changes the moment the vault opens, and
     /// as the shared body of the focus trigger. Respects the cycle_lock so it
     /// can't race a debounce push. No-op if inactive or a cycle is in flight.
-    pub async fn pull_only(&self, device_id: String) -> PullReport {
+    pub async fn pull_only_detailed(&self, device_id: String) -> (PullReport, Option<String>) {
         let (generation, devkey_seal, enroll_vk) = {
             let g = self.inner.lock().await;
             if !g.active {
-                return PullReport::Idle;
+                return (PullReport::Idle, None);
             }
             // NeedsDecision guard (peer review 2026-07-23):
             // `nudge` and `background_loop` both refuse to touch the repo while
@@ -599,7 +609,7 @@ impl AutoSyncHandle {
             // the exposure. Same guard as the other two repo-touching paths.
             if g.state == AutoSyncState::NeedsDecision {
                 log::debug!("[autosync] pull_only skipped: conflict paused (NeedsDecision)");
-                return PullReport::Paused;
+                return (PullReport::Paused, None);
             }
             (g.generation, g.devkey_seal, g.enroll_vk)
         };
@@ -610,7 +620,7 @@ impl AutoSyncHandle {
         // while the un-cancellable git pull is still running.
         let lock_guard = match Arc::clone(&self.cycle_lock).try_lock_owned() {
             Ok(g) => g,
-            Err(_) => return PullReport::Busy,
+            Err(_) => return (PullReport::Busy, None),
         };
         let mut fresh = false;
         let outcome = tokio::time::timeout(
@@ -629,9 +639,12 @@ impl AutoSyncHandle {
         .await;
         let mut g = self.inner.lock().await;
         if !g.active || g.generation != generation {
-            return PullReport::Idle;
+            return (PullReport::Idle, None);
         }
         let mut report = PullReport::Error;
+        // Scrubbed human-readable cause for the FFI surface; the bare tag
+        // alone once left the mobile toast guessing (2026-11-13 incident).
+        let mut detail: Option<String> = None;
         match outcome {
             Ok(Ok(Ok(r))) => {
                 report = r;
@@ -665,15 +678,20 @@ impl AutoSyncHandle {
                     g.access_denied_streak = g.access_denied_streak.saturating_add(1);
                     g.state = AutoSyncState::Offline;
                 } else if r == PullReport::Skipped {
+                    detail = Some(SKIPPED_DETAIL.to_string());
                     log::debug!("[autosync] pull_only skipped: dirty or ineligible worktree");
                 }
             }
             Ok(Ok(Err(ref e))) => {
                 report = PullReport::Error;
+                detail = Some(baluard_core::sync::credentials::scrub_git_error(e));
                 log::warn!("[autosync] pull failed: {e}")
             }
             Ok(Err(ref e)) => {
                 report = PullReport::Error;
+                detail = Some(baluard_core::sync::credentials::scrub_git_error(&format!(
+                    "sync task failed: {e}"
+                )));
                 log::warn!("[autosync] pull task failed: {e}")
             }
             Err(_) => {
@@ -686,7 +704,12 @@ impl AutoSyncHandle {
         if fresh {
             self.record_success().await;
         }
-        report
+        (report, detail)
+    }
+
+    /// Detail-free wrapper for callers that only classify the outcome.
+    pub async fn pull_only(&self, device_id: String) -> PullReport {
+        self.pull_only_detailed(device_id).await.0
     }
 
     /// Focus-triggered pull. Silently skips if the last sync was within

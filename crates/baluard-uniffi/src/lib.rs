@@ -179,6 +179,14 @@ pub fn set_token_encryption_key(key: Vec<u8>) -> Result<(), BaluardError> {
 /// A 24-word BIP-39 recovery phrase. Mirrors `baluard_core::recovery::RecoveryPhrase`
 /// but flattened to a plain String for the FFI boundary (the internal type
 /// holds zeroized entropy that UniFFI can't cross with the zeroize guarantee).
+/// Outcome of a user-triggered pull: the stable tag the toast matrix
+/// classifies, plus the scrubbed failure cause when one exists.
+#[derive(uniffi::Record)]
+pub struct SyncPullOutcome {
+    pub tag: String,
+    pub detail: Option<String>,
+}
+
 #[derive(uniffi::Record)]
 pub struct MobileRecoveryPhrase {
     /// Space-separated 24 words.
@@ -1040,12 +1048,16 @@ impl MobileVault {
 
     /// User pull-to-refresh / "Sync now". Returns the pull report tag
     /// (pulled, up_to_date, kept_local, idle, paused, busy, skipped,
-    /// offline, access_denied, error)
-    /// so the UI can toast what actually happened instead of a blanket
-    /// success.
-    pub async fn sync_pull_now(&self) -> String {
+    /// offline, access_denied, error) plus a scrubbed human-readable
+    /// cause on `error` and `skipped`, so the UI can toast what actually
+    /// happened instead of a blanket failure.
+    pub async fn sync_pull_now(&self) -> SyncPullOutcome {
         let dn = self.device_id().await;
-        self.state.autosync.pull_now(dn).await.tag().to_string()
+        let (report, detail) = self.state.autosync.pull_now_detailed(dn).await;
+        SyncPullOutcome {
+            tag: report.tag().to_string(),
+            detail,
+        }
     }
 
     /// Activate the autosync coordinator when the vault has a remote. The

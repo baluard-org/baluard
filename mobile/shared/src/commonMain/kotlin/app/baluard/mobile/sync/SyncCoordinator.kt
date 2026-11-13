@@ -1,6 +1,7 @@
 package app.baluard.mobile.sync
 
 import app.baluard.mobile.MobileVaultInterface
+import app.baluard.mobile.SyncPullOutcome
 import app.baluard.mobile.MobileSyncStatus
 import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.platform.Clock
@@ -79,10 +80,11 @@ class SyncCoordinator(
         vault.syncOnBackground()
     }
 
-    /** User pull-to-refresh / "Sync now". Returns the pull report tag, or
-     * null when the transport call threw ("locked" = subscription gate). */
-    suspend fun pullNow(vault: MobileVaultInterface): String? {
-        if (gated()) return "locked"
+    /** User pull-to-refresh / "Sync now". Returns the pull outcome (tag plus
+     * scrubbed detail), or null when the transport call threw ("locked" =
+     * subscription gate). */
+    suspend fun pullNow(vault: MobileVaultInterface): SyncPullOutcome? {
+        if (gated()) return SyncPullOutcome(tag = "locked", detail = null)
         return runCatching { vault.syncPullNow() }.getOrNull()
     }
 
