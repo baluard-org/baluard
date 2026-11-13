@@ -2690,7 +2690,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_on_unlock() != 40414.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
-  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_pull_now() != 25933.toShort()) {
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_pull_now() != 60465.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_status() != 496.toShort()) {
@@ -4987,11 +4987,11 @@ public interface MobileVaultInterface {
   /**
    * User pull-to-refresh / "Sync now". Returns the pull report tag
    * (pulled, up_to_date, kept_local, idle, paused, busy, skipped,
-   * offline, access_denied, error)
-   * so the UI can toast what actually happened instead of a blanket
-   * success.
+   * offline, access_denied, error) plus a scrubbed human-readable
+   * cause on `error` and `skipped`, so the UI can toast what actually
+   * happened instead of a blanket failure.
    */
-  suspend fun `syncPullNow`(): kotlin.String
+  suspend fun `syncPullNow`(): SyncPullOutcome
 
   /**
    * Coordinator status snapshot for the sync indicator.
@@ -8677,12 +8677,12 @@ open class MobileVault :
   /**
    * User pull-to-refresh / "Sync now". Returns the pull report tag
    * (pulled, up_to_date, kept_local, idle, paused, busy, skipped,
-   * offline, access_denied, error)
-   * so the UI can toast what actually happened instead of a blanket
-   * success.
+   * offline, access_denied, error) plus a scrubbed human-readable
+   * cause on `error` and `skipped`, so the UI can toast what actually
+   * happened instead of a blanket failure.
    */
   @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-  override suspend fun `syncPullNow`(): kotlin.String =
+  override suspend fun `syncPullNow`(): SyncPullOutcome =
     uniffiRustCallAsync(
       callWithPointer { thisPtr ->
         UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_pull_now(
@@ -8699,7 +8699,7 @@ open class MobileVault :
       { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
       { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
       // lift function
-      { FfiConverterString.lift(it) },
+      { FfiConverterTypeSyncPullOutcome.lift(it) },
       // Error FFI converter
       UniffiNullRustCallStatusErrorHandler,
     )
@@ -9211,11 +9211,6 @@ public object FfiConverterTypeMobileProviderConfig : FfiConverterRustBuffer<Mobi
   }
 }
 
-/**
- * A 24-word BIP-39 recovery phrase. Mirrors `baluard_core::recovery::RecoveryPhrase`
- * but flattened to a plain String for the FFI boundary (the internal type
- * holds zeroized entropy that UniFFI can't cross with the zeroize guarantee).
- */
 data class MobileRecoveryPhrase(
   /**
    * Space-separated 24 words.
@@ -9434,6 +9429,45 @@ public object FfiConverterTypePasswordConfig : FfiConverterRustBuffer<PasswordCo
     FfiConverterBoolean.write(value.`upper`, buf)
     FfiConverterBoolean.write(value.`numbers`, buf)
     FfiConverterBoolean.write(value.`symbols`, buf)
+  }
+}
+
+/**
+ * A 24-word BIP-39 recovery phrase. Mirrors `baluard_core::recovery::RecoveryPhrase`
+ * but flattened to a plain String for the FFI boundary (the internal type
+ * holds zeroized entropy that UniFFI can't cross with the zeroize guarantee).
+ * Outcome of a user-triggered pull: the stable tag the toast matrix
+ * classifies, plus the scrubbed failure cause when one exists.
+ */
+data class SyncPullOutcome(
+  var `tag`: kotlin.String,
+  var `detail`: kotlin.String?,
+) {
+  companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSyncPullOutcome : FfiConverterRustBuffer<SyncPullOutcome> {
+  override fun read(buf: ByteBuffer): SyncPullOutcome =
+    SyncPullOutcome(
+      FfiConverterString.read(buf),
+      FfiConverterOptionalString.read(buf),
+    )
+
+  override fun allocationSize(value: SyncPullOutcome) =
+    (
+      FfiConverterString.allocationSize(value.`tag`) +
+        FfiConverterOptionalString.allocationSize(value.`detail`)
+    )
+
+  override fun write(
+    value: SyncPullOutcome,
+    buf: ByteBuffer,
+  ) {
+    FfiConverterString.write(value.`tag`, buf)
+    FfiConverterOptionalString.write(value.`detail`, buf)
   }
 }
 

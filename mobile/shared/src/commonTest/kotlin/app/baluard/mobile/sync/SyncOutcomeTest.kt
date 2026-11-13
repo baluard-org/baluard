@@ -1,5 +1,6 @@
 package app.baluard.mobile.sync
 
+import app.baluard.mobile.SyncPullOutcome
 import app.baluard.mobile.ui.toast.Toast
 import app.baluard.mobile.ui.toast.ToastEntry
 import kotlinx.coroutines.test.runTest
@@ -17,9 +18,9 @@ class SyncOutcomeTest {
 
     private fun lastToast(): ToastEntry? = Toast.entries.lastOrNull()
 
-    private fun assertToast(tag: String?, type: String, key: String) {
+    private fun assertToast(tag: String?, type: String, key: String, detail: String? = null) {
         val before = Toast.entries.size
-        syncOutcomeToast(tag) { it }
+        syncOutcomeToast(tag, detail) { it }
         val entry = lastToast()
         assertEquals(before + 1, Toast.entries.size, "tag $tag produced no toast")
         assertEquals(type, entry!!.type, "tag $tag wrong toast type")
@@ -40,6 +41,15 @@ class SyncOutcomeTest {
         assertToast("error", "error", "sync.error")
     }
 
+    /// A runtime-provided detail replaces the generic copy for the two tags
+    /// where the bare tag cannot say what happened (2026-11-13 phone
+    /// incident: every pull died as bare "error").
+    @Test
+    fun details_surfaced_for_error_and_skipped() {
+        assertToast("error", "error", "could not read from remote repository", "could not read from remote repository")
+        assertToast("skipped", "info", "Pull skipped: uncommitted local changes are blocking the vault sync.", "Pull skipped: uncommitted local changes are blocking the vault sync.")
+    }
+
     @Test
     fun null_transport_throws_report_offline() {
         assertToast(null, "error", "sync.offline")
@@ -48,8 +58,8 @@ class SyncOutcomeTest {
     @Test
     fun unknown_tags_stay_silent() {
         val before = Toast.entries.size
-        syncOutcomeToast("locked") { it }
-        syncOutcomeToast("something-new") { it }
+        syncOutcomeToast("locked", null) { it }
+        syncOutcomeToast("something-new", null) { it }
         assertEquals(before, Toast.entries.size, "silent tags produced toasts")
     }
 
@@ -58,7 +68,7 @@ class SyncOutcomeTest {
         suspend fun phases(tag: String?): List<String> {
             val seen = mutableListOf<String>()
             runSyncCycle(
-                doPull = { tag },
+                doPull = { tag?.let { SyncPullOutcome(tag = it, detail = null) } },
                 setPhase = { seen.add(it.name) },
             )
             return seen

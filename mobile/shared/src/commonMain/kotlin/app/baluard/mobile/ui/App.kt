@@ -305,7 +305,7 @@ fun App(
                         saveRevision++
                     },
                     setPhase = setPhase,
-                    onResult = { _, tag -> syncOutcomeToast(tag, ::t) },
+                    onResult = { _, tag, detail -> syncOutcomeToast(tag, detail, ::t) },
                 )
             }
         }

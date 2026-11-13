@@ -318,7 +318,7 @@ val entitlement by Entitlements.state.collectAsState()
                                     doPull = { coordinator.pullNow(vault) },
                                     afterPull = { runCatching { viewModel.refresh(vault, coordinator) } },
                                     setPhase = { syncPhase = it },
-                                    onResult = { _, tag -> syncOutcomeToast(tag) { t(it) } },
+                                    onResult = { _, tag, detail -> syncOutcomeToast(tag, detail) { t(it) } },
                                 )
                             }
                         }
