@@ -31,6 +31,7 @@ const vaultMock = {
   showSettingsModal: vi.fn(() => true),
   setShowSettingsModal: vi.fn(),
   refreshProfile: vi.fn().mockResolvedValue(undefined),
+  refreshCiphers: vi.fn().mockResolvedValue(undefined),
 };
 const authMock = { signOut: vi.fn() };
 
@@ -457,6 +458,132 @@ describe("SettingsModal security-key guard flow", () => {
       expect(rendered.getByTestId("hw-guard-card")).toBeTruthy();
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("SettingsModal import feedback and processing", () => {
+  beforeEach(() => {
+    daemonMock.mockReset();
+    toastSuccessMock.mockClear();
+    toastErrorMock.mockClear();
+    toastWarningMock.mockClear();
+    vaultMock.refreshCiphers.mockClear();
+  });
+
+  function setupDataTabMocks(importHandler) {
+    daemonMock.mockImplementation((action, payload) => {
+      if (action === "settings.get") {
+        return Promise.resolve(JSON.stringify({ vault_timeout: "15m", fetch_favicons: false, display_name: "Alice", avatar_ext: "png" }));
+      }
+      if (action === "vault.avatar.get") return Promise.resolve("");
+      if (action === "vault.pin_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+      if (action === "vault.biometric_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+      if (action === "vault.hw_status") {
+        return Promise.resolve(JSON.stringify({ capable: false, reason: "no-token", backends: [], seal: "v1", enabled: false, consent_supported: false, consent: false, attestation: null }));
+      }
+      if (action === "vault.import") return importHandler(payload);
+      return Promise.resolve("");
+    });
+  }
+
+  function mockNextFileInput(contents = '{"items":[]}') {
+    const origCreate = document.createElement.bind(document);
+    let capturedInput = null;
+    const spy = vi.spyOn(document, "createElement").mockImplementation((tag, opts) => {
+      const el = origCreate(tag, opts);
+      if (tag === "input") {
+        capturedInput = el;
+        el.click = () => {
+          const buf = new TextEncoder().encode(contents).buffer;
+          Object.defineProperty(el, "files", {
+            value: [{
+              arrayBuffer: () => Promise.resolve(buf),
+              text: () => Promise.resolve(contents),
+            }],
+            configurable: true,
+          });
+          el.onchange?.();
+        };
+      }
+      return el;
+    });
+    return { restore: () => spy.mockRestore(), getInput: () => capturedInput };
+  }
+
+  it("shows processing animation while importing and renders inline success feedback above export", async () => {
+    let resolveImport;
+    setupDataTabMocks(() => new Promise((r) => { resolveImport = r; }));
+    const fileMock = mockNextFileInput();
+
+    try {
+      const rendered = render(() => <SettingsModal />);
+      await waitFor(() => expect(rendered.getByText("settings.tabData", { exact: false })).toBeTruthy());
+      fireEvent.click(rendered.getByText("settings.tabData", { exact: false }));
+      flush();
+
+      const select = rendered.getByTestId("import-source-select");
+      select.value = "bw-json";
+      fireEvent.change(select);
+      flush();
+
+      const importBtn = rendered.getByTestId("import-submit-btn");
+      fireEvent.click(importBtn);
+
+      await waitFor(() => expect(rendered.getByTestId("import-processing")).toBeTruthy());
+      expect(select.disabled).toBe(true);
+      expect(importBtn.disabled).toBe(true);
+      expect(importBtn.querySelector("svg")).toBeTruthy();
+
+      const exportHeading = rendered.getByText("settings.exportTitle", { exact: false });
+      const processingEl = rendered.getByTestId("import-processing");
+      expect(processingEl.compareDocumentPosition(exportHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      await waitFor(() => expect(typeof resolveImport).toBe("function"));
+      resolveImport(JSON.stringify({ imported: 123, skipped: 0 }));
+
+      await waitFor(() => expect(rendered.queryByTestId("import-processing")).toBeNull());
+      const feedbackEl = await rendered.findByTestId("import-feedback");
+      expect(feedbackEl.textContent).toContain('settings.importSuccess({"imported":123})');
+      expect(feedbackEl.compareDocumentPosition(exportHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(toastSuccessMock).toHaveBeenCalledWith('settings.importSuccess({"imported":123})');
+      expect(select.disabled).toBe(false);
+
+      // Selecting a new source clears previous feedback.
+      select.value = "chrome-csv";
+      fireEvent.change(select);
+      flush();
+      expect(rendered.queryByTestId("import-feedback")).toBeNull();
+    } finally {
+      fileMock.restore();
+    }
+  });
+
+  it("renders inline error feedback inside the import section when import fails", async () => {
+    setupDataTabMocks(() => Promise.reject(new Error("bad format")));
+    const fileMock = mockNextFileInput();
+
+    try {
+      const rendered = render(() => <SettingsModal />);
+      await waitFor(() => expect(rendered.getByText("settings.tabData", { exact: false })).toBeTruthy());
+      fireEvent.click(rendered.getByText("settings.tabData", { exact: false }));
+      flush();
+
+      const select = rendered.getByTestId("import-source-select");
+      select.value = "bw-json";
+      fireEvent.change(select);
+      flush();
+
+      fireEvent.click(rendered.getByTestId("import-submit-btn"));
+
+      const feedbackEl = await rendered.findByTestId("import-feedback");
+      expect(feedbackEl.textContent).toContain("settings.importFailed");
+      expect(toastErrorMock).toHaveBeenCalled();
+
+      const exportHeading = rendered.getByText("settings.exportTitle", { exact: false });
+      expect(feedbackEl.compareDocumentPosition(exportHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    } finally {
+      fileMock.restore();
     }
   });
 });

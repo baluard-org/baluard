@@ -384,6 +384,15 @@ input:not([type="checkbox"]):not([type="radio"]), textarea {
   animation: motionListEnter 180ms var(--motion-ease-emphasized) both;
 }
 
+@keyframes motionIndeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+.motion-progress-indeterminate {
+  width: 40%;
+  animation: motionIndeterminate 1.2s var(--motion-ease-standard) infinite;
+}
+
 /* Custom premium select styling */
 select {
   appearance: none !important;
@@ -511,7 +520,8 @@ select option {
   .vault-enter,
   .toast-enter,
   .animate-conflict-panel,
-  .copy-feedback {
+  .copy-feedback,
+  .motion-progress-indeterminate {
     animation-duration: 0.001ms;
   }
   .motion-window-morph,

@@ -13,7 +13,7 @@ import { toastError, toastSuccess, toastWarning } from "../context/toastSignal.j
 import { buildImportPayload } from "../lib/payload.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 import { biometryAvailable } from "../lib/biometry.js";
-import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy, IconCog, IconShield, IconUsers, IconFolder, IconIdentity, IconInbox, IconLinkSimple, IconClock } from "./Icon.jsx";
+import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy, IconCog, IconShield, IconUsers, IconFolder, IconIdentity, IconInbox, IconLinkSimple, IconClock, IconSpinner, IconCheck, IconAlert } from "./Icon.jsx";
 import IconInfo from "./IconInfo.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import UpdateSettingsRow from "./UpdateSettingsRow.jsx";
@@ -47,6 +47,32 @@ function TabButton(props) {
       <Icon class="w-4 h-4 shrink-0" />
       <span>{props.label}</span>
     </button>
+  );
+}
+
+function DataFeedbackBanner(props) {
+  const isError = () => props.feedback?.type === "error";
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid={props.testId}
+      class={`motion-fade flex items-center gap-2.5 p-3 rounded-xl border text-xs font-semibold ${
+        isError()
+          ? "bg-red-500/10 border-red-500/30 text-red-400 animate-shake"
+          : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+      }`}
+    >
+      <Show
+        when={!isError()}
+        fallback={<IconAlert class="w-4 h-4 shrink-0" />}
+      >
+        <span class="copy-feedback shrink-0">
+          <IconCheck class="w-4 h-4" />
+        </span>
+      </Show>
+      <span>{props.feedback?.text}</span>
+    </div>
   );
 }
 
@@ -151,7 +177,8 @@ export default function SettingsModal() {
   const [importing, setImporting] = createSignal(false);
   const [importSource, setImportSource] = createSignal("");
   const [exporting, setExporting] = createSignal(false);
-  const [message, setMessage] = createSignal(null);
+  const [importFeedback, setImportFeedback] = createSignal(null);
+  const [exportFeedback, setExportFeedback] = createSignal(null);
 
   // Sync profile to VaultContext when settings modal closes
   let wasSettingsOpen = false;
@@ -360,6 +387,8 @@ export default function SettingsModal() {
       if (!isOpen) return;
       loadSettings();
       setImportSource("");
+      setImportFeedback(null);
+      setExportFeedback(null);
       loadHwStatus();
       // Hot-plug: a security key can be inserted while the settings
       // are open; re-probe so the guard card appears without a reopen.
@@ -635,7 +664,7 @@ export default function SettingsModal() {
       const file = input.files[0];
       if (!file) return;
       setImporting(true);
-      setMessage(null);
+      setImportFeedback(null);
       try {
         let data;
         if (format === "1password-1pux") {
@@ -665,15 +694,17 @@ export default function SettingsModal() {
         const payload = JSON.stringify(buildImportPayload(format, data));
         const resp = await daemon("vault.import", payload);
         const result = JSON.parse(resp);
-        if (result.skipped) {
-          setMessage(t("settings.importSuccessSkipped", { imported: result.imported || 0, skipped: result.skipped }));
-        } else {
-          setMessage(t("settings.importSuccess", { imported: result.imported || 0 }));
-        }
+        const msg = result.skipped
+          ? t("settings.importSuccessSkipped", { imported: result.imported || 0, skipped: result.skipped })
+          : t("settings.importSuccess", { imported: result.imported || 0 });
+        setImportFeedback({ type: "success", text: msg });
+        toastSuccess(msg);
         setImportSource("");
         await vault.refreshCiphers(t);
       } catch (e) {
-        setMessage(t("settings.importFailed", { error: sanitizeError(e, t) }));
+        const msg = t("settings.importFailed", { error: sanitizeError(e, t) });
+        setImportFeedback({ type: "error", text: msg });
+        toastError(msg);
       } finally {
         setImporting(false);
       }
@@ -683,14 +714,20 @@ export default function SettingsModal() {
 
   async function doExport(format) {
     setExporting(true);
-    setMessage(null);
+    setExportFeedback(null);
     try {
       const r = await invoke("export_save_plain", { format });
       // saved=false is the user cancelling the save dialog: stay silent
       // (desktop parity with the recovery sheet and the encrypted backup).
-      if (r && r.saved) setMessage(t("settings.exportComplete"));
+      if (r && r.saved) {
+        const msg = t("settings.exportComplete");
+        setExportFeedback({ type: "success", text: msg });
+        toastSuccess(msg);
+      }
     } catch (e) {
-      setMessage(t("settings.exportFailed", { error: sanitizeError(e, t) }));
+      const msg = t("settings.exportFailed", { error: sanitizeError(e, t) });
+      setExportFeedback({ type: "error", text: msg });
+      toastError(msg);
     } finally {
       setExporting(false);
     }
@@ -703,27 +740,41 @@ export default function SettingsModal() {
   async function confirmBackup() {
     const mode = backupMode();
     setBackupBusy(true);
-    setMessage(null);
+    if (mode === "export") {
+      setExportFeedback(null);
+    } else {
+      setImportFeedback(null);
+    }
     try {
       if (mode === "export") {
         const r = await invoke("backup_save_encrypted", { passphrase: backupPw() });
         // saved=false is the user cancelling the save dialog: stay open,
         // stay silent (desktop parity with the recovery sheet).
         if (r && r.saved) {
-          setMessage(t("settings.backupChecked", { n: r.entries }));
+          const msg = t("settings.backupChecked", { n: r.entries });
+          setExportFeedback({ type: "success", text: msg });
+          toastSuccess(msg);
           closeBackupPass();
         }
       } else {
         const resp = await invoke("backup_import_encrypted", { passphrase: backupPw() });
         if (resp !== null) {
           const result = JSON.parse(resp);
-          setMessage(t("settings.importSuccess", { imported: result.imported || 0 }));
+          const msg = t("settings.importSuccess", { imported: result.imported || 0 });
+          setImportFeedback({ type: "success", text: msg });
+          toastSuccess(msg);
           closeBackupPass();
           await vault.refreshCiphers(t);
         }
       }
     } catch (e) {
-      setMessage(t("settings.backupFailed", { error: sanitizeError(e, t) }));
+      const msg = t("settings.backupFailed", { error: sanitizeError(e, t) });
+      if (mode === "export") {
+        setExportFeedback({ type: "error", text: msg });
+      } else {
+        setImportFeedback({ type: "error", text: msg });
+      }
+      toastError(msg);
     } finally {
       setBackupBusy(false);
     }
@@ -1213,9 +1264,14 @@ export default function SettingsModal() {
                   <div class="flex items-end gap-3">
                     <div class="flex-1">
                       <select
+                        data-testid="import-source-select"
                         value={importSource() || ""}
-                        onChange={e => setImportSource(e.target.value)}
-                        class="w-full px-3 py-2.5 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all cursor-pointer"
+                        disabled={importing()}
+                        onChange={e => {
+                          setImportSource(e.target.value);
+                          setImportFeedback(null);
+                        }}
+                        class="w-full px-3 py-2.5 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <option value="" disabled>{t("settings.chooseSource")}</option>
                         <For each={formats}>
@@ -1224,13 +1280,36 @@ export default function SettingsModal() {
                       </select>
                     </div>
                     <button
+                      data-testid="import-submit-btn"
                       onClick={() => doImport(importSource())}
                       disabled={!importSource() || importing()}
-                      class="px-5 py-2.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                      class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                     >
-                      {importing() ? t("settings.importing") : t("settings.import")}
+                      <Show when={importing()}>
+                        <IconSpinner class="w-3.5 h-3.5 shrink-0" />
+                      </Show>
+                      <span>{importing() ? t("settings.importing") : t("settings.import")}</span>
                     </button>
                   </div>
+                  <Show when={importing()}>
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      data-testid="import-processing"
+                      class="motion-fade p-3 rounded-xl bg-[var(--color-sidebar)]/70 border border-[var(--color-border)] space-y-2"
+                    >
+                      <div class="flex items-center gap-2 text-xs font-semibold text-[var(--color-text)]">
+                        <IconSpinner class="w-3.5 h-3.5 text-[var(--color-primary)] shrink-0" />
+                        <span>{t("settings.importing")}</span>
+                      </div>
+                      <div class="h-1 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
+                        <div class="h-full rounded-full bg-[var(--color-primary)] motion-progress-indeterminate" />
+                      </div>
+                    </div>
+                  </Show>
+                  <Show when={!importing() && importFeedback()}>
+                    <DataFeedbackBanner feedback={importFeedback()} testId="import-feedback" />
+                  </Show>
                 </div>
 
                 {/* Export Section */}
@@ -1272,14 +1351,10 @@ export default function SettingsModal() {
                       <span class="text-[10px] font-normal text-[var(--color-muted)]">{t("settings.exportSpreadsheetHint")}</span>
                     </button>
                   </div>
+                  <Show when={exportFeedback()}>
+                    <DataFeedbackBanner feedback={exportFeedback()} testId="export-feedback" />
+                  </Show>
                 </div>
-
-                {/* Message Display */}
-                <Show when={message()}>
-                  <div class="p-3.5 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-primary)] font-bold text-center">
-                    {message()}
-                  </div>
-                </Show>
               </Show>
 
               <Show when={activeTab() === "sync"}>
@@ -1407,9 +1482,12 @@ export default function SettingsModal() {
                         (backupMode() === "export" &&
                           (backupPw() !== backupPwConfirm() || !backupPwSaved()))
                       }
-                      class="px-5 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+                      class="inline-flex items-center justify-center gap-2 px-5 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      {backupMode() === "export" ? t("settings.exportBackup") : t("settings.import")}
+                      <Show when={backupBusy()}>
+                        <IconSpinner class="w-3.5 h-3.5 shrink-0" />
+                      </Show>
+                      <span>{backupMode() === "export" ? t("settings.exportBackup") : t("settings.import")}</span>
                     </button>
                   </div>
                 </div>
