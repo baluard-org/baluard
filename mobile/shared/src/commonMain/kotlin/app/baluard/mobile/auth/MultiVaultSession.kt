@@ -68,6 +68,11 @@ class MultiVaultSession(
         for (entry in sessions.values) {
             val handle = entry.vault.mobile ?: continue
             runCatching { handle.setAutosyncAllowed(allowed) }
+            // A Locked or Unknown cache at unlock leaves the coordinator
+            // down even after refresh() flips the entitlement to unlocked;
+            // arming here closes that hole for both unlock paths. The Rust
+            // side refuses locked handles, so locked sessions no-op.
+            if (allowed) runCatching { handle.activateAutosyncAfterRemote() }
         }
     }
     private val mapLock = Mutex()

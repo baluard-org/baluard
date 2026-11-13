@@ -480,20 +480,24 @@ impl VaultState {
         if self.autosync.is_active().await {
             return;
         }
-        let device_id = self
-            .inner
-            .read()
-            .await
-            .as_ref()
-            .map(|h| h.device_id.to_string())
-            .unwrap_or_default();
-        if device_id.is_empty() {
-            return;
-        }
-        let devkey_seal = self.devkey_seal().await;
-        let enroll_vk = {
+        // One handle snapshot for everything, and only an UNLOCKED one:
+        // lock() keeps the handle while zeroizing its keys, so arming on a
+        // locked vault would start a seal-less coordinator that the
+        // is_active early-return then keeps forever (an auto-lock racing
+        // the post-unlock arm is the live window).
+        let (device_id, devkey_seal, enroll_vk) = {
             let guard = self.inner.read().await;
-            guard.as_ref().and_then(|h| h.enroll_verify_key())
+            let Some(handle) = guard.as_ref() else {
+                return;
+            };
+            if !handle.is_unlocked() {
+                return;
+            }
+            (
+                handle.device_id.to_string(),
+                handle.devkey_seal(),
+                handle.enroll_verify_key(),
+            )
         };
         let has_remote = baluard_core::sync::engine::SyncEngine::new(
             &self.vault_path,
@@ -10456,6 +10460,82 @@ mod session_token_tests {
         state.session_token_created.store(stale, Ordering::Relaxed);
         let err = state.verify_session_token(&tok).await.unwrap_err();
         assert_eq!(err, "Session token expired. Re-unlock the vault.");
+    }
+}
+
+#[cfg(test)]
+mod activate_autosync_tests {
+    use super::VaultState;
+
+    const PASSWORD: &str = "correct horse battery";
+
+    async fn unlocked_state(dir: &tempfile::TempDir) -> VaultState {
+        let state = VaultState::new(dir.path().to_path_buf());
+        let payload =
+            serde_json::json!({ "password": PASSWORD, "profile": "mobile_low" }).to_string();
+        state.create_vault(&payload).await.unwrap();
+        state
+    }
+
+    fn attach_bare_remote(vault: &std::path::Path, bare: &std::path::Path) {
+        git2::Repository::init_opts(
+            bare,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        git2::Repository::open(vault)
+            .unwrap()
+            .remote("origin", bare.to_str().unwrap())
+            .unwrap();
+    }
+
+    /// lock() keeps the handle while zeroizing its keys, so an auto-lock
+    /// racing the post-unlock arm must not start a seal-less coordinator:
+    /// activate() reads the device id from any present handle, and once
+    /// active the is_active early-return keeps it forever.
+    #[tokio::test]
+    async fn arming_refuses_a_locked_handle_even_with_a_remote() {
+        if !baluard_core::keyring_disabled() {
+            eprintln!("skipping: set BALUARD_DISABLE_KEYRING=1 to run hermetically");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bare = tempfile::tempdir().unwrap();
+        let state = unlocked_state(&dir).await;
+        attach_bare_remote(dir.path(), bare.path());
+        state.lock().await.unwrap();
+        state.activate_autosync_after_remote().await;
+        assert!(
+            !state.autosync.is_active().await,
+            "a locked handle must never arm the coordinator"
+        );
+    }
+
+    /// Pins the main-app KEK sequence end to end at the Rust seam: the lean
+    /// KEK unlock landing skips the unlock-time sync tail, so the explicit
+    /// activate call is what arms a remote-bearing vault.
+    #[tokio::test]
+    async fn kek_unlock_then_activate_arms_a_remote_vault() {
+        if !baluard_core::keyring_disabled() {
+            eprintln!("skipping: set BALUARD_DISABLE_KEYRING=1 to run hermetically");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bare = tempfile::tempdir().unwrap();
+        let state = unlocked_state(&dir).await;
+        attach_bare_remote(dir.path(), bare.path());
+        let kdf_json = std::fs::read_to_string(dir.path().join("meta/kdf-params.json")).unwrap();
+        let params = baluard_core::crypto::kdf::parse_kdf_params(&kdf_json).unwrap();
+        let kek = baluard_core::crypto::kdf::derive_kek(PASSWORD, &params).unwrap();
+        state.lock().await.unwrap();
+        state.unlock_with_kek_lean(&kek).await.unwrap();
+        state.activate_autosync_after_remote().await;
+        assert!(
+            state.autosync.is_active().await,
+            "the KEK path plus the explicit activate call must arm sync"
+        );
     }
 }
 

@@ -103,15 +103,18 @@ class AuthViewModel(private val repo: VaultRepository) {
     suspend fun openAndUnlockWithKek(path: String, kek: ByteArray): UnlockResult {
         return try {
             val v = repo.openVault(path)
+            // One read for both consumers: a trial expiring mid-unlock must
+            // not leave the policy flag and the arm decision inconsistent.
+            val syncUnlocked = Entitlements.current().syncUnlocked
             // ADR 0102: same pre-unlock policy switch as the password path.
-            runCatching { v.setAutosyncAllowed(Entitlements.current().syncUnlocked) }
+            runCatching { v.setAutosyncAllowed(syncUnlocked) }
             if (requiresSecurityKey(v)) {
                 withSecurityKeyTransport { v.unlockWithSecurityKeyAndKek(kek, it) }
             } else {
                 v.unlockWithKek(kek)
             }
             session.adopt(path, MobileSessionVault(v), kek = kek)
-            armAutosyncAfterKekUnlock(v, Entitlements.current().syncUnlocked)
+            armAutosyncAfterKekUnlock(v, syncUnlocked)
             UnlockResult.Success
         } catch (e: BaluardException.DeviceUnpaired) {
             UnlockResult.DeviceMismatch
