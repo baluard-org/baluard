@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+## 0.5.2 - 2026-11-13
+
 - Mobile: a biometric or security-key unlock now arms background sync again, so the vault no longer claims sync is missing when it is configured.
 
 ## 0.5.1 - 2026-11-13
