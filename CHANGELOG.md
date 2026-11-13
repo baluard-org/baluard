@@ -27,6 +27,7 @@ Notable user-facing changes per release.
 - Pressing the theme toggle on the login screen no longer knocks it out of its corner. A shared button-effect stylesheet was quietly overriding the position of every pressed button.
 - Detaching a vault now stays detached. Previously the app could quietly re-adopt a forgotten vault from its folder on the next launch.
 - The theme toggle on the unlock, setup, and recovery screens stays pinned to its corner on macOS; it could jump and half-clip when pressed.
+
 ## 0.4.1 - 2026-11-11
 
 - On the welcome screen, opening a vault saved online comes second and opening a local vault moved under an Advanced divider. When a downloaded vault already exists on this device, a dialog now offers opening the existing copy or deleting it (master password required) and importing again; a leftover folder without a vault entry can be adopted directly.

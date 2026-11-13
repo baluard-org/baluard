@@ -39,6 +39,13 @@ case "$1 $2" in
   "api repos/baluard-org/baluard/releases/latest")
     # the script reads -q .tag_name; gh prints the stripped value
     echo "${SUB_LATEST_TAG:-0.4.6}" ;;
+  "release view")
+    # The script reads -q .body; emit the body text directly.
+    if [[ "${SUB_BAD_BODY:-}" == 1 ]]; then
+      printf 'notes end differently'
+    else
+      printf 'known gaps stay listed.\n\nAs always, thanks for trying Baluard :)'
+    fi ;;
   "run list")
     # --commit <sha>: match only the full 40-char fixture SHA.
     for a in "$@"; do
@@ -197,6 +204,35 @@ set -e
 [[ $rc -eq 0 ]] || { log "FAIL owned-missing: report mode exited $rc"; FAILED=$((FAILED + 1)); }
 grep -q "FAIL author-owned-files" "$repo/out.log" \
   || { log "FAIL owned-missing: survival failure not reported"; FAILED=$((FAILED + 1)); }
+PASS=$((PASS + 1))
+
+# Gate-mode twin of owned-missing: delete the sibling file inside this case
+# (each case's make_repo re-creates the shared sibling).
+repo="$TMP/owned-lost-gate"
+make_repo "$repo"
+rm "$repo/../baluard-packages/CNAME"
+mkdir -p "$repo/state"; : > "$repo/state/gh.log"; : > "$repo/state/curl.log"
+set +e
+( cd "$repo" && env "${UNSET[@]/#/-u}" SUB_STATE="$repo/state" \
+    PATH="$repo/bin:$PATH" \
+    bash scripts/verify-release-live.sh 0.4.6 --packages-sha "$FULLSHA" ) > "$repo/out.log" 2>&1
+rc=$?
+set -e
+[[ $rc -eq 1 ]] || { log "FAIL owned-files-lost: gate mode did not refuse (rc=$rc)"; FAILED=$((FAILED + 1)); }
+grep -q "FAIL author-owned-files" "$repo/out.log" \
+  || { log "FAIL owned-files-lost: survival failure not reported"; FAILED=$((FAILED + 1)); }
+PASS=$((PASS + 1))
+
+run_case notes-closer-ok 0 0.4.6 --packages-sha "$FULLSHA"
+grep -q "PASS notes-closer" "$LAST_REPO/out.log" \
+  || { log "FAIL notes-closer-ok: standing closer not detected"; FAILED=$((FAILED + 1)); }
+PASS=$((PASS + 1))
+
+export SUB_BAD_BODY=1
+run_case notes-closer-bad 1 0.4.6 --packages-sha "$FULLSHA"
+unset SUB_BAD_BODY
+grep -q "FAIL notes-closer" "$LAST_REPO/out.log" \
+  || { log "FAIL notes-closer-bad: wrong ending not caught"; FAILED=$((FAILED + 1)); }
 PASS=$((PASS + 1))
 
 if [[ "$FAILED" -gt 0 ]]; then

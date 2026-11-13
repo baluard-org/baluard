@@ -599,10 +599,6 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 	echo ""
 	BALUARD_DEBUG=1 BALUARD_LOG_DIR="$LOG_DIR" cd desktop && npm run tauri dev
 
-# Build desktop app (production bundle)
-# _sidecar-force (not _sidecar) because the staleness check keys on Rust
-# source mtimes only: a version bump that edits manifests alone would ship
-# stale sidecars (the 0.2.0 defect).
 # Release build legs: each launches detached, logs to /tmp/leg-<leg>.log and
 # writes the exit code to /tmp/leg-<leg>.rc. A missing rc file means the leg
 # is still running. The env bundles are the recorded release recipes; they
@@ -610,45 +606,75 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 build-linux:
 	#!/usr/bin/env bash
 	set -euo pipefail
+	if [[ -f /tmp/leg-linux.log && ! -f /tmp/leg-linux.rc ]]; then
+	  echo "linux leg looks already running: log exists with no rc; delete /tmp/leg-linux.log to force a relaunch"
+	  exit 1
+	fi
 	rm -f /tmp/leg-linux.rc
-	setsid bash -c 'bash -ic "set -a; source ~/.config/environment.d/baluard.conf; set +a; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; just desktop-build" > /tmp/leg-linux.log 2>&1 </dev/null; echo $? > /tmp/leg-linux.rc' </dev/null >/dev/null 2>&1 &
+	# bash -i (not -c): startup files source ~/.secrets, whose provider client
+	# ids must bake into the daemon; environment.d carries non-secret ids.
+	setsid bash -c 'bash -ic "set -euo pipefail; set -a; source ~/.config/environment.d/baluard.conf; set +a; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; just desktop-build" > /tmp/leg-linux.log 2>&1 </dev/null; echo $? > /tmp/leg-linux.rc' </dev/null >/dev/null 2>&1 &
 	echo "linux leg launched: poll /tmp/leg-linux.rc (tail /tmp/leg-linux.log)"
 
 build-windows:
 	#!/usr/bin/env bash
 	set -euo pipefail
+	if [[ -f /tmp/leg-windows.log && ! -f /tmp/leg-windows.rc ]]; then
+	  echo "windows leg looks already running: log exists with no rc; delete /tmp/leg-windows.log to force a relaunch"
+	  exit 1
+	fi
 	rm -f /tmp/leg-windows.rc
-	setsid bash -c 'bash -c "export PATH=\$HOME/.cargo/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; just desktop-windows" > /tmp/leg-windows.log 2>&1 </dev/null; echo $? > /tmp/leg-windows.rc' </dev/null >/dev/null 2>&1 &
+	# bash -i for the provider client ids in ~/.secrets; the rustup-first PATH
+	# export must sit INSIDE the payload so it wins over startup files.
+	setsid bash -c 'bash -ic "set -euo pipefail; export PATH=\$HOME/.cargo/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH; source ~/.config/environment.d/baluard.conf; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; just desktop-windows" > /tmp/leg-windows.log 2>&1 </dev/null; echo $? > /tmp/leg-windows.rc' </dev/null >/dev/null 2>&1 &
 	echo "windows leg launched: poll /tmp/leg-windows.rc (tail /tmp/leg-windows.log)"
 
 build-android:
 	#!/usr/bin/env bash
 	set -euo pipefail
+	if [[ -f /tmp/leg-android.log && ! -f /tmp/leg-android.rc ]]; then
+	  echo "android leg looks already running: log exists with no rc; delete /tmp/leg-android.log to force a relaunch"
+	  exit 1
+	fi
 	rm -f /tmp/leg-android.rc
-	setsid bash -c 'bash -ic "set -a; source ~/.config/environment.d/baluard.conf; set +a; export TMPDIR=/home/esteban/.cache/baluard-tmp; just android-apk-release" > /tmp/leg-android.log 2>&1 </dev/null; echo $? > /tmp/leg-android.rc' </dev/null >/dev/null 2>&1 &
+	setsid bash -c 'bash -ic "set -euo pipefail; mkdir -p \$HOME/.cache/baluard-tmp; set -a; source ~/.config/environment.d/baluard.conf; set +a; export TMPDIR=\$HOME/.cache/baluard-tmp; just android-apk-release" > /tmp/leg-android.log 2>&1 </dev/null; echo $? > /tmp/leg-android.rc' </dev/null >/dev/null 2>&1 &
 	echo "android leg launched: poll /tmp/leg-android.rc (tail /tmp/leg-android.log)"
 
 build-macos:
 	#!/usr/bin/env bash
 	set -euo pipefail
+	if [[ -f /tmp/leg-macos.log && ! -f /tmp/leg-macos.rc ]]; then
+	  echo "macos leg looks already running: log exists with no rc; delete /tmp/leg-macos.log to force a relaunch"
+	  exit 1
+	fi
 	rm -f /tmp/leg-macos.rc
-	setsid bash -c 'bash -c "export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; scripts/build-macos-aarch64-deliverable.sh" > /tmp/leg-macos.log 2>&1 </dev/null; echo $? > /tmp/leg-macos.rc' </dev/null >/dev/null 2>&1 &
+	# The built daemon must carry the real provider client ids; the guard
+	# greps the values through the env, never printing them.
+	setsid bash -c 'bash -ic "set -euo pipefail; source ~/.config/environment.d/baluard.conf; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; scripts/build-macos-aarch64-deliverable.sh && grep -aq \"\$BALUARD_GITLAB_CLIENT_ID\" desktop/src-tauri/binaries/baluard-daemon-aarch64-apple-darwin && grep -aq \"\$BALUARD_CODEBERG_CLIENT_ID\" desktop/src-tauri/binaries/baluard-daemon-aarch64-apple-darwin" > /tmp/leg-macos.log 2>&1 </dev/null; echo $? > /tmp/leg-macos.rc' </dev/null >/dev/null 2>&1 &
 	echo "macos leg launched: poll /tmp/leg-macos.rc (tail /tmp/leg-macos.log)"
 
 legs-status:
 	#!/usr/bin/env bash
 	set -euo pipefail
+	FAILED=0
 	for leg in linux windows android macos; do
 	  rc="/tmp/leg-$leg.rc"; logf="/tmp/leg-$leg.log"
 	  if [[ -f "$rc" ]]; then
 	    echo "$leg: rc=$(cat "$rc")"
+	    [[ "$(cat "$rc")" == "0" ]] || FAILED=1
 	  elif [[ -f "$logf" ]]; then
 	    echo "$leg: running (log $(wc -c < "$logf") bytes)"
 	  else
 	    echo "$leg: not launched"
 	  fi
 	done
+	exit "$FAILED"
 
+
+# Build desktop app (production bundle)
+# _sidecar-force (not _sidecar) because the staleness check keys on Rust
+# source mtimes only: a version bump that edits manifests alone would ship
+# stale sidecars (the 0.2.0 defect).
 desktop-build: _sysdeps-desktop _sidecar-force desktop-deps _nmh-manifests
 	#!/usr/bin/env bash
 	set -euo pipefail

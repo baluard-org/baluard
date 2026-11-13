@@ -156,6 +156,17 @@ else
   check "author-owned-files" fail "$owned_err"
 fi
 
+# 8. The release body ends with the standing closer (own line, blank line
+#    before it). The convention lives in release-protocol.md; this gate
+#    keeps the published bytes honest.
+body="$(gh release view "$TAG" --repo "$REPO" --json body -q .body 2>/dev/null || echo '')"
+last_line="$(awk 'NF {l=$0} END {print l}' <<<"$body")"
+if [[ "$last_line" == "As always, thanks for trying Baluard :)" ]]; then
+  check "notes-closer" ok
+else
+  check "notes-closer" fail "the body must end with the standing closer; last non-empty line: ${last_line:-none}"
+fi
+
 echo "---"
 echo "release-verify: $PASS passed, $FAIL failed, $WARN warned"
 if [[ "$FAIL" -gt 0 ]]; then
