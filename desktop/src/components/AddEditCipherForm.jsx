@@ -4,7 +4,7 @@ import { generateSecurePassword, formatCardNumber } from "../lib/utils.js";
 import { FIELD_LABEL, handleCardInput } from "../lib/helpers.js";
 import { getSchema, optionLabel } from "../lib/cipherSchema.js";
 import { daemon } from "../lib/daemon.js";
-import { IconX, IconStar, IconEye, IconEyeOff, IconPlus, IconGrip } from "./Icon.jsx";
+import { IconX, IconStar, IconEye, IconEyeOff, IconPlus, IconGrip, IconLinkSimple, IconSpinner } from "./Icon.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 import SshKeyGenerator from "./SshKeyGenerator.jsx";
 
@@ -15,6 +15,22 @@ const GRID_CLS = { 1: "grid grid-cols-1 gap-3", 2: "grid grid-cols-2 gap-3", 3: 
 // Security attrs for all sensitive inputs — prevent browser autocomplete,
 // autocorrect, spellcheck, and input history in a password manager.
 const SECURE_INPUT = { autocomplete: "off", autocorrect: "off", autocapitalize: "off", spellcheck: "false" };
+const MAX_ATTACHMENT_SIZE = 1_900_000;
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function formatAttachSize(size, t) {
+  if (size > 1024 * 1024) return (size / (1024 * 1024)).toFixed(1) + " MB";
+  if (size > 1024) return (size / 1024).toFixed(1) + " KB";
+  return `${size} ${t("common.bytes")}`;
+}
 
 function fieldCls(f) {
   return f.mono ? MONO_CLS : INPUT_CLS;
@@ -174,12 +190,51 @@ export default function AddEditCipherForm(props) {
     Object.assign(urisRef[index], { [field]: value });
   }
 
+  const [removedAttachmentIds, setRemovedAttachmentIds] = createSignal([]);
+  const [pendingAttachments, setPendingAttachments] = createSignal([]);
+  const [attachmentError, setAttachmentError] = createSignal(null);
+  const [saving, setSaving] = createSignal(false);
+
+  const existingAttachments = createMemo(() =>
+    (newCipher().attachments || []).filter((a) => !removedAttachmentIds().includes(a.id)),
+  );
+
+  function pickAttachment() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > MAX_ATTACHMENT_SIZE) {
+        setAttachmentError(t("entry.attachmentTooLarge"));
+        return;
+      }
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      setAttachmentError(null);
+      setPendingAttachments((prev) => [
+        ...prev,
+        { filename: file.name, size: file.size, data_base64: bytesToBase64(bytes) },
+      ]);
+    };
+    input.click();
+  }
+
   async function handleSave() {
-    setNewCipher({ ...newCipher(), uris: urisRef, custom_fields: fieldsRef, tags: tagsRef });
-    // Favicon: only for Login with a first URI, only when opt-in is enabled.
-    // Fetch happens here (add/edit save) — never while browsing the list.
-    await maybeFetchFavicon();
-    props.onSave?.();
+    if (saving()) return;
+    setSaving(true);
+    try {
+      setNewCipher({ ...newCipher(), uris: urisRef, custom_fields: fieldsRef, tags: tagsRef });
+      // Favicon: only for Login with a first URI, only when opt-in is enabled.
+      // Fetch happens here (add/edit save) — never while browsing the list.
+      await maybeFetchFavicon();
+      await props.onSave?.({
+        pendingAttachments: pendingAttachments(),
+        removedAttachmentIds: removedAttachmentIds(),
+      });
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function maybeFetchFavicon() {
@@ -735,12 +790,86 @@ export default function AddEditCipherForm(props) {
             </For>
           </div>
         </div>
+
+        {/* Attachments */}
+        <div class="space-y-3 pt-2 border-t border-[var(--color-border)]/50">
+          <div class="flex items-center justify-between">
+            <label class={FIELD_LABEL}>{t("entry.attachments")}</label>
+            <button
+              type="button"
+              data-testid="add-attachment-btn"
+              onClick={pickAttachment}
+              disabled={saving()}
+              class="text-xs text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-40"
+            >
+              <IconPlus class="w-3.5 h-3.5" /> {t("entry.addAttachment")}
+            </button>
+          </div>
+          <Show when={attachmentError()}>
+            <div class="p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+              {attachmentError()}
+            </div>
+          </Show>
+          <div class="space-y-2">
+            <For each={existingAttachments()}>
+              {(attach) => (
+                <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <IconLinkSimple class="w-4 h-4 text-[var(--color-muted)] shrink-0" />
+                    <div class="min-w-0">
+                      <div class="text-xs font-semibold text-[var(--color-text)] truncate">{attach.filename}</div>
+                      <div class="text-[10px] text-[var(--color-muted)]">{formatAttachSize(attach.size, t)}</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid={`remove-existing-attachment-${attach.id}`}
+                    onClick={() => setRemovedAttachmentIds((prev) => [...prev, attach.id])}
+                    disabled={saving()}
+                    class="p-1.5 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 disabled:opacity-40"
+                    title={t("entry.removeAttachment")}
+                  >
+                    <IconX class="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </For>
+            <For each={pendingAttachments()}>
+              {(attach, i) => (
+                <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-primary)]/40">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <IconLinkSimple class="w-4 h-4 text-[var(--color-primary)] shrink-0" />
+                    <div class="min-w-0">
+                      <div class="text-xs font-semibold text-[var(--color-text)] truncate">{attach.filename}</div>
+                      <div class="text-[10px] text-[var(--color-primary)]">
+                        {formatAttachSize(attach.size, t)} · {t("entry.pendingAttachment")}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid={`remove-pending-attachment-${i()}`}
+                    onClick={() => setPendingAttachments((prev) => prev.filter((_, j) => j !== i()))}
+                    disabled={saving()}
+                    class="p-1.5 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 disabled:opacity-40"
+                    title={t("entry.removeAttachment")}
+                  >
+                    <IconX class="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
       </div>
       <div class="flex gap-3 p-8 pt-0">
-        <button data-testid="form-save" onClick={handleSave} class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99]">
-          {t("entry.save")}
+        <button data-testid="form-save" onClick={handleSave} disabled={saving()} class="flex-1 inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
+          <Show when={saving()}>
+            <IconSpinner class="w-4 h-4 shrink-0" />
+          </Show>
+          <span>{t("entry.save")}</span>
         </button>
-        <button onClick={cancel} class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99]">
+        <button onClick={cancel} disabled={saving()} class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50">
           {t("entry.cancel")}
         </button>
       </div>

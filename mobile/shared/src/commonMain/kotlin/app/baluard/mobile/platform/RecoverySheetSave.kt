@@ -12,7 +12,15 @@ class PickedFile(val name: String, val bytes: ByteArray)
  * Callers stay silent on null — same contract as the saver's false.
  */
 fun interface ImportFilePicker {
-    operator fun invoke(mimeTypes: List<String>, onResult: (PickedFile?) -> Unit)
+    fun pick(mimeTypes: List<String>, maxBytes: Long, onResult: (PickedFile?) -> Unit)
+
+    operator fun invoke(mimeTypes: List<String>, onResult: (PickedFile?) -> Unit) {
+        pick(mimeTypes, 300L * 1024 * 1024, onResult)
+    }
+
+    operator fun invoke(mimeTypes: List<String>, maxBytes: Long, onResult: (PickedFile?) -> Unit) {
+        pick(mimeTypes, maxBytes, onResult)
+    }
 }
 
 /**

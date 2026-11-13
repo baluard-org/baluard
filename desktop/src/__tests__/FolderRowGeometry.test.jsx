@@ -33,4 +33,10 @@ describe("folder row geometry contract", () => {
     expect(confirm).toContain("h-[18px]");
     expect(confirm).not.toContain("py-0.5");
   });
+
+  it("the no-folder button spans full sidebar width and matches folder row height", () => {
+    const noFolderBlock = view.match(/<button(?:(?!<\/button>)[\s\S])*?t\("entry\.noFolder"\)[\s\S]*?<\/button>/)?.[0] ?? "";
+    expect(noFolderBlock).toContain("w-full");
+    expect(noFolderBlock).toContain("min-h-[30px]");
+  });
 });

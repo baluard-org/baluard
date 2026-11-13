@@ -9,4 +9,4 @@ import androidx.compose.runtime.Composable
  */
 @Composable
 actual fun rememberImportFilePicker(): ImportFilePicker =
-    ImportFilePicker { _, onResult -> onResult(null) }
+    ImportFilePicker { _, _, onResult -> onResult(null) }

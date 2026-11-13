@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createSignal, flush } from "solid-js";
-import { render, fireEvent, cleanup } from "@solidjs/testing-library";
+import { render, fireEvent, waitFor, cleanup } from "@solidjs/testing-library";
 
 vi.mock("../i18n/index.jsx", () => ({
   useI18n: () => ({ t: (k) => k, locale: () => "en", setLocale: vi.fn() }),
@@ -155,5 +155,104 @@ describe("AddEditCipherForm schema-field focus retention", () => {
     }
     unmount();
     cleanup();
+  });
+
+  it("shows existing attachments in edit mode and queues removals and additions for onSave", async () => {
+    const [cipher, setCipher] = createSignal({
+      cipherType: "login",
+      name: "GitHub",
+      attachments: [
+        { id: "att-1", filename: "recovery.txt", size: 42 },
+      ],
+    });
+    const onSave = vi.fn();
+    const { getByTestId, getByText, queryByText, unmount } = render(() => (
+      <AddEditCipherForm
+        isEdit={true}
+        newCipher={cipher}
+        setNewCipher={setCipher}
+        folders={[]}
+        tags={[]}
+        onSave={onSave}
+        onCancel={() => {}}
+      />
+    ));
+
+    expect(getByText("recovery.txt")).toBeTruthy();
+
+    // Remove existing attachment
+    fireEvent.click(getByTestId("remove-existing-attachment-att-1"));
+    flush();
+    expect(queryByText("recovery.txt")).toBeNull();
+
+    // Add a new attachment via file input
+    const origCreate = document.createElement.bind(document);
+    const spy = vi.spyOn(document, "createElement").mockImplementation((tag, opts) => {
+      const el = origCreate(tag, opts);
+      if (tag === "input") {
+        el.click = () => {
+          const bytes = new TextEncoder().encode("hello");
+          Object.defineProperty(el, "files", {
+            value: [{
+              name: "note.txt",
+              size: bytes.byteLength,
+              arrayBuffer: () => Promise.resolve(bytes.buffer),
+            }],
+            configurable: true,
+          });
+          el.onchange?.();
+        };
+      }
+      return el;
+    });
+
+    try {
+      fireEvent.click(getByTestId("add-attachment-btn"));
+      await waitFor(() => expect(getByText("note.txt")).toBeTruthy());
+
+      fireEvent.click(getByTestId("form-save"));
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+      const arg = onSave.mock.calls[0][0];
+      expect(arg.removedAttachmentIds).toEqual(["att-1"]);
+      expect(arg.pendingAttachments).toEqual([
+        { filename: "note.txt", size: 5, data_base64: btoa("hello") },
+      ]);
+    } finally {
+      spy.mockRestore();
+      unmount();
+      cleanup();
+    }
+  });
+
+  it("rejects attachments larger than 1.9 MB", async () => {
+    const { getByTestId, getByText, queryByText, unmount } = setup("login");
+    const origCreate = document.createElement.bind(document);
+    const spy = vi.spyOn(document, "createElement").mockImplementation((tag, opts) => {
+      const el = origCreate(tag, opts);
+      if (tag === "input") {
+        el.click = () => {
+          Object.defineProperty(el, "files", {
+            value: [{
+              name: "huge.bin",
+              size: 1_900_001,
+              arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+            }],
+            configurable: true,
+          });
+          el.onchange?.();
+        };
+      }
+      return el;
+    });
+
+    try {
+      fireEvent.click(getByTestId("add-attachment-btn"));
+      await waitFor(() => expect(getByText("entry.attachmentTooLarge")).toBeTruthy());
+      expect(queryByText("huge.bin")).toBeNull();
+    } finally {
+      spy.mockRestore();
+      unmount();
+      cleanup();
+    }
   });
 });

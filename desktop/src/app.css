@@ -521,6 +521,7 @@ select option {
   .toast-enter,
   .animate-conflict-panel,
   .copy-feedback,
+  .animate-shake,
   .motion-progress-indeterminate {
     animation-duration: 0.001ms;
   }

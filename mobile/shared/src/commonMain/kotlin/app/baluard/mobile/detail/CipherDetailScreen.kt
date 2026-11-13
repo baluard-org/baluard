@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.OpenInFull
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
@@ -102,6 +103,7 @@ fun CipherDetailScreen(
 
     val state = detailViewModel.state
     val scope = rememberCoroutineScope()
+    val attachmentSaver = rememberRecoverySheetSaver()
     var confirmDelete by remember { mutableStateOf(false) }
     // M7: a non-browser URI waiting for the user's confirmation to launch.
     var pendingExternalUri by remember { mutableStateOf<String?>(null) }
@@ -456,8 +458,7 @@ fun CipherDetailScreen(
                 }
             }
 
-            // Attachments Section (metadata display; download lands with the
-            // mobile attachment FFI)
+            // Attachments Section
             if (s.attachments.isNotEmpty()) {
                 SectionCard(title = t("detail.attachments")) {
                     s.attachments.forEachIndexed { index, att ->
@@ -483,6 +484,30 @@ fun CipherDetailScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            if (att.id.isNotBlank()) {
+                                IconButton(
+                                    onClick = {
+                                        scope.launch {
+                                            detailViewModel.downloadAttachment(vault, cipherId, att.id)
+                                                .onSuccess { res ->
+                                                    attachmentSaver(res.bytes, res.mimeType, res.filename) { saved ->
+                                                        if (saved) Toast.success(t("detail.attachmentSaved"))
+                                                    }
+                                                }
+                                                .onFailure {
+                                                    Toast.error(t("detail.downloadFailed"))
+                                                }
+                                        }
+                                    },
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = t("detail.downloadAttachment"),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
                         }
                         if (index < s.attachments.size - 1) {
                             BaluardDivider(

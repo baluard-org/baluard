@@ -107,6 +107,7 @@ fun VaultHomeScreen(
     onOpenSettings: () -> Unit = {},
     onLock: () -> Unit = {},
     onOpenKind: (EntryListKind) -> Unit = {},
+    onOpenCategories: () -> Unit = {},
     onOpenTags: () -> Unit = {},
     onCipherClick: (String) -> Unit = {},
     /** G24 §4.9: open a merged-search hit from another vault (path, id). */
@@ -544,16 +545,17 @@ fun VaultHomeScreen(
 
             Spacer(Modifier.height(14.dp))
 
-            // ── Types ──
+            // ── Categories ──
             if (typeRows.isEmpty()) {
                 HubEmptyCard(Icons.Default.Category)
             } else {
+                val primaryRows = homeCategoryRows(typeRows)
                 SectionCard(
                     title = "${t("home.types")} (${typeRows.size})",
                     modifier = Modifier.padding(horizontal = 16.dp),
                     contentPadding = PaddingValues(vertical = 4.dp),
                 ) {
-                    typeRows.forEachIndexed { index, (raw, count) ->
+                    primaryRows.forEach { (raw, count) ->
                         val (icon, color) = cipherTypeTheme(raw)
                         SectionLinkRow(
                             label = t(typeLabelKey(normalizeTypeTag(raw))),
@@ -562,14 +564,19 @@ fun VaultHomeScreen(
                             iconColor = color,
                             onClick = { onOpenKind(EntryListKind.Type(raw)) },
                         )
-                        if (index < typeRows.size - 1) {
-                            BaluardDivider(
-                                modifier = Modifier.padding(start = 58.dp, end = 14.dp),
-                                thickness = 0.7.dp,
-                                alpha = 0.35f,
-                            )
-                        }
+                        BaluardDivider(
+                            modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                            thickness = 0.7.dp,
+                            alpha = 0.35f,
+                        )
                     }
+                    SectionLinkRow(
+                        label = t("home.viewAllCategories"),
+                        count = cipherTypeDebugTags.size,
+                        icon = Icons.Default.Category,
+                        iconColor = MaterialTheme.colorScheme.primary,
+                        onClick = onOpenCategories,
+                    )
                 }
             }
 
@@ -884,6 +891,64 @@ private fun HubEmptyCard(icon: ImageVector) {
 @Composable
 private fun LaunchedEffectHubLoader(vault: MobileVault, revision: Int, vm: VaultListViewModel) {
     androidx.compose.runtime.LaunchedEffect(vault, revision) { vm.refresh(vault) }
+}
+
+// Home shows up to 4 primary categories; sshkey and secondary types live in CategoryListScreen.
+internal fun homeCategoryRows(typeRows: List<Pair<String, Int>>): List<Pair<String, Int>> =
+    typeRows.filterNot { it.first == "sshkey" }.take(4)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CategoryListScreen(
+    listViewModel: VaultListViewModel,
+    onCategory: (String) -> Unit = {},
+    onBack: () -> Unit = {},
+) {
+    val ciphers by listViewModel.ciphers.collectAsState()
+    val rows = cipherTypeDebugTags.map { raw ->
+        raw to ciphers.count { it.cipherType.lowercase() == raw }
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            BaluardTopBar(
+                title = t("home.types"),
+                onBack = onBack,
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            SectionCard(
+                title = t("home.types"),
+                modifier = Modifier.padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
+            ) {
+                rows.forEachIndexed { index, (raw, count) ->
+                    val (icon, color) = cipherTypeTheme(raw)
+                    SectionLinkRow(
+                        label = t(typeLabelKey(normalizeTypeTag(raw))),
+                        count = count,
+                        icon = icon,
+                        iconColor = color,
+                        onClick = { onCategory(raw) },
+                    )
+                    if (index < rows.size - 1) {
+                        BaluardDivider(
+                            modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                            thickness = 0.7.dp,
+                            alpha = 0.35f,
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** Tag list screen: all tags sorted by entry count, descending. */

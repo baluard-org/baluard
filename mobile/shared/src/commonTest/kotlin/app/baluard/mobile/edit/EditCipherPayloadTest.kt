@@ -252,4 +252,24 @@ class EditCipherPayloadTest {
         assertEquals("4242", data["number"]!!.jsonPrimitive.content)
         assertEquals("card", root["kind"]!!.jsonObject["type"]!!.jsonPrimitive.content)
     }
+
+    @Test
+    fun parseLoadedCipherIncludesAttachmentsAndViewModelQueuesChanges() {
+        val raw = """{"id":"c1","name":"GH","kind":{"type":"login","data":{}},"attachments":[{"id":"att-1","filename":"key.txt","size":128}]}"""
+        val parsed = parseLoadedCipher(raw)
+        assertEquals(1, parsed.existingAttachments.size)
+        assertEquals("att-1", parsed.existingAttachments[0].id)
+        assertEquals("key.txt", parsed.existingAttachments[0].filename)
+        assertEquals(128L, parsed.existingAttachments[0].size)
+
+        assertEquals(true, vm.addPendingAttachment("small.bin", ByteArray(10)))
+        assertEquals(false, vm.addPendingAttachment("huge.bin", ByteArray(EditCipherViewModel.MAX_ATTACHMENT_SIZE + 1)))
+        assertEquals(1, vm.form.value.pendingAttachments.size)
+
+        vm.removeExistingAttachment("att-1")
+        assertEquals(setOf("att-1"), vm.form.value.removedAttachmentIds)
+
+        vm.removePendingAttachment(0)
+        assertEquals(0, vm.form.value.pendingAttachments.size)
+    }
 }
