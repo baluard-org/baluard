@@ -103,18 +103,35 @@ class AuthViewModel(private val repo: VaultRepository) {
     suspend fun openAndUnlockWithKek(path: String, kek: ByteArray): UnlockResult {
         return try {
             val v = repo.openVault(path)
+            // ADR 0102: same pre-unlock policy switch as the password path.
+            runCatching { v.setAutosyncAllowed(Entitlements.current().syncUnlocked) }
             if (requiresSecurityKey(v)) {
                 withSecurityKeyTransport { v.unlockWithSecurityKeyAndKek(kek, it) }
             } else {
                 v.unlockWithKek(kek)
             }
             session.adopt(path, MobileSessionVault(v), kek = kek)
+            armAutosyncAfterKekUnlock(v, Entitlements.current().syncUnlocked)
             UnlockResult.Success
         } catch (e: BaluardException.DeviceUnpaired) {
             UnlockResult.DeviceMismatch
         } catch (e: Exception) {
             classifyUnlockError(e)
         }
+    }
+
+    /**
+     * The KEK unlock landing skips the unlock-time sync tail (the memory-
+     * capped autofill process shares that landing), so the main app must
+     * arm the coordinator itself: the password unlock's tail performs the
+     * same activation. Without it, every biometric unlock reported
+     * "No sync is set up" while the vault had a remote configured. Locked
+     * entitlements never arm (ADR 0102); a failed arm stays silent because
+     * the unlock itself succeeded and the next password unlock heals it.
+     */
+    private suspend fun armAutosyncAfterKekUnlock(vault: MobileVault, syncUnlocked: Boolean) {
+        if (!syncUnlocked) return
+        runCatching { vault.activateAutosyncAfterRemote() }
     }
 
     /** Argon2id KEK for biometric enroll (main-app only; see repository). */

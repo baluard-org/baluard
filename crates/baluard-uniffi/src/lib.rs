@@ -1047,6 +1047,15 @@ impl MobileVault {
         self.state.autosync.pull_now(dn).await.tag().to_string()
     }
 
+    /// Activate the autosync coordinator when the vault has a remote. The
+    /// KEK unlock landing skips the unlock-time sync tail because the
+    /// memory-capped autofill process shares it, so the main app calls this
+    /// after a biometric or security-key KEK unlock — the password unlock's
+    /// tail performs the same activation.
+    pub async fn activate_autosync_after_remote(&self) {
+        self.state.activate_autosync_after_remote().await;
+    }
+
     /// Host-scheduled 30s probe while Offline + foregrounded (the one piece of
     /// background_loop mobile must reproduce).
     pub async fn sync_offline_tick(&self) {
