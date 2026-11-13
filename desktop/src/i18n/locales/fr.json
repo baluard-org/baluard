@@ -653,6 +653,7 @@
     "switchToLight": "Passer au thème clair",
     "switchToDark": "Passer au thème sombre",
     "tabAbout": "À propos",
+    "aboutTitle": "À propos de Baluard",
     "aboutSubtitle": "Gestionnaire de mots de passe souverain, chiffré de bout en bout et sans serveur centralisé."
   },
   "categories": {

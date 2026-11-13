@@ -482,6 +482,7 @@
     "switchToLight": "Switch to light theme",
     "switchToDark": "Switch to dark theme",
     "tabAbout": "About",
+    "aboutTitle": "About Baluard",
     "aboutSubtitle": "Git-native password manager • GPL-3.0"
   },
   "sync": {

@@ -9211,6 +9211,11 @@ public object FfiConverterTypeMobileProviderConfig : FfiConverterRustBuffer<Mobi
   }
 }
 
+/**
+ * A 24-word BIP-39 recovery phrase. Mirrors `baluard_core::recovery::RecoveryPhrase`
+ * but flattened to a plain String for the FFI boundary (the internal type
+ * holds zeroized entropy that UniFFI can't cross with the zeroize guarantee).
+ */
 data class MobileRecoveryPhrase(
   /**
    * Space-separated 24 words.
@@ -9433,9 +9438,6 @@ public object FfiConverterTypePasswordConfig : FfiConverterRustBuffer<PasswordCo
 }
 
 /**
- * A 24-word BIP-39 recovery phrase. Mirrors `baluard_core::recovery::RecoveryPhrase`
- * but flattened to a plain String for the FFI boundary (the internal type
- * holds zeroized entropy that UniFFI can't cross with the zeroize guarantee).
  * Outcome of a user-triggered pull: the stable tag the toast matrix
  * classifies, plus the scrubbed failure cause when one exists.
  */
