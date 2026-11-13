@@ -6,6 +6,7 @@
 //! Clones are always full: commit signing verification walks the entire
 //! first-parent history, so a shallow clone could not verify signatures.
 
+pub mod attachments;
 pub mod commit;
 pub mod conflict;
 pub mod credentials;
