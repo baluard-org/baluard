@@ -4,7 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-- No user-facing changes yet.
+- The sync status dot now sits in the window's top-right corner on Windows and Linux, matching macOS, instead of hanging below the header row.
+- Focusing the vault search no longer draws a second, sharp-cornered box around the input; the rounded border around the whole field (magnifier included) is the single highlight.
 
 ## 0.4.6 - 2026-11-12
 
