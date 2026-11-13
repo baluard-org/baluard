@@ -84,13 +84,15 @@ export function FolderNode(props) {
     } catch {}
   }
 
+  const isSelected = () => vault.selectedFolder() === props.node.id;
+
   return (
     <div>
       <div
-        class={`group/folder flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors min-h-[30px] ${
-          vault.selectedFolder() === props.node.id
-            ? "bg-[var(--color-sidebar)] text-[var(--color-text)]"
-            : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"
+        class={`group/folder flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors min-h-[30px] border ${
+          isSelected()
+            ? "bg-[var(--color-card)] border-[var(--color-border)] text-[var(--color-text)] shadow-sm"
+            : "border-transparent text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"
         }`}
         style={{ "padding-left": `${indent()}px`, "padding-right": "14px" }}
         data-testid="folder-row"
@@ -106,7 +108,7 @@ export function FolderNode(props) {
             <svg class={`w-3 h-3 transition-transform ${expanded() ? "rotate-90" : ""}`} fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
           </button>
         ) : (depth() > 0 ? <span class="w-4 shrink-0" /> : null)}
-        <IconFolder class="w-3.5 h-3.5 shrink-0" />
+        <IconFolder filled={isSelected()} class={`w-3.5 h-3.5 shrink-0 transition-colors ${isSelected() ? "text-[var(--color-primary)]" : ""}`} />
 
         <Show when={renaming()} fallback={
           <span class="truncate flex-1 min-w-0">{props.node.name}</span>
