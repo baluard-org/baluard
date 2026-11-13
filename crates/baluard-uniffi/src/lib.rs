@@ -484,9 +484,10 @@ impl MobileVault {
             });
         }
         arr.copy_from_slice(&kek);
-        // Lean landing: no autosync/sweep tail. This runs in the
-        // memory-capped autofill process; the main app's coordinator
-        // owns the sync work.
+        // Lean landing: no autosync/sweep tail (the memory-capped
+        // autofill process shares this method and must not sync). The
+        // main app arms its coordinator itself via
+        // activate_autosync_after_remote after this returns.
         Ok(self.state.unlock_with_kek_lean(&arr).await?)
     }
 
