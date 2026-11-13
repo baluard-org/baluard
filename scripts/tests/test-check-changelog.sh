@@ -79,8 +79,34 @@ cat > "$TMP/nosection.md" <<'EOF'
 EOF
 expect missing-section 1 "$TMP/nosection.md" "no section for"
 
+# Splice artifact from a cut that relocates a bullets block: the moved block
+# carries its own leading blank line, doubling the separator under the new
+# heading. Neither the heading count nor bullet-fragment assertions catch it.
+cat > "$TMP/double-blank.md" <<'EOF'
+## [UNRELEASED]
+
+- next thing
+
+## 0.4.6 - 2026-11-12
+
+
+- shipped thing
+EOF
+expect double-blank-junction 1 "$TMP/double-blank.md" "one blank line"
+
+# The inverse splice damage: the bullet glued straight onto the heading.
+cat > "$TMP/glued.md" <<'EOF'
+## [UNRELEASED]
+
+- next thing
+
+## 0.4.6 - 2026-11-12
+- shipped thing
+EOF
+expect glued-junction 1 "$TMP/glued.md" "one blank line"
+
 if [[ "$FAILED" -gt 0 ]]; then
   log "FAIL: $FAILED failing assertions"
   exit 1
 fi
-log "PASS (5 cases)"
+log "PASS (7 cases)"
