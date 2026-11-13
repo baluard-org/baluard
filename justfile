@@ -602,9 +602,10 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 # Release build legs: each launches detached, logs to /tmp/leg-<leg>.log and
 # writes the exit code to /tmp/leg-<leg>.rc. A missing rc file means the leg
 # is still running. The inner script is written verbatim from a heredoc, so
-# it carries no nested quoting. Startup files provide PATH, JAVA_HOME, and
-# the SDK env; secrets are extracted per variable from ~/.secrets, never
-# sourced wholesale, and the ext-submit secrets are unset before any build.
+# it carries no nested quoting. Startup files provide PATH, JAVA_HOME, the
+# SDK env, and the ambient secret variables; the ext-submit credentials are
+# unset before any build, and each leg asserts the specific variables it
+# needs so a missing value fails loudly.
 build-linux:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -630,6 +631,7 @@ build-linux:
 	rm -f /tmp/leg-linux.rc
 	setsid bash -c 'bash -ic "bash /tmp/leg-linux-inner.sh > /tmp/leg-linux.log 2>&1 </dev/null; echo \$? > /tmp/leg-linux.rc"' </dev/null >/dev/null 2>&1 &
 	echo "linux leg launched: poll /tmp/leg-linux.rc (tail /tmp/leg-linux.log)"
+
 build-windows:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -656,6 +658,7 @@ build-windows:
 	rm -f /tmp/leg-windows.rc
 	setsid bash -c 'bash -ic "bash /tmp/leg-windows-inner.sh > /tmp/leg-windows.log 2>&1 </dev/null; echo \$? > /tmp/leg-windows.rc"' </dev/null >/dev/null 2>&1 &
 	echo "windows leg launched: poll /tmp/leg-windows.rc (tail /tmp/leg-windows.log)"
+
 build-android:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -681,6 +684,7 @@ build-android:
 	rm -f /tmp/leg-android.rc
 	setsid bash -c 'bash -ic "bash /tmp/leg-android-inner.sh > /tmp/leg-android.log 2>&1 </dev/null; echo \$? > /tmp/leg-android.rc"' </dev/null >/dev/null 2>&1 &
 	echo "android leg launched: poll /tmp/leg-android.rc (tail /tmp/leg-android.log)"
+
 build-macos:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -707,6 +711,22 @@ build-macos:
 	setsid bash -c 'bash -ic "bash /tmp/leg-macos-inner.sh > /tmp/leg-macos.log 2>&1 </dev/null; echo \$? > /tmp/leg-macos.rc"' </dev/null >/dev/null 2>&1 &
 	echo "macos leg launched: poll /tmp/leg-macos.rc (tail /tmp/leg-macos.log)"
 
+legs-status:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	FAILED=0
+	for leg in linux windows android macos; do
+	  rc="/tmp/leg-$leg.rc"; logf="/tmp/leg-$leg.log"
+	  if [[ -f "$rc" ]]; then
+	    echo "$leg: rc=$(cat "$rc")"
+	    [[ "$(cat "$rc")" == "0" ]] || FAILED=1
+	  elif [[ -f "$logf" ]]; then
+	    echo "$leg: running (log $(wc -c < "$logf") bytes)"
+	  else
+	    echo "$leg: not launched"
+	  fi
+	done
+	exit "$FAILED"
 
 # Build desktop app (production bundle)
 # _sidecar-force (not _sidecar) because the staleness check keys on Rust
