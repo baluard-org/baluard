@@ -602,7 +602,9 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 # Release build legs: each launches detached, logs to /tmp/leg-<leg>.log and
 # writes the exit code to /tmp/leg-<leg>.rc. A missing rc file means the leg
 # is still running. The env bundles are the recorded release recipes; they
-# live here so a leg relaunch cannot silently drop half of one.
+# live here so a leg relaunch cannot silently drop half of one. Secrets are
+# extracted per variable from ~/.secrets, never sourced wholesale, and each
+# leg asserts the variables it needs before any long work starts.
 build-linux:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -610,10 +612,19 @@ build-linux:
 	  echo "linux leg looks already running: log exists with no rc; delete /tmp/leg-linux.log to force a relaunch"
 	  exit 1
 	fi
+	cat > /tmp/leg-linux-inner.sh <<'INNER'
+	set -euo pipefail
+	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E 's/^"(.*)"$/\\1/; s/^\'(.*)\'\$/\\1/'; }
+	export BALUARD_GITLAB_CLIENT_ID="$(sec BALUARD_GITLAB_CLIENT_ID)"
+	export BALUARD_CODEBERG_CLIENT_ID="$(sec BALUARD_CODEBERG_CLIENT_ID)"
+	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing from ~/.secrets"; exit 1; }
+	set -a; source ~/.config/environment.d/baluard.conf; set +a
+	export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/baluard-updater.key)"
+	export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
+	just desktop-build
+	INNER
 	rm -f /tmp/leg-linux.rc
-	# bash -i (not -c): startup files source ~/.secrets, whose provider client
-	# ids must bake into the daemon; environment.d carries non-secret ids.
-	setsid bash -c 'bash -ic "set -euo pipefail; set -a; source ~/.config/environment.d/baluard.conf; set +a; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; just desktop-build" > /tmp/leg-linux.log 2>&1 </dev/null; echo $? > /tmp/leg-linux.rc' </dev/null >/dev/null 2>&1 &
+	setsid bash -c 'bash /tmp/leg-linux-inner.sh > /tmp/leg-linux.log 2>&1 </dev/null; echo $? > /tmp/leg-linux.rc' </dev/null >/dev/null 2>&1 &
 	echo "linux leg launched: poll /tmp/leg-linux.rc (tail /tmp/leg-linux.log)"
 
 build-windows:
@@ -623,10 +634,20 @@ build-windows:
 	  echo "windows leg looks already running: log exists with no rc; delete /tmp/leg-windows.log to force a relaunch"
 	  exit 1
 	fi
+	cat > /tmp/leg-windows-inner.sh <<'INNER'
+	set -euo pipefail
+	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E 's/^"(.*)"$/\\1/; s/^\'(.*)\'\$/\\1/'; }
+	export PATH="$HOME/.cargo/bin:/home/linuxbrew/.linuxbrew/bin:$PATH"
+	export BALUARD_GITLAB_CLIENT_ID="$(sec BALUARD_GITLAB_CLIENT_ID)"
+	export BALUARD_CODEBERG_CLIENT_ID="$(sec BALUARD_CODEBERG_CLIENT_ID)"
+	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing from ~/.secrets"; exit 1; }
+	source ~/.config/environment.d/baluard.conf
+	export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/baluard-updater.key)"
+	export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
+	just desktop-windows
+	INNER
 	rm -f /tmp/leg-windows.rc
-	# bash -i for the provider client ids in ~/.secrets; the rustup-first PATH
-	# export must sit INSIDE the payload so it wins over startup files.
-	setsid bash -c 'bash -ic "set -euo pipefail; export PATH=\$HOME/.cargo/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH; source ~/.config/environment.d/baluard.conf; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; just desktop-windows" > /tmp/leg-windows.log 2>&1 </dev/null; echo $? > /tmp/leg-windows.rc' </dev/null >/dev/null 2>&1 &
+	setsid bash -c 'bash /tmp/leg-windows-inner.sh > /tmp/leg-windows.log 2>&1 </dev/null; echo $? > /tmp/leg-windows.rc' </dev/null >/dev/null 2>&1 &
 	echo "windows leg launched: poll /tmp/leg-windows.rc (tail /tmp/leg-windows.log)"
 
 build-android:
@@ -636,8 +657,19 @@ build-android:
 	  echo "android leg looks already running: log exists with no rc; delete /tmp/leg-android.log to force a relaunch"
 	  exit 1
 	fi
+	cat > /tmp/leg-android-inner.sh <<'INNER'
+	set -euo pipefail
+	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E 's/^"(.*)"$/\\1/; s/^\'(.*)\'\$/\\1/'; }
+	mkdir -p "$HOME/.cache/baluard-tmp"
+	export TMPDIR="$HOME/.cache/baluard-tmp"
+	export BALUARD_ANDROID_STORE_PASSWORD="$(sec BALUARD_ANDROID_STORE_PASSWORD)"
+	export BALUARD_ANDROID_KEY_PASSWORD="$(sec BALUARD_ANDROID_KEY_PASSWORD)"
+	[[ -n "$BALUARD_ANDROID_STORE_PASSWORD" && -n "$BALUARD_ANDROID_KEY_PASSWORD" ]] || { echo "android signing passwords missing from ~/.secrets"; exit 1; }
+	set -a; source ~/.config/environment.d/baluard.conf; set +a
+	just android-apk-release
+	INNER
 	rm -f /tmp/leg-android.rc
-	setsid bash -c 'bash -ic "set -euo pipefail; mkdir -p \$HOME/.cache/baluard-tmp; set -a; source ~/.config/environment.d/baluard.conf; set +a; export TMPDIR=\$HOME/.cache/baluard-tmp; just android-apk-release" > /tmp/leg-android.log 2>&1 </dev/null; echo $? > /tmp/leg-android.rc' </dev/null >/dev/null 2>&1 &
+	setsid bash -c 'bash /tmp/leg-android-inner.sh > /tmp/leg-android.log 2>&1 </dev/null; echo $? > /tmp/leg-android.rc' </dev/null >/dev/null 2>&1 &
 	echo "android leg launched: poll /tmp/leg-android.rc (tail /tmp/leg-android.log)"
 
 build-macos:
@@ -647,10 +679,21 @@ build-macos:
 	  echo "macos leg looks already running: log exists with no rc; delete /tmp/leg-macos.log to force a relaunch"
 	  exit 1
 	fi
+	cat > /tmp/leg-macos-inner.sh <<'INNER'
+	set -euo pipefail
+	sec() { grep -m1 "^\(export \)\?$1=" ~/.secrets | cut -d= -f2- | sed -E 's/^"(.*)"$/\\1/; s/^\'(.*)\'\$/\\1/'; }
+	source ~/.config/environment.d/baluard.conf
+	export BALUARD_GITLAB_CLIENT_ID="$(sec BALUARD_GITLAB_CLIENT_ID)"
+	export BALUARD_CODEBERG_CLIENT_ID="$(sec BALUARD_CODEBERG_CLIENT_ID)"
+	[[ -n "$BALUARD_GITLAB_CLIENT_ID" && -n "$BALUARD_CODEBERG_CLIENT_ID" ]] || { echo "provider client ids missing from ~/.secrets"; exit 1; }
+	export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/baluard-updater.key)"
+	export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
+	scripts/build-macos-aarch64-deliverable.sh
+	grep -aq "$BALUARD_GITLAB_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-aarch64-apple-darwin
+	grep -aq "$BALUARD_CODEBERG_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-aarch64-apple-darwin
+	INNER
 	rm -f /tmp/leg-macos.rc
-	# The built daemon must carry the real provider client ids; the guard
-	# greps the values through the env, never printing them.
-	setsid bash -c 'bash -ic "set -euo pipefail; source ~/.config/environment.d/baluard.conf; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; scripts/build-macos-aarch64-deliverable.sh && grep -aq \"\$BALUARD_GITLAB_CLIENT_ID\" desktop/src-tauri/binaries/baluard-daemon-aarch64-apple-darwin && grep -aq \"\$BALUARD_CODEBERG_CLIENT_ID\" desktop/src-tauri/binaries/baluard-daemon-aarch64-apple-darwin" > /tmp/leg-macos.log 2>&1 </dev/null; echo $? > /tmp/leg-macos.rc' </dev/null >/dev/null 2>&1 &
+	setsid bash -c 'bash /tmp/leg-macos-inner.sh > /tmp/leg-macos.log 2>&1 </dev/null; echo $? > /tmp/leg-macos.rc' </dev/null >/dev/null 2>&1 &
 	echo "macos leg launched: poll /tmp/leg-macos.rc (tail /tmp/leg-macos.log)"
 
 legs-status:
@@ -669,7 +712,6 @@ legs-status:
 	  fi
 	done
 	exit "$FAILED"
-
 
 # Build desktop app (production bundle)
 # _sidecar-force (not _sidecar) because the staleness check keys on Rust

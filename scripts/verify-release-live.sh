@@ -160,7 +160,9 @@ fi
 #    before it). The convention lives in release-protocol.md; this gate
 #    keeps the published bytes honest.
 body="$(gh release view "$TAG" --repo "$REPO" --json body -q .body 2>/dev/null || echo '')"
-last_line="$(awk 'NF {l=$0} END {print l}' <<<"$body")"
+# The body is stored with the closer as its last non-empty line; strip CR so
+# a web-UI edit (CRLF) does not fail the comparison.
+last_line="$(awk 'NF {l=$0} END {print l}' <<<"$body" | tr -d '\r')"
 if [[ "$last_line" == "As always, thanks for trying Baluard :)" ]]; then
   check "notes-closer" ok
 else
