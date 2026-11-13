@@ -603,6 +603,52 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 # _sidecar-force (not _sidecar) because the staleness check keys on Rust
 # source mtimes only: a version bump that edits manifests alone would ship
 # stale sidecars (the 0.2.0 defect).
+# Release build legs: each launches detached, logs to /tmp/leg-<leg>.log and
+# writes the exit code to /tmp/leg-<leg>.rc. A missing rc file means the leg
+# is still running. The env bundles are the recorded release recipes; they
+# live here so a leg relaunch cannot silently drop half of one.
+build-linux:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	rm -f /tmp/leg-linux.rc
+	setsid bash -c 'bash -ic "set -a; source ~/.config/environment.d/baluard.conf; set +a; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; just desktop-build" > /tmp/leg-linux.log 2>&1 </dev/null; echo $? > /tmp/leg-linux.rc' </dev/null >/dev/null 2>&1 &
+	echo "linux leg launched: poll /tmp/leg-linux.rc (tail /tmp/leg-linux.log)"
+
+build-windows:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	rm -f /tmp/leg-windows.rc
+	setsid bash -c 'bash -c "export PATH=\$HOME/.cargo/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH; export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; just desktop-windows" > /tmp/leg-windows.log 2>&1 </dev/null; echo $? > /tmp/leg-windows.rc' </dev/null >/dev/null 2>&1 &
+	echo "windows leg launched: poll /tmp/leg-windows.rc (tail /tmp/leg-windows.log)"
+
+build-android:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	rm -f /tmp/leg-android.rc
+	setsid bash -c 'bash -ic "set -a; source ~/.config/environment.d/baluard.conf; set +a; export TMPDIR=/home/esteban/.cache/baluard-tmp; just android-apk-release" > /tmp/leg-android.log 2>&1 </dev/null; echo $? > /tmp/leg-android.rc' </dev/null >/dev/null 2>&1 &
+	echo "android leg launched: poll /tmp/leg-android.rc (tail /tmp/leg-android.log)"
+
+build-macos:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	rm -f /tmp/leg-macos.rc
+	setsid bash -c 'bash -c "export TAURI_SIGNING_PRIVATE_KEY=\$(cat ~/.tauri/baluard-updater.key); export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=; scripts/build-macos-aarch64-deliverable.sh" > /tmp/leg-macos.log 2>&1 </dev/null; echo $? > /tmp/leg-macos.rc' </dev/null >/dev/null 2>&1 &
+	echo "macos leg launched: poll /tmp/leg-macos.rc (tail /tmp/leg-macos.log)"
+
+legs-status:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	for leg in linux windows android macos; do
+	  rc="/tmp/leg-$leg.rc"; logf="/tmp/leg-$leg.log"
+	  if [[ -f "$rc" ]]; then
+	    echo "$leg: rc=$(cat "$rc")"
+	  elif [[ -f "$logf" ]]; then
+	    echo "$leg: running (log $(wc -c < "$logf") bytes)"
+	  else
+	    echo "$leg: not launched"
+	  fi
+	done
+
 desktop-build: _sysdeps-desktop _sidecar-force desktop-deps _nmh-manifests
 	#!/usr/bin/env bash
 	set -euo pipefail
