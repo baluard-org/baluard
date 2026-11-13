@@ -92,7 +92,7 @@ export function FolderNode(props) {
             ? "bg-[var(--color-sidebar)] text-[var(--color-text)]"
             : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"
         }`}
-        style={{ "padding-left": `${indent()}px`, "padding-right": "6px" }}
+        style={{ "padding-left": `${indent()}px`, "padding-right": "14px" }}
         data-testid="folder-row"
         onClick={() => vault.setSelectedFolder(props.node.id)}
         onMouseEnter={() => setHovered(true)}
@@ -126,7 +126,7 @@ export function FolderNode(props) {
 
         {/* Entry count badge */}
         <Show when={!hovered() || renaming()}>
-          <span class="ml-auto text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)] shrink-0">
+          <span class="ml-auto h-[18px] inline-flex items-center text-[10px] leading-none bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 rounded-md font-mono text-[var(--color-muted)] shrink-0">
             {folderCount()}
           </span>
         </Show>
@@ -152,7 +152,7 @@ export function FolderNode(props) {
               </button>
             }>
               <button title={t("entry.confirmDelete")}
-                class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60 cursor-pointer whitespace-nowrap"
+                class="h-[18px] px-1.5 inline-flex items-center leading-none rounded text-[10px] font-bold bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60 cursor-pointer whitespace-nowrap"
                 onClick={e => { e.stopPropagation(); setConfirmingDelete(false); handleDelete(e); }}>
                 {t("entry.deletePromptQuestion")}
               </button>
