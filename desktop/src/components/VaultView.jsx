@@ -603,7 +603,7 @@ export default function VaultView() {
              GPU/Wayland stacks (Arch report); flex centers them on every
              engine down to the WebKitGTK 2.44 floor without any positioning */}
           <div class="px-6 pb-4 shrink-0">
-            <div class="flex items-center rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] transition-all focus-within:border-[var(--color-primary)]" data-testid="vault-search">
+            <div class="vault-search flex items-center rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] transition-all focus-within:border-[var(--color-primary)]" data-testid="vault-search">
               <span class="pl-3.5 shrink-0 flex items-center pointer-events-none text-[var(--color-muted)]">
                 <IconSearch class="w-4 h-4" />
               </span>
