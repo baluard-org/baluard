@@ -992,6 +992,11 @@ internal interface UniffiLib : Library {
     `id`: RustBuffer.ByValue,
   ): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_ack(
+    `ptr`: Pointer,
+    `tip`: RustBuffer.ByValue,
+  ): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_compact(
     `ptr`: Pointer,
     `payload`: RustBuffer.ByValue,
@@ -1006,6 +1011,8 @@ internal interface UniffiLib : Library {
     `ptr`: Pointer,
     `payload`: RustBuffer.ByValue,
   ): Long
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_status(`ptr`: Pointer): Long
 
   fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_upload(
     `ptr`: Pointer,
@@ -1956,11 +1963,15 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_ack(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_compact(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_delete(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_download(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_status(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_upload(): Short
 
@@ -2364,6 +2375,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher() != 4306.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_ack() != 57022.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_compact() != 21575.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
@@ -2371,6 +2385,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_download() != 46864.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_status() != 53366.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_upload() != 17305.toShort()) {
@@ -4214,6 +4231,13 @@ public interface MobileVaultInterface {
   suspend fun `archiveCipher`(`id`: kotlin.String)
 
   /**
+   * Acknowledge the offered attachments-line tip after the cleanup
+   * notice, silencing it until the line is rewritten again. Refuses
+   * a stale accept when the line changed while reviewing.
+   */
+  suspend fun `attachAck`(`tip`: kotlin.String): kotlin.String
+
+  /**
    * Compact the vault's off-main attachments line, reclaiming
    * encrypted files no entry references anymore. Refuses when any
    * entry is unreadable on this device (shared vaults: owner/admin
@@ -4233,6 +4257,16 @@ public interface MobileVaultInterface {
    * Payload: `{ cipher_id, attachment_id }`.
    */
   suspend fun `attachDownload`(`payload`: kotlin.String): kotlin.String
+
+  /**
+   * Read the shared attachments-line status for the cleanup
+   * notice: whether this device still carries the tip it last
+   * accepted, whether the current tip was rewritten, and the
+   * verified compaction details when the genesis signature checks
+   * out. Works on a locked vault. Returns JSON
+   * `{tip, rewritten, foreign, rewrite_signed, compaction}`.
+   */
+  suspend fun `attachStatus`(): kotlin.String
 
   /**
    * Upload an attachment to a cipher.
@@ -5375,6 +5409,36 @@ open class MobileVault :
     )
 
   /**
+   * Acknowledge the offered attachments-line tip after the cleanup
+   * notice, silencing it until the line is rewritten again. Refuses
+   * a stale accept when the line changed while reviewing.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `attachAck`(`tip`: kotlin.String): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_attach_ack(
+          thisPtr,
+          FfiConverterString.lower(`tip`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
    * Compact the vault's off-main attachments line, reclaiming
    * encrypted files no entry references anymore. Refuses when any
    * entry is unreadable on this device (shared vaults: owner/admin
@@ -5447,6 +5511,38 @@ open class MobileVault :
         UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_attach_download(
           thisPtr,
           FfiConverterString.lower(`payload`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Read the shared attachments-line status for the cleanup
+   * notice: whether this device still carries the tip it last
+   * accepted, whether the current tip was rewritten, and the
+   * verified compaction details when the genesis signature checks
+   * out. Works on a locked vault. Returns JSON
+   * `{tip, rewritten, foreign, rewrite_signed, compaction}`.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `attachStatus`(): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_attach_status(
+          thisPtr,
         )
       },
       {

@@ -59,6 +59,16 @@ open class StubVault(
         return "{}"
     }
 
+    override suspend fun attachStatus(): String {
+        calls += "attachStatus"
+        return "{}"
+    }
+
+    override suspend fun attachAck(tip: String): String {
+        calls += "attachAck"
+        return "{}"
+    }
+
     override suspend fun autofillAppTrust(packageName: String, domain: String) {
         calls += "autofillAppTrust"
     }
