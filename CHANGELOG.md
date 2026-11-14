@@ -4,7 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-- Attachment metadata now pins the SHA-256 of each encrypted file, key rotation updates the pin, and large uploads scrub their encoded copy from memory. This is the groundwork for storing attachment files outside the vault's main history.
+- Attachment files now live outside the vault's main history, on a signed side channel that keeps the branch history lean: every file is pinned to its encrypted bytes (rotation updates the pin), syncing carries new files to the side channel before the entry lands, and a fresh clone downloads files on demand instead of carrying them in the git tree.
 
 ## 0.5.5 - 2026-11-13
 

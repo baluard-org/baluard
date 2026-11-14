@@ -1827,8 +1827,11 @@ impl SyncEngine {
         // The gossip channel rides refs/notes, which the wildcard heads
         // fetch does not carry; pull it explicitly best-effort (the
         // legacy branch, while it exists, rides the wildcard).
+        // '+': forced fetch. The remote tip is the only truth — without
+        // it libgit2 will not move an existing tracking ref to an
+        // unrelated tip (a rewritten channel would be invisible forever).
         let gossip_spec = format!(
-            "{}:refs/remotes/{remote_name}/{}",
+            "+{}:refs/remotes/{remote_name}/{}",
             crate::sync::gossip::GOSSIP_REF,
             crate::sync::gossip::GOSSIP_TRACKING
         );
@@ -1926,6 +1929,16 @@ impl SyncEngine {
         let mut remote = repo
             .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+
+        // Off-main attachments (design: attachment-storage): carry any
+        // new worktree blobs to the line BEFORE main lands, so metadata
+        // referencing a blob is only ever reachable after the blob is.
+        // Best-effort: a failed line publish must never block the main
+        // push — the worktree copy serves local downloads and the next
+        // sync retries.
+        if let Err(e) = self.publish_worktree_attachments(repo, remote_name) {
+            eprintln!("warning: attachments line publish failed: {e}");
+        }
 
         // Resolve local branch dynamically
         let branch = Self::resolve_default_branch(repo);
@@ -2165,7 +2178,8 @@ impl SyncEngine {
             // A fresh callbacks object per fetch: the credential attempt
             // counters live in the callbacks, and sharing one across two
             // fetches spends the retry budget on the first call.
-            let notes_spec = format!("{GOSSIP_REF}:{new_tracking}");
+            // '+': forced fetch — see fetch_locked.
+            let notes_spec = format!("+{GOSSIP_REF}:{new_tracking}");
             let mut notes_opts = FetchOptions::new();
             notes_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
             let _ = remote.fetch(&[&notes_spec], Some(&mut notes_opts), None);
@@ -2416,10 +2430,10 @@ impl SyncEngine {
         &self,
         repo: &Repository,
         remote_name: &str,
-        new_blobs: &[(String, Vec<u8>)],
+        blobs: &[(String, std::path::PathBuf)],
     ) -> Result<bool, BaluardError> {
-        use crate::sync::attachments::{ATTACHMENTS_REF, ATTACHMENTS_TRACKING};
-        if new_blobs.is_empty() {
+        use crate::sync::attachments::{ATTACHMENTS_REF, ATTACHMENTS_TRACKING, entry_name};
+        if blobs.is_empty() {
             return Ok(true);
         }
         if self.effective_signing_key(repo).is_none() {
@@ -2470,8 +2484,41 @@ impl SyncEngine {
             }
         }
 
+        // Dedup against the tip BEFORE reading bytes: a pin the line
+        // already carries is skipped unread, so repeated pushes over an
+        // append-mostly worktree cost one stat-walk, not a re-publish.
+        let tip_names: std::collections::HashSet<String> = tip
+            .as_ref()
+            .and_then(|c| c.tree().ok())
+            .map(|tree| {
+                crate::sync::attachments::raw_entries(&tree)
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut pending: Vec<(String, std::path::PathBuf)> = Vec::new();
+        for (pin, path) in blobs {
+            let Some(name) = entry_name(pin) else {
+                return Err(SyncError::Git(format!(
+                    "attachments: metadata pin {pin:?} is not a SHA-256 hash"
+                ))
+                .into());
+            };
+            if tip_names.contains(&name) {
+                continue;
+            }
+            pending.push((pin.clone(), path.clone()));
+        }
+        if pending.is_empty() {
+            // Everything is already on the line: no commit, no push, no
+            // genesis. This is also what makes the push-path scan cheap
+            // for vaults whose blobs are all synced.
+            return Ok(true);
+        }
+
         let mut oid =
-            self.build_attachment_line_commit(repo, tip.as_ref(), &vault_root, new_blobs)?;
+            self.build_attachment_line_commit(repo, tip.as_ref(), &vault_root, &pending)?;
         repo.reference(ATTACHMENTS_REF, oid, true, "attachments publish")
             .map_err(|e| SyncError::Git(format!("attachments ref: {e}")))?;
 
@@ -2502,12 +2549,8 @@ impl SyncEngine {
                         return Err(foreign_err());
                     }
                 }
-                oid = self.build_attachment_line_commit(
-                    repo,
-                    fresh.as_ref(),
-                    &vault_root,
-                    new_blobs,
-                )?;
+                oid =
+                    self.build_attachment_line_commit(repo, fresh.as_ref(), &vault_root, &pending)?;
                 repo.reference(
                     ATTACHMENTS_REF,
                     oid,
@@ -2550,22 +2593,22 @@ impl SyncEngine {
         repo: &Repository,
         tip: Option<&git2::Commit<'_>>,
         vault_root: &str,
-        new_blobs: &[(String, Vec<u8>)],
+        new_blobs: &[(String, std::path::PathBuf)],
     ) -> Result<Oid, BaluardError> {
-        use crate::sync::attachments::entry_name;
         let tip_tree = tip.and_then(|c| c.tree().ok());
         let mut tb = repo
             .treebuilder(tip_tree.as_ref())
             .map_err(|e| SyncError::Git(format!("attachments treebuilder: {e}")))?;
-        for (pin, bytes) in new_blobs {
-            let Some(name) = entry_name(pin) else {
-                return Err(SyncError::Git(format!(
+        for (pin, path) in new_blobs {
+            let bytes = std::fs::read(path)
+                .map_err(|e| SyncError::Git(format!("attachments read {}: {e}", path.display())))?;
+            let name = crate::sync::attachments::entry_name(pin).ok_or_else(|| {
+                SyncError::Git(format!(
                     "attachments: metadata pin {pin:?} is not a SHA-256 hash"
                 ))
-                .into());
-            };
+            })?;
             let blob_id = repo
-                .blob(bytes)
+                .blob(&bytes)
                 .map_err(|e| SyncError::Git(format!("attachments blob write: {e}")))?;
             tb.insert(&name, blob_id, git2::FileMode::Blob.into())
                 .map_err(|e| SyncError::Git(format!("attachments insert: {e}")))?;
@@ -2596,6 +2639,105 @@ impl SyncEngine {
             .map_err(|e| SyncError::Git(format!("attachments sig: {e}")))?;
         let msg = format!("attachments: publish {} blob(s)", new_blobs.len());
         self.create_signed_commit(repo, &sig, &msg, &tree, &parents)
+    }
+
+    /// Publish every untracked worktree blob the line does not carry yet
+    /// (design: attachment-storage). The sync push path calls this BEFORE
+    /// main lands, so metadata referencing a blob becomes reachable only
+    /// after the blob itself is. Best-effort by contract: callers
+    /// warn-and-continue, because a failed line publish must never block
+    /// the main push — the worktree copy serves local downloads and the
+    /// next sync retries. Legacy (tracked) blobs on main are never
+    /// republished to the line.
+    pub fn publish_worktree_attachments(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+    ) -> Result<bool, BaluardError> {
+        use crate::sync::attachments::collect_untracked_blob_paths;
+        let paths = collect_untracked_blob_paths(repo);
+        if paths.is_empty() {
+            return Ok(true);
+        }
+        let mut blobs = Vec::with_capacity(paths.len());
+        for path in paths {
+            let bytes = std::fs::read(&path)
+                .map_err(|e| SyncError::Git(format!("attachments read {}: {e}", path.display())))?;
+            blobs.push((crate::vault::attachment::blob_sha256(&bytes), path));
+        }
+        self.publish_attachment_line(repo, remote_name, &blobs)
+    }
+
+    /// Fetch the attachments line and read one blob by its ciphertext
+    /// pin. Returns Ok(None) when the line does not carry the pin (the
+    /// caller surfaces pending state); bytes come back only after the
+    /// integrity pin verifies, so a flipped or forged blob never reaches
+    /// decryption.
+    pub fn fetch_attachment_blob(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        pin: &str,
+    ) -> Result<Option<Vec<u8>>, BaluardError> {
+        use crate::sync::attachments::{
+            ATTACHMENTS_REF, ATTACHMENTS_TRACKING, entry_name, verify_blob,
+        };
+        let Some(name) = entry_name(pin) else {
+            return Err(SyncError::Git(format!(
+                "attachments: metadata pin {pin:?} is not a SHA-256 hash"
+            ))
+            .into());
+        };
+        let tracking = format!("refs/remotes/{remote_name}/{ATTACHMENTS_TRACKING}");
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let mut opts = FetchOptions::new();
+            opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            // '+': forced fetch — a compaction-replaced line must reach
+            // an existing tracking ref (libgit2 will not move a
+            // non-wildcard refspec to an unrelated tip without it).
+            let spec = format!("+{ATTACHMENTS_REF}:{tracking}");
+            // Ref-absent is a fine pending answer, but any other fetch
+            // failure must be audible: a stale tracking view would serve
+            // the previous line's bytes as if they were current.
+            if let Err(e) = remote.fetch(&[&spec], Some(&mut opts), None) {
+                let msg = e.message();
+                if !(msg.contains("find remote ref") || msg.contains("not found")) {
+                    eprintln!("warning: attachments line fetch failed: {msg}");
+                }
+            }
+        }
+        let Some(tree) = repo
+            .find_reference(&tracking)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+            .and_then(|c| c.tree().ok())
+        else {
+            return Ok(None);
+        };
+        let Some(entry) = tree.get_name(&name) else {
+            return Ok(None);
+        };
+        if entry.kind() != Some(git2::ObjectType::Blob) {
+            return Ok(None);
+        }
+        let blob = repo
+            .find_blob(entry.id())
+            .map_err(|e| SyncError::Git(format!("attachments blob read: {e}")))?;
+        let bytes = blob.content().to_vec();
+        if !verify_blob(&bytes, pin) {
+            return Err(SyncError::Git(
+                "attachments blob failed its integrity pin; it will not be decrypted".into(),
+            )
+            .into());
+        }
+        Ok(Some(bytes))
     }
 
     /// Consume the legacy heads channel and retire it so the repository
@@ -3217,8 +3359,10 @@ impl SyncEngine {
             // The gossip channel rides refs/notes, which the wildcard
             // heads fetch does not carry; pull it explicitly best-effort
             // so rollback detection sees post-migration announcements.
+            // '+': forced fetch (see fetch_locked) — the remote tip is
+            // the only truth for the notes channel.
             let gossip_spec = format!(
-                "{}:refs/remotes/{remote_name}/{}",
+                "+{}:refs/remotes/{remote_name}/{}",
                 crate::sync::gossip::GOSSIP_REF,
                 crate::sync::gossip::GOSSIP_TRACKING
             );
@@ -4674,8 +4818,10 @@ impl SyncEngine {
             let hinted = cred_config.clone().with_url_hint(url);
             let mut fetch_opts = FetchOptions::new();
             fetch_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&hinted));
+            // '+': forced fetch — the remote tip is the only truth for
+            // the notes channel (see fetch_locked).
             let spec = format!(
-                "{}:refs/remotes/origin/{}",
+                "+{}:refs/remotes/origin/{}",
                 crate::sync::gossip::GOSSIP_REF,
                 crate::sync::gossip::GOSSIP_TRACKING
             );
@@ -4914,8 +5060,10 @@ impl SyncEngine {
                 .with_url_hint(url);
             let mut fetch_opts = FetchOptions::new();
             fetch_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&hinted));
+            // '+': forced fetch — the remote tip is the only truth for
+            // the notes channel (see fetch_locked).
             let spec = format!(
-                "{}:refs/remotes/origin/{}",
+                "+{}:refs/remotes/origin/{}",
                 crate::sync::gossip::GOSSIP_REF,
                 crate::sync::gossip::GOSSIP_TRACKING
             );
@@ -11257,11 +11405,17 @@ mod tests {
         engine.add_remote(&repo, "origin", &remote_url).unwrap();
         engine.push(&repo, "origin").unwrap();
 
+        let att_dir = dir
+            .path()
+            .join("entries/11111111-1111-1111-1111-111111111111/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
         let blob_a = b"envelope-a".to_vec();
+        let path_a = att_dir.join("a.enc");
+        std::fs::write(&path_a, &blob_a).unwrap();
         let pin_a = crate::vault::attachment::blob_sha256(&blob_a);
         assert!(
             engine
-                .publish_attachment_line(&repo, "origin", &[(pin_a.clone(), blob_a)])
+                .publish_attachment_line(&repo, "origin", &[(pin_a.clone(), path_a)])
                 .unwrap()
         );
 
@@ -11284,9 +11438,11 @@ mod tests {
         // A second publish parents on the first and the tree keeps the
         // earlier entry (append-mostly line).
         let blob_b = b"envelope-b".to_vec();
+        let path_b = att_dir.join("b.enc");
+        std::fs::write(&path_b, &blob_b).unwrap();
         let pin_b = crate::vault::attachment::blob_sha256(&blob_b);
         engine
-            .publish_attachment_line(&repo, "origin", &[(pin_b.clone(), blob_b)])
+            .publish_attachment_line(&repo, "origin", &[(pin_b.clone(), path_b)])
             .unwrap();
         let tip2 = bare
             .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
@@ -11340,12 +11496,18 @@ mod tests {
         )
         .unwrap();
 
+        let att_dir = dir
+            .path()
+            .join("entries/44444444-4444-4444-4444-444444444444/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
         let blob = b"envelope".to_vec();
+        let path = att_dir.join("att.enc");
+        std::fs::write(&path, &blob).unwrap();
         let err = engine
             .publish_attachment_line(
                 &repo,
                 "origin",
-                &[(crate::vault::attachment::blob_sha256(&blob), blob)],
+                &[(crate::vault::attachment::blob_sha256(&blob), path)],
             )
             .unwrap_err();
         assert!(
@@ -11356,6 +11518,189 @@ mod tests {
         assert!(
             repo.find_reference(crate::sync::attachments::ATTACHMENTS_REF)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn attachment_line_publish_is_a_noop_when_pins_are_present() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine.add_remote(&repo, "origin", &remote_url).unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        let att_dir = dir
+            .path()
+            .join("entries/55555555-5555-5555-5555-555555555555/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let blob_a = b"envelope-a".to_vec();
+        let path_a = att_dir.join("a.enc");
+        std::fs::write(&path_a, &blob_a).unwrap();
+        let pin_a = crate::vault::attachment::blob_sha256(&blob_a);
+        engine
+            .publish_attachment_line(&repo, "origin", &[(pin_a.clone(), path_a.clone())])
+            .unwrap();
+        let bare = Repository::open(&remote_path).unwrap();
+        let tip1 = bare
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+
+        // Same pin again: the dedup makes this a no-op (tip unchanged).
+        engine
+            .publish_attachment_line(&repo, "origin", &[(pin_a.clone(), path_a)])
+            .unwrap();
+        let tip2 = bare
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        assert_eq!(tip1, tip2);
+
+        // A tracked (index) blob is legacy main content and is never
+        // republished to the line.
+        let legacy_dir = dir
+            .path()
+            .join("entries/66666666-6666-6666-6666-666666666666/attachments");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let blob_l = b"legacy-on-main".to_vec();
+        let path_l = legacy_dir.join("legacy.enc");
+        std::fs::write(&path_l, &blob_l).unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_path(std::path::Path::new(
+                "entries/66666666-6666-6666-6666-666666666666/attachments/legacy.enc",
+            ))
+            .unwrap();
+        index.write().unwrap();
+        assert!(
+            engine
+                .publish_worktree_attachments(&repo, "origin")
+                .unwrap()
+        );
+        let tree = bare
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        let name_l =
+            crate::sync::attachments::entry_name(&crate::vault::attachment::blob_sha256(&blob_l))
+                .unwrap();
+        assert!(
+            tree.get_name(&name_l).is_none(),
+            "tracked main blobs stay off the line"
+        );
+    }
+
+    #[test]
+    fn push_publishes_worktree_blobs_and_the_line_fetch_round_trips() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine.add_remote(&repo, "origin", &remote_url).unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        // Untracked blob beside a real main commit: the push carries the
+        // blob to the line BEFORE main lands.
+        let att_dir = dir
+            .path()
+            .join("entries/77777777-7777-7777-7777-777777777777/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let blob = b"envelope".to_vec();
+        let path = att_dir.join("att.enc");
+        std::fs::write(&path, &blob).unwrap();
+        std::fs::write(dir.path().join("two.enc"), b"\x02").unwrap();
+        engine.commit_all(&repo, "c2 with attachment").unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        let bare = Repository::open(&remote_path).unwrap();
+        let pin = crate::vault::attachment::blob_sha256(&blob);
+        let name = crate::sync::attachments::entry_name(&pin).unwrap();
+        let tree = bare
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        assert!(
+            tree.get_name(&name).is_some(),
+            "push carries new blobs to the line"
+        );
+
+        // Round trip: the fetch verifies the pin and returns the bytes.
+        let fetched = engine.fetch_attachment_blob(&repo, "origin", &pin).unwrap();
+        assert_eq!(fetched.as_deref(), Some(blob.as_slice()));
+        // A pin the line lacks reads as pending, not an error.
+        assert_eq!(
+            engine
+                .fetch_attachment_blob(&repo, "origin", &"0".repeat(64))
+                .unwrap(),
+            None
+        );
+
+        // Hostile forge: a line entry whose bytes do not match its pin
+        // name must be refused, never decrypted.
+        let mut tb = bare.treebuilder(None).unwrap();
+        let bad_blob = bare.blob(b"tampered").unwrap();
+        tb.insert(&name, bad_blob, git2::FileMode::Blob.into())
+            .unwrap();
+        let tree_id = tb.write().unwrap();
+        let sig = git2::Signature::now("attacker", "attacker@example.invalid").unwrap();
+        let hostile_tree = bare.find_tree(tree_id).unwrap();
+        let hostile = bare
+            .commit(None, &sig, &sig, "hostile line", &hostile_tree, &[])
+            .unwrap();
+        bare.reference(
+            crate::sync::attachments::ATTACHMENTS_REF,
+            hostile,
+            true,
+            "hostile",
+        )
+        .unwrap();
+        let err = engine
+            .fetch_attachment_blob(&repo, "origin", &pin)
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("integrity pin"),
+            "the refusal names the pin failure: {err}"
         );
     }
 
