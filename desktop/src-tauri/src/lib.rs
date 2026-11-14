@@ -222,6 +222,8 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.add",
     "vault.archive",
     "vault.attach_compact",
+    "vault.attach_status",
+    "vault.attach_ack",
     "vault.attach_delete",
     "vault.attach_download",
     "vault.attach_upload",
@@ -2189,6 +2191,9 @@ mod tests {
     fn d2_destructive_path_params_are_denied_but_wipe_params_pass() {
         assert!(desktop_action_allowed("vaults.detach"));
         assert!(desktop_action_allowed("vault.enroll_with_phrase"));
+        assert!(desktop_action_allowed("vault.attach_status"));
+        assert!(desktop_action_allowed("vault.attach_ack"));
+        assert!(desktop_action_allowed("vault.attach_compact"));
         assert!(!payload_has_desktop_forbidden_keys(
             "{\"slug\":\"a\",\"delete_from_disk\":true}"
         ));

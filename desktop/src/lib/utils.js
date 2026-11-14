@@ -2,6 +2,7 @@
 export const ERROR_PATTERNS = [
   { pattern: /Cannot connect/i, key: "errors.daemonNotRunning" },
   { pattern: /downloaded vault has no device key/i, key: "errors.phraseEnrollRequired" },
+  { pattern: /changed again while you were reviewing/i, key: "errors.attachChanged" },
   { pattern: /have not finished syncing/i, key: "errors.attachPending" },
   { pattern: /needs every entry readable/i, key: "errors.attachReadable" },
   { pattern: /older app version/i, key: "errors.attachLegacy" },

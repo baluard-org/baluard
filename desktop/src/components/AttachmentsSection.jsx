@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, onSettled, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -20,6 +20,46 @@ export default function AttachmentsSection() {
   const { t } = useI18n();
   const [busy, setBusy] = createSignal(false);
   const [report, setReport] = createSignal(null);
+  const [notice, setNotice] = createSignal(null);
+  const [ackBusy, setAckBusy] = createSignal(false);
+
+  // The line is shared with every synced device, so another device can
+  // compact (rewrite) it under this one. The daemon classifies the
+  // freshly fetched tip against the tip this device last accepted;
+  // switching over is automatic and safe (files, pins, and downloads all
+  // keep working) — the notice exists so a cleanup that deleted history
+  // is never silent, and Accept records that the user was told.
+  async function refreshStatus() {
+    try {
+      const raw = await daemon("vault.attach_status");
+      let parsed = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = null;
+      }
+      if (parsed && parsed.tip && (parsed.rewritten || parsed.foreign)) {
+        setNotice(parsed);
+      } else {
+        setNotice(null);
+      }
+    } catch {
+      // Status is advisory: a failure (offline, no remote) shows nothing.
+    }
+  }
+
+  async function acceptNotice() {
+    if (ackBusy() || !notice()) return;
+    setAckBusy(true);
+    try {
+      await daemon("vault.attach_ack", { tip: notice().tip });
+      setNotice(null);
+    } catch (e) {
+      toastError(sanitizeError(e));
+    } finally {
+      setAckBusy(false);
+    }
+  }
 
   async function runCompact() {
     if (busy()) return;
@@ -40,8 +80,41 @@ export default function AttachmentsSection() {
     }
   }
 
+  onSettled(() => {
+    void (async () => {
+      await refreshStatus();
+    })();
+  });
+
   return (
     <div class="space-y-3 mb-6" data-testid="attachments-section">
+      <Show when={notice()}>
+        <div
+          data-testid="attach-notice"
+          class="rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)] px-3.5 py-3 space-y-2"
+        >
+          <span class="block text-[11px] font-bold text-[var(--color-text)]">
+            {notice().foreign
+              ? t("sync.attachForeign")
+              : t("sync.attachCleaned")}
+          </span>
+          <span class="block text-[10px] text-[var(--color-muted)]">
+            {notice().foreign
+              ? t("sync.attachForeignHint")
+              : t("sync.attachCleanedHint")}
+          </span>
+          <Show when={!notice().foreign}>
+            <button
+              data-testid="attach-accept-btn"
+              onClick={acceptNotice}
+              disabled={ackBusy()}
+              class="px-4 py-1.5 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-[10px] font-bold transition-all cursor-pointer disabled:opacity-40"
+            >
+              {ackBusy() ? t("common.pleaseWait") : t("sync.attachAccept")}
+            </button>
+          </Show>
+        </div>
+      </Show>
       <div class="flex items-center justify-between">
         <div class="flex flex-col flex-1 pr-4">
           <span class="text-xs font-bold text-[var(--color-text)]">

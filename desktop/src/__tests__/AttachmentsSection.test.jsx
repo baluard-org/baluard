@@ -61,6 +61,67 @@ describe("AttachmentsSection", () => {
     expect(text).toContain('"kept":12');
   });
 
+  it("shows the cleanup notice and clears it through attach_ack", async () => {
+    const STATUS = JSON.stringify({
+      tip: "a".repeat(64),
+      rewritten: true,
+      foreign: false,
+    });
+    daemonMock.mockImplementation((action, payload) => {
+      if (action === "vault.attach_status") return Promise.resolve(STATUS);
+      if (action === "vault.attach_ack")
+        return Promise.resolve(JSON.stringify({ acknowledged: true }));
+      return Promise.resolve(REPORT);
+    });
+    render(() => <AttachmentsSection />);
+    const notice = await waitFor(() =>
+      screen.getByTestId("attach-notice")
+    );
+    expect(notice.textContent).toContain("sync.attachCleaned");
+    fireEvent.click(screen.getByTestId("attach-accept-btn"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("attach-notice")).toBeNull()
+    );
+    expect(daemonMock).toHaveBeenCalledWith("vault.attach_ack", {
+      tip: "a".repeat(64),
+    });
+  });
+
+  it("shows the foreign-storage notice without an accept button", async () => {
+    const STATUS = JSON.stringify({
+      tip: "b".repeat(64),
+      rewritten: true,
+      foreign: true,
+    });
+    daemonMock.mockImplementation((action) =>
+      action === "vault.attach_status"
+        ? Promise.resolve(STATUS)
+        : Promise.resolve(REPORT)
+    );
+    render(() => <AttachmentsSection />);
+    const notice = await waitFor(() =>
+      screen.getByTestId("attach-notice")
+    );
+    expect(notice.textContent).toContain("sync.attachForeign");
+    expect(screen.queryByTestId("attach-accept-btn")).toBeNull();
+  });
+
+  it("shows no notice when the line matches the acknowledged tip", async () => {
+    const STATUS = JSON.stringify({
+      tip: "c".repeat(64),
+      rewritten: false,
+      foreign: false,
+    });
+    daemonMock.mockImplementation((action) =>
+      action === "vault.attach_status"
+        ? Promise.resolve(STATUS)
+        : Promise.resolve(REPORT)
+    );
+    render(() => <AttachmentsSection />);
+    await waitFor(() => expect(daemonMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("attach-notice")).toBeNull();
+  });
+
   it("maps a daemon refusal to the sanitized toast and keeps the section usable", async () => {
     daemonMock.mockRejectedValue(
       new Error("some files have not finished syncing to the vault yet")

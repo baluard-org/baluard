@@ -28,6 +28,24 @@ use git2::Oid;
 
 use crate::error::{BaluardError, SyncError};
 
+/// Per-device view of the shared attachments line, for the cleanup
+/// notice: whether the line was rewritten under this device (a
+/// compaction on another device) and whether the current tip belongs to
+/// this vault at all.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LineStatus {
+    /// Hex tip of the freshly fetched line; `None` when no line exists.
+    pub tip: Option<String>,
+    /// A previous tip was acknowledged and the current tip is not a
+    /// descendant of it — the line was rewritten (compaction, or a
+    /// force push). Descent could not be proven when the old commit is
+    /// no longer reachable locally, which also reads as rewritten.
+    pub rewritten: bool,
+    /// The current tip is rooted on a different vault (hostile force
+    /// push, or a vault-history reset this device has not pulled yet).
+    pub foreign: bool,
+}
+
 /// The attachments channel: a ref under refs/notes, invisible to the
 /// forge branch and tag lists, so the user's repository keeps exactly one
 /// branch beside the gossip channel.

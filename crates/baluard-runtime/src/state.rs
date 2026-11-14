@@ -9227,6 +9227,122 @@ impl VaultState {
         Ok(result)
     }
 
+    /// Machine-local acknowledgment of the attachments line tip this
+    /// device has accepted, keyed by vault id. Per-device view state: it
+    /// must never ride inside the vault (main or settings), where another
+    /// device's acceptance would silence this one's cleanup notice.
+    fn line_ack_path(vault_id: uuid::Uuid) -> std::path::PathBuf {
+        baluard_core::paths::data_dir()
+            .join("attachment-line")
+            .join(format!("{vault_id}.json"))
+    }
+
+    fn read_line_ack(vault_id: uuid::Uuid) -> Option<String> {
+        let raw = std::fs::read_to_string(Self::line_ack_path(vault_id)).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        v.get("tip")?.as_str().map(String::from)
+    }
+
+    fn write_line_ack(vault_id: uuid::Uuid, tip: &str) -> Result<(), String> {
+        let path = Self::line_ack_path(vault_id);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("ack dir: {e}"))?;
+        }
+        let body = serde_json::json!({ "tip": tip }).to_string();
+        std::fs::write(&path, body).map_err(|e| format!("ack write: {e}"))
+    }
+
+    /// Classify the shared attachments line for this device: does it
+    /// still carry the tip this device last accepted, and does the
+    /// current tip belong to this vault? Works on a locked vault — the
+    /// classification needs no keys, only the repository.
+    pub async fn attach_status(&self, _payload: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        let vault_id = handle.vault_id;
+        let vault_path = handle.path.clone();
+        let device_id = handle.device_id.to_string();
+        let devkey_seal = handle.devkey_seal();
+        let ack = Self::read_line_ack(vault_id);
+        drop(guard);
+
+        let status = tokio::task::spawn_blocking(
+            move || -> Result<
+                baluard_core::sync::attachments::LineStatus,
+                baluard_core::error::BaluardError,
+            > {
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id,
+                    devkey_seal.as_ref(),
+                );
+                let repo = engine.open_repo()?;
+                engine.attachment_line_status(
+                    &repo,
+                    "origin",
+                    ack.as_deref(),
+                )
+            },
+        )
+        .await
+        .map_err(|e| format!("attachment status task: {e}"))?
+        .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "tip": status.tip,
+            "rewritten": status.rewritten,
+            "foreign": status.foreign,
+        })
+        .to_string())
+    }
+
+    /// Accept the current attachments line as this device's baseline,
+    /// clearing the cleanup notice. The tip is validated against the
+    /// freshly fetched remote before it is recorded, so a stale Accept
+    /// (the line moved again while the user was reading) is refused
+    /// instead of silently pinning yesterday's state.
+    pub async fn attach_ack(&self, payload: &str) -> Result<String, String> {
+        let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let tip = req["tip"].as_str().ok_or("missing tip")?.to_string();
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        let vault_id = handle.vault_id;
+        let vault_path = handle.path.clone();
+        let device_id = handle.device_id.to_string();
+        let devkey_seal = handle.devkey_seal();
+        drop(guard);
+
+        let current = tokio::task::spawn_blocking({
+            let tip = tip.clone();
+            move || -> Result<
+                baluard_core::sync::attachments::LineStatus,
+                baluard_core::error::BaluardError,
+            > {
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id,
+                    devkey_seal.as_ref(),
+                );
+                let repo = engine.open_repo()?;
+                engine.attachment_line_status(&repo, "origin", None)
+            }
+        })
+        .await
+        .map_err(|e| format!("attachment ack task: {e}"))?
+        .map_err(|e| e.to_string())?;
+        let Some(current_tip) = current.tip else {
+            return Err("The attachment storage has no shared copy to accept yet".into());
+        };
+        if current_tip != tip {
+            return Err(
+                "The attachment storage changed again while you were reviewing. Check once more."
+                    .into(),
+            );
+        }
+        Self::write_line_ack(vault_id, &current_tip)?;
+        Ok(serde_json::json!({ "acknowledged": true }).to_string())
+    }
+
     /// Compact the vault's off-main attachments line, reclaiming the
     /// encrypted blobs no cipher references anymore. The keep set must
     /// cover every main-HEAD reference, so every cipher (live, trashed,
