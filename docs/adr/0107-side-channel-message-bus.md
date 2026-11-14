@@ -2,7 +2,7 @@
 
 Date: 2026-11-14
 Status: accepted (standard specified; implementation deferred behind the trigger below)
-Review: two adversarial design review rounds folded in (2026-11-14); findings zero-trust verified against the tree
+Review: three adversarial design review rounds folded in (2026-11-14); findings zero-trust verified against the tree
 
 ## Context
 
@@ -10,7 +10,7 @@ Baluard already runs two side channels on `refs/notes`, both invisible in forge 
 
 ## Decision
 
-**The standard is specified now; the bus is built later.** A future advisory channel `refs/notes/baluard-msgs` follows the contract below. It is implemented only when the trigger fires. Until then, event facts ride the channel they describe. The compaction notice enrichment travels as a `compaction.json` entry inside the attachments compaction genesis. It has numeric fields only and a `v` field. It sits inside a commit that the compacting device signs, so it needs no second ref. Old clients never parse it. A later compaction replaces the genesis, so a device that was offline across two compactions sees only the last one. The UI reads `compaction.json` only after the classifier verifies the genesis signature against roster keys (see Standing improvement). Before that, the UI shows the generic notice. The `compaction.json` parse path has the same size and depth limits as the bus.
+**The standard is specified now; the bus is built later.** A future advisory channel `refs/notes/baluard-msgs` follows the contract below. It is implemented only when the trigger fires. Until then, event facts ride the channel they describe. The compaction notice enrichment travels as a `compaction.json` entry inside the attachments compaction genesis. It has a `v` field plus numeric fields only, mirroring the compaction report fields (`v`, `reclaimed`, `reclaimed_bytes`, `kept`). It sits inside a commit that the compacting device signs, so it needs no second ref. Old clients never parse it. A later compaction replaces the genesis, so a device that was offline across two compactions sees only the last one. The UI reads `compaction.json` only after the classifier verifies the genesis signature against roster keys (see Standing improvement). Before that, the UI shows the generic notice. The `compaction.json` parse path has the same size and depth limits as the bus.
 
 **Envelope, versioned from day one.** Canonical JSON: UTF-8, sorted keys, no insignificant whitespace, integers only, no floats. Fields:
 
@@ -23,7 +23,7 @@ Baluard already runs two side channels on `refs/notes`, both invisible in forge 
 | `id` | Hex SHA-256 over the canonical envelope with `id` and `sig` excluded. |
 | `body` | Numeric and enum fields only. |
 | `enc` | Reserved for a future HPKE-boxed body. A v1 reader skips any message that has `enc`. |
-| `sig` | ed25519 by the device's commit-signing key over the context string `baluard-msgs-v1`, a zero byte, and the raw `id` bytes. Publishers sign when a key exists and skip publish when it does not, as the attachments line does. |
+| `sig` | Lowercase hex ed25519 signature by the device's commit-signing key over the context string `baluard-msgs-v1`, a zero byte, and the 32 raw SHA-256 digest bytes of `id`. Publishers sign when a key exists and skip publish when it does not, as the attachments line does. |
 
 **Layout.** `msgs/<topic>/<at>-<id>.json`. The topic charset is `[a-z0-9-]`, which blocks path injection. `<at>` is decimal epoch seconds. This prefix is frozen for all versions, so any version can prune and cap by path alone. A reader skips a message when the topic differs from the first segment of `type`, when the path `at` differs from the body `at`, or when the recomputed `id` differs from the path `id`.
 
@@ -40,8 +40,8 @@ Baluard already runs two side channels on `refs/notes`, both invisible in forge 
 - Bodies carry fields, never prose the UI copies. The interface renders fixed localized templates interpolating whitelisted fields. This rule, not signatures, is the channel's actual boundary.
 - Merge preserves the unknown. The union merge walks raw tree entries and never drops one. It does not validate. Validation happens at consumption: path shape, topic charset, id format, per-message size, and the checks in the Layout paragraph. A merge that validated would let a v1 publisher silently delete v2 topics.
 - Caps bind the reader, not just honest publishers. Reading is work, so the parse path carries size and depth limits. The reader also stops at a hard entry count. A board over that count is ignored whole, and the consumer uses its non-message fallback.
-- Write-time prune, by path only. It drops entries outside the time window, then the oldest entries above the caps (ties break on `id`). The per-`from` cap is not a security bound, because `from` is unauthenticated on unsigned messages, and flooding can evict honest messages; that loss is accepted. Message loss is accepted by contract, so the attachments rule against write-time pruning does not transfer.
-- Publish is best-effort and last in the push order (line, main, gossip, then messages). It chains on the fetched tip with the standard reject-reconcile pass. Devices fetch the board with a force refspec. Board compaction is the only force-replace. It triggers when the entry count passes the hard cap. It builds a parentless commit from the union of all entries that survive the path-based prune, unknown topics and versions included. It adds one `cleanup.board-compacted` message in the same commit. If two devices compact at once, reject-reconcile resolves it and the loser re-merges the union. Readers use the tip tree only and never walk board history.
+- Write-time prune, by path only. It drops entries outside the time window, non-conforming paths, then the oldest entries above per-topic and total caps (ties break on `id`). Flooding can evict honest messages; that loss is accepted. Message loss is accepted by contract, so the attachments rule against write-time pruning does not transfer.
+- Publish is best-effort and last in the push order (line, main, gossip, then messages). It chains on the fetched tip with the standard reject-reconcile pass. Devices fetch the board with a force refspec. Board compaction is the only force-replace. It triggers when the entry count passes the hard cap. It builds a commit parented on the vault root commit, preserving root-of-history classification. The tree contains the union of all entries that survive the path-based prune to a low watermark below the hard cap, unknown topics and versions included. It adds one `cleanup.board-compacted` message in the same commit. A force push overwrites concurrent compaction pushes; a racing non-force publisher fails push, fetches the compacted tip, and reconciles by chaining. Readers use the tip tree only and never walk board history.
 - Unknown `type` or `v`: skipped. Forward compatibility is new types, never new refs.
 - Every consumer keeps a mandatory non-message fallback. Compaction can prune a board before a device reads it, so no message may be the only detection path, and no message class may need guaranteed delivery.
 - Banned by review gate: presence and liveness messages (they leak activity patterns to any repo reader and bloat the board), sync-scheduling hints (a denial primitive), and schema-update flags (old clients are the only audience that needs those, and old clients never read the ref; that signal belongs in `main`-visible data).
@@ -55,7 +55,7 @@ Baluard already runs two side channels on `refs/notes`, both invisible in forge 
 
 The proposer records the four answers in an amendment to this ADR or in a new ADR. The bus work item starts only after that record is accepted. Until then the ADR is the standard, not a work item.
 
-**Conformance tests.** The implementation writes these tests before the code. A v1 merge keeps a v2 topic. A v1 prune removes an expired v2 entry by path. A future-dated `at` is dropped. Topic, path-`at`, and id mismatches are skipped. A board over the hard entry count is ignored. A key removed from the roster fails verification. The reader limits hold on a large or deeply nested body.
+**Conformance tests.** The implementation writes these tests before the code. A v1 merge keeps a v2 topic. A v1 prune removes an expired v2 entry by path. A future-dated `at` is dropped. Topic, path-`at`, and id mismatches are skipped. A board over the hard entry count is ignored. A key removed from the roster fails verification. The reader limits hold on a large or deeply nested body. A compacted board tip roots on the vault root. Compaction prunes below the hard cap, so it does not retrigger at rest.
 
 **Standing improvement, independent of the bus.** Side-channel rewrite classification should learn roster-signature verification. The compaction genesis is already a signed commit, and the roster public keys are in vault metadata. So the data for "rewritten by a rostered key" versus "rewritten by an unknown signer" exists. The verification code does not exist yet, and no one has run it on a locked vault. Verify against the roster at the fetched `main` tip. This work blocks any UI use of `compaction.json` or of a bus message. It uses the same roster trust root as the bus and needs no second ref.
 
