@@ -2788,6 +2788,7 @@ impl SyncEngine {
                 tip: None,
                 rewritten: false,
                 foreign: false,
+                rewrite_signed: None,
             });
         };
         let vault_root = self.root_commit_oid(repo)?;
@@ -2806,10 +2807,40 @@ impl SyncEngine {
             },
             None => false, // first contact adopts silently
         };
+        // Signature attribution for a rewrite (ADR 0107): the roster
+        // lives in main's tip tree (plaintext metadata), so this works
+        // on a locked vault; an unsigned tip and a non-rewrite both
+        // carry no attribution.
+        let rewrite_signed = if !rewritten {
+            None
+        } else if repo.extract_signature(&tip_commit.id(), None).is_err() {
+            None
+        } else {
+            let branch = Self::resolve_default_branch(repo);
+            let roster = repo
+                .find_reference(format!("refs/heads/{branch}").as_str())
+                .ok()
+                .and_then(|r| r.peel_to_commit().ok())
+                .and_then(|commit| {
+                    let mut cache = std::collections::HashMap::new();
+                    Self::roster_for_commit(repo, &commit, &mut cache).ok()
+                })
+                .flatten()
+                .unwrap_or_default();
+            if roster.is_empty() {
+                Some(false)
+            } else {
+                Some(
+                    Self::verify_commit_against_roster_static(repo, tip_commit.id(), &roster)
+                        .is_ok(),
+                )
+            }
+        };
         Ok(LineStatus {
             tip: Some(tip_commit.id().to_string()),
             rewritten,
             foreign,
+            rewrite_signed,
         })
     }
 
@@ -12360,6 +12391,166 @@ mod tests {
             .fetch_attachment_blob(&repo, "origin", &pin_a)
             .unwrap();
         assert_eq!(fetched.as_deref(), Some(blob_a.as_slice()));
+    }
+
+    /// The cleanup notice must attribute a rewrite: the compacting
+    /// device signs the genesis, so a rostered-key rewrite reads as
+    /// verified while an unsigned or foreign-keyed tip reads as unknown
+    /// (ADR 0107 Standing improvement). Walks the three states on one
+    /// line: rostered compaction, unsigned hostile tip, forged key.
+    #[test]
+    fn attachment_line_classification_reports_the_signature_source() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+
+        let att_dir = dir
+            .path()
+            .join("entries/77777777-7777-7777-7777-777777777777/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let blob_a = b"envelope-a".to_vec();
+        let path_a = att_dir.join("a.enc");
+        std::fs::write(&path_a, &blob_a).unwrap();
+        let pin_a = crate::vault::attachment::blob_sha256(&blob_a);
+        let blob_b = b"envelope-b".to_vec();
+        let path_b = att_dir.join("b.enc");
+        std::fs::write(&path_b, &blob_b).unwrap();
+        let pin_b = crate::vault::attachment::blob_sha256(&blob_b);
+
+        let (remote_dir, _clone_dir_guard, clone_engine, cloned) =
+            make_clone(dir.path(), &engine, &repo);
+
+        // Publish the pre-compaction line after the clone exists, then
+        // hand the clone the line objects (the fixture clone fetches
+        // only the branch, the same gap clone_unchecked carries).
+        engine
+            .publish_attachment_line(
+                &repo,
+                "origin",
+                &[
+                    (pin_a.clone(), path_a.clone()),
+                    (pin_b.clone(), path_b.clone()),
+                ],
+            )
+            .unwrap();
+        let tip1 = repo
+            .find_reference(
+                format!(
+                    "refs/remotes/origin/{}",
+                    crate::sync::attachments::ATTACHMENTS_TRACKING
+                )
+                .as_str(),
+            )
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        let line_spec = format!(
+            "+{}:refs/remotes/origin/{}",
+            crate::sync::attachments::ATTACHMENTS_REF,
+            crate::sync::attachments::ATTACHMENTS_TRACKING
+        );
+        {
+            let mut remote = cloned.find_remote("origin").unwrap();
+            remote.fetch(&[line_spec.as_str()], None, None).unwrap();
+        }
+
+        // Rostered compaction: the genesis is signed by A, whose key is
+        // in main's roster, so the rewrite reads as verified.
+        let mut keep = std::collections::HashSet::new();
+        keep.insert(pin_a.clone());
+        engine
+            .compact_attachment_line(&repo, "origin", &keep)
+            .unwrap();
+        let bare = Repository::open(remote_dir.path().join("vault.git")).unwrap();
+        let genesis = bare
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let status = clone_engine
+            .attachment_line_status(&cloned, "origin", Some(&tip1.to_string()))
+            .unwrap();
+        assert!(status.rewritten, "the compaction is a rewrite");
+        assert!(!status.foreign);
+        assert_eq!(
+            status.rewrite_signed,
+            Some(true),
+            "a roster-keyed genesis classifies as verified"
+        );
+
+        // Unsigned hostile tip parented on the pre-compaction line: same
+        // vault root, not a descendant of the genesis, no signature.
+        let tip1_commit = bare.find_commit(tip1).unwrap();
+        let hsig = git2::Signature::now("attacker", "attacker@example.invalid").unwrap();
+        let unsigned_hostile = bare
+            .commit(
+                None,
+                &hsig,
+                &hsig,
+                "unsigned rewrite",
+                &tip1_commit.tree().unwrap(),
+                &[&tip1_commit],
+            )
+            .unwrap();
+        bare.reference(
+            crate::sync::attachments::ATTACHMENTS_REF,
+            unsigned_hostile,
+            true,
+            "hostile",
+        )
+        .unwrap();
+        let status = clone_engine
+            .attachment_line_status(&cloned, "origin", Some(&genesis.id().to_string()))
+            .unwrap();
+        assert!(status.rewritten);
+        assert!(!status.foreign, "the tip roots on this vault");
+        assert_eq!(
+            status.rewrite_signed, None,
+            "an unsigned tip carries no attribution"
+        );
+
+        // Forged signature from a key outside the roster: present but
+        // unverified, distinct from unsigned.
+        let key_x = crate::crypto::signature::generate_ed25519_keypair().0;
+        let fsig = git2::Signature::now("outsider", "outsider@example.invalid").unwrap();
+        let buf = bare
+            .commit_create_buffer(
+                &fsig,
+                &fsig,
+                "forged rewrite",
+                &tip1_commit.tree().unwrap(),
+                &[&tip1_commit],
+            )
+            .unwrap();
+        let raw = buf.as_str().unwrap();
+        let ed = crate::crypto::signature::sign(&key_x, raw.as_bytes()).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(ed.to_bytes());
+        let field =
+            format!("-----BEGIN BALUARD SIGNATURE-----\n{b64}\n-----END BALUARD SIGNATURE-----");
+        let forged = bare.commit_signed(raw, &field, None).unwrap();
+        bare.reference(
+            crate::sync::attachments::ATTACHMENTS_REF,
+            forged,
+            true,
+            "forged",
+        )
+        .unwrap();
+        let status = clone_engine
+            .attachment_line_status(&cloned, "origin", Some(&genesis.id().to_string()))
+            .unwrap();
+        assert!(status.rewritten);
+        assert_eq!(
+            status.rewrite_signed,
+            Some(false),
+            "a signature no roster key verifies reads as an unknown signer"
+        );
     }
 
     #[test]

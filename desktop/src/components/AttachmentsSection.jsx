@@ -101,7 +101,9 @@ export default function AttachmentsSection() {
           <span class="block text-[10px] text-[var(--color-muted)]">
             {notice().foreign
               ? t("sync.attachForeignHint")
-              : t("sync.attachCleanedHint")}
+              : notice().rewrite_signed === true
+                ? t("sync.attachCleanedVerifiedHint")
+                : t("sync.attachCleanedHint")}
           </span>
           <Show when={!notice().foreign}>
             <button

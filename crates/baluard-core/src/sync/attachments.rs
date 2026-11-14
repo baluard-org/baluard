@@ -44,6 +44,14 @@ pub struct LineStatus {
     /// The current tip is rooted on a different vault (hostile force
     /// push, or a vault-history reset this device has not pulled yet).
     pub foreign: bool,
+    /// Attribution for a rewrite, per ADR 0107: `Some(true)` when the
+    /// tip's commit signature verifies against a roster key (a rostered
+    /// device performed the cleanup), `Some(false)` when a signature is
+    /// present but no roster key verifies it (unknown signer), `None`
+    /// when the tip is unsigned or the state is not a rewrite. The
+    /// roster comes from main's tip tree (plaintext metadata, readable
+    /// without unlocking).
+    pub rewrite_signed: Option<bool>,
 }
 
 /// The attachments channel: a ref under refs/notes, invisible to the

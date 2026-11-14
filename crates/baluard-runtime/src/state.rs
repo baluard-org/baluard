@@ -9292,6 +9292,7 @@ impl VaultState {
             "tip": status.tip,
             "rewritten": status.rewritten,
             "foreign": status.foreign,
+            "rewrite_signed": status.rewrite_signed,
         })
         .to_string())
     }
