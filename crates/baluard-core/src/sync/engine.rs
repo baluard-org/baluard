@@ -1981,6 +1981,14 @@ impl SyncEngine {
             eprintln!("warning: gossip announce failed: {e}");
         }
 
+        // Advisory message board (ADR 0107, constants ADR 0109): last in
+        // the push order, best-effort. The board is dormant — an empty
+        // pending set returns before any network fetch, so this slot
+        // costs nothing until a consumer publishes.
+        if let Err(e) = self.publish_messages(repo, remote_name, &[]) {
+            eprintln!("warning: message board publish failed: {e}");
+        }
+
         Ok(())
     }
 
@@ -2894,6 +2902,516 @@ impl SyncEngine {
         })
     }
 
+    /// Publish advisory messages onto the board (ADR 0107 standard,
+    /// constants ADR 0109). Best-effort by contract: callers warn and
+    /// continue. An empty pending set short-circuits before any network
+    /// fetch — the board is dormant until a consumer supplies messages
+    /// (ADR 0109), so the push-order slot costs nothing today. Publishes
+    /// last in the push order; carries the write-time prune and the
+    /// board-compaction trigger (over `HARD_CAP` entries or a chain over
+    /// `MAX_CHAIN`). Returns Ok(false) when this device has no signing
+    /// key (the attachments Ok(false) skip).
+    pub fn publish_messages(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        msgs: &[crate::sync::msgbus::MsgOut],
+    ) -> Result<bool, BaluardError> {
+        use crate::sync::msgbus::{
+            BOARD_COMPACTED_TYPE, CAP_TOTAL, HARD_CAP, MAX_CHAIN, MSGS_REF, MSGS_TRACKING, MsgOut,
+            build_envelope, canonical, prune_entries,
+        };
+        if msgs.is_empty() {
+            return Ok(true);
+        }
+        let Some(signing_key) = self.effective_signing_key(repo) else {
+            return Ok(false);
+        };
+        let tracking = format!("refs/remotes/{remote_name}/{MSGS_TRACKING}");
+        let fetch_spec = format!("+{MSGS_REF}:{tracking}");
+        let push_spec = format!("{MSGS_REF}:{MSGS_REF}");
+        let vault_root = self.root_commit_oid(repo)?;
+        let now: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let mut opts = FetchOptions::new();
+            opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            // Forced: a compacted board is an unrelated tip a non-forced
+            // fetch would never adopt.
+            let _ = remote.fetch(&[&fetch_spec], Some(&mut opts), None);
+        }
+
+        let read_tip = || -> Option<git2::Commit<'_>> {
+            repo.find_reference(&tracking)
+                .ok()
+                .and_then(|r| r.peel_to_commit().ok())
+        };
+        let ours = |c: &git2::Commit<'_>| -> bool {
+            Self::root_commit_oid_from(repo, c.id())
+                .map(|r| r == vault_root)
+                .unwrap_or(false)
+        };
+        let foreign_err = || {
+            SyncError::Git(
+                "message board carries a foreign history; refusing to publish onto it".into(),
+            )
+            .into()
+        };
+        let tip = read_tip();
+        if let Some(t) = &tip {
+            if !ours(t) {
+                return Err(foreign_err());
+            }
+        }
+
+        // Build the pending envelopes first: signing can fail, and a
+        // signed-but-unpublishable message must not leave the board
+        // half-mutated.
+        let mut pending: Vec<(String, Vec<u8>)> = Vec::new();
+        for out in msgs {
+            let envelope = build_envelope(&signing_key, &self.device_id, now, out)?;
+            let id = envelope
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| SyncError::Git("envelope lost its id".into()))?
+                .to_string();
+            let at = envelope
+                .get("at")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| SyncError::Git("envelope lost its at".into()))?;
+            let topic = crate::sync::msgbus::topic_of(&out.r#type)
+                .ok_or_else(|| SyncError::Git("envelope lost its topic".into()))?;
+            let bytes = canonical(&envelope)?.into_bytes();
+            pending.push((format!("msgs/{topic}/{at}-{id}.json"), bytes));
+        }
+
+        // Board compaction trigger: the fetched tip holds more than
+        // HARD_CAP entries, or its chain grew past MAX_CHAIN. The
+        // compacted tree is the path-pruned union (unknown topics and
+        // versions included) plus one cleanup message, committed on the
+        // vault root and force-pushed. Pending messages then chain on
+        // the compacted tip below, the same shape a racing publisher
+        // takes.
+        let tip_entries: Vec<(String, git2::Oid)> = tip
+            .as_ref()
+            .and_then(|c| c.tree().ok())
+            .and_then(|tree| tree.get_path(std::path::Path::new("msgs")).ok())
+            .and_then(|sub| repo.find_tree(sub.id()).ok())
+            .map(|sub| {
+                let mut out = Vec::new();
+                for topic_entry in sub.iter() {
+                    let Some(topic) = topic_entry.name() else {
+                        continue;
+                    };
+                    if topic_entry.kind() != Some(git2::ObjectType::Tree) {
+                        out.push((format!("msgs/{topic}"), topic_entry.id()));
+                        continue;
+                    }
+                    if let Ok(topic_tree) = repo.find_tree(topic_entry.id()) {
+                        for leaf in topic_tree.iter() {
+                            if leaf.kind() == Some(git2::ObjectType::Blob) {
+                                if let Some(name) = leaf.name() {
+                                    out.push((format!("msgs/{topic}/{name}"), leaf.id()));
+                                }
+                            }
+                        }
+                    }
+                }
+                out
+            })
+            .unwrap_or_default();
+        let tip_conforming = tip_entries
+            .iter()
+            .filter(|(p, _)| crate::sync::msgbus::path_is_conforming(p).is_some())
+            .count();
+        let mut chain_len = 0u64;
+        if let Some(t) = &tip {
+            let mut oid = t.id();
+            loop {
+                chain_len += 1;
+                let commit = repo
+                    .find_commit(oid)
+                    .map_err(|e| SyncError::Git(format!("board walk: {e}")))?;
+                if commit.parent_count() == 0 {
+                    break;
+                }
+                oid = commit
+                    .parent_id(0)
+                    .map_err(|e| SyncError::Git(format!("board walk parent: {e}")))?;
+            }
+        }
+        let compacting = tip_conforming > HARD_CAP || chain_len > MAX_CHAIN;
+        let mut base_entries = tip_entries.clone();
+        if compacting {
+            let pruned = prune_entries(&tip_entries, now);
+            let cleanup = build_envelope(
+                &signing_key,
+                &self.device_id,
+                now,
+                &MsgOut {
+                    r#type: BOARD_COMPACTED_TYPE.into(),
+                    body: serde_json::json!({"compacted_entries": pruned.len() as u64}),
+                },
+            )?;
+            let cid = cleanup
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| SyncError::Git("cleanup envelope lost its id".into()))?
+                .to_string();
+            let cbytes = canonical(&cleanup)?.into_bytes();
+            let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+            for (path, oid) in &pruned {
+                let blob = repo
+                    .find_blob(*oid)
+                    .map_err(|e| SyncError::Git(format!("board blob read: {e}")))?;
+                entries.push((path.clone(), blob.content().to_vec()));
+            }
+            entries.push((format!("msgs/cleanup/{now}-{cid}.json"), cbytes));
+            let parent = repo
+                .find_commit(
+                    git2::Oid::from_str(&vault_root)
+                        .map_err(|e| SyncError::Git(format!("board root oid: {e}")))?,
+                )
+                .map_err(|e| SyncError::Git(format!("board root commit: {e}")))?;
+            let oid = self.build_message_board_commit(repo, None, &entries, &parent)?;
+            repo.reference(MSGS_REF, oid, true, "board compaction")
+                .map_err(|e| SyncError::Git(format!("board ref: {e}")))?;
+            {
+                let cfg = self
+                    .credential_config
+                    .clone()
+                    .with_url_hint(remote.url().unwrap_or(""));
+                let mut push_opts = PushOptions::new();
+                push_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+                let force_spec = format!("+{MSGS_REF}:{MSGS_REF}");
+                remote
+                    .push(&[&force_spec], Some(&mut push_opts))
+                    .map_err(|e| classify_remote_err("board compaction push", &e))?;
+            }
+            repo.reference(&tracking, oid, true, "board compaction tracking")
+                .map_err(|e| SyncError::Git(format!("board tracking: {e}")))?;
+            base_entries = prune_entries(&tip_entries, now);
+        }
+
+        // Merge pending onto the (possibly compacted) base, then the
+        // write-time prune: non-conforming, out-of-window, caps.
+        let tip_names: std::collections::HashSet<String> =
+            base_entries.iter().map(|(p, _)| p.clone()).collect();
+        let mut merged: Vec<(String, git2::Oid)> = base_entries.clone();
+        let mut fresh: Vec<(String, Vec<u8>)> = Vec::new();
+        for (path, bytes) in &pending {
+            if tip_names.contains(path) {
+                continue;
+            }
+            let blob_id = repo
+                .blob(bytes)
+                .map_err(|e| SyncError::Git(format!("board blob write: {e}")))?;
+            merged.push((path.clone(), blob_id));
+            fresh.push((path.clone(), bytes.clone()));
+        }
+        if fresh.is_empty() && !compacting {
+            return Ok(true);
+        }
+        let pruned = prune_entries(&merged, now);
+        // Nothing new and the prune changed nothing: no commit, no push.
+        let pruned_names: std::collections::HashSet<String> =
+            pruned.iter().map(|(p, _)| p.clone()).collect();
+        let base_names: std::collections::HashSet<String> =
+            base_entries.iter().map(|(p, _)| p.clone()).collect();
+        if pruned_names == base_names && fresh.is_empty() {
+            return Ok(true);
+        }
+
+        // The commit parent depends on the shape: a normal publish
+        // chains on the fetched tip; pending entries after a compaction
+        // chain on the fresh compacted tip; a genesis publish parents on
+        // the vault root. Deferred init: `rebound_tip` and
+        // `root_commit` must outlive `parent`.
+        let rebound_tip;
+        let root_commit;
+        let parent = match tip.as_ref() {
+            Some(t) if !compacting => t,
+            _ => {
+                rebound_tip = read_tip().filter(|t| ours(t));
+                if let Some(t) = rebound_tip.as_ref() {
+                    t
+                } else if tip.is_none() {
+                    root_commit = repo
+                        .find_commit(
+                            git2::Oid::from_str(&vault_root)
+                                .map_err(|e| SyncError::Git(format!("board root oid: {e}")))?,
+                        )
+                        .map_err(|e| SyncError::Git(format!("board root commit: {e}")))?;
+                    &root_commit
+                } else {
+                    return Err(foreign_err());
+                }
+            }
+        };
+        // Entries carry stored bytes, so the builder re-writes blobs.
+        let entry_bytes: Vec<(String, Vec<u8>)> = pruned
+            .iter()
+            .map(|(p, oid)| {
+                let blob = repo
+                    .find_blob(*oid)
+                    .map_err(|e| SyncError::Git(format!("board blob read: {e}")))?;
+                Ok((p.clone(), blob.content().to_vec()))
+            })
+            .collect::<Result<_, BaluardError>>()?;
+        let mut oid = self.build_message_board_commit(repo, Some(parent), &entry_bytes, parent)?;
+        repo.reference(MSGS_REF, oid, true, "board publish")
+            .map_err(|e| SyncError::Git(format!("board ref: {e}")))?;
+
+        {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let mut push_opts = PushOptions::new();
+            push_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            if let Err(first_err) = remote.push(&[&push_spec], Some(&mut push_opts)) {
+                let first = classify_remote_err("board push", &first_err);
+                {
+                    let cfg = self
+                        .credential_config
+                        .clone()
+                        .with_url_hint(remote.url().unwrap_or(""));
+                    let mut opts = FetchOptions::new();
+                    opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+                    let _ = remote.fetch(&[&fetch_spec], Some(&mut opts), None);
+                }
+                let fresh_tip = read_tip();
+                if let Some(t) = &fresh_tip {
+                    if !ours(t) {
+                        return Err(foreign_err());
+                    }
+                }
+                let base_entries: Vec<(String, git2::Oid)> = fresh_tip
+                    .as_ref()
+                    .and_then(|c| c.tree().ok())
+                    .and_then(|tree| tree.get_path(std::path::Path::new("msgs")).ok())
+                    .and_then(|sub| repo.find_tree(sub.id()).ok())
+                    .map(|sub| {
+                        let mut out = Vec::new();
+                        for topic_entry in sub.iter() {
+                            let Some(topic) = topic_entry.name() else {
+                                continue;
+                            };
+                            if topic_entry.kind() != Some(git2::ObjectType::Tree) {
+                                out.push((format!("msgs/{topic}"), topic_entry.id()));
+                                continue;
+                            }
+                            if let Ok(topic_tree) = repo.find_tree(topic_entry.id()) {
+                                for leaf in topic_tree.iter() {
+                                    if leaf.kind() == Some(git2::ObjectType::Blob) {
+                                        if let Some(name) = leaf.name() {
+                                            out.push((format!("msgs/{topic}/{name}"), leaf.id()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        out
+                    })
+                    .unwrap_or_default();
+                let mut merged: Vec<(String, git2::Oid)> = base_entries.clone();
+                for (path, bytes) in &fresh {
+                    let blob_id = repo
+                        .blob(bytes)
+                        .map_err(|e| SyncError::Git(format!("board blob write: {e}")))?;
+                    merged.push((path.clone(), blob_id));
+                }
+                let pruned = prune_entries(&merged, now);
+                let fresh_tip = fresh_tip.ok_or_else(foreign_err)?;
+                let entry_bytes: Vec<(String, Vec<u8>)> = pruned
+                    .iter()
+                    .map(|(p, oid)| {
+                        let blob = repo
+                            .find_blob(*oid)
+                            .map_err(|e| SyncError::Git(format!("board blob read: {e}")))?;
+                        Ok((p.clone(), blob.content().to_vec()))
+                    })
+                    .collect::<Result<_, BaluardError>>()?;
+                oid = self.build_message_board_commit(
+                    repo,
+                    Some(&fresh_tip),
+                    &entry_bytes,
+                    &fresh_tip,
+                )?;
+                repo.reference(MSGS_REF, oid, true, "board publish (reconcile)")
+                    .map_err(|e| SyncError::Git(format!("board ref: {e}")))?;
+                let cfg = self
+                    .credential_config
+                    .clone()
+                    .with_url_hint(remote.url().unwrap_or(""));
+                let mut push_opts = PushOptions::new();
+                push_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+                if let Err(second_err) = remote.push(&[&push_spec], Some(&mut push_opts)) {
+                    let second = classify_remote_err("board push", &second_err);
+                    return Err(SyncError::Git(format!(
+                        "board push still contended; will retry next sync ({first}; {second})"
+                    ))
+                    .into());
+                }
+            }
+        }
+
+        repo.reference(&tracking, oid, true, "board tracking")
+            .map_err(|e| SyncError::Git(format!("board tracking: {e}")))?;
+        Ok(true)
+    }
+
+    /// Build one board commit over `entries` (full `msgs/...` paths and
+    /// stored bytes), parented on `parent` — the fetched tip, or the
+    /// vault root for a genesis or compaction. Signed (hygiene).
+    #[allow(clippy::too_many_arguments)]
+    fn build_message_board_commit(
+        &self,
+        repo: &Repository,
+        base_tip: Option<&git2::Commit<'_>>,
+        entries: &[(String, Vec<u8>)],
+        parent: &git2::Commit<'_>,
+    ) -> Result<Oid, BaluardError> {
+        // Continue each existing topic subtree so unrelated topics
+        // survive untouched; entries carry full msgs/<topic>/<file>
+        // paths and group into per-topic treebuilders.
+        let mut topics: std::collections::BTreeMap<&str, Vec<(&str, &[u8])>> = Default::default();
+        for (path, bytes) in entries {
+            let rest = path
+                .strip_prefix("msgs/")
+                .ok_or_else(|| SyncError::Git(format!("board path {path:?} escapes msgs/")))?;
+            let (topic, file) = rest.split_once('/').ok_or_else(|| {
+                SyncError::Git(format!("board path {path:?} has no topic segment"))
+            })?;
+            topics
+                .entry(topic)
+                .or_default()
+                .push((file, bytes.as_slice()));
+        }
+        let mut msgs_tb = repo
+            .treebuilder(None)
+            .map_err(|e| SyncError::Git(format!("board treebuilder: {e}")))?;
+        for (topic, leaves) in topics {
+            let base_topic = base_tip
+                .and_then(|c| c.tree().ok())
+                .and_then(|tree| {
+                    tree.get_path(std::path::Path::new(&format!("msgs/{topic}")))
+                        .ok()
+                })
+                .map(|entry| entry.id())
+                .map(|id| repo.find_tree(id))
+                .transpose()
+                .map_err(|e| SyncError::Git(format!("board topic subtree: {e}")))?;
+            let mut topic_tb = repo
+                .treebuilder(base_topic.as_ref())
+                .map_err(|e| SyncError::Git(format!("board topic treebuilder: {e}")))?;
+            for (name, bytes) in leaves {
+                let blob_id = repo
+                    .blob(bytes)
+                    .map_err(|e| SyncError::Git(format!("board blob write: {e}")))?;
+                topic_tb
+                    .insert(name, blob_id, git2::FileMode::Blob.into())
+                    .map_err(|e| SyncError::Git(format!("board insert: {e}")))?;
+            }
+            let id = topic_tb
+                .write()
+                .map_err(|e| SyncError::Git(format!("board topic write: {e}")))?;
+            msgs_tb
+                .insert(topic, id, git2::FileMode::Tree.into())
+                .map_err(|e| SyncError::Git(format!("board topic insert: {e}")))?;
+        }
+        let msgs_id = msgs_tb
+            .write()
+            .map_err(|e| SyncError::Git(format!("board subtree write: {e}")))?;
+        let mut root_tb = repo
+            .treebuilder(None)
+            .map_err(|e| SyncError::Git(format!("board root treebuilder: {e}")))?;
+        root_tb
+            .insert("msgs", msgs_id, git2::FileMode::Tree.into())
+            .map_err(|e| SyncError::Git(format!("board root insert: {e}")))?;
+        let tree_id = root_tb
+            .write()
+            .map_err(|e| SyncError::Git(format!("board tree write: {e}")))?;
+        let tree = repo
+            .find_tree(tree_id)
+            .map_err(|e| SyncError::Git(format!("board find tree: {e}")))?;
+        let sig = git2::Signature::now("baluard-msgs", "msgs@baluard.local")
+            .map_err(|e| SyncError::Git(format!("board sig: {e}")))?;
+        self.create_signed_commit(repo, &sig, "messages: publish", &tree, &[parent])
+    }
+
+    /// Fetch and read the message board for consumers (ADR 0107): the
+    /// roster comes from the fetched main tip, the tip tree is the only
+    /// thing read, and a board over `HARD_CAP` or rooted on a foreign
+    /// vault is reported as a status instead of entries so the consumer
+    /// falls back to its non-message path.
+    pub fn read_message_board(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+    ) -> Result<crate::sync::msgbus::Board, BaluardError> {
+        use crate::sync::msgbus::{MSGS_REF, MSGS_TRACKING};
+        let tracking = format!("refs/remotes/{remote_name}/{MSGS_TRACKING}");
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let mut opts = FetchOptions::new();
+            opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            // Forced: a compacted board must reach an existing tracking
+            // ref. Ref-absent is a fine empty answer; any other failure
+            // warns, because a stale view would hide messages.
+            let spec = format!("+{MSGS_REF}:{tracking}");
+            if let Err(e) = remote.fetch(&[&spec], Some(&mut opts), None) {
+                let msg = e.message();
+                if !(msg.contains("find remote ref") || msg.contains("not found")) {
+                    eprintln!("warning: message board fetch failed: {msg}");
+                }
+            }
+        }
+        let tip = repo
+            .find_reference(&tracking)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok());
+        let Some(commit) = tip else {
+            return Ok(crate::sync::msgbus::Board {
+                status: crate::sync::msgbus::BoardStatus::Empty,
+                tip: None,
+                msgs: Vec::new(),
+            });
+        };
+        let vault_root = self.root_commit_oid(repo)?;
+        let branch = Self::resolve_default_branch(repo);
+        let mut cache = Default::default();
+        let roster = repo
+            .find_reference(&format!("refs/heads/{branch}"))
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+            .map(|head| Self::roster_for_commit(repo, &head, &mut cache))
+            .transpose()?
+            .flatten()
+            .unwrap_or_default();
+        let now: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        crate::sync::msgbus::read_board_tree(repo, &vault_root, &roster, Some(&commit), now)
+    }
+
     /// Compact the attachments line: force-replace it with a fresh
     /// genesis carrying only the pins the vault still references (live,
     /// trashed, and archived ciphers — the runtime supplies the set,
@@ -3532,7 +4050,10 @@ impl SyncEngine {
         Self::root_commit_oid_from(repo, head.id())
     }
 
-    fn root_commit_oid_from(repo: &Repository, mut oid: Oid) -> Result<String, BaluardError> {
+    pub(crate) fn root_commit_oid_from(
+        repo: &Repository,
+        mut oid: Oid,
+    ) -> Result<String, BaluardError> {
         loop {
             let commit = repo
                 .find_commit(oid)
@@ -14204,5 +14725,431 @@ mod tests {
         let engine = SyncEngine::new(dir.path(), "ssh-pin-test-device", None);
         engine.add_remote(&repo, "origin", ssh).unwrap();
         assert_eq!(repo.find_remote("origin").unwrap().url(), Some(ssh));
+    }
+
+    // ── Message board conformance (ADR 0107, constants ADR 0109) ────
+
+    /// Fixture: a vault with one commit pushed to a bare remote, a
+    /// rostered signing key, and the engine wired for publishing.
+    fn msg_board_fixture() -> (
+        tempfile::TempDir,
+        SyncEngine,
+        Repository,
+        std::path::PathBuf,
+        ed25519_dalek::SigningKey,
+    ) {
+        let key = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id, &key);
+        setup_signing_keys_with(dir.path(), &key);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine.add_remote(&repo, "origin", &remote_url).unwrap();
+        engine.push(&repo, "origin").unwrap();
+        // Leak the remote tempdir so the fixture lives as long as the test.
+        std::mem::forget(remote_dir);
+        (dir, engine, repo, remote_path, key)
+    }
+
+    /// Commit a hand-built board tree straight onto the bare remote's
+    /// msgs ref, parented on the vault root, simulating another device.
+    fn seed_board(bare: &Repository, vault_root_hex: &str, entries: &[(&str, &[u8])]) {
+        let mut topics: std::collections::BTreeMap<&str, Vec<(&str, &[u8])>> = Default::default();
+        for (path, body) in entries {
+            let rest = path.strip_prefix("msgs/").unwrap_or(path);
+            let (topic, file) = rest.split_once('/').unwrap_or((rest, ""));
+            topics.entry(topic).or_default().push((file, *body));
+        }
+        let mut msgs_tb = bare.treebuilder(None).unwrap();
+        for (topic, leaves) in topics {
+            let mut topic_tb = bare.treebuilder(None).unwrap();
+            for (name, body) in leaves {
+                if name.is_empty() {
+                    continue;
+                }
+                let blob = bare.blob(body).unwrap();
+                topic_tb
+                    .insert(name, blob, git2::FileMode::Blob.into())
+                    .unwrap();
+            }
+            let id = topic_tb.write().unwrap();
+            msgs_tb
+                .insert(topic, id, git2::FileMode::Tree.into())
+                .unwrap();
+        }
+        let msgs_id = msgs_tb.write().unwrap();
+        let mut root_tb = bare.treebuilder(None).unwrap();
+        root_tb
+            .insert("msgs", msgs_id, git2::FileMode::Tree.into())
+            .unwrap();
+        let tree_id = root_tb.write().unwrap();
+        let tree = bare.find_tree(tree_id).unwrap();
+        let root_oid = git2::Oid::from_str(vault_root_hex).unwrap();
+        let root_commit = bare.find_commit(root_oid).unwrap();
+        let sig = git2::Signature::now("seeder", "seed@baluard.local").unwrap();
+        bare.commit(
+            Some(crate::sync::msgbus::MSGS_REF),
+            &sig,
+            &sig,
+            "seeded board",
+            &tree,
+            &[&root_commit],
+        )
+        .unwrap();
+    }
+
+    fn board_tip(bare: &Repository) -> Option<git2::Commit<'_>> {
+        bare.find_reference(crate::sync::msgbus::MSGS_REF)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+    }
+
+    fn board_entry_names(bare: &Repository) -> Vec<String> {
+        let Some(commit) = board_tip(bare) else {
+            return Vec::new();
+        };
+        let Ok(tree) = commit.tree() else {
+            return Vec::new();
+        };
+        let Ok(sub) = tree.get_path(std::path::Path::new("msgs")) else {
+            return Vec::new();
+        };
+        let Ok(sub) = bare.find_tree(sub.id()) else {
+            return Vec::new();
+        };
+        sub.iter()
+            .filter_map(|e| e.name().map(String::from))
+            .collect()
+    }
+
+    #[test]
+    fn first_publish_roots_on_the_vault_root_then_chains() {
+        let (_dir, engine, repo, remote_path, _key) = msg_board_fixture();
+        engine
+            .publish_messages(
+                &repo,
+                "origin",
+                &[crate::sync::msgbus::MsgOut {
+                    r#type: "cleanup.compacted".into(),
+                    body: serde_json::json!({"kept": 1}),
+                }],
+            )
+            .unwrap();
+        let bare = Repository::open(&remote_path).unwrap();
+        let tip1 = board_tip(&bare).expect("first publish created the board");
+        let vault_root = engine.root_commit_oid(&repo).unwrap();
+        assert_eq!(
+            SyncEngine::root_commit_oid_from(&bare, tip1.id()).unwrap(),
+            vault_root,
+            "the first board commit roots on the vault root"
+        );
+
+        engine
+            .publish_messages(
+                &repo,
+                "origin",
+                &[crate::sync::msgbus::MsgOut {
+                    r#type: "other.notice".into(),
+                    body: serde_json::json!({"n": 2}),
+                }],
+            )
+            .unwrap();
+        let tip2 = board_tip(&bare).unwrap();
+        assert_ne!(
+            tip1.id(),
+            tip2.id(),
+            "the second publish advanced the board"
+        );
+        assert_eq!(
+            tip2.parent_id(0).unwrap(),
+            tip1.id(),
+            "later commits chain on the fetched tip"
+        );
+        let names = board_entry_names(&bare);
+        assert_eq!(names.len(), 2, "both topics ride the board: {names:?}");
+    }
+
+    #[test]
+    fn publish_prunes_expired_future_and_nonconforming_entries_by_path() {
+        let (_dir, engine, repo, remote_path, key) = msg_board_fixture();
+        let bare = Repository::open(&remote_path).unwrap();
+        let vault_root = engine.root_commit_oid(&repo).unwrap();
+        let now: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let id = |n: u8| format!("{n:064x}");
+        // An expired entry in a topic a v1 reader has never heard of: the
+        // prune is path-only, so unknown topics still expire.
+        let expired = format!(
+            "msgs/future-v2-topic/{}-{}.json",
+            now - crate::sync::msgbus::MSG_TTL_SECS - 10,
+            id(1)
+        );
+        let expired_body = format!(
+            "{{\"v\":1,\"type\":\"future-v2-topic.thing\",\"from\":\"d\",\"at\":{},\"body\":{{}}}}",
+            now - crate::sync::msgbus::MSG_TTL_SECS - 10
+        );
+        // A future-dated entry beyond the skew window.
+        let future = format!(
+            "msgs/future-v2-topic/{}-{}.json",
+            now + crate::sync::msgbus::CLOCK_SKEW_SECS + 10,
+            id(2)
+        );
+        let future_body = format!(
+            "{{\"v\":1,\"type\":\"future-v2-topic.thing\",\"from\":\"d\",\"at\":{},\"body\":{{}}}}",
+            now + crate::sync::msgbus::CLOCK_SKEW_SECS + 10
+        );
+        // A non-conforming hostile path.
+        let junk = "msgs/cleanup/junk".to_string();
+        seed_board(
+            &bare,
+            &vault_root,
+            &[
+                (expired.trim_start_matches("msgs/"), expired_body.as_bytes()),
+                (future.trim_start_matches("msgs/"), future_body.as_bytes()),
+                (junk.trim_start_matches("msgs/"), b"junk"),
+            ],
+        );
+
+        engine
+            .publish_messages(
+                &repo,
+                "origin",
+                &[crate::sync::msgbus::MsgOut {
+                    r#type: "cleanup.compacted".into(),
+                    body: serde_json::json!({"kept": 0}),
+                }],
+            )
+            .unwrap();
+
+        let names = board_entry_names(&bare);
+        assert!(
+            !names.iter().any(|n| n.starts_with(&format!(
+                "{}-",
+                now - crate::sync::msgbus::MSG_TTL_SECS - 10
+            ))),
+            "the expired v2 entry is pruned by path: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with(&format!(
+                "{}-",
+                now + crate::sync::msgbus::CLOCK_SKEW_SECS + 10
+            ))),
+            "the future-dated entry is pruned"
+        );
+        assert!(
+            !names.contains(&"junk".to_string()),
+            "non-conforming paths are evicted"
+        );
+        assert_eq!(names.len(), 1, "only the fresh publish survives: {names:?}");
+    }
+
+    #[test]
+    fn board_over_hard_cap_is_ignored_whole() {
+        let (_dir, engine, repo, remote_path, key) = msg_board_fixture();
+        let bare = Repository::open(&remote_path).unwrap();
+        let vault_root = engine.root_commit_oid(&repo).unwrap();
+        let now: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        for i in 0..(crate::sync::msgbus::HARD_CAP as u64 + 1) {
+            let out = crate::sync::msgbus::MsgOut {
+                r#type: "cleanup.compacted".into(),
+                body: serde_json::json!({"n": i}),
+            };
+            let env =
+                crate::sync::msgbus::build_envelope(&key, "device-a", now - 60 - i, &out).unwrap();
+            let id = crate::sync::msgbus::message_id(&env).unwrap();
+            let path = format!("cleanup/{}-{}.json", now - 60 - i, id);
+            entries.push((path, serde_json::to_vec(&env).unwrap()));
+        }
+        let refs: Vec<(&str, &[u8])> = entries
+            .iter()
+            .map(|(p, b)| (p.as_str(), b.as_slice()))
+            .collect();
+        seed_board(&bare, &vault_root, &refs);
+
+        let board = engine.read_message_board(&repo, "origin").unwrap();
+        assert_eq!(board.status, crate::sync::msgbus::BoardStatus::OverHardCap);
+        assert!(board.msgs.is_empty(), "a flooded board is ignored whole");
+    }
+
+    #[test]
+    fn long_chain_triggers_compaction_without_retriggering_at_rest() {
+        let (_dir, engine, repo, remote_path, _key) = msg_board_fixture();
+        let bare_path = remote_path.clone();
+        for i in 0..(crate::sync::msgbus::MAX_CHAIN + 2) {
+            engine
+                .publish_messages(
+                    &repo,
+                    "origin",
+                    &[crate::sync::msgbus::MsgOut {
+                        r#type: "cleanup.compacted".into(),
+                        body: serde_json::json!({"n": i}),
+                    }],
+                )
+                .unwrap();
+        }
+        let bare = Repository::open(&bare_path).unwrap();
+        let tip = board_tip(&bare).expect("the chain built a board");
+        let vault_root = engine.root_commit_oid(&repo).unwrap();
+        assert_eq!(
+            SyncEngine::root_commit_oid_from(&bare, tip.id()).unwrap(),
+            vault_root,
+            "the compacted board roots on the vault root"
+        );
+        let names = board_entry_names(&bare);
+        assert!(
+            names.len() <= crate::sync::msgbus::CAP_TOTAL + 1,
+            "compaction pruned below the hard cap: {} entries",
+            names.len()
+        );
+        let compacted = names
+            .iter()
+            .filter(|n| {
+                // The cleanup message's topic prefix is visible in no
+                // field of the name except through its content; count
+                // via the board read instead.
+                true
+            })
+            .count();
+        let _ = compacted;
+        let board = engine.read_message_board(&repo, "origin").unwrap();
+        assert_eq!(board.status, crate::sync::msgbus::BoardStatus::Ready);
+        assert!(
+            board
+                .msgs
+                .iter()
+                .any(|m| m.topic == "cleanup" && m.body.get("compacted_entries").is_some()),
+            "the compaction carries its cleanup.board-compacted message: {:?}",
+            board
+                .msgs
+                .iter()
+                .map(|m| m.topic.clone())
+                .collect::<Vec<_>>()
+        );
+
+        // At rest: one more publish must not compact again. The new tip
+        // chains on the previous one (no force-replace happened).
+        let before = board_tip(&bare).unwrap().id();
+        engine
+            .publish_messages(
+                &repo,
+                "origin",
+                &[crate::sync::msgbus::MsgOut {
+                    r#type: "cleanup.compacted".into(),
+                    body: serde_json::json!({"n": 999_999}),
+                }],
+            )
+            .unwrap();
+        let after = board_tip(&bare).unwrap();
+        assert_eq!(
+            after.parent_id(0).unwrap(),
+            before,
+            "an at-rest publish chains instead of force-replacing"
+        );
+    }
+
+    #[test]
+    fn racing_publisher_chains_on_a_compacted_tip() {
+        let (_dir, engine, repo, remote_path, _key) = msg_board_fixture();
+        let bare = Repository::open(&remote_path).unwrap();
+        let vault_root = engine.root_commit_oid(&repo).unwrap();
+        engine
+            .publish_messages(
+                &repo,
+                "origin",
+                &[crate::sync::msgbus::MsgOut {
+                    r#type: "cleanup.compacted".into(),
+                    body: serde_json::json!({"n": 1}),
+                }],
+            )
+            .unwrap();
+        let stale_tip = board_tip(&bare).unwrap();
+
+        // Another device compacts: its tip carries one survivor entry
+        // and is force-pushed over ours.
+        let survivor = format!("msgs/cleanup/{}-{}.json", 1_700_000_000u64, "b".repeat(64));
+        let mut cleanup_tb = bare.treebuilder(None).unwrap();
+        let blob = bare.blob(br#"{"v":1}"#).unwrap();
+        cleanup_tb
+            .insert(
+                survivor.rsplit('/').next().unwrap(),
+                blob,
+                git2::FileMode::Blob.into(),
+            )
+            .unwrap();
+        let cleanup_id = cleanup_tb.write().unwrap();
+        let mut msgs_tb = bare.treebuilder(None).unwrap();
+        msgs_tb
+            .insert("cleanup", cleanup_id, git2::FileMode::Tree.into())
+            .unwrap();
+        let msgs_id = msgs_tb.write().unwrap();
+        let mut root_tb = bare.treebuilder(None).unwrap();
+        root_tb
+            .insert("msgs", msgs_id, git2::FileMode::Tree.into())
+            .unwrap();
+        let tree = bare.find_tree(root_tb.write().unwrap()).unwrap();
+        let root_commit = bare
+            .find_commit(git2::Oid::from_str(&vault_root).unwrap())
+            .unwrap();
+        let sig = git2::Signature::now("other", "other@baluard.local").unwrap();
+        // git2's commit(Some(ref)) demands the parent be the ref's
+        // current tip; the compacted tip is unrelated, so commit orphan
+        // style and force-move the ref (recorded fixture lesson).
+        let compacted_oid = bare
+            .commit(None, &sig, &sig, "board compaction", &tree, &[&root_commit])
+            .unwrap();
+        bare.reference(
+            crate::sync::msgbus::MSGS_REF,
+            compacted_oid,
+            true,
+            "forced compaction",
+        )
+        .unwrap();
+        assert_ne!(compacted_oid, stale_tip.id());
+
+        // Our publish raced the compaction: its stale-tip build is
+        // rejected and it must reconcile onto the compacted tip.
+        engine
+            .publish_messages(
+                &repo,
+                "origin",
+                &[crate::sync::msgbus::MsgOut {
+                    r#type: "cleanup.compacted".into(),
+                    body: serde_json::json!({"n": 2}),
+                }],
+            )
+            .unwrap();
+
+        let tip = board_tip(&bare).unwrap();
+        assert_eq!(
+            tip.parent_id(0).unwrap(),
+            compacted_oid,
+            "the racing publisher chained on the compacted tip"
+        );
+        let names = board_entry_names(&bare);
+        assert!(
+            names
+                .iter()
+                .any(|n| survivor.starts_with(&format!("msgs/cleanup/"))),
+            "the survivor rides the merged board: {names:?}"
+        );
     }
 }

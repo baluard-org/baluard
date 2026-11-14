@@ -12,6 +12,7 @@ pub mod conflict;
 pub mod credentials;
 pub mod gossip;
 pub mod known_hosts;
+pub mod msgbus;
 pub mod policy;
 pub mod revocation;
 pub mod state_machine;
