@@ -327,6 +327,18 @@ class VaultRepository {
         vault.attachAck(tip)
     }
 
+    /** The guided resolution for a pending line rewrite: pull the
+     * rewritten history, delete this device's stale local copies of the
+     * reclaimed envelopes, acknowledge the new tip, and release the
+     * write lock. Entries are untouched. */
+    suspend fun attachResolve(vault: MobileVault): AttachmentResolveReport {
+        val raw = vault.attachResolve()
+        val obj = Json.parseToJsonElement(raw).jsonObject
+        return AttachmentResolveReport(
+            discarded = obj["discarded"]?.jsonPrimitive?.longOrNull ?: 0L,
+        )
+    }
+
     /** Read the shared advisory message board status for the cleanup
      * notice. Works on a locked vault (classification needs no keys).
      * Null fields mean the board carries nothing to show. */
@@ -1313,4 +1325,8 @@ data class MsgBoardStatus(
     val rewriteSigned: Boolean?,
     val compactionDevice: String?,
     val compactionEntries: Long?,
+)
+
+data class AttachmentResolveReport(
+    val discarded: Long,
 )

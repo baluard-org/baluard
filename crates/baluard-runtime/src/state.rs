@@ -4901,6 +4901,7 @@ impl VaultState {
 
     /// Add a new cipher. Requires vault to be unlocked.
     pub async fn add_cipher(&self, payload: &str) -> Result<String, String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
 
@@ -5401,6 +5402,7 @@ impl VaultState {
     /// actor has no write scope for, and the vault gate stays the
     /// session unlock.
     pub async fn cipher_set_collection(&self, payload: &str) -> Result<String, String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         if !handle.is_unlocked() {
@@ -6497,6 +6499,7 @@ impl VaultState {
 
     /// Mint a collection (admin-gated).
     pub async fn collection_create(&self, name: &str) -> Result<String, String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         if !handle.is_unlocked() {
@@ -6680,6 +6683,7 @@ impl VaultState {
     }
 
     pub async fn collection_rename(&self, id: &str, name: &str) -> Result<String, String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         if !handle.is_unlocked() {
@@ -6693,6 +6697,7 @@ impl VaultState {
     }
 
     pub async fn collection_delete(&self, id: &str) -> Result<String, String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         if !handle.is_unlocked() {
@@ -6914,6 +6919,7 @@ impl VaultState {
 
     /// Update an existing cipher.
     pub async fn update_cipher(&self, payload: &str) -> Result<(), String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
 
@@ -7080,6 +7086,7 @@ impl VaultState {
 
     /// Create a folder. Payload: JSON {"name": "...", "parent_id": "..." (optional)}
     pub async fn create_folder(&self, payload: &str) -> Result<String, String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
 
@@ -7106,6 +7113,7 @@ impl VaultState {
 
     /// Rename a folder. Payload: JSON {"id": "...", "name": "new name"}
     pub async fn rename_folder(&self, payload: &str) -> Result<(), String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
 
@@ -7448,6 +7456,7 @@ impl VaultState {
 
     /// Delete a folder. Unassigns all ciphers in that folder.
     pub async fn delete_folder(&self, id_str: &str) -> Result<(), String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
 
@@ -7518,6 +7527,7 @@ impl VaultState {
 
     /// Delete a cipher by ID. Uses write lock for filesystem mutation.
     pub async fn delete_cipher(&self, id_str: &str) -> Result<(), String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
 
@@ -7601,6 +7611,7 @@ impl VaultState {
 
     /// Restore a cipher by ID.
     pub async fn restore_cipher(&self, id_str: &str) -> Result<(), String> {
+        self.autosync.ensure_line_synced().await?;
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         let cipher_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
@@ -8966,6 +8977,7 @@ impl VaultState {
     /// Upload attachment to a cipher.
     /// Payload: { cipher_id, filename, data_base64 }
     pub async fn attach_upload(&self, payload: &str) -> Result<String, String> {
+        self.autosync.ensure_line_synced().await?;
         let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
         let cipher_id: uuid::Uuid = req["cipher_id"]
             .as_str()
@@ -9437,6 +9449,13 @@ impl VaultState {
         .map_err(|e| format!("attachment status task: {e}"))?
         .map_err(|e| e.to_string())?;
 
+        // Arm the write lock while a rewrite is unresolved: entries go
+        // read-only and sync cycles drop their push leg, so the stale
+        // local blob copies cannot republish and undo the cleanup.
+        self.autosync
+            .set_line_rewrite_pending(status.rewritten && !status.foreign)
+            .await;
+
         Ok(serde_json::json!({
             "tip": status.tip,
             "rewritten": status.rewritten,
@@ -9492,6 +9511,67 @@ impl VaultState {
         }
         Self::write_line_ack(vault_id, &current_tip)?;
         Ok(serde_json::json!({ "acknowledged": true }).to_string())
+    }
+
+    /// The guided resolution for a pending line rewrite: pull the
+    /// rewritten history, remove this device's stale local copies of
+    /// the reclaimed envelopes (a later sync would republish them and
+    /// undo the cleanup for every device), acknowledge the new tip, and
+    /// release the write lock. Entries are untouched; only side-channel
+    /// file copies whose content hash no longer appears on the line are
+    /// removed.
+    pub async fn attach_resolve(&self, _payload: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        let vault_id = handle.vault_id;
+        let vault_path = handle.path.clone();
+        let device_id = handle.device_id.to_string();
+        let devkey_seal = handle.devkey_seal();
+        drop(guard);
+
+        let (removed, tip) = tokio::task::spawn_blocking(
+            move || -> Result<(u32, String), String> {
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id,
+                    devkey_seal.as_ref(),
+                );
+                let repo = engine.open_repo().map_err(|e| e.to_string())?;
+                match engine.pull(&repo, "origin").map_err(|e| e.to_string())? {
+                    baluard_core::sync::engine::PullResult::Conflict { .. } => {
+                        return Err(
+                            "A sync conflict needs a decision first; resolve it, then get the updates again."
+                                .to_string(),
+                        );
+                    }
+                    _ => {}
+                }
+                let status = engine
+                    .attachment_line_status(&repo, "origin", None)
+                    .map_err(|e| e.to_string())?;
+                if status.foreign {
+                    return Err(
+                        "The shared storage belongs to a different vault; sync once and try again."
+                            .to_string(),
+                    );
+                }
+                let removed = engine
+                    .discard_stale_line_blobs(&repo, "origin")
+                    .map_err(|e| e.to_string())?;
+                let tip = status
+                    .tip
+                    .clone()
+                    .ok_or("The shared storage line vanished; sync and try again.")?;
+                Ok((removed, tip))
+            },
+        )
+        .await
+        .map_err(|e| format!("attachment resolve task: {e}"))??;
+
+        Self::write_line_ack(vault_id, &tip)?;
+        self.autosync.set_line_rewrite_pending(false).await;
+
+        Ok(serde_json::json!({ "discarded": removed }).to_string())
     }
 
     /// Compact the vault's off-main attachments line, reclaiming the
@@ -9561,6 +9641,7 @@ impl VaultState {
     /// Delete attachment from a cipher.
     /// Payload: { cipher_id, attachment_id }
     pub async fn attach_delete(&self, payload: &str) -> Result<String, String> {
+        self.autosync.ensure_line_synced().await?;
         let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
         let cipher_id: uuid::Uuid = req["cipher_id"]
             .as_str()
@@ -10931,6 +11012,106 @@ mod activate_autosync_tests {
     use super::VaultState;
 
     const PASSWORD: &str = "correct horse battery";
+
+    /// The guided-resolution contract: once `attach_status` classifies a
+    /// line rewrite this device has not resolved, entry writes refuse
+    /// with the typed message, and only `attach_resolve` (pull, discard
+    /// stale copies, ack) releases the lock. The rewrite is planted by
+    /// hand: a line tip parented on the vault root (so it reads
+    /// rewritten, not foreign) beside an unreachable acked tip.
+    #[tokio::test]
+    async fn pending_line_rewrite_locks_writes_until_resolve() {
+        let _env = crate::test_support::lock_env();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", dir.path());
+        }
+        let state = unlocked_state(&dir).await;
+        let vault_id = {
+            let g = state.inner.read().await;
+            g.as_ref().unwrap().vault_id
+        };
+        let bare = tempfile::tempdir().unwrap();
+        attach_bare_remote(dir.path(), bare.path());
+
+        // Publish existing main, so the resolution pull is clean.
+        {
+            let repo = git2::Repository::open(dir.path()).unwrap();
+            let mut remote = repo.find_remote("origin").unwrap();
+            remote
+                .push(&["refs/heads/main:refs/heads/main"], None)
+                .unwrap();
+        }
+
+        // Plant the rewritten line tip: parented on main's head, so its
+        // root of history is this vault's root (rewritten, not foreign).
+        let planted_tip = {
+            let repo = git2::Repository::open(dir.path()).unwrap();
+            let tb = repo.treebuilder(None).unwrap();
+            let tree_id = tb.write().unwrap();
+            let sig = git2::Signature::now("t", "t@example").unwrap();
+            let parent = repo
+                .revparse_single("main")
+                .unwrap()
+                .peel_to_commit()
+                .unwrap();
+            repo.commit(
+                None,
+                &sig,
+                &sig,
+                "planted line tip",
+                &repo.find_tree(tree_id).unwrap(),
+                &[&parent],
+            )
+            .unwrap()
+            .to_string()
+        };
+        {
+            let repo = git2::Repository::open(dir.path()).unwrap();
+            let mut remote = repo.find_remote("origin").unwrap();
+            let spec = format!("+{planted_tip}:refs/notes/baluard-attachments");
+            remote.push(&[spec.as_str()], None).unwrap();
+        }
+        // The ack points at a well-formed but unreachable git oid, so
+        // descent from it cannot be proven: rewritten (a malformed ack
+        // would degrade to first contact and adopt silently).
+        let ack_dir = dir.path().join("attachment-line");
+        std::fs::create_dir_all(&ack_dir).unwrap();
+        std::fs::write(
+            ack_dir.join(format!("{vault_id}.json")),
+            format!(r#"{{"tip":"{}"}}"#, "f".repeat(40)),
+        )
+        .unwrap();
+
+        // The status classifies the rewrite and arms the lock.
+        let status = state.attach_status("{}").await.unwrap();
+        assert!(status.contains("\"rewritten\":true"), "status: {status}");
+
+        // Writes refuse with the typed message.
+        let err = state
+            .add_cipher(r#"{"name":"Bank","kind":{"type":"login","data":{"username":"u"}}}"#)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("Get the latest updates before making changes"),
+            "refusal: {err}"
+        );
+
+        // The resolution pulls, acks, and releases the lock.
+        let resolved = state.attach_resolve("{}").await.unwrap();
+        assert!(resolved.contains("\"discarded\":"), "resolve: {resolved}");
+
+        // Writes work again, and the status is clean.
+        state
+            .add_cipher(r#"{"name":"Bank","kind":{"type":"login","data":{"username":"u"}}}"#)
+            .await
+            .unwrap();
+        let status = state.attach_status("{}").await.unwrap();
+        assert!(
+            status.contains("\"rewritten\":false"),
+            "post-resolve status: {status}"
+        );
+    }
 
     async fn unlocked_state(dir: &tempfile::TempDir) -> VaultState {
         let state = VaultState::new(dir.path().to_path_buf());

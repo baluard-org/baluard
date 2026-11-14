@@ -383,6 +383,7 @@
     "attachPending": "Des fichiers sont encore en cours de synchronisation. Synchronisez une fois, puis réessayez.",
     "attachReadable": "La compaction exige que toutes les entrées soient lisibles sur cet appareil. Déverrouillez tout le coffre ici, ou exécutez-la depuis un appareil capable de tout lire.",
     "attachLegacy": "Des entrées ont été enregistrées pour la dernière fois par une version antérieure de l'app. Mettez à jour tous les appareils, enregistrez à nouveau ces entrées, puis réessayez.",
+    "cleanupPending": "Get the latest updates before making changes: another device cleaned up shared storage.",
     "attachChanged": "Le stockage des pièces jointes a encore changé pendant votre vérification. Revérifiez."
   },
   "sync": {
@@ -491,12 +492,6 @@
     "attachDesc": "Les pièces jointes vivent en dehors de l'historique du coffre. Libérer de l'espace récupère les fichiers qu'aucune entrée ne référence.",
     "attachCompact": "Libérer de l'espace",
     "attachResult": "{reclaimed} fichier(s) récupéré(s) ({bytes}), {kept} conservé(s).",
-    "attachCleaned": {
-      "en": "Attachment storage was cleaned up",
-      "es": "El almacenamiento de adjuntos fue limpiado",
-      "pt": "O armazenamento de anexos foi limpo",
-      "fr": "Le stockage des pièces jointes a été nettoyé"
-    },
     "attachCleanedHint": {
       "en": "Another device removed deleted attachments from the shared storage. Your files are safe and everything keeps working; this device switches over automatically.",
       "es": "Otro dispositivo eliminó los adjuntos borrados del almacenamiento compartido. Tus archivos están a salvo y todo sigue funcionando; este dispositivo cambia automáticamente.",
@@ -517,19 +512,23 @@
       "pt": "O armazenamento compartilhado de anexos não corresponde a este cofre. Faça uma sincronização e verifique esta seção novamente.",
       "fr": "Le stockage partagé des pièces jointes ne correspond pas à ce coffre. Lancez une synchronisation puis revérifiez cette section."
     },
-    "attachAccept": {
-      "en": "Got it",
-      "es": "Entendido",
-      "pt": "Entendi",
-      "fr": "Compris"
-    },
     "msgCleaned": "Le tableau de messages partage a ete nettoye.",
     "msgCleanedDetails": "L'appareil {device} a retire {count} messages du tableau partage.",
     "msgCleanedHint": "Un appareil que vous n'avez pas verifie a range le tableau de messages partage.",
     "msgCleanedVerifiedHint": "Le nettoyage a ete signe par une cle d appareil verifiee.",
     "msgForeign": "Le tableau de messages partage appartient a un autre coffre.",
     "msgForeignHint": "Synchronisez une fois pour que cet appareil puisse lire le tableau recu.",
-    "msgAccept": "Compris"
+    "msgAccept": "Compris",
+    "cleanupTitle": "Le stockage a ete nettoye sur un autre appareil",
+    "cleanupBody": "Un autre appareil a range le stockage partage de Baluard. Obtenez les dernieres mises a jour pour terminer le nettoyage. D'ici la, vous pouvez consulter et remplir vos identifiants, mais l'enregistrement des modifications est en pause.",
+    "cleanupAdvanced": "Ce que fait Baluard",
+    "cleanupAdvancedBody": "Baluard garde les fichiers joints chiffres dans un historique git separe. Un autre appareil a reecrit cet historique pour retirer des fichiers qu'aucune entree n'utilise. Cet appareil detient encore des copies locales des fichiers retires; synchroniser les reecrirait pour tout le monde. Obtenir les mises a jour accepte l'historique reecrit et supprime uniquement ces copies locales perimees.",
+    "cleanupAction": "Obtenir les mises a jour",
+    "cleanupKeepReading": "Continuer a lire",
+    "cleanupBusy": "Obtention des mises a jour…",
+    "cleanupDone": "Mises a jour recues. {count} copies perimees supprimees.",
+    "cleanupDoneNone": "Mises a jour recues. Rien a nettoyer sur cet appareil.",
+    "cleanupBar": "Mises a jour requises — modifications en pause"
   },
   "settings": {
     "faviconLabel": "Afficher les icônes des sites web",

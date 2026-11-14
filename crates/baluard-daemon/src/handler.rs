@@ -5939,6 +5939,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
         "sync.push" => {
             refresh_connected_tokens_if_needed().await;
+            // A pending line rewrite must not push: the sync would
+            // republish the stale blob copies the cleanup removed.
+            if let Err(e) = state.autosync.ensure_line_synced().await {
+                return err_response(e);
+            }
             // C3: hold the autosync cycle lock so this manual cycle cannot
             // overlap a debounce push, background pull, or paused merge.
             let cycle_guard = state.autosync.cycle_lock_owned().await;
@@ -6512,6 +6517,13 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
 
         "vault.attach_ack" => match state.attach_ack(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        // ── Guided resolution of a pending line rewrite (token
+        // required; pulls, discards stale local copies, acks) ──
+        "vault.attach_resolve" => match state.attach_resolve(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },

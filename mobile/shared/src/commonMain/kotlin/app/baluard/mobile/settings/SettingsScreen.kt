@@ -2962,7 +2962,6 @@ val entitlement by Entitlements.state.collectAsState()
                 var compactBusy by remember { mutableStateOf(false) }
                 var compactResult by remember { mutableStateOf<String?>(null) }
                 var notice by remember { mutableStateOf<AttachmentLineStatus?>(null) }
-                var ackBusy by remember { mutableStateOf(false) }
                 LaunchedEffect(vault) {
                     // Advisory only: a failed status read shows nothing.
                     try {
@@ -2972,59 +2971,16 @@ val entitlement by Entitlements.state.collectAsState()
                     } catch (_: Exception) {
                     }
                 }
+                // A rewrite is owned by the app-level blocking gate; the
+                // card only surfaces the foreign-line guidance.
                 val n = notice
-                if (n != null && (n.rewritten || n.foreign)) {
-                    val msg = when {
-                        n.foreign -> t("settings.attachForeign")
-                        n.compactionDevice != null -> {
-                            val kb = (n.compactionBytes ?: 0L) / 1024.0
-                            val size = if (kb >= 1024) {
-                                "${(kb / 1024 * 10).toInt() / 10.0} MB"
-                            } else {
-                                "${(kb * 10).toInt() / 10.0} KB"
-                            }
-                            t(
-                                "settings.attachCleanedDetails",
-                                n.compactionDevice.take(8),
-                                n.compactionReclaimed ?: 0L,
-                                size,
-                            )
-                        }
-                        n.rewriteSigned == true -> t("settings.attachCleanedVerified")
-                        else -> t("settings.attachCleaned")
-                    }
+                if (n != null && n.foreign) {
+                    val msg = t("settings.attachForeign")
                     Text(
                         msg,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (!n.foreign && n.tip != null) {
-                        BaluardOutlinedButton(
-                            text = if (ackBusy) t("common.pleaseWait") else t("settings.attachAck"),
-                            enabled = !ackBusy,
-                            onClick = {
-                                scope.launch {
-                                    ackBusy = true
-                                    try {
-                                        repo.attachAck(vault, n.tip)
-                                        notice = null
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        val m = e.message.orEmpty()
-                                        when {
-                                            m.contains("changed again") ->
-                                                Toast.error(t("settings.attachChanged"))
-                                            else ->
-                                                Toast.error(m.ifEmpty { t("settings.attachFailed") })
-                                        }
-                                    } finally {
-                                        ackBusy = false
-                                    }
-                                }
-                            },
-                        )
-                    }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),

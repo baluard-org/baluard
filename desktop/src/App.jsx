@@ -24,6 +24,7 @@ import AutoSyncIndicator from "./components/AutoSyncIndicator.jsx";
 import ConflictResolutionPanel from "./components/ConflictResolutionPanel.jsx";
 import ToastContainer from "./components/ToastContainer.jsx";
 import UpdateBanner from "./components/UpdateBanner.jsx";
+import StorageCleanupGate from "./components/StorageCleanupGate.jsx";
 
 // D79 version gate: after an update, a stale daemon (the bundled sidecar
 // did not get replaced) must be impossible to talk to, not quietly wrong.
@@ -235,6 +236,7 @@ export default function App() {
               <ConflictResolutionProvider>
                 <AutoSyncProvider>
                   <AutoSyncIndicator />
+                  <StorageCleanupGate />
                   <VaultView />
                   <ConflictResolutionPanel />
                   <DevTriggerSlot />

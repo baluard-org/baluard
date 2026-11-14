@@ -61,76 +61,18 @@ describe("AttachmentsSection", () => {
     expect(text).toContain('"kept":12');
   });
 
-  it("shows the cleanup notice and clears it through attach_ack", async () => {
+  it("renders nothing for a rewrite: the app-level gate owns it", async () => {
     const STATUS = JSON.stringify({
       tip: "a".repeat(64),
       rewritten: true,
       foreign: false,
-    });
-    daemonMock.mockImplementation((action, payload) => {
-      if (action === "vault.attach_status") return Promise.resolve(STATUS);
-      if (action === "vault.attach_ack")
-        return Promise.resolve(JSON.stringify({ acknowledged: true }));
-      return Promise.resolve(REPORT);
-    });
-    render(() => <AttachmentsSection />);
-    const notice = await waitFor(() =>
-      screen.getByTestId("attach-notice")
-    );
-    expect(notice.textContent).toContain("sync.attachCleaned");
-    fireEvent.click(screen.getByTestId("attach-accept-btn"));
-    await waitFor(() =>
-      expect(screen.queryByTestId("attach-notice")).toBeNull()
-    );
-    expect(daemonMock).toHaveBeenCalledWith("vault.attach_ack", {
-      tip: "a".repeat(64),
-    });
-  });
-
-  it("attributes a verified rewrite in the cleanup notice", async () => {
-    const STATUS = JSON.stringify({
-      tip: "d".repeat(64),
-      rewritten: true,
-      foreign: false,
       rewrite_signed: true,
     });
-    daemonMock.mockImplementation((action) =>
-      action === "vault.attach_status"
-        ? Promise.resolve(STATUS)
-        : Promise.resolve(REPORT)
-    );
+    daemonMock.mockResolvedValue(STATUS);
     render(() => <AttachmentsSection />);
-    const notice = await waitFor(() => screen.getByTestId("attach-notice"));
-    expect(notice.textContent).toContain("sync.attachCleaned");
-    expect(notice.textContent).toContain("sync.attachCleanedVerifiedHint");
-    expect(notice.textContent).not.toContain("sync.attachCleanedHint");
-  });
-
-  it("shows the verified cleanup details in the notice", async () => {
-    const STATUS = JSON.stringify({
-      tip: "e".repeat(64),
-      rewritten: true,
-      foreign: false,
-      rewrite_signed: true,
-      compaction: {
-        device_id: "12345678-1234-1234-1234-123456789abc",
-        at: 1731600000,
-        reclaimed: 3,
-        reclaimed_bytes: 5242880,
-        kept: 12,
-      },
-    });
-    daemonMock.mockImplementation((action) =>
-      action === "vault.attach_status"
-        ? Promise.resolve(STATUS)
-        : Promise.resolve(REPORT)
-    );
-    render(() => <AttachmentsSection />);
-    const notice = await waitFor(() => screen.getByTestId("attach-notice"));
-    expect(notice.textContent).toContain("sync.attachCleanedDetails");
-    expect(notice.textContent).toContain("12345678");
-    expect(notice.textContent).toContain("3");
-    expect(notice.textContent).toContain("5.0 MB");
+    await waitFor(() => expect(daemonMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("attach-notice")).toBeNull();
+    expect(screen.queryByTestId("attach-accept-btn")).toBeNull();
   });
 
   it("shows the foreign-storage notice without an accept button", async () => {

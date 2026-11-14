@@ -1042,6 +1042,18 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })?)
     }
 
+    /// The guided resolution for a pending line rewrite: pull the
+    /// rewritten history, delete this device's stale local copies of
+    /// the reclaimed envelopes, acknowledge the new tip, and release
+    /// the write lock. Returns JSON `{discarded}`.
+    pub async fn attach_resolve(&self) -> Result<String, BaluardError> {
+        Ok(self
+            .state
+            .attach_resolve("{}")
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })?)
+    }
+
     /// Compact the vault's off-main attachments line, reclaiming
     /// encrypted files no entry references anymore. Refuses when any
     /// entry is unreadable on this device (shared vaults: owner/admin

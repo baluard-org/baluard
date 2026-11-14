@@ -12,11 +12,19 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -26,6 +34,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -33,6 +43,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import app.baluard.mobile.auth.AuthViewModel
 import app.baluard.mobile.auth.UnlockScreen
 import app.baluard.mobile.platform.AppBackground
+import app.baluard.mobile.data.AttachmentLineStatus
 import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.data.vaultTimeoutToken
 import app.baluard.mobile.data.vaultTimeoutMinutes
@@ -54,6 +65,8 @@ import app.baluard.mobile.platform.AppPaths
 import app.baluard.mobile.platform.VaultRegistry
 import app.baluard.mobile.ui.components.ConflictResolutionPanel
 import app.baluard.mobile.ui.theme.BaluardTheme
+import app.baluard.mobile.ui.components.BaluardOutlinedButton
+import app.baluard.mobile.ui.components.BaluardPrimaryButton
 import app.baluard.mobile.ui.toast.Toast
 import app.baluard.mobile.ui.toast.ToastHost
 import app.baluard.mobile.vault.CategoryListScreen
@@ -179,6 +192,15 @@ fun App(
         var showOpen by remember { mutableStateOf(false) }
         // ADR 0102: the hub/list Sync buttons gate like the Settings one.
         var showSyncUpgrade by remember { mutableStateOf(false) }
+        // Attachments-line rewrite blocking (non-dismissable): another
+        // device compacted the line and this device has not run the
+        // guided resolution. Reads and autofill keep working; the
+        // runtime refuses writes until the pull lands. The full-screen
+        // alert collapses to a persistent bar when the user chooses to
+        // keep reading; there is no dismiss without acting.
+        var pendingCleanup by remember { mutableStateOf<AttachmentLineStatus?>(null) }
+        var cleanupCollapsed by remember { mutableStateOf(false) }
+        var cleanupBusy by remember { mutableStateOf(false) }
         val entitlement by Entitlements.state.collectAsState()
         var unlocked by remember { mutableStateOf(false) }
         // Where the create ceremony writes. Set by the switcher's create row
@@ -341,6 +363,45 @@ fun App(
                 }
             },
         )
+
+        // Check for a pending line rewrite whenever the vault unlocks:
+        // attach_status works on a locked vault, but the gate only
+        // matters once the user can act.
+        LaunchedEffect(unlocked) {
+            if (!unlocked) return@LaunchedEffect
+            val v = auth.vault() ?: return@LaunchedEffect
+            val st = runCatching { repo.attachStatus(v) }.getOrNull() ?: return@LaunchedEffect
+            if (st.rewritten && !st.foreign) {
+                pendingCleanup = st
+                cleanupCollapsed = false
+            }
+        }
+        val resolveCleanup: () -> Unit = {
+            if (!cleanupBusy) scope.launch {
+                cleanupBusy = true
+                try {
+                    val v = auth.vault()
+                    if (v != null) {
+                        val report = repo.attachResolve(v)
+                        pendingCleanup = null
+                        cleanupCollapsed = false
+                        Toast.success(
+                            if (report.discarded > 0) {
+                                t("settings.cleanupDone", report.discarded)
+                            } else {
+                                t("settings.cleanupDoneNone")
+                            }
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    Toast.error(t("settings.cleanupFailed"))
+                } finally {
+                    cleanupBusy = false
+                }
+            }
+        }
 
         // Auto-lock on background/return, per the vault's timeout policy.
         // Reads the policy fresh each time so Settings changes apply live.
@@ -1004,6 +1065,123 @@ fun App(
                         }
 
                     is app.baluard.mobile.passkeys.PasskeyUiRequest.Unlock -> Unit
+                }
+            }
+            // Attachments-line rewrite gate: full-screen and
+            // non-dismissable (only Get updates or Keep reading); the
+            // collapsed bar stays until the resolution lands.
+            val cleanup = pendingCleanup
+            if (cleanup != null) {
+                if (!cleanupCollapsed) {
+                    Dialog(
+                        onDismissRequest = { /* non-dismissable by design */ },
+                        properties = DialogProperties(
+                            dismissOnBackPress = false,
+                            dismissOnClickOutside = false,
+                            usePlatformDefaultWidth = false,
+                        ),
+                    ) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.background,
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Text(
+                                    t("settings.cleanupTitle"),
+                                    style = MaterialTheme.typography.titleLarge,
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    t("settings.cleanupBody"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                cleanup.compactionDevice?.let { device ->
+                                    Spacer(Modifier.height(8.dp))
+                                    val kb = (cleanup.compactionBytes ?: 0L) / 1024.0
+                                    val size = if (kb >= 1024) {
+                                        "${(kb / 1024 * 10).toInt() / 10.0} MB"
+                                    } else {
+                                        "${(kb * 10).toInt() / 10.0} KB"
+                                    }
+                                    Text(
+                                        t(
+                                            "settings.attachCleanedDetails",
+                                            device.take(8),
+                                            cleanup.compactionReclaimed ?: 0L,
+                                            size,
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Spacer(Modifier.height(16.dp))
+                                var showAdvanced by remember { mutableStateOf(false) }
+                                TextButton(onClick = { showAdvanced = !showAdvanced }) {
+                                    Text(t("settings.cleanupAdvanced"))
+                                }
+                                if (showAdvanced) {
+                                    Text(
+                                        t("settings.cleanupAdvancedBody"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Spacer(Modifier.height(24.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    BaluardOutlinedButton(
+                                        text = t("settings.cleanupKeepReading"),
+                                        onClick = { cleanupCollapsed = true },
+                                        modifier = Modifier.weight(1f),
+                                        enabled = !cleanupBusy,
+                                    )
+                                    BaluardPrimaryButton(
+                                        text = if (cleanupBusy) t("settings.cleanupBusy") else t("settings.cleanupAction"),
+                                        onClick = resolveCleanup,
+                                        modifier = Modifier.weight(1f),
+                                        enabled = !cleanupBusy,
+                                        loading = cleanupBusy,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Collapsed: persistent bar. No dismiss — acting is
+                    // the only way out.
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .statusBarsPadding()
+                            .fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                t("settings.cleanupBar"),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            BaluardPrimaryButton(
+                                text = if (cleanupBusy) t("settings.cleanupBusy") else t("settings.cleanupAction"),
+                                onClick = resolveCleanup,
+                                enabled = !cleanupBusy,
+                                loading = cleanupBusy,
+                            )
+                        }
+                    }
                 }
             }
             // Global toasts (desktop toastSignal parity): stacked bottom-center.

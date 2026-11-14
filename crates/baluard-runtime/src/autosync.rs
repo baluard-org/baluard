@@ -164,6 +164,11 @@ struct Inner {
     access_denied_streak: u32,
     /// Unix ms of the last throttled registry `last_synced` persist.
     stamp_persist_ms: Option<u64>,
+    /// Another device compacted the attachments line and this device
+    /// has not run the guided resolution yet. While set, entry writes
+    /// are refused and sync cycles pull without pushing, so the stale
+    /// worktree blob copies cannot republish and undo the cleanup.
+    line_rewrite_pending: std::sync::atomic::AtomicBool,
     /// Phase 2b: conflicts paused for field-level resolution. Populated when
     /// `run_sync_cycle` returns `NeedsDecision`; drained by `sync.conflict`
     /// (read) and `sync.conflict.resolve` (consume + finalize). Empty in all
@@ -258,6 +263,7 @@ impl AutoSyncHandle {
                 conflicts_resolved: 0,
                 access_denied_streak: 0,
                 stamp_persist_ms: None,
+                line_rewrite_pending: std::sync::atomic::AtomicBool::new(false),
                 pending_conflicts: Vec::new(),
                 device_id: String::new(),
                 devkey_seal: None,
@@ -581,6 +587,40 @@ impl AutoSyncHandle {
     /// Owned-guard variant for callers that must move the guard into a
     /// spawn_blocking closure (a stack-local guard would drop on timeout
     /// while the git op keeps running).
+    /// Flip the pending line-rewrite state. Set by `attach_status`
+    /// when the fetched line tip is a rewrite this device has not
+    /// resolved; cleared by the guided resolution.
+    pub async fn set_line_rewrite_pending(&self, pending: bool) {
+        self.inner
+            .lock()
+            .await
+            .line_rewrite_pending
+            .store(pending, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// True while an unresolved line rewrite blocks writes and pushes.
+    pub async fn line_rewrite_pending(&self) -> bool {
+        self.inner
+            .lock()
+            .await
+            .line_rewrite_pending
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The typed refusal for vault-mutating routes while a line
+    /// rewrite is pending. The message is matched by the desktop
+    /// ERROR_PATTERNS and the mobile contains-arm, so wording is
+    /// load-bearing.
+    pub async fn ensure_line_synced(&self) -> Result<(), String> {
+        if self.line_rewrite_pending().await {
+            return Err(
+                "Get the latest updates before making changes: another device cleaned up shared storage."
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     pub async fn cycle_lock_owned(&self) -> tokio::sync::OwnedMutexGuard<()> {
         Arc::clone(&self.cycle_lock).lock_owned().await
     }
@@ -781,11 +821,20 @@ impl AutoSyncHandle {
     /// passes a shorter budget ([`BG_FLUSH_TIMEOUT`]) so a mobile OS
     /// background-task kill doesn't leak the pool thread against a 60s wall.
     async fn fire_sync(&self, device_id: String, generation: u64, timeout: std::time::Duration) {
+        // A pending line rewrite downgrades this cycle to pull-only:
+        // pushing would republish the stale worktree blob copies the
+        // compaction removed, so the push waits for the guided
+        // resolution. Pulls stay allowed (reads, and the resolution
+        // itself pulls).
+        let rewrite_pending;
         let (devkey_seal, enroll_vk) = {
             let mut g = self.inner.lock().await;
             if !g.active || g.generation != generation {
                 return;
             }
+            rewrite_pending = g
+                .line_rewrite_pending
+                .load(std::sync::atomic::Ordering::SeqCst);
             g.state = AutoSyncState::Syncing;
             g.pending = 0;
             (g.devkey_seal, g.enroll_vk)
@@ -820,8 +869,23 @@ impl AutoSyncHandle {
                 let vault_path = self.vault_path.clone();
                 move || {
                     let _cycle_guard = lock_guard;
-                    let out =
-                        run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk);
+                    let out = if rewrite_pending {
+                        run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk).map(
+                            |report| match report {
+                                PullReport::Pulled
+                                | PullReport::UpToDate
+                                | PullReport::KeptLocal => SyncOutcome::Synced { conflicts: 0 },
+                                PullReport::Offline => SyncOutcome::Offline,
+                                // No local writes happened while pending,
+                                // so a pull cannot diverge into a conflict;
+                                // any other report still counts as a
+                                // completed (no-op) cycle.
+                                _ => SyncOutcome::Synced { conflicts: 0 },
+                            },
+                        )
+                    } else {
+                        run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
+                    };
                     if let Some(mut k) = devkey_seal {
                         use zeroize::Zeroize;
                         k.zeroize();

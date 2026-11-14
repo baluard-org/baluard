@@ -1012,6 +1012,8 @@ internal interface UniffiLib : Library {
     `payload`: RustBuffer.ByValue,
   ): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_resolve(`ptr`: Pointer): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_status(`ptr`: Pointer): Long
 
   fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_upload(
@@ -1978,6 +1980,8 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_download(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_resolve(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_status(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_upload(): Short
@@ -2396,6 +2400,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_download() != 46864.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_resolve() != 20146.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_status() != 53366.toShort()) {
@@ -4276,6 +4283,14 @@ public interface MobileVaultInterface {
   suspend fun `attachDownload`(`payload`: kotlin.String): kotlin.String
 
   /**
+   * The guided resolution for a pending line rewrite: pull the
+   * rewritten history, delete this device's stale local copies of
+   * the reclaimed envelopes, acknowledge the new tip, and release
+   * the write lock. Returns JSON `{discarded}`.
+   */
+  suspend fun `attachResolve`(): kotlin.String
+
+  /**
    * Read the shared attachments-line status for the cleanup
    * notice: whether this device still carries the tip it last
    * accepted, whether the current tip was rewritten, and the
@@ -5545,6 +5560,36 @@ open class MobileVault :
         UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_attach_download(
           thisPtr,
           FfiConverterString.lower(`payload`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * The guided resolution for a pending line rewrite: pull the
+   * rewritten history, delete this device's stale local copies of
+   * the reclaimed envelopes, acknowledge the new tip, and release
+   * the write lock. Returns JSON `{discarded}`.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `attachResolve`(): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_attach_resolve(
+          thisPtr,
         )
       },
       {

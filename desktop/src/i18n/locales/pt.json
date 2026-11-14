@@ -597,12 +597,6 @@
     "attachDesc": "Os anexos ficam fora do histórico do cofre. Liberar espaço recupera os arquivos que nenhuma entrada referencia.",
     "attachCompact": "Liberar espaço",
     "attachResult": "Recuperados {reclaimed} arquivo(s) ({bytes}), mantidos {kept}.",
-    "attachCleaned": {
-      "en": "Attachment storage was cleaned up",
-      "es": "El almacenamiento de adjuntos fue limpiado",
-      "pt": "O armazenamento de anexos foi limpo",
-      "fr": "Le stockage des pièces jointes a été nettoyé"
-    },
     "attachCleanedHint": {
       "en": "Another device removed deleted attachments from the shared storage. Your files are safe and everything keeps working; this device switches over automatically.",
       "es": "Otro dispositivo eliminó los adjuntos borrados del almacenamiento compartido. Tus archivos están a salvo y todo sigue funcionando; este dispositivo cambia automáticamente.",
@@ -623,19 +617,23 @@
       "pt": "O armazenamento compartilhado de anexos não corresponde a este cofre. Faça uma sincronização e verifique esta seção novamente.",
       "fr": "Le stockage partagé des pièces jointes ne correspond pas à ce coffre. Lancez une synchronisation puis revérifiez cette section."
     },
-    "attachAccept": {
-      "en": "Got it",
-      "es": "Entendido",
-      "pt": "Entendi",
-      "fr": "Compris"
-    },
     "msgCleaned": "O quadro de mensagens compartilhado foi limpo.",
     "msgCleanedDetails": "O dispositivo {device} removeu {count} mensagens do quadro compartilhado.",
     "msgCleanedHint": "Um dispositivo que você não verificou organizou o quadro de mensagens compartilhado.",
     "msgCleanedVerifiedHint": "A limpeza foi assinada por uma chave de dispositivo verificada.",
     "msgForeign": "O quadro de mensagens compartilhado pertence a outro cofre.",
     "msgForeignHint": "Sincronize uma vez para que este dispositivo possa ler o quadro que recebeu.",
-    "msgAccept": "Entendi"
+    "msgAccept": "Entendi",
+    "cleanupTitle": "O armazenamento foi limpo em outro dispositivo",
+    "cleanupBody": "Outro dispositivo organizou o armazenamento compartilhado do Baluard. Obtenha as últimas atualizações para terminar a limpeza. Até lá, você pode ver e preencher seus logins, mas salvar alterações está pausado.",
+    "cleanupAdvanced": "O que o Baluard está fazendo",
+    "cleanupAdvancedBody": "O Baluard guarda arquivos anexos criptografados em um histórico git separado. Outro dispositivo reescreveu esse histórico para remover arquivos que nenhuma entrada usa. Este dispositivo ainda tem cópias locais dos arquivos removidos; sincronizar as gravaria de novo para todos. Obter as atualizações aceita o histórico reescrito e apaga apenas essas cópias locais obsoletas.",
+    "cleanupAction": "Obter atualizações",
+    "cleanupKeepReading": "Continuar lendo",
+    "cleanupBusy": "Obtendo atualizações…",
+    "cleanupDone": "Atualizações recebidas. {count} cópias obsoletas removidas.",
+    "cleanupDoneNone": "Atualizações recebidas. Nada a limpar neste dispositivo.",
+    "cleanupBar": "Atualizações necessárias — alterações pausadas"
   },
   "autosync": {
     "upToDate": "Todas as alterações sincronizadas",
@@ -707,6 +705,7 @@
     "attachPending": "Alguns arquivos ainda estão sincronizando. Sincronize uma vez e tente novamente.",
     "attachReadable": "A compactação precisa que todas as entradas sejam legíveis neste dispositivo. Desbloqueie todo o cofre aqui, ou execute-a em um dispositivo que consiga ler tudo.",
     "attachLegacy": "Algumas entradas foram salvas pela última vez em uma versão anterior do app. Atualize todos os dispositivos, salve novamente essas entradas e tente de novo.",
+    "cleanupPending": "Get the latest updates before making changes: another device cleaned up shared storage.",
     "attachChanged": "O armazenamento de anexos mudou novamente enquanto você verificava. Confira mais uma vez."
   },
   "categories": {

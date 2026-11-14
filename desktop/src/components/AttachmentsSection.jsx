@@ -21,14 +21,12 @@ export default function AttachmentsSection() {
   const [busy, setBusy] = createSignal(false);
   const [report, setReport] = createSignal(null);
   const [notice, setNotice] = createSignal(null);
-  const [ackBusy, setAckBusy] = createSignal(false);
 
   // The line is shared with every synced device, so another device can
-  // compact (rewrite) it under this one. The daemon classifies the
-  // freshly fetched tip against the tip this device last accepted;
-  // switching over is automatic and safe (files, pins, and downloads all
-  // keep working) — the notice exists so a cleanup that deleted history
-  // is never silent, and Accept records that the user was told.
+  // compact (rewrite) it under this one. A rewrite is owned by the
+  // app-level blocking gate; this section only surfaces the rare
+  // foreign-line case (the remote points at a different vault), which
+  // resolves with a normal sync.
   async function refreshStatus() {
     try {
       const raw = await daemon("vault.attach_status");
@@ -38,26 +36,16 @@ export default function AttachmentsSection() {
       } catch {
         parsed = null;
       }
-      if (parsed && parsed.tip && (parsed.rewritten || parsed.foreign)) {
+      // A rewrite is owned by the app-level StorageCleanupGate (it
+      // blocks writes until the guided resolution); this section only
+      // surfaces the foreign-line guidance.
+      if (parsed && parsed.tip && parsed.foreign) {
         setNotice(parsed);
       } else {
         setNotice(null);
       }
     } catch {
       // Status is advisory: a failure (offline, no remote) shows nothing.
-    }
-  }
-
-  async function acceptNotice() {
-    if (ackBusy() || !notice()) return;
-    setAckBusy(true);
-    try {
-      await daemon("vault.attach_ack", { tip: notice().tip });
-      setNotice(null);
-    } catch (e) {
-      toastError(sanitizeError(e));
-    } finally {
-      setAckBusy(false);
     }
   }
 
@@ -94,33 +82,11 @@ export default function AttachmentsSection() {
           class="rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)] px-3.5 py-3 space-y-2"
         >
           <span class="block text-[11px] font-bold text-[var(--color-text)]">
-            {notice().foreign
-              ? t("sync.attachForeign")
-              : t("sync.attachCleaned")}
+            {t("sync.attachForeign")}
           </span>
           <span class="block text-[10px] text-[var(--color-muted)]">
-            {notice().foreign
-              ? t("sync.attachForeignHint")
-              : notice().compaction
-                ? t("sync.attachCleanedDetails", {
-                    device: notice().compaction.device_id.slice(0, 8),
-                    count: notice().compaction.reclaimed,
-                    size: formatBytes(notice().compaction.reclaimed_bytes),
-                  })
-                : notice().rewrite_signed === true
-                  ? t("sync.attachCleanedVerifiedHint")
-                  : t("sync.attachCleanedHint")}
+            {t("sync.attachForeignHint")}
           </span>
-          <Show when={!notice().foreign}>
-            <button
-              data-testid="attach-accept-btn"
-              onClick={acceptNotice}
-              disabled={ackBusy()}
-              class="px-4 py-1.5 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-[10px] font-bold transition-all cursor-pointer disabled:opacity-40"
-            >
-              {ackBusy() ? t("common.pleaseWait") : t("sync.attachAccept")}
-            </button>
-          </Show>
         </div>
       </Show>
       <div class="flex items-center justify-between">

@@ -2752,6 +2752,65 @@ impl SyncEngine {
         Ok(Some(bytes))
     }
 
+    /// Remove worktree copies of attachment envelopes the line no longer
+    /// carries. After another device compacts the line, this device may
+    /// still hold untracked local copies of the reclaimed envelopes; a
+    /// later sync would republish them and undo the cleanup. Only pure
+    /// untracked (WT_NEW) files are candidates, so blobs grandfathered
+    /// on main are never touched; a file whose content hash is still
+    /// pinned on the line stays, because it remains a valid cache.
+    /// Returns the number of files removed.
+    pub fn discard_stale_line_blobs(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+    ) -> Result<u32, BaluardError> {
+        use crate::sync::attachments::{ATTACHMENTS_REF, ATTACHMENTS_TRACKING, line_entries};
+        let tracking = format!("refs/remotes/{remote_name}/{ATTACHMENTS_TRACKING}");
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let mut opts = FetchOptions::new();
+            opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            // '+': forced fetch — the tracking ref must reach the
+            // compacted tip even though it moved to an unrelated commit.
+            let spec = format!("+{ATTACHMENTS_REF}:{tracking}");
+            if let Err(e) = remote.fetch(&[&spec], Some(&mut opts), None) {
+                let msg = e.message();
+                if !(msg.contains("find remote ref") || msg.contains("not found")) {
+                    eprintln!("warning: attachments line fetch failed: {msg}");
+                }
+            }
+        }
+        let pinned: std::collections::HashSet<String> = repo
+            .find_reference(&tracking)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+            .and_then(|c| c.tree().ok())
+            .map(|t| line_entries(&t).into_iter().map(|(pin, _)| pin).collect())
+            .unwrap_or_default();
+        let mut removed = 0u32;
+        for path in crate::sync::attachments::collect_untracked_blob_paths(repo) {
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let pin = crate::vault::attachment::blob_sha256(&bytes);
+            if pinned.contains(&pin) {
+                continue;
+            }
+            if std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     /// Fetch the attachments line and classify it against a previously
     /// acknowledged tip, for the cleanup notice on secondary devices.
     /// `ack_tip_hex` is the tip this device last accepted (`None` on
@@ -13260,6 +13319,82 @@ mod tests {
     /// verified while an unsigned or foreign-keyed tip reads as unknown
     /// (ADR 0107 Standing improvement). Walks the three states on one
     /// line: rostered compaction, unsigned hostile tip, forged key.
+    #[test]
+    fn discard_stale_line_blobs_removes_unpinned_worktree_copies() {
+        // The resolution flow behind a remote compaction: this device
+        // still holds worktree copies of envelopes the rewritten line no
+        // longer carries. Discarding must remove exactly the copies
+        // whose content hash is absent from the line (the stale ones a
+        // later sync would republish) and keep everything the line
+        // still pins.
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine.add_remote(&repo, "origin", &remote_url).unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        let att_dir = dir
+            .path()
+            .join("entries/99999999-9999-9999-9999-999999999999/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let blob_live = b"live-envelope".to_vec();
+        let path_live = att_dir.join("live.enc");
+        std::fs::write(&path_live, &blob_live).unwrap();
+        let pin_live = crate::vault::attachment::blob_sha256(&blob_live);
+        let blob_stale = b"stale-envelope".to_vec();
+        let path_stale = att_dir.join("stale.enc");
+        std::fs::write(&path_stale, &blob_stale).unwrap();
+        let pin_stale = crate::vault::attachment::blob_sha256(&blob_stale);
+        engine
+            .publish_attachment_line(
+                &repo,
+                "origin",
+                &[
+                    (pin_live.clone(), path_live.clone()),
+                    (pin_stale.clone(), path_stale.clone()),
+                ],
+            )
+            .unwrap();
+
+        // A remote device compacts, reclaiming the stale pin.
+        let mut keep = std::collections::HashSet::new();
+        keep.insert(pin_live.clone());
+        engine
+            .compact_attachment_line(&repo, "origin", &keep)
+            .unwrap();
+
+        // This device's local copies survive the rewrite untouched.
+        assert!(path_live.exists());
+        assert!(path_stale.exists());
+
+        let removed = engine.discard_stale_line_blobs(&repo, "origin").unwrap();
+        assert_eq!(removed, 1);
+        // The pinned copy stays (it is still a valid cache); the stale
+        // copy is gone so a later sync cannot republish it.
+        assert!(path_live.exists());
+        assert!(!path_stale.exists());
+
+        // Idempotent: a second pass finds nothing stale.
+        let again = engine.discard_stale_line_blobs(&repo, "origin").unwrap();
+        assert_eq!(again, 0);
+    }
+
     #[test]
     fn attachment_line_classification_reports_the_signature_source() {
         let key_a = crate::crypto::signature::generate_ed25519_keypair().0;

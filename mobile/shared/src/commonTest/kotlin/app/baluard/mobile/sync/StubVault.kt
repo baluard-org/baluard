@@ -64,6 +64,11 @@ open class StubVault(
         return "{}"
     }
 
+    override suspend fun attachResolve(): String {
+        calls += "attachResolve"
+        return "{}"
+    }
+
     override suspend fun attachAck(tip: String): String {
         calls += "attachAck"
         return "{}"
