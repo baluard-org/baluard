@@ -106,6 +106,33 @@ describe("AttachmentsSection", () => {
     expect(notice.textContent).not.toContain("sync.attachCleanedHint");
   });
 
+  it("shows the verified cleanup details in the notice", async () => {
+    const STATUS = JSON.stringify({
+      tip: "e".repeat(64),
+      rewritten: true,
+      foreign: false,
+      rewrite_signed: true,
+      compaction: {
+        device_id: "12345678-1234-1234-1234-123456789abc",
+        at: 1731600000,
+        reclaimed: 3,
+        reclaimed_bytes: 5242880,
+        kept: 12,
+      },
+    });
+    daemonMock.mockImplementation((action) =>
+      action === "vault.attach_status"
+        ? Promise.resolve(STATUS)
+        : Promise.resolve(REPORT)
+    );
+    render(() => <AttachmentsSection />);
+    const notice = await waitFor(() => screen.getByTestId("attach-notice"));
+    expect(notice.textContent).toContain("sync.attachCleanedDetails");
+    expect(notice.textContent).toContain("12345678");
+    expect(notice.textContent).toContain("3");
+    expect(notice.textContent).toContain("5.0 MB");
+  });
+
   it("shows the foreign-storage notice without an accept button", async () => {
     const STATUS = JSON.stringify({
       tip: "b".repeat(64),

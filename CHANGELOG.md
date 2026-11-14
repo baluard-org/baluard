@@ -4,7 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-- Attachment files now live outside the vault's main history, on a signed side channel that keeps the branch history lean: every file is pinned to its encrypted bytes (rotation updates the pin), syncing carries new files to the side channel before the entry lands, and a fresh clone downloads files on demand instead of carrying them in the git tree. Deleting an entry no longer pins its storage forever: Settings > Sync has a "Free up space" action that reclaims files nothing references anymore, on desktop and mobile. When another device runs that cleanup, this device shows a short notice in the same section with a "Got it" button, so a history rewrite is never silent. The notice also tells you whether the cleanup was performed by a verified device.
+- Attachment files now live outside the vault's main history, on a signed side channel that keeps the branch history lean: every file is pinned to its encrypted bytes (rotation updates the pin), syncing carries new files to the side channel before the entry lands, and a fresh clone downloads files on demand instead of carrying them in the git tree. Deleting an entry no longer pins its storage forever: Settings > Sync has a "Free up space" action that reclaims files nothing references anymore, on desktop and mobile. When another device runs that cleanup, this device shows a short notice in the same section with a "Got it" button, so a history rewrite is never silent. The notice also says who cleaned up (a verified device), how many files it reclaimed, and how much space that freed.
 
 ## 0.5.5 - 2026-11-13
 

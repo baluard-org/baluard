@@ -28,6 +28,37 @@ use git2::Oid;
 
 use crate::error::{BaluardError, SyncError};
 
+/// What the cleanup notice says about a verified compaction (ADR 0107
+/// enrichment). `device_id` comes from the genesis signature verifying
+/// against a roster key — the key match IS the device binding — while
+/// the numbers come from the signed genesis tree's `compaction.json`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CompactionNotice {
+    pub device_id: String,
+    pub at: u64,
+    pub reclaimed: u64,
+    pub reclaimed_bytes: u64,
+    pub kept: u64,
+}
+
+/// Tree entry name of the compaction record inside a compaction genesis.
+pub const COMPACTION_ENTRY: &str = "compaction.json";
+
+/// Reader cap for the compaction record (the bus's size-limit posture):
+/// a larger entry is hostile or corrupt and surfaces no details.
+pub const COMPACTION_MAX_BYTES: usize = 16 * 1024;
+
+/// The parsed shape of `compaction.json`. Numeric fields only, `v`-gated;
+/// unknown additive fields are ignored so a future version can extend.
+#[derive(serde::Deserialize)]
+pub(crate) struct CompactionPayload {
+    pub(crate) v: u64,
+    pub(crate) at: u64,
+    pub(crate) reclaimed: u64,
+    pub(crate) reclaimed_bytes: u64,
+    pub(crate) kept: u64,
+}
+
 /// Per-device view of the shared attachments line, for the cleanup
 /// notice: whether the line was rewritten under this device (a
 /// compaction on another device) and whether the current tip belongs to
@@ -52,6 +83,10 @@ pub struct LineStatus {
     /// roster comes from main's tip tree (plaintext metadata, readable
     /// without unlocking).
     pub rewrite_signed: Option<bool>,
+    /// Cleanup details when the rewrite is a compaction whose genesis
+    /// signature verifies against the roster; `None` otherwise (not a
+    /// rewrite, unsigned or unknown-signer genesis, no record).
+    pub compaction: Option<CompactionNotice>,
 }
 
 /// The attachments channel: a ref under refs/notes, invisible to the

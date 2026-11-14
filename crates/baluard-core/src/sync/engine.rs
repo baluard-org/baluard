@@ -2789,6 +2789,7 @@ impl SyncEngine {
                 rewritten: false,
                 foreign: false,
                 rewrite_signed: None,
+                compaction: None,
             });
         };
         let vault_root = self.root_commit_oid(repo)?;
@@ -2811,10 +2812,8 @@ impl SyncEngine {
         // lives in main's tip tree (plaintext metadata), so this works
         // on a locked vault; an unsigned tip and a non-rewrite both
         // carry no attribution.
-        let rewrite_signed = if !rewritten {
-            None
-        } else if repo.extract_signature(&tip_commit.id(), None).is_err() {
-            None
+        let (rewrite_signed, compaction) = if !rewritten {
+            (None, None)
         } else {
             let branch = Self::resolve_default_branch(repo);
             let roster = repo
@@ -2827,20 +2826,71 @@ impl SyncEngine {
                 })
                 .flatten()
                 .unwrap_or_default();
-            if roster.is_empty() {
+            let signed = if repo.extract_signature(&tip_commit.id(), None).is_err() {
+                None
+            } else if roster.is_empty() {
                 Some(false)
             } else {
                 Some(
                     Self::verify_commit_against_roster_static(repo, tip_commit.id(), &roster)
                         .is_ok(),
                 )
-            }
+            };
+            let notice = Self::compaction_notice(repo, &tip_commit, &vault_root, &roster);
+            (signed, notice)
         };
         Ok(LineStatus {
             tip: Some(tip_commit.id().to_string()),
             rewritten,
             foreign,
             rewrite_signed,
+            compaction,
+        })
+    }
+
+    /// Cleanup details for a rewritten line (ADR 0107 enrichment). Walks
+    /// first-parent from the tip to the line genesis — the commit whose
+    /// single parent is the vault root — because the union merge carries
+    /// unknown entries into later tips, where any publisher could forge
+    /// a record. The record surfaces only when that genesis's signature
+    /// verifies against the roster; the verifying key match is the
+    /// device id, so no body field names the actor.
+    fn compaction_notice(
+        repo: &Repository,
+        tip_commit: &git2::Commit<'_>,
+        vault_root_hex: &str,
+        roster: &DeviceRoster,
+    ) -> Option<crate::sync::attachments::CompactionNotice> {
+        let root = Oid::from_str(vault_root_hex).ok()?;
+        let mut cur = tip_commit.clone();
+        let mut genesis = None;
+        for _ in 0..128 {
+            if cur.parent_count() == 1 && cur.parent_id(0).ok()? == root {
+                genesis = Some(cur);
+                break;
+            }
+            cur = cur.parent(0).ok()?;
+        }
+        let genesis = genesis?;
+        let tree = genesis.tree().ok()?;
+        let entry = tree.get_name(crate::sync::attachments::COMPACTION_ENTRY)?;
+        let blob = repo.find_blob(entry.id()).ok()?;
+        if blob.size() > crate::sync::attachments::COMPACTION_MAX_BYTES {
+            return None;
+        }
+        let device_id =
+            Self::verify_commit_against_roster_static(repo, genesis.id(), roster).ok()?;
+        let parsed: crate::sync::attachments::CompactionPayload =
+            serde_json::from_slice(blob.content()).ok()?;
+        if parsed.v != 1 {
+            return None;
+        }
+        Some(crate::sync::attachments::CompactionNotice {
+            device_id,
+            at: parsed.at,
+            reclaimed: parsed.reclaimed,
+            reclaimed_bytes: parsed.reclaimed_bytes,
+            kept: parsed.kept,
         })
     }
 
@@ -2992,6 +3042,28 @@ impl SyncEngine {
             tb.insert(name, *oid, git2::FileMode::Blob.into())
                 .map_err(|e| SyncError::Git(format!("attachments insert: {e}")))?;
         }
+        // The enrichment record rides the signed genesis (ADR 0107):
+        // numeric fields only; `who` is derived from the signature, not
+        // stated here, so nothing in the body is trusted prose.
+        let notice = serde_json::json!({
+            "v": 1,
+            "at": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            "reclaimed": report.reclaimed,
+            "reclaimed_bytes": report.reclaimed_bytes,
+            "kept": report.kept,
+        });
+        let notice_oid = repo
+            .blob(notice.to_string().as_bytes())
+            .map_err(|e| SyncError::Git(format!("attachments blob: {e}")))?;
+        tb.insert(
+            crate::sync::attachments::COMPACTION_ENTRY,
+            notice_oid,
+            git2::FileMode::Blob.into(),
+        )
+        .map_err(|e| SyncError::Git(format!("attachments insert: {e}")))?;
         let tree_id = tb
             .write()
             .map_err(|e| SyncError::Git(format!("attachments tree write: {e}")))?;
@@ -12550,6 +12622,167 @@ mod tests {
             status.rewrite_signed,
             Some(false),
             "a signature no roster key verifies reads as an unknown signer"
+        );
+    }
+
+    /// The cleanup notice enrichment (ADR 0107): a compaction genesis
+    /// carries compaction.json, and a verified genesis surfaces its
+    /// numeric fields plus the signing device id. A later unsigned
+    /// publish chained on the genesis keeps the details (the cleanup
+    /// itself was verified), while a hostile tip carrying a FORGED
+    /// compaction.json surfaces none — the reader walks to the genesis,
+    /// never the tip tree.
+    #[test]
+    fn attachment_line_notice_carries_compaction_details() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let (dir, _e) = make_test_repo();
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+
+        let att_dir = dir
+            .path()
+            .join("entries/88888888-8888-8888-8888-888888888888/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let blob_a = b"envelope-a".to_vec();
+        let path_a = att_dir.join("a.enc");
+        std::fs::write(&path_a, &blob_a).unwrap();
+        let pin_a = crate::vault::attachment::blob_sha256(&blob_a);
+        let blob_b = b"envelope-b".to_vec();
+        let path_b = att_dir.join("b.enc");
+        std::fs::write(&path_b, &blob_b).unwrap();
+        let pin_b = crate::vault::attachment::blob_sha256(&blob_b);
+
+        let (remote_dir, _clone_dir_guard, clone_engine, cloned) =
+            make_clone(dir.path(), &engine, &repo);
+        engine
+            .publish_attachment_line(
+                &repo,
+                "origin",
+                &[
+                    (pin_a.clone(), path_a.clone()),
+                    (pin_b.clone(), path_b.clone()),
+                ],
+            )
+            .unwrap();
+        let tip1 = repo
+            .find_reference(
+                format!(
+                    "refs/remotes/origin/{}",
+                    crate::sync::attachments::ATTACHMENTS_TRACKING
+                )
+                .as_str(),
+            )
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        let line_spec = format!(
+            "+{}:refs/remotes/origin/{}",
+            crate::sync::attachments::ATTACHMENTS_REF,
+            crate::sync::attachments::ATTACHMENTS_TRACKING
+        );
+        {
+            let mut remote = cloned.find_remote("origin").unwrap();
+            remote.fetch(&[line_spec.as_str()], None, None).unwrap();
+        }
+
+        let mut keep = std::collections::HashSet::new();
+        keep.insert(pin_a.clone());
+        let report = engine
+            .compact_attachment_line(&repo, "origin", &keep)
+            .unwrap();
+        let bare = Repository::open(remote_dir.path().join("vault.git")).unwrap();
+        let genesis = bare
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+
+        // Rostered compaction: the notice carries the report numbers and
+        // the signing device, gated on the genesis signature verifying.
+        let status = clone_engine
+            .attachment_line_status(&cloned, "origin", Some(&tip1.to_string()))
+            .unwrap();
+        assert!(status.rewritten);
+        let notice = status
+            .compaction
+            .expect("verified genesis surfaces details");
+        // setup_signing_keys_with enrolls under the fixture constant id.
+        assert_eq!(notice.device_id, "00000000-0000-0000-0000-00000000000a");
+        assert_eq!(notice.reclaimed, report.reclaimed);
+        assert_eq!(notice.reclaimed_bytes, report.reclaimed_bytes);
+        assert_eq!(notice.kept, report.kept);
+
+        // A later UNSIGNED publish chained on the genesis (the union
+        // merge carries compaction.json forward) keeps the details: the
+        // cleanup itself was performed by a verified device.
+        let gsig = git2::Signature::now("attacker", "attacker@example.invalid").unwrap();
+        let unsigned_tip = bare
+            .commit(
+                None,
+                &gsig,
+                &gsig,
+                "unsigned publish",
+                &genesis.tree().unwrap(),
+                &[&genesis],
+            )
+            .unwrap();
+        bare.reference(
+            crate::sync::attachments::ATTACHMENTS_REF,
+            unsigned_tip,
+            true,
+            "unsigned publish",
+        )
+        .unwrap();
+        let status = clone_engine
+            .attachment_line_status(&cloned, "origin", Some(&tip1.to_string()))
+            .unwrap();
+        assert!(status.rewritten);
+        assert_eq!(status.rewrite_signed, None, "the tip is unsigned");
+        assert!(
+            status.compaction.is_some(),
+            "details survive a later unsigned publish"
+        );
+
+        // A hostile tip parented on the PRE-compaction line carrying a
+        // forged compaction.json surfaces none: the walk lands on the
+        // first-publish genesis, which carries no compaction record.
+        let tip1_commit = bare.find_commit(tip1).unwrap();
+        let mut tb = bare
+            .treebuilder(Some(&tip1_commit.tree().unwrap()))
+            .unwrap();
+        let forged_json = br#"{"v":1,"at":1,"reclaimed":99,"reclaimed_bytes":99,"kept":0}"#;
+        let forged_oid = bare.blob(forged_json).unwrap();
+        tb.insert("compaction.json", forged_oid, git2::FileMode::Blob.into())
+            .unwrap();
+        let forged_tree = tb.write().unwrap();
+        let hostile = bare
+            .commit(
+                None,
+                &gsig,
+                &gsig,
+                "forged notice",
+                &bare.find_tree(forged_tree).unwrap(),
+                &[&tip1_commit],
+            )
+            .unwrap();
+        bare.reference(
+            crate::sync::attachments::ATTACHMENTS_REF,
+            hostile,
+            true,
+            "forged notice",
+        )
+        .unwrap();
+        let status = clone_engine
+            .attachment_line_status(&cloned, "origin", Some(&genesis.id().to_string()))
+            .unwrap();
+        assert!(status.rewritten);
+        assert!(
+            status.compaction.is_none(),
+            "a forged record at the tip tree must not surface"
         );
     }
 
