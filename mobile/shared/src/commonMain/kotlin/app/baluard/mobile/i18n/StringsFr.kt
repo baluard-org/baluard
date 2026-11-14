@@ -485,6 +485,7 @@ internal val FR: Map<String, String> = mapOf(
     "settings.attachResult" to "{0} fichier(s) récupéré(s) ({1}), {2} conservé(s).",
     "settings.attachPending" to "Des fichiers sont encore en cours de synchronisation. Synchronisez une fois, puis réessayez.",
     "settings.attachReadable" to "La compaction exige que toutes les entrées soient lisibles sur cet appareil.",
+    "settings.attachLegacy" to "Des entrées ont été enregistrées pour la dernière fois par une version antérieure de l'app. Mettez à jour tous les appareils, enregistrez à nouveau ces entrées, puis réessayez.",
     "settings.attachFailed" to "Impossible de libérer l'espace des pièces jointes.",
     "settings.dataSection" to "Données",
     "settings.categorySyncSubtitle" to "État, synchronisation automatique et connexions distantes",

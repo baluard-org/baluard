@@ -494,6 +494,7 @@ internal val EN: Map<String, String> = mapOf(
     "settings.attachResult" to "Reclaimed {0} files ({1}), kept {2}.",
     "settings.attachPending" to "Some files are still syncing. Sync once, then try again.",
     "settings.attachReadable" to "Compaction needs every entry readable on this device.",
+    "settings.attachLegacy" to "Some entries were last saved by an older app version. Update every device and re-save those entries, then try again.",
     "settings.attachFailed" to "Could not free attachment space.",
     "settings.dataSection" to "Data",
     "settings.categorySyncSubtitle" to "Sync status, automatic sync, and remote connections",

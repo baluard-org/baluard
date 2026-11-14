@@ -381,7 +381,8 @@
     "cloneDeleteFailed": "Baluard n'a pas pu supprimer entièrement le dossier local. Supprimez-le manuellement, puis retéléchargez.",
     "cloneRetry": "Baluard n'a pas pu vérifier ce coffre en toute sécurité. Réessayez ou supprimez le dossier manuellement.",
     "attachPending": "Des fichiers sont encore en cours de synchronisation. Synchronisez une fois, puis réessayez.",
-    "attachReadable": "La compaction exige que toutes les entrées soient lisibles sur cet appareil. Déverrouillez tout le coffre ici, ou exécutez-la depuis un appareil capable de tout lire."
+    "attachReadable": "La compaction exige que toutes les entrées soient lisibles sur cet appareil. Déverrouillez tout le coffre ici, ou exécutez-la depuis un appareil capable de tout lire.",
+    "attachLegacy": "Des entrées ont été enregistrées pour la dernière fois par une version antérieure de l'app. Mettez à jour tous les appareils, enregistrez à nouveau ces entrées, puis réessayez."
   },
   "sync": {
     "title": "Synchronisation du coffre",

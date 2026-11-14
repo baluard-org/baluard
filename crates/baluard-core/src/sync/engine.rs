@@ -1840,8 +1840,10 @@ impl SyncEngine {
         // explicit fetch (fresh callbacks: the attempt counters live in
         // the callbacks object).
         {
+            // Forced: a compacted line is an unrelated tip a non-forced fetch
+            // would never adopt, which would defeat dedup and the self-heal republish.
             let attach_spec = format!(
-                "{}:refs/remotes/{remote_name}/{}",
+                "+{}:refs/remotes/{remote_name}/{}",
                 crate::sync::attachments::ATTACHMENTS_REF,
                 crate::sync::attachments::ATTACHMENTS_TRACKING
             );
@@ -2440,7 +2442,9 @@ impl SyncEngine {
             return Ok(false);
         }
         let tracking = format!("refs/remotes/{remote_name}/{ATTACHMENTS_TRACKING}");
-        let fetch_spec = format!("{ATTACHMENTS_REF}:{tracking}");
+        // Forced: a compacted line is an unrelated tip a non-forced fetch
+        // would never adopt, which would defeat dedup and the self-heal republish.
+        let fetch_spec = format!("+{ATTACHMENTS_REF}:{tracking}");
         let push_spec = format!("{ATTACHMENTS_REF}:{ATTACHMENTS_REF}");
         let vault_root = self.root_commit_oid(repo)?;
 
@@ -2792,6 +2796,45 @@ impl SyncEngine {
                 }
             }
         }
+        // Refuse when main is not current: a pin referenced by a commit
+        // this device has not pulled would be pruned unrecoverably, and
+        // an unpushed local commit would lose its line entries to the
+        // genesis. Forced spec, mirroring the ambient wildcard refspec.
+        let branch = Self::resolve_default_branch(repo);
+        let main_tracking = format!("refs/remotes/{remote_name}/{branch}");
+        {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let mut opts = FetchOptions::new();
+            opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            let spec = format!("+refs/heads/{branch}:{main_tracking}");
+            if let Err(e) = remote.fetch(&[&spec], Some(&mut opts), None) {
+                let msg = e.message();
+                if !(msg.contains("find remote ref") || msg.contains("not found")) {
+                    eprintln!("warning: main fetch before compaction failed: {msg}");
+                }
+            }
+        }
+        let remote_head = repo
+            .find_reference(&main_tracking)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+            .map(|c| c.id());
+        let local_head = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.id());
+        if remote_head.is_some() && remote_head != local_head {
+            return Err(SyncError::Git(
+                "the vault has unsynced changes here or elsewhere; sync once and retry compaction"
+                    .into(),
+            )
+            .into());
+        }
+
         // No line at all: nothing to reclaim.
         let Some(tip) = repo
             .find_reference(&tracking)
@@ -3519,8 +3562,10 @@ impl SyncEngine {
             // explicit fetch so downloads see post-clone blobs (fresh
             // callbacks per fetch).
             {
+                // Forced: a compacted line is an unrelated tip a non-forced fetch
+                // would never adopt, which would defeat dedup and the self-heal republish.
                 let attach_spec = format!(
-                    "{}:refs/remotes/{remote_name}/{}",
+                    "+{}:refs/remotes/{remote_name}/{}",
                     crate::sync::attachments::ATTACHMENTS_REF,
                     crate::sync::attachments::ATTACHMENTS_TRACKING
                 );
@@ -4982,8 +5027,10 @@ impl SyncEngine {
             // The attachments line rides refs/notes too (fresh callbacks
             // per fetch); non-ref-absent failures stay audible, degrading
             // downloads to the first pull like the gossip channel does.
+            // Forced: a compacted line is an unrelated tip a non-forced fetch
+            // would never adopt, which would defeat dedup and the self-heal republish.
             let attach_spec = format!(
-                "{}:refs/remotes/origin/{}",
+                "+{}:refs/remotes/origin/{}",
                 crate::sync::attachments::ATTACHMENTS_REF,
                 crate::sync::attachments::ATTACHMENTS_TRACKING
             );
@@ -5224,8 +5271,10 @@ impl SyncEngine {
             // The attachments line rides refs/notes too (fresh callbacks
             // per fetch); non-ref-absent failures stay audible, degrading
             // downloads to the first pull like the gossip channel does.
+            // Forced: a compacted line is an unrelated tip a non-forced fetch
+            // would never adopt, which would defeat dedup and the self-heal republish.
             let attach_spec = format!(
-                "{}:refs/remotes/origin/{}",
+                "+{}:refs/remotes/origin/{}",
                 crate::sync::attachments::ATTACHMENTS_REF,
                 crate::sync::attachments::ATTACHMENTS_TRACKING
             );
@@ -11850,6 +11899,183 @@ mod tests {
             format!("{err}").contains("integrity pin"),
             "the refusal names the pin failure: {err}"
         );
+    }
+
+    #[test]
+    fn attachment_line_publish_sees_a_compaction_through_a_stale_tracking_ref() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        let (remote_dir, clone_dir, _engine_b, repo_b) = make_clone(dir.path(), &engine_a, &repo_a);
+        // make_clone builds its engine before any signing material exists
+        // (the key is an engine field, loaded at construction), so B is
+        // re-constructed over the same clone with A's rostered key — any
+        // roster key may sign.
+        setup_signing_keys_with(clone_dir.path(), &key_a);
+        let engine_b = SyncEngine::new(clone_dir.path(), "clone-device", None);
+        let remote_url = {
+            let r = repo_b.find_remote("origin").unwrap();
+            r.url().unwrap().to_string()
+        };
+
+        // A publishes blob X; B's line tracking ref now holds tip1.
+        let blob_x = b"self-heal-me".to_vec();
+        let att_dir_b = repo_b
+            .workdir()
+            .unwrap()
+            .join("entries/77777777-7777-7777-7777-777777777777/attachments");
+        std::fs::create_dir_all(&att_dir_b).unwrap();
+        let path_x_b = att_dir_b.join("x.enc");
+        std::fs::write(&path_x_b, &blob_x).unwrap();
+        let pin_x = crate::vault::attachment::blob_sha256(&blob_x);
+        engine_b
+            .publish_attachment_line(&repo_b, "origin", &[(pin_x.clone(), path_x_b.clone())])
+            .unwrap();
+        let remote_repo = Repository::open(remote_dir.path().join("vault.git").as_path()).unwrap();
+        let tip1 = remote_repo
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        let name_x = crate::sync::attachments::entry_name(&pin_x).unwrap();
+        assert!(
+            remote_repo
+                .find_commit(tip1)
+                .unwrap()
+                .tree()
+                .unwrap()
+                .get_name(&name_x)
+                .is_some()
+        );
+
+        // A compacts behind B's back. A's main references no pins (the X
+        // upload above rode the line only), so the genesis reclaims X and
+        // replaces tip1 with an unrelated empty line.
+        let report = engine_a
+            .compact_attachment_line(&repo_a, "origin", &std::collections::HashSet::new())
+            .unwrap();
+        assert_eq!(report.reclaimed, 1, "X is reclaimed from the tip");
+        let genesis = remote_repo
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        assert_ne!(genesis, tip1);
+
+        // B still holds X's untracked worktree copy and has a NEW blob Y.
+        // B's publish must adopt the genesis through the FORCED fetch (its
+        // tracking ref is stale at tip1), republish X (the self-heal: the
+        // only live copy is B's worktree file) and Y, and land the
+        // non-force push on the genesis. Non-forced, B would dedup against
+        // tip1, build a child of it, and have the push rejected
+        // non-fast-forward forever.
+        let blob_y = b"published-after-compaction".to_vec();
+        let path_y_b = att_dir_b.join("y.enc");
+        std::fs::write(&path_y_b, &blob_y).unwrap();
+        let pin_y = crate::vault::attachment::blob_sha256(&blob_y);
+        let published = engine_b
+            .publish_attachment_line(
+                &repo_b,
+                "origin",
+                &[
+                    (pin_x.clone(), path_x_b.clone()),
+                    (pin_y.clone(), path_y_b.clone()),
+                ],
+            )
+            .unwrap();
+        assert!(
+            published,
+            "the batch must publish; a skip means the stale tip won"
+        );
+
+        let tip2 = remote_repo
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        assert_ne!(tip2, tip1);
+        let tree2 = remote_repo.find_commit(tip2).unwrap().tree().unwrap();
+        assert!(
+            tree2.get_name(&name_x).is_some(),
+            "the reclaimed pin self-heals from B's worktree copy"
+        );
+        let name_y = crate::sync::attachments::entry_name(&pin_y).unwrap();
+        assert!(tree2.get_name(&name_y).is_some(), "Y is on the line");
+        // The rebuilt line still roots on the vault root.
+        let root = engine_a.root_commit_oid(&repo_a).unwrap();
+        assert_eq!(
+            SyncEngine::root_commit_oid_from(&remote_repo, tip2).unwrap(),
+            root
+        );
+    }
+
+    #[test]
+    fn attachment_line_compaction_refuses_when_main_is_not_current() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine.add_remote(&repo, "origin", &remote_url).unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        let att_dir = dir
+            .path()
+            .join("entries/66666666-6666-6666-6666-666666666666/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let blob = b"envelope".to_vec();
+        let path = att_dir.join("a.enc");
+        std::fs::write(&path, &blob).unwrap();
+        let pin = crate::vault::attachment::blob_sha256(&blob);
+        engine
+            .publish_attachment_line(&repo, "origin", &[(pin.clone(), path)])
+            .unwrap();
+
+        // Local main advances past the remote (an unpushed commit): the
+        // compaction must refuse, because the unpushed commit may carry
+        // line-referencing metadata the keep set cannot see yet.
+        std::fs::write(dir.path().join("two.enc"), b"\x02").unwrap();
+        engine.commit_all(&repo, "c2-unpushed").unwrap();
+        let mut keep = std::collections::HashSet::new();
+        keep.insert(pin.clone());
+        let err = engine
+            .compact_attachment_line(&repo, "origin", &keep)
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("sync once and retry compaction"),
+            "the behind-guard fires: {err}"
+        );
+
+        // Current again: the same compaction proceeds.
+        engine.push(&repo, "origin").unwrap();
+        let report = engine
+            .compact_attachment_line(&repo, "origin", &keep)
+            .unwrap();
+        assert_eq!(report.reclaimed, 0, "the referenced pin is kept");
+        assert_eq!(report.kept, 1);
     }
 
     #[test]

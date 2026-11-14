@@ -625,7 +625,8 @@
     "cloneDeleteFailed": "Baluard no pudo eliminar por completo la carpeta local. Elimínala manualmente y descarga de nuevo.",
     "cloneRetry": "Baluard no pudo verificar esta bóveda de forma segura. Inténtalo de nuevo o elimina la carpeta manualmente.",
     "attachPending": "Algunos archivos aún se están sincronizando. Sincroniza una vez e inténtalo de nuevo.",
-    "attachReadable": "La compactación necesita que todas las entradas sean legibles en este dispositivo. Desbloquea toda la bóveda aquí, o ejecútala desde un dispositivo que pueda leerlo todo."
+    "attachReadable": "La compactación necesita que todas las entradas sean legibles en este dispositivo. Desbloquea toda la bóveda aquí, o ejecútala desde un dispositivo que pueda leerlo todo.",
+    "attachLegacy": "Algunas entradas se guardaron por última vez con una versión anterior de la app. Actualiza todos los dispositivos, vuelve a guardar esas entradas e inténtalo de nuevo."
   },
   "categories": {
     "allItems": "Todos los elementos",

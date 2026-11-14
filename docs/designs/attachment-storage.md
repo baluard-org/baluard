@@ -167,6 +167,8 @@ Fetch mechanics: explicit `FetchOptions` for the notes ref (the `refs/heads/*` w
 
 Would-have-been ladder: L 250K (shared with entries), then 512 KiB, 1 MiB, 2 MiB, 5 MiB, with `MAX_ATTACHMENT_SIZE` at 5_242_876. Rejected with the 2 MiB decision: existing attachments keep classic tiers and valid decrypt paths forever, no new-client/old-client window, no migration commit, no `.gitignore`. The cutover mechanics that SURVIVE the decision: readers check the worktree path first, then the line; legacy blobs stay grandfathered on main; new clients skip `entries/*/attachments/**` in `stage_admitted` with a prefix rule placed BEFORE the decisions pass (engine.rs ~825), and new blobs are written only to the line; `AttachmentMeta.blob_sha256` additive with serde default, absent for legacy attachments.
 
+A compaction reclaim sticks only where no other device still holds the file: any device carrying an untracked worktree copy of a reclaimed blob republishes it on its next sync (the self-heal is the same mechanism). On an actively multi-device vault, expect deleted files whose copies survive elsewhere to reappear on the line; they are junk again until the next compaction once those devices delete locally too. The manifest on main remains the existence authority throughout.
+
 ## Deltas from the first draft (peer review, zero-trust verified)
 
 1. BLOCKER fixed: ciphertext hash pin in metadata plus content-addressed paths, replacing signature-based admission as the integrity boundary. The drafted claim that AAD alone makes forgeries inert was false for key-holding members.

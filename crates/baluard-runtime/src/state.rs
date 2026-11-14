@@ -185,6 +185,41 @@ fn schema_blocks_typed_merge(result: &Result<u32, baluard_core::BaluardError>) -
     }
 }
 
+/// Keep set for compaction over already-decrypted ciphers. An empty pin
+/// is grandfathered-on-main only while the tracked file exists locally;
+/// an empty pin with no file means an older build re-serialized the
+/// metadata for a line-carried blob, and compacting would prune the only
+/// copy.
+fn compact_keep_pins(
+    decrypted: &[(
+        uuid::Uuid,
+        Vec<baluard_core::vault::attachment::AttachmentMeta>,
+    )],
+    vault_path: &std::path::Path,
+) -> Result<std::collections::HashSet<String>, String> {
+    let mut keep = std::collections::HashSet::new();
+    for (cipher_id, attachments) in decrypted {
+        for a in attachments {
+            if a.blob_sha256.is_empty() {
+                let f = vault_path
+                    .join("entries")
+                    .join(cipher_id.to_string())
+                    .join("attachments")
+                    .join(format!("{}.enc", a.id));
+                if !f.exists() {
+                    return Err(
+                        "Some entries were last saved by an older app version; update every device and re-save those entries, then compact again"
+                            .into(),
+                    );
+                }
+                continue;
+            }
+            keep.insert(a.blob_sha256.clone());
+        }
+    }
+    Ok(keep)
+}
+
 impl VaultState {
     /// Create a new empty state pointing at a vault directory.
     pub fn new(vault_path: PathBuf) -> Self {
@@ -9207,15 +9242,17 @@ impl VaultState {
 
         let mut ids = handle.list_cipher_ids().map_err(|e| e.to_string())?;
         ids.extend(handle.list_trash_ids().map_err(|e| e.to_string())?);
-        let mut keep: std::collections::HashSet<String> = Default::default();
+        let vault_path = handle.path.clone();
+        let device_id = handle.device_id.to_string();
+        let devkey_seal = handle.devkey_seal();
+        let mut decrypted: Vec<(
+            uuid::Uuid,
+            Vec<baluard_core::vault::attachment::AttachmentMeta>,
+        )> = Vec::with_capacity(ids.len());
         for id in ids {
             match handle.get_cipher(id) {
                 Ok(baluard_core::vault::handle::CipherRead::Decrypted(c)) => {
-                    for a in &c.attachments {
-                        if !a.blob_sha256.is_empty() {
-                            keep.insert(a.blob_sha256.clone());
-                        }
-                    }
+                    decrypted.push((c.id, c.attachments.clone()));
                 }
                 _ => {
                     return Err(
@@ -9225,11 +9262,8 @@ impl VaultState {
                 }
             }
         }
-
-        let vault_path = handle.path.clone();
-        let device_id = handle.device_id.to_string();
-        let devkey_seal = handle.devkey_seal();
         drop(guard);
+        let keep = compact_keep_pins(&decrypted, &vault_path)?;
 
         let report = tokio::task::spawn_blocking(
             move || -> Result<
@@ -10651,6 +10685,68 @@ mod activate_autosync_tests {
             .unwrap()
             .remote("origin", bare.to_str().unwrap())
             .unwrap();
+    }
+
+    #[test]
+    fn keep_pins_refuse_an_empty_pin_whose_file_is_missing() {
+        // The old-build hazard: metadata re-serialized without the pin for
+        // a blob that lives only on the line. Compacting would prune the
+        // only copy, so the builder refuses instead of guessing.
+        let dir = tempfile::tempdir().unwrap();
+        let cipher_id = uuid::Uuid::new_v4();
+        let meta = baluard_core::vault::attachment::AttachmentMeta {
+            id: uuid::Uuid::new_v4().to_string(),
+            filename: "f.bin".into(),
+            size: 3,
+            encrypted_size: 4096,
+            mime_type: "application/octet-stream".into(),
+            created_at: 0,
+            blob_sha256: String::new(),
+        };
+        let err = super::compact_keep_pins(&[(cipher_id, vec![meta])], dir.path()).unwrap_err();
+        assert!(err.contains("older app version"), "{err}");
+    }
+
+    #[test]
+    fn keep_pins_treat_an_empty_pin_with_a_local_file_as_grandfathered() {
+        let dir = tempfile::tempdir().unwrap();
+        let cipher_id = uuid::Uuid::new_v4();
+        let att_dir = dir
+            .path()
+            .join("entries")
+            .join(cipher_id.to_string())
+            .join("attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let legacy = baluard_core::vault::attachment::AttachmentMeta {
+            id: uuid::Uuid::new_v4().to_string(),
+            filename: "legacy.bin".into(),
+            size: 19,
+            encrypted_size: 4096,
+            mime_type: "application/octet-stream".into(),
+            created_at: 0,
+            blob_sha256: String::new(),
+        };
+        // The grandfathered blob's file is named by its attachment id.
+        std::fs::write(
+            att_dir.join(format!("{}.enc", legacy.id)),
+            b"tracked legacy blob",
+        )
+        .unwrap();
+        let pinned = baluard_core::vault::attachment::AttachmentMeta {
+            id: uuid::Uuid::new_v4().to_string(),
+            filename: "new.bin".into(),
+            size: 3,
+            encrypted_size: 4096,
+            mime_type: "application/octet-stream".into(),
+            created_at: 0,
+            blob_sha256: "ab".repeat(32),
+        };
+        let keep =
+            super::compact_keep_pins(&[(cipher_id, vec![legacy, pinned])], dir.path()).unwrap();
+        assert_eq!(
+            keep,
+            std::iter::once("ab".repeat(32)).collect::<std::collections::HashSet<_>>()
+        );
     }
 
     /// lock() keeps the handle while zeroizing its keys, so an auto-lock
