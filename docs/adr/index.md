@@ -108,3 +108,5 @@ Numbered in design chronology. Each record carries its context, decision, and co
 | [0102](0102-store-sync-subscription.md) | Sync, Sharing, and TOTP Subscription on Store Builds |
 | [0103](0103-play-entitlement-verification-service.md) | Google Play Entitlement Verification Service |
 | [0104](0104-fellowship-companion.md) | Fellowship Companion Entitlement |
+| [0105](0105-vault-empty-and-squash-rewrite.md) | `baluard vault empty` and the Squash History Rewrite |
+| [0106](0106-attachment-blobs-off-main.md) | Attachment Blobs Off `main` on a Signed Side Channel |

@@ -57,6 +57,7 @@ The session token is a capability in the object-capability sense: it is the only
 - **Threat**: Attacker infers vault contents based on specific file size signatures.
 - **Control**: All entries under `entries/` are padded to uniform bucket sizes (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB) prior to encryption. Filenames are random UUID hashes. Attacker only observes counts of files per size bucket. `Tier::fit()` auto-selects the smallest bucket that fits the plaintext plus the padding length prefix.
 - **Attachments (audit C4, fixed)**: attachment blobs join the same tier padding and carry AAD binding (vault + cipher + attachment + tier + epoch + seq), so neither exact plaintext sizes nor same-cipher blob swaps are available to a push-capable attacker. Input cap is 1.9 MB so the padded XL envelope stays within budget.
+- **Attachments side channel**: blobs no longer ride `main`; they publish to a signed, content-addressed append-only line at `refs/notes/baluard-attachments`, so a provider observing branch history sees ciphertext tree entries only, keyed by the SHA-256 of the stored bytes. The provider sees the same per-bucket size classes as before plus raw padded byte counts on the line (identical to the old main-tree exposure). Deletion is logical until the owner runs compaction, which force-replaces the line with only still-referenced files.
 
 ### T2: Local IPC Interception
 - **Threat**: Another application on the same machine connects to the daemon and requests secrets.
@@ -86,6 +87,7 @@ The session token is a capability in the object-capability sense: it is the only
 ### T7: Attachment Plaintext Leakage
 - **Threat**: During upload or download, unencrypted attachment data exists in process memory or as a temp file on disk.
 - **Control**: Attachments are encrypted with the cipher's item key (AES-256-GCM, random nonce) in memory. No temp files are written. Plaintext is zeroized in both daemon and CLI after use. Max attachment size: 1.9 MB (`MAX_ATTACHMENT_SIZE`), enforced before encryption to prevent resource exhaustion.
+- **Line fetch path (post side-channel move)**: downloads fall back to fetching the stored blob from `refs/notes/baluard-attachments` when the worktree copy is absent. Every fetched blob is verified against its content pin (SHA-256 of the stored bytes) inside the fetch before it can reach decryption, so a hostile remote cannot substitute foreign bytes; ref-absent reads surface as "not finished syncing" rather than an error. The upload path holds its base64 transport buffer only long enough to decode, and zeroizes it immediately after.
 
 ### T8: Import Parser Exploitation
 - **Threat**: A crafted import file (CSV, JSON, XML, 1PUX) exploits a parser bug to cause memory corruption or code execution.
