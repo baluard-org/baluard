@@ -9107,26 +9107,70 @@ impl VaultState {
             .join(cipher_id.to_string())
             .join("attachments")
             .join(format!("{}.enc", attach_id));
+        // Captured before the read guard can drop (the line-fetch path
+        // below awaits network work outside the lock).
+        let vault_id = handle.vault_id;
 
-        // Vault contents arrive over git: refuse non-regular files
-        // (symlinks) and bound the read, mirroring the backup container
-        // guards. A git-supplied symlink at this path would otherwise
-        // read /dev/zero or a huge file into memory.
-        let attach_stat =
-            std::fs::symlink_metadata(&attach_path).map_err(|e| format!("read: {e}"))?;
-        if !attach_stat.is_file() {
-            return Err("Attachment is not a regular file".into());
-        }
-        const MAX_ATTACHMENT_READ: u64 = 4 * 1024 * 1024;
-        if attach_stat.len() > MAX_ATTACHMENT_READ {
-            return Err("Attachment exceeds the size limit".into());
-        }
-        let encrypted = std::fs::read(&attach_path).map_err(|e| format!("read: {e}"))?;
+        let encrypted: Vec<u8> = if attach_path.symlink_metadata().is_ok() {
+            // Vault contents arrive over git: refuse non-regular files
+            // (symlinks) and bound the read, mirroring the backup
+            // container guards. A git-supplied symlink at this path would
+            // otherwise read /dev/zero or a huge file into memory.
+            let attach_stat =
+                std::fs::symlink_metadata(&attach_path).map_err(|e| format!("read: {e}"))?;
+            if !attach_stat.is_file() {
+                return Err("Attachment is not a regular file".into());
+            }
+            const MAX_ATTACHMENT_READ: u64 = 4 * 1024 * 1024;
+            if attach_stat.len() > MAX_ATTACHMENT_READ {
+                return Err("Attachment exceeds the size limit".into());
+            }
+            std::fs::read(&attach_path).map_err(|e| format!("read: {e}"))?
+        } else {
+            // Off-main transport (design: attachment-storage): new blobs
+            // ride the attachments line, not the git tree, so a fresh
+            // clone or wiped worktree materializes them on demand. Legacy
+            // pre-line blobs have no pin and live on main — a missing
+            // file there is a real loss, not a pending sync.
+            if meta.blob_sha256.is_empty() {
+                return Err("Attachment file is missing on this device".into());
+            }
+            let vault_path = handle.path.clone();
+            let device_id = handle.device_id.to_string();
+            let devkey_seal = handle.devkey_seal();
+            let pin = meta.blob_sha256.clone();
+            drop(guard);
+            let fetched = tokio::task::spawn_blocking(
+                move || -> Result<Option<Vec<u8>>, baluard_core::error::BaluardError> {
+                    let engine = baluard_core::sync::engine::SyncEngine::new(
+                        &vault_path,
+                        &device_id,
+                        devkey_seal.as_ref(),
+                    );
+                    let repo = engine.open_repo()?;
+                    engine.fetch_attachment_blob(&repo, "origin", &pin)
+                },
+            )
+            .await
+            .map_err(|e| format!("attachment fetch task: {e}"))?
+            .map_err(|e| e.to_string())?;
+            let Some(bytes) = fetched else {
+                return Err("Attachment has not finished syncing to this device yet".into());
+            };
+            // Materialize for next time (owner-only), then serve from
+            // memory.
+            if let Some(parent) = attach_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            baluard_core::secret_file::write_secret_file(&attach_path, &bytes)
+                .map_err(|e| format!("write: {e}"))?;
+            bytes
+        };
         let attach_uuid: uuid::Uuid = attach_id
             .parse()
             .map_err(|e| format!("invalid attachment_id: {e}"))?;
         let mut plaintext = baluard_core::vault::attachment::decrypt_attachment(
-            handle.vault_id,
+            vault_id,
             cipher_id,
             attach_uuid,
             item_key.as_bytes(),

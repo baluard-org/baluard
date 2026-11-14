@@ -80,7 +80,7 @@ pub fn verify_blob(blob: &[u8], pin: &str) -> bool {
 /// are skipped, but names are NOT validated here — a hostile junk name
 /// must survive a union untouched (hash pinning makes it inert; only
 /// compaction reclaims it).
-fn raw_entries(tip: &git2::Tree<'_>) -> Vec<(String, Oid)> {
+pub fn raw_entries(tip: &git2::Tree<'_>) -> Vec<(String, Oid)> {
     let mut out = Vec::new();
     for entry in tip.iter() {
         if entry.kind() != Some(git2::ObjectType::Blob) {
@@ -88,6 +88,51 @@ fn raw_entries(tip: &git2::Tree<'_>) -> Vec<(String, Oid)> {
         }
         let Some(name) = entry.name() else { continue };
         out.push((name.to_string(), entry.id()));
+    }
+    out
+}
+
+/// Worktree blob files that are line transport rather than git content:
+/// new uploads stay untracked (stage_admitted skips them), while legacy
+/// pre-line blobs were checked out from main and carry index state.
+/// Only the pure-WT_NEW shape is publishable — the same classification
+/// the staging skip uses.
+pub fn collect_untracked_blob_paths(repo: &git2::Repository) -> Vec<std::path::PathBuf> {
+    let workdir = match repo.workdir() {
+        Some(w) => w.to_path_buf(),
+        None => return Vec::new(),
+    };
+    let Ok(ciphers) = std::fs::read_dir(workdir.join("entries")) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for cipher in ciphers.flatten() {
+        let Ok(att) = std::fs::read_dir(cipher.path().join("attachments")) else {
+            continue;
+        };
+        for file in att.flatten() {
+            let path = file.path();
+            if path.extension().is_none_or(|e| e != "enc") {
+                continue;
+            }
+            let Ok(rel) = path.strip_prefix(&workdir) else {
+                continue;
+            };
+            let Ok(status) = repo.status_file(rel) else {
+                continue;
+            };
+            let has_index = status.intersects(
+                git2::Status::INDEX_NEW
+                    | git2::Status::INDEX_MODIFIED
+                    | git2::Status::INDEX_DELETED
+                    | git2::Status::INDEX_RENAMED
+                    | git2::Status::INDEX_TYPECHANGE,
+            );
+            if has_index || !status.contains(git2::Status::WT_NEW) {
+                continue;
+            }
+            out.push(path);
+        }
     }
     out
 }
