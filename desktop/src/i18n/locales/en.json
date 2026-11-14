@@ -628,7 +628,14 @@
       "es": "Entendido",
       "pt": "Entendi",
       "fr": "Compris"
-    }
+    },
+    "msgCleaned": "The shared message board was cleaned up.",
+    "msgCleanedDetails": "Device {device} removed {count} messages from the shared message board.",
+    "msgCleanedHint": "A device you have not verified tidied the shared message board.",
+    "msgCleanedVerifiedHint": "The cleanup was signed by a verified device key.",
+    "msgForeign": "The shared message board belongs to a different vault.",
+    "msgForeignHint": "Sync once so this device can read the board it was given.",
+    "msgAccept": "Got it"
   },
   "autosync": {
     "upToDate": "All changes synced",

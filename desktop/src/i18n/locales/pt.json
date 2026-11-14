@@ -628,7 +628,14 @@
       "es": "Entendido",
       "pt": "Entendi",
       "fr": "Compris"
-    }
+    },
+    "msgCleaned": "O quadro de mensagens compartilhado foi limpo.",
+    "msgCleanedDetails": "O dispositivo {device} removeu {count} mensagens do quadro compartilhado.",
+    "msgCleanedHint": "Um dispositivo que você não verificou organizou o quadro de mensagens compartilhado.",
+    "msgCleanedVerifiedHint": "A limpeza foi assinada por uma chave de dispositivo verificada.",
+    "msgForeign": "O quadro de mensagens compartilhado pertence a outro cofre.",
+    "msgForeignHint": "Sincronize uma vez para que este dispositivo possa ler o quadro que recebeu.",
+    "msgAccept": "Entendi"
   },
   "autosync": {
     "upToDate": "Todas as alterações sincronizadas",

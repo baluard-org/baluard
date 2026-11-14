@@ -15,6 +15,7 @@ import { Button, Toggle } from "./Primitives.jsx";
 import CopyButton from "./CopyButton.jsx";
 import IconBackfillSection from "./IconBackfillSection.jsx";
 import AttachmentsSection from "./AttachmentsSection.jsx";
+import MsgBoardNotice from "./MsgBoardNotice.jsx";
 
 const PROVIDER_STYLES = {
   github: { bg: "bg-gray-800", border: "border-gray-600", text: "text-white" },
@@ -1257,6 +1258,7 @@ const [customError, setCustomError] = createSignal(null);
           <IconBackfillSection />
 
           {/* ── Attachment storage (off-main line compaction) ── */}
+          <MsgBoardNotice />
           <AttachmentsSection />
 
           {/* ── Error ── */}

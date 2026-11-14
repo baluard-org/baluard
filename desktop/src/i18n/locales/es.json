@@ -587,7 +587,14 @@
       "es": "Entendido",
       "pt": "Entendi",
       "fr": "Compris"
-    }
+    },
+    "msgCleaned": "El tablón de mensajes compartido fue limpiado.",
+    "msgCleanedDetails": "El dispositivo {device} quitó {count} mensajes del tablón compartido.",
+    "msgCleanedHint": "Un dispositivo que no has verificado ordenó el tablón de mensajes compartido.",
+    "msgCleanedVerifiedHint": "La limpieza fue firmada por una clave de dispositivo verificada.",
+    "msgForeign": "El tablón de mensajes compartido pertenece a otra bóveda.",
+    "msgForeignHint": "Sincroniza una vez para que este dispositivo pueda leer el tablón que recibió.",
+    "msgAccept": "Entendido"
   },
   "autosync": {
     "upToDate": "Todos los cambios sincronizados",

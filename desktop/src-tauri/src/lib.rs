@@ -224,6 +224,9 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.attach_compact",
     "vault.attach_status",
     "vault.attach_ack",
+    "vault.msg_status",
+    "vault.msg_ack",
+    "vault.msg_compact",
     "vault.attach_delete",
     "vault.attach_download",
     "vault.attach_upload",
@@ -2193,6 +2196,9 @@ mod tests {
         assert!(desktop_action_allowed("vault.enroll_with_phrase"));
         assert!(desktop_action_allowed("vault.attach_status"));
         assert!(desktop_action_allowed("vault.attach_ack"));
+        assert!(desktop_action_allowed("vault.msg_status"));
+        assert!(desktop_action_allowed("vault.msg_ack"));
+        assert!(desktop_action_allowed("vault.msg_compact"));
         assert!(desktop_action_allowed("vault.attach_compact"));
         assert!(!payload_has_desktop_forbidden_keys(
             "{\"slug\":\"a\",\"delete_from_disk\":true}"

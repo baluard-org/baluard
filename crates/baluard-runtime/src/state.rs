@@ -9252,6 +9252,155 @@ impl VaultState {
         std::fs::write(&path, body).map_err(|e| format!("ack write: {e}"))
     }
 
+    /// Machine-local acknowledgment of the message-board tip this
+    /// device has accepted, keyed by vault id. Per-device view state,
+    /// deliberately outside the vault so another device's acceptance
+    /// cannot silence this one's notice.
+    fn board_ack_path(vault_id: uuid::Uuid) -> std::path::PathBuf {
+        baluard_core::paths::data_dir()
+            .join("msg-board")
+            .join(format!("{vault_id}.json"))
+    }
+
+    fn read_board_ack(vault_id: uuid::Uuid) -> Option<String> {
+        let raw = std::fs::read_to_string(Self::board_ack_path(vault_id)).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        v.get("tip")?.as_str().map(String::from)
+    }
+
+    fn write_board_ack(vault_id: uuid::Uuid, tip: &str) -> Result<(), String> {
+        let path = Self::board_ack_path(vault_id);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("ack dir: {e}"))?;
+        }
+        let body = serde_json::json!({ "tip": tip }).to_string();
+        std::fs::write(&path, body).map_err(|e| format!("ack write: {e}"))
+    }
+
+    /// Classify the shared message board for this device. Works on a
+    /// locked vault — the classification needs no keys, only the
+    /// repository.
+    pub async fn msg_board_status(&self, _payload: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        let vault_id = handle.vault_id;
+        let vault_path = handle.path.clone();
+        let device_id = handle.device_id.to_string();
+        let devkey_seal = handle.devkey_seal();
+        let ack = Self::read_board_ack(vault_id);
+        drop(guard);
+
+        let status = tokio::task::spawn_blocking(
+            move || -> Result<
+                baluard_core::sync::msgbus::MsgBoardStatus,
+                baluard_core::error::BaluardError,
+            > {
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id,
+                    devkey_seal.as_ref(),
+                );
+                let repo = engine.open_repo()?;
+                engine.msg_board_status(&repo, "origin", ack.as_deref())
+            },
+        )
+        .await
+        .map_err(|e| format!("message board status task: {e}"))?
+        .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "tip": status.tip,
+            "rewritten": status.rewritten,
+            "foreign": status.foreign,
+            "rewrite_signed": status.rewrite_signed,
+            "compaction": status.compaction,
+        })
+        .to_string())
+    }
+
+    /// Accept the current message board as this device's baseline,
+    /// clearing the compaction notice. The tip is validated against the
+    /// freshly fetched board before it is recorded, so a stale Accept is
+    /// refused instead of silently pinning yesterday's state.
+    pub async fn msg_board_ack(&self, payload: &str) -> Result<String, String> {
+        let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let tip = req["tip"].as_str().ok_or("missing tip")?.to_string();
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        let vault_id = handle.vault_id;
+        let vault_path = handle.path.clone();
+        let device_id = handle.device_id.to_string();
+        let devkey_seal = handle.devkey_seal();
+        drop(guard);
+
+        let current = tokio::task::spawn_blocking({
+            let tip = tip.clone();
+            move || -> Result<
+                baluard_core::sync::msgbus::MsgBoardStatus,
+                baluard_core::error::BaluardError,
+            > {
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id,
+                    devkey_seal.as_ref(),
+                );
+                let repo = engine.open_repo()?;
+                engine.msg_board_status(&repo, "origin", None)
+            }
+        })
+        .await
+        .map_err(|e| format!("message board ack task: {e}"))?
+        .map_err(|e| e.to_string())?;
+        let Some(current_tip) = current.tip else {
+            return Err("The message board has nothing to accept yet".into());
+        };
+        if current_tip != tip {
+            return Err(
+                "The message board changed again while you were reviewing. Check once more.".into(),
+            );
+        }
+        Self::write_board_ack(vault_id, &current_tip)?;
+        Ok(serde_json::json!({ "acknowledged": true }).to_string())
+    }
+
+    /// Compact the shared message board on demand: prune expired and
+    /// over-cap entries, reset the chain, and leave a signed cleanup
+    /// message other devices detect. Needs no vault unlock — only the
+    /// device signing key — but other devices must be able to read the
+    /// board, so this refuses on a foreign board rather than guess.
+    pub async fn msg_compact(&self, _payload: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        let vault_path = handle.path.clone();
+        let device_id = handle.device_id.to_string();
+        let devkey_seal = handle.devkey_seal();
+        drop(guard);
+
+        let report = tokio::task::spawn_blocking(
+            move || -> Result<
+                baluard_core::sync::msgbus::MsgCompactionReport,
+                baluard_core::error::BaluardError,
+            > {
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id,
+                    devkey_seal.as_ref(),
+                );
+                let repo = engine.open_repo()?;
+                engine.compact_message_board(&repo, "origin")
+            },
+        )
+        .await
+        .map_err(|e| format!("message board compaction task: {e}"))?
+        .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "compacted": report.compacted,
+            "kept": report.kept,
+        })
+        .to_string())
+    }
+
     /// Classify the shared attachments line for this device: does it
     /// still carry the tip this device last accepted, and does the
     /// current tip belong to this vault? Works on a locked vault — the

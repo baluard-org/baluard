@@ -330,6 +330,38 @@ pub fn prune_entries(entries: &[(String, git2::Oid)], now: u64) -> Vec<(String, 
     out
 }
 
+/// What the cleanup notice says about a verified board compaction.
+/// `device_id` comes from the compaction commit's signature verifying
+/// against a roster key — the key match IS the device binding — while
+/// the number comes from the signed compaction commit's tree.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MsgCompactionNotice {
+    pub device_id: String,
+    pub at: u64,
+    pub compacted_entries: u64,
+}
+
+/// Per-device view of the shared message board: whether the board was
+/// rewritten under this device (a compaction on another device) and
+/// whether the current tip belongs to this vault at all.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MsgBoardStatus {
+    pub tip: Option<String>,
+    pub rewritten: bool,
+    pub foreign: bool,
+    pub rewrite_signed: Option<bool>,
+    pub compaction: Option<MsgCompactionNotice>,
+}
+
+/// Result of a manual board compaction: how many conforming messages
+/// the prune dropped and how many survive. A zero-compacted no-op
+/// writes no commit.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct MsgCompactionReport {
+    pub compacted: u64,
+    pub kept: u64,
+}
+
 /// A message that passed every validation gate at consumption time.
 #[derive(Debug, Clone)]
 pub struct ValidatedMsg {

@@ -522,7 +522,14 @@
       "es": "Entendido",
       "pt": "Entendi",
       "fr": "Compris"
-    }
+    },
+    "msgCleaned": "Le tableau de messages partage a ete nettoye.",
+    "msgCleanedDetails": "L'appareil {device} a retire {count} messages du tableau partage.",
+    "msgCleanedHint": "Un appareil que vous n'avez pas verifie a range le tableau de messages partage.",
+    "msgCleanedVerifiedHint": "Le nettoyage a ete signe par une cle d appareil verifiee.",
+    "msgForeign": "Le tableau de messages partage appartient a un autre coffre.",
+    "msgForeignHint": "Synchronisez une fois pour que cet appareil puisse lire le tableau recu.",
+    "msgAccept": "Compris"
   },
   "settings": {
     "faviconLabel": "Afficher les icônes des sites web",

@@ -6516,6 +6516,24 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        // ── Message board status + compaction acknowledgment (token
+        // required; all three work on a locked vault — classification
+        // and compaction need no vault keys, only the signing key) ──
+        "vault.msg_status" => match state.msg_board_status(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.msg_ack" => match state.msg_board_ack(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.msg_compact" => match state.msg_compact(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
         // ── Biometric unlock (token NOT required for status/unlock) ──
         "vault.biometric_status" => match state.biometric_status().await {
             Ok(json) => ok_resp(json, token_str),
