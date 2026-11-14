@@ -998,6 +998,24 @@ impl MobileVault {
         Ok(self.state.delete_cipher(&id).await?)
     }
 
+    /// Read the shared attachments-line status for the cleanup
+    /// notice: whether this device still carries the tip it last
+    /// accepted, whether the current tip was rewritten, and the
+    /// verified compaction details when the genesis signature checks
+    /// out. Works on a locked vault. Returns JSON
+    /// `{tip, rewritten, foreign, rewrite_signed, compaction}`.
+    pub async fn attach_status(&self) -> Result<String, BaluardError> {
+        Ok(self.state.attach_status("{}").await?)
+    }
+
+    /// Acknowledge the offered attachments-line tip after the cleanup
+    /// notice, silencing it until the line is rewritten again. Refuses
+    /// a stale accept when the line changed while reviewing.
+    pub async fn attach_ack(&self, tip: String) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "tip": tip }).to_string();
+        Ok(self.state.attach_ack(&payload).await?)
+    }
+
     /// Compact the vault's off-main attachments line, reclaiming
     /// encrypted files no entry references anymore. Refuses when any
     /// entry is unreadable on this device (shared vaults: owner/admin

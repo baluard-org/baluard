@@ -8,9 +8,11 @@ import app.baluard.mobile.MobileVault
 import app.baluard.mobile.detail.str
 import kotlin.io.encoding.Base64
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
@@ -299,6 +301,30 @@ class VaultRepository {
             put("attachment_id", attachmentId)
         }.toString()
         vault.attachDelete(payload)
+    }
+
+    /** Read the shared attachments-line status for the cleanup
+     * notice. Works on a locked vault (classification needs no keys).
+     * Null fields mean the line carries nothing to show. */
+    suspend fun attachStatus(vault: MobileVault): AttachmentLineStatus {
+        val raw = vault.attachStatus()
+        val obj = Json.parseToJsonElement(raw).jsonObject
+        val compaction = obj["compaction"]?.jsonObject
+        return AttachmentLineStatus(
+            tip = obj["tip"]?.jsonPrimitive?.contentOrNull,
+            rewritten = obj["rewritten"]?.jsonPrimitive?.booleanOrNull ?: false,
+            foreign = obj["foreign"]?.jsonPrimitive?.booleanOrNull ?: false,
+            rewriteSigned = obj["rewrite_signed"]?.jsonPrimitive?.booleanOrNull,
+            compactionDevice = compaction?.get("device_id")?.jsonPrimitive?.contentOrNull,
+            compactionReclaimed = compaction?.get("reclaimed")?.jsonPrimitive?.longOrNull,
+            compactionBytes = compaction?.get("reclaimed_bytes")?.jsonPrimitive?.longOrNull,
+        )
+    }
+
+    /** Acknowledge the offered line tip after the cleanup notice,
+     * silencing it until the line is rewritten again. */
+    suspend fun attachAck(vault: MobileVault, tip: String) {
+        vault.attachAck(tip)
     }
 
     /** Reclaim encrypted attachment files no entry references anymore.
@@ -1239,6 +1265,16 @@ data class AttachmentDownloadResult(
     val filename: String,
     val mimeType: String,
     val bytes: ByteArray,
+)
+
+data class AttachmentLineStatus(
+    val tip: String?,
+    val rewritten: Boolean,
+    val foreign: Boolean,
+    val rewriteSigned: Boolean?,
+    val compactionDevice: String?,
+    val compactionReclaimed: Long?,
+    val compactionBytes: Long?,
 )
 
 data class AttachmentCompactReport(

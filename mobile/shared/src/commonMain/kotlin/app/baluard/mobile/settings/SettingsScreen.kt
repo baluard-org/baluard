@@ -79,6 +79,7 @@ import kotlinx.serialization.json.JsonObject
 import app.baluard.mobile.MobileProvider
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.auth.AuthViewModel
+import app.baluard.mobile.data.AttachmentLineStatus
 import app.baluard.mobile.data.MobileHealthReport
 import app.baluard.mobile.data.MobileHealthFinding
 import app.baluard.mobile.data.VaultRepository
@@ -2899,6 +2900,71 @@ val entitlement by Entitlements.state.collectAsState()
             SectionCard(title = t("settings.attachTitle")) {
                 var compactBusy by remember { mutableStateOf(false) }
                 var compactResult by remember { mutableStateOf<String?>(null) }
+                var notice by remember { mutableStateOf<AttachmentLineStatus?>(null) }
+                var ackBusy by remember { mutableStateOf(false) }
+                LaunchedEffect(vault) {
+                    // Advisory only: a failed status read shows nothing.
+                    try {
+                        notice = repo.attachStatus(vault)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                    }
+                }
+                val n = notice
+                if (n != null && (n.rewritten || n.foreign)) {
+                    val msg = when {
+                        n.foreign -> t("settings.attachForeign")
+                        n.compactionDevice != null -> {
+                            val kb = (n.compactionBytes ?: 0L) / 1024.0
+                            val size = if (kb >= 1024) {
+                                "${(kb / 1024 * 10).toInt() / 10.0} MB"
+                            } else {
+                                "${(kb * 10).toInt() / 10.0} KB"
+                            }
+                            t(
+                                "settings.attachCleanedDetails",
+                                n.compactionDevice.take(8),
+                                n.compactionReclaimed ?: 0L,
+                                size,
+                            )
+                        }
+                        n.rewriteSigned == true -> t("settings.attachCleanedVerified")
+                        else -> t("settings.attachCleaned")
+                    }
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (!n.foreign && n.tip != null) {
+                        BaluardOutlinedButton(
+                            text = if (ackBusy) t("common.pleaseWait") else t("settings.attachAck"),
+                            enabled = !ackBusy,
+                            onClick = {
+                                scope.launch {
+                                    ackBusy = true
+                                    try {
+                                        repo.attachAck(vault, n.tip)
+                                        notice = null
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        val m = e.message.orEmpty()
+                                        when {
+                                            m.contains("changed again") ->
+                                                Toast.error(t("settings.attachChanged"))
+                                            else ->
+                                                Toast.error(m.ifEmpty { t("settings.attachFailed") })
+                                        }
+                                    } finally {
+                                        ackBusy = false
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
