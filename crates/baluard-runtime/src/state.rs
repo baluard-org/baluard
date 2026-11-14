@@ -9192,6 +9192,71 @@ impl VaultState {
         Ok(result)
     }
 
+    /// Compact the vault's off-main attachments line, reclaiming the
+    /// encrypted blobs no cipher references anymore. The keep set must
+    /// cover every main-HEAD reference, so every cipher (live, trashed,
+    /// and archived) must be readable here — on shared vaults this is an
+    /// owner/admin action, and it refuses rather than guess. Payload is
+    /// ignored; the route exists for symmetry with the attachment family.
+    pub async fn attach_compact(&self, _payload: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
+
+        let mut ids = handle.list_cipher_ids().map_err(|e| e.to_string())?;
+        ids.extend(handle.list_trash_ids().map_err(|e| e.to_string())?);
+        let mut keep: std::collections::HashSet<String> = Default::default();
+        for id in ids {
+            match handle.get_cipher(id) {
+                Ok(baluard_core::vault::handle::CipherRead::Decrypted(c)) => {
+                    for a in &c.attachments {
+                        if !a.blob_sha256.is_empty() {
+                            keep.insert(a.blob_sha256.clone());
+                        }
+                    }
+                }
+                _ => {
+                    return Err(
+                        "Compaction needs every entry readable on this device; sync and unlock fully, or compact from a device that can read the whole vault"
+                            .into(),
+                    );
+                }
+            }
+        }
+
+        let vault_path = handle.path.clone();
+        let device_id = handle.device_id.to_string();
+        let devkey_seal = handle.devkey_seal();
+        drop(guard);
+
+        let report = tokio::task::spawn_blocking(
+            move || -> Result<
+                baluard_core::sync::attachments::CompactionReport,
+                baluard_core::error::BaluardError,
+            > {
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id,
+                    devkey_seal.as_ref(),
+                );
+                let repo = engine.open_repo()?;
+                engine.compact_attachment_line(&repo, "origin", &keep)
+            },
+        )
+        .await
+        .map_err(|e| format!("attachment compaction task: {e}"))?
+        .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "reclaimed": report.reclaimed,
+            "reclaimed_bytes": report.reclaimed_bytes,
+            "kept": report.kept,
+        })
+        .to_string())
+    }
+
     /// Delete attachment from a cipher.
     /// Payload: { cipher_id, attachment_id }
     pub async fn attach_delete(&self, payload: &str) -> Result<String, String> {

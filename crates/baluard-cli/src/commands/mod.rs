@@ -5237,6 +5237,27 @@ pub fn handle_attach_delete(
     Ok(())
 }
 
+pub fn handle_attach_compact(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_unlocked_daemon(socket)?;
+
+    let resp = client::request_to("vault.attach_compact", "{}", socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+
+    let report: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    let reclaimed = report["reclaimed"].as_u64().unwrap_or(0);
+    let bytes = report["reclaimed_bytes"].as_u64().unwrap_or(0);
+    let kept = report["kept"].as_u64().unwrap_or(0);
+    let bytes_str = if bytes > 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    };
+    println!("Compacted: reclaimed {reclaimed} file(s) ({bytes_str}), kept {kept}.");
+    Ok(())
+}
+
 pub fn handle_attach_list(
     socket: Option<&str>,
     cipher_id: &str,

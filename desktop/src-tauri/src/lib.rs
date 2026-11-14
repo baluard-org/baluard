@@ -221,6 +221,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.active",
     "vault.add",
     "vault.archive",
+    "vault.attach_compact",
     "vault.attach_delete",
     "vault.attach_download",
     "vault.attach_upload",

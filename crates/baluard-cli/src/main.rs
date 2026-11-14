@@ -425,6 +425,9 @@ enum Commands {
         attachment_id: String,
     },
 
+    /// Reclaim encrypted attachment files no entry references anymore.
+    AttachCompact,
+
     /// List attachments on a cipher.
     AttachList {
         /// Cipher ID.
@@ -2328,6 +2331,8 @@ fn main() {
             cipher_id,
             attachment_id,
         } => commands::handle_attach_delete(cli.socket.as_deref(), &cipher_id, &attachment_id),
+
+        Commands::AttachCompact => commands::handle_attach_compact(cli.socket.as_deref()),
 
         Commands::AttachList { cipher_id } => {
             commands::handle_attach_list(cli.socket.as_deref(), &cipher_id)

@@ -6497,6 +6497,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        // ── Attachments line compaction (token required) ──
+        "vault.attach_compact" => match state.attach_compact(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
         // ── Biometric unlock (token NOT required for status/unlock) ──
         "vault.biometric_status" => match state.biometric_status().await {
             Ok(json) => ok_resp(json, token_str),
