@@ -384,6 +384,7 @@
     "attachReadable": "La compaction exige que toutes les entrées soient lisibles sur cet appareil. Déverrouillez tout le coffre ici, ou exécutez-la depuis un appareil capable de tout lire.",
     "attachLegacy": "Des entrées ont été enregistrées pour la dernière fois par une version antérieure de l'app. Mettez à jour tous les appareils, enregistrez à nouveau ces entrées, puis réessayez.",
     "cleanupPending": "Get the latest updates before making changes: another device cleaned up shared storage.",
+    "attachForeign": "Le stockage partage appartient a un autre coffre; synchronisez une fois puis reessayez.",
     "attachChanged": "Le stockage des pièces jointes a encore changé pendant votre vérification. Revérifiez."
   },
   "sync": {

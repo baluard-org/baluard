@@ -520,7 +520,7 @@ impl VaultState {
         // locked vault would start a seal-less coordinator that the
         // is_active early-return then keeps forever (an auto-lock racing
         // the post-unlock arm is the live window).
-        let (device_id, devkey_seal, enroll_vk) = {
+        let (device_id, devkey_seal, enroll_vk, vault_id) = {
             let guard = self.inner.read().await;
             let Some(handle) = guard.as_ref() else {
                 return;
@@ -532,8 +532,18 @@ impl VaultState {
                 handle.device_id.to_string(),
                 handle.devkey_seal(),
                 handle.enroll_verify_key(),
+                handle.vault_id,
             )
         };
+        // Wire the line-ack context so the sync cycle itself re-classifies
+        // the attachments line: a compaction landing mid-session is then
+        // caught at the next cycle, not only at the next attach_status poll.
+        self.autosync
+            .set_line_ack_context(
+                Some(Self::line_ack_path(vault_id)),
+                Self::read_line_ack(vault_id),
+            )
+            .await;
         let has_remote = baluard_core::sync::engine::SyncEngine::new(
             &self.vault_path,
             &device_id,
@@ -6124,6 +6134,13 @@ impl VaultState {
         if baluard_core::vault::approvals::list_pending(&self.vault_path).is_empty() {
             return;
         }
+        // A pending storage cleanup pauses pushes: this ship would
+        // otherwise republish the stale blob copies the cleanup removed.
+        // Best-effort by contract; the next gated route or cycle refuses
+        // loudly, so a silent skip here is safe.
+        if self.autosync.ensure_line_synced().await.is_err() {
+            return;
+        }
         let vault_path = self.vault_path.clone();
         let (device_id, seal, enroll_vk) = {
             let g = self.inner.read().await;
@@ -7651,6 +7668,9 @@ impl VaultState {
     }
 
     async fn vault_empty_inner(&self, phrase: &str, rewrite: bool) -> Result<String, String> {
+        // Rewriting or pushing while a cleanup is pending would
+        // republish stale blob copies; resolve first.
+        self.autosync.ensure_line_synced().await?;
         use baluard_core::sync::engine::SyncEngine;
 
         // Phrase proof reads meta/ only; run it BEFORE the cycle lock so a
@@ -9425,6 +9445,7 @@ impl VaultState {
         let device_id = handle.device_id.to_string();
         let devkey_seal = handle.devkey_seal();
         let ack = Self::read_line_ack(vault_id);
+        let ack_was_none = ack.is_none();
         drop(guard);
 
         let status = tokio::task::spawn_blocking(
@@ -9449,6 +9470,20 @@ impl VaultState {
         .map_err(|e| format!("attachment status task: {e}"))?
         .map_err(|e| e.to_string())?;
 
+        // First contact: adopt the current tip as this device's
+        // baseline, otherwise a later compaction is undetectable
+        // (rewritten needs an ack to compare against).
+        if ack_was_none && !status.foreign {
+            if let Some(tip) = &status.tip {
+                Self::write_line_ack(vault_id, tip)?;
+            }
+        }
+        // Mirror the ack into the sync cycle so mid-session compactions
+        // are caught at the next cycle, not only at the next poll.
+        let ack_path = Self::line_ack_path(vault_id);
+        self.autosync
+            .set_line_ack_context(Some(ack_path), Self::read_line_ack(vault_id))
+            .await;
         // Arm the write lock while a rewrite is unresolved: entries go
         // read-only and sync cycles drop their push leg, so the stale
         // local blob copies cannot republish and undo the cleanup.
@@ -9528,24 +9563,70 @@ impl VaultState {
         let device_id = handle.device_id.to_string();
         let devkey_seal = handle.devkey_seal();
         drop(guard);
+        let device_id_for_task = device_id.clone();
 
-        let (removed, tip) = tokio::task::spawn_blocking(
-            move || -> Result<(u32, String), String> {
-                let engine = baluard_core::sync::engine::SyncEngine::new(
-                    &vault_path,
-                    &device_id,
-                    devkey_seal.as_ref(),
-                );
-                let repo = engine.open_repo().map_err(|e| e.to_string())?;
-                match engine.pull(&repo, "origin").map_err(|e| e.to_string())? {
-                    baluard_core::sync::engine::PullResult::Conflict { .. } => {
+        // Everything this device still references locally survives the
+        // discard: after the pull below, an entry's blob file can be
+        // absent from the line (uploaded but not yet pushed) while the
+        // entry itself is live — deleting it would destroy the only
+        // copy. Same enumeration contract as compaction.
+        let keep_pins = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault not opened")?;
+            let mut ids = handle.list_cipher_ids().map_err(|e| e.to_string())?;
+            ids.extend(handle.list_trash_ids().map_err(|e| e.to_string())?);
+            let mut decrypted = Vec::with_capacity(ids.len());
+            for id in ids {
+                match handle.get_cipher(id) {
+                    Ok(baluard_core::vault::handle::CipherRead::Decrypted(c)) => {
+                        decrypted.push((c.id, c.attachments.clone()));
+                    }
+                    _ => {
                         return Err(
-                            "A sync conflict needs a decision first; resolve it, then get the updates again."
+                            "Get the latest updates from a device that can read the whole vault; some entries are not readable here."
                                 .to_string(),
                         );
                     }
-                    _ => {}
                 }
+            }
+            compact_keep_pins(&decrypted, &vault_path)?
+        };
+
+        // Serialize against autosync git work: the pull's force checkout
+        // must not race a debounce push (review R).
+        let lock = self.autosync.cycle_lock_owned().await;
+        let enroll_vk = self.autosync.enroll_verify_key_snapshot().await;
+        let op = tokio::time::timeout(
+            crate::autosync::SYNC_OP_TIMEOUT,
+            tokio::task::spawn_blocking(move || -> Result<(u32, String), String> {
+                let _cycle = lock;
+                // Mature pull path: keep-local on conflict, index
+                // invalidation, enrollment-proof admission.
+                let report = crate::autosync::run_pull_only(
+                    &vault_path,
+                    &device_id_for_task,
+                    devkey_seal.as_ref(),
+                    enroll_vk,
+                )
+                .map_err(|e| e.to_string())?;
+                if report == crate::autosync::PullReport::AccessDenied {
+                    return Err(
+                        "The remote refused this device's credentials; check the account and try again."
+                            .to_string(),
+                    );
+                }
+                if report == crate::autosync::PullReport::Offline {
+                    return Err(
+                        "Baluard could not reach the server. Check the connection and try again."
+                            .to_string(),
+                    );
+                }
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id_for_task,
+                    devkey_seal.as_ref(),
+                );
+                let repo = engine.open_repo().map_err(|e| e.to_string())?;
                 let status = engine
                     .attachment_line_status(&repo, "origin", None)
                     .map_err(|e| e.to_string())?;
@@ -9555,21 +9636,34 @@ impl VaultState {
                             .to_string(),
                     );
                 }
-                let removed = engine
-                    .discard_stale_line_blobs(&repo, "origin")
-                    .map_err(|e| e.to_string())?;
+                // Tip validated BEFORE any deletion (the discard also
+                // refuses a vanished line, but this reads cleaner in the
+                // user-facing errors).
                 let tip = status
                     .tip
                     .clone()
                     .ok_or("The shared storage line vanished; sync and try again.")?;
+                let removed = engine
+                    .discard_stale_line_blobs(&repo, "origin", &keep_pins)
+                    .map_err(|e| e.to_string())?;
                 Ok((removed, tip))
-            },
+            }),
         )
         .await
-        .map_err(|e| format!("attachment resolve task: {e}"))??;
+        .map_err(|_| "Getting the updates timed out; try again.".to_string())?
+        .map_err(|e| format!("attachment resolve task: {e}"))?;
+        let Ok((removed, tip)) = op else {
+            return Err("Getting the updates timed out; try again.".to_string());
+        };
 
         Self::write_line_ack(vault_id, &tip)?;
+        self.autosync
+            .set_line_ack_context(Some(Self::line_ack_path(vault_id)), Some(tip.clone()))
+            .await;
         self.autosync.set_line_rewrite_pending(false).await;
+        // The gate held pushes while pending; stranded local edits (and
+        // keep-local merges from the pull) push now.
+        self.autosync.nudge(device_id).await;
 
         Ok(serde_json::json!({ "discarded": removed }).to_string())
     }
@@ -9581,6 +9675,9 @@ impl VaultState {
     /// owner/admin action, and it refuses rather than guess. Payload is
     /// ignored; the route exists for symmetry with the attachment family.
     pub async fn attach_compact(&self, _payload: &str) -> Result<String, String> {
+        // A rewrite is already pending; compaction now would race the
+        // guided resolution.
+        self.autosync.ensure_line_synced().await?;
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
         if !handle.is_unlocked() {

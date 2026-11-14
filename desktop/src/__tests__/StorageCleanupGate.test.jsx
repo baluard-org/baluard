@@ -113,10 +113,16 @@ describe("StorageCleanupGate", () => {
   });
 
   it("resolve pulls, refreshes ciphers, toasts the discarded count, and dismisses", async () => {
+    // Stateful mock: after a resolve the daemon classifies the line as
+    // clean (the ack was written), matching the production wire.
+    let resolved = false;
     daemonMock.mockImplementation((action) => {
-      if (action === "vault.attach_status") return Promise.resolve(REWRITTEN);
-      if (action === "vault.attach_resolve")
+      if (action === "vault.attach_status")
+        return Promise.resolve(resolved ? CLEAN : REWRITTEN);
+      if (action === "vault.attach_resolve") {
+        resolved = true;
         return Promise.resolve(JSON.stringify({ discarded: 4 }));
+      }
       throw new Error(`unexpected action ${action}`);
     });
     vaultMock.refreshCiphers.mockResolvedValue(undefined);

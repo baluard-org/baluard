@@ -169,6 +169,15 @@ struct Inner {
     /// are refused and sync cycles pull without pushing, so the stale
     /// worktree blob copies cannot republish and undo the cleanup.
     line_rewrite_pending: std::sync::atomic::AtomicBool,
+    /// The line tip this device last accepted, mirrored from the ack
+    /// file VaultState owns, so the sync cycle can re-classify the line
+    /// without touching VaultState's locks. None until the first
+    /// attach_status/unlock wires it (the cycle then skips probing).
+    line_ack_tip: Option<String>,
+    /// Where to persist an adopted first-contact tip (same file
+    /// VaultState writes). None until wired; adoption without a path is
+    /// skipped rather than guessed.
+    line_ack_path: Option<std::path::PathBuf>,
     /// Phase 2b: conflicts paused for field-level resolution. Populated when
     /// `run_sync_cycle` returns `NeedsDecision`; drained by `sync.conflict`
     /// (read) and `sync.conflict.resolve` (consume + finalize). Empty in all
@@ -264,6 +273,8 @@ impl AutoSyncHandle {
                 access_denied_streak: 0,
                 stamp_persist_ms: None,
                 line_rewrite_pending: std::sync::atomic::AtomicBool::new(false),
+                line_ack_tip: None,
+                line_ack_path: None,
                 pending_conflicts: Vec::new(),
                 device_id: String::new(),
                 devkey_seal: None,
@@ -590,6 +601,27 @@ impl AutoSyncHandle {
     /// Flip the pending line-rewrite state. Set by `attach_status`
     /// when the fetched line tip is a rewrite this device has not
     /// resolved; cleared by the guided resolution.
+    /// Enrollment-proof verifier captured at activate, for callers
+    /// running pull paths outside the normal cycle (guided resolution).
+    pub async fn enroll_verify_key_snapshot(
+        &self,
+    ) -> Option<baluard_core::sync::engine::EnrollVerifyKey> {
+        self.inner.lock().await.enroll_vk.clone()
+    }
+
+    /// Wire the line-ack context so sync cycles can classify the line:
+    /// the ack tip VaultState read, plus the file path cycles should
+    /// adopt a first-contact baseline into.
+    pub async fn set_line_ack_context(
+        &self,
+        path: Option<std::path::PathBuf>,
+        tip: Option<String>,
+    ) {
+        let mut g = self.inner.lock().await;
+        g.line_ack_path = path;
+        g.line_ack_tip = tip;
+    }
+
     pub async fn set_line_rewrite_pending(&self, pending: bool) {
         self.inner
             .lock()
@@ -827,6 +859,8 @@ impl AutoSyncHandle {
         // resolution. Pulls stay allowed (reads, and the resolution
         // itself pulls).
         let rewrite_pending;
+        let ack_ctx;
+        let queued;
         let (devkey_seal, enroll_vk) = {
             let mut g = self.inner.lock().await;
             if !g.active || g.generation != generation {
@@ -835,8 +869,15 @@ impl AutoSyncHandle {
             rewrite_pending = g
                 .line_rewrite_pending
                 .load(std::sync::atomic::Ordering::SeqCst);
+            ack_ctx = (g.line_ack_tip.clone(), g.line_ack_path.clone());
+            queued = g.pending;
+            // While the rewrite gate is up the push leg is dropped, so
+            // the queued edits must stay queued: zeroing pending here
+            // would strand them uncommitted AND invisible to the UI.
+            if !rewrite_pending {
+                g.pending = 0;
+            }
             g.state = AutoSyncState::Syncing;
-            g.pending = 0;
             (g.devkey_seal, g.enroll_vk)
         };
 
@@ -869,20 +910,35 @@ impl AutoSyncHandle {
                 let vault_path = self.vault_path.clone();
                 move || {
                     let _cycle_guard = lock_guard;
-                    let out = if rewrite_pending {
-                        run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk).map(
-                            |report| match report {
-                                PullReport::Pulled
-                                | PullReport::UpToDate
-                                | PullReport::KeptLocal => SyncOutcome::Synced { conflicts: 0 },
-                                PullReport::Offline => SyncOutcome::Offline,
-                                // No local writes happened while pending,
-                                // so a pull cannot diverge into a conflict;
-                                // any other report still counts as a
-                                // completed (no-op) cycle.
-                                _ => SyncOutcome::Synced { conflicts: 0 },
-                            },
-                        )
+                    // Re-classify the line at cycle time so a compaction
+                    // landing mid-session is caught here, not only at the
+                    // next attach_status poll. Conservative union: the
+                    // stale flag OR a fresh rewrite both drop the push.
+                    let mut downgrade = rewrite_pending;
+                    let mut adopt = None;
+                    if ack_ctx.0.is_some() || ack_ctx.1.is_some() || downgrade {
+                        match classify_line_rewrite(
+                            &vault_path,
+                            &device_id,
+                            devkey_seal.as_ref(),
+                            ack_ctx.0.as_deref(),
+                            ack_ctx.1.as_deref(),
+                        ) {
+                            Ok((fresh, adopted)) => {
+                                downgrade = downgrade || fresh;
+                                adopt = adopted;
+                            }
+                            Err(ref e) => {
+                                log::warn!("[autosync] line classification failed: {e}")
+                            }
+                        }
+                    }
+                    let out = if downgrade {
+                        // Pull without pushing (stale blob copies would
+                        // republish); the tail keeps the queue and never
+                        // reports synced.
+                        run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
+                            .map(|_| SyncOutcome::Synced { conflicts: 0 })
                     } else {
                         run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
                     };
@@ -890,7 +946,7 @@ impl AutoSyncHandle {
                         use zeroize::Zeroize;
                         k.zeroize();
                     }
-                    out
+                    (out, downgrade, adopt)
                 }
             }),
         )
@@ -900,8 +956,26 @@ impl AutoSyncHandle {
         if !g.active || g.generation != generation {
             return;
         }
+        // Timeout / join failure keeps the conservative flag value.
+        let (downgraded, adopted) = match &outcome {
+            Ok(Ok((_, dg, ad))) => (*dg, ad.clone()),
+            _ => (rewrite_pending, None),
+        };
+        if let Some(tip) = adopted {
+            g.line_ack_tip = Some(tip);
+        }
+        if downgraded {
+            // Honest downgrade: the push leg was dropped, so the queued
+            // edits stay queued (Dirty) and last_sync does NOT advance —
+            // reporting synced here would strand unpushed changes behind
+            // an "All synced" UI.
+            g.pending = queued;
+            g.state = AutoSyncState::Dirty;
+            drop(g);
+            return;
+        }
         match outcome {
-            Ok(Ok(Ok(SyncOutcome::Synced { conflicts }))) => {
+            Ok(Ok((Ok(SyncOutcome::Synced { conflicts }), _, _))) => {
                 synced = true;
                 // A successful full cycle (manual sync, mutation push) is
                 // proof the remote accepts this device: clear the streak
@@ -919,10 +993,10 @@ impl AutoSyncHandle {
                 // local-only index (keyless) so the next list rebuilds.
                 baluard_core::sync::engine::SyncEngine::invalidate_local_index(&self.vault_path);
             }
-            Ok(Ok(Ok(SyncOutcome::Offline))) => {
+            Ok(Ok((Ok(SyncOutcome::Offline), _, _))) => {
                 g.state = AutoSyncState::Offline;
             }
-            Ok(Ok(Ok(SyncOutcome::NeedsDecision { pending }))) => {
+            Ok(Ok((Ok(SyncOutcome::NeedsDecision { pending }), _, _))) => {
                 // Phase 2b: hold the paused conflicts and surface to the UI.
                 // The background loop and debounce must NOT fire while the repo
                 // is mid-merge; they resume once the queue drains via
@@ -931,7 +1005,7 @@ impl AutoSyncHandle {
                 g.pending_conflicts = pending;
                 g.state = AutoSyncState::NeedsDecision;
             }
-            Ok(Ok(Err(ref e))) => log::warn!("[autosync] sync cycle failed: {e}"),
+            Ok(Ok((Err(ref e), _, _))) => log::warn!("[autosync] sync cycle failed: {e}"),
             Ok(Err(ref e)) => log::warn!("[autosync] sync task failed: {e}"),
             _ => {
                 // SYNC_OP_TIMEOUT: do not go offline unless run_sync_cycle
@@ -1158,7 +1232,42 @@ fn run_sync_cycle(
 /// edits and by the manual sync button. Returns the detailed PullReport;
 /// Err(String) is an unexpected transport failure.
 #[cfg(feature = "git-sync")]
-fn run_pull_only(
+/// Refresh the attachments-line classification from inside a sync
+/// cycle: does this device's local ack still describe the remote line?
+/// Returns (pending, adopt_tip) — pending gates the push leg; adopt_tip
+/// is Some on first contact, where the current tip becomes the
+/// baseline and must be persisted by the caller.
+pub(crate) fn classify_line_rewrite(
+    vault_path: &Path,
+    device_id: &str,
+    devkey_seal: Option<&[u8; 32]>,
+    ack_tip: Option<&str>,
+    ack_path: Option<&std::path::Path>,
+) -> Result<(bool, Option<String>), String> {
+    use baluard_core::sync::engine::SyncEngine;
+    let engine = SyncEngine::new(vault_path, device_id, devkey_seal);
+    let repo = engine.open_repo().map_err(|e| e.to_string())?;
+    let status = engine
+        .attachment_line_status(&repo, "origin", ack_tip)
+        .map_err(|e| e.to_string())?;
+    let pending = status.rewritten && !status.foreign;
+    // First contact: adopt the current tip as the baseline so a LATER
+    // compaction is detectable. Nothing to adopt when the line is
+    // absent, foreign, or already acked.
+    let adopt = if ack_tip.is_none() && !status.foreign {
+        status.tip.clone()
+    } else {
+        None
+    };
+    if let (Some(tip), Some(path)) = (&adopt, ack_path) {
+        if let Err(e) = std::fs::write(path, tip) {
+            log::warn!("[autosync] line ack baseline write failed: {e}");
+        }
+    }
+    Ok((pending, adopt))
+}
+
+pub(crate) fn run_pull_only(
     vault_path: &Path,
     device_id: &str,
     devkey_seal: Option<&[u8; 32]>,

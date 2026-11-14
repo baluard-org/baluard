@@ -706,6 +706,7 @@
     "attachReadable": "Compaction needs every entry readable on this device. Unlock the whole vault here, or run it from a device that can read everything.",
     "attachLegacy": "Some entries were last saved by an older app version. Update every device and re-save those entries, then free up space again.",
     "cleanupPending": "Get the latest updates before making changes: another device cleaned up shared storage.",
+    "attachForeign": "The shared storage belongs to a different vault; sync once and try again.",
     "attachChanged": "The attachment storage changed again while you were reviewing. Check once more."
   },
   "categories": {

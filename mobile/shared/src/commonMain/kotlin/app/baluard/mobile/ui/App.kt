@@ -18,8 +18,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -366,25 +369,42 @@ fun App(
 
         // Check for a pending line rewrite whenever the vault unlocks:
         // attach_status works on a locked vault, but the gate only
-        // matters once the user can act.
-        LaunchedEffect(unlocked) {
-            if (!unlocked) return@LaunchedEffect
+        // matters once the user can act. The check keys on the vault
+        // id so a switch re-evaluates and stale gate state never acts on
+        // the wrong vault (cleared on lock and on switch below).
+        var cleanupVaultId by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(unlocked, cleanupVaultId) {
+            if (!unlocked) {
+                pendingCleanup = null
+                cleanupCollapsed = false
+                cleanupVaultId = null
+                return@LaunchedEffect
+            }
             val v = auth.vault() ?: return@LaunchedEffect
+            cleanupVaultId = v.vaultId()
             val st = runCatching { repo.attachStatus(v) }.getOrNull() ?: return@LaunchedEffect
             if (st.rewritten && !st.foreign) {
                 pendingCleanup = st
                 cleanupCollapsed = false
+            } else {
+                pendingCleanup = null
             }
         }
+        var cleanupError by remember { mutableStateOf<String?>(null) }
         val resolveCleanup: () -> Unit = {
-            if (!cleanupBusy) scope.launch {
+            val gateId = cleanupVaultId
+            if (!cleanupBusy && gateId != null) scope.launch {
                 cleanupBusy = true
+                cleanupError = null
                 try {
                     val v = auth.vault()
-                    if (v != null) {
+                    // A vault switch between arm and click must not act
+                    // on the new vault (the gate described the old one).
+                    if (v != null && v.vaultId() == gateId) {
                         val report = repo.attachResolve(v)
                         pendingCleanup = null
                         cleanupCollapsed = false
+                        cleanupVaultId = null
                         Toast.success(
                             if (report.discarded > 0) {
                                 t("settings.cleanupDone", report.discarded)
@@ -395,8 +415,13 @@ fun App(
                     }
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
-                    Toast.error(t("settings.cleanupFailed"))
+                } catch (e: Exception) {
+                    // Surface the real daemon reason inline: the toast
+                    // hides behind the dialog window, so the copy the
+                    // user can read is the error line, not the toast.
+                    val msg = e.message.orEmpty()
+                    cleanupError = msg.ifEmpty { t("settings.cleanupFailed") }
+                    Toast.error(msg.ifEmpty { t("settings.cleanupFailed") })
                 } finally {
                     cleanupBusy = false
                 }
@@ -1088,6 +1113,7 @@ fun App(
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
                                     .padding(24.dp),
                                 verticalArrangement = Arrangement.Center,
                             ) {
@@ -1132,6 +1158,14 @@ fun App(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
+                                cleanupError?.let { err ->
+                                    Spacer(Modifier.height(12.dp))
+                                    Text(
+                                        err,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
                                 Spacer(Modifier.height(24.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1157,10 +1191,12 @@ fun App(
                 } else {
                     // Collapsed: persistent bar. No dismiss — acting is
                     // the only way out.
+                    // Bottom placement: a top bar would cover the
+                    // header's back/menu controls while non-dismissable.
                     Surface(
                         modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .statusBarsPadding()
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
                             .fillMaxWidth(),
                         color = MaterialTheme.colorScheme.surfaceVariant,
                     ) {

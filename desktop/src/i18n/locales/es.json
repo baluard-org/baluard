@@ -665,6 +665,7 @@
     "attachReadable": "La compactación necesita que todas las entradas sean legibles en este dispositivo. Desbloquea toda la bóveda aquí, o ejecútala desde un dispositivo que pueda leerlo todo.",
     "attachLegacy": "Algunas entradas se guardaron por última vez con una versión anterior de la app. Actualiza todos los dispositivos, vuelve a guardar esas entradas e inténtalo de nuevo.",
     "cleanupPending": "Get the latest updates before making changes: another device cleaned up shared storage.",
+    "attachForeign": "El almacenamiento compartido pertenece a otra bóveda; sincroniza una vez e inténtalo de nuevo.",
     "attachChanged": "El almacenamiento de adjuntos volvió a cambiar mientras lo revisabas. Vuelve a comprobarlo."
   },
   "categories": {

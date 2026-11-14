@@ -29,11 +29,14 @@ export default function StorageCleanupGate() {
   const [overlayOpen, setOverlayOpen] = createSignal(true);
   const [busy, setBusy] = createSignal(false);
   let disposed = false;
+  // Resolve epoch: a status check that started before a resolve must not
+  // re-arm the gate afterwards (the daemon fetch can outlast the click).
+  let epoch = 0;
   onCleanup(() => {
     disposed = true;
   });
 
-  async function check() {
+  async function check(atEpoch) {
     try {
       const raw = await daemon("vault.attach_status");
       let parsed = null;
@@ -42,7 +45,7 @@ export default function StorageCleanupGate() {
       } catch {
         parsed = null;
       }
-      if (disposed) return;
+      if (disposed || atEpoch !== epoch) return;
       const needs = !!(parsed && parsed.tip && parsed.rewritten && !parsed.foreign);
       setPending(needs);
       setNotice(needs ? parsed : null);
@@ -53,16 +56,19 @@ export default function StorageCleanupGate() {
 
   onSettled(() => {
     void (async () => {
-      await check();
+      await check(epoch);
     })();
   });
   // Re-check when the active vault changes: the gate guards whatever
-  // vault is open, and the daemon classifies the active one.
+  // vault is open, and the daemon classifies the active one. The old
+  // vault's overlay state (collapse) must not leak into the new one.
   createEffect(
     () => switcher.activeSlug(),
     () => {
+      epoch += 1;
+      setOverlayOpen(true);
       void (async () => {
-        await check();
+        await check(epoch);
       })();
     },
   );
@@ -70,6 +76,8 @@ export default function StorageCleanupGate() {
   async function resolve() {
     if (busy()) return;
     setBusy(true);
+    epoch += 1;
+    const atEpoch = epoch;
     try {
       const raw = await daemon("vault.attach_resolve");
       let parsed = null;
@@ -78,22 +86,31 @@ export default function StorageCleanupGate() {
       } catch {
         parsed = null;
       }
-      if (disposed) return;
+      if (disposed || atEpoch !== epoch) return;
       // The pull may have brought remote changes; refresh before the
-      // user sees the vault again.
-      await vault.refreshCiphers(t);
-      window.dispatchEvent(new CustomEvent("baluard:local-mutation"));
-      const count = parsed?.discarded ?? 0;
-      toastSuccess(
-        count > 0
-          ? t("sync.cleanupDone", { count })
-          : t("sync.cleanupDoneNone"),
-      );
+      // user sees the vault again. The gate closes regardless: the
+      // daemon already released the write lock, so staying up would
+      // block an already-resolved vault.
+      const resolved = parsed?.discarded ?? 0;
       setPending(false);
       setNotice(null);
       setOverlayOpen(true);
+      try {
+        await vault.refreshCiphers(t);
+        window.dispatchEvent(new CustomEvent("baluard:local-mutation"));
+      } catch {
+        // The next poll refreshes; do not keep the gate up for it.
+      }
+      toastSuccess(
+        resolved > 0
+          ? t("sync.cleanupDone", { count: resolved })
+          : t("sync.cleanupDoneNone"),
+      );
+      void (async () => {
+        await check(atEpoch);
+      })();
     } catch (e) {
-      toastError(sanitizeError(e));
+      toastError(t(sanitizeError(e)));
     } finally {
       setBusy(false);
     }
@@ -119,7 +136,13 @@ export default function StorageCleanupGate() {
           class="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-6"
           data-testid="cleanup-gate"
         >
-          <div class="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-8 space-y-4">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={t("sync.cleanupTitle")}
+            ref={(el) => queueMicrotask(() => el.querySelector("[data-testid=cleanup-resolve]")?.focus())}
+            class="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-8 space-y-4"
+          >
             <h2 class="text-lg font-bold text-[var(--color-text)]">
               {t("sync.cleanupTitle")}
             </h2>
@@ -161,7 +184,7 @@ export default function StorageCleanupGate() {
       <Show when={pending() && !overlayOpen()}>
         <div
           data-testid="cleanup-bar"
-          class="fixed top-0 left-0 right-0 z-[90] bg-[var(--color-sidebar)] border-b border-[var(--color-border)] px-4 py-2 flex items-center justify-between gap-3"
+          class="fixed bottom-4 left-4 right-4 z-[90] mx-auto max-w-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-xl shadow-lg px-4 py-2 flex items-center justify-between gap-3"
         >
           <span class="text-xs font-bold text-[var(--color-text)]">
             {t("sync.cleanupBar")}

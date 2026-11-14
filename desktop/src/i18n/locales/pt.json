@@ -706,6 +706,7 @@
     "attachReadable": "A compactação precisa que todas as entradas sejam legíveis neste dispositivo. Desbloqueie todo o cofre aqui, ou execute-a em um dispositivo que consiga ler tudo.",
     "attachLegacy": "Algumas entradas foram salvas pela última vez em uma versão anterior do app. Atualize todos os dispositivos, salve novamente essas entradas e tente de novo.",
     "cleanupPending": "Get the latest updates before making changes: another device cleaned up shared storage.",
+    "attachForeign": "O armazenamento compartilhado pertence a outro cofre; sincronize uma vez e tente de novo.",
     "attachChanged": "O armazenamento de anexos mudou novamente enquanto você verificava. Confira mais uma vez."
   },
   "categories": {

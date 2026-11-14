@@ -2764,6 +2764,7 @@ impl SyncEngine {
         &self,
         repo: &Repository,
         remote_name: &str,
+        keep_pins: &std::collections::HashSet<String>,
     ) -> Result<u32, BaluardError> {
         use crate::sync::attachments::{ATTACHMENTS_REF, ATTACHMENTS_TRACKING, line_entries};
         let tracking = format!("refs/remotes/{remote_name}/{ATTACHMENTS_TRACKING}");
@@ -2780,20 +2781,39 @@ impl SyncEngine {
             // '+': forced fetch — the tracking ref must reach the
             // compacted tip even though it moved to an unrelated commit.
             let spec = format!("+{ATTACHMENTS_REF}:{tracking}");
+            // Strict for the guided resolution: a failed fetch would
+            // leave the tracking view stale and the discard could judge
+            // live uploads stale against an old tip. Only a genuinely
+            // absent line is fine (nothing was ever published).
             if let Err(e) = remote.fetch(&[&spec], Some(&mut opts), None) {
                 let msg = e.message();
                 if !(msg.contains("find remote ref") || msg.contains("not found")) {
-                    eprintln!("warning: attachments line fetch failed: {msg}");
+                    return Err(BaluardError::Sync(SyncError::Git(format!(
+                        "attachments line fetch failed: {msg}"
+                    ))));
                 }
             }
         }
-        let pinned: std::collections::HashSet<String> = repo
+        // Validate the tip BEFORE deleting anything: with no line at all
+        // we cannot know what a compaction removed, so refuse instead of
+        // wiping every unpinned local copy.
+        let tip_pins: std::collections::HashSet<String> = repo
             .find_reference(&tracking)
             .ok()
             .and_then(|r| r.peel_to_commit().ok())
             .and_then(|c| c.tree().ok())
             .map(|t| line_entries(&t).into_iter().map(|(pin, _)| pin).collect())
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                BaluardError::Sync(SyncError::Git(
+                    "The shared storage line vanished; sync and try again.".to_string(),
+                ))
+            })?;
+        // Survivors are the line's own pins plus everything THIS device
+        // still references locally (uploaded but not yet pushed, or
+        // kept-local metadata): deleting those would destroy the only
+        // copy of data an entry still points at.
+        let mut pinned = tip_pins;
+        pinned.extend(keep_pins.iter().cloned());
         let mut removed = 0u32;
         for path in crate::sync::attachments::collect_untracked_blob_paths(repo) {
             let bytes = match std::fs::read(&path) {
@@ -13383,15 +13403,30 @@ mod tests {
         assert!(path_live.exists());
         assert!(path_stale.exists());
 
-        let removed = engine.discard_stale_line_blobs(&repo, "origin").unwrap();
+        // A blob this device still references in committed metadata but
+        // that never reached the line (offline upload) must survive: it
+        // is the only copy of data an entry points at.
+        let blob_unpub = b"unpublished-envelope".to_vec();
+        let path_unpub = att_dir.join("unpub.enc");
+        std::fs::write(&path_unpub, &blob_unpub).unwrap();
+        let pin_unpub = crate::vault::attachment::blob_sha256(&blob_unpub);
+        let mut local_refs = std::collections::HashSet::new();
+        local_refs.insert(pin_unpub);
+
+        let removed = engine
+            .discard_stale_line_blobs(&repo, "origin", &local_refs)
+            .unwrap();
         assert_eq!(removed, 1);
+        assert!(path_unpub.exists());
         // The pinned copy stays (it is still a valid cache); the stale
         // copy is gone so a later sync cannot republish it.
         assert!(path_live.exists());
         assert!(!path_stale.exists());
 
         // Idempotent: a second pass finds nothing stale.
-        let again = engine.discard_stale_line_blobs(&repo, "origin").unwrap();
+        let again = engine
+            .discard_stale_line_blobs(&repo, "origin", &local_refs)
+            .unwrap();
         assert_eq!(again, 0);
     }
 

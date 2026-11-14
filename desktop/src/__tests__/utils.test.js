@@ -79,6 +79,12 @@ describe("sanitizeError", () => {
         t,
       ),
     ).toBe("errors.attachReadable");
+    expect(
+      sanitizeError(
+        "The shared storage belongs to a different vault; sync once and try again.",
+        t,
+      ),
+    ).toBe("errors.attachForeign");
   });
 
   test("matches timeout", () => {
