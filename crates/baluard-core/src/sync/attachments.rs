@@ -92,6 +92,17 @@ pub fn raw_entries(tip: &git2::Tree<'_>) -> Vec<(String, Oid)> {
     out
 }
 
+/// What one compaction pass reclaimed from the line. `kept` counts the
+/// encrypted files the vault still references; `reclaimed` counts line
+/// entries dropped (deleted attachments, pre-rotation leftovers, hostile
+/// junk names).
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct CompactionReport {
+    pub reclaimed: u64,
+    pub reclaimed_bytes: u64,
+    pub kept: u64,
+}
+
 /// Worktree blob files that are line transport rather than git content:
 /// new uploads stay untracked (stage_admitted skips them), while legacy
 /// pre-line blobs were checked out from main and carry index state.

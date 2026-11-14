@@ -2740,6 +2740,154 @@ impl SyncEngine {
         Ok(Some(bytes))
     }
 
+    /// Compact the attachments line: force-replace it with a fresh
+    /// genesis carrying only the pins the vault still references (live,
+    /// trashed, and archived ciphers — the runtime supplies the set,
+    /// because main's cipher metadata is encrypted at this layer). The
+    /// precondition is that `keep_pins` covers EVERY main-HEAD reference:
+    /// the runtime refuses when any cipher is undecryptable locally, so
+    /// on shared vaults compaction is an owner/admin action. Aborts when
+    /// a referenced pin is missing from the line (an upload has not
+    /// finished publishing; sync and retry) — never partially reclaims.
+    /// The genesis parents the vault root, so root-of-history
+    /// classification keeps applying; a hostile or foreign tip is simply
+    /// reclaimed (its pins cannot be in the keep set). Residual race: a
+    /// reference pushed by another device between our pull and this
+    /// force push would be pruned — and self-heals, because the device
+    /// holding that file republishes it from its untracked worktree copy
+    /// on its next sync.
+    pub fn compact_attachment_line(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        keep_pins: &std::collections::HashSet<String>,
+    ) -> Result<crate::sync::attachments::CompactionReport, BaluardError> {
+        use crate::sync::attachments::{
+            ATTACHMENTS_REF, ATTACHMENTS_TRACKING, CompactionReport, entry_name, entry_pin,
+            raw_entries,
+        };
+        if self.effective_signing_key(repo).is_none() {
+            return Err(SyncError::Git(
+                "compaction requires the vault's signing key; unlock and sync once first".into(),
+            )
+            .into());
+        }
+        let tracking = format!("refs/remotes/{remote_name}/{ATTACHMENTS_TRACKING}");
+        let vault_root = self.root_commit_oid(repo)?;
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let mut opts = FetchOptions::new();
+            opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            let spec = format!("+{ATTACHMENTS_REF}:{tracking}");
+            if let Err(e) = remote.fetch(&[&spec], Some(&mut opts), None) {
+                let msg = e.message();
+                if !(msg.contains("find remote ref") || msg.contains("not found")) {
+                    eprintln!("warning: attachments line fetch failed: {msg}");
+                }
+            }
+        }
+        // No line at all: nothing to reclaim.
+        let Some(tip) = repo
+            .find_reference(&tracking)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+        else {
+            return Ok(CompactionReport::default());
+        };
+        let tip_tree = tip
+            .tree()
+            .map_err(|e| SyncError::Git(format!("attachments tip tree: {e}")))?;
+
+        let mut kept: Vec<(String, Oid)> = Vec::new();
+        let mut report = CompactionReport::default();
+        for (name, oid) in raw_entries(&tip_tree) {
+            let referenced = entry_pin(&name).is_some_and(|p| keep_pins.contains(p));
+            if referenced {
+                kept.push((name, oid));
+                report.kept += 1;
+            } else {
+                // Deleted, pre-rotation leftover, or hostile junk: the
+                // hash pin (or the junk name's absence from any metadata)
+                // makes it inert, so reclaiming it is pure byte savings.
+                report.reclaimed += 1;
+                if let Ok(blob) = repo.find_blob(oid) {
+                    report.reclaimed_bytes += blob.size() as u64;
+                }
+            }
+        }
+        // Never partially reclaim: a pin main still references but the
+        // line lacks means an upload has not landed yet.
+        for pin in keep_pins {
+            let Some(name) = entry_name(pin) else {
+                return Err(SyncError::Git(format!(
+                    "attachments: metadata pin {pin:?} is not a SHA-256 hash"
+                ))
+                .into());
+            };
+            if tip_tree.get_name(&name).is_none() {
+                return Err(SyncError::Git(
+                    "some files have not finished syncing to the vault yet; sync once and retry compaction"
+                        .into(),
+                )
+                .into());
+            }
+        }
+
+        // Fresh genesis: kept entries only, orphan commit parented on the
+        // vault root. Signed (hygiene; the unsigned fallback must never
+        // move HEAD onto a line commit).
+        let mut tb = repo
+            .treebuilder(None)
+            .map_err(|e| SyncError::Git(format!("attachments treebuilder: {e}")))?;
+        for (name, oid) in &kept {
+            tb.insert(name, *oid, git2::FileMode::Blob.into())
+                .map_err(|e| SyncError::Git(format!("attachments insert: {e}")))?;
+        }
+        let tree_id = tb
+            .write()
+            .map_err(|e| SyncError::Git(format!("attachments tree write: {e}")))?;
+        let tree = repo
+            .find_tree(tree_id)
+            .map_err(|e| SyncError::Git(format!("attachments find tree: {e}")))?;
+        let root_oid = Oid::from_str(&vault_root)
+            .map_err(|e| SyncError::Git(format!("attachments root oid: {e}")))?;
+        let root_commit = repo
+            .find_commit(root_oid)
+            .map_err(|e| SyncError::Git(format!("attachments root commit: {e}")))?;
+        let sig = git2::Signature::now("baluard-attachments", "attachments@baluard.local")
+            .map_err(|e| SyncError::Git(format!("attachments sig: {e}")))?;
+        let msg = format!(
+            "attachments: compact ({} file(s) reclaimed)",
+            report.reclaimed
+        );
+        let genesis = self.create_signed_commit(repo, &sig, &msg, &tree, &[&root_commit])?;
+
+        repo.reference(ATTACHMENTS_REF, genesis, true, "attachments compaction")
+            .map_err(|e| SyncError::Git(format!("attachments ref: {e}")))?;
+        {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let mut push_opts = PushOptions::new();
+            push_opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            let spec = format!("+{ATTACHMENTS_REF}:{ATTACHMENTS_REF}");
+            remote.push(&[&spec], Some(&mut push_opts)).map_err(|e| {
+                let c = classify_remote_err("attachments compaction push", &e);
+                SyncError::Git(format!("compaction push failed: {c}"))
+            })?;
+        }
+        repo.reference(&tracking, genesis, true, "attachments tracking")
+            .map_err(|e| SyncError::Git(format!("attachments tracking: {e}")))?;
+        Ok(report)
+    }
+
     /// Consume the legacy heads channel and retire it so the repository
     /// keeps exactly one branch. Runs after every announce AND on the
     /// own-announcement skip path. Best-effort: a failed step retries on
@@ -11702,6 +11850,148 @@ mod tests {
             format!("{err}").contains("integrity pin"),
             "the refusal names the pin failure: {err}"
         );
+    }
+
+    #[test]
+    fn attachment_line_compaction_reclaims_unreferenced_pins() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine.add_remote(&repo, "origin", &remote_url).unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        let att_dir = dir
+            .path()
+            .join("entries/88888888-8888-8888-8888-888888888888/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let blob_a = b"kept-envelope".to_vec();
+        let path_a = att_dir.join("a.enc");
+        std::fs::write(&path_a, &blob_a).unwrap();
+        let pin_a = crate::vault::attachment::blob_sha256(&blob_a);
+        let blob_b = b"deleted-envelope".to_vec();
+        let path_b = att_dir.join("b.enc");
+        std::fs::write(&path_b, &blob_b).unwrap();
+        let pin_b = crate::vault::attachment::blob_sha256(&blob_b);
+        engine
+            .publish_attachment_line(
+                &repo,
+                "origin",
+                &[
+                    (pin_a.clone(), path_a.clone()),
+                    (pin_b.clone(), path_b.clone()),
+                ],
+            )
+            .unwrap();
+
+        // Simulate the delete flow: B's cipher no longer references it
+        // and its worktree file is gone, so the keep set carries only A.
+        std::fs::remove_file(&path_b).unwrap();
+
+        // A keep pin absent from the line aborts — never partially
+        // reclaim (the missing pin here is a fabricated pending upload).
+        let mut missing = std::collections::HashSet::new();
+        missing.insert("0".repeat(64));
+        let err = engine
+            .compact_attachment_line(&repo, "origin", &missing)
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("not finished syncing"),
+            "the abort names the pending-sync cause: {err}"
+        );
+
+        // Real compaction: B reclaimed, A kept.
+        let mut keep = std::collections::HashSet::new();
+        keep.insert(pin_a.clone());
+        let report = engine
+            .compact_attachment_line(&repo, "origin", &keep)
+            .unwrap();
+        assert_eq!(report.kept, 1);
+        assert_eq!(report.reclaimed, 1);
+        assert_eq!(report.reclaimed_bytes, blob_b.len() as u64);
+
+        let bare = Repository::open(&remote_path).unwrap();
+        let genesis = bare
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let name_a = crate::sync::attachments::entry_name(&pin_a).unwrap();
+        assert!(genesis.tree().unwrap().get_name(&name_a).is_some());
+        let name_b = crate::sync::attachments::entry_name(&pin_b).unwrap();
+        assert!(genesis.tree().unwrap().get_name(&name_b).is_none());
+        // The genesis roots on the vault root: classification machinery
+        // still applies after a force-replace.
+        let root = engine.root_commit_oid(&repo).unwrap();
+        assert_eq!(
+            SyncEngine::root_commit_oid_from(&bare, genesis.id()).unwrap(),
+            root
+        );
+
+        // A hostile tip carrying A plus junk is reclaimed down to the
+        // keep set, and the replacement still roots on the vault root.
+        let cur_tree = genesis.tree().unwrap();
+        let mut tb = bare.treebuilder(None).unwrap();
+        let a_entry = cur_tree.get_name(&name_a).unwrap();
+        tb.insert(&name_a, a_entry.id(), git2::FileMode::Blob.into())
+            .unwrap();
+        let junk_blob = bare.blob(b"junk").unwrap();
+        tb.insert("not-a-pin.enc", junk_blob, git2::FileMode::Blob.into())
+            .unwrap();
+        let junk_tree = bare.find_tree(tb.write().unwrap()).unwrap();
+        let sig = git2::Signature::now("attacker", "attacker@example.invalid").unwrap();
+        let hostile = bare
+            .commit(None, &sig, &sig, "hostile line", &junk_tree, &[])
+            .unwrap();
+        bare.reference(
+            crate::sync::attachments::ATTACHMENTS_REF,
+            hostile,
+            true,
+            "hostile",
+        )
+        .unwrap();
+        let report2 = engine
+            .compact_attachment_line(&repo, "origin", &keep)
+            .unwrap();
+        assert_eq!(report2.kept, 1);
+        assert_eq!(report2.reclaimed, 1, "the junk name is reclaimed");
+        let tip2 = bare
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        assert_eq!(
+            SyncEngine::root_commit_oid_from(&bare, tip2.id()).unwrap(),
+            root
+        );
+
+        // The forced fetch propagates the rewrite to this device: B is
+        // pending again, A still verifies.
+        assert_eq!(
+            engine
+                .fetch_attachment_blob(&repo, "origin", &pin_b)
+                .unwrap(),
+            None
+        );
+        let fetched = engine
+            .fetch_attachment_blob(&repo, "origin", &pin_a)
+            .unwrap();
+        assert_eq!(fetched.as_deref(), Some(blob_a.as_slice()));
     }
 
     #[test]
