@@ -382,7 +382,8 @@
     "cloneRetry": "Baluard n'a pas pu vérifier ce coffre en toute sécurité. Réessayez ou supprimez le dossier manuellement.",
     "attachPending": "Des fichiers sont encore en cours de synchronisation. Synchronisez une fois, puis réessayez.",
     "attachReadable": "La compaction exige que toutes les entrées soient lisibles sur cet appareil. Déverrouillez tout le coffre ici, ou exécutez-la depuis un appareil capable de tout lire.",
-    "attachLegacy": "Des entrées ont été enregistrées pour la dernière fois par une version antérieure de l'app. Mettez à jour tous les appareils, enregistrez à nouveau ces entrées, puis réessayez."
+    "attachLegacy": "Des entrées ont été enregistrées pour la dernière fois par une version antérieure de l'app. Mettez à jour tous les appareils, enregistrez à nouveau ces entrées, puis réessayez.",
+    "attachChanged": "Le stockage des pièces jointes a encore changé pendant votre vérification. Revérifiez."
   },
   "sync": {
     "title": "Synchronisation du coffre",
@@ -489,7 +490,37 @@
     "attachTitle": "Stockage des pièces jointes",
     "attachDesc": "Les pièces jointes vivent en dehors de l'historique du coffre. Libérer de l'espace récupère les fichiers qu'aucune entrée ne référence.",
     "attachCompact": "Libérer de l'espace",
-    "attachResult": "{reclaimed} fichier(s) récupéré(s) ({bytes}), {kept} conservé(s)."
+    "attachResult": "{reclaimed} fichier(s) récupéré(s) ({bytes}), {kept} conservé(s).",
+    "attachCleaned": {
+      "en": "Attachment storage was cleaned up",
+      "es": "El almacenamiento de adjuntos fue limpiado",
+      "pt": "O armazenamento de anexos foi limpo",
+      "fr": "Le stockage des pièces jointes a été nettoyé"
+    },
+    "attachCleanedHint": {
+      "en": "Another device removed deleted attachments from the shared storage. Your files are safe and everything keeps working; this device switches over automatically.",
+      "es": "Otro dispositivo eliminó los adjuntos borrados del almacenamiento compartido. Tus archivos están a salvo y todo sigue funcionando; este dispositivo cambia automáticamente.",
+      "pt": "Outro dispositivo removeu os anexos excluídos do armazenamento compartilhado. Seus arquivos estão a salvo e tudo continua funcionando; este dispositivo troca automaticamente.",
+      "fr": "Un autre appareil a retiré les pièces jointes supprimées du stockage partagé. Vos fichiers sont en sécurité et tout continue de fonctionner ; cet appareil bascule automatiquement."
+    },
+    "attachForeign": {
+      "en": "Attachment storage is out of step",
+      "es": "El almacenamiento de adjuntos está desalineado",
+      "pt": "O armazenamento de anexos está fora de sincronia",
+      "fr": "Le stockage des pièces jointes est désynchronisé"
+    },
+    "attachForeignHint": {
+      "en": "The shared attachment storage does not match this vault. Run a sync, then check this section again.",
+      "es": "El almacenamiento compartido de adjuntos no corresponde a esta bóveda. Haz una sincronización y revisa esta sección de nuevo.",
+      "pt": "O armazenamento compartilhado de anexos não corresponde a este cofre. Faça uma sincronização e verifique esta seção novamente.",
+      "fr": "Le stockage partagé des pièces jointes ne correspond pas à ce coffre. Lancez une synchronisation puis revérifiez cette section."
+    },
+    "attachAccept": {
+      "en": "Got it",
+      "es": "Entendido",
+      "pt": "Entendi",
+      "fr": "Compris"
+    }
   },
   "settings": {
     "faviconLabel": "Afficher les icônes des sites web",

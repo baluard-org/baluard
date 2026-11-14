@@ -596,7 +596,37 @@
     "attachTitle": "Armazenamento de anexos",
     "attachDesc": "Os anexos ficam fora do histórico do cofre. Liberar espaço recupera os arquivos que nenhuma entrada referencia.",
     "attachCompact": "Liberar espaço",
-    "attachResult": "Recuperados {reclaimed} arquivo(s) ({bytes}), mantidos {kept}."
+    "attachResult": "Recuperados {reclaimed} arquivo(s) ({bytes}), mantidos {kept}.",
+    "attachCleaned": {
+      "en": "Attachment storage was cleaned up",
+      "es": "El almacenamiento de adjuntos fue limpiado",
+      "pt": "O armazenamento de anexos foi limpo",
+      "fr": "Le stockage des pièces jointes a été nettoyé"
+    },
+    "attachCleanedHint": {
+      "en": "Another device removed deleted attachments from the shared storage. Your files are safe and everything keeps working; this device switches over automatically.",
+      "es": "Otro dispositivo eliminó los adjuntos borrados del almacenamiento compartido. Tus archivos están a salvo y todo sigue funcionando; este dispositivo cambia automáticamente.",
+      "pt": "Outro dispositivo removeu os anexos excluídos do armazenamento compartilhado. Seus arquivos estão a salvo e tudo continua funcionando; este dispositivo troca automaticamente.",
+      "fr": "Un autre appareil a retiré les pièces jointes supprimées du stockage partagé. Vos fichiers sont en sécurité et tout continue de fonctionner ; cet appareil bascule automatiquement."
+    },
+    "attachForeign": {
+      "en": "Attachment storage is out of step",
+      "es": "El almacenamiento de adjuntos está desalineado",
+      "pt": "O armazenamento de anexos está fora de sincronia",
+      "fr": "Le stockage des pièces jointes est désynchronisé"
+    },
+    "attachForeignHint": {
+      "en": "The shared attachment storage does not match this vault. Run a sync, then check this section again.",
+      "es": "El almacenamiento compartido de adjuntos no corresponde a esta bóveda. Haz una sincronización y revisa esta sección de nuevo.",
+      "pt": "O armazenamento compartilhado de anexos não corresponde a este cofre. Faça uma sincronização e verifique esta seção novamente.",
+      "fr": "Le stockage partagé des pièces jointes ne correspond pas à ce coffre. Lancez une synchronisation puis revérifiez cette section."
+    },
+    "attachAccept": {
+      "en": "Got it",
+      "es": "Entendido",
+      "pt": "Entendi",
+      "fr": "Compris"
+    }
   },
   "autosync": {
     "upToDate": "Todas as alterações sincronizadas",
@@ -667,7 +697,8 @@
     "cloneRetry": "O Baluard não conseguiu verificar este cofre com segurança. Tente de novo ou remova a pasta manualmente.",
     "attachPending": "Alguns arquivos ainda estão sincronizando. Sincronize uma vez e tente novamente.",
     "attachReadable": "A compactação precisa que todas as entradas sejam legíveis neste dispositivo. Desbloqueie todo o cofre aqui, ou execute-a em um dispositivo que consiga ler tudo.",
-    "attachLegacy": "Algumas entradas foram salvas pela última vez em uma versão anterior do app. Atualize todos os dispositivos, salve novamente essas entradas e tente de novo."
+    "attachLegacy": "Algumas entradas foram salvas pela última vez em uma versão anterior do app. Atualize todos os dispositivos, salve novamente essas entradas e tente de novo.",
+    "attachChanged": "O armazenamento de anexos mudou novamente enquanto você verificava. Confira mais uma vez."
   },
   "categories": {
     "allItems": "Todos os itens",

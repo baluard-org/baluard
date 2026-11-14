@@ -2744,6 +2744,75 @@ impl SyncEngine {
         Ok(Some(bytes))
     }
 
+    /// Fetch the attachments line and classify it against a previously
+    /// acknowledged tip, for the cleanup notice on secondary devices.
+    /// `ack_tip_hex` is the tip this device last accepted (`None` on
+    /// first contact). Ref-absent stays a fine "no line yet" answer; any
+    /// other fetch failure warns, because a stale tracking view would
+    /// hide a compaction from the notice.
+    pub fn attachment_line_status(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        ack_tip_hex: Option<&str>,
+    ) -> Result<crate::sync::attachments::LineStatus, BaluardError> {
+        use crate::sync::attachments::{ATTACHMENTS_REF, ATTACHMENTS_TRACKING, LineStatus};
+        let tracking = format!("refs/remotes/{remote_name}/{ATTACHMENTS_TRACKING}");
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        {
+            let cfg = self
+                .credential_config
+                .clone()
+                .with_url_hint(remote.url().unwrap_or(""));
+            let mut opts = FetchOptions::new();
+            opts.remote_callbacks(crate::sync::credentials::build_callbacks(&cfg));
+            // '+': forced fetch — the notice exists precisely to surface
+            // compaction rewrites, which only move the tracking ref when
+            // the fetch is forced.
+            let spec = format!("+{ATTACHMENTS_REF}:{tracking}");
+            if let Err(e) = remote.fetch(&[&spec], Some(&mut opts), None) {
+                let msg = e.message();
+                if !(msg.contains("find remote ref") || msg.contains("not found")) {
+                    eprintln!("warning: attachments line fetch failed: {msg}");
+                }
+            }
+        }
+        let tip = repo
+            .find_reference(&tracking)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok());
+        let Some(tip_commit) = tip else {
+            return Ok(LineStatus {
+                tip: None,
+                rewritten: false,
+                foreign: false,
+            });
+        };
+        let vault_root = self.root_commit_oid(repo)?;
+        let foreign = Self::root_commit_oid_from(repo, tip_commit.id())? != vault_root;
+        let rewritten = match ack_tip_hex.and_then(|h| Oid::from_str(h).ok()) {
+            Some(old_oid) => match repo.find_commit(old_oid) {
+                Ok(old) => {
+                    old.id() != tip_commit.id()
+                        && !repo
+                            .graph_descendant_of(tip_commit.id(), old.id())
+                            .unwrap_or(false)
+                }
+                // The acknowledged commit is no longer reachable locally
+                // (pruned): descent cannot be proven, so surface it.
+                Err(_) => true,
+            },
+            None => false, // first contact adopts silently
+        };
+        Ok(LineStatus {
+            tip: Some(tip_commit.id().to_string()),
+            rewritten,
+            foreign,
+        })
+    }
+
     /// Compact the attachments line: force-replace it with a fresh
     /// genesis carrying only the pins the vault still references (live,
     /// trashed, and archived ciphers — the runtime supplies the set,
@@ -12016,6 +12085,79 @@ mod tests {
             SyncEngine::root_commit_oid_from(&remote_repo, tip2).unwrap(),
             root
         );
+    }
+
+    #[test]
+    fn attachment_line_status_classifies_a_compaction_for_secondary_devices() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine.add_remote(&repo, "origin", &remote_url).unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        let att_dir = dir
+            .path()
+            .join("entries/77777777-7777-7777-7777-777777777777/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let blob = b"envelope".to_vec();
+        let path = att_dir.join("a.enc");
+        std::fs::write(&path, &blob).unwrap();
+        let pin = crate::vault::attachment::blob_sha256(&blob);
+        engine
+            .publish_attachment_line(&repo, "origin", &[(pin.clone(), path)])
+            .unwrap();
+
+        // First contact: no acknowledged tip, nothing rewritten.
+        let first = engine
+            .attachment_line_status(&repo, "origin", None)
+            .unwrap();
+        assert!(!first.rewritten && !first.foreign);
+        let tip1 = first.tip.clone().unwrap();
+
+        // A normal push on the line descends from the acknowledged tip:
+        // silently fine, not a rewrite.
+        let path2 = att_dir.join("b.enc");
+        let blob2 = b"second".to_vec();
+        std::fs::write(&path2, &blob2).unwrap();
+        let pin2 = crate::vault::attachment::blob_sha256(&blob2);
+        engine
+            .publish_attachment_line(&repo, "origin", &[(pin2, path2)])
+            .unwrap();
+        let grown = engine
+            .attachment_line_status(&repo, "origin", Some(&tip1))
+            .unwrap();
+        assert!(!grown.rewritten, "a normal append is not a rewrite");
+
+        // A compaction force-replaces the line with an orphan genesis:
+        // the acknowledged tip is no longer an ancestor, so secondary
+        // devices classify it as rewritten.
+        let mut keep = std::collections::HashSet::new();
+        keep.insert(pin);
+        engine
+            .compact_attachment_line(&repo, "origin", &keep)
+            .unwrap();
+        let after = engine
+            .attachment_line_status(&repo, "origin", Some(&tip1))
+            .unwrap();
+        assert!(after.rewritten, "a compaction is a rewrite");
+        assert!(!after.foreign, "the genesis is rooted on this vault");
+        assert_ne!(after.tip.as_deref(), Some(tip1.as_str()));
     }
 
     #[test]

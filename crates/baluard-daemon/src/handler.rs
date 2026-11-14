@@ -6503,6 +6503,19 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        // ── Attachments line status + cleanup acknowledgment (token
+        // required; both work on a locked vault — classification needs
+        // no keys, only the repository) ──
+        "vault.attach_status" => match state.attach_status(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.attach_ack" => match state.attach_ack(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
         // ── Biometric unlock (token NOT required for status/unlock) ──
         "vault.biometric_status" => match state.biometric_status().await {
             Ok(json) => ok_resp(json, token_str),
