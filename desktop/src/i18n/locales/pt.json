@@ -592,7 +592,11 @@
     "iconsCancel": "Cancelar",
     "iconsRunning": "Buscando {done} de {total}",
     "iconsDone": "{fetched} ícones buscados; {skipped} pulados.",
-    "iconsUpToDate": "Todas as entradas já têm ícone."
+    "iconsUpToDate": "Todas as entradas já têm ícone.",
+    "attachTitle": "Armazenamento de anexos",
+    "attachDesc": "Os anexos ficam fora do histórico do cofre. Liberar espaço recupera os arquivos que nenhuma entrada referencia.",
+    "attachCompact": "Liberar espaço",
+    "attachResult": "Recuperados {reclaimed} arquivo(s) ({bytes}), mantidos {kept}."
   },
   "autosync": {
     "upToDate": "Todas as alterações sincronizadas",
@@ -660,7 +664,9 @@
     "phraseEnrollRequired": "Este cofre baixado não tem chave de dispositivo nesta máquina. Digite sua frase de recuperação de 24 palavras para configurá-lo.",
     "cloneGuard": "Essa pasta não é o cofre que o Baluard esperava, então foi deixada como está.",
     "cloneDeleteFailed": "O Baluard não conseguiu remover totalmente a pasta local. Elimine-a manualmente e baixe de novo.",
-    "cloneRetry": "O Baluard não conseguiu verificar este cofre com segurança. Tente de novo ou remova a pasta manualmente."
+    "cloneRetry": "O Baluard não conseguiu verificar este cofre com segurança. Tente de novo ou remova a pasta manualmente.",
+    "attachPending": "Alguns arquivos ainda estão sincronizando. Sincronize uma vez e tente novamente.",
+    "attachReadable": "A compactação precisa que todas as entradas sejam legíveis neste dispositivo. Desbloqueie todo o cofre aqui, ou execute-a em um dispositivo que consiga ler tudo."
   },
   "categories": {
     "allItems": "Todos os itens",

@@ -379,7 +379,9 @@
     "phraseEnrollRequired": "Ce coffre téléchargé n'a pas de clé d'appareil sur cette machine. Saisis ta phrase de récupération de 24 mots pour le configurer.",
     "cloneGuard": "Ce dossier n'est pas le coffre attendu par Baluard, il a donc été laissé intact.",
     "cloneDeleteFailed": "Baluard n'a pas pu supprimer entièrement le dossier local. Supprimez-le manuellement, puis retéléchargez.",
-    "cloneRetry": "Baluard n'a pas pu vérifier ce coffre en toute sécurité. Réessayez ou supprimez le dossier manuellement."
+    "cloneRetry": "Baluard n'a pas pu vérifier ce coffre en toute sécurité. Réessayez ou supprimez le dossier manuellement.",
+    "attachPending": "Des fichiers sont encore en cours de synchronisation. Synchronisez une fois, puis réessayez.",
+    "attachReadable": "La compaction exige que toutes les entrées soient lisibles sur cet appareil. Déverrouillez tout le coffre ici, ou exécutez-la depuis un appareil capable de tout lire."
   },
   "sync": {
     "title": "Synchronisation du coffre",
@@ -482,7 +484,11 @@
     "iconsCancel": "Annuler",
     "iconsRunning": "Récupération {done} sur {total}",
     "iconsDone": "{fetched} icônes récupérées ; {skipped} ignorées.",
-    "iconsUpToDate": "Toutes les entrées ont déjà une icône."
+    "iconsUpToDate": "Toutes les entrées ont déjà une icône.",
+    "attachTitle": "Stockage des pièces jointes",
+    "attachDesc": "Les pièces jointes vivent en dehors de l'historique du coffre. Libérer de l'espace récupère les fichiers qu'aucune entrée ne référence.",
+    "attachCompact": "Libérer de l'espace",
+    "attachResult": "{reclaimed} fichier(s) récupéré(s) ({bytes}), {kept} conservé(s)."
   },
   "settings": {
     "faviconLabel": "Afficher les icônes des sites web",

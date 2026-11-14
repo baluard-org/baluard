@@ -54,6 +54,11 @@ open class StubVault(
         return "{}"
     }
 
+    override suspend fun attachCompact(payload: String): String {
+        calls += "attachCompact"
+        return "{}"
+    }
+
     override suspend fun autofillAppTrust(packageName: String, domain: String) {
         calls += "autofillAppTrust"
     }
