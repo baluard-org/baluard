@@ -666,7 +666,8 @@
     "cloneDeleteFailed": "O Baluard não conseguiu remover totalmente a pasta local. Elimine-a manualmente e baixe de novo.",
     "cloneRetry": "O Baluard não conseguiu verificar este cofre com segurança. Tente de novo ou remova a pasta manualmente.",
     "attachPending": "Alguns arquivos ainda estão sincronizando. Sincronize uma vez e tente novamente.",
-    "attachReadable": "A compactação precisa que todas as entradas sejam legíveis neste dispositivo. Desbloqueie todo o cofre aqui, ou execute-a em um dispositivo que consiga ler tudo."
+    "attachReadable": "A compactação precisa que todas as entradas sejam legíveis neste dispositivo. Desbloqueie todo o cofre aqui, ou execute-a em um dispositivo que consiga ler tudo.",
+    "attachLegacy": "Algumas entradas foram salvas pela última vez em uma versão anterior do app. Atualize todos os dispositivos, salve novamente essas entradas e tente de novo."
   },
   "categories": {
     "allItems": "Todos os itens",

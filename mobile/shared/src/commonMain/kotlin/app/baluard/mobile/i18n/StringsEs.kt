@@ -508,6 +508,7 @@ internal val ES: Map<String, String> = mapOf(
     "settings.attachResult" to "Se recuperaron {0} archivos ({1}), se conservaron {2}.",
     "settings.attachPending" to "Algunos archivos aún se están sincronizando. Sincroniza una vez e inténtalo de nuevo.",
     "settings.attachReadable" to "La compactación necesita que todas las entradas sean legibles en este dispositivo.",
+    "settings.attachLegacy" to "Algunas entradas se guardaron por última vez con una versión anterior de la app. Actualiza todos los dispositivos, vuelve a guardar esas entradas e inténtalo de nuevo.",
     "settings.attachFailed" to "No se pudo liberar el espacio de los adjuntos.",
     "settings.dataSection" to "Datos",
     "settings.categorySyncSubtitle" to "Estado, sincronización automática y conexiones remotas",

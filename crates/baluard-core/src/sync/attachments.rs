@@ -152,8 +152,7 @@ pub fn collect_untracked_blob_paths(repo: &git2::Repository) -> Vec<std::path::P
 /// that are not SHA-256 pins (junk cannot masquerade as content). The
 /// pruner and download path speak in pins; the merger preserves raw
 /// names.
-pub fn line_entries(repo: &git2::Repository, tip: &git2::Tree<'_>) -> Vec<(String, Oid)> {
-    let _ = repo;
+pub fn line_entries(tip: &git2::Tree<'_>) -> Vec<(String, Oid)> {
     raw_entries(tip)
         .into_iter()
         .filter(|(name, _)| entry_pin(name).is_some())
@@ -200,7 +199,7 @@ pub fn prune_line_tree<'r>(
     let mut tb = repo
         .treebuilder(None)
         .map_err(|e| SyncError::Git(format!("attachments treebuilder: {e}")))?;
-    for (pin, oid) in line_entries(repo, tip) {
+    for (pin, oid) in line_entries(tip) {
         if keep.contains(&pin) {
             let Some(name) = entry_name(&pin) else {
                 continue;

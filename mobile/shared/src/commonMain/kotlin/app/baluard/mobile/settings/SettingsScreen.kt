@@ -2936,6 +2936,8 @@ val entitlement by Entitlements.state.collectAsState()
                                             Toast.error(t("settings.attachPending"))
                                         msg.contains("needs every entry readable") ->
                                             Toast.error(t("settings.attachReadable"))
+                                        msg.contains("older app version") ->
+                                            Toast.error(t("settings.attachLegacy"))
                                         else ->
                                             Toast.error(msg.ifEmpty { t("settings.attachFailed") })
                                     }
