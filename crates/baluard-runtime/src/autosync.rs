@@ -174,6 +174,10 @@ struct Inner {
     /// without touching VaultState's locks. None until the first
     /// attach_status/unlock wires it (the cycle then skips probing).
     line_ack_tip: Option<String>,
+    /// Earliest instant the next downgrade retry may fire. Reset at the
+    /// top of every fire_sync; set by the downgrade tail so the
+    /// background loop retries at push cadence, not LOOP_SLICE_SECS.
+    line_retry_at: Option<std::time::Instant>,
     /// Where to persist an adopted first-contact tip (same file
     /// VaultState writes). None until wired; adoption without a path is
     /// skipped rather than guessed.
@@ -274,6 +278,7 @@ impl AutoSyncHandle {
                 stamp_persist_ms: None,
                 line_rewrite_pending: std::sync::atomic::AtomicBool::new(false),
                 line_ack_tip: None,
+                line_retry_at: None,
                 line_ack_path: None,
                 pending_conflicts: Vec::new(),
                 device_id: String::new(),
@@ -869,6 +874,7 @@ impl AutoSyncHandle {
             rewrite_pending = g
                 .line_rewrite_pending
                 .load(std::sync::atomic::Ordering::SeqCst);
+            g.line_retry_at = None;
             ack_ctx = (g.line_ack_tip.clone(), g.line_ack_path.clone());
             queued = g.pending;
             // While the rewrite gate is up the push leg is dropped, so
@@ -915,6 +921,7 @@ impl AutoSyncHandle {
                     // next attach_status poll. Conservative union: the
                     // stale flag OR a fresh rewrite both drop the push.
                     let mut downgrade = rewrite_pending;
+                    let mut fresh_pending: Option<bool> = None;
                     let mut adopt = None;
                     if ack_ctx.0.is_some() || ack_ctx.1.is_some() || downgrade {
                         match classify_line_rewrite(
@@ -926,6 +933,7 @@ impl AutoSyncHandle {
                         ) {
                             Ok((fresh, adopted)) => {
                                 downgrade = downgrade || fresh;
+                                fresh_pending = Some(fresh);
                                 adopt = adopted;
                             }
                             Err(ref e) => {
@@ -946,7 +954,7 @@ impl AutoSyncHandle {
                         use zeroize::Zeroize;
                         k.zeroize();
                     }
-                    (out, downgrade, adopt)
+                    (out, downgrade, fresh_pending, adopt)
                 }
             }),
         )
@@ -957,12 +965,18 @@ impl AutoSyncHandle {
             return;
         }
         // Timeout / join failure keeps the conservative flag value.
-        let (downgraded, adopted) = match &outcome {
-            Ok(Ok((_, dg, ad))) => (*dg, ad.clone()),
-            _ => (rewrite_pending, None),
+        let (downgraded, fresh_pending, adopted) = match &outcome {
+            Ok(Ok((_, dg, fp, ad))) => (*dg, *fp, ad.clone()),
+            _ => (rewrite_pending, None, None),
         };
         if let Some(tip) = adopted {
             g.line_ack_tip = Some(tip);
+        }
+        // The fresh classification is authoritative when it answered:
+        // arm on a new rewrite, and self-heal a stale flag it cleared.
+        if let Some(fresh) = fresh_pending {
+            g.line_rewrite_pending
+                .store(fresh, std::sync::atomic::Ordering::SeqCst);
         }
         if downgraded {
             // Honest downgrade: the push leg was dropped, so the queued
@@ -971,11 +985,19 @@ impl AutoSyncHandle {
             // an "All synced" UI.
             g.pending = queued;
             g.state = AutoSyncState::Dirty;
+            // Back off the retry to push cadence: with state left Dirty
+            // and no timer, the background loop's slice check refires
+            // every LOOP_SLICE_SECS and hammers the network while the
+            // gate is up. (Spawning the next fire_sync from here is not
+            // an option — a recursive future is never Send.)
+            g.line_retry_at = Some(
+                std::time::Instant::now() + std::time::Duration::from_secs(PUSH_DEBOUNCE_SECS),
+            );
             drop(g);
             return;
         }
         match outcome {
-            Ok(Ok((Ok(SyncOutcome::Synced { conflicts }), _, _))) => {
+            Ok(Ok((Ok(SyncOutcome::Synced { conflicts }), _, _, _))) => {
                 synced = true;
                 // A successful full cycle (manual sync, mutation push) is
                 // proof the remote accepts this device: clear the streak
@@ -993,10 +1015,10 @@ impl AutoSyncHandle {
                 // local-only index (keyless) so the next list rebuilds.
                 baluard_core::sync::engine::SyncEngine::invalidate_local_index(&self.vault_path);
             }
-            Ok(Ok((Ok(SyncOutcome::Offline), _, _))) => {
+            Ok(Ok((Ok(SyncOutcome::Offline), _, _, _))) => {
                 g.state = AutoSyncState::Offline;
             }
-            Ok(Ok((Ok(SyncOutcome::NeedsDecision { pending }), _, _))) => {
+            Ok(Ok((Ok(SyncOutcome::NeedsDecision { pending }), _, _, _))) => {
                 // Phase 2b: hold the paused conflicts and surface to the UI.
                 // The background loop and debounce must NOT fire while the repo
                 // is mid-merge; they resume once the queue drains via
@@ -1005,7 +1027,7 @@ impl AutoSyncHandle {
                 g.pending_conflicts = pending;
                 g.state = AutoSyncState::NeedsDecision;
             }
-            Ok(Ok((Err(ref e), _, _))) => log::warn!("[autosync] sync cycle failed: {e}"),
+            Ok(Ok((Err(ref e), _, _, _))) => log::warn!("[autosync] sync cycle failed: {e}"),
             Ok(Err(ref e)) => log::warn!("[autosync] sync task failed: {e}"),
             _ => {
                 // SYNC_OP_TIMEOUT: do not go offline unless run_sync_cycle
@@ -1062,7 +1084,14 @@ impl AutoSyncHandle {
                     }
                     // A debounce timer still armed means a fresh edit is
                     // coalescing; firing here would defeat the debounce.
-                    if g.state == AutoSyncState::Dirty && g.debounce.is_none() {
+                    // A pending line-rewrite retry deadline backs the
+                    // retry off to push cadence while the gate is up.
+                    if g.state == AutoSyncState::Dirty
+                        && g.debounce.is_none()
+                        && g.line_retry_at
+                            .map(|t| std::time::Instant::now() >= t)
+                            .unwrap_or(true)
+                    {
                         drop(g);
                         self.fire_sync(device_id.clone(), generation, SYNC_OP_TIMEOUT)
                             .await;
@@ -1260,7 +1289,15 @@ pub(crate) fn classify_line_rewrite(
         None
     };
     if let (Some(tip), Some(path)) = (&adopt, ack_path) {
-        if let Err(e) = std::fs::write(path, tip) {
+        // Same JSON shape write_line_ack uses — read_line_ack parses
+        // {"tip": ...} and a raw string would poison every later read.
+        let body = serde_json::json!({ "tip": tip }).to_string();
+        if let Some(dir) = path.parent() {
+            if let Err(e) = std::fs::create_dir_all(dir) {
+                log::warn!("[autosync] line ack dir create failed: {e}");
+            }
+        }
+        if let Err(e) = std::fs::write(path, body) {
             log::warn!("[autosync] line ack baseline write failed: {e}");
         }
     }

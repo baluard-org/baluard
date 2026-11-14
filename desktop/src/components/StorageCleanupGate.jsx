@@ -116,6 +116,15 @@ export default function StorageCleanupGate() {
     }
   }
 
+  // The solid compiler cannot parse optional-chaining calls inside JSX
+  // attribute lambdas, so the dialog focus helper lives here.
+  function focusResolveButton() {
+    queueMicrotask(() => {
+      const btn = document.querySelector("[data-testid=cleanup-resolve]");
+      if (btn) btn.focus();
+    });
+  }
+
   const n = () => notice();
   const detail = () => {
     const c = n();
@@ -140,7 +149,7 @@ export default function StorageCleanupGate() {
             role="alertdialog"
             aria-modal="true"
             aria-label={t("sync.cleanupTitle")}
-            ref={(el) => queueMicrotask(() => el.querySelector("[data-testid=cleanup-resolve]")?.focus())}
+            ref={focusResolveButton}
             class="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-8 space-y-4"
           >
             <h2 class="text-lg font-bold text-[var(--color-text)]">
@@ -161,7 +170,17 @@ export default function StorageCleanupGate() {
             <div class="flex items-center justify-end gap-3 pt-2">
               <button
                 data-testid="cleanup-keep-reading"
-                onClick={() => setOverlayOpen(false)}
+                onClick={() => {
+                  setOverlayOpen(false);
+                  // Moving focus with the collapse keeps keyboard users
+                  // out of body purgatory (the overlay unmounts under them).
+                  queueMicrotask(() => {
+                    const btn = document.querySelector(
+                      "[data-testid=cleanup-bar-resolve]",
+                    );
+                    if (btn) btn.focus();
+                  });
+                }}
                 class="px-4 py-2 rounded-xl text-xs font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
               >
                 {t("sync.cleanupKeepReading")}

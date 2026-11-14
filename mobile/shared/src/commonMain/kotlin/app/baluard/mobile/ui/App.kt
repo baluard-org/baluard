@@ -204,6 +204,9 @@ fun App(
         var pendingCleanup by remember { mutableStateOf<AttachmentLineStatus?>(null) }
         var cleanupCollapsed by remember { mutableStateOf(false) }
         var cleanupBusy by remember { mutableStateOf(false) }
+        // Vault identity the gate was armed for; declared early because
+        // the vault switch below must clear it (Kotlin locals precede use).
+        var cleanupVaultId by remember { mutableStateOf<String?>(null) }
         val entitlement by Entitlements.state.collectAsState()
         var unlocked by remember { mutableStateOf(false) }
         // Where the create ceremony writes. Set by the switcher's create row
@@ -292,6 +295,12 @@ fun App(
                     homeSyncPhase = SyncPhase.Idle
                     listSyncPhase = SyncPhase.Idle
                     pushPending = false
+                    // A cleanup gate armed for the outgoing vault must
+                    // never act on the new one; the keyed effect below
+                    // re-evaluates against the fresh vault.
+                    pendingCleanup = null
+                    cleanupCollapsed = false
+                    cleanupVaultId = null
                     auth.vault()?.let { v ->
                         runCatching { sync.onUnlock(v) }
                         conflictVm.refresh(v)
@@ -371,8 +380,7 @@ fun App(
         // attach_status works on a locked vault, but the gate only
         // matters once the user can act. The check keys on the vault
         // id so a switch re-evaluates and stale gate state never acts on
-        // the wrong vault (cleared on lock and on switch below).
-        var cleanupVaultId by remember { mutableStateOf<String?>(null) }
+        // the wrong vault (cleared on lock and on switch above).
         LaunchedEffect(unlocked, cleanupVaultId) {
             if (!unlocked) {
                 pendingCleanup = null

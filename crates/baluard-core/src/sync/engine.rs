@@ -2765,6 +2765,7 @@ impl SyncEngine {
         repo: &Repository,
         remote_name: &str,
         keep_pins: &std::collections::HashSet<String>,
+        protected_entry_ids: &std::collections::HashSet<uuid::Uuid>,
     ) -> Result<u32, BaluardError> {
         use crate::sync::attachments::{ATTACHMENTS_REF, ATTACHMENTS_TRACKING, line_entries};
         let tracking = format!("refs/remotes/{remote_name}/{ATTACHMENTS_TRACKING}");
@@ -2816,6 +2817,20 @@ impl SyncEngine {
         pinned.extend(keep_pins.iter().cloned());
         let mut removed = 0u32;
         for path in crate::sync::attachments::collect_untracked_blob_paths(repo) {
+            // Blob paths are entries/<cipher-id>/attachments/<file>; a
+            // cipher this device cannot decrypt has unknowable pins, so
+            // its whole directory is protected rather than hash-guessed.
+            if let Some(entry_id) = path
+                .parent()
+                .and_then(|atts| atts.parent())
+                .and_then(|entry| entry.file_name())
+                .and_then(|name| name.to_str())
+                .and_then(|name| uuid::Uuid::parse_str(name).ok())
+            {
+                if protected_entry_ids.contains(&entry_id) {
+                    continue;
+                }
+            }
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(_) => continue,
@@ -13414,7 +13429,7 @@ mod tests {
         local_refs.insert(pin_unpub);
 
         let removed = engine
-            .discard_stale_line_blobs(&repo, "origin", &local_refs)
+            .discard_stale_line_blobs(&repo, "origin", &local_refs, &Default::default())
             .unwrap();
         assert_eq!(removed, 1);
         assert!(path_unpub.exists());
@@ -13425,9 +13440,80 @@ mod tests {
 
         // Idempotent: a second pass finds nothing stale.
         let again = engine
-            .discard_stale_line_blobs(&repo, "origin", &local_refs)
+            .discard_stale_line_blobs(&repo, "origin", &local_refs, &Default::default())
             .unwrap();
         assert_eq!(again, 0);
+    }
+
+    #[test]
+    fn discard_stale_line_blobs_protects_unreadable_entries() {
+        // A cipher this device cannot decrypt has unknowable pins, so the
+        // guided resolution protects its whole attachments directory
+        // rather than hash-guessing; only truly stale copies are removed.
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _e) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine = SyncEngine::new(dir.path(), "device-a", None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine.commit_all(&repo, "c1").unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        engine
+            .add_remote(
+                &repo,
+                "origin",
+                &format!("file://{}", remote_path.display()),
+            )
+            .unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        // The line carries an unrelated pin so it exists at all; the
+        // stale copy under test is NOT on it.
+        let unrelated = b"unrelated-envelope".to_vec();
+        let unrelated_path = dir
+            .path()
+            .join("entries/77777777-7777-7777-7777-777777777777/attachments/x.enc");
+        std::fs::create_dir_all(unrelated_path.parent().unwrap()).unwrap();
+        std::fs::write(&unrelated_path, &unrelated).unwrap();
+        let unrelated_pin = crate::vault::attachment::blob_sha256(&unrelated);
+        engine
+            .publish_attachment_line(&repo, "origin", &[(unrelated_pin, unrelated_path.clone())])
+            .unwrap();
+
+        let att_dir = dir
+            .path()
+            .join("entries/88888888-8888-8888-8888-888888888888/attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let blob_a = b"unreadable-entry-envelope".to_vec();
+        let path_a = att_dir.join("a.enc");
+        std::fs::write(&path_a, &blob_a).unwrap();
+
+        // The unreadable entry is protected: its stale copy survives even
+        // though its pin is not in keep.
+        let mut protected = std::collections::HashSet::new();
+        protected.insert(uuid::Uuid::parse_str("88888888-8888-8888-8888-888888888888").unwrap());
+        let removed = engine
+            .discard_stale_line_blobs(&repo, "origin", &Default::default(), &protected)
+            .unwrap();
+        assert_eq!(removed, 0);
+        assert!(path_a.exists());
+
+        // Without protection the stale copy goes.
+        let removed = engine
+            .discard_stale_line_blobs(&repo, "origin", &Default::default(), &Default::default())
+            .unwrap();
+        assert_eq!(removed, 1);
+        assert!(!path_a.exists());
     }
 
     #[test]

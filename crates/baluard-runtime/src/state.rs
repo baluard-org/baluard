@@ -201,6 +201,11 @@ fn compact_keep_pins(
     for (cipher_id, attachments) in decrypted {
         for a in attachments {
             if a.blob_sha256.is_empty() {
+                // Pre-pin metadata: the file may have been published to
+                // the line by another device's worktree scan (content
+                // hash), so hashing it here is what keeps the line entry
+                // alive through compaction — skipping it would reclaim a
+                // blob the entry still references.
                 let f = vault_path
                     .join("entries")
                     .join(cipher_id.to_string())
@@ -212,6 +217,8 @@ fn compact_keep_pins(
                             .into(),
                     );
                 }
+                let bytes = std::fs::read(&f).map_err(|e| format!("legacy blob read: {e}"))?;
+                keep.insert(baluard_core::vault::attachment::blob_sha256(&bytes));
                 continue;
             }
             keep.insert(a.blob_sha256.clone());
@@ -9570,26 +9577,54 @@ impl VaultState {
         // absent from the line (uploaded but not yet pushed) while the
         // entry itself is live — deleting it would destroy the only
         // copy. Same enumeration contract as compaction.
-        let keep_pins = {
+        // Resolve-side keep set: unlike compaction this must never
+        // hard-fail. An entry this device cannot decrypt contributes its
+        // whole attachments directory as protected (its pins are
+        // unknowable here); a missing legacy file protects nothing
+        // because the committed blob still rides main.
+        let (keep_pins, protected_ids) = {
             let guard = self.inner.read().await;
             let handle = guard.as_ref().ok_or("Vault not opened")?;
             let mut ids = handle.list_cipher_ids().map_err(|e| e.to_string())?;
             ids.extend(handle.list_trash_ids().map_err(|e| e.to_string())?);
-            let mut decrypted = Vec::with_capacity(ids.len());
+            let mut keep = std::collections::HashSet::new();
+            let mut protected = std::collections::HashSet::new();
             for id in ids {
                 match handle.get_cipher(id) {
                     Ok(baluard_core::vault::handle::CipherRead::Decrypted(c)) => {
-                        decrypted.push((c.id, c.attachments.clone()));
+                        for a in &c.attachments {
+                            if !a.blob_sha256.is_empty() {
+                                keep.insert(a.blob_sha256.clone());
+                                continue;
+                            }
+                            // Legacy pre-pin blob: protect it by content
+                            // hash when the file is local; when it is
+                            // missing there is nothing local to lose.
+                            let f = vault_path
+                                .join("entries")
+                                .join(c.id.to_string())
+                                .join("attachments")
+                                .join(format!("{}.enc", a.id));
+                            if f.exists() {
+                                match std::fs::read(&f) {
+                                    Ok(bytes) => {
+                                        keep.insert(baluard_core::vault::attachment::blob_sha256(
+                                            &bytes,
+                                        ));
+                                    }
+                                    Err(_) => {
+                                        protected.insert(c.id);
+                                    }
+                                }
+                            }
+                        }
                     }
                     _ => {
-                        return Err(
-                            "Get the latest updates from a device that can read the whole vault; some entries are not readable here."
-                                .to_string(),
-                        );
+                        protected.insert(id);
                     }
                 }
             }
-            compact_keep_pins(&decrypted, &vault_path)?
+            (keep, protected)
         };
 
         // Serialize against autosync git work: the pull's force checkout
@@ -9644,7 +9679,7 @@ impl VaultState {
                     .clone()
                     .ok_or("The shared storage line vanished; sync and try again.")?;
                 let removed = engine
-                    .discard_stale_line_blobs(&repo, "origin", &keep_pins)
+                    .discard_stale_line_blobs(&repo, "origin", &keep_pins, &protected_ids)
                     .map_err(|e| e.to_string())?;
                 Ok((removed, tip))
             }),
@@ -9652,8 +9687,13 @@ impl VaultState {
         .await
         .map_err(|_| "Getting the updates timed out; try again.".to_string())?
         .map_err(|e| format!("attachment resolve task: {e}"))?;
-        let Ok((removed, tip)) = op else {
-            return Err("Getting the updates timed out; try again.".to_string());
+        // Elapsed (the outer arm) is the only timeout case; every inner
+        // Err carries its own typed reason and must surface verbatim.
+        let (removed, tip) = match op {
+            Ok(v) => v,
+            Err(_) => {
+                return Err("Getting the updates timed out; try again.".to_string());
+            }
         };
 
         Self::write_line_ack(vault_id, &tip)?;
@@ -11288,9 +11328,15 @@ mod activate_autosync_tests {
         };
         let keep =
             super::compact_keep_pins(&[(cipher_id, vec![legacy, pinned])], dir.path()).unwrap();
+        // The grandfathered blob contributes its CONTENT hash: another
+        // device's worktree scan may have published it to the line under
+        // that pin, and omitting it here would reclaim a live blob.
+        let legacy_hash = baluard_core::vault::attachment::blob_sha256(b"tracked legacy blob");
         assert_eq!(
             keep,
-            std::iter::once("ab".repeat(32)).collect::<std::collections::HashSet<_>>()
+            std::iter::once("ab".repeat(32))
+                .chain(std::iter::once(legacy_hash))
+                .collect::<std::collections::HashSet<_>>()
         );
     }
 
