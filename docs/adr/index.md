@@ -111,3 +111,4 @@ Numbered in design chronology. Each record carries its context, decision, and co
 | [0105](0105-vault-empty-and-squash-rewrite.md) | `baluard vault empty` and the Squash History Rewrite |
 | [0106](0106-attachment-blobs-off-main.md) | Attachment Blobs Off `main` on a Signed Side Channel |
 | [0107](0107-side-channel-message-bus.md) | Side-Channel Message Bus, Standard and Trigger |
+| [0108](0108-desktop-ui-stack.md) | Desktop UI Stack, Webview (Tauri v2) vs Native Rust (Rune) |
