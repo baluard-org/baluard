@@ -551,7 +551,11 @@
     "iconsCancel": "Cancelar",
     "iconsRunning": "Trayendo {done} de {total}",
     "iconsDone": "Se trajeron {fetched} iconos; {skipped} omitidos.",
-    "iconsUpToDate": "Todas las entradas ya tienen icono."
+    "iconsUpToDate": "Todas las entradas ya tienen icono.",
+    "attachTitle": "Almacenamiento de adjuntos",
+    "attachDesc": "Los adjuntos viven fuera del historial de la bóveda. Liberar espacio recupera los archivos que ninguna entrada referencia.",
+    "attachCompact": "Liberar espacio",
+    "attachResult": "Se recuperaron {reclaimed} archivo(s) ({bytes}), se conservaron {kept}."
   },
   "autosync": {
     "upToDate": "Todos los cambios sincronizados",
@@ -619,7 +623,9 @@
     "phraseEnrollRequired": "Esta bóveda descargada no tiene clave de dispositivo en esta máquina. Ingresa tu frase de recuperación de 24 palabras para configurarla.",
     "cloneGuard": "Esa carpeta no es la bóveda que Baluard esperaba, así que se dejó intacta.",
     "cloneDeleteFailed": "Baluard no pudo eliminar por completo la carpeta local. Elimínala manualmente y descarga de nuevo.",
-    "cloneRetry": "Baluard no pudo verificar esta bóveda de forma segura. Inténtalo de nuevo o elimina la carpeta manualmente."
+    "cloneRetry": "Baluard no pudo verificar esta bóveda de forma segura. Inténtalo de nuevo o elimina la carpeta manualmente.",
+    "attachPending": "Algunos archivos aún se están sincronizando. Sincroniza una vez e inténtalo de nuevo.",
+    "attachReadable": "La compactación necesita que todas las entradas sean legibles en este dispositivo. Desbloquea toda la bóveda aquí, o ejecútala desde un dispositivo que pueda leerlo todo."
   },
   "categories": {
     "allItems": "Todos los elementos",

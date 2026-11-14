@@ -992,6 +992,11 @@ internal interface UniffiLib : Library {
     `id`: RustBuffer.ByValue,
   ): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_compact(
+    `ptr`: Pointer,
+    `payload`: RustBuffer.ByValue,
+  ): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_attach_delete(
     `ptr`: Pointer,
     `payload`: RustBuffer.ByValue,
@@ -1951,6 +1956,8 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_compact(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_delete(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_attach_download(): Short
@@ -2355,6 +2362,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher() != 4306.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_compact() != 21575.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_attach_delete() != 56681.toShort()) {
@@ -4204,6 +4214,15 @@ public interface MobileVaultInterface {
   suspend fun `archiveCipher`(`id`: kotlin.String)
 
   /**
+   * Compact the vault's off-main attachments line, reclaiming
+   * encrypted files no entry references anymore. Refuses when any
+   * entry is unreadable on this device (shared vaults: owner/admin
+   * action) or when an upload is still syncing. Returns JSON
+   * `{reclaimed, reclaimed_bytes, kept}`.
+   */
+  suspend fun `attachCompact`(`payload`: kotlin.String): kotlin.String
+
+  /**
    * Delete an attachment from a cipher.
    * Payload: `{ cipher_id, attachment_id }`.
    */
@@ -5351,6 +5370,38 @@ open class MobileVault :
       { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
       // lift function
       { Unit },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Compact the vault's off-main attachments line, reclaiming
+   * encrypted files no entry references anymore. Refuses when any
+   * entry is unreadable on this device (shared vaults: owner/admin
+   * action) or when an upload is still syncing. Returns JSON
+   * `{reclaimed, reclaimed_bytes, kept}`.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `attachCompact`(`payload`: kotlin.String): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_attach_compact(
+          thisPtr,
+          FfiConverterString.lower(`payload`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
       // Error FFI converter
       BaluardException.ErrorHandler,
     )

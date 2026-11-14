@@ -998,6 +998,15 @@ impl MobileVault {
         Ok(self.state.delete_cipher(&id).await?)
     }
 
+    /// Compact the vault's off-main attachments line, reclaiming
+    /// encrypted files no entry references anymore. Refuses when any
+    /// entry is unreadable on this device (shared vaults: owner/admin
+    /// action) or when an upload is still syncing. Returns JSON
+    /// `{reclaimed, reclaimed_bytes, kept}`.
+    pub async fn attach_compact(&self, payload: String) -> Result<String, BaluardError> {
+        Ok(self.state.attach_compact(&payload).await?)
+    }
+
     /// Upload an attachment to a cipher.
     /// Payload: `{ cipher_id, filename, data_base64 }`.
     pub async fn attach_upload(&self, payload: String) -> Result<String, BaluardError> {

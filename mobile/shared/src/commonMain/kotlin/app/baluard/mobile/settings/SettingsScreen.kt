@@ -2894,6 +2894,66 @@ val entitlement by Entitlements.state.collectAsState()
                     )
                 }
             }
+
+            // ── Attachments: reclaim the off-main blob line ────────────
+            SectionCard(title = t("settings.attachTitle")) {
+                var compactBusy by remember { mutableStateOf(false) }
+                var compactResult by remember { mutableStateOf<String?>(null) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        t("settings.attachDesc"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    BaluardPrimaryButton(
+                        text = if (compactBusy) t("common.pleaseWait") else t("settings.attachCompact"),
+                        enabled = !compactBusy,
+                        loading = compactBusy,
+                        onClick = {
+                            scope.launch {
+                                compactBusy = true
+                                try {
+                                    val r = repo.attachCompact(vault)
+                                    val kb = r.reclaimedBytes / 1024.0
+                                    // One decimal without String.format (JVM-only).
+                                    val size = if (kb >= 1024) "${(kb / 1024 * 10).toInt() / 10.0} MB" else "${(kb * 10).toInt() / 10.0} KB"
+                                    compactResult = t(
+                                        "settings.attachResult",
+                                        r.reclaimed, size, r.kept,
+                                    )
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    val msg = e.message.orEmpty()
+                                    compactResult = null
+                                    when {
+                                        msg.contains("not finished syncing") ->
+                                            Toast.error(t("settings.attachPending"))
+                                        msg.contains("needs every entry readable") ->
+                                            Toast.error(t("settings.attachReadable"))
+                                        else ->
+                                            Toast.error(msg.ifEmpty { t("settings.attachFailed") })
+                                    }
+                                } finally {
+                                    compactBusy = false
+                                }
+                            }
+                        },
+                    )
+                }
+                compactResult?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
                     }
                     SettingsCategory.Vault -> {
 

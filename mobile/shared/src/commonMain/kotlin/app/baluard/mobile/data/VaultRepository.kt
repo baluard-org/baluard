@@ -12,6 +12,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import app.baluard.mobile.MobileRecoveryPhrase
 import app.baluard.mobile.openVault as uniffiOpenVault
@@ -298,6 +299,20 @@ class VaultRepository {
             put("attachment_id", attachmentId)
         }.toString()
         vault.attachDelete(payload)
+    }
+
+    /** Reclaim encrypted attachment files no entry references anymore.
+     * The daemon-side contract refuses when any entry is unreadable on
+     * this device (shared vaults: owner/admin action) or when an upload
+     * is still syncing. */
+    suspend fun attachCompact(vault: MobileVault): AttachmentCompactReport {
+        val raw = vault.attachCompact("{}")
+        val obj = Json.parseToJsonElement(raw).jsonObject
+        return AttachmentCompactReport(
+            reclaimed = obj["reclaimed"]?.jsonPrimitive?.longOrNull ?: 0L,
+            reclaimedBytes = obj["reclaimed_bytes"]?.jsonPrimitive?.longOrNull ?: 0L,
+            kept = obj["kept"]?.jsonPrimitive?.longOrNull ?: 0L,
+        )
     }
 
     /** Generate an SSH keypair (ed25519 | ecdsa256). JSON {public_key,
@@ -1224,4 +1239,10 @@ data class AttachmentDownloadResult(
     val filename: String,
     val mimeType: String,
     val bytes: ByteArray,
+)
+
+data class AttachmentCompactReport(
+    val reclaimed: Long,
+    val reclaimedBytes: Long,
+    val kept: Long,
 )

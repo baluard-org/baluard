@@ -14,6 +14,7 @@ import ExternalLink from "./ExternalLink.jsx";
 import { Button, Toggle } from "./Primitives.jsx";
 import CopyButton from "./CopyButton.jsx";
 import IconBackfillSection from "./IconBackfillSection.jsx";
+import AttachmentsSection from "./AttachmentsSection.jsx";
 
 const PROVIDER_STYLES = {
   github: { bg: "bg-gray-800", border: "border-gray-600", text: "text-white" },
@@ -1254,6 +1255,9 @@ const [customError, setCustomError] = createSignal(null);
 
           {/* ── Site icons backfill ── */}
           <IconBackfillSection />
+
+          {/* ── Attachment storage (off-main line compaction) ── */}
+          <AttachmentsSection />
 
           {/* ── Error ── */}
           <Show when={error()}>

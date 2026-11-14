@@ -66,6 +66,21 @@ describe("sanitizeError", () => {
     ).toBe("errors.phraseEnrollRequired");
   });
 
+  test("matches attachment compaction refusals", () => {
+    expect(
+      sanitizeError(
+        "some files have not finished syncing to the vault yet; sync once and retry compaction",
+        t,
+      ),
+    ).toBe("errors.attachPending");
+    expect(
+      sanitizeError(
+        "Compaction needs every entry readable on this device; sync and unlock fully",
+        t,
+      ),
+    ).toBe("errors.attachReadable");
+  });
+
   test("matches timeout", () => {
     expect(sanitizeError("request timeout after 5s", t)).toBe("errors.timeout");
   });
