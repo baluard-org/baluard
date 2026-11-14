@@ -77,6 +77,9 @@ When a vault has a remote and a connected provider, the daemon coordinator (`cra
 ### Padded Buckets
 Five fixed-size padding tiers (XS: 5KB, S: 30KB, M: 100KB, L: 250KB, XL: 2MB). Auto-selected via `Tier::fit()`. Prevents file-size metadata leakage across encrypted Git commits.
 
+### Attachment Side Channel
+Attachment blobs live outside `main` on `refs/notes/baluard-attachments` (`crates/baluard-core/src/sync/attachments.rs`): a signed, append-only, content-addressed line keyed by the SHA-256 of the stored ciphertext (`AttachmentMeta.blob_sha256`, empty meaning legacy blobs grandfathered on main). Every sync publishes untracked worktree blobs to the line before the main push (best-effort); downloads fall back worktree-then-line and verify fetched bytes against the pin inside the fetch, so a hostile remote cannot substitute foreign bytes and a missing line entry surfaces as "not finished syncing". Deleting an entry is logical until compaction (`vault.attach_compact`, a Settings action on desktop and mobile): the daemon refuses when any entry is unreadable locally (owner/admin action on shared vaults) or when an upload is still syncing, then force-replaces the line with a fresh signed genesis carrying only still-referenced pins, parented on the vault root. See ADR 0106 and docs/designs/attachment-storage.md.
+
 ### Device Lifecycle
 Epoch state machine: `CREATED -> ACTIVE -> ROTATING -> RETIRED -> DESTROYED`.
 - `revoke_device_and_rekey()` executes full rotation: validates preconditions, writes a crash marker, re-encrypts all ciphers + attachments, writes keywrap, and updates in-memory state.
