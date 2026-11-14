@@ -503,6 +503,7 @@
       "pt": "Outro dispositivo removeu os anexos excluídos do armazenamento compartilhado. Seus arquivos estão a salvo e tudo continua funcionando; este dispositivo troca automaticamente.",
       "fr": "Un autre appareil a retiré les pièces jointes supprimées du stockage partagé. Vos fichiers sont en sécurité et tout continue de fonctionner ; cet appareil bascule automatiquement."
     },
+    "attachCleanedVerifiedHint": "Le nettoyage a ete fait par un appareil verifie. Les entrees et les pieces jointes restent synchronisees.",
     "attachForeign": {
       "en": "Attachment storage is out of step",
       "es": "El almacenamiento de adjuntos está desalineado",

@@ -87,6 +87,25 @@ describe("AttachmentsSection", () => {
     });
   });
 
+  it("attributes a verified rewrite in the cleanup notice", async () => {
+    const STATUS = JSON.stringify({
+      tip: "d".repeat(64),
+      rewritten: true,
+      foreign: false,
+      rewrite_signed: true,
+    });
+    daemonMock.mockImplementation((action) =>
+      action === "vault.attach_status"
+        ? Promise.resolve(STATUS)
+        : Promise.resolve(REPORT)
+    );
+    render(() => <AttachmentsSection />);
+    const notice = await waitFor(() => screen.getByTestId("attach-notice"));
+    expect(notice.textContent).toContain("sync.attachCleaned");
+    expect(notice.textContent).toContain("sync.attachCleanedVerifiedHint");
+    expect(notice.textContent).not.toContain("sync.attachCleanedHint");
+  });
+
   it("shows the foreign-storage notice without an accept button", async () => {
     const STATUS = JSON.stringify({
       tip: "b".repeat(64),
