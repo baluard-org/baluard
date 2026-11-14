@@ -1016,6 +1016,32 @@ impl MobileVault {
         Ok(self.state.attach_ack(&payload).await?)
     }
 
+    /// Read the shared advisory message board status for the cleanup
+    /// notice: whether this device still carries the tip it last
+    /// accepted, whether the current tip was rewritten, and the
+    /// verified compaction details when the genesis signature checks
+    /// out. Works on a locked vault. Returns JSON
+    /// `{tip, rewritten, foreign, rewrite_signed, compaction}`.
+    pub async fn msg_board_status(&self) -> Result<String, BaluardError> {
+        Ok(self
+            .state
+            .msg_board_status("{}")
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })?)
+    }
+
+    /// Acknowledge the offered message board tip after the cleanup
+    /// notice, silencing it until the board is rewritten again. Refuses
+    /// a stale accept when the board changed while reviewing.
+    pub async fn msg_board_ack(&self, tip: String) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "tip": tip }).to_string();
+        Ok(self
+            .state
+            .msg_board_ack(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })?)
+    }
+
     /// Compact the vault's off-main attachments line, reclaiming
     /// encrypted files no entry references anymore. Refuses when any
     /// entry is unreadable on this device (shared vaults: owner/admin

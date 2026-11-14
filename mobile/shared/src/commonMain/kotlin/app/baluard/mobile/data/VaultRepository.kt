@@ -327,6 +327,29 @@ class VaultRepository {
         vault.attachAck(tip)
     }
 
+    /** Read the shared advisory message board status for the cleanup
+     * notice. Works on a locked vault (classification needs no keys).
+     * Null fields mean the board carries nothing to show. */
+    suspend fun msgBoardStatus(vault: MobileVault): MsgBoardStatus {
+        val raw = vault.msgBoardStatus()
+        val obj = Json.parseToJsonElement(raw).jsonObject
+        val compaction = obj["compaction"]?.jsonObject
+        return MsgBoardStatus(
+            tip = obj["tip"]?.jsonPrimitive?.contentOrNull,
+            rewritten = obj["rewritten"]?.jsonPrimitive?.booleanOrNull ?: false,
+            foreign = obj["foreign"]?.jsonPrimitive?.booleanOrNull ?: false,
+            rewriteSigned = obj["rewrite_signed"]?.jsonPrimitive?.booleanOrNull,
+            compactionDevice = compaction?.get("device_id")?.jsonPrimitive?.contentOrNull,
+            compactionEntries = compaction?.get("compacted_entries")?.jsonPrimitive?.longOrNull,
+        )
+    }
+
+    /** Acknowledge the offered board tip after the cleanup notice,
+     * silencing it until the board is rewritten again. */
+    suspend fun msgBoardAck(vault: MobileVault, tip: String) {
+        vault.msgBoardAck(tip)
+    }
+
     /** Reclaim encrypted attachment files no entry references anymore.
      * The daemon-side contract refuses when any entry is unreadable on
      * this device (shared vaults: owner/admin action) or when an upload
@@ -1281,4 +1304,13 @@ data class AttachmentCompactReport(
     val reclaimed: Long,
     val reclaimedBytes: Long,
     val kept: Long,
+)
+
+data class MsgBoardStatus(
+    val tip: String?,
+    val rewritten: Boolean,
+    val foreign: Boolean,
+    val rewriteSigned: Boolean?,
+    val compactionDevice: String?,
+    val compactionEntries: Long?,
 )

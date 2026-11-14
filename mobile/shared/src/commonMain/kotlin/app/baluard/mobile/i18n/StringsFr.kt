@@ -479,6 +479,13 @@ internal val FR: Map<String, String> = mapOf(
     "settings.avatarBadType" to "Format non supporté (utilisez PNG, JPG, GIF ou WebP)",
     "settings.avatarTooLarge" to "Cette image est trop volumineuse même après compression. Choisissez une image plus légère.",
 
+    "settings.msgTitle" to "Tableau de messages partage",
+    "settings.msgForeign" to "Le tableau de messages partage appartient a un autre coffre.",
+    "settings.msgCleaned" to "Le tableau de messages partage a ete nettoye.",
+    "settings.msgCleanedDetails" to "L'appareil {0} a retire {1} messages du tableau partage.",
+    "settings.msgCleanedVerified" to "Le nettoyage a ete signe par une cle d appareil verifiee.",
+    "settings.msgAck" to "Compris",
+    "settings.msgChanged" to "Le tableau a change pendant que vous le consultiez. Verifiez une fois de plus.",
     "settings.attachTitle" to "Stockage des pièces jointes",
     "settings.attachDesc" to "Les pièces jointes vivent en dehors de l'historique du coffre. Libérer de l'espace récupère les fichiers qu'aucune entrée ne référence.",
     "settings.attachCompact" to "Libérer de l'espace",

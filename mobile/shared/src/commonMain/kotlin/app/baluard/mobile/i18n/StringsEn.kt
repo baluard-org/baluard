@@ -488,6 +488,13 @@ internal val EN: Map<String, String> = mapOf(
     "settings.avatarBadType" to "Use a png, jpg, gif, or webp image.",
     "settings.avatarTooLarge" to "That image is too large even after shrinking. Try a smaller one.",
 
+    "settings.msgTitle" to "Shared message board",
+    "settings.msgForeign" to "The shared message board belongs to a different vault.",
+    "settings.msgCleaned" to "The shared message board was cleaned up.",
+    "settings.msgCleanedDetails" to "Device {0} removed {1} messages from the shared message board.",
+    "settings.msgCleanedVerified" to "The cleanup was signed by a verified device key.",
+    "settings.msgAck" to "Got it",
+    "settings.msgChanged" to "The message board changed again while you were reviewing. Check once more.",
     "settings.attachTitle" to "Attachment storage",
     "settings.attachDesc" to "Attachments live outside the vault history. Freeing space reclaims files no entry references anymore.",
     "settings.attachCompact" to "Free up space",

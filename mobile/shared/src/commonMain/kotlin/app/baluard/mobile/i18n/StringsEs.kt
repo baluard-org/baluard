@@ -502,6 +502,13 @@ internal val ES: Map<String, String> = mapOf(
     "settings.avatarBadType" to "Usa una imagen png, jpg, gif o webp.",
     "settings.avatarTooLarge" to "Esa imagen es demasiado grande incluso al reducirla. Prueba con una más pequeña.",
 
+    "settings.msgTitle" to "Tablón de mensajes compartido",
+    "settings.msgForeign" to "El tablón de mensajes compartido pertenece a otra bóveda.",
+    "settings.msgCleaned" to "El tablón de mensajes compartido fue limpiado.",
+    "settings.msgCleanedDetails" to "El dispositivo {0} quitó {1} mensajes del tablón compartido.",
+    "settings.msgCleanedVerified" to "La limpieza fue firmada por una clave de dispositivo verificada.",
+    "settings.msgAck" to "Entendido",
+    "settings.msgChanged" to "El tablón cambió mientras lo revisabas. Verifica una vez más.",
     "settings.attachTitle" to "Almacenamiento de adjuntos",
     "settings.attachDesc" to "Los adjuntos viven fuera del historial de la bóveda. Liberar espacio recupera los archivos que ninguna entrada referencia.",
     "settings.attachCompact" to "Liberar espacio",

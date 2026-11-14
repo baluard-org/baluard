@@ -80,6 +80,7 @@ import app.baluard.mobile.MobileProvider
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.auth.AuthViewModel
 import app.baluard.mobile.data.AttachmentLineStatus
+import app.baluard.mobile.data.MsgBoardStatus
 import app.baluard.mobile.data.MobileHealthReport
 import app.baluard.mobile.data.MobileHealthFinding
 import app.baluard.mobile.data.VaultRepository
@@ -2893,6 +2894,66 @@ val entitlement by Entitlements.state.collectAsState()
                             }) { Text(t("common.cancel")) }
                         },
                     )
+                }
+            }
+
+            // ── Advisory message board: cleanup notices only ───────────
+            var msgNotice by remember { mutableStateOf<MsgBoardStatus?>(null) }
+            var msgAckBusy by remember { mutableStateOf(false) }
+            LaunchedEffect(vault) {
+                // Advisory only: a failed status read shows nothing.
+                try {
+                    msgNotice = repo.msgBoardStatus(vault)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+            }
+            val m = msgNotice
+            if (m != null && (m.rewritten || m.foreign)) {
+                SectionCard(title = t("settings.msgTitle")) {
+                    val msg = when {
+                        m.foreign -> t("settings.msgForeign")
+                        m.compactionDevice != null ->
+                            t(
+                                "settings.msgCleanedDetails",
+                                m.compactionDevice.take(8),
+                                m.compactionEntries ?: 0L,
+                            )
+                        m.rewriteSigned == true -> t("settings.msgCleanedVerified")
+                        else -> t("settings.msgCleaned")
+                    }
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (!m.foreign && m.tip != null) {
+                        BaluardOutlinedButton(
+                            text = if (msgAckBusy) t("common.pleaseWait") else t("settings.msgAck"),
+                            enabled = !msgAckBusy,
+                            onClick = {
+                                scope.launch {
+                                    msgAckBusy = true
+                                    try {
+                                        repo.msgBoardAck(vault, m.tip)
+                                        msgNotice = null
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        val em = e.message.orEmpty()
+                                        when {
+                                            em.contains("changed again") ->
+                                                Toast.error(t("settings.msgChanged"))
+                                            else -> Toast.error(em)
+                                        }
+                                    } finally {
+                                        msgAckBusy = false
+                                    }
+                                }
+                            },
+                        )
+                    }
                 }
             }
 

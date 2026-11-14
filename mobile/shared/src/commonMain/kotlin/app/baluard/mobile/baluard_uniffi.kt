@@ -1359,6 +1359,13 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_fn_method_mobilevault_members_list(`ptr`: Pointer): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_msg_board_ack(
+    `ptr`: Pointer,
+    `tip`: RustBuffer.ByValue,
+  ): Long
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_msg_board_status(`ptr`: Pointer): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_my_contact_card(`ptr`: Pointer): Long
 
   fun uniffi_baluard_uniffi_fn_method_mobilevault_my_role(`ptr`: Pointer): Long
@@ -2141,6 +2148,10 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_members_list(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_msg_board_ack(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_msg_board_status(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_my_contact_card(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_my_role(): Short
@@ -2640,6 +2651,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_members_list() != 29779.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_msg_board_ack() != 23261.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_msg_board_status() != 32278.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_my_contact_card() != 10077.toShort()) {
@@ -4819,6 +4836,23 @@ public interface MobileVaultInterface {
    * removed, identity_rotated_at, is_self}], your_role}`.
    */
   suspend fun `membersList`(): kotlin.String
+
+  /**
+   * Acknowledge the offered message board tip after the cleanup
+   * notice, silencing it until the board is rewritten again. Refuses
+   * a stale accept when the board changed while reviewing.
+   */
+  suspend fun `msgBoardAck`(`tip`: kotlin.String): kotlin.String
+
+  /**
+   * Read the shared advisory message board status for the cleanup
+   * notice: whether this device still carries the tip it last
+   * accepted, whether the current tip was rewritten, and the
+   * verified compaction details when the genesis signature checks
+   * out. Works on a locked vault. Returns JSON
+   * `{tip, rewritten, foreign, rewrite_signed, compaction}`.
+   */
+  suspend fun `msgBoardStatus`(): kotlin.String
 
   /**
    * This device's signed contact card plus its verification code.
@@ -7952,6 +7986,68 @@ open class MobileVault :
     uniffiRustCallAsync(
       callWithPointer { thisPtr ->
         UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_members_list(
+          thisPtr,
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Acknowledge the offered message board tip after the cleanup
+   * notice, silencing it until the board is rewritten again. Refuses
+   * a stale accept when the board changed while reviewing.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `msgBoardAck`(`tip`: kotlin.String): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_msg_board_ack(
+          thisPtr,
+          FfiConverterString.lower(`tip`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Read the shared advisory message board status for the cleanup
+   * notice: whether this device still carries the tip it last
+   * accepted, whether the current tip was rewritten, and the
+   * verified compaction details when the genesis signature checks
+   * out. Works on a locked vault. Returns JSON
+   * `{tip, rewritten, foreign, rewrite_signed, compaction}`.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `msgBoardStatus`(): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_msg_board_status(
           thisPtr,
         )
       },

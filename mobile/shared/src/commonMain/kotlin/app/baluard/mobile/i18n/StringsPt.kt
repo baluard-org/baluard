@@ -450,6 +450,13 @@ internal val PT: Map<String, String> = mapOf(
     "settings.avatarBadType" to "Use uma imagem png, jpg, gif ou webp.",
     "settings.avatarTooLarge" to "Essa imagem é grande demais mesmo depois de reduzida. Tente uma menor.",
 
+    "settings.msgTitle" to "Quadro de mensagens compartilhado",
+    "settings.msgForeign" to "O quadro de mensagens compartilhado pertence a outro cofre.",
+    "settings.msgCleaned" to "O quadro de mensagens compartilhado foi limpo.",
+    "settings.msgCleanedDetails" to "O dispositivo {0} removeu {1} mensagens do quadro compartilhado.",
+    "settings.msgCleanedVerified" to "A limpeza foi assinada por uma chave de dispositivo verificada.",
+    "settings.msgAck" to "Entendi",
+    "settings.msgChanged" to "O quadro mudou enquanto você o revisava. Verifique uma vez mais.",
     "settings.attachTitle" to "Armazenamento de anexos",
     "settings.attachDesc" to "Os anexos ficam fora do histórico do cofre. Liberar espaço recupera os arquivos que nenhuma entrada referencia.",
     "settings.attachCompact" to "Liberar espaço",

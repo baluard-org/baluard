@@ -69,6 +69,16 @@ open class StubVault(
         return "{}"
     }
 
+    override suspend fun msgBoardStatus(): String {
+        calls += "msgBoardStatus"
+        return "{}"
+    }
+
+    override suspend fun msgBoardAck(tip: String): String {
+        calls += "msgBoardAck"
+        return "{}"
+    }
+
     override suspend fun autofillAppTrust(packageName: String, domain: String) {
         calls += "autofillAppTrust"
     }
