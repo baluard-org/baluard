@@ -569,6 +569,7 @@
       "fr": "Un autre appareil a retiré les pièces jointes supprimées du stockage partagé. Vos fichiers sont en sécurité et tout continue de fonctionner ; cet appareil bascule automatiquement."
     },
     "attachCleanedVerifiedHint": "La limpieza fue realizada por un dispositivo verificado. Las entradas y los adjuntos siguen sincronizados.",
+    "attachCleanedDetails": "La limpieza la hizo el dispositivo {device}: {count} archivo(s), {size} liberados.",
     "attachForeign": {
       "en": "Attachment storage is out of step",
       "es": "El almacenamiento de adjuntos está desalineado",

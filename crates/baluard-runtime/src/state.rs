@@ -9293,6 +9293,7 @@ impl VaultState {
             "rewritten": status.rewritten,
             "foreign": status.foreign,
             "rewrite_signed": status.rewrite_signed,
+            "compaction": status.compaction,
         })
         .to_string())
     }

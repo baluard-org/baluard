@@ -101,9 +101,15 @@ export default function AttachmentsSection() {
           <span class="block text-[10px] text-[var(--color-muted)]">
             {notice().foreign
               ? t("sync.attachForeignHint")
-              : notice().rewrite_signed === true
-                ? t("sync.attachCleanedVerifiedHint")
-                : t("sync.attachCleanedHint")}
+              : notice().compaction
+                ? t("sync.attachCleanedDetails", {
+                    device: notice().compaction.device_id.slice(0, 8),
+                    count: notice().compaction.reclaimed,
+                    size: formatBytes(notice().compaction.reclaimed_bytes),
+                  })
+                : notice().rewrite_signed === true
+                  ? t("sync.attachCleanedVerifiedHint")
+                  : t("sync.attachCleanedHint")}
           </span>
           <Show when={!notice().foreign}>
             <button
