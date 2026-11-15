@@ -84,7 +84,9 @@ for DIR in "$PROFILE/NativeMessagingHosts" \
 done
 
 # ---- Scratch daemon + seeded, unlocked vault (the desktop side).
-BALUARD_DATA_DIR="$DATA" BALUARD_DISABLE_KEYRING=1 BALUARD_AUTOSYNC=0 \
+# BALUARD_DEBUG=1: route_bridge_request logs every bridge action at debug;
+# the passkey leg's forensics depend on seeing those lines.
+BALUARD_DATA_DIR="$DATA" BALUARD_DISABLE_KEYRING=1 BALUARD_AUTOSYNC=0 BALUARD_DEBUG=1 \
   "$REPO/target/debug/baluard-daemon" --socket "$SOCK" >"$WORK/daemon.log" 2>&1 &
 DPID=$!
 for i in $(seq 1 50); do [ -S "$SOCK" ] && break; sleep 0.2; done
@@ -139,4 +141,21 @@ PROFILE_DIR="$PROFILE"
 export EXT_ID EXT_DIR DESKTOP_TOKEN DAEMON_SOCKET SITE_URL DEMO_URL PROFILE_DIR CDP_PORT
 # RUN_RING1=0 skips the popup ring for fast inline-dropdown-only iterations.
 if [ "${RUN_RING1:-1}" = "1" ]; then node pw.mjs; fi
-node inline.mjs
+# RUN_RING2=0 skips the inline ring for passkey-only iterations.
+if [ "${RUN_RING2:-1}" = "1" ]; then node inline.mjs; fi
+# Ring 3: the WebAuthn passkey ceremonies against the local verifying RP
+# (rp.mjs on http://localhost — a secure context). SKIP_PASSKEY=1 skips.
+if [ "${SKIP_PASSKEY:-0}" = "1" ]; then
+  echo "skip: passkey leg (SKIP_PASSKEY=1)"
+else
+  RP_PORT=$((18000 + RANDOM % 2000))
+  export RP_PORT
+  node rp.mjs >"$WORK/rp.log" 2>&1 &
+  RP_PID=$!
+  # Probe 127.0.0.1 explicitly: curl resolves localhost to ::1 first and
+  # the RP binds IPv4 only. Chromium is unaffected (it falls back).
+  for _i in $(seq 1 50); do curl -sf "http://127.0.0.1:$RP_PORT/state" >/dev/null 2>&1 && break; sleep 0.2; done
+  curl -sf "http://127.0.0.1:$RP_PORT/state" >/dev/null || { echo "RP never started"; tail "$WORK/rp.log"; exit 1; }
+  node pw-passkey.mjs
+  kill "$RP_PID" 2>/dev/null || true
+fi
