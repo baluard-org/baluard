@@ -20,8 +20,54 @@ function scheduleClear(seconds) {
   if (!Number.isFinite(s) || s <= 0) return;
   clearTimer = setTimeout(() => {
     clearTimer = null;
-    navigator.clipboard.writeText(" ").catch(() => {});
+    writeClipboard(" ").catch(() => {});
   }, s * 1000);
+}
+
+// The async Clipboard API only writes from a FOCUSED document, and an
+// offscreen document can never be focused (Chrome's own offscreen
+// reference: "Offscreen documents can't be focused"). On Chrome 109-156
+// navigator.clipboard.writeText() therefore rejects with
+// "NotAllowedError: ... Document is not focused." and the secret never
+// reaches the clipboard. document.execCommand("copy") is the supported
+// path for an unfocused extension document, so it is the fallback; when
+// the document somehow IS focused, writeText is tried first.
+function writeClipboard(text) {
+  const value = String(text ?? "");
+  if (document.hasFocus?.() && navigator.clipboard?.writeText) {
+    return navigator.clipboard
+      .writeText(value)
+      .catch((cause) => execCopy(value, cause));
+  }
+  return execCopy(value);
+}
+
+// Copy through a hidden textarea. execCommand is deprecated but still the
+// only clipboard write that works from an unfocused extension document.
+// The failing writeText rejection rides along so the surfaced error keeps
+// its cause.
+function execCopy(text, cause) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("aria-hidden", "true");
+  ta.style.position = "fixed";
+  ta.style.top = "-1000px";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  if (!ok) {
+    const why = cause?.message ? `: ${cause.message}` : "";
+    return Promise.reject(new Error(`clipboard write failed${why}`));
+  }
+  return Promise.resolve();
 }
 
 export function handleOffscreenMessage(msg, sender, sendResponse) {
@@ -31,8 +77,7 @@ export function handleOffscreenMessage(msg, sender, sendResponse) {
   // closed on anything that is not the extension itself without a tab.
   if (!sender || sender.id !== chrome.runtime.id || sender.tab) return;
   if (msg.action === "offscreen-copy") {
-    navigator.clipboard
-      .writeText(msg.text || "")
+    writeClipboard(msg.text || "")
       .then(() => {
         // A fresh copy always cancels a pending clear for the previous one.
         scheduleClear(msg.clearSeconds);
@@ -44,8 +89,7 @@ export function handleOffscreenMessage(msg, sender, sendResponse) {
   if (msg.action === "offscreen-clear") {
     if (clearTimer) clearTimeout(clearTimer);
     clearTimer = null;
-    navigator.clipboard
-      .writeText(" ")
+    writeClipboard(" ")
       .catch(() => {})
       .finally(() => sendResponse({ ok: true }));
     return true;

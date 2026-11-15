@@ -5,7 +5,7 @@
 // writes a single space (per design — overwrite, not empty string, to avoid
 // some clipboard managers capturing an empty history entry).
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { handleOffscreenMessage } from "../src/offscreen.js";
 
 // The extension's own sender shape (background service worker: no tab).
@@ -14,6 +14,9 @@ const SENDER = { id: "test-extension-id" };
 describe("offscreen message router", () => {
   let writeText;
   beforeEach(() => {
+    // jsdom reports the document unfocused, which would skip the writeText
+    // fast path; these tests exercise it explicitly.
+    document.hasFocus = () => true;
     writeText = vi.fn().mockResolvedValue(undefined);
     globalThis.navigator.clipboard.writeText = writeText;
   });
@@ -83,7 +86,66 @@ describe("offscreen message router", () => {
       sendResponse
     );
     await new Promise((r) => setTimeout(r, 0));
-    expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: "Error: permission denied" });
+    // The async API failed, so the execCommand fallback ran; with no
+    // execCommand support the copy is reported as failed.
+    expect(sendResponse).toHaveBeenCalledWith({
+      ok: false,
+      error: "Error: clipboard write failed: permission denied",
+    });
+  });
+
+  // Chromium 109-156: navigator.clipboard.writeText() rejects in an
+  // offscreen document ("Document is not focused."). The execCommand
+  // fallback is the only write that works from an unfocused document.
+  it("falls back to execCommand when the async clipboard API refuses", async () => {
+    writeText.mockRejectedValueOnce(new Error("Document is not focused."));
+    document.execCommand = vi.fn(() => true);
+    const sendResponse = vi.fn();
+    handleOffscreenMessage(
+      { target: "offscreen", action: "offscreen-copy", text: "secret" },
+      SENDER,
+      sendResponse
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.execCommand).toHaveBeenCalledWith("copy");
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    delete document.execCommand;
+  });
+
+  it("copies the secret through a hidden textarea on the execCommand path", async () => {
+    writeText.mockRejectedValueOnce(new Error("Document is not focused."));
+    let copied = null;
+    document.execCommand = vi.fn(() => {
+      copied = document.activeElement?.value ?? null;
+      return true;
+    });
+    handleOffscreenMessage(
+      { target: "offscreen", action: "offscreen-copy", text: "secret" },
+      SENDER,
+      vi.fn()
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(copied).toBe("secret");
+    // The textarea must not stay behind in the page.
+    expect(document.querySelectorAll("textarea")).toHaveLength(0);
+    delete document.execCommand;
+  });
+
+  it("uses execCommand when the async clipboard API is missing", async () => {
+    const saved = globalThis.navigator.clipboard;
+    globalThis.navigator.clipboard = undefined;
+    document.execCommand = vi.fn(() => true);
+    const sendResponse = vi.fn();
+    handleOffscreenMessage(
+      { target: "offscreen", action: "offscreen-copy", text: "secret" },
+      SENDER,
+      sendResponse
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.execCommand).toHaveBeenCalledWith("copy");
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    globalThis.navigator.clipboard = saved;
+    delete document.execCommand;
   });
 
   it("offscreen-clear overwrites with a single space (not empty)", async () => {
@@ -175,5 +237,73 @@ describe("offscreen-copy clearSeconds", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+describe("offscreen writeClipboard fallback (unfocused document)", () => {
+  let writeText;
+  let execCommand;
+  let lastCopiedValue;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // Focused document: writeText is tried first and rejects below.
+    document.hasFocus = () => true;
+    writeText = vi.fn().mockRejectedValue(new Error("NotAllowedError: Document is not focused"));
+    globalThis.navigator.clipboard.writeText = writeText;
+    lastCopiedValue = null;
+    execCommand = vi.fn(() => {
+      lastCopiedValue = document.querySelector("textarea")?.value ?? null;
+      return true;
+    });
+    document.execCommand = execCommand;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    delete document.execCommand;
+  });
+
+  it("falls back to execCommand('copy') when writeText rejects, and reports ok", async () => {
+    const sendResponse = vi.fn();
+    handleOffscreenMessage(
+      { target: "offscreen", action: "offscreen-copy", text: "secret", clearSeconds: 0 },
+      { id: chrome.runtime.id },
+      sendResponse
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writeText).toHaveBeenCalledWith("secret");
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(lastCopiedValue).toBe("secret");
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    // The hidden textarea never survives the copy.
+    expect(document.querySelectorAll("textarea")).toHaveLength(0);
+  });
+
+  it("skips writeText entirely when the document is unfocused", async () => {
+    document.hasFocus = () => true; // overridden below
+    document.hasFocus = () => false;
+    const sendResponse = vi.fn();
+    handleOffscreenMessage(
+      { target: "offscreen", action: "offscreen-copy", text: "secret", clearSeconds: 0 },
+      { id: chrome.runtime.id },
+      sendResponse
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writeText).not.toHaveBeenCalled();
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+  });
+
+  it("routes the auto-clear through the same fallback", async () => {
+    const sendResponse = vi.fn();
+    handleOffscreenMessage(
+      { target: "offscreen", action: "offscreen-copy", text: "secret", clearSeconds: 10 },
+      { id: chrome.runtime.id },
+      sendResponse
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(execCommand).toHaveBeenCalledTimes(2);
+    // Second write is the clear overwrite.
+    expect(lastCopiedValue).toBe(" ");
+    expect(sendResponse).toHaveBeenCalledTimes(1);
   });
 });

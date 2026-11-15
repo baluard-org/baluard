@@ -29,8 +29,8 @@ const fakePort = {
         ok: true,
         payload: JSON.stringify({
           matches: [
-            { id: "u1", name: "Bank", username: "me", favorite: true, vault_slug: "personal", vault_name: "Personal vault" },
-            { id: "f1", name: "Wifi", username: "home", favorite: false, vault_slug: "family", vault_name: "Family space" },
+            { id: "u1", name: "Bank", username: "me", favorite: true, vault_slug: "personal", vault_name: "Personal vault", totp: true, totp_period: 30 },
+            { id: "f1", name: "Wifi", username: "home", favorite: false, vault_slug: "family", vault_name: "Family space", totp: false },
           ],
           // The raw route payload carries the chips array - it must be
           // projected OUT before anything reaches the page principal.
@@ -89,14 +89,54 @@ describe("handleInlineMatches projection (B4, G24 step 5)", () => {
         "favorite",
         "id",
         "name",
+        "totp",
+        "totp_period",
         "username",
         "vault_slug",
       ]);
       expect(m.vault_name).toBeUndefined();
     }
+    // TOTP presence + window length ride along (metadata, like favorite) so
+    // the inline rows can render the countdown ring; no seed ever crosses.
+    expect(data.matches[0].totp).toBe(true);
+    expect(data.matches[0].totp_period).toBe(30);
+    expect(data.matches[1].totp).toBe(false);
+    expect(data.matches[1].totp_period).toBe(0);
     expect(data.vaults).toBeUndefined();
     expect(raw).not.toContain("Family space");
     expect(raw).not.toContain("Personal vault");
+  });
+
+  it("clamps unusable totp_period values to 0", async () => {
+    const bg = await import("../src/background.js");
+    const realPost = fakePort.postMessage;
+    fakePort.postMessage = (msg) => {
+      if (msg.action === "bridge.match") {
+        nmhMessages.push(msg);
+        swListener({
+          id: msg.id,
+          ok: true,
+          payload: JSON.stringify({
+            matches: [
+              { id: "a", name: "A", username: "u", vault_slug: "v", totp: true, totp_period: -5 },
+              { id: "b", name: "B", username: "u", vault_slug: "v", totp: true, totp_period: 2.5 },
+              { id: "c", name: "C", username: "u", vault_slug: "v", totp: true, totp_period: 99999 },
+              { id: "d", name: "D", username: "u", vault_slug: "v", totp: true, totp_period: 30 },
+            ],
+            vaults: [],
+          }),
+        });
+        return;
+      }
+      realPost(msg);
+    };
+    try {
+      const raw = await bg.handleInlineMatches({ tab: { id: 7, url: "https://site.test/login" } });
+      const data = JSON.parse(raw);
+      expect(data.matches.map((m) => m.totp_period)).toEqual([0, 0, 0, 30]);
+    } finally {
+      fakePort.postMessage = realPost;
+    }
   });
 
   it("reports multiVault false for a single-vault match set", async () => {
@@ -125,6 +165,8 @@ describe("handleInlineMatches projection (B4, G24 step 5)", () => {
       const data = JSON.parse(raw);
       expect(data.multiVault).toBe(false);
       expect(data.vaults).toBeUndefined();
+      expect(data.matches[0].totp).toBe(false);
+      expect(data.matches[0].totp_period).toBe(0);
     } finally {
       fakePort.postMessage = realPost;
     }

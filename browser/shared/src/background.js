@@ -117,6 +117,13 @@ function buildError(msg) {
 // Exported for unit tests; not used outside the SW module otherwise.
 export { buildError, send };
 
+// One TOTP window per row: presence flag plus an integer period in [1,3600],
+// 0 when unusable. Exported for the clamp unit test.
+function clampTotpPeriod(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 3600 ? n : 0;
+}
+
 function send(action, payload) {
   return new Promise((resolve, reject) => {
     if (!port) {
@@ -238,6 +245,12 @@ export async function handleInlineMatches(sender) {
     name: m.name,
     username: m.username,
     favorite: m.favorite,
+    // TOTP presence + window length (metadata, like favorite) so inline
+    // rows can render the countdown ring; the seed itself never crosses.
+    totp: m.totp === true,
+    // Daemon periods are positive integers; a hostile/garbage value must not
+    // reach the ring math (negative or fractional values poison the sweep).
+    totp_period: clampTotpPeriod(m.totp_period),
     vault_slug: m.vault_slug,
   }));
   return JSON.stringify({
@@ -277,6 +290,7 @@ export async function handleInlineFill(sender, id, mode, hasTotpField, vaultSlug
   let totpCode = "";
   let copied = false;
   let clipboardFallback = false;
+  let copyFailed = false;
   if (wantsTotp) {
     try {
       const t = await send("cipher.totp_code", { id, url, vault_slug: vaultSlug || "" });
@@ -292,14 +306,18 @@ export async function handleInlineFill(sender, id, mode, hasTotpField, vaultSlug
         const res = await clipboardCopy(totpCode);
         if (res === "fallback") clipboardFallback = true;
         else copied = true;
-      } catch {
+      } catch (e) {
+        // Fail visibly: a silent copy means the user pastes a stale or
+        // missing code into the login form.
+        console.warn("[baluard] clipboard copy failed:", String(e));
         copied = false;
+        copyFailed = true;
       }
     }
   }
   const expectedOrigin = originOf(url);
   const payload = totpOnly
-    ? { kind: "totp", expectedOrigin, totpCode, copied, clipboardFallback }
+    ? { kind: "totp", expectedOrigin, totpCode, copied, clipboardFallback, copyFailed }
     : {
         kind: "login",
         expectedOrigin,
@@ -310,6 +328,7 @@ export async function handleInlineFill(sender, id, mode, hasTotpField, vaultSlug
         },
         copied,
         clipboardFallback,
+        copyFailed,
       };
   // Push the fill to the requesting tab only (B5: pinned to the exact
   // frame the request came from). Content script re-checks the ORIGIN at
@@ -421,7 +440,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // offscreen doc owns the auto-clear timer (configurable, see
 // clipboardClearSeconds) and survives SW restarts.
 
-async function clipboardCopy(text) {
+export async function clipboardCopy(text) {
   // B8: Firefox has no chrome.offscreen. The copy must run in the popup
   // context (user gesture + document focus satisfy navigator.clipboard);
   // signal the fallback to the caller instead of throwing.
@@ -430,22 +449,72 @@ async function clipboardCopy(text) {
   }
   const clearSeconds = await getClipboardClearSeconds();
   await ensureOffscreen();
-  await chrome.runtime.sendMessage({
+  const resp = await chrome.runtime.sendMessage({
     action: "offscreen-copy",
     target: "offscreen",
     text,
     clearSeconds,
   });
+  // The offscreen doc answers {ok:false, error} when the write was refused
+  // (an unfocused document cannot use the async Clipboard API). The old
+  // code ignored the answer and reported a copy that never happened.
+  if (!resp || resp.ok !== true) {
+    throw new Error("clipboard write refused: " + JSON.stringify(resp));
+  }
 }
 
-async function ensureOffscreen() {
-  const existing = await chrome.offscreen?.hasDocument?.();
-  if (existing) return;
-  await chrome.offscreen.createDocument({
+// Chrome 116+ exposes runtime.getContexts; offscreen.hasDocument() only
+// exists from Chrome 150. Getting this wrong makes every copy AFTER the
+// first one fail: createDocument() rejects when a document already exists.
+async function hasOffscreenDocument() {
+  if (chrome.runtime?.getContexts) {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+      documentUrls: [chrome.runtime.getURL("offscreen.html")],
+    });
+    return contexts.length > 0;
+  }
+  if (chrome.offscreen?.hasDocument) return chrome.offscreen.hasDocument();
+  if (self.clients?.matchAll) {
+    const clients = await self.clients.matchAll();
+    return clients.some((c) => c.url.includes("offscreen.html"));
+  }
+  return false;
+}
+
+// Concurrent copies must not create the document twice: the second
+// createDocument() rejects ("Only a single offscreen document may be
+// created") and the copy is lost.
+let creatingOffscreen = null;
+export async function ensureOffscreen() {
+  // Serialize on the creation promise FIRST: a probe that resolves after
+  // another caller's createDocument() settled can carry a stale "no
+  // document" answer and would double-create.
+  if (creatingOffscreen) {
+    await creatingOffscreen;
+    return;
+  }
+  if (await hasOffscreenDocument()) return;
+  // A creator may have appeared while the probe was pending.
+  if (creatingOffscreen) {
+    await creatingOffscreen;
+    return;
+  }
+  creatingOffscreen = chrome.offscreen.createDocument({
     url: "offscreen.html",
     reasons: ["CLIPBOARD"],
-    justification: "Copy passwords/TOTP from the popup; service worker has no DOM.",
+    justification: "Copy passwords and TOTP codes for autofill; service worker has no DOM.",
   });
+  try {
+    await creatingOffscreen;
+  } catch (e) {
+    // A concurrent creator won (or the probe was stale): the document may
+    // exist now, which is the state we needed. Anything else still fails.
+    if (await hasOffscreenDocument()) return;
+    throw e;
+  } finally {
+    creatingOffscreen = null;
+  }
 }
 
 // ── Toolbar badge: match count for the active tab ──

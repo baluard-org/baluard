@@ -487,7 +487,9 @@ async function fill(entry) {
         totpCode = "";
       }
       if (totpCode && copyTotpEnabled()) {
-        clipboardCopy(totpCode).catch(() => {});
+        // Same surfacing as copyField: a silent copy failure would leave the
+        // user pasting nothing at the 2FA step.
+        clipboardCopy(totpCode).catch((e) => setError(e.message));
       }
     }
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

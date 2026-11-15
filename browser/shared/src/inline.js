@@ -38,6 +38,20 @@ export function statusKeyFor(code) {
   }
 }
 
+// One TOTP window's ring state, epoch-aligned (now mod period) like the
+// daemon rows. The daemon rotates on floor(now/period), so the ring floors
+// too: rounding would show a fresh full window for the last half second of
+// the dying code. Unusable periods fall back to 30s; the ring flips to
+// danger at OTP_EXPIRY_SECONDS and under (Bitwarden parity). The resolved
+// period rides the result so callers never re-derive it. Exported for
+// unit tests.
+export const OTP_EXPIRY_SECONDS = 7;
+export function otpRingState(period, nowSec) {
+  const p = Number(period) > 0 ? Number(period) : 30;
+  const seconds = p - (Math.floor(nowSec) % p);
+  return { seconds, expiring: seconds <= OTP_EXPIRY_SECONDS, period: p };
+}
+
 (() => {
   if (window.__baluardInline) return;
   window.__baluardInline = true;
@@ -122,14 +136,37 @@ export function statusKeyFor(code) {
       .menu-note { padding: 8px 12px 0; font-size: 11px; opacity: 0.85; }
       .entry {
         display: flex;
-        flex-direction: column;
-        gap: 2px;
+        flex-direction: row;
+        align-items: center;
+        gap: 10px;
         padding: 9px 12px;
         cursor: pointer;
       }
       .entry:hover, .entry:focus-visible { background: #14292c; outline: none; }
-      .entry-name { font-weight: 600; }
+      .entry-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+      .entry-name { font-weight: 600; overflow-wrap: anywhere; }
       .entry-user { color: #a2b7ba; font-size: 12px; word-break: break-all; }
+      /* Bitwarden-parity countdown ring: inner sweep drains clockwise, the
+         remaining seconds sit centered; the whole ring goes danger-red at
+         7s and under so the user can wait for a fresh code instead of
+         autofilling a stale one. */
+      .otp-ring { position: relative; width: 28px; height: 28px; flex-shrink: 0; }
+      .otp-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); }
+      .otp-ring circle { fill: none; }
+      .otp-ring-track { stroke: #1d3a3d; stroke-width: 1; }
+      .otp-ring-sweep { stroke: #b3e55c; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 78.5; }
+      .otp-ring-sec {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 9px;
+        font-weight: 600;
+        color: #f3f4f6;
+        font-variant-numeric: tabular-nums;
+      }
+      .otp-ring.expiring .otp-ring-sweep { stroke: #ef4444; }
+      .otp-ring.expiring .otp-ring-sec { color: #ef4444; }
       .status {
         position: fixed;
         display: none;
@@ -213,6 +250,7 @@ export function statusKeyFor(code) {
   function closeMenu() {
     menu.classList.remove("open");
     menuOpen = false;
+    stopOtpTicker();
   }
 
   async function toggleMenu() {
@@ -264,16 +302,32 @@ export function statusKeyFor(code) {
       item.className = "entry";
       item.setAttribute("role", "option");
       item.tabIndex = 0;
+      if (m.totp && m.totp_period) {
+        // The ring takes the row's leading slot, like Bitwarden's inline
+        // menu; rows without a code stay text-only.
+        const ring = document.createElement("span");
+        ring.className = "otp-ring";
+        ring.dataset.period = String(m.totp_period);
+        ring.setAttribute("aria-hidden", "true");
+        ring.innerHTML =
+          '<svg viewBox="0 0 29 29"><circle class="otp-ring-track" cx="14.5" cy="14.5" r="14"></circle>' +
+          '<circle class="otp-ring-sweep" cx="14.5" cy="14.5" r="12.5"></circle></svg>' +
+          '<span class="otp-ring-sec"></span>';
+        item.appendChild(ring);
+      }
+      const text = document.createElement("div");
+      text.className = "entry-text";
       const name = document.createElement("div");
       name.className = "entry-name";
       name.textContent = m.name || "";
-      item.appendChild(name);
+      text.appendChild(name);
       if (m.username) {
         const user = document.createElement("div");
         user.className = "entry-user";
         user.textContent = m.username;
-        item.appendChild(user);
+        text.appendChild(user);
       }
+      item.appendChild(text);
       // m.id is chosen from the entries WE rendered — never from the page.
       item.addEventListener("click", () => requestFill(m.id, m.vault_slug));
       item.addEventListener("keydown", (e) => {
@@ -286,6 +340,39 @@ export function statusKeyFor(code) {
     }
     // The real height is known only after the entries render.
     if (menuOpen) positionMenu();
+    // Ticker runs only while a ring is on screen; closeMenu stops it.
+    if (menu.querySelector(".otp-ring")) startOtpTicker();
+  }
+
+  // 1 Hz painter for the on-screen rings, aligned to the second boundary so
+  // the displayed second matches the wall clock (a free-running interval
+  // drifts and can show a stale 1 after the code already rotated).
+  let otpTicker = null;
+  function startOtpTicker() {
+    if (otpTicker) return;
+    const tick = () => {
+      tickOtpRings();
+      otpTicker = setTimeout(tick, 1000 - (Date.now() % 1000));
+    };
+    tick();
+  }
+  function stopOtpTicker() {
+    if (otpTicker) {
+      clearTimeout(otpTicker);
+      otpTicker = null;
+    }
+  }
+  function tickOtpRings() {
+    if (!menuOpen) return;
+    const now = Date.now() / 1000;
+    for (const ring of menu.querySelectorAll(".otp-ring")) {
+      const { seconds, expiring, period } = otpRingState(Number(ring.dataset.period), now);
+      const sweep = ring.querySelector(".otp-ring-sweep");
+      if (sweep) sweep.style.strokeDashoffset = String(((period - seconds) / period) * 78.5);
+      const sec = ring.querySelector(".otp-ring-sec");
+      if (sec) sec.textContent = String(seconds);
+      ring.classList.toggle("expiring", expiring);
+    }
   }
 
   // Ask the SW for the credential and the fill push. mode tells the SW to
@@ -384,6 +471,10 @@ export function statusKeyFor(code) {
         },
         () => showStatus(t("codeCopyFailed"), anchor)
       );
+    } else if (msg.copyFailed) {
+      // The SW tried and failed (clipboard blocked): say so instead of
+      // leaving the user to paste a stale code.
+      showStatus(t("codeCopyFailed"), anchor);
     }
   }
 
