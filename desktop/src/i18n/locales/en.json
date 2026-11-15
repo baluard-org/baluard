@@ -488,7 +488,7 @@
     "runInBackgroundEnabled": "Baluard keeps running when you close the window",
     "runInBackgroundDisabled": "Baluard now quits when you close the window",
     "closeToTrayLabel": "Close to system tray",
-    "closeToTrayDesc": "When you close the window, hide the Dock icon too: Baluard lives only in the system tray. Click the tray icon to open it again.",
+    "closeToTrayDesc": "When you close the window, hide the Dock icon too: Baluard lives only in the system tray. Click the tray icon to open it again. If the tray icon is not visible, relaunching Baluard brings the Dock icon back.",
     "closeToTrayEnabled": "Baluard now lives only in the system tray when closed",
     "closeToTrayDisabled": "The Dock icon stays while Baluard runs in the background",
     "switchToLight": "Switch to light theme",

@@ -447,7 +447,7 @@
     "runInBackgroundEnabled": "Baluard sigue ejecutándose al cerrar la ventana",
     "runInBackgroundDisabled": "Baluard ahora se cierra al cerrar la ventana",
     "closeToTrayLabel": "Cerrar a la bandeja del sistema",
-    "closeToTrayDesc": "Al cerrar la ventana, también oculta el icono del Dock: Baluard vive solo en la bandeja del sistema. Haz clic en el icono de la bandeja para volver a abrirlo.",
+    "closeToTrayDesc": "Al cerrar la ventana, también oculta el icono del Dock: Baluard vive solo en la bandeja del sistema. Haz clic en el icono de la bandeja para volver a abrirlo. Si el icono de la bandeja no es visible, volver a abrir Baluard restaura el icono del Dock.",
     "closeToTrayEnabled": "Baluard vive solo en la bandeja del sistema al cerrarse",
     "closeToTrayDisabled": "El icono del Dock permanece mientras Baluard se ejecuta en segundo plano",
     "switchToLight": "Cambiar al tema claro",
