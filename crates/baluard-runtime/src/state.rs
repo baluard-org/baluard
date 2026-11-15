@@ -3319,25 +3319,41 @@ impl VaultState {
         // 1-3. Well-known static paths, cheapest probes first.
         for path in Self::STATIC_ICON_PATHS {
             let url = format!("https://{domain}{path}");
-            if let Some(icon) = Self::try_fetch_icon(client, &url).await {
+            if let Some(icon) = Self::try_fetch_icon(client, &url, Self::STATIC_PROBE_TIMEOUT).await
+            {
                 return Some(icon);
             }
         }
 
         // 4. Scrape the page for <link rel="...icon..."> targets.
         for url in Self::scrape_icon_links(client, domain).await {
-            if let Some(icon) = Self::try_fetch_icon(client, &url).await {
+            if let Some(icon) = Self::try_fetch_icon(client, &url, Self::STATIC_PROBE_TIMEOUT).await
+            {
                 return Some(icon);
             }
         }
 
         // 5. Google's favicon service, last resort.
-        Self::try_fetch_icon(client, &Self::favicon_url(domain)).await
+        Self::try_fetch_icon(
+            client,
+            &Self::favicon_url(domain),
+            Self::HEAVY_PROBE_TIMEOUT,
+        )
+        .await
     }
 
     /// Well-known favicon paths, in probe order. favicon.ico stays first:
     /// it is by far the most common.
     const STATIC_ICON_PATHS: [&'static str; 3] = ["/favicon.ico", "/favicon.png", "/favicon.jpg"];
+
+    // Probe ceilings by rung: icon files are tiny and a live host answers
+    // in under a second, so a hung static probe or scraped link cannot eat
+    // the caller's whole entry budget before the page scrape (icon tags
+    // live in the head, served early) and the Google fallback get their
+    // turn. HEAVY is also the shared client's per-request default.
+    const STATIC_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+    const PAGE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+    const HEAVY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     /// Shared HTTP client for icon fetching: short timeout, https-only
     /// redirects, and every redirect hop re-checked against the plain-name
@@ -3347,7 +3363,7 @@ impl VaultState {
     /// resolves privately are out of scope for a client-side fetcher.)
     pub(crate) fn build_icon_client() -> Option<reqwest::Client> {
         reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(Self::HEAVY_PROBE_TIMEOUT)
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
                 if attempt.previous().len() > 5 {
                     return attempt.error("too many redirects");
@@ -3368,8 +3384,12 @@ impl VaultState {
     /// supported image, None otherwise (a miss means the caller tries the
     /// next candidate). Size cap keeps a misbehaving endpoint from pushing
     /// a huge blob into the cipher envelope.
-    async fn try_fetch_icon(client: &reqwest::Client, url: &str) -> Option<String> {
-        let resp = client.get(url).send().await.ok()?;
+    async fn try_fetch_icon(
+        client: &reqwest::Client,
+        url: &str,
+        cap: std::time::Duration,
+    ) -> Option<String> {
+        let resp = client.get(url).timeout(cap).send().await.ok()?;
         // Cap before buffering: content-length lies get the response
         // dropped instead of read into memory.
         if let Some(len) = resp.content_length() {
@@ -3483,7 +3503,12 @@ impl VaultState {
     /// come back, and every candidate must be https + fetchable by name.
     async fn scrape_icon_links(client: &reqwest::Client, domain: &str) -> Vec<String> {
         let page_url = format!("https://{domain}/");
-        let resp = match client.get(&page_url).send().await {
+        let resp = match client
+            .get(&page_url)
+            .timeout(Self::PAGE_PROBE_TIMEOUT)
+            .send()
+            .await
+        {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
