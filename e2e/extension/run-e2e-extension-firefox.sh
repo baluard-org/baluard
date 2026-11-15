@@ -53,8 +53,8 @@ export BALUARD_DISABLE_KEYRING=1
 exec "$NMH_BIN"
 WRAPPER
 chmod +x "$WORK/nmh-wrapper.sh"
-printf '{"name":"xyz.actitud.baluard","description":"Baluard bridge","path":"%s","type":"stdio","allowed_extensions":["baluard@actitud.xyz"]}' \
-  "$WORK/nmh-wrapper.sh" > "$HOME_SBOX/.mozilla/native-messaging-hosts/xyz.actitud.baluard.json"
+printf '{"name":"app.baluard.browser","description":"Baluard bridge","path":"%s","type":"stdio","allowed_extensions":["baluard@actitud.xyz"]}' \
+  "$WORK/nmh-wrapper.sh" > "$HOME_SBOX/.mozilla/native-messaging-hosts/app.baluard.browser.json"
 
 # ---- Scratch daemon + seeded, unlocked vault (the desktop side).
 BALUARD_DATA_DIR="$DATA" BALUARD_DISABLE_KEYRING=1 BALUARD_AUTOSYNC=0 \

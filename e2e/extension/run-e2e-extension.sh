@@ -79,8 +79,8 @@ for DIR in "$PROFILE/NativeMessagingHosts" \
   "$HOME_SBOX/.config/chromium/NativeMessagingHosts" \
   "$HOME_SBOX/.config/google-chrome/NativeMessagingHosts"; do
   mkdir -p "$DIR"
-  printf '{"name":"xyz.actitud.baluard","description":"Baluard bridge","path":"%s","type":"stdio","allowed_origins":["chrome-extension://%s/"]}' \
-    "$WORK/nmh-wrapper.sh" "$EXT_ID" > "$DIR/xyz.actitud.baluard.json"
+  printf '{"name":"app.baluard.browser","description":"Baluard bridge","path":"%s","type":"stdio","allowed_origins":["chrome-extension://%s/"]}' \
+    "$WORK/nmh-wrapper.sh" "$EXT_ID" > "$DIR/app.baluard.browser.json"
 done
 
 # ---- Scratch daemon + seeded, unlocked vault (the desktop side).
@@ -126,10 +126,10 @@ Xvfb ":$XVFB_DISP" -screen 0 1280x800x24 >/dev/null 2>&1 & XVFB_PID=$!
 for _i in $(seq 1 30); do [ -S "/tmp/.X11-unix/X$XVFB_DISP" ] && break; sleep 0.2; done
 [ -S "/tmp/.X11-unix/X$XVFB_DISP" ] || { echo "Xvfb never started"; exit 1; }
 export DISPLAY=":$XVFB_DISP"
-# The browser and node run under the sandboxed HOME (NMH brand paths; no
-# caller state leaks through). Cargo deliberately stays on the real HOME so
-# its caches keep working.
-true # BISECT: export HOME disabled
+# The browser and node run under the sandboxed HOME so Chromium resolves
+# the NMH manifest from the brand paths written above; Cargo deliberately
+# stays on the real HOME so its caches keep working.
+export HOME="$HOME_SBOX"
 
 cd e2e/extension
 CDP_PORT=$((25000 + RANDOM % 20000))
@@ -137,5 +137,6 @@ export PLAYWRIGHT_BROWSERS_PATH="$REPO/e2e/extension/.browsers"
 DAEMON_SOCKET="$SOCK"
 PROFILE_DIR="$PROFILE"
 export EXT_ID EXT_DIR DESKTOP_TOKEN DAEMON_SOCKET SITE_URL DEMO_URL PROFILE_DIR CDP_PORT
-node pw.mjs
+# RUN_RING1=0 skips the popup ring for fast inline-dropdown-only iterations.
+if [ "${RUN_RING1:-1}" = "1" ]; then node pw.mjs; fi
 node inline.mjs

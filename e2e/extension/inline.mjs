@@ -15,6 +15,7 @@
 import { createServer } from "node:http";
 import crypto from "node:crypto";
 import { chromium } from "playwright";
+import { execFileSync } from "node:child_process";
 import { gatewayRequest } from "./gateway.mjs";
 import { PopupCdp } from "./cdp-popup.mjs";
 
@@ -155,10 +156,24 @@ async function shadowNodes(client, hostAttr, cls) {
     for (const sr of node.shadowRoots || []) walk(sr, true);
   };
   const collectText = (n) =>
-    (n.nodeType === 3 ? n.textContent || "" : "") +
+    (n.nodeType === 3 ? n.nodeValue || n.textContent || "" : "") +
     (n.children || []).map(collectText).join("");
   walk(root, false);
   return out;
+}
+
+// Poll for a shadow-DOM node: the dropdown renders its entries after an
+// async IPC round trip, so a single read right after the click can miss
+// the node (the ring paints in the same render pass).
+async function waitShadowNodes(client, hostAttr, cls, timeoutMs = 12000, accept) {
+  const deadline = Date.now() + timeoutMs;
+  let nodes = [];
+  while (Date.now() < deadline) {
+    nodes = await shadowNodes(client, hostAttr, cls);
+    if (nodes.length > 0 && (!accept || nodes.some((n) => accept(n.text)))) return nodes;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return nodes;
 }
 
 async function clickShadowNode(page, client, hostAttr, cls, wantText) {
@@ -224,12 +239,12 @@ const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
     `--remote-debugging-port=${CDP_PORT}`,
   ],
 });
+const swLogs = [];
 try {
   const sw =
     ctx.serviceWorkers().find((w) => w.url().includes(EXT_ID)) ||
     (await ctx.waitForEvent("serviceworker", { timeout: 15000 }));
   if (!sw.url().includes(EXT_ID)) fail(`unexpected worker ${sw.url()}`);
-  const swLogs = [];
   sw.on("console", (m) => swLogs.push(m.text()));
 
   const version = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
@@ -267,34 +282,38 @@ try {
 
   // ---- Leg A: practice-site login via the inline dropdown.
   const pageA = await ctx.newPage();
-  await pageA.goto(PRACTICE_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-  // focus() rather than a click: ad iframes can cover the field and make a
-  // click race; the icon only needs the focusin event.
-  await pageA.focus("#username");
-  const clientA = await pageA.context().newCDPSession(pageA);
-  await waitHostMounted(pageA, "practice login");
-  await clickShadowNode(pageA, clientA, HOST_ATTR, "icon");
-  await clickShadowNode(pageA, clientA, HOST_ATTR, "entry", "Practice Portal");
-  await pageWait(
-    pageA,
-    () =>
-      document.querySelector("#username")?.value === "student" &&
-      document.querySelector("#password")?.value === "Password123",
-    8000,
-    "inline fill of the practice login form"
-  );
-  await pageA.click("#submit");
-  await pageWait(
-    pageA,
-    () => document.body.innerText.includes("Logged In Successfully"),
-    25000,
-    "practice-site successful login"
-  );
-  console.log("PASS practice login fill");
-  await pageA.close();
+  if (process.env.SKIP_PRACTICE !== "1") {
+    await pageA.goto(PRACTICE_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+    // focus() rather than a click: ad iframes can cover the field and make a
+    // click race; the icon only needs the focusin event.
+    await pageA.focus("#username");
+    const clientA = await pageA.context().newCDPSession(pageA);
+    await waitHostMounted(pageA, "practice login");
+    await clickShadowNode(pageA, clientA, HOST_ATTR, "icon");
+    await clickShadowNode(pageA, clientA, HOST_ATTR, "entry", "Practice Portal");
+    await pageWait(
+      pageA,
+      () =>
+        document.querySelector("#username")?.value === "student" &&
+        document.querySelector("#password")?.value === "Password123",
+      8000,
+      "inline fill of the practice login form"
+    );
+    await pageA.click("#submit");
+    await pageWait(
+      pageA,
+      () => document.body.innerText.includes("Logged In Successfully"),
+      25000,
+      "practice-site successful login"
+    );
+    console.log("PASS practice login fill");
+    await pageA.close();
+  }
 
   // ---- Leg B: 2FA demo - password leg, then the TOTP challenge.
   const pageB = await ctx.newPage();
+  const pageBLogs = [];
+  pageB.on("console", (m) => pageBLogs.push(m.text()));
   await pageB.goto(DEMO_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
   await pageB.focus("#username");
   const clientB = await pageB.context().newCDPSession(pageB);
@@ -309,6 +328,26 @@ try {
     8000,
     "inline fill of the demo login form"
   );
+  // Clipboard probe: the password leg of a TOTP entry must leave the code
+  // on the X clipboard (copyTotp setting, Chromium offscreen path).
+  // ASSERTED, not just logged: the whole point of the probe is that an
+  // empty clipboard (the pre-fix bug) fails the run. The clear timer is
+  // far away (60s default), so the code is still there when we read it.
+  let clip;
+  try {
+    clip = execFileSync("xclip", ["-selection", "clipboard", "-o"], { encoding: "utf8" });
+  } catch (e) {
+    throw new Error(
+      `clipboard probe failed (is xclip installed and a clipboard owner set?): ${e.message}`
+    );
+  }
+  console.log(`CLIPBOARD=${JSON.stringify(clip)}`);
+  if (!/^\d{6}$/.test(clip.trim())) {
+    throw new Error(
+      `clipboard does not hold the TOTP code after the password leg: ${JSON.stringify(clip)}`
+    );
+  }
+  console.log("PASS clipboard totp");
   await pageB.click("button:has-text('Login')");
   await pageWait(
     pageB,
@@ -319,6 +358,42 @@ try {
   await pageB.focus("#_auth_code");
   await waitHostMounted(pageB, "demo 2fa");
   await clickShadowNode(pageB, clientB, HOST_ATTR, "icon");
+  // The TOTP entry renders the live countdown ring (Bitwarden parity);
+  // renderEntries paints it before the first 1 Hz tick, so the seconds
+  // number must already be numeric when the menu is open.
+  const ring = (
+    await waitShadowNodes(clientB, HOST_ATTR, "otp-ring-sec", 12000, (t) => /^[1-9]\d*$/.test(t.trim()))
+  )[0];
+  // Failure forensics: the closed shadow root is invisible to main-world
+  // evaluate, so dump the pierced CDP markup of the ring and its menu
+  // (dashoffset style tells whether any tick painted) plus the page
+  // console, where content-script errors land.
+  if (!ring || !/^[1-9]\d*$/.test(ring.text.trim())) {
+    const fresh = await shadowNodes(clientB, HOST_ATTR, "otp-ring");
+    for (const node of fresh.slice(0, 2)) {
+      try {
+        const { outerHTML } = await clientB.send("DOM.getOuterHTML", { nodeId: node.nodeId });
+        console.log(`RING_HTML=${outerHTML.slice(0, 500)}`);
+      } catch (e) {
+        console.log(`RING_HTML_ERR=${e.message}`);
+      }
+    }
+    const menuNode = (await shadowNodes(clientB, HOST_ATTR, "menu"))[0];
+    if (menuNode) {
+      try {
+        const { outerHTML } = await clientB.send("DOM.getOuterHTML", { nodeId: menuNode.nodeId });
+        console.log(`MENU_HTML=${outerHTML.slice(0, 700)}`);
+      } catch (e) {
+        console.log(`MENU_HTML_ERR=${e.message}`);
+      }
+    }
+    console.log(`PAGE_B_LOGS=${JSON.stringify(pageBLogs.slice(-12))}`);
+  }
+  if (!ring || !/^[1-9]\d*$/.test(ring.text.trim())) {
+    throw new Error(`otp ring not painted: ${ring ? ring.text : "absent"}`);
+  }
+  console.log(`PASS otp ring seconds=${ring.text.trim()}`);
+  if (process.env.RING_SNAPSHOT) await pageB.screenshot({ path: process.env.RING_SNAPSHOT });
   await clickShadowNode(pageB, clientB, HOST_ATTR, "entry", "2FA Demo");
   await pageWait(
     pageB,
@@ -340,6 +415,7 @@ try {
   console.log("RING2=0");
 } catch (e) {
   console.error(`FAIL: ${e.message}`);
+  console.error(`sw console: ${JSON.stringify(swLogs ?? [])}`);
   process.exitCode = 1;
 } finally {
   await ctx.close().catch(() => {});
