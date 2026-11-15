@@ -3133,17 +3133,20 @@ mod tests {
             )
             .await
             .expect_err("required UV without a grant must fail");
-        assert!(format!("{err}").contains("Assertion failed"), "got: {err}");
+        assert!(
+            format!("{err}").contains("passkey:uv-required"),
+            "got: {err}"
+        );
 
         // Pending state stays Rust-side: the FFI response never carries the
         // private key, and the stored cipher holds it encrypted.
-        let reg_text = format!("{reg}");
+        let reg_text = reg.to_string();
         assert!(!reg_text.contains("private_key"), "key leaked over FFI");
         let detail = vault
             .get_cipher(cipher_id, true)
             .await
             .expect("cipher readable");
-        assert!(format!("{detail}").contains("private_key"));
+        assert!(detail.to_string().contains("private_key"));
     }
 
     #[tokio::test]
