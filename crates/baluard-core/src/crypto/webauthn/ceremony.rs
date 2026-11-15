@@ -553,11 +553,13 @@ fn override_client_data_json(
 /// and return the marker instead.
 ///
 /// PRF (`extensions.prf`) deliberately does NOT escalate to the marker:
-/// the provider store never carries a prf key (PasskeyStore prf_key None),
-/// so passkey-authenticator never advertises hmac-secret and drops PRF
-/// inputs — no UV-flag-derived secret divergence is possible. When
-/// hmac-secret support is ever wired into the store, PRF requests must
-/// start demanding the gesture here before any secret is minted.
+/// no hmac-secret store is wired (neither `Authenticator::new` site below
+/// calls `.hmac_secret(...)`, and `Passkey.extensions` stays empty), so
+/// passkey-authenticator never advertises hmac-secret and drops PRF
+/// inputs — no UV-flag-derived secret divergence is possible. If
+/// hmac-secret support is ever wired in, PRF requests must start demanding
+/// the gesture here before any secret is minted; the downgrade test below
+/// fails the moment PRF output appears in a response.
 fn resolve_uv_for_provider(
     requirement: &mut passkey::types::webauthn::UserVerificationRequirement,
     user_verified: bool,
@@ -1411,30 +1413,44 @@ mod provider_tests {
 
     #[tokio::test]
     async fn prf_assertion_downgrades_without_a_gesture_like_any_preferred() {
-        // PRF inputs cannot diverge here: the provider store never carries a
-        // prf key, so passkey-authenticator never advertises hmac-secret and
-        // drops PRF inputs — a UP-only response mints no secret at all.
-        // Common RPs send extensions.prf = {} as a capability probe; refusing
-        // those would break logins that worked before.
+        // PRF inputs cannot diverge: no hmac-secret store is wired, so
+        // passkey-authenticator never advertises hmac-secret and drops PRF
+        // inputs — a UP-only response mints no secret at all. Common RPs
+        // send extensions.prf = {} as a capability probe; refusing those
+        // would break logins that worked before.
         let (origin, reg) = register_default().await;
         let index = index_with(&reg);
-        let request = with_extensions(
-            &assertion_options_json(&[17u8; 32], Some(RP), "preferred", None),
+        for probe in [
+            serde_json::json!({"prf": {}}),
             serde_json::json!({"prf": {"eval": {"first": b64url(&[18u8; 32])}}}),
-        );
-        let result = run_provider_assertion(
-            &origin,
-            &request,
-            &reg.credential_id_b64,
-            None,
-            None,
-            false,
-            &index,
-        )
-        .await
-        .expect("PRF probe must downgrade like any preferred request");
-        let (auth_data, _) = decode_auth_data(&result.assertion_response);
-        assert_eq!(flags_byte(&auth_data) & 0x04, 0, "UV flag must stay clear");
+        ] {
+            let request = with_extensions(
+                &assertion_options_json(&[17u8; 32], Some(RP), "preferred", None),
+                probe,
+            );
+            let result = run_provider_assertion(
+                &origin,
+                &request,
+                &reg.credential_id_b64,
+                None,
+                None,
+                false,
+                &index,
+            )
+            .await
+            .expect("PRF probe must downgrade like any preferred request");
+            let (auth_data, _) = decode_auth_data(&result.assertion_response);
+            assert_eq!(flags_byte(&auth_data) & 0x04, 0, "UV flag must stay clear");
+            let response: serde_json::Value = serde_json::from_str(&result.assertion_response)
+                .expect("assertion response must be JSON");
+            assert!(
+                response
+                    .get("clientExtensionResults")
+                    .and_then(|v| v.get("prf"))
+                    .is_none(),
+                "PRF output means hmac-secret got wired: the gesture demand must come back",
+            );
+        }
     }
 
     #[tokio::test]

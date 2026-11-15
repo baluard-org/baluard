@@ -77,8 +77,8 @@ fun PasskeyCreateScreen(
     fun fail(e: Throwable) {
         if (e is CancellationException) throw e
         busy = false
-        error = e.message?.removePrefix("detail=")?.ifBlank { t("passkey.failed") }
-            ?: t("passkey.failed")
+        val raw = e.message?.removePrefix("detail=")?.takeIf { it.isNotBlank() }
+        error = raw?.takeUnless { it.contains(UV_REQUIRED_MARKER) } ?: t("passkey.failed")
     }
 
     fun runCeremony() {
