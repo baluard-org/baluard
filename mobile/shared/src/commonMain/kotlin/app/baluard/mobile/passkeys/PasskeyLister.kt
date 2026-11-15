@@ -84,17 +84,6 @@ object PasskeyLister {
         candidates.singleOrNull()
     }.getOrNull()
 
-    /** RP's requested user-verification level ("required"/"preferred"/"discouraged"). */
-    fun userVerificationOf(requestJson: String): String = runCatching {
-        val obj = json.parseToJsonElement(requestJson).jsonObject
-        // Assertion requests carry userVerification at the top level
-        // (PublicKeyCredentialRequestOptions); creation requests nest it
-        // under authenticatorSelection.
-        (obj["userVerification"]?.jsonPrimitive?.content)
-            ?: ((obj["authenticatorSelection"] as? kotlinx.serialization.json.JsonObject)
-                ?.get("userVerification")?.jsonPrimitive?.content)
-    }.getOrNull() ?: "preferred"
-
     suspend fun list(
         vault: MobileVault,
         rpId: String,

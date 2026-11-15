@@ -1,6 +1,7 @@
 package app.baluard.mobile.ui.passkey
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,6 +42,12 @@ import app.baluard.mobile.ui.components.BaluardPrimaryButton
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.i18n.t
 
+/** Core's marker for a request that demands a UV gesture (required RP or
+ * a PRF extension): the screen answers it with the master-password dialog
+ * and retries the ceremony with the gesture performed. Pinned core-side
+ * by tests; matched by contains because the FFI may wrap the message. */
+private const val UV_REQUIRED_MARKER = "passkey:uv-required"
+
 /**
  * Fulfillment for a provider passkey ASSERT (plan §9): credential picker
  * when several match, origin already validated at the trampoline gate,
@@ -63,12 +70,15 @@ fun PasskeyAssertScreen(
     var showPassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var passwordError by remember { mutableStateOf<String?>(null) }
+    // Set once the master-password check succeeds: the gesture that makes
+    // the ceremony's UV claim honest (required RPs, PRF requests, and
+    // re-prompt items all route through it).
+    var gestureVerified by remember { mutableStateOf(false) }
 
     // System back must cancel the ceremony with the typed result, not
     // finish the activity untyped (§4).
     BackPressHandler { onCancel() }
 
-    val needsUv = PasskeyLister.userVerificationOf(request.requestJson) == "required"
 
     LaunchedEffect(request.id) {
         matches = PasskeyLister.list(vault, request.rpId, request.allowCredentialIds)
@@ -98,12 +108,22 @@ fun PasskeyAssertScreen(
                     credentialId,
                     null,
                     request.clientDataHash,
-                    needsUv,
+                    gestureVerified,
                 )
                 val obj = org.json.JSONObject(assert)
                 runCatching { vault.passkeyConsumeAssertion(obj.getString("ceremony_id")) }
                 onResult(obj.getJSONObject("assertion_response").toString())
             } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                if (!gestureVerified && e.message?.contains(UV_REQUIRED_MARKER) == true) {
+                    // The request demands verification (required RP or PRF):
+                    // ask for the master password, then retry with the
+                    // gesture performed.
+                    busy = false
+                    passwordError = null
+                    showPassword = true
+                    return@launch
+                }
                 fail(e)
             }
         }
@@ -173,11 +193,18 @@ fun PasskeyAssertScreen(
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            BaluardOutlinedButton(
+                text = t("common.cancel"),
+                onClick = onCancel,
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(50),
+            )
             BaluardPrimaryButton(
                 text = if (busy) t("common.loading") else t("common.continue"),
                 onClick = {
                     val pick = selected ?: return@BaluardPrimaryButton
-                    if (needsUv || pick.reprompt) {
+                    if (pick.reprompt && !gestureVerified) {
                         passwordError = null
                         showPassword = true
                     } else {
@@ -186,12 +213,7 @@ fun PasskeyAssertScreen(
                 },
                 enabled = !busy && selected != null,
                 modifier = Modifier.weight(1f),
-            )
-            BaluardOutlinedButton(
-                text = t("common.cancel"),
-                onClick = onCancel,
-                enabled = !busy,
-                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(50),
             )
         }
         if (busy) CircularProgressIndicator(Modifier.padding(top = 8.dp))
@@ -225,6 +247,7 @@ fun PasskeyAssertScreen(
                             try {
                                 vault.repromptVerify(password)
                                 showPassword = false
+                                gestureVerified = true
                                 password = ""
                                 busy = false
                                 runCeremony(selected?.credentialId ?: return@launch)
