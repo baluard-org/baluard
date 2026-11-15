@@ -1,13 +1,13 @@
 package app.baluard.mobile.ui.passkey
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,7 +65,7 @@ fun PasskeyCreateScreen(
     var password by remember { mutableStateOf("") }
     var passwordError by remember { mutableStateOf<String?>(null) }
     // Set once the master-password check succeeds: the gesture that makes
-    // the ceremony's UV claim honest.
+    // the ceremony's UV claim honest (a required RP routes through it).
     var gestureVerified by remember { mutableStateOf(false) }
 
     // System back must cancel the ceremony with the typed result, not
@@ -111,10 +111,11 @@ fun PasskeyCreateScreen(
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 if (!gestureVerified && e.message?.contains(UV_REQUIRED_MARKER) == true) {
-                    // The request demands verification (required RP or PRF):
+                    // The request demands verification (a required RP):
                     // ask for the master password, then retry with the
                     // gesture performed.
                     busy = false
+                    error = null
                     passwordError = null
                     showPassword = true
                     return@launch

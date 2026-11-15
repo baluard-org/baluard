@@ -1,7 +1,6 @@
 package app.baluard.mobile.ui.passkey
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,10 +42,10 @@ import app.baluard.mobile.ui.components.BaluardPrimaryButton
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.i18n.t
 
-/** Core's marker for a request that demands a UV gesture (required RP or
- * a PRF extension): the screen answers it with the master-password dialog
- * and retries the ceremony with the gesture performed. Pinned core-side
- * by tests; matched by contains because the FFI may wrap the message. */
+/** Core's marker for a request that demands a UV gesture (a required RP):
+ * the screen answers it with the master-password dialog and retries the
+ * ceremony with the gesture performed. Pinned core-side by tests; matched
+ * by contains because the FFI may wrap the message. */
 private const val UV_REQUIRED_MARKER = "passkey:uv-required"
 
 /**
@@ -70,15 +70,15 @@ fun PasskeyAssertScreen(
     var showPassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var passwordError by remember { mutableStateOf<String?>(null) }
-    // Set once the master-password check succeeds: the gesture that makes
-    // the ceremony's UV claim honest (required RPs, PRF requests, and
-    // re-prompt items all route through it).
-    var gestureVerified by remember { mutableStateOf(false) }
+    // The credential id whose ceremony may claim user verification: set
+    // when the master-password check succeeds for the selected entry
+    // (required RPs and re-prompt items route through it). Keyed by id so
+    // the reprompt gate is per item, never carried across a re-pick.
+    var gestureVerifiedFor by remember { mutableStateOf<String?>(null) }
 
     // System back must cancel the ceremony with the typed result, not
     // finish the activity untyped (§4).
     BackPressHandler { onCancel() }
-
 
     LaunchedEffect(request.id) {
         matches = PasskeyLister.list(vault, request.rpId, request.allowCredentialIds)
@@ -108,18 +108,21 @@ fun PasskeyAssertScreen(
                     credentialId,
                     null,
                     request.clientDataHash,
-                    gestureVerified,
+                    gestureVerifiedFor == credentialId,
                 )
                 val obj = org.json.JSONObject(assert)
                 runCatching { vault.passkeyConsumeAssertion(obj.getString("ceremony_id")) }
                 onResult(obj.getJSONObject("assertion_response").toString())
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
-                if (!gestureVerified && e.message?.contains(UV_REQUIRED_MARKER) == true) {
-                    // The request demands verification (required RP or PRF):
+                if (gestureVerifiedFor != credentialId &&
+                    e.message?.contains(UV_REQUIRED_MARKER) == true
+                ) {
+                    // The request demands verification (a required RP):
                     // ask for the master password, then retry with the
                     // gesture performed.
                     busy = false
+                    error = null
                     passwordError = null
                     showPassword = true
                     return@launch
@@ -204,7 +207,7 @@ fun PasskeyAssertScreen(
                 text = if (busy) t("common.loading") else t("common.continue"),
                 onClick = {
                     val pick = selected ?: return@BaluardPrimaryButton
-                    if (pick.reprompt && !gestureVerified) {
+                    if (pick.reprompt && gestureVerifiedFor != pick.credentialId) {
                         passwordError = null
                         showPassword = true
                     } else {
@@ -247,7 +250,7 @@ fun PasskeyAssertScreen(
                             try {
                                 vault.repromptVerify(password)
                                 showPassword = false
-                                gestureVerified = true
+                                gestureVerifiedFor = selected?.credentialId
                                 password = ""
                                 busy = false
                                 runCeremony(selected?.credentialId ?: return@launch)

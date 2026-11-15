@@ -541,6 +541,39 @@ fn override_client_data_json(
     Ok(())
 }
 
+/// Resolve the request's user-verification demand for a provider
+/// ceremony driven by a caller-supplied gesture flag.
+///
+/// passkey-client maps every requirement except `discouraged` to a hard
+/// `uv = true`, and the authenticator then answers OperationDenied when
+/// verification was not performed, so a `preferred` ceremony would die on
+/// every request that omitted a gesture. W3C semantics for `preferred`
+/// accept a UP-only response: downgrade the parsed requirement to
+/// `discouraged` in that case. `required` ceremonies keep the hard demand
+/// and return the marker instead.
+///
+/// PRF (`extensions.prf`) deliberately does NOT escalate to the marker:
+/// the provider store never carries a prf key (PasskeyStore prf_key None),
+/// so passkey-authenticator never advertises hmac-secret and drops PRF
+/// inputs — no UV-flag-derived secret divergence is possible. When
+/// hmac-secret support is ever wired into the store, PRF requests must
+/// start demanding the gesture here before any secret is minted.
+fn resolve_uv_for_provider(
+    requirement: &mut passkey::types::webauthn::UserVerificationRequirement,
+    user_verified: bool,
+) -> Result<(), String> {
+    if user_verified {
+        return Ok(());
+    }
+    if *requirement == passkey::types::webauthn::UserVerificationRequirement::Required {
+        return Err(PASSKEY_UV_REQUIRED.to_string());
+    }
+    if *requirement == passkey::types::webauthn::UserVerificationRequirement::Preferred {
+        *requirement = passkey::types::webauthn::UserVerificationRequirement::Discouraged;
+    }
+    Ok(())
+}
+
 /// Run a provider registration ceremony.
 ///
 /// `request_json` is the `PublicKeyCredentialCreationOptions` — the INNER
@@ -554,39 +587,6 @@ fn override_client_data_json(
 /// always discoverable, so `residentKey` is forced to `required` regardless
 /// of the request (a password manager must surface account selection); the
 /// synced-model flags and zero counter come from passkey-rs' defaults.
-/// Resolve the request's user-verification demand for a provider
-/// ceremony driven by a caller-supplied gesture flag.
-///
-/// passkey-client maps every requirement except `discouraged` to a hard
-/// `uv = true`, and the authenticator then answers OperationDenied when
-/// verification was not performed, so a `preferred` ceremony would die on
-/// every request that omitted a gesture. W3C semantics for `preferred`
-/// accept a UP-only response: downgrade the parsed requirement to
-/// `discouraged` in that case. `required` ceremonies and PRF requests
-/// (whose extension output is derived under the UV flag, so a UP-only
-/// response would mint a different secret) keep the hard demand and
-/// return the marker instead.
-fn resolve_uv_for_provider(
-    requirement: &mut passkey::types::webauthn::UserVerificationRequirement,
-    extensions: Option<&passkey::types::webauthn::AuthenticationExtensionsClientInputs>,
-    user_verified: bool,
-) -> Result<(), String> {
-    if user_verified {
-        return Ok(());
-    }
-    let prf = matches!(
-        extensions,
-        Some(e) if e.prf.is_some() || e.prf_already_hashed.is_some()
-    );
-    if *requirement == passkey::types::webauthn::UserVerificationRequirement::Required || prf {
-        return Err(PASSKEY_UV_REQUIRED.to_string());
-    }
-    if *requirement == passkey::types::webauthn::UserVerificationRequirement::Preferred {
-        *requirement = passkey::types::webauthn::UserVerificationRequirement::Discouraged;
-    }
-    Ok(())
-}
-
 pub async fn run_provider_registration(
     origin: &Url,
     request_json: &str,
@@ -627,11 +627,7 @@ pub async fn run_provider_registration(
     // The selection is always Some after the force above, and creation
     // reads user_verification from exactly that branch.
     if let Some(selection) = public_key.authenticator_selection.as_mut() {
-        resolve_uv_for_provider(
-            &mut selection.user_verification,
-            public_key.extensions.as_ref(),
-            user_verified,
-        )?;
+        resolve_uv_for_provider(&mut selection.user_verification, user_verified)?;
     }
 
     let store = BaluardCredentialStore::from_index(index);
@@ -758,11 +754,7 @@ pub async fn run_provider_assertion(
         id: Bytes::from(cred_bytes.clone()),
         transports: None,
     }]);
-    resolve_uv_for_provider(
-        &mut options.user_verification,
-        options.extensions.as_ref(),
-        user_verified,
-    )?;
+    resolve_uv_for_provider(&mut options.user_verification, user_verified)?;
 
     let store = BaluardCredentialStore::from_index(&narrowed);
     let extraction_clone = store.clone();
@@ -1418,14 +1410,19 @@ mod provider_tests {
     }
 
     #[tokio::test]
-    async fn prf_assertion_demands_a_gesture_even_when_preferred() {
+    async fn prf_assertion_downgrades_without_a_gesture_like_any_preferred() {
+        // PRF inputs cannot diverge here: the provider store never carries a
+        // prf key, so passkey-authenticator never advertises hmac-secret and
+        // drops PRF inputs — a UP-only response mints no secret at all.
+        // Common RPs send extensions.prf = {} as a capability probe; refusing
+        // those would break logins that worked before.
         let (origin, reg) = register_default().await;
         let index = index_with(&reg);
         let request = with_extensions(
             &assertion_options_json(&[17u8; 32], Some(RP), "preferred", None),
             serde_json::json!({"prf": {"eval": {"first": b64url(&[18u8; 32])}}}),
         );
-        let err = run_provider_assertion(
+        let result = run_provider_assertion(
             &origin,
             &request,
             &reg.credential_id_b64,
@@ -1435,8 +1432,9 @@ mod provider_tests {
             &index,
         )
         .await
-        .expect_err("PRF output is UV-derived; never downgrade without a gesture");
-        assert_eq!(err, PASSKEY_UV_REQUIRED, "got: {}", err);
+        .expect("PRF probe must downgrade like any preferred request");
+        let (auth_data, _) = decode_auth_data(&result.assertion_response);
+        assert_eq!(flags_byte(&auth_data) & 0x04, 0, "UV flag must stay clear");
     }
 
     #[tokio::test]
