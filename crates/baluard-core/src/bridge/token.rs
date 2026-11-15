@@ -56,6 +56,14 @@ pub const BRIDGE_ALLOWED_ACTIONS: &[&str] = &[
     "bridge.config",         // returns ONLY default_uri_match
     "bridge.request_unlock", // ask the desktop to unlock a merge-eligible vault (§4.7 v2)
     "sync.autosync_status",  // read-only sync badge
+    // Browser WebAuthn ceremonies (ADR 0095 browser extension). The
+    // provider routes keep all key material and counters Rust-side; the
+    // desktop two-phase routes stay off this list on purpose.
+    "passkey.list",              // passkey metadata rows for one rp_id
+    "passkey.provider_register", // sign a registration from the RP's own options
+    "passkey.provider_assert",   // sign an assertion for ONE pinned credential
+    "passkey.store_registered",  // file the pending credential into a Login
+    "passkey.consume_assertion", // persist the pinned ceremony's counter
 ];
 
 /// Membership test against the allowlist. Used by both the daemon (authoritative)
@@ -191,6 +199,25 @@ mod tests {
             "bridge.config",
         ] {
             assert!(is_allowed(ok), "{ok} must be bridge-allowed");
+        }
+    }
+
+    #[test]
+    fn allowlist_includes_passkey_provider_surface() {
+        // The browser WebAuthn client may run ceremonies and read passkey
+        // metadata, but the desktop-only two-phase routes (echo holes by
+        // design, ADR 0095) stay off the bridge.
+        for ok in [
+            "passkey.list",
+            "passkey.provider_register",
+            "passkey.provider_assert",
+            "passkey.store_registered",
+            "passkey.consume_assertion",
+        ] {
+            assert!(is_allowed(ok), "{ok} must be bridge-allowed");
+        }
+        for denied in ["passkey.finish_assert", "passkey.finish_register"] {
+            assert!(!is_allowed(denied), "{denied} must stay desktop-only");
         }
     }
 

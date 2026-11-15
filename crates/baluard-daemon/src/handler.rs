@@ -2565,6 +2565,41 @@ async fn search_state_meta(
 /// (Decision 5 lock binding). Then snapshots the active vault and delegates
 /// the actual op (bridge.match / bridge.config are NEW; the rest reuse the
 /// existing vault.* semantics via route_request).
+/// Where an allowlisted bridge action's `vault_slug` may target a sibling
+/// vault. Reads REQUIRE the page URL for origin binding; provider passkey
+/// ceremonies are exempt because the origin and the credential id are
+/// validated Rust-side against the target vault's index; plain writes stay
+/// refused for a foreign slug (G24 §4.4).
+enum SlugScope {
+    Read,
+    Passkey,
+    WriteRefused,
+    None,
+}
+
+fn slug_scope_kind(action: &str) -> SlugScope {
+    match action {
+        "vault.get" | "cipher.totp_code" => SlugScope::Read,
+        "passkey.provider_register"
+        | "passkey.provider_assert"
+        | "passkey.store_registered"
+        | "passkey.consume_assertion" => SlugScope::Passkey,
+        "vault.add" | "vault.update" => SlugScope::WriteRefused,
+        _ => SlugScope::None,
+    }
+}
+
+/// D21: bridge actions that MUTATE vault data ride the desktop session's
+/// write scope — a Viewer or half-joined member must not mint entries or
+/// bump counters from the extension. Ceremony creation signs but does not
+/// mutate, so it stays ungated.
+fn bridge_write_gated(action: &str) -> bool {
+    matches!(
+        action,
+        "vault.add" | "vault.update" | "passkey.store_registered" | "passkey.consume_assertion"
+    )
+}
+
 async fn route_bridge_request(
     req: GatewayRequest,
     host: &SharedVaultHost,
@@ -2654,17 +2689,13 @@ async fn route_bridge_request(
     let mut state: SharedVaultState = snapshot.1.clone();
     let active_slug = snapshot.0.clone();
 
-    // 4b. G24 §4.4 slug-scoped reads: vault.get / cipher.totp_code may
-    //     name a sibling vault (cipher UUIDs are per-vault). The target
-    //     resolves BEFORE any per-vault gate so the origin binding and
-    //     the delegated token bind the right vault, not the active
-    //     one. The slug must be merge-eligible and the target
-    //     unlocked; anything else is refused exactly like an unknown
-    //     vault (fail closed).
-    if matches!(
-        req.action.as_str(),
-        "vault.get" | "cipher.totp_code" | "vault.add" | "vault.update"
-    ) {
+    // 4b. G24 §4.4 slug-scoped targeting: some actions may name a sibling
+    //     vault. The target resolves BEFORE any per-vault gate so the
+    //     origin binding and the delegated token bind the right vault, not
+    //     the active one. The slug must be merge-eligible and unlocked;
+    //     anything else fails closed exactly like an unknown vault.
+    let scope = slug_scope_kind(&req.action);
+    if !matches!(scope, SlugScope::None) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) {
             if let Some(slug) = v.get("vault_slug").and_then(|x| x.as_str()) {
                 if !slug.is_empty() && slug != active_slug {
@@ -2672,17 +2703,20 @@ async fn route_bridge_request(
                     // MUST carry the page URL: without it the origin
                     // binding below would be skipped and any UUID from
                     // any enabled vault would be readable (plan §4.4).
-                    // Writes (capture updates, §4.6 v1.1) carry no page
-                    // URL; the C21 preservation gate below re-checks the
-                    // target vault after the rebind.
-                    let is_read = matches!(req.action.as_str(), "vault.get" | "cipher.totp_code");
+                    // Provider passkey ceremonies pin to the vault that
+                    // holds the chosen credential; the origin and the
+                    // credential id are validated Rust-side against that
+                    // vault's index, so no URL binding is needed.
                     let has_url = v
                         .get("url")
                         .and_then(|x| x.as_str())
                         .map(|u| !u.is_empty())
                         .unwrap_or(false);
-                    if is_read && !has_url {
+                    if matches!(scope, SlugScope::Read) && !has_url {
                         return err_response("slug-scoped bridge reads require a page URL");
+                    }
+                    if matches!(scope, SlugScope::WriteRefused) {
+                        return err_response("slug-scoped bridge writes are not supported");
                     }
                     let eligible = baluard_core::vault::registry::VaultRegistry::load_locked()
                         .ok()
@@ -2711,15 +2745,26 @@ async fn route_bridge_request(
         if !any_unlocked {
             return err_response("locked");
         }
+    } else if req.action.as_str() == "passkey.list" && !state.is_unlocked().await {
+        // Passkey listing fans out over merge-eligible vaults like
+        // bridge.match: any unlocked vault contributes rows.
+        let any_unlocked = merge_fanout_rows(host)
+            .await
+            .iter()
+            .any(|r| r.state.is_some());
+        if !any_unlocked {
+            return err_response("locked");
+        }
     } else if !state.is_unlocked().await {
         return err_response("locked");
     }
 
-    // 5b. D21 read scope: capture/update from the extension rides the
-    //     desktop session's write scope. On a shared vault a Viewer (or
-    //     a half-finished join) must not mint entries their own device
-    //     could never push — refuse here, where the extension can show it.
-    if matches!(req.action.as_str(), "vault.add" | "vault.update") {
+    // 5b. D21 read scope: every browser-visible vault mutation rides the
+    //     desktop session's write scope. On a shared vault a Viewer (or a
+    //     half-finished join) must not mint entries — or bump passkey
+    //     counters — that their own device could never push; refuse here,
+    //     where the extension can show it.
+    if bridge_write_gated(&req.action) {
         if let Err(reason) = state.bridge_write_allowed().await {
             log::warn!("[daemon] bridge {} refused: {reason}", req.action);
             return err_response(reason);
@@ -2783,6 +2828,7 @@ async fn route_bridge_request(
     match req.action.as_str() {
         "bridge.match" => handle_bridge_match(req, host, &vault_name).await,
         "bridge.config" => handle_bridge_config(&state).await,
+        "passkey.list" => handle_bridge_passkey_list(req, host, &active_slug).await,
         // B10 + H1 (Decision 7 minimalism): a bridge read returns only the
         // fill fields and only for Login entries; notes, history, custom
         // fields, the totp seed, passkeys, and every other cipher kind
@@ -2801,6 +2847,80 @@ async fn route_bridge_request(
         // generator.* / sync.autosync_status all reuse the normal path.
         _ => route_request(delegated, &state).await,
     }
+}
+
+/// Payload unpackers for the browser WebAuthn provider routes. The state
+/// layer takes discrete args (UniFFI shape); the IPC surface is flat JSON.
+/// `new_login` accepts an object or a pre-serialized string so the
+/// extension never juggles double-encoded JSON.
+fn provider_register_args(
+    payload: &str,
+) -> Result<(String, String, Option<String>, Option<String>, bool), String> {
+    let v: serde_json::Value =
+        serde_json::from_str(payload).map_err(|_| "Invalid JSON".to_string())?;
+    let request_json = v
+        .get("request_json")
+        .and_then(|x| x.as_str())
+        .ok_or("Missing 'request_json'")?
+        .to_string();
+    let origin = v
+        .get("origin")
+        .and_then(|x| x.as_str())
+        .ok_or("Missing 'origin'")?
+        .to_string();
+    let str_field = |k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    Ok((
+        request_json,
+        origin,
+        str_field("client_data_json_b64"),
+        str_field("client_data_hash_b64"),
+        v.get("user_verified")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+    ))
+}
+
+fn provider_assert_args(
+    payload: &str,
+) -> Result<(String, String, String, Option<String>, Option<String>, bool), String> {
+    let v: serde_json::Value =
+        serde_json::from_str(payload).map_err(|_| "Invalid JSON".to_string())?;
+    let credential_id = v
+        .get("credential_id")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or("Missing 'credential_id'")?
+        .to_string();
+    let (request_json, origin, cdj, cdh, uv) = provider_register_args(payload)?;
+    Ok((request_json, origin, credential_id, cdj, cdh, uv))
+}
+
+fn store_registered_args(
+    payload: &str,
+) -> Result<(String, Option<String>, Option<String>), String> {
+    let v: serde_json::Value =
+        serde_json::from_str(payload).map_err(|_| "Invalid JSON".to_string())?;
+    let ceremony_id = v
+        .get("ceremony_id")
+        .and_then(|x| x.as_str())
+        .ok_or("Missing 'ceremony_id'")?
+        .to_string();
+    let cipher_id = v
+        .get("cipher_id")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    let new_login = match v.get("new_login") {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(x @ serde_json::Value::Object(_)) => Some(x.to_string()),
+        _ => None,
+    };
+    Ok((ceremony_id, cipher_id, new_login))
 }
 
 /// Decision 7: a bridge vault.get returns the fill fields only, and only
@@ -3174,6 +3294,53 @@ async fn handle_bridge_match(
             "active_vault": vault_name,
         })
         .to_string(),
+        None,
+    )
+}
+
+/// bridge.passkey.list: merged passkey metadata over every unlocked
+/// merge-eligible vault, mirroring bridge.match's fan-out contract. Rows
+/// carry vault_slug so ceremonies can pin back to the right vault.
+async fn handle_bridge_passkey_list(
+    req: GatewayRequest,
+    host: &SharedVaultHost,
+    _active_slug: &str,
+) -> GatewayResponse {
+    // The browser client always narrows by the page's validated rpId; a
+    // bridge caller without one would dump every passkey in every unlocked
+    // vault, so fail closed instead of fanning out unfiltered.
+    let requested_rp_id = serde_json::from_str::<serde_json::Value>(&req.payload)
+        .ok()
+        .and_then(|v| v.get("rp_id").and_then(|x| x.as_str()).map(String::from))
+        .filter(|s| !s.is_empty());
+    let Some(rp_id) = requested_rp_id else {
+        return err_response("Missing 'rp_id'");
+    };
+    let mut rows = Vec::new();
+    for entry in merge_fanout_rows(host).await {
+        let Some(state) = entry.state else { continue };
+        let payload = serde_json::json!({ "rp_id": rp_id }).to_string();
+        match state.passkey_list(&payload).await {
+            Ok(json) => {
+                if let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
+                    for mut row in list {
+                        if let Some(obj) = row.as_object_mut() {
+                            obj.insert(
+                                "vault_slug".into(),
+                                serde_json::Value::String(
+                                    entry.meta["slug"].as_str().unwrap_or_default().to_string(),
+                                ),
+                            );
+                        }
+                        rows.push(row);
+                    }
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+    ok_resp(
+        serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into()),
         None,
     )
 }
@@ -6788,6 +6955,77 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+        "passkey.provider_register" => match provider_register_args(&req.payload) {
+            Ok((request_json, origin, cdj, cdh, uv)) => {
+                match state
+                    .passkey_provider_register(
+                        &request_json,
+                        &origin,
+                        cdj.as_deref(),
+                        cdh.as_deref(),
+                        uv,
+                    )
+                    .await
+                {
+                    Ok(json) => ok_resp(json, token_str),
+                    Err(e) => err_response(e),
+                }
+            }
+            Err(e) => err_response(e),
+        },
+        "passkey.provider_assert" => match provider_assert_args(&req.payload) {
+            Ok((request_json, origin, cred, cdj, cdh, uv)) => {
+                match state
+                    .passkey_provider_assert(
+                        &request_json,
+                        &origin,
+                        &cred,
+                        cdj.as_deref(),
+                        cdh.as_deref(),
+                        uv,
+                    )
+                    .await
+                {
+                    Ok(json) => ok_resp(json, token_str),
+                    Err(e) => err_response(e),
+                }
+            }
+            Err(e) => err_response(e),
+        },
+        "passkey.store_registered" => match store_registered_args(&req.payload) {
+            Ok((ceremony_id, cipher_id, new_login)) => {
+                match state
+                    .passkey_store_registered(
+                        &ceremony_id,
+                        cipher_id.as_deref(),
+                        new_login.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(json) => ok_resp(json, token_str),
+                    Err(e) => err_response(e),
+                }
+            }
+            Err(e) => err_response(e),
+        },
+        "passkey.consume_assertion" => {
+            let ceremony_id = serde_json::from_str::<serde_json::Value>(&req.payload)
+                .ok()
+                .and_then(|v| {
+                    v.get("ceremony_id")
+                        .and_then(|x| x.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or_default();
+            if ceremony_id.is_empty() {
+                err_response("Missing 'ceremony_id'")
+            } else {
+                match state.passkey_consume_assertion(&ceremony_id).await {
+                    Ok(json) => ok_resp(json, token_str),
+                    Err(e) => err_response(e),
+                }
+            }
+        }
         "passkey.finish_assert" => match state.passkey_finish_assert(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
@@ -8291,8 +8529,8 @@ fn clone_refusal_prefixes_match_the_frontend_matcher() {
 mod tests {
     use super::{
         HOST_ACTIONS, HOST_ONLY_ACTIONS, SENTINEL_FORWARDED_ACTIONS, TOKEN_EXEMPT_ACTIONS,
-        action_requires_session_token, parse_repo_owner_name, repo_web_url_from_remote,
-        route_request,
+        SlugScope, action_requires_session_token, bridge_write_gated, parse_repo_owner_name,
+        repo_web_url_from_remote, route_request, slug_scope_kind,
     };
     use crate::proto::GatewayRequest;
     use crate::state::VaultState;
@@ -8599,6 +8837,48 @@ mod tests {
         assert!(validate_slug("my-vault").is_ok());
     }
 
+    /// Slug-scoped targeting (G24 §4.4 + the browser passkey fix): reads
+    /// may target a sibling vault with a page URL, provider passkey
+    /// ceremonies pin to the credential's vault Rust-side, and plain writes
+    /// stay refused for a foreign slug.
+    #[test]
+    fn slug_scope_covers_passkey_and_write_actions() {
+        assert!(matches!(slug_scope_kind("vault.get"), SlugScope::Read));
+        assert!(matches!(slug_scope_kind("cipher.totp_code"), SlugScope::Read));
+        for a in [
+            "passkey.provider_register",
+            "passkey.provider_assert",
+            "passkey.store_registered",
+            "passkey.consume_assertion",
+        ] {
+            assert!(
+                matches!(slug_scope_kind(a), SlugScope::Passkey),
+                "{a} must be slug-pinnable"
+            );
+        }
+        assert!(matches!(slug_scope_kind("vault.add"), SlugScope::WriteRefused));
+        assert!(matches!(slug_scope_kind("vault.update"), SlugScope::WriteRefused));
+        // The list fans out over every unlocked vault by design; no scope.
+        assert!(matches!(slug_scope_kind("passkey.list"), SlugScope::None));
+        assert!(matches!(slug_scope_kind("bridge.match"), SlugScope::None));
+    }
+
+    /// D21: every browser-visible vault MUTATION rides the desktop
+    /// session's write scope; a Viewer must not mint entries or bump
+    /// counters from the extension. Ceremony creation signs but does not
+    /// mutate, so it stays ungated.
+    #[test]
+    fn bridge_write_gate_covers_passkey_mutations() {
+        assert!(bridge_write_gated("vault.add"));
+        assert!(bridge_write_gated("vault.update"));
+        assert!(bridge_write_gated("passkey.store_registered"));
+        assert!(bridge_write_gated("passkey.consume_assertion"));
+        assert!(!bridge_write_gated("passkey.provider_register"));
+        assert!(!bridge_write_gated("passkey.provider_assert"));
+        assert!(!bridge_write_gated("passkey.list"));
+        assert!(!bridge_write_gated("vault.get"));
+    }
+
     /// Covers the URL forms `sync_disconnect` must extract owner/name from.
     /// If this breaks, the destructive delete-remote path silently no-ops
     /// (returns Err on the now-unparseable URL instead of deleting).
@@ -8665,7 +8945,10 @@ mod tests {
 
     // ── Browser bridge regression tests ──
 
-    use super::bridge_write_outside_decision_seven;
+    use super::{
+        bridge_write_outside_decision_seven, provider_assert_args, provider_register_args,
+        store_registered_args,
+    };
 
     /// H1 (D81 review): the Decision 7 write fence is an ALLOWLIST. Every
     /// data field the extension may write is named; anything else —
@@ -8685,6 +8968,90 @@ mod tests {
             "kind": { "type": "login", "data": { "number": "4111111111111111" } }
         });
         assert!(bridge_write_outside_decision_seven(&with_card_number, false).is_some());
+    }
+
+    #[test]
+    fn provider_register_args_unpack_flat_payload() {
+        let p = serde_json::json!({
+            "request_json": "{\"rp\":{}}",
+            "origin": "https://example.com",
+            "client_data_json_b64": "e30",
+            "user_verified": true,
+        })
+        .to_string();
+        let (rj, origin, cdj, cdh, uv) = provider_register_args(&p).unwrap();
+        assert_eq!(rj, "{\"rp\":{}}");
+        assert_eq!(origin, "https://example.com");
+        assert_eq!(cdj.as_deref(), Some("e30"));
+        assert!(cdh.is_none());
+        assert!(uv);
+    }
+
+    #[test]
+    fn provider_register_args_require_request_and_origin() {
+        let missing_origin = serde_json::json!({ "request_json": "{}" }).to_string();
+        assert!(provider_register_args(&missing_origin).is_err());
+        let missing_request = serde_json::json!({ "origin": "https://x.test" }).to_string();
+        assert!(provider_register_args(&missing_request).is_err());
+        // Defaults: absent UV and empty strings degrade to None/false.
+        let minimal = serde_json::json!({
+            "request_json": "{}",
+            "origin": "https://x.test",
+            "client_data_json_b64": "",
+        })
+        .to_string();
+        let (_, _, cdj, _, uv) = provider_register_args(&minimal).unwrap();
+        assert!(cdj.is_none());
+        assert!(!uv);
+    }
+
+    #[test]
+    fn provider_assert_args_require_credential() {
+        let base = serde_json::json!({
+            "request_json": "{}",
+            "origin": "https://x.test",
+        });
+        let missing = base.to_string();
+        assert!(provider_assert_args(&missing).is_err());
+        let empty = serde_json::json!({
+            "request_json": "{}",
+            "origin": "https://x.test",
+            "credential_id": "",
+        })
+        .to_string();
+        assert!(provider_assert_args(&empty).is_err());
+        let ok = serde_json::json!({
+            "request_json": "{}",
+            "origin": "https://x.test",
+            "credential_id": "abc",
+        })
+        .to_string();
+        let (_, _, cred, _, _, _) = provider_assert_args(&ok).unwrap();
+        assert_eq!(cred, "abc");
+    }
+
+    #[test]
+    fn store_registered_args_accept_object_or_string_new_login() {
+        let as_object = serde_json::json!({
+            "ceremony_id": "c1",
+            "new_login": { "name": "GitHub", "username": "u@x.test" },
+        })
+        .to_string();
+        let (cid, cipher, nl) = store_registered_args(&as_object).unwrap();
+        assert_eq!(cid, "c1");
+        assert!(cipher.is_none());
+        let parsed: serde_json::Value = serde_json::from_str(&nl.unwrap()).unwrap();
+        assert_eq!(parsed["name"], "GitHub");
+
+        let as_string = serde_json::json!({
+            "ceremony_id": "c2",
+            "cipher_id": "0197e183-7f21-7cc8-9d0b-bca2f51b31a6",
+            "new_login": "{\"name\":\"X\"}",
+        })
+        .to_string();
+        let (_, cipher, nl) = store_registered_args(&as_string).unwrap();
+        assert_eq!(nl.as_deref(), Some("{\"name\":\"X\"}"));
+        assert!(cipher.is_some());
     }
 
     /// M-4: an update payload may only name identity, scope, the kind
