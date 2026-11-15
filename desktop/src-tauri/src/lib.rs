@@ -693,6 +693,8 @@ fn send_ping_payload() -> Option<String> {
 /// avoiding the white flash.
 #[tauri::command]
 fn show_window(window: tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    restore_dock(window.app_handle());
     let _ = window.show();
     let _ = window.set_focus();
     // The webview loaded and rendered: the previous run did NOT die before
@@ -1013,6 +1015,13 @@ fn close_response(run_in_background: bool, tray_online: bool) -> CloseResponse {
     } else {
         CloseResponse::Minimize
     }
+}
+
+/// macOS: bring the Dock icon back when a window becomes reachable again
+/// (tray click, tray menu, frontend show, Dock Reopen). No-op elsewhere.
+#[cfg(target_os = "macos")]
+fn restore_dock(app: &AppHandle) {
+    let _ = app.set_dock_visibility(true);
 }
 
 /// Whether a functioning tray exists to hide to. None (no state yet, or the
@@ -1369,6 +1378,13 @@ struct DesktopPrefs {
     /// browser extension pairs with the daemon this keeps alive.
     #[serde(default = "default_true")]
     run_in_background: bool,
+    /// macOS only: with run-in-background on, closing also hides the Dock
+    /// icon so Baluard lives only in the system tray until a window opens
+    /// again. Windows/Linux need no pref — a hidden window has no taskbar
+    /// entry. Default off: the Dock icon is the standard macOS reopen
+    /// affordance.
+    #[serde(default)]
+    close_to_tray: bool,
     /// Linux compatible-rendering preference. `None` = automatic (decided
     /// at each launch from GPU detection + crash recovery). `Some(true)`
     /// forces the WebKitGTK workaround on, `Some(false)` forces it off.
@@ -1385,6 +1401,7 @@ impl Default for DesktopPrefs {
     fn default() -> Self {
         Self {
             run_in_background: true,
+            close_to_tray: false,
             compatible_rendering: None,
         }
     }
@@ -1463,6 +1480,16 @@ mod desktop_prefs_tests {
     }
 
     #[test]
+    fn close_to_tray_defaults_off_and_parses_on() {
+        assert!(!DesktopPrefs::default().close_to_tray);
+        let empty: DesktopPrefs = serde_json::from_str("{}").unwrap();
+        assert!(!empty.close_to_tray, "missing key must stay opt-in");
+        let on: DesktopPrefs = serde_json::from_str("{\"close_to_tray\": true}").unwrap();
+        assert!(on.close_to_tray);
+        assert!(on.run_in_background, "unrelated defaults must survive");
+    }
+
+    #[test]
     fn run_in_background_true_parses_and_compatible_rendering_defaults_to_auto() {
         let prefs: DesktopPrefs = serde_json::from_str("{\"run_in_background\": true}").unwrap();
         assert!(prefs.run_in_background);
@@ -1508,6 +1535,18 @@ async fn set_run_in_background(enabled: bool) -> Result<(), String> {
         .await
         .unwrap_or_default();
     prefs.run_in_background = enabled;
+    let _ = tauri::async_runtime::spawn_blocking(move || save_desktop_prefs(&prefs)).await;
+    Ok(())
+}
+
+/// Toggle close-to-tray (macOS: also hide the Dock icon while the app runs
+/// in the background). Persists; applies on the next window close.
+#[tauri::command]
+async fn set_close_to_tray(enabled: bool) -> Result<(), String> {
+    let mut prefs = tauri::async_runtime::spawn_blocking(load_desktop_prefs)
+        .await
+        .unwrap_or_default();
+    prefs.close_to_tray = enabled;
     let _ = tauri::async_runtime::spawn_blocking(move || save_desktop_prefs(&prefs)).await;
     Ok(())
 }
@@ -1866,6 +1905,8 @@ pub fn run() {
                     .show_menu_on_left_click(false)
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "show" => {
+                            #[cfg(target_os = "macos")]
+                            restore_dock(app);
                             if let Some(w) = app.get_webview_window("main") {
                                 let _ = w.show();
                                 let _ = w.set_focus();
@@ -1882,6 +1923,8 @@ pub fn run() {
                         } = event
                         {
                             let app = tray.app_handle();
+                            #[cfg(target_os = "macos")]
+                            restore_dock(&app);
                             if let Some(w) = app.get_webview_window("main") {
                                 let _ = w.show();
                                 let _ = w.set_focus();
@@ -2001,8 +2044,9 @@ pub fn run() {
                     // into view (window_geometry). The RunEvent::Exit arm also
                     // saves, but the hide path never exits.
                     save_window_geometry(window.app_handle());
+                    let prefs = load_desktop_prefs();
                     let response = close_response(
-                        load_desktop_prefs().run_in_background,
+                        prefs.run_in_background,
                         tray_host_online(window.app_handle()),
                     );
                     match response {
@@ -2014,6 +2058,14 @@ pub fn run() {
                         CloseResponse::Hide => {
                             api.prevent_close();
                             let _ = window.hide();
+                            // close-to-tray: only the tray represents the app
+                            // (Windows/Linux taskbars drop hidden windows anyway)
+                            #[cfg(target_os = "macos")]
+                            if prefs.close_to_tray {
+                                let _ = window
+                                    .app_handle()
+                                    .set_dock_visibility(false);
+                            }
                         }
                         CloseResponse::Minimize => {
                             api.prevent_close();
@@ -2135,6 +2187,7 @@ pub fn run() {
             clipboard_mark_concealed,
             get_desktop_prefs,
             set_run_in_background,
+            set_close_to_tray,
             get_render_state,
             set_compatible_rendering
         ])
@@ -2152,6 +2205,7 @@ pub fn run() {
             // the arm is gated to match; other platforms match nothing here.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
+                restore_dock(app_handle);
                 if let Some(w) = app_handle.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();

@@ -86,4 +86,10 @@ async function setCompatibleRendering(value) {
   return invoke("set_compatible_rendering", { value });
 }
 
-export { daemon, showWindow, getDesktopPrefs, setRunInBackground, getRenderState, setCompatibleRendering };
+// Toggle close-to-tray (macOS: close also hides the Dock icon while the
+// app runs in the background). Persists; takes effect on the next close.
+async function setCloseToTray(enabled) {
+  return invoke("set_close_to_tray", { enabled });
+}
+
+export { daemon, showWindow, getDesktopPrefs, setRunInBackground, setCloseToTray, getRenderState, setCompatibleRendering };

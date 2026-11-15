@@ -326,7 +326,11 @@
     "runInBackgroundLabel": "",
     "runInBackgroundDesc": "",
     "runInBackgroundEnabled": "",
-    "runInBackgroundDisabled": ""
+    "runInBackgroundDisabled": "",
+    "closeToTrayLabel": "",
+    "closeToTrayDesc": "",
+    "closeToTrayEnabled": "",
+    "closeToTrayDisabled": ""
   },
   "sync": {
     "title": "",

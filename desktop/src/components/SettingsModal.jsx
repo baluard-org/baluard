@@ -4,7 +4,7 @@ import { useVault } from "../context/VaultContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
-import { daemon, getDesktopPrefs, setRunInBackground, getRenderState, setCompatibleRendering } from "../lib/daemon.js";
+import { daemon, getDesktopPrefs, setRunInBackground, setCloseToTray, getRenderState, setCompatibleRendering } from "../lib/daemon.js";
 import ConfirmModal from "./ConfirmModal.jsx";
 import { sanitizeError, generatePassphrase } from "../lib/utils.js";
 import { copyToClipboard } from "../lib/clipboard.js";
@@ -165,6 +165,12 @@ export default function SettingsModal() {
   // Run-in-background (app-global: keep running in the tray after close).
   // Lives in the Tauri layer, not the daemon — pre-unlock client preference.
   const [runInBackground, setRunInBackgroundSignal] = createSignal(true);
+
+  // macOS toggle (nested under run-in-background): close also hides the
+  // Dock icon. Frontend renders it only on macOS; the backend stores it
+  // app-global like its parent pref.
+  const isMac = navigator.userAgent.includes("Mac");
+  const [closeToTray, setCloseToTray] = createSignal(false);
 
   // Linux compatible rendering (WebKitGTK workaround). Setting cycles
   // automatic → on → off → automatic; `active` mirrors what the backend
@@ -443,6 +449,7 @@ export default function SettingsModal() {
       try {
         const prefs = await getDesktopPrefs();
         setRunInBackgroundSignal(prefs.run_in_background !== false);
+        setCloseToTray(!!prefs.close_to_tray);
       } catch {}
 
       // Linux compatible rendering state (also Tauri layer). One call fills
@@ -560,6 +567,20 @@ export default function SettingsModal() {
       toastSuccess(t(next ? "settings.runInBackgroundEnabled" : "settings.runInBackgroundDisabled"));
     } catch (e) {
       setRunInBackgroundSignal(!next);
+      toastError(sanitizeError(e, t));
+    }
+  }
+
+  // macOS only: close also hides the Dock icon, leaving the tray as the
+  // only launcher. Applies on the next close.
+  async function toggleCloseToTray() {
+    const next = !closeToTray();
+    setCloseToTray(next);
+    try {
+      await setCloseToTray(next);
+      toastSuccess(t(next ? "settings.closeToTrayEnabled" : "settings.closeToTrayDisabled"));
+    } catch (e) {
+      setCloseToTray(!next);
       toastError(sanitizeError(e, t));
     }
   }
@@ -1211,6 +1232,20 @@ export default function SettingsModal() {
                       {runInBackground() ? t("settings.enabled") : t("settings.disabled")}
                     </button>
                   </div>
+                  <Show when={isMac && runInBackground()}>
+                    <div class="flex items-center justify-between pl-4 border-l border-[var(--color-border)]">
+                      <div class="flex flex-col flex-1 pr-4">
+                        <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.closeToTrayLabel")}</span>
+                        <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.closeToTrayDesc")}</span>
+                      </div>
+                      <button
+                        onClick={toggleCloseToTray}
+                        class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${closeToTray() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                      >
+                        {closeToTray() ? t("settings.enabled") : t("settings.disabled")}
+                      </button>
+                    </div>
+                  </Show>
                 </div>
 
                 {/* Linux compatible rendering (WebKitGTK blank-window fix).
