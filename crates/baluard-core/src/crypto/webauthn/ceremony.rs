@@ -34,6 +34,13 @@ pub const CEREMONY_TTL: Duration = Duration::from_secs(300);
 /// Baluard platform AAGUID (all zeros = self-attestation, no vendor tracking).
 pub const BALUARD_AAGUID: Aaguid = Aaguid::new_empty();
 
+/// Error marker returned when a request demands a UV gesture (requirement
+/// `required`, or a PRF extension) but the caller performed none. The
+/// mobile UI turns this marker into its master-password dialog and retries
+/// the ceremony with the gesture performed; it is a contract across the
+/// FFI boundary, so the wording is pinned by tests.
+pub const PASSKEY_UV_REQUIRED: &str = "passkey:uv-required";
+
 /// Pending ceremony state.
 #[derive(Clone)]
 pub enum CeremonyState {
@@ -547,6 +554,39 @@ fn override_client_data_json(
 /// always discoverable, so `residentKey` is forced to `required` regardless
 /// of the request (a password manager must surface account selection); the
 /// synced-model flags and zero counter come from passkey-rs' defaults.
+/// Resolve the request's user-verification demand for a provider
+/// ceremony driven by a caller-supplied gesture flag.
+///
+/// passkey-client maps every requirement except `discouraged` to a hard
+/// `uv = true`, and the authenticator then answers OperationDenied when
+/// verification was not performed, so a `preferred` ceremony would die on
+/// every request that omitted a gesture. W3C semantics for `preferred`
+/// accept a UP-only response: downgrade the parsed requirement to
+/// `discouraged` in that case. `required` ceremonies and PRF requests
+/// (whose extension output is derived under the UV flag, so a UP-only
+/// response would mint a different secret) keep the hard demand and
+/// return the marker instead.
+fn resolve_uv_for_provider(
+    requirement: &mut passkey::types::webauthn::UserVerificationRequirement,
+    extensions: Option<&passkey::types::webauthn::AuthenticationExtensionsClientInputs>,
+    user_verified: bool,
+) -> Result<(), String> {
+    if user_verified {
+        return Ok(());
+    }
+    let prf = matches!(
+        extensions,
+        Some(e) if e.prf.is_some() || e.prf_already_hashed.is_some()
+    );
+    if *requirement == passkey::types::webauthn::UserVerificationRequirement::Required || prf {
+        return Err(PASSKEY_UV_REQUIRED.to_string());
+    }
+    if *requirement == passkey::types::webauthn::UserVerificationRequirement::Preferred {
+        *requirement = passkey::types::webauthn::UserVerificationRequirement::Discouraged;
+    }
+    Ok(())
+}
+
 pub async fn run_provider_registration(
     origin: &Url,
     request_json: &str,
@@ -584,6 +624,15 @@ pub async fn run_provider_registration(
     selection.resident_key = Some(ResidentKeyRequirement::Required);
     selection.require_resident_key = true;
     public_key.authenticator_selection = Some(selection);
+    // The selection is always Some after the force above, and creation
+    // reads user_verification from exactly that branch.
+    if let Some(selection) = public_key.authenticator_selection.as_mut() {
+        resolve_uv_for_provider(
+            &mut selection.user_verification,
+            public_key.extensions.as_ref(),
+            user_verified,
+        )?;
+    }
 
     let store = BaluardCredentialStore::from_index(index);
     let extraction_clone = store.clone();
@@ -709,6 +758,11 @@ pub async fn run_provider_assertion(
         id: Bytes::from(cred_bytes.clone()),
         transports: None,
     }]);
+    resolve_uv_for_provider(
+        &mut options.user_verification,
+        options.extensions.as_ref(),
+        user_verified,
+    )?;
 
     let store = BaluardCredentialStore::from_index(&narrowed);
     let extraction_clone = store.clone();
@@ -865,6 +919,16 @@ mod provider_tests {
             o.insert("allowCredentials".into(), Value::Array(list));
         }
         serde_json::to_string(&Value::Object(o)).unwrap()
+    }
+
+    /** Overlay a W3C extensions object onto a built request-options JSON. */
+    fn with_extensions(base: &str, extensions: serde_json::Value) -> String {
+        use serde_json::Value;
+        let mut o = serde_json::from_str::<Value>(base).expect("base options");
+        o.as_object_mut()
+            .expect("options object")
+            .insert("extensions".into(), extensions);
+        o.to_string()
     }
 
     fn empty_index() -> PasskeyIndex {
@@ -1112,7 +1176,7 @@ mod provider_tests {
         )
         .await
         .expect_err("required UV without a grant must fail");
-        assert!(err.contains("Registration failed"), "got: {}", err);
+        assert_eq!(err, PASSKEY_UV_REQUIRED, "got: {}", err);
 
         // Discouraged runs without verification and the UV flag stays clear.
         let result = run_provider_registration(
@@ -1185,7 +1249,8 @@ mod provider_tests {
         .expect_err("cross-origin rp.id must refuse");
         assert!(err.contains("not valid for origin"), "got: {}", err);
 
-        // UV gate.
+        // UV gate: required without a gesture names the marker the mobile
+        // UI turns into its master-password dialog.
         let err = run_provider_assertion(
             &origin,
             &assertion_options_json(&[12u8; 32], Some(RP), "required", None),
@@ -1197,7 +1262,7 @@ mod provider_tests {
         )
         .await
         .expect_err("required UV without a grant must fail");
-        assert!(err.contains("Assertion failed"), "got: {}", err);
+        assert_eq!(err, PASSKEY_UV_REQUIRED, "got: {}", err);
 
         // Happy path with the credential listed.
         let assertion = run_provider_assertion(
@@ -1289,5 +1354,121 @@ mod provider_tests {
         use p256::ecdsa::signature::hazmat::PrehashVerifier;
         vk.verify_prehash(&digest, &signature)
             .expect("signature must cover the browser-provided hash");
+    }
+
+    #[tokio::test]
+    async fn preferred_assertion_runs_without_a_gesture() {
+        let (origin, reg) = register_default().await;
+        let index = index_with(&reg);
+        let assertion = run_provider_assertion(
+            &origin,
+            &assertion_options_json(&[16u8; 32], Some(RP), "preferred", None),
+            &reg.credential_id_b64,
+            None,
+            None,
+            false,
+            &index,
+        )
+        .await
+        .expect("preferred must run UP-only without a gesture");
+        let (auth_data, _) = decode_auth_data(&assertion.assertion_response);
+        assert_eq!(flags_byte(&auth_data) & 0x04, 0, "UV flag must stay clear");
+        assert_ne!(flags_byte(&auth_data) & 0x01, 0, "UP still set");
+    }
+
+    #[tokio::test]
+    async fn preferred_assertion_with_a_gesture_keeps_the_uv_flag() {
+        let (origin, reg) = register_default().await;
+        let index = index_with(&reg);
+        let assertion = run_provider_assertion(
+            &origin,
+            &assertion_options_json(&[21u8; 32], Some(RP), "preferred", None),
+            &reg.credential_id_b64,
+            None,
+            None,
+            true,
+            &index,
+        )
+        .await
+        .expect("a performed gesture claims UV for preferred");
+        let (auth_data, _) = decode_auth_data(&assertion.assertion_response);
+        assert_ne!(
+            flags_byte(&auth_data) & 0x04,
+            0,
+            "UV flag must be set for a verified gesture"
+        );
+    }
+
+    #[tokio::test]
+    async fn required_assertion_without_a_gesture_returns_the_marker() {
+        let (origin, reg) = register_default().await;
+        let index = index_with(&reg);
+        let err = run_provider_assertion(
+            &origin,
+            &assertion_options_json(&[22u8; 32], Some(RP), "required", None),
+            &reg.credential_id_b64,
+            None,
+            None,
+            false,
+            &index,
+        )
+        .await
+        .expect_err("required without a gesture must name the marker");
+        assert_eq!(err, PASSKEY_UV_REQUIRED, "got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn prf_assertion_demands_a_gesture_even_when_preferred() {
+        let (origin, reg) = register_default().await;
+        let index = index_with(&reg);
+        let request = with_extensions(
+            &assertion_options_json(&[17u8; 32], Some(RP), "preferred", None),
+            serde_json::json!({"prf": {"eval": {"first": b64url(&[18u8; 32])}}}),
+        );
+        let err = run_provider_assertion(
+            &origin,
+            &request,
+            &reg.credential_id_b64,
+            None,
+            None,
+            false,
+            &index,
+        )
+        .await
+        .expect_err("PRF output is UV-derived; never downgrade without a gesture");
+        assert_eq!(err, PASSKEY_UV_REQUIRED, "got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn preferred_registration_runs_without_a_gesture() {
+        let origin = url::Url::parse(ORIGIN).unwrap();
+        let result = run_provider_registration(
+            &origin,
+            &create_options_json(&[19u8; 32], Some(RP), "preferred", None, -7, false),
+            None,
+            None,
+            false,
+            &empty_index(),
+        )
+        .await
+        .expect("preferred registration must run without a gesture");
+        let (auth_data, _) = decode_auth_data(&result.attestation_response);
+        assert_eq!(flags_byte(&auth_data) & 0x04, 0, "UV flag must stay clear");
+    }
+
+    #[tokio::test]
+    async fn required_registration_without_a_gesture_returns_the_marker() {
+        let origin = url::Url::parse(ORIGIN).unwrap();
+        let err = run_provider_registration(
+            &origin,
+            &create_options_json(&[20u8; 32], Some(RP), "required", None, -7, false),
+            None,
+            None,
+            false,
+            &empty_index(),
+        )
+        .await
+        .expect_err("required registration without a gesture must name the marker");
+        assert_eq!(err, PASSKEY_UV_REQUIRED, "got: {}", err);
     }
 }
