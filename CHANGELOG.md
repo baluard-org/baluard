@@ -6,6 +6,16 @@ Notable user-facing changes per release.
 
 - The daemon can act as an OpenSSH agent: turn on SSH agent in Settings, mark individual SSH keys for serving, and terminal apps and git sign through the local agent socket. Signing asks for approval on every use unless you enable automatic approval. The SSH agent switches apply per device, so turning the agent on here does not turn it on anywhere else.
 
+- The browser extension can offer vault passkeys to websites that use WebAuthn: signing in with a saved passkey and saving new ones work in the browser, with a picker when several credentials match. Off by default; turn on Passkeys in the extension settings.
+
+- Android: sites whose passkey sign-in requires user verification now ask for the master password instead of failing.
+
+- macOS: new Close to system tray option under Run in the background. When it is on, closing the window also hides the Dock icon and Baluard lives only in the system tray until you open it again. Off by default; with it off, the Dock icon stays while Baluard runs in the background.
+
+- Fixed the copy path on Chromium and the inline TOTP ring.
+
+- Site icons on slow or unresponsive hosts are less likely to be skipped while entries fetch in the background.
+
 ## 0.6.0 - 2026-11-14
 
 - Large vaults no longer freeze the desktop when you edit an entry: the app now refreshes only the entry you touched instead of reloading the entire vault, and vault lists load in pages, so big collections stay fast. (Desktop, with the same change backing the mobile list.)
