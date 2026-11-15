@@ -153,6 +153,9 @@ System autofill provider (`BaluardAutofillService`) runs in an isolated `:autofi
 ### SSH Key Generation
 Generated daemon-side via the `ssh-key` crate. Supports Ed25519 (recommended) and ECDSA P-256. Private key PEM and public key are formatted daemon-side; private key material never crosses IPC unformatted.
 
+### SSH Agent Serve
+The daemon doubles as an OpenSSH agent at `agent.sock` beside the IPC socket (unix only). Three switches gate it, all default off: the vault master switch (`ssh_agent_enabled`), the per-key opt-in (`SshKeyData.serve_via_agent`), and the sign policy (`ssh_agent_auto_approve`). Manual signs queue through the same PendingQueue as agent grants; locked or disabled states answer empty/failure per [ADR 0110](../adr/0110-ssh-agent-serve.md). The serve flag is sticky across edits from clients that predate it.
+
 ### User Profile and Avatar Storage
 Display name, subtitle, and avatar stored in `VaultSettings`. Avatars are stored as files in the vault (`meta/avatar.{ext}`), encrypted at rest under the SGK-epoch key, avoiding large diffs in settings files.
 

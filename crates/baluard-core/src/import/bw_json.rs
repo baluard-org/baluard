@@ -545,6 +545,8 @@ pub fn parse(data: &str) -> ImportResult {
                     private_key: ssh.and_then(|s| s.private_key.clone()),
                     public_key: ssh.and_then(|s| s.public_key.clone()),
                     key_fingerprint: ssh.and_then(|s| s.key_fingerprint.clone()),
+                    // Imports never auto-serve keys; the user opts in.
+                    serve_via_agent: false,
                 })
             }
             Some(6) => match item.bank_account.clone() {

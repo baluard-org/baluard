@@ -568,6 +568,24 @@ export default function AddEditCipherForm(props) {
             />
           </Show>
 
+          {/* SSH agent opt-in for this key (the master switch lives in
+              Settings; both must be on for the daemon to serve it) */}
+          <Show when={cipherType() === "sshKey"}>
+            <div class="flex items-center justify-between py-2 border-t border-[var(--color-border)]">
+              <div class="flex flex-col flex-1 pr-4">
+                <span class="text-xs font-bold text-[var(--color-text)]">{t("entry.serveViaAgentLabel")}</span>
+                <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("entry.serveViaAgentDesc")}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNewCipher({ ...newCipher(), serveViaAgent: !newCipher().serveViaAgent })}
+                class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${newCipher().serveViaAgent ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+              >
+                {newCipher().serveViaAgent ? t("settings.enabled") : t("settings.disabled")}
+              </button>
+            </div>
+          </Show>
+
           {/* Type-specific fields */}
           <Show when={cipherType() === "login"}>{renderLoginFields()}</Show>
           <Show when={cipherType() !== "login" && cipherType() !== "card"}><For each={layoutRows()}>

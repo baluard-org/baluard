@@ -159,6 +159,8 @@ export default function SettingsModal() {
 
   // Favicon state
   const [fetchFavicons, setFetchFavicons] = createSignal(false);
+  const [sshAgent, setSshAgent] = createSignal(false);
+  const [sshAgentAutoApprove, setSshAgentAutoApprove] = createSignal(false);
 
   // Run-in-background (app-global: keep running in the tray after close).
   // Lives in the Tauri layer, not the daemon — pre-unlock client preference.
@@ -404,6 +406,10 @@ export default function SettingsModal() {
       setTimeoutToken(normalizeVaultTimeout(data.vault_timeout));
       // Favicon setting (default: disabled — opt-in for privacy)
       setFetchFavicons(data.fetch_favicons === true);
+      // SSH agent switches (default: off — the vault never serves keys
+      // unless both the master switch and the per-key flag say so)
+      setSshAgent(data.ssh_agent_enabled === true);
+      setSshAgentAutoApprove(data.ssh_agent_auto_approve === true);
 
       // Load biometric status. Single daemon fetch also carries install_hint
       // when the system keyring is missing (Linux), so the UI can print the fix.
@@ -485,6 +491,26 @@ export default function SettingsModal() {
       await daemon("settings.set", JSON.stringify({ fetch_favicons: next }));
     } catch (e) {
       setFetchFavicons(!next);
+    }
+  }
+
+  async function toggleSshAgent() {
+    const next = !sshAgent();
+    setSshAgent(next);
+    try {
+      await daemon("settings.set", JSON.stringify({ ssh_agent_enabled: next }));
+    } catch (e) {
+      setSshAgent(!next);
+    }
+  }
+
+  async function toggleSshAgentAutoApprove() {
+    const next = !sshAgentAutoApprove();
+    setSshAgentAutoApprove(next);
+    try {
+      await daemon("settings.set", JSON.stringify({ ssh_agent_auto_approve: next }));
+    } catch (e) {
+      setSshAgentAutoApprove(!next);
     }
   }
 
@@ -1099,6 +1125,36 @@ export default function SettingsModal() {
                       class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${fetchFavicons() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
                     >
                       {fetchFavicons() ? t("settings.enabled") : t("settings.disabled")}
+                    </button>
+                  </div>
+                </div>
+
+                {/* SSH agent (serve vault keys over the local agent socket) */}
+                <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                  <div class="flex items-center justify-between">
+                    <div class="flex flex-col flex-1 pr-4">
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.sshAgentLabel")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.sshAgentDesc")}</span>
+                    </div>
+                    <button
+                      data-testid="ssh-agent-toggle"
+                      onClick={toggleSshAgent}
+                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${sshAgent() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                    >
+                      {sshAgent() ? t("settings.enabled") : t("settings.disabled")}
+                    </button>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <div class="flex flex-col flex-1 pr-4">
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.sshAgentAutoApproveLabel")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.sshAgentAutoApproveDesc")}</span>
+                    </div>
+                    <button
+                      data-testid="ssh-agent-auto-approve-toggle"
+                      onClick={toggleSshAgentAutoApprove}
+                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${sshAgentAutoApprove() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                    >
+                      {sshAgentAutoApprove() ? t("settings.enabled") : t("settings.disabled")}
                     </button>
                   </div>
                 </div>

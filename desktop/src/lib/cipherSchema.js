@@ -180,6 +180,7 @@ export const CIPHER_SCHEMAS = {
         publicKey: d.public_key || "",
         privateKey: d.private_key || "",
         fingerprint: d.key_fingerprint || "",
+        serveViaAgent: d.serve_via_agent === true,
       };
     },
     toKind(flat) {
@@ -187,6 +188,7 @@ export const CIPHER_SCHEMAS = {
         type: "sshKey",
         data: {
           public_key: flat.publicKey || null,
+          serve_via_agent: flat.serveViaAgent === true,
           private_key: flat.privateKey || null,
           key_fingerprint: flat.fingerprint || null,
         },

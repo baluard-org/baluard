@@ -1326,6 +1326,9 @@ enum CipherAddCommand {
         /// Key fingerprint.
         #[arg(long)]
         fingerprint: Option<String>,
+        /// Opt this key in to the daemon's SSH agent serve.
+        #[arg(long, default_value_t = false)]
+        serve_via_agent: bool,
         /// Notes.
         #[arg(long)]
         notes: Option<String>,
@@ -1655,6 +1658,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
             public_key,
             private_key,
             fingerprint,
+            serve_via_agent,
             notes,
             folder,
             tags,
@@ -1671,6 +1675,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
                     public_key,
                     private_key,
                     key_fingerprint: fingerprint,
+                    serve_via_agent,
                 }),
                 favorite,
                 notes,

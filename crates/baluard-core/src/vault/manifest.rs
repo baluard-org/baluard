@@ -327,6 +327,17 @@ pub struct VaultSettings {
     /// explicit false turns it off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggest_app_logins: Option<bool>,
+    /// Serve vault-stored SSH keys through the daemon's OpenSSH agent
+    /// socket. Master switch: off (or a locked vault) answers an empty
+    /// identities list and protocol-fails sign requests. Per-key opt-in
+    /// additionally requires SshKeyData::serve_via_agent.
+    #[serde(default)]
+    pub ssh_agent_enabled: bool,
+    /// Sign policy for the agent: false (default) routes every sign
+    /// through the desktop approval queue; true auto-approves signs for
+    /// opted-in keys without prompting.
+    #[serde(default)]
+    pub ssh_agent_auto_approve: bool,
     /// Trusted (package, registrable domain) pairs for app-to-web matching.
     /// A trusted pair lets web-saved entries for `domain` fill inside the
     /// native app `package`. Synced via settings.enc; auditable and per-vault.
@@ -477,6 +488,12 @@ pub struct EncryptedSettings {
     /// Trusted (package, registrable domain) pairs for app-to-web matching.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trusted_app_packages: Option<Vec<crate::vault::manifest::AppDomainTrust>>,
+    /// Mirrors VaultSettings::ssh_agent_enabled (persisted).
+    #[serde(default)]
+    pub ssh_agent_enabled: bool,
+    /// Mirrors VaultSettings::ssh_agent_auto_approve (persisted).
+    #[serde(default)]
+    pub ssh_agent_auto_approve: bool,
     /// Rejected pairs: never suggest these pairings again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rejected_app_packages: Option<Vec<crate::vault::manifest::AppDomainTrust>>,
@@ -673,6 +690,37 @@ mod tests {
         let json = r#"{"default_uri_match": null}"#;
         let settings: VaultSettings = serde_json::from_str(json).unwrap();
         assert!(settings.default_uri_match.is_none());
+    }
+
+    #[test]
+    fn settings_without_agent_fields_default_to_off() {
+        // Pre-agent vault settings (and every older settings.enc) carry
+        // neither flag; both must read false so the agent stays off for
+        // existing vaults.
+        let json = r#"{"vault_timeout": "15m"}"#;
+        let settings: VaultSettings = serde_json::from_str(json).unwrap();
+        assert!(!settings.ssh_agent_enabled);
+        assert!(!settings.ssh_agent_auto_approve);
+    }
+
+    #[test]
+    fn settings_agent_flags_roundtrip() {
+        let mut settings = VaultSettings::default();
+        settings.ssh_agent_enabled = true;
+        settings.ssh_agent_auto_approve = true;
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: VaultSettings = serde_json::from_str(&json).unwrap();
+        assert!(back.ssh_agent_enabled);
+        assert!(back.ssh_agent_auto_approve);
+    }
+
+    #[test]
+    fn encrypted_settings_without_agent_fields_default_to_off() {
+        // settings.enc written by older builds lacks both keys.
+        let json = r#"{"vault_timeout": "15m"}"#;
+        let enc: EncryptedSettings = serde_json::from_str(json).unwrap();
+        assert!(!enc.ssh_agent_enabled);
+        assert!(!enc.ssh_agent_auto_approve);
     }
 
     #[test]

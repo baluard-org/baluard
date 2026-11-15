@@ -1791,6 +1791,14 @@ impl VaultState {
             settings.fetch_favicons = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid fetch_favicons: {e}"))?;
         }
+        if let Some(v) = partial.get("ssh_agent_enabled") {
+            settings.ssh_agent_enabled = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid ssh_agent_enabled: {e}"))?;
+        }
+        if let Some(v) = partial.get("ssh_agent_auto_approve") {
+            settings.ssh_agent_auto_approve = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid ssh_agent_auto_approve: {e}"))?;
+        }
         if let Some(v) = partial.get("display_name") {
             settings.display_name = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid display_name: {e}"))?;
@@ -6951,7 +6959,7 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".to_string());
         }
 
-        let update: serde_json::Value =
+        let mut update: serde_json::Value =
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
 
         let cipher_id = update["id"]
@@ -6962,10 +6970,30 @@ impl VaultState {
 
         // Get existing cipher to merge updates
         let existing = handle.get_cipher(cipher_id).map_err(|e| format!("{e}"))?;
-        let existing_cipher = match existing {
+        let mut existing_cipher = match existing {
             baluard_core::vault::handle::CipherRead::Decrypted(c) => *c,
             _ => return Err("Cipher not found or vault locked".to_string()),
         };
+
+        // serve_via_agent is sticky: clients that predate the agent
+        // (mobile, older desktops) re-serialize kind.data without the key,
+        // and serde's bool default would silently un-serve the key on
+        // every edit. A payload that omits the key carries the stored
+        // value forward; an explicit false still turns it off.
+        if update["kind"]["type"] == "sshKey" {
+            let carried = match &existing_cipher.kind {
+                baluard_core::types::CipherKind::SshKey(d) => d.serve_via_agent,
+                _ => false,
+            };
+            if let Some(data) = update
+                .get_mut("kind")
+                .and_then(|k| k.get_mut("data"))
+                .and_then(|d| d.as_object_mut())
+            {
+                data.entry("serve_via_agent")
+                    .or_insert(serde_json::Value::Bool(carried));
+            }
+        }
 
         // Build merged input from existing + updates (proper PATCH semantics)
         // Distinguishes "key absent" from "key present with null"
@@ -12319,5 +12347,80 @@ mod app_match_context_tests {
         let mut s = baluard_core::vault::manifest::VaultSettings::default();
         s.suggest_app_logins = Some(false);
         assert!(app_match_context(Some(&s), "androidapp://com.github.android").is_none());
+    }
+}
+
+#[cfg(test)]
+mod ssh_serve_sticky_tests {
+    use super::VaultState;
+
+    const PASSWORD: &str = "sticky-agent-suite-pw";
+
+    async fn unlocked_state(dir: &tempfile::TempDir) -> VaultState {
+        let state = VaultState::new(dir.path().to_path_buf());
+        let payload =
+            serde_json::json!({ "password": PASSWORD, "profile": "mobile_low" }).to_string();
+        state.create_vault(&payload).await.unwrap();
+        state
+    }
+
+    /// A mobile- or old-desktop-style ssh edit re-serializes kind.data
+    /// without serve_via_agent; the merge must carry the stored flag
+    /// forward instead of serde-defaulting it off. An explicit false
+    /// still turns serving off.
+    #[tokio::test]
+    async fn ssh_edit_without_the_serve_key_preserves_the_flag() {
+        let _env = crate::test_support::lock_env();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", dir.path());
+        }
+        let state = unlocked_state(&dir).await;
+
+        let id = state
+            .add_cipher(
+                r#"{"name":"git","kind":{"type":"sshKey","data":{
+                    "public_key":"ssh-ed25519 AAAA",
+                    "serve_via_agent":true
+                }}}"#,
+            )
+            .await
+            .unwrap();
+
+        // Mobile-style edit: kind.data carries no serve_via_agent key.
+        state
+            .update_cipher(&format!(
+                r#"{{"id":"{id}","name":"git renamed","kind":{{"type":"sshKey","data":{{
+                    "public_key":"ssh-ed25519 AAAA",
+                    "key_fingerprint":"SHA256:abc"
+                }}}}}}"#,
+            ))
+            .await
+            .unwrap();
+
+        let back = state.get_cipher(&id, true).await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&back).unwrap();
+        assert_eq!(
+            v["kind"]["data"]["serve_via_agent"],
+            serde_json::json!(true),
+            "sticky flag must survive an edit that omits it"
+        );
+
+        // An explicit false turns it off.
+        state
+            .update_cipher(&format!(
+                r#"{{"id":"{id}","kind":{{"type":"sshKey","data":{{
+                    "public_key":"ssh-ed25519 AAAA",
+                    "serve_via_agent":false
+                }}}}}}"#
+            ))
+            .await
+            .unwrap();
+        let back = state.get_cipher(&id, true).await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&back).unwrap();
+        assert_eq!(
+            v["kind"]["data"]["serve_via_agent"],
+            serde_json::json!(false)
+        );
     }
 }

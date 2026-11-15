@@ -586,4 +586,44 @@ describe("SettingsModal import feedback and processing", () => {
       fileMock.restore();
     }
   });
+
+  it("ssh agent toggle sends ssh_agent_enabled through settings.set", async () => {
+    daemonMock.mockImplementation((action) => {
+      if (action === "settings.get") {
+        return Promise.resolve(JSON.stringify({
+          vault_timeout: "15m",
+          ssh_agent_enabled: false,
+          ssh_agent_auto_approve: false,
+        }));
+      }
+      return Promise.resolve("");
+    });
+    const { getByTestId } = render(() => <SettingsModal />);
+    await waitFor(() => expect(getByTestId("ssh-agent-toggle")).toBeTruthy());
+    fireEvent.click(getByTestId("ssh-agent-toggle"));
+    await waitFor(() => {
+      const calls = daemonMock.mock.calls.filter(([a]) => a === "settings.set");
+      expect(calls.some(([, payload]) => payload === JSON.stringify({ ssh_agent_enabled: true }))).toBe(true);
+    });
+  });
+
+  it("ssh agent auto-approve toggle sends ssh_agent_auto_approve", async () => {
+    daemonMock.mockImplementation((action) => {
+      if (action === "settings.get") {
+        return Promise.resolve(JSON.stringify({
+          vault_timeout: "15m",
+          ssh_agent_enabled: true,
+          ssh_agent_auto_approve: false,
+        }));
+      }
+      return Promise.resolve("");
+    });
+    const { getByTestId } = render(() => <SettingsModal />);
+    await waitFor(() => expect(getByTestId("ssh-agent-auto-approve-toggle")).toBeTruthy());
+    fireEvent.click(getByTestId("ssh-agent-auto-approve-toggle"));
+    await waitFor(() => {
+      const calls = daemonMock.mock.calls.filter(([a]) => a === "settings.set");
+      expect(calls.some(([, payload]) => payload === JSON.stringify({ ssh_agent_auto_approve: true }))).toBe(true);
+    });
+  });
 });

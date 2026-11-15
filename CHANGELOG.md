@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- The daemon can act as an OpenSSH agent: turn on SSH agent in Settings, mark individual SSH keys for serving, and terminal apps and git sign through the local agent socket. Signing asks for approval on every use unless you enable automatic approval.
+
 ## 0.6.0 - 2026-11-14
 
 - Large vaults no longer freeze the desktop when you edit an entry: the app now refreshes only the entry you touched instead of reloading the entire vault, and vault lists load in pages, so big collections stay fast. (Desktop, with the same change backing the mobile list.)

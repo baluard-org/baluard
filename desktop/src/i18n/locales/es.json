@@ -270,7 +270,9 @@
     "collectionLabel": "Carpeta compartida",
     "noCollection": "Sin carpeta compartida",
     "movedToast": "Entrada movida",
-    "reorderUri": "Arrastra para reordenar"
+    "reorderUri": "Arrastra para reordenar",
+    "serveViaAgentLabel": "Compartir por el agente SSH",
+    "serveViaAgentDesc": "Permite que el agente SSH local use esta clave para firmas de terminal y git. El interruptor principal en Ajustes también debe estar activado."
   },
   "settings": {
     "faviconLabel": "Mostrar iconos de sitios web",
@@ -448,7 +450,11 @@
     "switchToDark": "Cambiar al tema oscuro",
     "tabAbout": "Acerca de",
     "aboutTitle": "Acerca de Baluard",
-    "aboutSubtitle": "Gestor de contraseñas nativo git • GPL-3.0"
+    "aboutSubtitle": "Gestor de contraseñas nativo git • GPL-3.0",
+    "sshAgentLabel": "Agente SSH",
+    "sshAgentDesc": "Permite que apps de terminal y git pidan firmas de las claves SSH de tu bóveda mediante el socket local del agente. Desactivado por defecto. Cada clave también debe marcarse para compartirse.",
+    "sshAgentAutoApproveLabel": "Aprobar firmas automáticamente",
+    "sshAgentAutoApproveDesc": "Omite la aprobación por firma para las claves compartidas. Todas las solicitudes se quedan en este dispositivo."
   },
   "sync": {
     "title": "Sincronización de bóveda",

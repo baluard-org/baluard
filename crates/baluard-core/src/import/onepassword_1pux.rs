@@ -308,6 +308,8 @@ fn parse_ssh_key(fields: &[&OnePuxField]) -> Option<CipherKind> {
         private_key: field_value(fields, "private_key"),
         public_key: field_value(fields, "public_key"),
         key_fingerprint: field_value(fields, "fingerprint"),
+        // Imports never auto-serve keys; the user opts in.
+        serve_via_agent: false,
     }))
 }
 

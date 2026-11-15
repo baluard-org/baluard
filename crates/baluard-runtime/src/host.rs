@@ -275,6 +275,19 @@ impl VaultHost {
     /// Enumerate every registered vault, joining registry entries with the
     /// in-memory map so each row carries its `VaultPresence`. Drives the
     /// desktop vault switcher and `baluard vaults list`.
+    /// Slug→state snapshot of the open-vault map without `list()`'s
+    /// registry self-heal. The SSH-agent listener iterates open vaults
+    /// only and must never mutate the registry as a side effect.
+    pub async fn snapshot_states(&self) -> Vec<(String, Arc<VaultState>)> {
+        self.inner
+            .read()
+            .await
+            .vaults
+            .iter()
+            .map(|(slug, state)| (slug.clone(), state.clone()))
+            .collect()
+    }
+
     pub async fn list(&self) -> Vec<VaultListRow> {
         // Snapshot the map keys + arcs once, then drop the host lock before
         // the per-vault is_unlocked() reads (those acquire the vault's inner

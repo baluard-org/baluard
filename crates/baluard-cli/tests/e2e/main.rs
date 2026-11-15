@@ -151,6 +151,9 @@ fn spawn_daemon_with(tmp: TempDir, home: Option<&std::path::Path>) -> DaemonGuar
         .env("BALUARD_AUTOSYNC", "0")
         // Kernel kills the daemon if this test process dies first.
         .env("BALUARD_DAEMON_DIE_WITH_PARENT", "1")
+        // Manual agent-sign approvals must not stall the suite on the
+        // production 130s ceiling; the desktop keeps the default.
+        .env("BALUARD_AGENT_APPROVAL_WAIT_SECS", "6")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .current_dir(tmp.path());
@@ -1905,4 +1908,299 @@ fn e2e_members_replace_device() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("would lock you out"));
+}
+
+// ── SSH agent serve: the daemon as an OpenSSH agent for vault keys ──
+
+/// Generate a throwaway ed25519 keypair in `dir`; returns (private text,
+/// public text).
+fn gen_ssh_key(dir: &tempfile::TempDir, name: &str) -> (String, String) {
+    let ok = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(dir.path().join(name))
+        .status()
+        .expect("ssh-keygen must be on PATH");
+    assert!(ok.success(), "{name} generation failed");
+    (
+        std::fs::read_to_string(dir.path().join(name)).expect("private key"),
+        std::fs::read_to_string(dir.path().join(format!("{name}.pub"))).expect("public key"),
+    )
+}
+
+/// Shared fixture: daemon + unlocked agent-enabled vault + the ssh server
+/// whose authorized_keys is swapped to accept the vault-held key.
+struct AgentFixture {
+    guard: DaemonGuard,
+    server: SshServerGuard,
+    url: String,
+    url_port: String,
+    agent_sock: PathBuf,
+    home: PathBuf,
+}
+
+fn spawn_agent_fixture() -> AgentFixture {
+    let (server, url, _client_key) = spawn_ssh_server();
+    let tmp = tempfile::tempdir().expect("tmp");
+    let home = tempfile::tempdir().expect("home tmp");
+    let guard = spawn_daemon_with(tmp, Some(home.path()));
+    let agent_sock = guard.socket.parent().unwrap().join("agent.sock");
+    let url_port = url
+        .split(':')
+        .nth(2)
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or("22")
+        .to_string();
+    AgentFixture {
+        guard,
+        server,
+        url,
+        url_port,
+        agent_sock,
+        home: home.path().to_path_buf(),
+    }
+}
+
+fn run_cli(f: &AgentFixture, args: &[&str]) -> std::process::Output {
+    baluard_daemon(&f.guard)
+        .env("HOME", &f.home)
+        .args(args)
+        .output()
+        .expect("run baluard")
+}
+
+fn ssh_add_list(sock: &Path) -> (bool, String) {
+    let out = std::process::Command::new("ssh-add")
+        .arg("-l")
+        .env("SSH_AUTH_SOCK", sock)
+        .output()
+        .expect("ssh-add must be on PATH");
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+/// Unlocked vault, master switch on, one opted-in ("served") and one
+/// opted-out ("quiet") ssh key. Returns the served key texts.
+fn seed_vault_keys(f: &AgentFixture) -> (String, String) {
+    let out = run_cli(f, &["init", "--slug", "agent", "--json"]);
+    assert!(
+        out.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run_cli(f, &["vaults", "switch", "baluard-agent"]);
+    assert!(out.status.success(), "switch failed");
+    let out = run_cli(f, &["unlock"]);
+    assert!(out.status.success(), "unlock failed");
+    let out = run_cli(f, &["settings", "set", "ssh_agent_enabled=true"]);
+    assert!(out.status.success(), "settings set failed");
+
+    let dir = tempfile::tempdir().unwrap();
+    let (serve_priv, serve_pub) = gen_ssh_key(&dir, "serve");
+    let (quiet_priv, quiet_pub) = gen_ssh_key(&dir, "quiet");
+    // The key text begins with dashes, so values must ride the --flag=
+    // form or clap would parse the payload as flags.
+    let served_priv_arg = format!("--private-key={serve_priv}");
+    let served_pub_arg = format!("--public-key={serve_pub}");
+    let out = run_cli(
+        f,
+        &[
+            "add",
+            "ssh",
+            "--name",
+            "served",
+            &served_pub_arg,
+            &served_priv_arg,
+            "--serve-via-agent",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "add served: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let quiet_priv_arg = format!("--private-key={quiet_priv}");
+    let quiet_pub_arg = format!("--public-key={quiet_pub}");
+    let out = run_cli(
+        f,
+        &[
+            "add",
+            "ssh",
+            "--name",
+            "quiet",
+            &quiet_pub_arg,
+            &quiet_priv_arg,
+        ],
+    );
+    assert!(out.status.success(), "add quiet failed");
+    (serve_priv, serve_pub)
+}
+
+fn wait_pending_request(f: &AgentFixture) -> String {
+    for _ in 0..80 {
+        let out = run_cli(f, &["agents", "pending"]);
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        eprintln!("pending poll: {text}");
+        if let Some(id) = text
+            .split("\"request_id\":\"")
+            .nth(1)
+            .and_then(|r| r.split('"').next())
+        {
+            return id.to_string();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("no pending agent request surfaced");
+}
+
+/// ssh-add -l lists exactly the opted-in keys; the opted-out key is
+/// invisible; the master switch off answers the empty-list form.
+#[test]
+fn e2e_ssh_agent_identities_gate() {
+    let f = spawn_agent_fixture();
+    seed_vault_keys(&f);
+
+    let (ok, out) = ssh_add_list(&f.agent_sock);
+    assert!(ok, "ssh-add failed: {out}");
+    assert!(out.contains("served"), "served key missing: {out}");
+    assert!(!out.contains("quiet"), "opted-out key leaked: {out}");
+
+    let out = run_cli(&f, &["settings", "set", "ssh_agent_enabled=false"]);
+    assert!(out.status.success(), "settings off failed");
+    // ssh-add prints the same "no identities" for an empty answer and a
+    // protocol failure, so the off-state e2e check is "nothing listed";
+    // the wire-level empty-vs-failure split is pinned by the daemon
+    // unit tests.
+    let (_ok, out) = ssh_add_list(&f.agent_sock);
+    assert!(!out.contains("served"), "off must list nothing: {out}");
+}
+
+/// A locked vault protocol-fails identities instead of listing.
+#[test]
+fn e2e_ssh_agent_locked_fails() {
+    let f = spawn_agent_fixture();
+    seed_vault_keys(&f);
+    let out = run_cli(&f, &["lock"]);
+    assert!(out.status.success(), "lock failed");
+
+    let (ok, out) = ssh_add_list(&f.agent_sock);
+    assert!(!ok, "locked vault must not list identities");
+    assert!(!out.contains("served"), "locked vault leaked keys: {out}");
+}
+
+/// A real git push over ssh signs through the agent; the identical push
+/// without the agent socket fails (only the vault holds the accepted
+/// private half).
+#[test]
+fn e2e_ssh_agent_git_push_signs_via_agent() {
+    let f = spawn_agent_fixture();
+    let (serve_priv, serve_pub) = seed_vault_keys(&f);
+    let out = run_cli(&f, &["settings", "set", "ssh_agent_auto_approve=true"]);
+    assert!(out.status.success(), "auto approve failed");
+
+    // The fixture authorizes clientkey; swap in the vault key so only the
+    // agent-held identity can authenticate.
+    std::fs::write(f.server.dir.path().join("authorized_keys"), &serve_pub).unwrap();
+
+    let repo = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let mut c = std::process::Command::new("git");
+        c.args(args).current_dir(repo.path());
+        c
+    };
+    let _ = git(&["init", "-q", "-b", "main"]).status();
+    std::fs::write(repo.path().join("f.txt"), "x").unwrap();
+    let _ = git(&["add", "."]).status();
+    let mut commit = git(&[
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-qm",
+        "x",
+    ]);
+    commit.env("HOME", &f.home).status().expect("commit");
+    let _ = git(&["remote", "add", "origin", &f.url]).status();
+
+    let ssh_flags =
+        "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes";
+
+    // Control: no agent in the environment -> no acceptable key -> refused.
+    let mut push = git(&["push", "-q", "origin", "HEAD"]);
+    push.env("HOME", &f.home)
+        .env("GIT_SSH_COMMAND", ssh_flags)
+        .env_remove("SSH_AUTH_SOCK");
+    let out = push.output().expect("git push");
+    assert!(
+        !out.status.success(),
+        "push without the agent must fail: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Through the agent: authenticates and lands.
+    let mut push = git(&["push", "-q", "origin", "HEAD"]);
+    push.env("HOME", &f.home)
+        .env("SSH_AUTH_SOCK", &f.agent_sock)
+        .env("GIT_SSH_COMMAND", ssh_flags);
+    let out = push.output().expect("git push");
+    assert!(
+        out.status.success(),
+        "push via the agent failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A manual-approval sign denied through agents.deny fails the client;
+/// the approve route completes the next one.
+#[test]
+fn e2e_ssh_agent_deny_and_approve_routes() {
+    let f = spawn_agent_fixture();
+    let (serve_priv, serve_pub) = seed_vault_keys(&f);
+    std::fs::write(f.server.dir.path().join("authorized_keys"), &serve_pub).unwrap();
+
+    // One ssh auth attempt = exactly one agent sign request. The server
+    // accepts only the vault-held key, so success proves the agent signed.
+    let port = f.url_port.clone();
+    let sign_once = move |sock: &Path| -> bool {
+        std::process::Command::new("ssh")
+            .arg("-o")
+            .arg("StrictHostKeyChecking=no")
+            .arg("-o")
+            .arg("UserKnownHostsFile=/dev/null")
+            .arg("-o")
+            .arg("BatchMode=yes")
+            .args(["-p", &port])
+            .env("SSH_AUTH_SOCK", sock)
+            .args(["127.0.0.1", "true"])
+            .output()
+            .expect("ssh")
+            .status
+            .success()
+    };
+
+    std::thread::scope(|scope| {
+        let sign_once = &sign_once;
+        // Deny.
+        let sock = f.agent_sock.clone();
+        let signer = scope.spawn(move || sign_once(&sock));
+        let id = wait_pending_request(&f);
+        let out = run_cli(&f, &["agents", "deny", &id]);
+        assert!(out.status.success(), "deny failed");
+        assert!(!signer.join().unwrap(), "denied sign must fail");
+
+        // Approve.
+        let sock = f.agent_sock.clone();
+        let signer = scope.spawn(move || sign_once(&sock));
+        let id = wait_pending_request(&f);
+        let out = run_cli(&f, &["agents", "approve", &id]);
+        assert!(
+            out.status.success(),
+            "approve failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(signer.join().unwrap(), "approved sign must succeed");
+    });
+    let _ = serve_priv;
 }

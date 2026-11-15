@@ -311,7 +311,9 @@
     "collectionLabel": "Dossier partagé",
     "noCollection": "Aucun dossier partagé",
     "movedToast": "Élément déplacé",
-    "reorderUri": "Glisser pour réordonner"
+    "reorderUri": "Glisser pour réordonner",
+    "serveViaAgentLabel": "Servir via l'agent SSH",
+    "serveViaAgentDesc": "Permet à l'agent SSH local d'utiliser cette clé pour les signatures de terminal et de git. L'interrupteur principal dans Réglages doit aussi être activé."
   },
   "autosync": {
     "upToDate": "Toutes les modifications sont synchronisées",
@@ -707,7 +709,11 @@
     "switchToDark": "Passer au thème sombre",
     "tabAbout": "À propos",
     "aboutTitle": "À propos de Baluard",
-    "aboutSubtitle": "Gestionnaire de mots de passe souverain, chiffré de bout en bout et sans serveur centralisé."
+    "aboutSubtitle": "Gestionnaire de mots de passe souverain, chiffré de bout en bout et sans serveur centralisé.",
+    "sshAgentLabel": "Agent SSH",
+    "sshAgentDesc": "Permet aux apps de terminal et à git de demander des signatures des clés SSH de votre coffre via le socket local de l'agent. Désactivé par défaut. Chaque clé doit aussi être marquée pour le service.",
+    "sshAgentAutoApproveLabel": "Approuver les signatures automatiquement",
+    "sshAgentAutoApproveDesc": "Passe l'approbation par signature pour les clés servies. Toutes les demandes restent sur cet appareil."
   },
   "categories": {
     "allItems": "Tous les éléments",

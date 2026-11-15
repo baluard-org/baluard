@@ -755,6 +755,10 @@ pub struct SshKeyData {
     pub public_key: Option<String>,
     #[serde(default)]
     pub key_fingerprint: Option<String>,
+    /// Per-key opt-in to the daemon's SSH-agent serve (D80 grant rules
+    /// still gate every sign). Absent means off.
+    #[serde(default)]
+    pub serve_via_agent: bool,
 }
 
 /// Signing key & certificate cipher data (D81). The private key and the
@@ -1731,6 +1735,7 @@ mod tests {
             private_key: Some("-----BEGIN PRIVATE KEY-----".into()),
             public_key: Some("ssh-rsa AAAA".into()),
             key_fingerprint: Some("SHA256:abc123".into()),
+            serve_via_agent: false,
         });
         let json = serde_json::to_string(&ssh).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();

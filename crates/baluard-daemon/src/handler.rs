@@ -8083,8 +8083,9 @@ fn peer_binding(stream: &IpcStream) -> Option<baluard_runtime::agents::PeerBindi
 }
 
 #[cfg(target_os = "linux")]
-fn peer_binding_unix(stream: &UnixStream) -> Option<baluard_runtime::agents::PeerBinding> {
-    use std::os::unix::io::AsRawFd;
+pub(crate) fn peer_binding_unix(
+    stream: &impl std::os::unix::io::AsRawFd,
+) -> Option<baluard_runtime::agents::PeerBinding> {
     let fd = stream.as_raw_fd();
     let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
     let mut cred_len: libc::socklen_t = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
@@ -8123,8 +8124,9 @@ fn linux_start_ticks(stat: &str) -> Option<u64> {
 }
 
 #[cfg(target_os = "macos")]
-fn peer_binding_unix(stream: &UnixStream) -> Option<baluard_runtime::agents::PeerBinding> {
-    use std::os::unix::io::AsRawFd;
+pub(crate) fn peer_binding_unix(
+    stream: &impl std::os::unix::io::AsRawFd,
+) -> Option<baluard_runtime::agents::PeerBinding> {
     let fd = stream.as_raw_fd();
     let mut pid: libc::pid_t = 0;
     let ret = unsafe {
