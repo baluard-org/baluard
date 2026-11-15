@@ -58,6 +58,7 @@ pub struct RegistrationReport {
 }
 
 impl RegistrationReport {
+    #[allow(dead_code)]
     fn is_clean(&self) -> bool {
         self.errors.is_empty()
     }
@@ -124,7 +125,7 @@ pub fn register_at(apps_root: &Path, nmh_path: &Path, report: &mut RegistrationR
 pub fn register_beside_exec(exe_dir: &Path, report: &mut RegistrationReport) {
     let id = chrome_ext_id();
     let nmh_path = exe_dir.join("baluard-nmh.exe");
-    let mut write =
+    let write =
         |doc: Result<String, String>, file: String, report: &mut RegistrationReport| match doc
             .and_then(|doc| write_manifest(&exe_dir.join(file), &doc))
         {

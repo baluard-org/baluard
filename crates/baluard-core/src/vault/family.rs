@@ -312,7 +312,7 @@ mod tests {
             &digest,
             vault_id,
             pending.initiated_at,
-            &pending.nonce.as_deref().unwrap_or_default(),
+            pending.nonce.as_deref().unwrap_or_default(),
         );
         let sig = hex::encode(
             crate::crypto::signature::sign(&sk, &msg)

@@ -227,7 +227,7 @@ const STAMP_PERSIST_GAP_MS: u64 = 60_000;
 
 /// `true` when a registry persist is due (first ever, or the gap elapsed).
 fn stamp_due(last_persist_ms: Option<u64>, now_ms: u64) -> bool {
-    last_persist_ms.map_or(true, |t| now_ms.saturating_sub(t) >= STAMP_PERSIST_GAP_MS)
+    last_persist_ms.is_none_or(|t| now_ms.saturating_sub(t) >= STAMP_PERSIST_GAP_MS)
 }
 
 /// Pure over the passed registry so tests avoid the machine-global file.
@@ -611,7 +611,7 @@ impl AutoSyncHandle {
     pub async fn enroll_verify_key_snapshot(
         &self,
     ) -> Option<baluard_core::sync::engine::EnrollVerifyKey> {
-        self.inner.lock().await.enroll_vk.clone()
+        self.inner.lock().await.enroll_vk
     }
 
     /// Wire the line-ack context so sync cycles can classify the line:
@@ -718,7 +718,7 @@ impl AutoSyncHandle {
         if !g.active || g.generation != generation {
             return (PullReport::Idle, None);
         }
-        let mut report = PullReport::Error;
+        let report: PullReport;
         // Scrubbed human-readable cause for the FFI surface; the bare tag
         // alone once left the mobile toast guessing (2026-11-13 incident).
         let mut detail: Option<String> = None;

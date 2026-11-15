@@ -1005,6 +1005,7 @@ fn rollback_arm(vault_path: &Path, kit_id: &str, prior: Option<&[u8]>) -> Result
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn arm(
     vault_path: &Path,
     handle: &crate::vault::handle::VaultHandle,
@@ -1493,7 +1494,7 @@ mod tests {
     #[tokio::test]
     async fn arm_rolls_back_when_the_forge_refuses_the_key() {
         let dir = tempfile::tempdir().unwrap();
-        let mut handle = open_vault(&dir);
+        let handle = open_vault(&dir);
         let mut mock = MockProvider::github();
         mock.fail_deploy_key = true;
         let tok = ProviderToken::new("tok", "repo");
@@ -1620,7 +1621,7 @@ mod tests {
             )
             .unwrap()
         };
-        let mut sealed: serde_json::Value = serde_json::from_str(&sealed_json).unwrap();
+        let sealed: serde_json::Value = serde_json::from_str(&sealed_json).unwrap();
         // The kit must carry the algorithm: kits are stored for years and
         // a future KDF's kits must fail as "update Baluard", not as a
         // wrong passphrase.
@@ -1751,7 +1752,7 @@ mod tests {
     #[test]
     fn layer_blob_round_trip_and_cross_epoch_refusal() {
         let ek = [5u8; 32];
-        let root = [0xAau8; 64];
+        let root = [0xAAu8; 64];
         let packed = seal_layer(&ek, &root, "vault-1", "kit-1", 3).unwrap();
         let opened = open_layer(&ek, &packed, "vault-1", "kit-1", 3).unwrap();
         assert_eq!(*opened, root);
@@ -1855,7 +1856,7 @@ mod tests {
     #[tokio::test]
     async fn contact_view_opens_the_cloned_copy_from_the_kit_alone() {
         let dir = tempfile::tempdir().unwrap();
-        let mut handle = open_vault(&dir);
+        let handle = open_vault(&dir);
         let mock = MockProvider::github();
         let tok = ProviderToken::new("tok", "repo");
         let outcome = arm(

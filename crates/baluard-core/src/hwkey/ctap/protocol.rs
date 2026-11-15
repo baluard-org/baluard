@@ -504,6 +504,7 @@ impl<'a> CtapClient<'a> {
     }
 
     /// getAssertion with the PIN-less hmac-secret extension.
+    #[allow(clippy::too_many_arguments)]
     pub fn get_assertion(
         &self,
         rp_id: &str,

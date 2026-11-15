@@ -389,7 +389,7 @@ impl VaultRegistry {
             if paths.len() > 1 {
                 // Copies present: the directory named exactly after the slug
                 // is the live one; anything else is ambiguous, skip the slug.
-                let slug_dir = format!("{slug}");
+                let slug_dir = slug.to_string();
                 paths.retain(|p| p.file_name().and_then(|n| n.to_str()) == Some(slug_dir.as_str()));
                 if paths.len() != 1 {
                     continue;

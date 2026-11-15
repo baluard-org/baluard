@@ -47,7 +47,7 @@ pub fn parse(data: &str) -> ImportResult {
     let col_extra = headers.iter().position(|h| h.eq_ignore_ascii_case("extra"));
     let col_fav = headers.iter().position(|h| h.eq_ignore_ascii_case("fav"));
     if !headers.iter().any(|h| h.eq_ignore_ascii_case("url")) {
-        result.skip(format!("Not a lastpass CSV: no 'url' column"));
+        result.skip("Not a lastpass CSV: no 'url' column".to_string());
         return result;
     }
 

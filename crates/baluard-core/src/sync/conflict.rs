@@ -1119,7 +1119,7 @@ mod tests {
             fido2_credentials: Some(vec![keyed.clone()]),
             ..LoginData::default()
         });
-        let mut local_c = base_c.clone();
+        let local_c = base_c.clone();
         let mut remote_c = base.clone();
         remote_c.kind = CipherKind::Login(LoginData {
             fido2_credentials: Some(vec![redacted]),

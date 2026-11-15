@@ -575,7 +575,6 @@ fn code_for(resp: &GatewayResponse) -> &'static str {
 
 fn forward(action: &str, payload: &str, token: &str) -> anyhow::Result<GatewayResponse> {
     use prost::Message;
-    use std::io::Read;
 
     let socket = baluard_core::paths::socket_path();
     let mut stream = baluard_core::ipc::IpcStream::connect(&socket)

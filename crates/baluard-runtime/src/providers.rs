@@ -1178,9 +1178,6 @@ fn urldecode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Extract the slug field from a JSON payload. Returns `None` when the
-/// payload is not JSON, has no `slug` field, or the field is empty. Used to
-
 #[cfg(test)]
 mod tests {
     use super::*;

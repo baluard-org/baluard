@@ -13,8 +13,8 @@
 
 #[cfg(unix)]
 mod serve {
-    use crate::host::{SharedVaultHost, VaultHost};
-    use crate::state::VaultState;
+    use crate::host::VaultHost;
+
     use baluard_runtime::agents::PeerBinding;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -250,7 +250,6 @@ mod serve {
     /// "cannot serve" answer unless some vault is already enabled.
     async fn scan(host: &VaultHost, policy_path: &Path) -> (Vec<ServeEntry>, bool, bool) {
         let mut entries = Vec::new();
-        let mut any_enabled = false;
         let mut any_locked = false;
         // The master switch and the sign policy are device-local, not
         // vault settings: a synced switch would let another device turn
@@ -262,7 +261,7 @@ mod serve {
             // device-local and readable without the vault.
             return (entries, false, false);
         }
-        any_enabled = true;
+        let any_enabled = true;
         // Deterministic order: the vault map is unordered, and a key
         // present in two vaults must resolve the same way every time.
         let mut vaults = host.snapshot_states().await;
@@ -462,7 +461,7 @@ mod serve {
                 peer,
                 None,
                 None,
-                &[entry.cipher_id.clone()],
+                std::slice::from_ref(&entry.cipher_id),
                 "auto-approve",
             )
             .is_err()
@@ -534,7 +533,7 @@ mod serve {
             peer,
             Some(&request_id),
             None,
-            &[entry.cipher_id.clone()],
+            std::slice::from_ref(&entry.cipher_id),
             "pending",
         )
         .is_err()

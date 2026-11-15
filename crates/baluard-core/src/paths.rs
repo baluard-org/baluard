@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn update_state_path_is_inside_cache_dir() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        assert!(update_state_path().starts_with(&cache_dir()));
+        assert!(update_state_path().starts_with(cache_dir()));
         assert!(update_state_path().to_string_lossy().contains("baluard"));
     }
 

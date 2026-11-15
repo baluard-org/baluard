@@ -2611,7 +2611,7 @@ pub fn handle_credentials(
             key,
         } => {
             let mut obj = serde_json::Map::new();
-            if let Some(host) = std::env::var("BALUARD_CREDENTIALS_HOST").ok() {
+            if let Ok(host) = std::env::var("BALUARD_CREDENTIALS_HOST") {
                 obj.insert("host".into(), serde_json::Value::String(host));
             } else {
                 // The route requires a host even on clear; read the
@@ -2737,9 +2737,7 @@ pub fn handle_git_probe(
             // Exit code 2 is a scripting contract: probe ran, host changed.
             std::process::exit(2);
         }
-        _ => {
-            return Err(format!("Connection failed ({kind}): {detail}").into());
-        }
+        _ => Err(format!("Connection failed ({kind}): {detail}").into()),
     }
 }
 
@@ -3007,12 +3005,15 @@ fn resolve_empty_phrase(
 }
 
 #[cfg(feature = "git-sync")]
+type VaultEmptyReport = (usize, usize, usize, usize, String);
+
+#[cfg(feature = "git-sync")]
 fn vault_empty_direct(
     vault_path: &str,
     phrase_flag: Option<&str>,
     rewrite_history: bool,
     yes: bool,
-) -> Result<(usize, usize, usize, usize, String), Box<dyn std::error::Error>> {
+) -> Result<VaultEmptyReport, Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
     // P2: the wipe and any rewrite commit need the signing key.
     let handle = unlock_vault_direct(vault_path)?;
@@ -4506,7 +4507,7 @@ pub fn handle_settings_get(
             Ok(())
         }
         ConnectMode::Direct => {
-            return Err("Settings requires daemon mode. Use --socket or start the daemon.".into());
+            Err("Settings requires daemon mode. Use --socket or start the daemon.".into())
         }
     }
 }
@@ -4550,7 +4551,7 @@ pub fn handle_settings_set(
             Ok(())
         }
         ConnectMode::Direct => {
-            return Err("Settings requires daemon mode. Use --socket or start the daemon.".into());
+            Err("Settings requires daemon mode. Use --socket or start the daemon.".into())
         }
     }
 }
@@ -4572,9 +4573,7 @@ pub fn handle_space_settings_get(
             Ok(())
         }
         ConnectMode::Direct => {
-            return Err(
-                "Space settings requires daemon mode. Use --socket or start the daemon.".into(),
-            );
+            Err("Space settings requires daemon mode. Use --socket or start the daemon.".into())
         }
     }
 }
@@ -4677,9 +4676,7 @@ pub fn handle_space_settings_set(
             Ok(())
         }
         ConnectMode::Direct => {
-            return Err(
-                "Space settings requires daemon mode. Use --socket or start the daemon.".into(),
-            );
+            Err("Space settings requires daemon mode. Use --socket or start the daemon.".into())
         }
     }
 }

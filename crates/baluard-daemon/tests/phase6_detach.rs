@@ -1348,7 +1348,7 @@ async fn clone_start_reports_registered_over_dir_exists_for_default_dir_vaults()
 
 #[tokio::test]
 async fn route_unlock_on_a_downloaded_vault_names_the_recovery_phrase() {
-    let (data_dir, _guard) = sandboxed_data_dir().await;
+    let (_data_dir, _guard) = sandboxed_data_dir().await;
     let (_tmp, dir, vault_id) = make_real_vault("downloaded");
     // Simulate a fresh clone: the device key and member unlock are
     // device-local (gitignored) and never travel with the download.

@@ -31,20 +31,6 @@ pub mod error;
 pub mod types;
 pub mod wire;
 
-/// Serializes tests that sandbox process-global env vars. Env mutation is
-/// process-global, so every test redirecting a path env var holds this lock
-/// for its whole body (see the same helper in baluard-runtime).
-#[cfg(test)]
-pub(crate) mod test_support {
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    pub(crate) fn lock_env() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
-}
-
 pub use error::BaluardError;
 
 /// Library version, embedded in vault format headers.
@@ -73,6 +59,20 @@ pub fn keyring_disabled() -> bool {
 
 /// Current AEAD algorithm identifier: AES-256-GCM.
 pub const ALG_AES_256_GCM: u16 = 0x0001;
+
+/// Serializes tests that sandbox process-global env vars. Env mutation is
+/// process-global, so every test redirecting a path env var holds this lock
+/// for its whole body (see the same helper in baluard-runtime).
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn lock_env() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
 
 // NOTE: the mobile UniFFI FFI surface lives in `crates/baluard-uniffi/`, NOT here.
 // An earlier spike placed `mobile_version` / `mobile_generate_mnemonic` /

@@ -326,7 +326,7 @@ impl PendingQueue {
         let mut entries = self.entries.write().unwrap();
         Self::sweep(&mut entries);
         let mut v: Vec<PendingRequest> = entries.values().cloned().collect();
-        v.sort_by(|a, b| a.created_at_ms.cmp(&b.created_at_ms));
+        v.sort_by_key(|a| a.created_at_ms);
         v
     }
 
@@ -379,6 +379,12 @@ impl PendingQueue {
     fn sweep(entries: &mut HashMap<String, PendingRequest>) {
         let cutoff = now_ms().saturating_sub(120_000);
         entries.retain(|_, e| e.created_at_ms > cutoff);
+    }
+}
+
+impl Default for PendingQueue {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

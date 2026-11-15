@@ -11,7 +11,7 @@ use baluard_core::ipc::IpcStream;
 /// while allowing large vaults in CLI commands like `trash list`).
 const MAX_RESPONSE: usize = 32 * 1024 * 1024;
 use prost::Message;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 use zeroize::Zeroize;

@@ -376,21 +376,7 @@ fn finish(state: &SharedVaultState, error: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use baluard_core::types::{CipherKind, LoginData, LoginUri, UriMatchStrategy};
-
-    fn login(uris: &[&str], favicon: Option<baluard_core::types::FaviconData>) -> CipherKind {
-        CipherKind::Login(LoginData {
-            uris: uris
-                .iter()
-                .map(|u| LoginUri {
-                    uri: (*u).to_string(),
-                    match_strategy: UriMatchStrategy::default(),
-                })
-                .collect(),
-            favicon,
-            ..Default::default()
-        })
-    }
+    use baluard_core::types::CipherKind;
 
     #[test]
     fn build_targets_dedups_domains_and_skips_covered_entries() {
@@ -398,7 +384,7 @@ mod tests {
         let b = Uuid::new_v4();
         let c = Uuid::new_v4();
         let e = Uuid::new_v4();
-        let items = vec![
+        let items = [
             (a, vec!["https://github.com/x".to_string()], false),
             (
                 b,
@@ -428,7 +414,7 @@ mod tests {
     fn build_targets_orders_domains_by_first_seen() {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
-        let items = vec![
+        let items = [
             (a, vec!["https://gitlab.com/x".to_string()], false),
             (b, vec!["https://example.com/y".to_string()], false),
         ];

@@ -726,7 +726,7 @@ pub async fn run_provider_assertion(
     user_verified: bool,
     index: &PasskeyIndex,
 ) -> Result<ProviderAssertionResult, String> {
-    let mut options: passkey::types::webauthn::PublicKeyCredentialRequestOptions =
+    let options: passkey::types::webauthn::PublicKeyCredentialRequestOptions =
         serde_json::from_str(request_json).map_err(|e| format!("Invalid request options: {e}"))?;
     let rp_id = effective_rp_id(origin, options.rp_id.as_deref())?;
 

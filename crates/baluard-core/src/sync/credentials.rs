@@ -82,7 +82,7 @@ pub fn extract_host(url: &str) -> Option<String> {
         // bound. Taking the first '@' anywhere would let a path like
         // evil.example/x@github.com/y resolve to github.com and release
         // its host-bound token to evil.example.
-        let bound = s.find(|c: char| c == ':' || c == '/').unwrap_or(s.len());
+        let bound = s.find([':', '/']).unwrap_or(s.len());
         let authority = &s[..bound];
         let host = match authority.rfind('@') {
             Some(at) => &authority[at + 1..],
@@ -1303,7 +1303,7 @@ mod custom_remote_tests {
         let up = std::cell::Cell::new(0u32);
         let types = git2::CredentialType::USER_PASS_PLAINTEXT;
         // Own host: released (Cred is not Debug, so judge by is_ok only).
-        assert!(matches!(
+        assert!(
             credentials_attempt(
                 &cfg,
                 "https://git.example.com/vault.git",
@@ -1311,9 +1311,9 @@ mod custom_remote_tests {
                 types,
                 &ssh,
                 &up
-            ),
-            Ok(_)
-        ));
+            )
+            .is_ok()
+        );
         // Redirected host: refused with the bound message.
         let Err(err) = credentials_attempt(
             &cfg,

@@ -221,7 +221,7 @@ pub async fn handle_agent_route(
                 .pending_requests()
                 .list()
                 .into_iter()
-                .filter(|p| p.vault_slug.as_deref().map_or(true, |s| s == slug))
+                .filter(|p| p.vault_slug.as_deref().is_none_or(|s| s == slug))
                 .map(|p| {
                     serde_json::json!({
                         "request_id": p.request_id,

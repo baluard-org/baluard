@@ -355,7 +355,7 @@ impl<'a> VaultCreator<'a> {
     }
 
     /// Executes the ceremony transactionally, sets files, and returns a pre-unlocked handle.
-    pub fn execute(mut self) -> Result<(VaultHandle, CeremonySecrets), BaluardError> {
+    pub fn execute(self) -> Result<(VaultHandle, CeremonySecrets), BaluardError> {
         // A failed Create never showed the recovery phrase, so the
         // directory it scaffolded holds no user data; leaving it behind
         // wedges every re-run behind AlreadyExists. Only a directory we

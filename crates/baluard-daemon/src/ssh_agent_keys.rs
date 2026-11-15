@@ -6,7 +6,7 @@
 //! generates (ADR 0014). RSA stays out with the L7 RUSTSEC-2023-0071 fix.
 
 use ssh_key::private::PrivateKey;
-use ssh_key::{Algorithm, HashAlg, LineEnding};
+use ssh_key::{Algorithm, HashAlg};
 
 /// One served key, ready for the agent protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +75,7 @@ pub fn sign_wire(private: &PrivateKey, data: &[u8]) -> Result<Vec<u8>, KeyError>
 mod tests {
     use super::*;
     use rand::RngCore;
+    use ssh_key::LineEnding;
     use ssh_key::private::{Ed25519Keypair, KeypairData};
 
     /// Fixed test seed — synthetic, never a real key.

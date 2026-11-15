@@ -410,7 +410,7 @@ mod tests {
             .get_assertion(
                 RP_ID,
                 &salt,
-                &[attestation.credential_id.clone()],
+                std::slice::from_ref(&attestation.credential_id),
                 &shared,
                 &salt,
                 None,

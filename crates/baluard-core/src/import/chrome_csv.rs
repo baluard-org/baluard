@@ -43,7 +43,7 @@ pub fn parse(data: &str) -> ImportResult {
         .position(|h| h.eq_ignore_ascii_case("password"));
     let col_note = headers.iter().position(|h| h.eq_ignore_ascii_case("note"));
     if !headers.iter().any(|h| h.eq_ignore_ascii_case("url")) {
-        result.skip(format!("Not a chrome CSV: no 'url' column"));
+        result.skip("Not a chrome CSV: no 'url' column".to_string());
         return result;
     }
 
@@ -128,7 +128,7 @@ Google,https://google.com,user@gmail.com,pass123,"#;
         // stripping it every name/url column missed and rows imported as
         // "Untitled" with no URL.
         let csv = "\u{feff}name,url,username,password\nGitHub,https://github.com,u,p\n";
-        let result = parse(&csv);
+        let result = parse(csv);
         assert_eq!(result.ciphers.len(), 1);
         assert_eq!(result.ciphers[0].name, "GitHub");
         match &result.ciphers[0].kind {

@@ -8,6 +8,9 @@ use sha2::Sha256;
 
 use crate::error::CryptoError;
 
+/// The three keys a contact-view derivation yields.
+pub type ContactViewKeys = ([u8; 32], [u8; 32], [u8; 32]);
+
 const SESSION_INFO: &[u8] = b"baluard-session-v1";
 const SYNC_INFO: &[u8] = b"baluard-sync-v1";
 const ENROLL_PROOF_INFO: &[u8] = b"baluard-enroll-proof-v1";
@@ -48,9 +51,7 @@ pub fn derive_session_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
 /// passphrase is the only secret collected), so the view session keys
 /// derive from the Root Key with view-specific labels. They share no
 /// derivation path with the KEK subkeys a normal unlock produces.
-pub fn derive_contact_view_keys(
-    root: &[u8; 64],
-) -> Result<([u8; 32], [u8; 32], [u8; 32]), CryptoError> {
+pub fn derive_contact_view_keys(root: &[u8; 64]) -> Result<ContactViewKeys, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root);
     let expand = |info: &[u8]| -> Result<[u8; 32], CryptoError> {
         let mut key = [0u8; 32];

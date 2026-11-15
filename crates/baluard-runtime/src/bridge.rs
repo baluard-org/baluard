@@ -457,10 +457,9 @@ mod tests {
     /// `BALUARD_DATA_DIR` (read by `baluard_core::paths::data_dir`) and holds
     /// a guard for the test's lifetime. Serialised by the crate-shared env
     /// lock (env vars are process-global; see `test_support` in lib.rs).
-
     struct Sandbox {
         _dir: tempfile::TempDir,
-        _guard: std::sync::MutexGuard<'static, ()>,
+        _guard: crate::test_support::EnvGuard,
     }
 
     fn sandbox() -> Sandbox {

@@ -1257,7 +1257,7 @@ impl VaultState {
         // keywrap: run on a blocking thread like the password path.
         let vault_path = self.vault_path.clone();
         let kek = *kek;
-        let mut new_handle = tokio::task::spawn_blocking(
+        let new_handle = tokio::task::spawn_blocking(
             move || -> Result<VaultHandle, baluard_core::error::BaluardError> {
                 let mut h = VaultHandle::open(&vault_path)?;
                 h.unlock_with_kek(&kek)?;
@@ -2084,7 +2084,7 @@ impl VaultState {
         // against the 256KB cap, and one section keeps the profile
         // read-modify-write atomic with the blob swap, so a rotation or a
         // concurrent settings write cannot land between key use and save.
-        let mut guard = self.inner.write().await;
+        let guard = self.inner.write().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
@@ -2470,7 +2470,7 @@ impl VaultState {
             }
         }
 
-        let state = self
+        let _state = self
             .ceremony_cache
             .remove(ceremony_id)
             .await
@@ -3061,7 +3061,7 @@ impl VaultState {
                 passkey_data: boxed_pk,
                 rp_id,
                 ..
-            } => ((&**boxed_pk).clone(), rp_id.clone()),
+            } => ((**boxed_pk).clone(), rp_id.clone()),
             _ => return Err("Expected a provider registration ceremony".into()),
         };
         {
@@ -6987,7 +6987,7 @@ impl VaultState {
 
         // Get existing cipher to merge updates
         let existing = handle.get_cipher(cipher_id).map_err(|e| format!("{e}"))?;
-        let mut existing_cipher = match existing {
+        let existing_cipher = match existing {
             baluard_core::vault::handle::CipherRead::Decrypted(c) => *c,
             _ => return Err("Cipher not found or vault locked".to_string()),
         };
@@ -8477,7 +8477,7 @@ impl VaultState {
         // Open a temp handle, try unlock, discard
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
-        let vault_path = handle.path.clone();
+        let _vault_path = handle.path.clone();
         let vault_id = handle.vault_id.to_string();
         drop(guard);
 
@@ -8922,7 +8922,7 @@ impl VaultState {
         // two Argon2id runs would otherwise pin the worker ~2s.
         let vault_path = self.vault_path.clone();
         let password = Zeroizing::new(password.to_string());
-        let (mut temp, kek) =
+        let (_temp, kek) =
             tokio::task::spawn_blocking(move || -> Result<(VaultHandle, [u8; 32]), String> {
                 let mut temp =
                     VaultHandle::open(&vault_path).map_err(|e| format!("Open failed: {e}"))?;
@@ -9191,7 +9191,7 @@ impl VaultState {
             .ok_or("missing attachment_id")?;
         // Validate before any path use: the id later joins a filesystem
         // path, and synced cipher meta is member-writable data.
-        let attach_uuid: uuid::Uuid = attach_id
+        let _attach_uuid: uuid::Uuid = attach_id
             .parse()
             .map_err(|e| format!("invalid attachment_id: {e}"))?;
 
@@ -9418,7 +9418,7 @@ impl VaultState {
         drop(guard);
 
         let current = tokio::task::spawn_blocking({
-            let tip = tip.clone();
+            let _tip = tip.clone();
             move || -> Result<
                 baluard_core::sync::msgbus::MsgBoardStatus,
                 baluard_core::error::BaluardError,
@@ -9570,7 +9570,7 @@ impl VaultState {
         drop(guard);
 
         let current = tokio::task::spawn_blocking({
-            let tip = tip.clone();
+            let _tip = tip.clone();
             move || -> Result<
                 baluard_core::sync::attachments::LineStatus,
                 baluard_core::error::BaluardError,
@@ -11755,14 +11755,14 @@ mod avatar_lock_tests {
         let getter = tokio::spawn(async move { getter_state.avatar_get().await });
         // The remove payload commits while the legacy bytes are still in
         // flight, so the migration commit races the removal.
-        let _ = opened_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        opened_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         state
             .avatar_set(&serde_json::json!({"data": "", "ext": "png"}).to_string())
             .await
             .unwrap();
         let result = getter.await.unwrap();
         assert!(result.is_ok(), "avatar_get should complete: {result:?}");
-        let _ = closed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        closed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
 
         let enc = dir.path().join("meta").join("avatar.enc");
         assert!(
@@ -11792,6 +11792,18 @@ mod pin_hw_escrow_tests {
     const PIN: &str = "246813";
 
     pub(super) static TEST_STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Store lock held for the entire test body, awaits included: the
+    /// store is process-global, and each #[tokio::test] runs its own
+    /// single-threaded runtime whose code never takes this lock, so the
+    /// span across await points is the design, not a hazard.
+    pub(super) struct StoreGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+    impl StoreGuard {
+        pub(super) fn hold() -> Self {
+            Self(TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner()))
+        }
+    }
     static TAP_OFF_WORKER: AtomicBool = AtomicBool::new(false);
 
     /// H5 red signal: a chip derive reached from inside `block_on` panics
@@ -12000,7 +12012,7 @@ mod pin_hw_escrow_tests {
     /// typing the master password.
     #[tokio::test]
     async fn pin_unlock_keeps_the_escrow_on_hardware_errors() {
-        let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _lock = StoreGuard::hold();
         let _env = HwEnvGuard::clear();
         let _keyring = KeyringEnvGuard::set();
         let (_dir, state) = sealed_pin_vault(false).await;
@@ -12040,7 +12052,7 @@ mod pin_hw_escrow_tests {
     /// worker (spawn_blocking, like the password unlock path).
     #[tokio::test]
     async fn pin_unlock_tap_runs_off_the_runtime_worker() {
-        let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _lock = StoreGuard::hold();
         let _env = HwEnvGuard::clear();
         let _keyring = KeyringEnvGuard::set();
         TAP_OFF_WORKER.store(false, Ordering::SeqCst);
@@ -12062,7 +12074,7 @@ mod pin_hw_escrow_tests {
 
     #[tokio::test]
     async fn password_rechecks_keep_the_live_signing_cache_without_tapping() {
-        let _lock = TEST_STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _lock = StoreGuard::hold();
         let _env = HwEnvGuard::clear();
         let _keyring = KeyringEnvGuard::set();
         let (dir, state) = sealed_pin_vault(false).await;
@@ -12105,7 +12117,7 @@ mod pin_hw_escrow_tests {
 #[cfg(test)]
 mod devkey_op_lock_tests {
     use super::VaultState;
-    use super::pin_hw_escrow_tests::{HwEnvGuard, TEST_STORE_LOCK};
+    use super::pin_hw_escrow_tests::{HwEnvGuard, StoreGuard};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -12191,7 +12203,7 @@ mod devkey_op_lock_tests {
 
     #[tokio::test]
     async fn device_key_operations_serialize_per_vault() {
-        let _store = TEST_STORE_LOCK.lock().unwrap();
+        let _store = StoreGuard::hold();
         let _env = HwEnvGuard::clear();
         baluard_core::hwkey::install(Arc::new(RacingMock));
         MAX_OPEN_BINDINGS.store(0, Ordering::SeqCst);
@@ -12301,7 +12313,7 @@ mod devkey_op_lock_tests {
     /// panics on the current-thread test runtime.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn password_change_does_not_hold_the_write_lock_across_taps() {
-        let _store = TEST_STORE_LOCK.lock().unwrap();
+        let _store = StoreGuard::hold();
         let _env = HwEnvGuard::clear();
         baluard_core::hwkey::install(Arc::new(SlowSealMock));
 
@@ -12361,8 +12373,10 @@ mod app_match_context_tests {
 
     #[test]
     fn explicit_opt_out_still_wins() {
-        let mut s = baluard_core::vault::manifest::VaultSettings::default();
-        s.suggest_app_logins = Some(false);
+        let s = baluard_core::vault::manifest::VaultSettings {
+            suggest_app_logins: Some(false),
+            ..Default::default()
+        };
         assert!(app_match_context(Some(&s), "androidapp://com.github.android").is_none());
     }
 }

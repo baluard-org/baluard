@@ -228,14 +228,7 @@ pub fn store_token(
                 .map_err(|e| keyring_error(&e))
         });
 
-    if let Err(e) = keyring_result {
-        // Keyring present but unusable (headless session, locked
-        // collection): refuse rather than silently park the secret in a
-        // plaintext file — the error already carries the install hint for
-        // the missing Secret Service (UX rule: print the command, never
-        // degrade). Android and tests took the file path above.
-        return Err(e);
-    }
+    keyring_result?;
     // Keyring took it; drop any stale fallback copy so the two can't diverge.
     let _ = std::fs::remove_file(token_file_path(&key));
     Ok(())

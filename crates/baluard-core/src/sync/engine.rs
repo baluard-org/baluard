@@ -151,8 +151,12 @@ pub struct RemoteMigrateReport {
     pub to: String,
 }
 
+type BoardCompaction = (Oid, Vec<(String, git2::Oid)>, u64);
+
 impl SyncEngine {
     /// The signing key this engine will sign commits with, if loaded.
+    // Unused until the commit-signing caller lands.
+    #[allow(dead_code)]
     pub(crate) fn signing_key(&self) -> Option<&ed25519_dalek::SigningKey> {
         self.signing_key.as_ref()
     }
@@ -718,7 +722,7 @@ impl SyncEngine {
             // remote-supplied .gitignore dropped their ignore lines or a
             // legacy vault tracks a copy: staging it would push the
             // device's private key or credentials to the remote.
-            if Self::DEVICE_LOCAL_PATHS.iter().any(|p| path == *p) {
+            if Self::DEVICE_LOCAL_PATHS.contains(&path) {
                 continue;
             }
             let s = entry.status();
@@ -3009,7 +3013,7 @@ impl SyncEngine {
         tracking: &str,
         tip_entries: &[(String, git2::Oid)],
         now: u64,
-    ) -> Result<(Oid, Vec<(String, git2::Oid)>, u64), BaluardError> {
+    ) -> Result<BoardCompaction, BaluardError> {
         use crate::sync::msgbus::{
             BOARD_COMPACTED_TYPE, MSGS_REF, MsgOut, build_envelope, canonical, path_is_conforming,
             prune_entries,
@@ -3369,8 +3373,7 @@ impl SyncEngine {
         msgs: &[crate::sync::msgbus::MsgOut],
     ) -> Result<bool, BaluardError> {
         use crate::sync::msgbus::{
-            BOARD_COMPACTED_TYPE, CAP_TOTAL, HARD_CAP, MAX_CHAIN, MSGS_REF, MSGS_TRACKING, MsgOut,
-            build_envelope, canonical, prune_entries,
+            HARD_CAP, MAX_CHAIN, MSGS_REF, MSGS_TRACKING, build_envelope, canonical, prune_entries,
         };
         if msgs.is_empty() {
             return Ok(true);
@@ -12975,7 +12978,7 @@ mod tests {
         // roster key may sign.
         setup_signing_keys_with(clone_dir.path(), &key_a);
         let engine_b = SyncEngine::new(clone_dir.path(), "clone-device", None);
-        let remote_url = {
+        let _remote_url = {
             let r = repo_b.find_remote("origin").unwrap();
             r.url().unwrap().to_string()
         };
@@ -15636,7 +15639,7 @@ mod tests {
         );
         let compacted = names
             .iter()
-            .filter(|n| {
+            .filter(|_n| {
                 // The cleanup message's topic prefix is visible in no
                 // field of the name except through its content; count
                 // via the board read instead.
@@ -15760,9 +15763,7 @@ mod tests {
         );
         let names = board_entry_names(&bare);
         assert!(
-            names
-                .iter()
-                .any(|n| survivor.starts_with(&format!("msgs/cleanup/"))),
+            names.iter().any(|_n| survivor.starts_with("msgs/cleanup/")),
             "the survivor rides the merged board: {names:?}"
         );
     }

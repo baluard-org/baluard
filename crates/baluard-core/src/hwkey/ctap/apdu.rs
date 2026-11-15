@@ -192,11 +192,12 @@ mod tests {
     use std::cell::RefCell;
 
     /// Plays a scripted (request-prefix-matched) sequence of responses.
+    type ScriptedResponse = (Vec<u8>, Vec<u8>, [u8; 2]);
     struct Script {
-        steps: RefCell<Vec<(Vec<u8>, Vec<u8>, [u8; 2])>>,
+        steps: RefCell<Vec<ScriptedResponse>>,
     }
     impl Script {
-        fn new(steps: Vec<(Vec<u8>, Vec<u8>, [u8; 2])>) -> Self {
+        fn new(steps: Vec<ScriptedResponse>) -> Self {
             Self {
                 steps: RefCell::new(steps),
             }

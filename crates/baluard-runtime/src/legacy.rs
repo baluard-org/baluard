@@ -235,92 +235,6 @@ pub fn resend_json(vault_path: &std::path::Path, handle: &VaultHandle) -> Result
     Ok(serde_json::json!({ "kit_id": kit_id, "kit_armor": armor }).to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::split_git_url;
-
-    /// Regression for the re-review tuple swap: the JSON layer must
-    /// return the armored letter under kit_armor and only the UUID
-    /// under kit_id — the pre-fix order handed contacts a letter file
-    /// containing a UUID.
-    #[tokio::test]
-    async fn resend_json_returns_the_armored_letter_and_kit_id() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault_dir = dir.path().join("v");
-        let (handle, _secrets) =
-            baluard_core::vault::creation::VaultCreator::new(&vault_dir, "test password 123", "t")
-                .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
-                .initialize_git(false)
-                .execute()
-                .unwrap();
-        let store = baluard_core::legacy::LegacyStore {
-            kit_id: "01234567-aaaa-bbbb-cccc-dddddddddddd".into(),
-            lk_seed: "aa".repeat(32),
-            ek: "bb".repeat(32),
-            kit_letter: "THE LETTER".into(),
-            kit_armor: "THE ARMORED LETTER".into(),
-            deploy_key_fingerprint: "SHA256:abc".into(),
-            forge_key_id: None,
-            provider: baluard_core::providers::types::Provider::GitHub,
-            owner: "me".into(),
-            repo: "repo".into(),
-            origin_url: "https://github.com/me/repo".into(),
-        };
-        let root: [u8; 64] = *handle.unlocked().root().unwrap().as_bytes();
-        baluard_core::legacy::save_store(&vault_dir, &root, &store).unwrap();
-        baluard_core::legacy::save_record(
-            &vault_dir,
-            &baluard_core::legacy::LegacyRecord {
-                version: 1,
-                vault_id: "v".into(),
-                kit_id: store.kit_id.clone(),
-                state: baluard_core::legacy::LegacyState::Armed,
-                reason: None,
-                seq: 1,
-                epoch: 0,
-                window_days: 30,
-                lk_public_hash: "hh".into(),
-                ek_check: "cc".into(),
-                layer_hash: "ll".into(),
-                deploy_key_fingerprint: "SHA256:abc".into(),
-                created_day: 0,
-                repo_url_hash: "rr".into(),
-                signer_device_id: "dddddddd-dddd-dddd-dddd-dddddddddddd".into(),
-                owner_signature: None,
-            },
-        )
-        .unwrap();
-        let out = super::resend_json(&vault_dir, &handle).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["kit_id"], "01234567-aaaa-bbbb-cccc-dddddddddddd");
-        assert_eq!(v["kit_armor"], "THE ARMORED LETTER");
-    }
-
-    #[test]
-    fn splits_https_scp_and_ssh_forms() {
-        assert_eq!(
-            split_git_url("https://github.com/owner/repo.git"),
-            Some(("github.com".into(), "owner".into(), "repo".into()))
-        );
-        assert_eq!(
-            split_git_url("git@github.com:owner/repo.git"),
-            Some(("github.com".into(), "owner".into(), "repo".into()))
-        );
-        assert_eq!(
-            split_git_url("ssh://git@gitlab.com/owner/repo"),
-            Some(("gitlab.com".into(), "owner".into(), "repo".into()))
-        );
-        // Userinfo in an HTTPS URL must not become the owner.
-        assert_eq!(
-            split_git_url("https://user@github.com/owner/repo.git"),
-            Some(("github.com".into(), "owner".into(), "repo".into()))
-        );
-        // Deep paths and bare hosts are not owner/repo URLs.
-        assert_eq!(split_git_url("https://github.com/owner/repo/extra"), None);
-        assert_eq!(split_git_url("https://github.com"), None);
-    }
-}
-
 /// The opened contact view: an unlocked, disposable clone of the
 /// owner's vault plus the silence-window facts the UI shows first.
 pub struct ContactViewOpened {
@@ -516,5 +430,91 @@ fn url_host(url: &str) -> String {
             Some((h, _)) => h.to_ascii_lowercase(),
             None => auth.to_ascii_lowercase(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_git_url;
+
+    /// Regression for the re-review tuple swap: the JSON layer must
+    /// return the armored letter under kit_armor and only the UUID
+    /// under kit_id — the pre-fix order handed contacts a letter file
+    /// containing a UUID.
+    #[tokio::test]
+    async fn resend_json_returns_the_armored_letter_and_kit_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_dir = dir.path().join("v");
+        let (handle, _secrets) =
+            baluard_core::vault::creation::VaultCreator::new(&vault_dir, "test password 123", "t")
+                .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
+                .initialize_git(false)
+                .execute()
+                .unwrap();
+        let store = baluard_core::legacy::LegacyStore {
+            kit_id: "01234567-aaaa-bbbb-cccc-dddddddddddd".into(),
+            lk_seed: "aa".repeat(32),
+            ek: "bb".repeat(32),
+            kit_letter: "THE LETTER".into(),
+            kit_armor: "THE ARMORED LETTER".into(),
+            deploy_key_fingerprint: "SHA256:abc".into(),
+            forge_key_id: None,
+            provider: baluard_core::providers::types::Provider::GitHub,
+            owner: "me".into(),
+            repo: "repo".into(),
+            origin_url: "https://github.com/me/repo".into(),
+        };
+        let root: [u8; 64] = *handle.unlocked().root().unwrap().as_bytes();
+        baluard_core::legacy::save_store(&vault_dir, &root, &store).unwrap();
+        baluard_core::legacy::save_record(
+            &vault_dir,
+            &baluard_core::legacy::LegacyRecord {
+                version: 1,
+                vault_id: "v".into(),
+                kit_id: store.kit_id.clone(),
+                state: baluard_core::legacy::LegacyState::Armed,
+                reason: None,
+                seq: 1,
+                epoch: 0,
+                window_days: 30,
+                lk_public_hash: "hh".into(),
+                ek_check: "cc".into(),
+                layer_hash: "ll".into(),
+                deploy_key_fingerprint: "SHA256:abc".into(),
+                created_day: 0,
+                repo_url_hash: "rr".into(),
+                signer_device_id: "dddddddd-dddd-dddd-dddd-dddddddddddd".into(),
+                owner_signature: None,
+            },
+        )
+        .unwrap();
+        let out = super::resend_json(&vault_dir, &handle).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["kit_id"], "01234567-aaaa-bbbb-cccc-dddddddddddd");
+        assert_eq!(v["kit_armor"], "THE ARMORED LETTER");
+    }
+
+    #[test]
+    fn splits_https_scp_and_ssh_forms() {
+        assert_eq!(
+            split_git_url("https://github.com/owner/repo.git"),
+            Some(("github.com".into(), "owner".into(), "repo".into()))
+        );
+        assert_eq!(
+            split_git_url("git@github.com:owner/repo.git"),
+            Some(("github.com".into(), "owner".into(), "repo".into()))
+        );
+        assert_eq!(
+            split_git_url("ssh://git@gitlab.com/owner/repo"),
+            Some(("gitlab.com".into(), "owner".into(), "repo".into()))
+        );
+        // Userinfo in an HTTPS URL must not become the owner.
+        assert_eq!(
+            split_git_url("https://user@github.com/owner/repo.git"),
+            Some(("github.com".into(), "owner".into(), "repo".into()))
+        );
+        // Deep paths and bare hosts are not owner/repo URLs.
+        assert_eq!(split_git_url("https://github.com/owner/repo/extra"), None);
+        assert_eq!(split_git_url("https://github.com"), None);
     }
 }

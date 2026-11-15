@@ -230,7 +230,7 @@ fn time_to_unix(tag: u8, body: &[u8]) -> Option<u64> {
     if days < 0 {
         return None;
     }
-    let day_secs = (days as i64).checked_mul(86_400)?;
+    let day_secs = days.checked_mul(86_400)?;
     let secs = day_secs.checked_add((hour * 3600 + minute * 60 + second) as i64)?;
     u64::try_from(secs).ok()
 }
@@ -258,9 +258,9 @@ fn days_from_civil(y: i64, m: u64, d: u64) -> i64 {
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = (y - era * 400) as u64;
     let mp = (m + 9) % 12;
-    let doy = (153 * mp as u64 + 2) / 5 + d - 1;
+    let doy = (153 * mp + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era as i64 * 146_097 + doe as i64 - 719_468
+    era * 146_097 + doe as i64 - 719_468
 }
 
 /// Inverse of `days_from_civil` (Howard Hinnant's civil-from-days).

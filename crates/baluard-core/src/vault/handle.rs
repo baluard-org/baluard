@@ -5897,13 +5897,13 @@ impl VaultHandle {
                         return Err(primary_err);
                     }
                     if keys_cache.is_none() {
-                        match load_device_privkeys_with_ck(
-                            &self.path,
-                            self.device_id,
-                            Some(&devkey_seal),
-                        ) {
-                            Ok(pair) => keys_cache = Some(pair),
-                            Err(e) => return Err(e),
+                        {
+                            let pair = load_device_privkeys_with_ck(
+                                &self.path,
+                                self.device_id,
+                                Some(&devkey_seal),
+                            )?;
+                            keys_cache = Some(pair)
                         }
                     }
                     // P3: prefer this device's fresh wrap from the committed
@@ -11917,6 +11917,8 @@ fn load_device_privkeys(
     load_device_privkeys_with_ck(vault_path, device_id, seal_key).map(|(keys, _)| keys)
 }
 
+type DevicePrivKeysRead = (DevicePrivKeys, Option<zeroize::Zeroizing<[u8; 32]>>);
+
 /// `load_device_privkeys` plus the hw content key when the device file
 /// was v2-hw: identity re-binding derives from the SAME chip assertion
 /// instead of paying a second tap.
@@ -11924,7 +11926,7 @@ fn load_device_privkeys_with_ck(
     vault_path: &Path,
     device_id: Uuid,
     seal_key: Option<&[u8; 32]>,
-) -> Result<(DevicePrivKeys, Option<zeroize::Zeroizing<[u8; 32]>>), BaluardError> {
+) -> Result<DevicePrivKeysRead, BaluardError> {
     // 0. Consult SecureKeystore (global or injected)
     if let Some(keystore) = crate::vault::creation::get_global_keystore() {
         if let Ok(bytes) = keystore
@@ -11957,9 +11959,10 @@ fn load_device_privkeys_with_ck(
     Err(VaultError::NotFound("device private key not found".into()).into())
 }
 
-static DEVICE_SIGNING_KEYS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<(PathBuf, Uuid), zeroize::Zeroizing<[u8; 32]>>>,
-> = std::sync::OnceLock::new();
+type DeviceKeyCache =
+    std::sync::Mutex<std::collections::HashMap<(PathBuf, Uuid), zeroize::Zeroizing<[u8; 32]>>>;
+
+static DEVICE_SIGNING_KEYS: std::sync::OnceLock<DeviceKeyCache> = std::sync::OnceLock::new();
 
 /// Byte snapshots of every identity artifact rotate_seal_key rebinds, so
 /// change_master_password can roll them back with the device file.
@@ -13740,7 +13743,7 @@ mod tests {
         let owner_seal = handle.devkey_seal();
         let device_o = handle.device_id.to_string();
         let engine_o = crate::sync::engine::SyncEngine::new(&dir, &device_o, owner_seal.as_ref());
-        let mut repo_o = engine_o.open_repo().unwrap();
+        let repo_o = engine_o.open_repo().unwrap();
         // The kit file must be committed BEFORE the clone, or the
         // peers' parent-tree lookup finds no verifier.
         engine_o.commit_all(&repo_o, "kit").unwrap();
@@ -15800,9 +15803,11 @@ mod tests {
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         handle.unlock(&password).unwrap();
 
-        let mut login = crate::types::LoginData::default();
-        login.username = Some("alex@example.com".into());
-        login.password = Some("correct horse".into());
+        let mut login = crate::types::LoginData {
+            username: Some("alex@example.com".into()),
+            password: Some("correct horse".into()),
+            ..Default::default()
+        };
         let mut passkey = crate::types::PasskeyData::default();
         passkey.credential_id = "cred-1".into();
         passkey.key_type = "public-key".into();

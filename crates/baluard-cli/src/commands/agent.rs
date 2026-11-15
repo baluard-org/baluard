@@ -294,7 +294,7 @@ mod tests {
             "MISSING_DELIMITERS".to_string(),
             format!("1BAD={id}:password"),
             format!("BALUARD_TOKEN={id}:password"),
-            format!("TOKEN=not-a-uuid:password"),
+            "TOKEN=not-a-uuid:password".to_string(),
             format!("TOKEN={id}:notes"),
             format!("TOKEN={id}:custom:"),
         ] {

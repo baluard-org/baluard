@@ -269,9 +269,10 @@ mod tests {
     // ── G24 merge ceiling (family-spaces step 7): org-regression suite ──
 
     fn settings_with(personal_merge: Option<bool>) -> VaultSettings {
-        let mut s = VaultSettings::default();
-        s.personal_merge = personal_merge;
-        s
+        VaultSettings {
+            personal_merge,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -464,10 +465,10 @@ mod tests {
         super::set_purpose(vault, super::SpacePurpose::Family).unwrap();
         // A family vault holds the whole household: admin roles and a
         // third member both pass.
-        pair_gate(&vault, MemberRole::Admin).unwrap();
-        write_member(&vault, &row(MemberRole::Owner, None)).unwrap();
-        write_member(&vault, &row(MemberRole::Editor, None)).unwrap();
-        pair_gate(&vault, MemberRole::Viewer).unwrap();
+        pair_gate(vault, MemberRole::Admin).unwrap();
+        write_member(vault, &row(MemberRole::Owner, None)).unwrap();
+        write_member(vault, &row(MemberRole::Editor, None)).unwrap();
+        pair_gate(vault, MemberRole::Viewer).unwrap();
     }
 
     #[test]
@@ -475,8 +476,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let vault = dir.path();
         super::set_purpose(vault, super::SpacePurpose::Org).unwrap();
-        assert!(!super::is_pair(&vault));
-        pair_gate(&vault, MemberRole::Admin).unwrap();
+        assert!(!super::is_pair(vault));
+        pair_gate(vault, MemberRole::Admin).unwrap();
     }
 
     #[test]
@@ -486,10 +487,10 @@ mod tests {
         // Raw flag write, bypassing the purpose stamp a real set does.
         std::fs::create_dir_all(vault.join("meta")).unwrap();
         std::fs::write(vault.join("meta/settings-pub.json"), r#"{ "space": true }"#).unwrap();
-        assert_eq!(super::read_purpose(&vault), super::SpacePurpose::Absent);
-        assert!(super::is_pair(&vault));
-        assert!(super::is_space(&vault));
-        let err = pair_gate(&vault, MemberRole::Admin).unwrap_err();
+        assert_eq!(super::read_purpose(vault), super::SpacePurpose::Absent);
+        assert!(super::is_pair(vault));
+        assert!(super::is_space(vault));
+        let err = pair_gate(vault, MemberRole::Admin).unwrap_err();
         assert!(err.to_string().contains("editor or viewer"), "{err}");
     }
 
@@ -498,27 +499,27 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let vault = dir.path();
         super::set_purpose(vault, super::SpacePurpose::Org).unwrap();
-        assert!(super::is_space(&vault));
-        assert!(!super::is_pair(&vault));
-        assert!(!super::is_space_vault(&vault));
+        assert!(super::is_space(vault));
+        assert!(!super::is_pair(vault));
+        assert!(!super::is_space_vault(vault));
     }
 
     #[test]
     fn set_space_flag_stamps_pair_purpose_for_new_spaces() {
         let dir = TempDir::new().unwrap();
         let vault = dir.path();
-        super::set_space_flag(&vault, true).unwrap();
-        assert_eq!(super::read_purpose(&vault), super::SpacePurpose::Pair);
+        super::set_space_flag(vault, true).unwrap();
+        assert_eq!(super::read_purpose(vault), super::SpacePurpose::Pair);
         // Clearing the flag later never invents or removes a purpose.
-        super::set_space_flag(&vault, false).unwrap();
-        assert_eq!(super::read_purpose(&vault), super::SpacePurpose::Pair);
+        super::set_space_flag(vault, false).unwrap();
+        assert_eq!(super::read_purpose(vault), super::SpacePurpose::Pair);
     }
 
     #[test]
     fn purpose_cannot_be_set_to_absent() {
         let dir = TempDir::new().unwrap();
         let vault = dir.path();
-        let err = super::set_purpose(&vault, super::SpacePurpose::Absent).unwrap_err();
+        let err = super::set_purpose(vault, super::SpacePurpose::Absent).unwrap_err();
         assert!(err.to_string().contains("cannot be cleared"), "{err}");
     }
 
@@ -532,6 +533,6 @@ mod tests {
             r#"{ "purpose": "commune" }"#,
         )
         .unwrap();
-        assert_eq!(super::read_purpose(&vault), super::SpacePurpose::Absent);
+        assert_eq!(super::read_purpose(vault), super::SpacePurpose::Absent);
     }
 }

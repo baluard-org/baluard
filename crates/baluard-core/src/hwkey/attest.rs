@@ -741,8 +741,8 @@ fn verify_attstmt(att: &PackedAttestation) -> bool {
         -257 => &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B],
         _ => return false,
     };
-    let ok = verify_link(&leaf.key, &msg, &att.sig, alg_oid);
-    ok
+
+    verify_link(&leaf.key, &msg, &att.sig, alg_oid)
 }
 
 /// Verify against the bundled Yubico pin.
@@ -913,6 +913,8 @@ pub(crate) mod test_chain {
     }
 
     /// hmac-secret applied extension (authData extensions map).
+    // Unused: hmac-secret stays unadvertised until PRF support lands.
+    #[allow(dead_code)]
     pub fn hmac_secret_extension() -> Vec<u8> {
         tlv_bytes(
             0x30,
@@ -1120,7 +1122,7 @@ mod tests {
         att: PackedAttestation,
         pins: Vec<Vec<u8>>,
         auth_data: Vec<u8>,
-        credential_id: Vec<u8>,
+        _credential_id: Vec<u8>,
         leaf: p256::ecdsa::SigningKey,
     }
 
@@ -1153,7 +1155,7 @@ mod tests {
             },
             pins: vec![root_der],
             auth_data,
-            credential_id,
+            _credential_id: credential_id,
             leaf,
         }
     }

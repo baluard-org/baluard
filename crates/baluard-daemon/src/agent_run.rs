@@ -169,11 +169,11 @@ pub async fn run(
         Ok(child) => child,
         Err(e) => return err_response(format!("agent command could not start: {e}")),
     };
-    let mut child_stdout = match child.stdout.take() {
+    let child_stdout = match child.stdout.take() {
         Some(stdout) => stdout,
         None => return err_response("agent command stdout is unavailable"),
     };
-    let mut child_stderr = match child.stderr.take() {
+    let child_stderr = match child.stderr.take() {
         Some(stderr) => stderr,
         None => return err_response("agent command stderr is unavailable"),
     };
@@ -350,9 +350,4 @@ pub(crate) fn macos_proc_info(pid: u32) -> Option<(u32, u64)> {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn process_chain(_pid: u32) -> Option<Vec<(u32, u64)>> {
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 }

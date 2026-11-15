@@ -1023,11 +1023,10 @@ impl MobileVault {
     /// out. Works on a locked vault. Returns JSON
     /// `{tip, rewritten, foreign, rewrite_signed, compaction}`.
     pub async fn msg_board_status(&self) -> Result<String, BaluardError> {
-        Ok(self
-            .state
+        self.state
             .msg_board_status("{}")
             .await
-            .map_err(|e| BaluardError::Vault { detail: e })?)
+            .map_err(|e| BaluardError::Vault { detail: e })
     }
 
     /// Acknowledge the offered message board tip after the cleanup
@@ -1035,11 +1034,10 @@ impl MobileVault {
     /// a stale accept when the board changed while reviewing.
     pub async fn msg_board_ack(&self, tip: String) -> Result<String, BaluardError> {
         let payload = serde_json::json!({ "tip": tip }).to_string();
-        Ok(self
-            .state
+        self.state
             .msg_board_ack(&payload)
             .await
-            .map_err(|e| BaluardError::Vault { detail: e })?)
+            .map_err(|e| BaluardError::Vault { detail: e })
     }
 
     /// The guided resolution for a pending line rewrite: pull the
@@ -1047,11 +1045,10 @@ impl MobileVault {
     /// the reclaimed envelopes, acknowledge the new tip, and release
     /// the write lock. Returns JSON `{discarded}`.
     pub async fn attach_resolve(&self) -> Result<String, BaluardError> {
-        Ok(self
-            .state
+        self.state
             .attach_resolve("{}")
             .await
-            .map_err(|e| BaluardError::Vault { detail: e })?)
+            .map_err(|e| BaluardError::Vault { detail: e })
     }
 
     /// Compact the vault's off-main attachments line, reclaiming
@@ -2144,7 +2141,7 @@ pub async fn create_vault_with_recovery(
         recovery_phrase: MobileRecoveryPhrase {
             phrase: secrets.recovery_phrase.phrase(),
         },
-        kit_phrase: secrets.kit_phrase.as_deref().map(|s| s.clone()),
+        kit_phrase: secrets.kit_phrase.as_deref().cloned(),
     })
 }
 
@@ -3121,7 +3118,9 @@ mod tests {
             0
         );
 
-        // UV gate: Required plus no grant refuses.
+        // UV gate: Required plus no grant refuses with the machine
+        // marker clients answer by reprompting (master password on
+        // mobile) and retrying with the grant set.
         let err = vault
             .passkey_provider_assert(
                 assertion_request.clone(),

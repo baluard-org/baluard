@@ -39,6 +39,7 @@ fn write_head(out: &mut Vec<u8>, major: u8, arg: u64) {
     }
 }
 
+#[allow(dead_code)]
 fn encoded_len_head(len: usize) -> usize {
     if len < 24 {
         1
@@ -140,7 +141,7 @@ impl Value {
             27 => &rest[8..],
             _ => unreachable!(),
         };
-        fn take<'a>(n: usize, rest: &'a [u8]) -> Result<(&'a [u8], &'a [u8]), DecodeError> {
+        fn take(n: usize, rest: &[u8]) -> Result<(&[u8], &[u8]), DecodeError> {
             if rest.len() < n {
                 return Err(DecodeError);
             }

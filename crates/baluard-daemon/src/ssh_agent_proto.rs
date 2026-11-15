@@ -116,7 +116,7 @@ pub fn parse_frame(frame: &[u8]) -> Result<AgentRequest, ProtoError> {
 
 /// True when a length prefix is acceptable before reading the body.
 pub fn frame_len_ok(len: u32) -> bool {
-    len >= 1 && len <= MAX_FRAME_LEN
+    (1..=MAX_FRAME_LEN).contains(&len)
 }
 
 /// `12` with a zero key count — an empty key list and a failure are the

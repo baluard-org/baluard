@@ -846,7 +846,7 @@ mod tests {
         let asset = "Baluard-cli-amd64.tar.gz";
         let sums = format!("{}  {asset}\n", sha256_hex(&archive));
         let sums_sig = signer.sign_legacy(sums.as_bytes());
-        let tag_json = format!("{{\"tag_name\":\"9.9.9\"}}");
+        let tag_json = "{\"tag_name\":\"9.9.9\"}".to_string();
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();

@@ -2358,9 +2358,7 @@ fn main() {
             commands::handle_attach_list(cli.socket.as_deref(), &cipher_id)
         }
 
-        Commands::SelfUpdate => {
-            update::self_update().map_err(|e| Box::<dyn std::error::Error>::from(e))
-        }
+        Commands::SelfUpdate => update::self_update().map_err(Box::<dyn std::error::Error>::from),
 
         Commands::Ping => {
             match client::request_to("ping", "", cli.socket.as_deref()) {

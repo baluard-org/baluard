@@ -49,7 +49,7 @@ pub fn parse(data: &str) -> ImportResult {
         .iter()
         .position(|h| h.eq_ignore_ascii_case("httpRealm"));
     if !headers.iter().any(|h| h.eq_ignore_ascii_case("url")) {
-        result.skip(format!("Not a firefox CSV: no 'url' column"));
+        result.skip("Not a firefox CSV: no 'url' column".to_string());
         return result;
     }
 

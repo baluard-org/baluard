@@ -261,18 +261,18 @@ pub fn read_privkey_file(
     read_privkey_file_with_ck(path, seal_key).map(|(inner, _)| inner)
 }
 
+/// Privkey JSON plus, for v2-hw files, the hw content key.
+type PrivkeyRead = (
+    zeroize::Zeroizing<String>,
+    Option<zeroize::Zeroizing<[u8; 32]>>,
+);
+
 /// Read the privkey JSON plus, for v2-hw files, the hw content key (see
 /// `open_bytes_hw_with_ck`).
 pub fn read_privkey_file_with_ck(
     path: &Path,
     seal_key: Option<&[u8; 32]>,
-) -> Result<
-    (
-        zeroize::Zeroizing<String>,
-        Option<zeroize::Zeroizing<[u8; 32]>>,
-    ),
-    BaluardError,
-> {
+) -> Result<PrivkeyRead, BaluardError> {
     match file_kind(path) {
         PrivkeyFileKind::Absent => {
             Err(VaultError::NotFound("device private key not found".into()).into())
@@ -399,12 +399,12 @@ pub fn rotate_seal_key_with_inner(
         .and_then(hw_attestation_from_str);
     let out = seal_bytes_hw(&*hw, &binding, new_seal_key, inner, id, mode, attestation)?;
     staged_reseal(
-        path.parent().and_then(Path::parent).as_deref(),
+        path.parent().and_then(Path::parent),
         path,
         &out.bytes,
         || {
             rebind_identity_artifacts(
-                path.parent().and_then(Path::parent).as_deref().unwrap(),
+                path.parent().and_then(Path::parent).unwrap(),
                 id,
                 &ik_of(old_ck),
                 &ik_of(&out.content_key),
@@ -860,12 +860,12 @@ pub fn set_hw_seal_consent(
         attestation,
     )?;
     staged_reseal(
-        path.parent().and_then(Path::parent).as_deref(),
+        path.parent().and_then(Path::parent),
         path,
         &out.bytes,
         || {
             rebind_identity_artifacts(
-                path.parent().and_then(Path::parent).as_deref().unwrap(),
+                path.parent().and_then(Path::parent).unwrap(),
                 device_id,
                 &ik_of(&old_ck),
                 &ik_of(&out.content_key),
@@ -1048,6 +1048,7 @@ pub fn enable_hw_seal_rotating(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rotate_and_seal(
     vault: &Path,
     vault_id: Uuid,
@@ -2580,7 +2581,7 @@ mod tests {
         let _old_env = hw_env_clear();
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
-        let (mut handle, _password, _phrase) = audit_vault(dir.path());
+        let (handle, _password, _phrase) = audit_vault(dir.path());
         let seal = handle.unlocked().devkey_seal;
         let vault = handle.path.clone();
         let devkey = vault.join("meta/device-privkey.json");
@@ -2675,7 +2676,7 @@ mod tests {
         let _old_env = hw_env_clear();
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
-        let (mut handle, _password, _phrase) = audit_vault(dir.path());
+        let (handle, _password, _phrase) = audit_vault(dir.path());
         let seal = handle.unlocked().devkey_seal;
         let vault = handle.path.clone();
         let devkey = vault.join("meta/device-privkey.json");
@@ -2978,7 +2979,7 @@ mod tests {
         let _old_env = hw_env_clear();
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
-        let (mut handle, _password, _phrase) = audit_vault(dir.path());
+        let (handle, _password, _phrase) = audit_vault(dir.path());
         let seal = handle.unlocked().devkey_seal;
         let vault = handle.path.clone();
         let devkey = vault.join("meta/device-privkey.json");

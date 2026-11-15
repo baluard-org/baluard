@@ -23,6 +23,8 @@ const SUBCMD_GET_KEY_AGREEMENT: u8 = 0x02;
 
 // CTAP2 status codes the model answers with.
 const OK: u8 = 0x00;
+// Unused: real CTAP2 authenticators answer 0x22; the scripted model never does.
+#[allow(dead_code)]
 const ERR_INVALID_CREDENTIAL: u8 = 0x22;
 const ERR_CREDENTIAL_EXCLUDED: u8 = 0x19;
 const ERR_UNSUPPORTED_ALGORITHM: u8 = 0x26;
@@ -525,7 +527,7 @@ mod tests {
 
     impl HidLink for ModelLink {
         fn write(&self, report: &[u8; 65]) -> Result<(), CtapHidError> {
-            let cid = [report[1], report[2], report[3], report[4]];
+            let _cid = [report[1], report[2], report[3], report[4]];
             let cmd = report[5];
             if cmd == ctaphid::wire::CMD_INIT {
                 let mut r = [0u8; 65];
@@ -600,7 +602,7 @@ mod tests {
         let client = client_of(model);
         let info = client.require_hmac_secret().unwrap();
         assert_eq!(info.pin_protocols, vec![1, 2]);
-        let secret = client.shared_secret(&info).unwrap();
+        let _secret = client.shared_secret(&info).unwrap();
         let made = client
             .make_credential(&[7u8; 32], RP, USER, "Baluard", &[], &mut |_| {})
             .unwrap();
@@ -615,7 +617,7 @@ mod tests {
             .get_assertion(
                 RP,
                 &[7u8; 32],
-                &[made.credential_id.clone()],
+                std::slice::from_ref(&made.credential_id),
                 &secret2,
                 &salt,
                 None,
@@ -629,7 +631,7 @@ mod tests {
     #[test]
     fn two_salts_yield_two_outputs() {
         let client = client_of(SoftAuthenticator::new(master()));
-        let made = client
+        let _made = client
             .make_credential(&[7u8; 32], RP, USER, "Baluard", &[], &mut |_| {})
             .unwrap();
         let info = client.require_hmac_secret().unwrap();
@@ -760,7 +762,7 @@ mod tests {
                 RP,
                 USER,
                 "Baluard",
-                &[made.credential_id.clone()],
+                std::slice::from_ref(&made.credential_id),
                 &mut |_| {},
             )
             .unwrap_err();

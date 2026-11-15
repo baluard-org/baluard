@@ -715,7 +715,7 @@ impl ForgeProvider for CodebergProvider {
             .map_err(|e| ProviderError::Api(format!("refresh failed: {e}")))?;
 
         if !resp.status().is_success() {
-            let s = resp.status();
+            let _s = resp.status();
             let st = resp.status().as_u16();
             return match st {
                 400 | 401 => Err(ProviderError::AuthFailed(format!("refresh HTTP {st}"))),

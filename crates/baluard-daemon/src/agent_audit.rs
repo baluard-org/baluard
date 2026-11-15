@@ -2,7 +2,7 @@ use baluard_runtime::agents::PeerBinding;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const FILE_NAME: &str = "agent-audit.jsonl";
