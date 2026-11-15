@@ -204,7 +204,7 @@ Phase 4, clients:
 Phase 5, docs and tests:
 - ADR for the attachments ref design; threat-model T1 (bucket classes, unchanged ladder) and T7 (caps, base64 zeroization) updates; key-concepts attachment section.
 - e2e git-server fixture gains the attachments ref scenario (clone, upload offline then sync, delete and prune, compact) PLUS the multi-device compaction race: device B holds an unpublished upload while device A compacts; assert B's blob survives the reconcile and lands on the fresh genesis.
-- Live forge test: DONE for GitHub (see assessment results; probe size 5 MiB is generous headroom over the 2 MiB cap).
+- Live forge test: DONE for GitHub, GitLab, and Codeberg (see assessment results; probe size 5 MiB is generous headroom over the 2 MiB cap).
 
 ## Assessment results (empirical, 2026-11-13)
 
@@ -227,7 +227,7 @@ Design deltas the results produce (SUPERSEDED in part — see the second review 
 2. **Shallow fetch is for readers only.** Depth=1 fetching works, but the vault repo itself must never become shallow: a shallow repo cannot push its own line (incomplete history), and the vault repo is the line's writer. So the vault keeps full line fetches (client weight still bounded by compaction), while depth=1 is the tool for two future paths: restoring a wiped line cheaply (self-heal reads the remote tip without dragging history) and a lazy read-only blob service if one is ever needed. A shallow-fetch design note must record that libgit2's local transport rejects shallow entirely, so e2e fixtures against local bare repos cannot exercise it.
 3. **The spike re-proved the ambient pushInsteadOf hazard:** the first live run pushed to SSH and died auth-side because the box's global gitconfig rewrites https github pushes; the fix was a repo-local `remote.origin.pushurl` pin, exactly the shipped identity-pin pattern. Any new probe or tool repo on this box needs the pin.
 
-Remaining open (needs credentials or live access): GitLab and Codeberg runs of the same suite (notes-ref acceptance is already strongly evidenced by the shipped gossip ref on both forges, but 5 MiB push size, force-update, depth fetch, and the atomic option are unverified there), read-only-role key holding, trash/purge interaction with the new ref, and the AGENTS.md STATUS-versus-standards inconsistency.
+GitLab and Codeberg runs: DONE 2026-11-15 (see the assessment addendum below; a fresh probe run re-created and deleted a private repo on each forge, using account PATs via `Cred::userpass_plaintext`). Remaining open: read-only-role key holding, the integrity-manifest treatment of the new ref, and the AGENTS.md STATUS-versus-standards inconsistency.
 
 ## Second peer review round (Claude, 2026-11-13): findings, zero-trust verification, dispositions
 
@@ -251,7 +251,7 @@ Risks verified and dispositioned:
 
 ## Open items
 
-- GitLab and Codeberg runs of the assessment suite (needs PATs or user-approved token use; the GitHub probe pushed a 5 MiB blob, generous headroom over the kept 2 MiB cap — the remaining question is force-update acceptance on those two forges; the atomic option was dropped with B1).
+- ~~GitLab and Codeberg runs of the assessment suite~~ DONE 2026-11-15: both forges accepted the notes-ref push carrying a 5,242,876-byte blob, served it byte-identical on fetch, accepted the compaction-style force-rewrite, rejected the non-force push of a non-descendant, and list only `main` under branches with empty tags (the ref is invisible in both UIs). Not probed there: shallow `depth` fetch (GitHub-only evidence, not load-bearing because no code path fetches the line shallowly) and the atomic option (dropped with B1). Probe repos were deleted after the run.
 - Trash/purge interaction: RESOLVED by B2 verification — trash is a metadata state (files never move under trash/), purge removes the whole `entries/<cipher_id>/` dir (three sites in handle.rs), so the live set must include trashed and archived ciphers and compaction needs readable metadata for ALL ciphers in main HEAD. Integrity-manifest treatment of the new ref stays open.
 - Whether read-only/viewer roles hold item keys (B2 sharpened this: key-less devices never prune unattributable ids and never compact; the hash pin makes foreign blobs inert regardless).
 - PRE-EXISTING defect surfaced by B3, outside this design's scope: key rotation's `exists() -> continue` skip strands blobs not materialized locally (handle.rs ~3062, ~10538) — they keep old-key ciphertext and become undecryptable after rotation. The line design does not fix or worsen this; flag for a dedicated rotation wave.
