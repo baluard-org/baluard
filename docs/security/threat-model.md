@@ -193,6 +193,10 @@ The session token is a capability in the object-capability sense: it is the only
 +-------------------------------------------------------------+
 ```
 
+### Browser extension bridge (untrusted)
+
+The browser extension is untrusted like every client. It holds a scoped bridge token whose `BRIDGE_ALLOWED_ACTIONS` allowlist carries exactly `passkey.list`, `passkey.provider_register`, `passkey.provider_assert`, `passkey.store_registered`, and `passkey.consume_assertion` (2026-11-15); the desktop two-phase `finish_register` and `finish_assert` routes stay off it. The `passkey.list` projection carries names, usernames, rp ids, favorite flags, `has_password`, counters, a `private_key_missing` marker, and the cipher id; key bytes never cross IPC. Signing and counter persistence stay in the daemon behind the ceremony id. A compromised extension can list paired-vault passkey metadata and complete sign-ins; that capability is inherent to browser passkeys and is bounded by the opt-in `enablePasskeys` setting (default off), explicit pairing, and daemon-side origin validation.
+
 ---
 
 ## 3. Residual Risks

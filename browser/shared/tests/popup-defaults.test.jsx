@@ -1,7 +1,7 @@
 // Fresh-install defaults rendered through the real popup.
 //
 // Empty storage (new user, nothing in chrome.storage.local) must render
-// BOTH settings toggles enabled, matching DEFAULT_SETTINGS. Separate test
+// ALL settings toggles enabled, matching DEFAULT_SETTINGS. Separate test
 // file on purpose: vitest gives each file a fresh module registry, so the
 // dynamic import here mounts a popup that loads with an EMPTY store,
 // unlike popup-settings.test.jsx which starts from stored false values.
@@ -14,6 +14,8 @@ function installFakeStorage(initial = {}) {
     get: (keys, cb) => {
       const out = {};
       for (const k of keys) if (store.has(k)) out[k] = store.get(k);
+      // MV3: promise result when no callback is passed.
+      if (typeof cb !== "function") return Promise.resolve(out);
       cb(out);
     },
     set: (obj, cb) => {
@@ -37,18 +39,24 @@ describe("fresh-install settings defaults", () => {
     await new Promise((r) => setTimeout(r, 0));
   });
 
-  it("renders both toggles enabled on first run", () => {
+  it("renders the autofill toggles enabled and passkeys off on first run", () => {
     const toggles = [
       ...document.querySelectorAll(".setting-row input[type=checkbox]"),
     ];
-    expect(toggles.length).toBe(2);
-    for (const input of toggles) {
+    expect(toggles.length).toBe(3);
+    // inlineAutofill + copyTotp default ON (1Password/Bitwarden parity).
+    for (const input of toggles.slice(0, 2)) {
       expect(input.checked, "checkbox should be checked").toBe(true);
       expect(
         input.closest(".toggle").classList.contains("on"),
         "toggle knob should paint the on state"
       ).toBe(true);
     }
+    // enablePasskeys defaults OFF: a WebAuthn interceptor is an opt-in
+    // surface (ADR 0095), so a fresh install must never wrap the page.
+    const passkeys = toggles[2];
+    expect(passkeys.checked, "passkeys toggle should start off").toBe(false);
+    expect(passkeys.closest(".toggle").classList.contains("on")).toBe(false);
   });
 
   it("getSettings reports both enabled without writing to storage", () => {

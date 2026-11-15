@@ -9,6 +9,7 @@
 
 import { normalizeClearSeconds } from "./settings.js";
 import { originOf } from "./url.js";
+import { createPasskeyClient } from "./passkey-client.js";
 
 const NMH_HOST = "app.baluard.browser"; // packages ship the legacy xyz.actitud.baluard alias too, so 0.1.0 store installs keep pairing
 const MIN_NMH_VERSION = "0.1.0";
@@ -390,7 +391,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (
     fromContentScript &&
     msg.action !== "inline.matches" &&
-    msg.action !== "inline.fill"
+    msg.action !== "inline.fill" &&
+    msg.action !== "inline.passkeys" &&
+    msg.action !== "inline.pickPasskey" &&
+    msg.action !== "passkey.createRequest" &&
+    msg.action !== "passkey.getRequest" &&
+    msg.action !== "passkey.abortRequest"
   ) {
     console.warn(
       "[baluard-sw] dropped non-inline action from content script:",
@@ -426,6 +432,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     handleInlineFill(sender, msg.id, msg.mode, msg.hasTotpField, msg.vault_slug)
       .then((payload) => sendResponse({ ok: true, payload }))
       .catch((e) => sendResponse({ ok: false, error: e.message, code: e.code }));
+    return true;
+  }
+  // Passkey ceremony routes (sender-gated content scripts). The client
+  // answers "accepted" synchronously; results push over the bridge port.
+  const passkeyRoute =
+    (msg.action === "passkey.createRequest" && (() => PASSKEY_CLIENT.handleCreateRequest(sender, msg))) ||
+    (msg.action === "passkey.getRequest" && (() => PASSKEY_CLIENT.handleGetRequest(sender, msg))) ||
+    (msg.action === "passkey.abortRequest" && (() => PASSKEY_CLIENT.handleAbortRequest(sender, msg.sessionId))) ||
+    (msg.action === "inline.passkeys" && (() => PASSKEY_CLIENT.handleInlinePasskeys(sender))) ||
+    (msg.action === "inline.pickPasskey" &&
+      (() => PASSKEY_CLIENT.handleInlinePick(sender, msg.credential_id)));
+  if (passkeyRoute && sender && sender.tab) {
+    const run = async () => {
+      // abortRequest must always run. Every other route refuses while the
+      // feature is off so already-injected tabs stop intercepting without
+      // waiting for the next navigation.
+      if (msg.action !== "passkey.abortRequest" && !(await passkeysEnabled())) {
+        return { error: "NotAllowedError" };
+      }
+      return passkeyRoute();
+    };
+    run()
+      .then((payload) => sendResponse({ ok: true, payload }))
+      .catch((e) => sendResponse({ ok: false, error: e.message, code: e.code }));
+    return true;
+  }
+  // Popout ceremony UI (extension-origin pages, full routing per B4).
+  if (
+    fromExtensionPage &&
+    (msg.action === "passkey.ui.state" || msg.action === "passkey.ui.decide")
+  ) {
+    handlePasskeyUi(msg)
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;
   }
   send(msg.action, msg.payload || {})
@@ -629,9 +669,173 @@ async function syncInlineScript() {
 }
 
 chrome.storage?.onChanged?.addListener((changes, area) => {
-  if (area === "local" && changes[SETTINGS_KEY]) syncInlineScript();
+  if (area === "local" && changes[SETTINGS_KEY]) {
+    syncInlineScript();
+    syncPasskeyScripts();
+  }
 });
+
+// ── Passkey ceremonies (WebAuthn interception, ADR 0095 browser) ──
+// The client module owns ceremony orchestration; this block owns the
+// browser wiring: content-script registration (page script in MAIN world +
+// bridge in the isolated world), the bridge runtime port, message routing
+// and tab-lifecycle cleanup.
+const PASSKEY_CLIENT = createPasskeyClient(send);
+const PASSKEY_PAGE_SCRIPT_ID = "baluard-passkey-page";
+const PASSKEY_BRIDGE_SCRIPT_ID = "baluard-passkey-bridge";
+
+chrome.runtime.onConnect?.addListener((port) => {
+  if (port.name === "baluard-passkey") PASSKEY_CLIENT.onBridgePort(port);
+});
+
+chrome.windows?.onRemoved?.addListener((windowId) => {
+  PASSKEY_CLIENT.popoutClosed(windowId);
+});
+
+chrome.tabs?.onRemoved?.addListener((tabId) => PASSKEY_CLIENT.cleanupTab(tabId));
+chrome.tabs?.onUpdated?.addListener((tabId, change) => {
+  // A real NAVIGATION invalidates the tab's pending ceremonies (the page
+  // world and its ports died with the old document). Chromium reports
+  // status=loading for SPA pushState url changes too, so changeInfo alone
+  // cannot discriminate: only treat it as a navigation when the bridge
+  // port is already gone, because the port dies with the old document.
+  if (change.status === "loading" && !PASSKEY_CLIENT.hasTabPort(tabId)) {
+    PASSKEY_CLIENT.cleanupTab(tabId);
+  }
+});
+
+// Popout (popup.html#/passkey/<session>) reads and decides.
+async function handlePasskeyUi(msg) {
+  if (msg.action === "passkey.ui.state") {
+    return { ok: true, payload: PASSKEY_CLIENT.uiState(msg.sessionId) };
+  }
+  if (msg.action === "passkey.ui.decide") {
+    const r = await PASSKEY_CLIENT.uiDecide(msg.sessionId, msg.decision);
+    return r && r.error ? { ok: false, error: r.error } : { ok: true, payload: r };
+  }
+  return null;
+}
+
+// Serialized: overlapping runs raced registerContentScripts (duplicate-id
+// errors) and any error flipped the user's opt-in off. One chain, ever.
+let passkeySyncChain = Promise.resolve();
+function syncPasskeyScripts() {
+  passkeySyncChain = passkeySyncChain.catch(() => {}).then(syncPasskeyScriptsOnce);
+  return passkeySyncChain;
+}
+export { syncPasskeyScripts };
+
+// Exported for unit tests (esbuild IIFE strips it from the bundle).
+async function syncPasskeyScriptsOnce() {
+  if (!chrome.scripting?.registerContentScripts) return;
+  const settings = await readSettings();
+  const enabled = settings.enablePasskeys === true;
+  const registered = await chrome.scripting.getRegisteredContentScripts();
+  const hasPage = registered.some((s) => s.id === PASSKEY_PAGE_SCRIPT_ID);
+  const hasBridge = registered.some((s) => s.id === PASSKEY_BRIDGE_SCRIPT_ID);
+  if (!enabled) {
+    const stale = [hasPage && PASSKEY_PAGE_SCRIPT_ID, hasBridge && PASSKEY_BRIDGE_SCRIPT_ID].filter(Boolean);
+    if (stale.length > 0) {
+      try {
+        await chrome.scripting.unregisterContentScripts({ ids: stale });
+      } catch (e) {
+        console.error("[baluard] passkey script unregister failed:", e);
+      }
+    }
+    // Restore natives in tabs whose page script is still live.
+    if (hasPage || hasBridge) {
+      const tabs = await chrome.tabs.query({ url: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"] });
+      for (const t of tabs) {
+        try {
+          await chrome.tabs.sendMessage(t.id, { type: "baluard-passkey-destroy" });
+        } catch {}
+      }
+    }
+    try {
+      await chrome.storage.session.remove("passkeysInjected");
+    } catch {}
+    return;
+  }
+  try {
+    if (!hasPage) {
+      await chrome.scripting.registerContentScripts([
+        {
+          id: PASSKEY_PAGE_SCRIPT_ID,
+          js: ["passkey-page.js"],
+          matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+          runAt: "document_start",
+          world: "MAIN",
+          allFrames: false,
+          persistAcrossSessions: true,
+        },
+      ]);
+    }
+    if (!hasBridge) {
+      await chrome.scripting.registerContentScripts([
+        {
+          id: PASSKEY_BRIDGE_SCRIPT_ID,
+          js: ["passkey-bridge.js"],
+          matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+          runAt: "document_start",
+          allFrames: false,
+          persistAcrossSessions: true,
+        },
+      ]);
+    }
+    await chrome.storage.local.remove("passkeysWorldUnsupported");
+  } catch (e) {
+    // Firefox < 128 rejects world MAIN on registered scripts; only that
+    // true support gap reverts the setting — a transient error must leave
+    // the user's opt-in alone and retry on the next settings change.
+    const message = String((e && e.message) || e);
+    if (!/world/i.test(message)) {
+      console.error("[baluard] passkey registration failed:", e);
+      return;
+    }
+    console.error("[baluard] passkey registration unsupported:", e);
+    await chrome.storage.local.set({ passkeysWorldUnsupported: true });
+    await updateSettingsLocal({ enablePasskeys: false });
+    return;
+  }
+  // Inject into live tabs once per browser session: registration already
+  // covers future documents, and re-running on every unrelated settings
+  // change re-executed the MAIN-world script in every open tab.
+  let injected = false;
+  try {
+    injected = (await chrome.storage.session.get("passkeysInjected")).passkeysInjected === true;
+  } catch {}
+  if (!injected) {
+    const tabs = await chrome.tabs.query({ url: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"] });
+    for (const t of tabs) {
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["passkey-page.js"], world: "MAIN" });
+        await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["passkey-bridge.js"] });
+      } catch {}
+    }
+    try {
+      await chrome.storage.session.set({ passkeysInjected: true });
+    } catch {}
+  }
+}
+
+// enablePasskeys is strictly opt-in (default off, ADR 0095): unlike the
+// ON-by-default settings, check the flag itself, never settingEnabled().
+async function passkeysEnabled() {
+  const settings = await readSettings();
+  return settings.enablePasskeys === true;
+}
+
+// storage.set wrapper for background-side writes (settings.js updateSettings
+// targets the popup context; keep one merge shape here).
+async function updateSettingsLocal(patch) {
+  const settings = await readSettings();
+  await chrome.storage.local.set({ [SETTINGS_KEY]: { ...settings, ...patch } });
+}
+
+// Support flag write-back lives in syncPasskeyScripts (storage), so no
+// dedicated message route is needed here.
 
 // Connect on worker start.
 connect();
 syncInlineScript();
+syncPasskeyScripts();

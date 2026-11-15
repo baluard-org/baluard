@@ -43,6 +43,7 @@ describe("getSettings", () => {
       inlineAutofill: false,
       copyTotp: true,
       clipboardClearSeconds: 60,
+      enablePasskeys: false,
     });
   });
 
@@ -68,6 +69,7 @@ describe("updateSettings", () => {
       inlineAutofill: false,
       copyTotp: true,
       clipboardClearSeconds: 60,
+      enablePasskeys: false,
     });
   });
 
@@ -79,6 +81,7 @@ describe("updateSettings", () => {
       inlineAutofill: true,
       copyTotp: true,
       clipboardClearSeconds: 60,
+      enablePasskeys: false,
       futureKey: 42,
     });
   });

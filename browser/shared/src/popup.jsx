@@ -92,6 +92,26 @@ const STRINGS = {
     clear60: "1 minute",
     clear120: "2 minutes",
     clearNever: "Never",
+    // Passkey popout (WebAuthn ceremonies)
+    passkeySaveTitle: "Save this passkey?",
+    passkeySaveDesc: "Baluard stores a passkey for this site in your vault.",
+    passkeySaveInto: "Add to an existing entry",
+    passkeyNewEntry: "Create a new entry",
+    passkeyPickTitle: "Sign in with Baluard?",
+    passkeyPickDesc: "Choose the passkey to use for this site.",
+    passkeyNotFoundTitle: "No passkey for this site",
+    passkeyNotFoundDesc: "Baluard has no stored passkey for this site. Try another sign-in method.",
+    passkeyExcludedTitle: "You already have a passkey here",
+    passkeyExcludedDesc: "This site already has a passkey in your vault. Use it to sign in.",
+    passkeyLockedTitle: "Unlock Baluard first",
+    passkeyLockedDesc: "Open the Baluard app and unlock your vault, then try again.",
+    passkeyRetry: "Retry",
+    passkeyCancel: "Use another method",
+    passkeyDone: "You can return to the site.",
+    // Settings
+    passkeysTitle: "Offer passkeys",
+    passkeysDesc: "Baluard fills sign-in requests with passkeys stored in your vault. Requires the Baluard app.",
+    passkeysUnsupported: "This browser cannot offer passkeys.",
   },
   es: {
     title: "Baluard",
@@ -154,6 +174,26 @@ const STRINGS = {
     clear60: "1 minuto",
     clear120: "2 minutos",
     clearNever: "Nunca",
+    // Passkey popout (ceremonias WebAuthn)
+    passkeySaveTitle: "¿Guardar esta llave de acceso?",
+    passkeySaveDesc: "Baluard guardará una llave de acceso para este sitio en tu caja fuerte.",
+    passkeySaveInto: "Añadir a una entrada existente",
+    passkeyNewEntry: "Crear una entrada nueva",
+    passkeyPickTitle: "¿Iniciar sesión con Baluard?",
+    passkeyPickDesc: "Elige la llave de acceso para este sitio.",
+    passkeyNotFoundTitle: "No hay llave para este sitio",
+    passkeyNotFoundDesc: "Baluard no tiene una llave de acceso guardada para este sitio. Prueba otro método de inicio.",
+    passkeyExcludedTitle: "Ya tienes una llave aquí",
+    passkeyExcludedDesc: "Este sitio ya tiene una llave de acceso en tu caja fuerte. Úsala para entrar.",
+    passkeyLockedTitle: "Desbloquea Baluard antes",
+    passkeyLockedDesc: "Abre la app de Baluard y desbloquea tu caja fuerte; después inténtalo de nuevo.",
+    passkeyRetry: "Reintentar",
+    passkeyCancel: "Usar otro método",
+    passkeyDone: "Puedes volver al sitio.",
+    // Ajustes
+    passkeysTitle: "Ofrecer llaves de acceso",
+    passkeysDesc: "Baluard completa inicios de sesión con llaves de acceso guardadas en tu caja fuerte. Requiere la app de Baluard.",
+    passkeysUnsupported: "Este navegador no puede ofrecer llaves de acceso.",
   },
   pt: {
     title: "Baluard",
@@ -217,6 +257,26 @@ const STRINGS = {
     clear60: "1 minuto",
     clear120: "2 minutos",
     clearNever: "Nunca",
+    // Pop-up de passkey (cerimônias WebAuthn)
+    passkeySaveTitle: "Salvar esta chave de acesso?",
+    passkeySaveDesc: "O Baluard guardará uma chave de acesso para este site no seu cofre.",
+    passkeySaveInto: "Adicionar a uma entrada existente",
+    passkeyNewEntry: "Criar uma nova entrada",
+    passkeyPickTitle: "Entrar com o Baluard?",
+    passkeyPickDesc: "Escolha a chave de acesso para este site.",
+    passkeyNotFoundTitle: "Sem chave para este site",
+    passkeyNotFoundDesc: "O Baluard não tem uma chave de acesso guardada para este site. Tente outro método de login.",
+    passkeyExcludedTitle: "Você já tem uma chave aqui",
+    passkeyExcludedDesc: "Este site já tem uma chave de acesso no seu cofre. Use-a para entrar.",
+    passkeyLockedTitle: "Desbloqueie o Baluard antes",
+    passkeyLockedDesc: "Abra o app Baluard e desbloqueie seu cofre, depois tente novamente.",
+    passkeyRetry: "Tentar novamente",
+    passkeyCancel: "Usar outro método",
+    passkeyDone: "Você pode voltar ao site.",
+    // Configurações
+    passkeysTitle: "Oferecer chaves de acesso",
+    passkeysDesc: "O Baluard completa logins com chaves de acesso guardadas no seu cofre. Requer o app Baluard.",
+    passkeysUnsupported: "Este navegador não pode oferecer chaves de acesso.",
   },
 };
 
@@ -241,6 +301,8 @@ const [settingsOpen, setSettingsOpen] = createSignal(false);
 const [inlineAutofill, setInlineAutofill] = createSignal(true);
 const [copyTotpEnabled, setCopyTotpEnabled] = createSignal(true);
 const [clipboardClear, setClipboardClear] = createSignal(60);
+const [passkeysEnabled, setPasskeysEnabled] = createSignal(false);
+const [passkeysSupported, setPasskeysSupported] = createSignal(true);
 // Live TOTP ring clock. Windows are epoch-aligned, so the drained fraction
 // is just now mod the row's period — no code is ever fetched for display.
 const [nowSec, setNowSec] = createSignal(Date.now() / 1000);
@@ -691,6 +753,17 @@ onMount(async () => {
   setInlineAutofill(Boolean(s.inlineAutofill));
   setCopyTotpEnabled(Boolean(s.copyTotp));
   setClipboardClear(normalizeClearSeconds(s.clipboardClearSeconds));
+  setPasskeysEnabled(Boolean(s.enablePasskeys));
+  // Support = the SW never recorded a failed MAIN-world registration (old
+  // Firefox) and the scripting API exists. Read straight from storage so
+  // no extra message route is needed.
+  const flags = await Promise.resolve(
+    chrome.storage.local.get(["passkeysWorldUnsupported"])
+  ).catch(() => ({}));
+  setPasskeysSupported(
+    !flags.passkeysWorldUnsupported &&
+      typeof chrome.scripting?.registerContentScripts === "function"
+  );
 });
 
 // Flip the setting. The service worker listens for the storage change and
@@ -715,6 +788,19 @@ function changeClipboardClear(ev) {
   updateSettings({ clipboardClearSeconds: seconds }).then((next) =>
     setClipboardClear(normalizeClearSeconds(next.clipboardClearSeconds))
   );
+}
+
+async function togglePasskeys() {
+  const next = await updateSettings({ enablePasskeys: !passkeysEnabled() });
+  setPasskeysEnabled(Boolean(next.enablePasskeys));
+  // The SW reverts the flag itself when registration fails (Firefox < 128);
+  // re-read so the hint appears on the next render tick.
+  setTimeout(async () => {
+    const r = await chrome.storage.local.get(["passkeysWorldUnsupported"]);
+    setPasskeysSupported(!r.passkeysWorldUnsupported);
+    const cur = await getSettings();
+    setPasskeysEnabled(Boolean(cur.enablePasskeys));
+  }, 400);
 }
 
 function App() {
@@ -791,6 +877,24 @@ function App() {
                 checked={copyTotpEnabled()}
                 onChange={toggleCopyTotp}
                 aria-label={t("copyTotpTitle")}
+              />
+              <span class="toggle-knob" aria-hidden="true"></span>
+            </span>
+          </label>
+          <label class="setting-row">
+            <div class="setting-text">
+              <div class="setting-name">{t("passkeysTitle")}</div>
+              <div class="state-desc">
+                {passkeysSupported() ? t("passkeysDesc") : t("passkeysUnsupported")}
+              </div>
+            </div>
+            <span class={`toggle ${passkeysEnabled() ? "on" : ""}`}>
+              <input
+                type="checkbox"
+                checked={passkeysEnabled()}
+                disabled={!passkeysSupported()}
+                onChange={togglePasskeys}
+                aria-label={t("passkeysTitle")}
               />
               <span class="toggle-knob" aria-hidden="true"></span>
             </span>
@@ -1021,5 +1125,168 @@ function StateBlock(props) {
   );
 }
 
-render(() => <App />, document.body);
+// ── Passkey popout (WebAuthn ceremony UI) ──
+// The service worker opens this page as a small popup window
+// (popup.html#/passkey/<sessionId>) whenever a ceremony needs a decision:
+// registration save-target, assertion pick, not-found/excluded notices, or
+// the unlock-and-retry prompt. All decisions ride runtime messaging back to
+// the SW (passkey.ui.*); the SW closes the window after acting.
+function PasskeyPopout(props) {
+  const t = (k) => (STRINGS[detectLocale()] || STRINGS.en)[k] || k;
+  const [view, setView] = createSignal(null); // uiState payload or {gone}
+  const [busy, setBusy] = createSignal(false);
+
+  async function pull() {
+    const r = await chrome.runtime
+      .sendMessage({ action: "passkey.ui.state", sessionId: props.sessionId })
+      .catch(() => null);
+    if (!r || !r.ok) {
+      setView({ gone: true });
+      return;
+    }
+    setView(r.payload);
+    if (r.payload.gone) setTimeout(() => window.close(), 400);
+  }
+
+  async function decide(decision) {
+    setBusy(true);
+    const r = await chrome.runtime
+      .sendMessage({ action: "passkey.ui.decide", sessionId: props.sessionId, decision })
+      .catch(() => null);
+    setBusy(false);
+    if (!r || !r.ok) {
+      setView({ gone: true });
+      setTimeout(() => window.close(), 400);
+      return;
+    }
+    // Decisions either finish the ceremony (window closes server-side) or
+    // return fresh state (retry loops).
+    await pull();
+  }
+
+  onMount(pull);
+  const v = () => view() || {};
+  const show = (kind) => v().kind === kind;
+
+  return (
+    <div class="baluard-popup">
+      <style>{popupCss}</style>
+      <div class="popup-header">
+        <strong class="brand-title">Baluard</strong>
+      </div>
+      <Show when={!v().gone} fallback={
+        <div class="state-block">
+          <div class="state-desc">{t("passkeyDone")}</div>
+        </div>
+      }>
+        <Show when={show("confirmRegister")}>
+          <div class="state-block">
+            <div class="state-title">{t("passkeySaveTitle")}</div>
+            <div class="state-desc">{t("passkeySaveDesc")}</div>
+            {/* The rpId is the daemon-validated site identity; the page-supplied rp.name is never displayed. */}
+            <div class="match-name">{v().rpId}</div>
+            <Show when={v().userName}>
+              <div class="match-user">{v().userName}</div>
+            </Show>
+          </div>
+          <Show when={(v().siteRows || []).length > 0}>
+            <div class="state-desc">{t("passkeySaveInto")}</div>
+            <div class="matches-list">
+              <For each={v().siteRows}>
+                {(row) => (
+                  <div
+                    class="match-card"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => !busy() && decide({ kind: "confirmRegister", cipher_id: row.cipher_id, vault_slug: row.vault_slug })}
+                    onKeyDown={(e) => e.key === "Enter" && decide({ kind: "confirmRegister", cipher_id: row.cipher_id, vault_slug: row.vault_slug })}
+                  >
+                    <div class="match-info">
+                      <div class="match-name">{row.name}</div>
+                      <Show when={row.username}>
+                        <div class="match-user">{row.username}</div>
+                      </Show>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+          <button
+            class="btn-secondary"
+            disabled={busy()}
+            onClick={() => decide({ kind: "confirmRegister", new_login: { name: v().rpName, username: v().userName || undefined } })}
+          >
+            {t("passkeyNewEntry")}
+          </button>
+        </Show>
+        <Show when={show("pickAssertion")}>
+          <div class="state-block">
+            <div class="state-title">{t("passkeyPickTitle")}</div>
+            <div class="state-desc">{t("passkeyPickDesc")}</div>
+            <div class="match-name">{v().rpId}</div>
+          </div>
+          <div class="matches-list">
+            <For each={v().rows || []}>
+              {(row) => (
+                <div
+                  class="match-card"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => !busy() && decide({ kind: "pickAssertion", credential_id: row.credential_id })}
+                  onKeyDown={(e) => e.key === "Enter" && decide({ kind: "pickAssertion", credential_id: row.credential_id })}
+                >
+                  <div class="match-info">
+                    <div class="match-name">{row.name}</div>
+                    <Show when={row.username}>
+                      <div class="match-user">{row.username}</div>
+                    </Show>
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+          <button class="btn-secondary" disabled={busy()} onClick={() => decide({ kind: "cancel" })}>
+            {t("passkeyCancel")}
+          </button>
+        </Show>
+        <Show when={show("notFound")}>
+          <StateBlock title={t("passkeyNotFoundTitle")} desc={t("passkeyNotFoundDesc")} />
+          <button class="btn-secondary" onClick={() => decide({ kind: "dismiss" })}>
+            {t("passkeyCancel")}
+          </button>
+        </Show>
+        <Show when={show("excluded")}>
+          <StateBlock title={t("passkeyExcludedTitle")} desc={t("passkeyExcludedDesc")} />
+          <button class="btn-secondary" onClick={() => decide({ kind: "dismiss" })}>
+            {t("passkeyCancel")}
+          </button>
+        </Show>
+        <Show when={show("locked")}>
+          <StateBlock title={t("passkeyLockedTitle")} desc={t("passkeyLockedDesc")} class="danger" />
+          <button class="btn-secondary" disabled={busy()} onClick={() => decide({ kind: "retryUnlock" })}>
+            {t("passkeyRetry")}
+          </button>
+          <button class="btn-secondary" disabled={busy()} onClick={() => decide({ kind: "cancel" })}>
+            {t("passkeyCancel")}
+          </button>
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
+// Route: the popup doubles as the passkey ceremony popout via the hash
+// (popup.html#/passkey/<sessionId>) that the service worker appends when it
+// opens the window.
+const passkeySession = (location.hash || "").match(/^#\/passkey\/(.+)$/);
+render(
+  () =>
+    passkeySession ? (
+      <PasskeyPopout sessionId={decodeURIComponent(passkeySession[1])} />
+    ) : (
+      <App />
+    ),
+  document.body
+);
 

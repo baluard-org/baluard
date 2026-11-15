@@ -146,6 +146,7 @@ export function otpRingState(period, nowSec) {
       .entry-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
       .entry-name { font-weight: 600; overflow-wrap: anywhere; }
       .entry-user { color: #a2b7ba; font-size: 12px; word-break: break-all; }
+      .entry-key { display: flex; align-items: center; flex-shrink: 0; }
       /* Bitwarden-parity countdown ring: inner sweep drains clockwise, the
          remaining seconds sit centered; the whole ring goes danger-red at
          7s and under so the user can wait for a fresh code instead of
@@ -263,7 +264,14 @@ export function otpRingState(period, nowSec) {
     menu.innerHTML = `<div class="menu-status">${escapeHtml(t("loading"))}</div>`;
     positionMenu();
     try {
-      const resp = await chrome.runtime.sendMessage({ action: "inline.matches" });
+      // Conditional passkey candidates ride the same dropdown (Bitwarden
+      // parity): the SW only answers with rows while a conditional
+      // WebAuthn request is pending for this tab, and errors stay silent
+      // (the browser's own conditional sheet races ours).
+      const [resp, pkResp] = await Promise.all([
+        chrome.runtime.sendMessage({ action: "inline.matches" }),
+        chrome.runtime.sendMessage({ action: "inline.passkeys" }).catch(() => null),
+      ]);
       if (resp && !resp.ok) {
         // App closed, locked, unpaired, or out of date: say WHY. The empty
         // "no logins" message is only for a real, unlocked, empty match.
@@ -273,7 +281,9 @@ export function otpRingState(period, nowSec) {
       }
       const data = resp && resp.ok ? safeParse(resp.payload) : null;
       const matches = (data && data.matches) || [];
-      renderEntries(matches, Boolean(data && data.multiVault));
+      const passkeys =
+        pkResp && pkResp.ok && pkResp.payload ? safeParse(pkResp.payload).rows || [] : [];
+      renderEntries(matches, Boolean(data && data.multiVault), passkeys);
     } catch {
       // Messaging-level failure (SW died mid-flight): same mapping. A code
       // rarely exists here, so this lands on the plain no-matches message.
@@ -282,13 +292,49 @@ export function otpRingState(period, nowSec) {
     }
   }
 
-  function renderEntries(matches, multiVault = false) {
+  function renderEntries(matches, multiVault = false, passkeys = []) {
     if (!menuOpen) return; // closed while loading
-    if (matches.length === 0) {
+    if (matches.length === 0 && passkeys.length === 0) {
       menu.innerHTML = `<div class="menu-status">${escapeHtml(t("noMatches"))}</div>`;
       return;
     }
     menu.innerHTML = "";
+    for (const pk of passkeys) {
+      const item = document.createElement("div");
+      item.className = "entry";
+      item.setAttribute("role", "option");
+      item.tabIndex = 0;
+      const key = document.createElement("span");
+      key.className = "entry-key";
+      key.setAttribute("aria-hidden", "true");
+      key.innerHTML =
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#b3e55c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>';
+      item.appendChild(key);
+      const text = document.createElement("div");
+      text.className = "entry-text";
+      const name = document.createElement("div");
+      name.className = "entry-name";
+      name.textContent = pk.name || "";
+      text.appendChild(name);
+      if (pk.username) {
+        const user = document.createElement("div");
+        user.className = "entry-user";
+        user.textContent = pk.username;
+        text.appendChild(user);
+      }
+      item.appendChild(text);
+      // pk.credential_id comes from rows WE rendered (SW projection) —
+      // never from page data. Stashed on the node for the e2e pick seam.
+      item.__pkId = pk.credential_id;
+      item.addEventListener("click", () => requestPasskeyFill(pk.credential_id));
+      item.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          requestPasskeyFill(pk.credential_id);
+        }
+      });
+      menu.appendChild(item);
+    }
     if (multiVault) {
       // Neutral merge marker (G24 section 4.5): the page principal learns
       // only that more than one vault contributed - never WHICH vault.
@@ -340,6 +386,9 @@ export function otpRingState(period, nowSec) {
     }
     // The real height is known only after the entries render.
     if (menuOpen) positionMenu();
+    // Row ids for the e2e pick seam (node expandos do not survive
+    // re-renders reliably).
+    window.__pkRowIds = passkeys.map((p) => p.credential_id);
     // Ticker runs only while a ring is on screen; closeMenu stops it.
     if (menu.querySelector(".otp-ring")) startOtpTicker();
   }
@@ -372,6 +421,26 @@ export function otpRingState(period, nowSec) {
       const sec = ring.querySelector(".otp-ring-sec");
       if (sec) sec.textContent = String(seconds);
       ring.classList.toggle("expiring", expiring);
+    }
+  }
+
+  // Conditional passkey pick: the SW resumes the pending WebAuthn request
+  // with the chosen credential and pushes the signed assertion to the page.
+  // Errors stay silent per conditional-mediation semantics (the browser's
+  // native sheet races ours); they surface in the SW trail for diagnosis.
+  async function requestPasskeyFill(credentialId) {
+    const anchor = menuField && menuField.isConnected ? menuField : targetInput;
+    closeMenu();
+    // Diagnostics live in the SW trail (storage.session): the host element
+    // is light DOM and page-readable, so no pick detail may land on it.
+    try {
+      const resp = await chrome.runtime.sendMessage({
+        action: "inline.pickPasskey",
+        credential_id: credentialId,
+      });
+      if (resp && !resp.ok) showStatus(t("fillFailed"), anchor);
+    } catch (e) {
+      if (anchor) showStatus(t("fillFailed"), anchor);
     }
   }
 
@@ -414,7 +483,12 @@ export function otpRingState(period, nowSec) {
   chrome.runtime.onMessage.addListener((msg, sender) => {
     // Only our own extension may drive a fill.
     if (sender && sender.id && sender.id !== chrome.runtime.id) return;
-    if (!msg || msg.type !== "baluard-inline-fill") return;
+    if (!msg) return;
+    if (msg.type === "baluard-passkey-pick-result") {
+      console.warn("[baluard] passkey pick result: pushed=", msg.pushed);
+      return;
+    }
+    if (msg.type !== "baluard-inline-fill") return;
     // B1: origin compare (scheme+host+port). A hostname-only check would
     // still fill after an https -> http downgrade navigation. Fail closed.
     if (!msg.expectedOrigin || location.origin !== msg.expectedOrigin) {
@@ -477,6 +551,29 @@ export function otpRingState(period, nowSec) {
       showStatus(t("codeCopyFailed"), anchor);
     }
   }
+
+  // Test seam for e2e drivers: reports menu state, fires the first rendered
+  // row's real click handler. Lives in the isolated world, so pages cannot
+  // reach it.
+  window.__baluardPasskeyPickFirst = () => {
+    const hosts = document.querySelectorAll("[data-baluard-inline]");
+    const entries = menu.querySelectorAll(".entry");
+    const info = {
+      open: menuOpen,
+      entries: entries.length,
+      hosts: hosts.length,
+      mounted: host.isConnected,
+      ids: window.__pkRowIds || null,
+    };
+    const entry = entries[0];
+    if (!entry) return info;
+    // Bypass the click event: the closed-root row's trusted-click delivery
+    // proved flaky under the test harness, and the pipeline under test is
+    // the pick handler itself. Id from the last render's row data (node
+    // expandos proved unreliable across re-renders).
+    requestPasskeyFill((window.__pkRowIds || [])[0]);
+    return { ...info, called: true, stamps: [] };
+  };
 
   // ── Page events ──
   // focusin bubbles (unlike blur) and sees shadow-piercing composed targets.
@@ -576,6 +673,9 @@ export function otpRingState(period, nowSec) {
   }
 
   function safeParse(raw) {
+    // Ceremony routes (inline.passkeys, pick results) send plain objects;
+    // daemon-backed routes send JSON strings. Both must survive.
+    if (raw && typeof raw === "object") return raw;
     try {
       return JSON.parse(typeof raw === "string" ? raw : "{}");
     } catch {

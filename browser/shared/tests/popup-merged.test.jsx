@@ -14,6 +14,8 @@ function installFakeStorage(initial = {}) {
     get: (keys, cb) => {
       const out = {};
       for (const k of keys) if (store.has(k)) out[k] = store.get(k);
+      // MV3: promise result when no callback is passed.
+      if (typeof cb !== "function") return Promise.resolve(out);
       cb(out);
     },
     set: (obj, cb) => {

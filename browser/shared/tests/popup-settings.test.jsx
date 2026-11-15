@@ -12,6 +12,8 @@ function installFakeStorage(initial = {}) {
     get: (keys, cb) => {
       const out = {};
       for (const k of keys) if (store.has(k)) out[k] = store.get(k);
+      // MV3: promise result when no callback is passed.
+      if (typeof cb !== "function") return Promise.resolve(out);
       cb(out);
     },
     set: (obj, cb) => {
@@ -53,9 +55,9 @@ describe("popup settings toggles", () => {
     await flush();
   });
 
-  it("renders both toggles OFF from stored false values (bug state)", () => {
+  it("renders the inline/copy toggles OFF from stored false values (bug state)", () => {
     const rows = toggleRows();
-    expect(rows.length).toBe(2);
+    expect(rows.length).toBe(3);
     expect(rows[0].querySelector(".toggle").classList.contains("on")).toBe(false);
     expect(rows[1].querySelector(".toggle").classList.contains("on")).toBe(false);
   });

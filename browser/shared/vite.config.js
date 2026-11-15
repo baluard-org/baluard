@@ -67,6 +67,8 @@ function extensionPackPlugin() {
           resolve(__dirname, "src/background.js"),
           resolve(__dirname, "src/content.js"),
           resolve(__dirname, "src/inline.js"),
+          resolve(__dirname, "src/passkey-page.js"),
+          resolve(__dirname, "src/passkey-bridge.js"),
         ],
         outdir: outDir,
         bundle: true,
