@@ -24,6 +24,15 @@ mod serve {
     /// shorten it via BALUARD_AGENT_APPROVAL_WAIT_SECS.
     const DEFAULT_APPROVAL_WAIT_SECS: u64 = 130;
     const APPROVAL_POLL_MS: u64 = 300;
+    /// Open agent connections at once. A local client that opens more
+    /// than this is refused rather than allowed to starve the daemon.
+    const MAX_CONNECTIONS: usize = 32;
+    /// An idle agent connection is closed: the protocol has no keepalive,
+    /// and a parked socket would hold a descriptor for nothing.
+    const CONNECTION_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+    static ACTIVE_CONNECTIONS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
 
     fn approval_wait_secs() -> u64 {
         std::env::var("BALUARD_AGENT_APPROVAL_WAIT_SECS")
@@ -49,6 +58,16 @@ mod serve {
         host: &Arc<VaultHost>,
         socket_path: &Path,
     ) -> std::io::Result<tokio::task::JoinHandle<()>> {
+        spawn_listener_with(host, socket_path, crate::ssh_agent_policy::policy_path()).await
+    }
+
+    /// Bind the agent socket with an explicit policy path, so the tests
+    /// never touch the machine's real policy file.
+    pub async fn spawn_listener_with(
+        host: &Arc<VaultHost>,
+        socket_path: &Path,
+        policy_path: PathBuf,
+    ) -> std::io::Result<tokio::task::JoinHandle<()>> {
         if let Some(parent) = socket_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -62,23 +81,33 @@ mod serve {
             }
             std::fs::remove_file(socket_path)?;
         }
-        let listener = {
-            let prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
-            let l = tokio::net::UnixListener::bind(socket_path)?;
-            unsafe {
-                libc::umask(prev);
-            }
-            l
-        };
+        // Bind first, then tighten the mode explicitly. The umask dance
+        // cannot be used here: it is process-wide, so a concurrent bind
+        // or vault creation would inherit (or leak) 0177. The exposed
+        // window is one syscall wide, and the parent directory is the
+        // daemon's private runtime dir.
+        let std_listener = std::os::unix::net::UnixListener::bind(socket_path)?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(socket_path)?.permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(socket_path, perms)?;
+        }
+        std_listener.set_nonblocking(true)?;
+        let listener = tokio::net::UnixListener::from_std(std_listener)?;
         let host = host.clone();
         let path = socket_path.to_path_buf();
         Ok(tokio::spawn(async move {
             log::info!("ssh agent listening on {}", path.display());
-            accept_loop(listener, host).await;
+            accept_loop(listener, host, policy_path).await;
         }))
     }
 
-    async fn accept_loop(listener: tokio::net::UnixListener, host: Arc<VaultHost>) {
+    async fn accept_loop(
+        listener: tokio::net::UnixListener,
+        host: Arc<VaultHost>,
+        policy_path: PathBuf,
+    ) {
         loop {
             // A transient accept error must not kill the listener.
             let (stream, _) = match listener.accept().await {
@@ -89,14 +118,34 @@ mod serve {
                     continue;
                 }
             };
+            // Another user must never reach the agent, whatever the
+            // socket mode says: the daemon checks the peer uid itself.
+            {
+                use std::os::unix::io::AsRawFd;
+                if !crate::handler::peer_uid_matches_daemon(stream.as_raw_fd()) {
+                    log::warn!("[agent] rejected a connection from another user");
+                    continue;
+                }
+            }
+            // A connection cap keeps a local process from exhausting
+            // descriptors or the pending-approval queue.
+            if ACTIVE_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                >= MAX_CONNECTIONS
+            {
+                ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                log::warn!("[agent] refused a connection: too many open");
+                continue;
+            }
             // Peer identity is best-effort: macOS LOCAL_PEERPID, Linux
             // SO_PEERCRED, an unresolved fallback elsewhere. Serving never
             // blocks on richer peer data.
             let peer = crate::handler::peer_binding_unix(&stream)
                 .unwrap_or_else(|| PeerBinding::new(0, "<unresolved local client>".to_string(), 0));
             let host = host.clone();
+            let policy_path = policy_path.clone();
             tokio::spawn(async move {
-                serve_connection(stream, host, peer).await;
+                serve_connection(stream, host, peer, policy_path).await;
+                ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             });
         }
     }
@@ -105,12 +154,16 @@ mod serve {
         mut stream: tokio::net::UnixStream,
         host: Arc<VaultHost>,
         peer: PeerBinding,
+        policy_path: PathBuf,
     ) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         loop {
             let mut lenb = [0u8; 4];
-            if stream.read_exact(&mut lenb).await.is_err() {
-                return; // closed or torn connection: nothing to answer
+            match tokio::time::timeout(CONNECTION_IDLE_TIMEOUT, stream.read_exact(&mut lenb)).await
+            {
+                Ok(Ok(_)) => {}
+                // Closed, torn, or idle for too long: nothing to answer.
+                Ok(Err(_)) | Err(_) => return,
             }
             let len = u32::from_be_bytes(lenb);
             if !crate::ssh_agent_proto::frame_len_ok(len) {
@@ -120,20 +173,19 @@ mod serve {
             if stream.read_exact(&mut body).await.is_err() {
                 return;
             }
-            let request =
-                match crate::ssh_agent_proto::parse_frame(&crate::ssh_agent_proto::frame(&body)) {
-                    Ok(r) => r,
-                    Err(_) => return, // malformed framing: drop the client
-                };
+            let request = match crate::ssh_agent_proto::parse_request(&body) {
+                Ok(r) => r,
+                Err(_) => return, // malformed framing: drop the client
+            };
             let answer = match request {
                 crate::ssh_agent_proto::AgentRequest::RequestIdentities => {
-                    identities_answer(&host).await
+                    identities_answer(&host, &policy_path).await
                 }
                 crate::ssh_agent_proto::AgentRequest::SignRequest {
                     key_blob,
                     data,
                     flags: _,
-                } => sign_answer(&host, &peer, &key_blob, &data).await,
+                } => sign_answer(&host, &peer, &key_blob, &data, &policy_path).await,
                 crate::ssh_agent_proto::AgentRequest::Unsupported(_) => {
                     crate::ssh_agent_proto::encode_failure()
                 }
@@ -159,39 +211,41 @@ mod serve {
     /// Scan of the open vaults. `enabled` vaults contribute entries;
     /// a locked vault is unknowable (settings encrypted) and forces the
     /// "cannot serve" answer unless some vault is already enabled.
-    async fn scan(host: &VaultHost) -> (Vec<ServeEntry>, bool, bool) {
+    async fn scan(host: &VaultHost, policy_path: &Path) -> (Vec<ServeEntry>, bool, bool) {
         let mut entries = Vec::new();
         let mut any_enabled = false;
         let mut any_locked = false;
-        for (slug, state) in host.snapshot_states().await {
+        // The master switch and the sign policy are device-local, not
+        // vault settings: a synced switch would let another device turn
+        // on silent signing here.
+        let policy = crate::ssh_agent_policy::load_from(policy_path);
+        if !policy.enabled {
+            // Master switch off: this machine serves nothing. A locked
+            // vault does not change that answer, because the switch is
+            // device-local and readable without the vault.
+            return (entries, false, false);
+        }
+        any_enabled = true;
+        // Deterministic order: the vault map is unordered, and a key
+        // present in two vaults must resolve the same way every time.
+        let mut vaults = host.snapshot_states().await;
+        vaults.sort_by(|a, b| a.0.cmp(&b.0));
+        for (slug, state) in vaults {
             if !state.is_unlocked().await {
                 any_locked = true;
                 continue;
             }
-            let Ok(settings_json) = state.settings_get().await else {
-                continue;
-            };
-            let settings: serde_json::Value =
-                serde_json::from_str(&settings_json).unwrap_or(serde_json::Value::Null);
-            if !settings
-                .get("ssh_agent_enabled")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            any_enabled = true;
-            let auto_approve = settings
-                .get("ssh_agent_auto_approve")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
+            let auto_approve = policy.auto_approve;
             let Ok(ids) = state.list_cipher_ids().await else {
                 continue;
             };
             for id in ids {
+                // The decrypted payload carries the private key text, so
+                // it lives in a zeroizing buffer that is wiped on drop.
                 let Ok(cipher_json) = state.get_cipher(&id, true).await else {
                     continue;
                 };
+                let cipher_json = zeroize::Zeroizing::new(cipher_json);
                 let Ok(v) = serde_json::from_str::<serde_json::Value>(&cipher_json) else {
                     continue;
                 };
@@ -209,24 +263,29 @@ mod serve {
                 if !is_ssh || !opted_in {
                     continue;
                 }
-                let private_text = v
-                    .get("kind")
-                    .and_then(|k| k.get("data"))
-                    .and_then(|d| d.get("private_key"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
+                let private_text = zeroize::Zeroizing::new(
+                    v.get("kind")
+                        .and_then(|k| k.get("data"))
+                        .and_then(|d| d.get("private_key"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                );
                 // Unreadable, encrypted, or unsupported keys are skipped
                 // from the listing at debug level; the agent serves the
                 // rest rather than failing the whole answer.
-                let Ok((_, material)) = crate::ssh_agent_keys::load_material(private_text) else {
+                let Ok((_, material)) = crate::ssh_agent_keys::load_material(&private_text) else {
                     log::debug!("[agent] key {id} is not serveable; skipped");
                     continue;
                 };
-                let name = v
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("ssh key")
-                    .to_string();
+                // The entry name travels into an approval prompt, so it
+                // is capped and stripped of control characters: a shared
+                // folder entry name must not be able to spoof the prompt.
+                let name = sanitize_label(
+                    v.get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("ssh key"),
+                );
                 entries.push(ServeEntry {
                     vault_slug: slug.clone(),
                     cipher_id: id,
@@ -239,18 +298,36 @@ mod serve {
         (entries, any_enabled, any_locked)
     }
 
-    async fn identities_answer(host: &VaultHost) -> Vec<u8> {
-        let (entries, any_enabled, any_locked) = scan(host).await;
+    /// Cap a label that reaches an approval prompt and drop the
+    /// characters that could break the prompt's shape.
+    fn sanitize_label(raw: &str) -> String {
+        const MAX_LABEL: usize = 120;
+        let mut out: String = raw
+            .chars()
+            .filter(|c| !c.is_control() && *c != '"' && *c != '\'')
+            .take(MAX_LABEL)
+            .collect();
+        out = out.trim().to_string();
+        if out.is_empty() {
+            out = "ssh key".to_string();
+        }
+        out
+    }
+
+    async fn identities_answer(host: &VaultHost, policy_path: &Path) -> Vec<u8> {
+        let (entries, any_enabled, any_locked) = scan(host, policy_path).await;
         if !any_enabled {
-            // No enabled vault: empty list when every open vault is
-            // readable-off, protocol failure when a locked vault makes
-            // serveability unknowable (or nothing is open at all).
-            if any_locked {
-                return crate::ssh_agent_proto::encode_failure();
-            }
+            // Master switch off: this machine serves nothing, which is a
+            // plain empty list.
             return crate::ssh_agent_proto::encode_identities_answer(&[]);
         }
-        let identities: Vec<crate::ssh_agent_proto::Identity> = entries
+        if entries.is_empty() && any_locked {
+            // The policy is on but every open vault is locked: this
+            // machine cannot serve right now, which stays distinct from
+            // "no keys".
+            return crate::ssh_agent_proto::encode_failure();
+        }
+        let identities: Vec<crate::ssh_agent_proto::Identity> = dedupe_entries(entries)
             .into_iter()
             .map(|e| crate::ssh_agent_proto::Identity {
                 blob: e.blob,
@@ -260,18 +337,41 @@ mod serve {
         crate::ssh_agent_proto::encode_identities_answer(&identities)
     }
 
+    /// One entry per key. A key present in two vaults resolves to the
+    /// strictest policy: if any vault holding it wants an approval, the
+    /// sign asks, whatever the other vault's policy says.
+    fn dedupe_entries(entries: Vec<ServeEntry>) -> Vec<ServeEntry> {
+        let mut seen: std::collections::HashMap<Vec<u8>, usize> = std::collections::HashMap::new();
+        let mut out: Vec<ServeEntry> = Vec::new();
+        for entry in entries {
+            match seen.get(&entry.blob) {
+                Some(index) => {
+                    let existing = &mut out[*index];
+                    existing.auto_approve = existing.auto_approve && entry.auto_approve;
+                }
+                None => {
+                    seen.insert(entry.blob.clone(), out.len());
+                    out.push(entry);
+                }
+            }
+        }
+        out
+    }
+
     async fn sign_answer(
         host: &VaultHost,
         peer: &PeerBinding,
         key_blob: &[u8],
         data: &[u8],
+        policy_path: &Path,
     ) -> Vec<u8> {
         // Fresh scan: every gate (unlocked, master switch, per-key opt-in)
         // is evaluated per request, never cached from an earlier answer.
-        let (entries, any_enabled, _any_locked) = scan(host).await;
+        let (entries, any_enabled, _any_locked) = scan(host, policy_path).await;
         if !any_enabled {
             return crate::ssh_agent_proto::encode_failure();
         }
+        let entries = dedupe_entries(entries);
         let Some(entry) = entries.iter().find(|e| e.blob == key_blob) else {
             // Unknown or unopted key: bare failure, no existence oracle.
             return crate::ssh_agent_proto::encode_failure();
@@ -285,7 +385,9 @@ mod serve {
                 }
             }
         } else {
-            crate::agent_audit::append(
+            // The audit trail is the record of every signing decision:
+            // a failed write refuses the sign, as the agents.* routes do.
+            if crate::agent_audit::append(
                 &baluard_core::paths::data_dir(),
                 "approved",
                 &entry.vault_slug,
@@ -295,16 +397,25 @@ mod serve {
                 &[entry.cipher_id.clone()],
                 "auto-approve",
             )
-            .ok();
+            .is_err()
+            {
+                return crate::ssh_agent_proto::encode_failure();
+            }
         }
         // Reload the cipher at sign time: the key may have been edited or
         // the vault locked since the scan.
         let Some(state) = host.get(&entry.vault_slug).await else {
             return crate::ssh_agent_proto::encode_failure();
         };
+        // The master switch may have been turned off while the approval
+        // was pending: re-read it before signing.
+        if !crate::ssh_agent_policy::load_from(policy_path).enabled {
+            return crate::ssh_agent_proto::encode_failure();
+        }
         let Ok(cipher_json) = state.get_cipher(&entry.cipher_id, true).await else {
             return crate::ssh_agent_proto::encode_failure();
         };
+        let cipher_json = zeroize::Zeroizing::new(cipher_json);
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&cipher_json) else {
             return crate::ssh_agent_proto::encode_failure();
         };
@@ -314,13 +425,14 @@ mod serve {
             .and_then(|d| d.get("serve_via_agent"))
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        let private_text = v
-            .get("kind")
-            .and_then(|k| k.get("data"))
-            .and_then(|d| d.get("private_key"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+        let private_text = zeroize::Zeroizing::new(
+            v.get("kind")
+                .and_then(|k| k.get("data"))
+                .and_then(|d| d.get("private_key"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        );
         let Ok((private, material)) = crate::ssh_agent_keys::load_material(&private_text) else {
             return crate::ssh_agent_proto::encode_failure();
         };
@@ -352,10 +464,12 @@ mod serve {
             "SSH agent client".to_string(),
             format!("Sign an SSH challenge with \"{}\"", entry.name),
             vec![entry.cipher_id.clone()],
+            // A sign releases the sign; it mints no credential grant.
+            baluard_runtime::agents::PendingPurpose::SshSign,
         ) else {
             return Approval::TimedOut; // queue full: treat as refusal
         };
-        crate::agent_audit::append(
+        if crate::agent_audit::append(
             &baluard_core::paths::data_dir(),
             "requested",
             &entry.vault_slug,
@@ -365,7 +479,12 @@ mod serve {
             &[entry.cipher_id.clone()],
             "pending",
         )
-        .ok();
+        .is_err()
+        {
+            // No audit record, no request: the user would never see it.
+            host.pending_requests().deny(&request_id);
+            return Approval::TimedOut;
+        }
         let deadline =
             std::time::Instant::now() + std::time::Duration::from_secs(approval_wait_secs());
         loop {
@@ -390,6 +509,8 @@ mod serve {
 pub use serve::agent_socket_path;
 #[cfg(unix)]
 pub use serve::spawn_listener;
+#[cfg(unix)]
+pub use serve::spawn_listener_with;
 
 #[cfg(unix)]
 #[cfg(test)]
@@ -444,36 +565,43 @@ mod tests {
         state.add_cipher(&payload).await.unwrap()
     }
 
-    async fn enable_agent(state: &VaultState, auto_approve: bool) {
-        state
-            .settings_set(
-                &serde_json::json!({
-                    "ssh_agent_enabled": true,
-                    "ssh_agent_auto_approve": auto_approve,
-                })
-                .to_string(),
-            )
-            .await
-            .unwrap();
+    /// The policy is device-local, so the tests write the policy file
+    /// directly instead of a vault setting.
+    fn enable_agent(server: &Server, auto_approve: bool) {
+        crate::ssh_agent_policy::save_to(
+            &server.policy_path,
+            &crate::ssh_agent_policy::AgentPolicy {
+                enabled: true,
+                auto_approve,
+            },
+        )
+        .unwrap();
     }
 
     /// Server + socket path. The harness cleans the tempdir on drop; the
     /// listener task ends with the test runtime.
     struct Server {
+        policy_path: std::path::PathBuf,
         host: Arc<VaultHost>,
         socket: std::path::PathBuf,
-        _dir: (Vec<tempfile::TempDir>, ()),
+        _dir: tempfile::TempDir,
     }
 
     async fn spawn_server() -> Server {
         let host = Arc::new(VaultHost::new());
         let socket =
             std::env::temp_dir().join(format!("baluard-agent-test-{}.sock", uuid::Uuid::new_v4()));
-        spawn_listener(&host, &socket).await.unwrap();
+        // The policy lives in a scratch file, never in the machine's own.
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join("agent-policy.json");
+        super::spawn_listener_with(&host, &socket, policy_path.clone())
+            .await
+            .unwrap();
         Server {
             host,
             socket,
-            _dir: (Vec::new(), ()),
+            policy_path,
+            _dir: dir,
         }
     }
 
@@ -522,21 +650,21 @@ mod tests {
     async fn locked_vault_answers_failure_not_an_empty_list() {
         let server = spawn_server().await;
         let (_dir, state) = make_vault("agent-locked").await;
-        enable_agent(&state, true).await;
+        enable_agent(&server, true);
         add_ssh_key(&state, "k", true).await;
         // Re-lock: the answer must distinguish "cannot serve" from "no keys".
         state.lock().await.unwrap();
         server.host.insert("agent-locked".into(), state).await;
 
         let out = ask(&server.socket, &identities_body()).await;
-        assert_eq!(out, vec![12], "locked vault must protocol-fail identities");
+        assert_eq!(out, vec![5], "locked vault must protocol-fail identities");
     }
 
     #[tokio::test]
     async fn enabled_vault_lists_only_opted_in_keys() {
         let server = spawn_server().await;
         let (_dir, state) = make_vault("agent-list").await;
-        enable_agent(&state, false).await;
+        enable_agent(&server, false);
         add_ssh_key(&state, "github-signing", true).await;
         add_ssh_key(&state, "local-only", false).await;
         server.host.insert("agent-list".into(), state).await;
@@ -570,7 +698,7 @@ mod tests {
     async fn auto_approved_sign_round_trips_and_verifies() {
         let server = spawn_server().await;
         let (_dir, state) = make_vault("agent-auto").await;
-        enable_agent(&state, true).await;
+        enable_agent(&server, true);
         add_ssh_key(&state, "auto-key", true).await;
         server.host.insert("agent-auto".into(), state).await;
 
@@ -585,11 +713,11 @@ mod tests {
     async fn sign_for_an_unserved_blob_fails() {
         let server = spawn_server().await;
         let (_dir, state) = make_vault("agent-nosuch").await;
-        enable_agent(&state, true).await;
+        enable_agent(&server, true);
         server.host.insert("agent-nosuch".into(), state).await;
 
         let out = ask(&server.socket, &sign_body(&[0xAA; 51], b"x")).await;
-        assert_eq!(out, vec![12]);
+        assert_eq!(out, vec![5]);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -599,7 +727,7 @@ mod tests {
         }
         let server = spawn_server().await;
         let (_dir, state) = make_vault("agent-manual").await;
-        enable_agent(&state, false).await;
+        enable_agent(&server, false);
         add_ssh_key(&state, "manual-key", true).await;
         server.host.insert("agent-manual".into(), state).await;
 
@@ -624,7 +752,7 @@ mod tests {
             "deny accepted"
         );
         let out = client.await.unwrap();
-        assert_eq!(out, vec![12], "denied sign must fail");
+        assert_eq!(out, vec![5], "denied sign must fail");
 
         // Second request: approve it through the same queue path.
         let socket = server.socket.clone();
@@ -648,5 +776,51 @@ mod tests {
         let _ = pending;
         let out = client.await.unwrap();
         assert_eq!(out[0], 14, "approved sign must succeed: {out:?}");
+    }
+
+    #[tokio::test]
+    async fn approved_sign_mints_no_agent_grant() {
+        unsafe {
+            std::env::set_var("BALUARD_AGENT_APPROVAL_WAIT_SECS", "8");
+        }
+        let server = spawn_server().await;
+        let (_dir, state) = make_vault("agent-grant").await;
+        enable_agent(&server, false);
+        add_ssh_key(&state, "grant-key", true).await;
+        server
+            .host
+            .insert("agent-grant".into(), state.clone())
+            .await;
+
+        let socket = server.socket.clone();
+        let blob = key_blob();
+        let client = tokio::spawn(async move { ask(&socket, &sign_body(&blob, b"g")).await });
+        let mut request_id = String::new();
+        for _ in 0..100 {
+            let pending = server.host.pending_requests().list();
+            if let Some(p) = pending.first() {
+                request_id = p.request_id.clone();
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let pending = server.host.pending_requests().take(&request_id).unwrap();
+        assert_eq!(
+            pending.purpose,
+            baluard_runtime::agents::PendingPurpose::SshSign,
+            "the sign request must carry the SshSign purpose"
+        );
+        // Mirror the daemon approve arm: an SshSign request completes with
+        // an empty token and mints nothing.
+        server
+            .host
+            .pending_requests()
+            .complete_approved(&request_id, String::new());
+        let out = client.await.unwrap();
+        assert_eq!(out[0], 14, "approved sign must succeed: {out:?}");
+        assert!(
+            !state.has_live_agent_grants(),
+            "an approved SSH sign must never mint an agt_ grant"
+        );
     }
 }

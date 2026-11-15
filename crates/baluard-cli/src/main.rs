@@ -51,6 +51,21 @@ enum AgentAction {
     List,
     /// Revoke every agent grant for this vault.
     Revoke,
+    /// Show or change what this device may do with vault SSH keys.
+    Policy {
+        /// Turn the SSH agent on for this device.
+        #[arg(long)]
+        enable: bool,
+        /// Turn the SSH agent off for this device.
+        #[arg(long)]
+        disable: bool,
+        /// Sign without asking for approval on every use.
+        #[arg(long)]
+        auto_approve: bool,
+        /// Ask for approval on every sign.
+        #[arg(long)]
+        no_auto_approve: bool,
+    },
 }
 
 #[derive(Subcommand)]

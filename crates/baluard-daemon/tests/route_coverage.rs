@@ -6518,6 +6518,7 @@ async fn agent_pending_requests_survive_the_desktop_blur_lock() {
             "Blur agent".into(),
             "about to be approved".into(),
             vec!["item-1".into()],
+            baluard_runtime::agents::PendingPurpose::Credential,
         )
         .unwrap();
     let locked = host.lock_blur_vaults().await;

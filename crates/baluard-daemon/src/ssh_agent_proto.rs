@@ -2,23 +2,23 @@
 //! codec. Pure bytes in, pure bytes out: no sockets, no vault, no crypto.
 //!
 //! Message numbers as used by OpenSSH:
+//! - `5` SSH_AGENT_FAILURE
 //! - `11` SSH_AGENTC_REQUEST_IDENTITIES
-//! - `12` SSH_AGENT_IDENTITIES_ANSWER (also SSH_AGENT_FAILURE)
+//! - `12` SSH_AGENT_IDENTITIES_ANSWER
 //! - `13` SSH_AGENTC_SIGN_REQUEST
 //! - `14` SSH_AGENT_SIGN_RESPONSE
 //!
-//! The number 12 doubles as the failure answer: an agent answers any
-//! unsupported request with the bare `12` opcode, and an identities
-//! request with no keys is the same bytes plus a zero count. OpenSSH
-//! treats both identically.
+//! Failure is its own opcode (`5`), distinct from an identities answer
+//! with a zero count (`12`): a client parses the two differently, so a
+//! bare `12` is a malformed identities answer, not a refusal.
 
 /// Frame size ceiling. A legitimate identities or sign request never
 /// approaches this; anything larger is a hostile or broken client and the
 /// connection is dropped before allocation.
 pub const MAX_FRAME_LEN: u32 = 1024 * 1024;
 
+const AGENT_FAILURE: u8 = 5;
 const AGENTC_REQUEST_IDENTITIES: u8 = 11;
-const AGENT_FAILURE: u8 = 12;
 const AGENT_IDENTITIES_ANSWER: u8 = 12;
 const AGENTC_SIGN_REQUEST: u8 = 13;
 const AGENT_SIGN_RESPONSE: u8 = 14;
@@ -312,8 +312,8 @@ mod tests {
 
     #[test]
     fn failure_is_five_zero_padded_bytes() {
-        assert_eq!(encode_failure(), vec![12]);
-        assert_eq!(frame(&encode_failure()), vec![0, 0, 0, 1, 12]);
+        assert_eq!(encode_failure(), vec![5]);
+        assert_eq!(frame(&encode_failure()), vec![0, 0, 0, 1, 5]);
     }
 
     #[test]

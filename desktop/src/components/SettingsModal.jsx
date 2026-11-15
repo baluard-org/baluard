@@ -406,10 +406,18 @@ export default function SettingsModal() {
       setTimeoutToken(normalizeVaultTimeout(data.vault_timeout));
       // Favicon setting (default: disabled — opt-in for privacy)
       setFetchFavicons(data.fetch_favicons === true);
-      // SSH agent switches (default: off — the vault never serves keys
-      // unless both the master switch and the per-key flag say so)
-      setSshAgent(data.ssh_agent_enabled === true);
-      setSshAgentAutoApprove(data.ssh_agent_auto_approve === true);
+      // SSH agent switches. The policy is device-local: it says what
+      // THIS machine may do with the vault's keys, so it never arrives
+      // through the synced settings. A failed read leaves the switches
+      // off and never blocks the rest of the settings.
+      try {
+        const policy = JSON.parse(await daemon("agent.policy.get"));
+        setSshAgent(policy.enabled === true);
+        setSshAgentAutoApprove(policy.auto_approve === true);
+      } catch {
+        setSshAgent(false);
+        setSshAgentAutoApprove(false);
+      }
 
       // Load biometric status. Single daemon fetch also carries install_hint
       // when the system keyring is missing (Linux), so the UI can print the fix.
@@ -494,24 +502,54 @@ export default function SettingsModal() {
     }
   }
 
+  // Turning the agent on, or silent signing on, is a security downgrade
+  // for this device: the master password is asked for through the shared
+  // reprompt, and the daemon checks it again.
+  function setAgentPolicy(payload, onDone) {
+    const reprompt = window.__baluardReprompt;
+    if (!reprompt || !reprompt.show) {
+      toastError(t("errors.unexpected"));
+      return;
+    }
+    reprompt.show((password) => {
+      (async () => {
+        try {
+          await daemon("agent.policy.set", JSON.stringify({ ...payload, master_password: password }));
+          onDone();
+        } catch (e) {
+          toastError(sanitizeError(e, t));
+        }
+      })();
+    });
+  }
+
   async function toggleSshAgent() {
     const next = !sshAgent();
-    setSshAgent(next);
-    try {
-      await daemon("settings.set", JSON.stringify({ ssh_agent_enabled: next }));
-    } catch (e) {
-      setSshAgent(!next);
+    if (!next) {
+      // Turning the agent off never needs a password.
+      try {
+        await daemon("agent.policy.set", JSON.stringify({ enabled: false }));
+        setSshAgent(false);
+      } catch (e) {
+        toastError(sanitizeError(e, t));
+      }
+      return;
     }
+    setAgentPolicy({ enabled: true }, () => setSshAgent(true));
   }
 
   async function toggleSshAgentAutoApprove() {
     const next = !sshAgentAutoApprove();
-    setSshAgentAutoApprove(next);
-    try {
-      await daemon("settings.set", JSON.stringify({ ssh_agent_auto_approve: next }));
-    } catch (e) {
-      setSshAgentAutoApprove(!next);
+    if (!next) {
+      try {
+        await daemon("agent.policy.set", JSON.stringify({ auto_approve: false }));
+        setSshAgentAutoApprove(false);
+      } catch (e) {
+        toastError(sanitizeError(e, t));
+      }
+      return;
     }
+    setAgentPolicy({ auto_approve: true }, () => setSshAgentAutoApprove(true));
   }
 
   async function toggleRunInBackground() {

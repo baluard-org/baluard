@@ -385,10 +385,17 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     #[cfg(unix)]
     let agent_socket_path = baluard_daemon::ssh_agent_serve::agent_socket_path(socket_path);
     #[cfg(unix)]
-    match baluard_daemon::ssh_agent_serve::spawn_listener(&host, &agent_socket_path).await {
-        Ok(_handle) => {}
-        Err(e) => log::error!("ssh agent listener disabled: {e}"),
-    }
+    // The socket is only removed on shutdown when this daemon owns it:
+    // another daemon in the same directory may have failed to bind and
+    // must not delete the live socket on its way out.
+    let agent_socket_owned =
+        match baluard_daemon::ssh_agent_serve::spawn_listener(&host, &agent_socket_path).await {
+            Ok(_handle) => true,
+            Err(e) => {
+                log::error!("ssh agent listener disabled: {e}");
+                false
+            }
+        };
 
     // Graceful shutdown on SIGINT or SIGTERM
     #[cfg(unix)]
@@ -428,7 +435,9 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     #[cfg(unix)]
     let _ = std::fs::remove_file(socket_path);
     #[cfg(unix)]
-    let _ = std::fs::remove_file(&agent_socket_path);
+    if agent_socket_owned {
+        let _ = std::fs::remove_file(&agent_socket_path);
+    }
     Ok(())
 }
 

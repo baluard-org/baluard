@@ -1791,14 +1791,6 @@ impl VaultState {
             settings.fetch_favicons = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid fetch_favicons: {e}"))?;
         }
-        if let Some(v) = partial.get("ssh_agent_enabled") {
-            settings.ssh_agent_enabled = serde_json::from_value(v.clone())
-                .map_err(|e| format!("Invalid ssh_agent_enabled: {e}"))?;
-        }
-        if let Some(v) = partial.get("ssh_agent_auto_approve") {
-            settings.ssh_agent_auto_approve = serde_json::from_value(v.clone())
-                .map_err(|e| format!("Invalid ssh_agent_auto_approve: {e}"))?;
-        }
         if let Some(v) = partial.get("display_name") {
             settings.display_name = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid display_name: {e}"))?;

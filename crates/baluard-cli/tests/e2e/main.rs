@@ -26,6 +26,8 @@ const TEST_PASSWORD: &str = "test-passw0rd-12chars";
 struct DaemonGuard {
     child: Child,
     socket: PathBuf,
+    /// The daemon's BALUARD_DATA_DIR, where device-local state lives.
+    data_dir: PathBuf,
     _tmp: TempDir,
 }
 
@@ -161,10 +163,12 @@ fn spawn_daemon_with(tmp: TempDir, home: Option<&std::path::Path>) -> DaemonGuar
         cmd.env("HOME", home);
     }
     let child = cmd.spawn().expect("spawn baluard-daemon");
+    let data_dir = tmp.path().join("data");
 
     let mut guard = DaemonGuard {
         child,
         socket,
+        data_dir,
         _tmp: tmp,
     };
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -1936,6 +1940,8 @@ struct AgentFixture {
     url_port: String,
     agent_sock: PathBuf,
     home: PathBuf,
+    /// The daemon's device-local SSH agent policy file.
+    agent_policy: PathBuf,
 }
 
 fn spawn_agent_fixture() -> AgentFixture {
@@ -1944,6 +1950,7 @@ fn spawn_agent_fixture() -> AgentFixture {
     let home = tempfile::tempdir().expect("home tmp");
     let guard = spawn_daemon_with(tmp, Some(home.path()));
     let agent_sock = guard.socket.parent().unwrap().join("agent.sock");
+    let agent_policy = guard.data_dir.join("agent-policy.json");
     let url_port = url
         .split(':')
         .nth(2)
@@ -1957,7 +1964,20 @@ fn spawn_agent_fixture() -> AgentFixture {
         url_port,
         agent_sock,
         home: home.path().to_path_buf(),
+        agent_policy,
     }
+}
+
+/// Enable the agent on the fixture's device by writing its policy file,
+/// the same machine-local file the settings screen drives through the
+/// daemon route.
+fn enable_agent_policy(f: &AgentFixture, auto_approve: bool) {
+    std::fs::create_dir_all(f.agent_policy.parent().unwrap()).unwrap();
+    std::fs::write(
+        &f.agent_policy,
+        serde_json::json!({"enabled": true, "auto_approve": auto_approve}).to_string(),
+    )
+    .unwrap();
 }
 
 fn run_cli(f: &AgentFixture, args: &[&str]) -> std::process::Output {
@@ -1993,8 +2013,7 @@ fn seed_vault_keys(f: &AgentFixture) -> (String, String) {
     assert!(out.status.success(), "switch failed");
     let out = run_cli(f, &["unlock"]);
     assert!(out.status.success(), "unlock failed");
-    let out = run_cli(f, &["settings", "set", "ssh_agent_enabled=true"]);
-    assert!(out.status.success(), "settings set failed");
+    enable_agent_policy(f, false);
 
     let dir = tempfile::tempdir().unwrap();
     let (serve_priv, serve_pub) = gen_ssh_key(&dir, "serve");
@@ -2066,8 +2085,7 @@ fn e2e_ssh_agent_identities_gate() {
     assert!(out.contains("served"), "served key missing: {out}");
     assert!(!out.contains("quiet"), "opted-out key leaked: {out}");
 
-    let out = run_cli(&f, &["settings", "set", "ssh_agent_enabled=false"]);
-    assert!(out.status.success(), "settings off failed");
+    std::fs::write(&f.agent_policy, r#"{"enabled": false}"#).unwrap();
     // ssh-add prints the same "no identities" for an empty answer and a
     // protocol failure, so the off-state e2e check is "nothing listed";
     // the wire-level empty-vs-failure split is pinned by the daemon
@@ -2096,8 +2114,7 @@ fn e2e_ssh_agent_locked_fails() {
 fn e2e_ssh_agent_git_push_signs_via_agent() {
     let f = spawn_agent_fixture();
     let (serve_priv, serve_pub) = seed_vault_keys(&f);
-    let out = run_cli(&f, &["settings", "set", "ssh_agent_auto_approve=true"]);
-    assert!(out.status.success(), "auto approve failed");
+    enable_agent_policy(&f, true);
 
     // The fixture authorizes clientkey; swap in the vault key so only the
     // agent-held identity can authenticate.

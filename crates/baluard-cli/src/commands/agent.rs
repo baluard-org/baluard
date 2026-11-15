@@ -149,6 +149,72 @@ pub fn handle_agent_action(
         }
         crate::AgentAction::List => ("agents.list", serde_json::json!({})),
         crate::AgentAction::Revoke => ("agents.revoke", serde_json::json!({})),
+        crate::AgentAction::Policy {
+            enable,
+            disable,
+            auto_approve,
+            no_auto_approve,
+        } => {
+            if enable && disable {
+                return Err("--enable and --disable contradict each other".into());
+            }
+            if auto_approve && no_auto_approve {
+                return Err("--auto-approve and --no-auto-approve contradict each other".into());
+            }
+            let mut payload = serde_json::Map::new();
+            if enable {
+                payload.insert("enabled".into(), serde_json::Value::Bool(true));
+            }
+            if disable {
+                payload.insert("enabled".into(), serde_json::Value::Bool(false));
+            }
+            if auto_approve {
+                payload.insert("auto_approve".into(), serde_json::Value::Bool(true));
+            }
+            if no_auto_approve {
+                payload.insert("auto_approve".into(), serde_json::Value::Bool(false));
+            }
+            if payload.is_empty() {
+                // No change requested: show the current policy.
+                let response = client::request_to("agent.policy.get", "{}", socket)?;
+                if !response.success {
+                    return Err(response.error_message.into());
+                }
+                println!("{}", response.payload);
+                return Ok(());
+            }
+            // Turning the agent on, or silent signing on, needs the master
+            // password: the daemon checks it, and the CLI supplies it.
+            let current = client::request_to("agent.policy.get", "{}", socket)?;
+            if !current.success {
+                return Err(current.error_message.into());
+            }
+            let current: serde_json::Value = serde_json::from_str(&current.payload)?;
+            let turning_on = payload
+                .get("enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(current["enabled"].as_bool().unwrap_or(false))
+                && !current["enabled"].as_bool().unwrap_or(false)
+                || payload
+                    .get("auto_approve")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(current["auto_approve"].as_bool().unwrap_or(false))
+                    && !current["auto_approve"].as_bool().unwrap_or(false);
+            let mut payload_value = serde_json::Value::Object(payload);
+            if turning_on {
+                let password = crate::commands::daemon_master_password(
+                    "Master password (to turn on the SSH agent for this device): ",
+                )?;
+                payload_value["master_password"] = serde_json::Value::String(password);
+            }
+            let response =
+                client::request_to("agent.policy.set", &payload_value.to_string(), socket)?;
+            if !response.success {
+                return Err(response.error_message.into());
+            }
+            println!("{}", response.payload);
+            return Ok(());
+        }
     };
     let response = client::request_to(route, &payload.to_string(), socket)?;
     if !response.success {

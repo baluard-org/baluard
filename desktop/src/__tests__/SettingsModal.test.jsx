@@ -66,15 +66,25 @@ import { toastSuccess as toastSuccessMock, toastError as toastErrorMock, toastWa
 
 import SettingsModal from "../components/SettingsModal.jsx";
 
+// The shared reprompt modal is what asks for the master password when
+// the agent is turned on.
+const repromptMock = { show: vi.fn(), hide: vi.fn() };
+
 describe("SettingsModal", () => {
   beforeEach(() => {
     daemonMock.mockReset();
+    repromptMock.show.mockClear();
+    repromptMock.hide.mockClear();
+    globalThis.window.__baluardReprompt = repromptMock;
     vaultMock.showSettingsModal.mockReturnValue(true);
     themeMock.set.mockClear();
     authMock.signOut.mockClear();
     vaultMock.refreshProfile.mockClear();
     // Default settings payload
     daemonMock.mockImplementation((action) => {
+      if (action === "agent.policy.get") {
+        return Promise.resolve(JSON.stringify({ enabled: false, auto_approve: false }));
+      }
       if (action === "settings.get") {
         return Promise.resolve(JSON.stringify({
           vault_timeout: "15m",
@@ -174,6 +184,9 @@ describe("SettingsModal", () => {
 
 describe("SettingsModal security-key guard flow", () => {
   beforeEach(() => {
+    repromptMock.show.mockClear();
+    repromptMock.hide.mockClear();
+    globalThis.window.__baluardReprompt = repromptMock;
     daemonMock.mockReset();
     toastSuccessMock.mockClear();
     toastErrorMock.mockClear();
@@ -464,6 +477,9 @@ describe("SettingsModal security-key guard flow", () => {
 
 describe("SettingsModal import feedback and processing", () => {
   beforeEach(() => {
+    repromptMock.show.mockClear();
+    repromptMock.hide.mockClear();
+    globalThis.window.__baluardReprompt = repromptMock;
     daemonMock.mockReset();
     toastSuccessMock.mockClear();
     toastErrorMock.mockClear();
@@ -587,43 +603,79 @@ describe("SettingsModal import feedback and processing", () => {
     }
   });
 
-  it("ssh agent toggle sends ssh_agent_enabled through settings.set", async () => {
+  it("ssh agent toggle turns the device policy on through the reprompt", async () => {
     daemonMock.mockImplementation((action) => {
       if (action === "settings.get") {
-        return Promise.resolve(JSON.stringify({
-          vault_timeout: "15m",
-          ssh_agent_enabled: false,
-          ssh_agent_auto_approve: false,
-        }));
+        return Promise.resolve(JSON.stringify({ vault_timeout: "15m" }));
+      }
+      if (action === "agent.policy.get") {
+        return Promise.resolve(JSON.stringify({ enabled: false, auto_approve: false }));
       }
       return Promise.resolve("");
     });
     const { getByTestId } = render(() => <SettingsModal />);
     await waitFor(() => expect(getByTestId("ssh-agent-toggle")).toBeTruthy());
     fireEvent.click(getByTestId("ssh-agent-toggle"));
+    // Turning the agent on asks for the master password first.
+    await waitFor(() => expect(repromptMock.show).toHaveBeenCalled());
+    await repromptMock.show.mock.calls[0][0]("master-pw");
     await waitFor(() => {
-      const calls = daemonMock.mock.calls.filter(([a]) => a === "settings.set");
-      expect(calls.some(([, payload]) => payload === JSON.stringify({ ssh_agent_enabled: true }))).toBe(true);
+      const calls = daemonMock.mock.calls.filter(([a]) => a === "agent.policy.set");
+      expect(
+        calls.some(([, payload]) =>
+          payload === JSON.stringify({ enabled: true, master_password: "master-pw" })
+        )
+      ).toBe(true);
     });
   });
 
-  it("ssh agent auto-approve toggle sends ssh_agent_auto_approve", async () => {
+  it("ssh agent toggle turns the device policy off without a password", async () => {
     daemonMock.mockImplementation((action) => {
       if (action === "settings.get") {
-        return Promise.resolve(JSON.stringify({
-          vault_timeout: "15m",
-          ssh_agent_enabled: true,
-          ssh_agent_auto_approve: false,
-        }));
+        return Promise.resolve(JSON.stringify({ vault_timeout: "15m" }));
+      }
+      if (action === "agent.policy.get") {
+        return Promise.resolve(JSON.stringify({ enabled: true, auto_approve: false }));
+      }
+      return Promise.resolve("");
+    });
+    const { getByTestId } = render(() => <SettingsModal />);
+    await waitFor(() => expect(getByTestId("ssh-agent-toggle")).toBeTruthy());
+    // Wait for the loaded policy to land in the UI, so the click turns
+    // it OFF rather than on.
+    await waitFor(() =>
+      expect(getByTestId("ssh-agent-toggle").textContent).toContain("settings.enabled")
+    );
+    fireEvent.click(getByTestId("ssh-agent-toggle"));
+    await waitFor(() => {
+      const calls = daemonMock.mock.calls.filter(([a]) => a === "agent.policy.set");
+      expect(calls.some(([, payload]) => payload === JSON.stringify({ enabled: false }))).toBe(true);
+    });
+    expect(repromptMock.show).not.toHaveBeenCalled();
+  });
+
+  it("ssh agent auto-approve toggle asks for the password when turning on", async () => {
+    daemonMock.mockImplementation((action) => {
+      if (action === "settings.get") {
+        return Promise.resolve(JSON.stringify({ vault_timeout: "15m" }));
+      }
+      if (action === "agent.policy.get") {
+        return Promise.resolve(JSON.stringify({ enabled: true, auto_approve: false }));
       }
       return Promise.resolve("");
     });
     const { getByTestId } = render(() => <SettingsModal />);
     await waitFor(() => expect(getByTestId("ssh-agent-auto-approve-toggle")).toBeTruthy());
     fireEvent.click(getByTestId("ssh-agent-auto-approve-toggle"));
+    await waitFor(() => expect(repromptMock.show).toHaveBeenCalled());
+    await repromptMock.show.mock.calls[0][0]("master-pw");
     await waitFor(() => {
-      const calls = daemonMock.mock.calls.filter(([a]) => a === "settings.set");
-      expect(calls.some(([, payload]) => payload === JSON.stringify({ ssh_agent_auto_approve: true }))).toBe(true);
+      const calls = daemonMock.mock.calls.filter(([a]) => a === "agent.policy.set");
+      expect(
+        calls.some(([, payload]) =>
+          payload === JSON.stringify({ auto_approve: true, master_password: "master-pw" })
+        )
+      ).toBe(true);
     });
   });
 });

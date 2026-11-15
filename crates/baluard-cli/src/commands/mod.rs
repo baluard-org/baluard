@@ -4532,13 +4532,9 @@ pub fn handle_settings_set(
                 .map_err(|e| format!("Invalid URI match strategy: {e}"))?;
             serde_json::json!({"default_uri_match": serde_json::to_value(strategy)?})
         }
-        "ssh_agent_enabled" | "ssh_agent_auto_approve" => {
-            let on = value.eq_ignore_ascii_case("true") || value == "1";
-            serde_json::json!({ key: on })
-        }
         _ => {
             return Err(format!(
-                "Unknown setting: {key}. Available: vault_timeout, theme, default_uri_match, ssh_agent_enabled, ssh_agent_auto_approve"
+                "Unknown setting: {key}. Available: vault_timeout, theme, default_uri_match"
             )
             .into());
         }

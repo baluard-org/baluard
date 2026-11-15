@@ -6696,8 +6696,6 @@ impl VaultHandle {
                         suggest_app_logins: None,
                         trusted_app_packages: None,
                         rejected_app_packages: None,
-                        ssh_agent_enabled: false,
-                        ssh_agent_auto_approve: false,
                     };
                     let legacy_lang = v["lang"].as_str().map(String::from);
                     (Some(enc), legacy_lang)
@@ -6737,14 +6735,6 @@ impl VaultHandle {
             rejected_app_packages: enc_fields
                 .as_ref()
                 .and_then(|e| e.rejected_app_packages.clone()),
-            ssh_agent_enabled: enc_fields
-                .as_ref()
-                .map(|e| e.ssh_agent_enabled)
-                .unwrap_or(false),
-            ssh_agent_auto_approve: enc_fields
-                .as_ref()
-                .map(|e| e.ssh_agent_auto_approve)
-                .unwrap_or(false),
             enrollment_policy: enc_fields.as_ref().map(|e| e.enrollment_policy).unwrap_or(
                 // No encrypted settings and no legacy file (step 3 already
                 // handled the legacy case above, Strict for field-less old
@@ -6858,8 +6848,6 @@ impl VaultHandle {
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
             rejected_app_packages: settings.rejected_app_packages.clone(),
-            ssh_agent_enabled: settings.ssh_agent_enabled,
-            ssh_agent_auto_approve: settings.ssh_agent_auto_approve,
         };
         let key = hkdf_derive::derive_settings_key(&unlocked.meta_ikm())
             .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
@@ -6993,8 +6981,6 @@ impl VaultHandle {
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
             rejected_app_packages: settings.rejected_app_packages.clone(),
-            ssh_agent_enabled: settings.ssh_agent_enabled,
-            ssh_agent_auto_approve: settings.ssh_agent_auto_approve,
         };
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
@@ -20998,8 +20984,6 @@ mod tests {
             suggest_app_logins: None,
             trusted_app_packages: None,
             rejected_app_packages: None,
-            ssh_agent_enabled: false,
-            ssh_agent_auto_approve: false,
             enrollment_policy: crate::vault::manifest::EnrollmentPolicy::Personal,
             space_invite_authority: Default::default(),
             allow_viewer_export: false,

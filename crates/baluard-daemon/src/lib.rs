@@ -24,6 +24,7 @@ pub mod handler;
 mod scrub;
 pub mod socket_path;
 mod ssh_agent_keys;
+pub mod ssh_agent_policy;
 pub mod ssh_agent_proto;
 pub mod ssh_agent_serve;
 

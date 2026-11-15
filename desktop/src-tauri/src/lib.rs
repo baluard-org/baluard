@@ -377,6 +377,9 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "agents.revoke",
     "agents.list",
     "agents.set_yolo",
+    // The SSH agent policy is device-local state, not vault data.
+    "agent.policy.get",
+    "agent.policy.set",
     "agents.audit",
     "vaults.register_local",
     "vaults.discard_orphan",

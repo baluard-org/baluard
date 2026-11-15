@@ -166,6 +166,7 @@ pub async fn handle_agent_route(
                 payload.claimed_name,
                 payload.need,
                 payload.item_ids,
+                baluard_runtime::agents::PendingPurpose::Credential,
             ) {
                 Ok(request_id) => {
                     audit_best_effort(
@@ -260,7 +261,20 @@ pub async fn handle_agent_route(
                 return err_response("agent request is no longer pending");
             };
             let audit_pending = pending.clone();
-            let token = state.agent_mint(pending.peer, pending.item_ids, DEFAULT_TTL_SECS);
+            // A credential request mints a grant token; an SSH sign
+            // request only releases the sign. Minting a grant for a
+            // sign would leave a live, unreachable grant behind that
+            // also suppresses blur-locking for the vault.
+            let token =
+                if audit_pending.purpose == baluard_runtime::agents::PendingPurpose::Credential {
+                    state.agent_mint(
+                        audit_pending.peer.clone(),
+                        audit_pending.item_ids.clone(),
+                        DEFAULT_TTL_SECS,
+                    )
+                } else {
+                    String::new()
+                };
             if let Err(error) = audit(
                 "approved",
                 audit_pending.vault_slug.as_deref().unwrap_or(&slug),
@@ -436,6 +450,90 @@ pub async fn handle_agent_route(
             }
             state.revoke_agent_token(&req.session_token);
             ok_resp(serde_json::json!({"revoked": true}).to_string(), None)
+        }
+        "agent.policy.get" => {
+            // Device-local policy: two booleans, no vault data.
+            let policy = crate::ssh_agent_policy::load();
+            ok_resp(
+                serde_json::json!({
+                    "enabled": policy.enabled,
+                    "auto_approve": policy.auto_approve,
+                })
+                .to_string(),
+                None,
+            )
+        }
+        "agent.policy.set" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid agent policy: {e}")),
+            };
+            let (_slug, state) = match target_state(req, host, None).await {
+                Ok(pair) => pair,
+                Err(resp) => return resp,
+            };
+            if let Err(resp) = verify_user(req, &state).await {
+                return resp;
+            }
+            let current = crate::ssh_agent_policy::load();
+            let enabled = payload["enabled"].as_bool().unwrap_or(current.enabled);
+            let auto_approve = payload["auto_approve"]
+                .as_bool()
+                .unwrap_or(current.auto_approve);
+            if auto_approve && !enabled {
+                return err_response(
+                    "The SSH agent must be on before signings can be approved automatically",
+                );
+            }
+            // Turning the agent on, or turning silent signing on, is a
+            // security downgrade: it needs the master password, the same
+            // way the permissive agent mode does.
+            let turns_on = (enabled && !current.enabled) || (auto_approve && !current.auto_approve);
+            if turns_on {
+                let Some(password) = payload["master_password"].as_str() else {
+                    return err_response(
+                        "Master password required to turn on the SSH agent for this device",
+                    );
+                };
+                if let Err(e) = crate::handler::verify_seal_change_password(&state, password).await
+                {
+                    return err_response(e);
+                }
+            }
+            let next = crate::ssh_agent_policy::AgentPolicy {
+                enabled,
+                auto_approve,
+            };
+            let audit_peer = peer.cloned().unwrap_or_else(|| PeerBinding {
+                pid: 0,
+                exe_path: "<unresolved local client>".into(),
+                start_ticks: 0,
+            });
+            if let Err(error) = audit(
+                if next.enabled {
+                    "agent_policy_enabled"
+                } else {
+                    "agent_policy_disabled"
+                },
+                &_slug,
+                &audit_peer,
+                None,
+                &[],
+                "saved",
+            ) {
+                return err_response(format!("agent audit failed: {error}"));
+            }
+            if let Err(e) = crate::ssh_agent_policy::save(&next) {
+                return err_response(e);
+            }
+            ok_resp(
+                serde_json::json!({
+                    "enabled": next.enabled,
+                    "auto_approve": next.auto_approve,
+                })
+                .to_string(),
+                None,
+            )
         }
         _ => err_response(format!("Unknown action: {}", req.action)),
     }

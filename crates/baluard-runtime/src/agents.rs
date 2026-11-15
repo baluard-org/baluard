@@ -245,6 +245,17 @@ pub struct PendingQueue {
     outcomes: RwLock<HashMap<String, (PendingOutcome, u64)>>,
 }
 
+/// What a pending request asks for. The purpose decides what approval
+/// means: a credential request turns into a grant token, an SSH sign
+/// request only releases the sign and mints nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingPurpose {
+    /// Credential grant: approval mints an agent grant token.
+    Credential,
+    /// SSH sign request: approval releases the sign, no grant token.
+    SshSign,
+}
+
 #[derive(Debug, Clone)]
 pub struct PendingRequest {
     pub request_id: String,
@@ -254,6 +265,7 @@ pub struct PendingRequest {
     pub need: String,
     pub item_ids: Vec<String>,
     pub created_at_ms: u64,
+    pub purpose: PendingPurpose,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -280,6 +292,7 @@ impl PendingQueue {
         claimed_name: String,
         need: String,
         item_ids: Vec<String>,
+        purpose: PendingPurpose,
     ) -> Result<String, QueueFull> {
         let mut entries = self.entries.write().unwrap();
         Self::sweep(&mut entries);
@@ -303,6 +316,7 @@ impl PendingQueue {
                 need,
                 item_ids,
                 created_at_ms: now_ms(),
+                purpose,
             },
         );
         Ok(request_id)
@@ -495,6 +509,7 @@ mod tests {
                 "Claude".into(),
                 "github login".into(),
                 vec!["item-1".into()],
+                PendingPurpose::Credential,
             )
             .unwrap();
         let listed = q.list();
@@ -513,8 +528,15 @@ mod tests {
         for pid in 1..=MAX_PENDING_PER_EXE as u32 {
             let mut p = peer(pid);
             p.exe_path = "/usr/bin/agent".into();
-            q.push(Some("personal".into()), p, "A".into(), "n".into(), vec![])
-                .unwrap();
+            q.push(
+                Some("personal".into()),
+                p,
+                "A".into(),
+                "n".into(),
+                vec![],
+                PendingPurpose::Credential,
+            )
+            .unwrap();
         }
         let mut overflow = peer(90);
         overflow.exe_path = "/usr/bin/agent".into();
@@ -525,6 +547,7 @@ mod tests {
                 "A".into(),
                 "n".into(),
                 vec![],
+                PendingPurpose::Credential,
             )
             .unwrap_err();
         assert_eq!(err, QueueFull);
@@ -537,6 +560,7 @@ mod tests {
             "B".into(),
             "n".into(),
             vec![],
+            PendingPurpose::Credential,
         )
         .unwrap();
     }
@@ -547,12 +571,28 @@ mod tests {
         for pid in 1..=MAX_PENDING_TOTAL as u32 {
             let mut p = peer(pid);
             p.exe_path = format!("/usr/bin/exe-{pid}");
-            q.push(None, p, "n".into(), "n".into(), vec![]).unwrap();
+            q.push(
+                None,
+                p,
+                "n".into(),
+                "n".into(),
+                vec![],
+                PendingPurpose::Credential,
+            )
+            .unwrap();
         }
         let mut p = peer(MAX_PENDING_TOTAL as u32 + 1);
         p.exe_path = "/usr/bin/exe-overflow".into();
         assert_eq!(
-            q.push(None, p, "n".into(), "n".into(), vec![]).unwrap_err(),
+            q.push(
+                None,
+                p,
+                "n".into(),
+                "n".into(),
+                vec![],
+                PendingPurpose::Credential
+            )
+            .unwrap_err(),
             QueueFull
         );
     }
@@ -561,7 +601,14 @@ mod tests {
     fn deny_removes_the_request() {
         let q = PendingQueue::new();
         let id = q
-            .push(None, peer(7), "A".into(), "n".into(), vec![])
+            .push(
+                None,
+                peer(7),
+                "A".into(),
+                "n".into(),
+                vec![],
+                PendingPurpose::Credential,
+            )
             .unwrap();
         assert!(q.deny(&id));
         assert!(q.list().is_empty());
@@ -573,7 +620,14 @@ mod tests {
         let q = PendingQueue::new();
         let p = peer(7);
         let id1 = q
-            .push(None, p.clone(), "A".into(), "n".into(), vec![])
+            .push(
+                None,
+                p.clone(),
+                "A".into(),
+                "n".into(),
+                vec![],
+                PendingPurpose::Credential,
+            )
             .unwrap();
         // Simulate the first request aging out of the approval window.
         q.entries
@@ -586,7 +640,16 @@ mod tests {
             q.get(&id1).is_none(),
             "an expired request never reports pending"
         );
-        let id2 = q.push(None, p, "A".into(), "n".into(), vec![]).unwrap();
+        let id2 = q
+            .push(
+                None,
+                p,
+                "A".into(),
+                "n".into(),
+                vec![],
+                PendingPurpose::Credential,
+            )
+            .unwrap();
         assert_ne!(id1, id2);
         assert_eq!(q.list().len(), 1);
     }

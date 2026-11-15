@@ -408,6 +408,9 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     "agents.run",
     "agents.revoke_own",
     "agents.set_yolo",
+    // The agent policy is device-local state, not vault data: reading it
+    // needs no vault and no token.
+    "agent.policy.get",
 ];
 
 /// Default-deny gate for the per-vault dispatcher. Unknown actions require
@@ -479,6 +482,9 @@ const HOST_ACTIONS: &[&str] = &[
     "agents.run",
     "agents.revoke_own",
     "agents.set_yolo",
+    // Writing the device policy changes what this machine serves, so
+    // it needs a session token like every other state change.
+    "agent.policy.set",
     "bridge.list",
     "bridge.config",
     "bridge.match",
@@ -922,7 +928,7 @@ async fn route_host_request_inner(
         extract_slug(&req.payload).is_some()
     );
 
-    if req.action.starts_with("agents.") {
+    if req.action.starts_with("agents.") || req.action.starts_with("agent.policy.") {
         return crate::agents::handle_agent_route(&req, host, peer).await;
     }
 
@@ -8238,6 +8244,39 @@ fn verify_peer_uid_unix(stream: &UnixStream) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Same-UID check for a socket the daemon accepted, by raw descriptor.
+/// The agent socket already relies on its 0600 mode, but the daemon
+/// verifies the peer as well: the socket mode is only as strong as the
+/// directory it sits in, and that directory is not ours to trust.
+#[cfg(unix)]
+pub(crate) fn peer_uid_matches_daemon(fd: std::os::unix::io::RawFd) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+        let mut cred_len: libc::socklen_t = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let ret = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                &mut cred as *mut _ as *mut _,
+                &mut cred_len,
+            )
+        };
+        if ret != 0 {
+            return false;
+        }
+        cred.uid == unsafe { libc::geteuid() }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut uid: libc::uid_t = 0;
+        let mut gid: libc::gid_t = 0;
+        let ret = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+        ret == 0 && uid == unsafe { libc::geteuid() }
+    }
 }
 
 /// Tripwire for the frontend clash-dialog matcher: if one of these changes,
