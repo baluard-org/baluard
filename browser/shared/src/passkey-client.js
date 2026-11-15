@@ -422,10 +422,17 @@ export function createPasskeyClient(send, opts = {}) {
         user_verified: uv,
         vault_slug: row.vault_slug || "",
       });
-      await daemon("passkey.consume_assertion", {
-        ceremony_id: assertion.ceremony_id,
-        vault_slug: row.vault_slug || "",
-      });
+      // Counter persistence is advisory: synced passkeys carry counter 0
+      // and shared-vault viewers are write-gated, so a refusal must not
+      // fail an assertion that was already issued. Mobile skips it too.
+      try {
+        await daemon("passkey.consume_assertion", {
+          ceremony_id: assertion.ceremony_id,
+          vault_slug: row.vault_slug || "",
+        });
+      } catch (e) {
+        console.warn("[baluard-passkey] counter persistence skipped:", e && e.message);
+      }
       return pushSuccess(session, assertion.assertion_response);
     } catch (e) {
       const c = e && e.code ? e : classify(e);
