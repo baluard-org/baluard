@@ -211,7 +211,10 @@ mod tests {
         let (after_r, r) = read_mpint(0);
         let (after_s, s) = read_mpint(after_r);
         assert_eq!(after_s, blob.len(), "trailing bytes in sig blob");
-        // Stripped of the mpint pad, each half is a full-width P-256 scalar.
+        // Stripped of the mpint pad, each half is a full-width P-256
+        // scalar. Minimal mpint encoding strips a scalar-high 0x00 byte,
+        // so a signature whose r or s lands under 2^248 carries 31 wire
+        // bytes: the honest bound is 31..=32 with a minimal encoding.
         let scalar_len = |m: &[u8]| -> usize {
             if m.first() == Some(&0) {
                 m.len() - 1
@@ -219,8 +222,17 @@ mod tests {
                 m.len()
             }
         };
-        assert_eq!(scalar_len(r), 32, "r scalar len");
-        assert_eq!(scalar_len(s), 32, "s scalar len");
+        let r_len = scalar_len(r);
+        let s_len = scalar_len(s);
+        assert!((31..=32).contains(&r_len), "r scalar len {r_len}");
+        assert!((31..=32).contains(&s_len), "s scalar len {s_len}");
+        // Minimal encoding: no stripped-able zero pad may remain.
+        if r.len() <= 32 {
+            assert_ne!(r.first(), Some(&0), "r mpint not minimal");
+        }
+        if s.len() <= 32 {
+            assert_ne!(s.first(), Some(&0), "s mpint not minimal");
+        }
     }
 
     #[test]

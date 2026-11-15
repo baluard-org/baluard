@@ -1949,7 +1949,20 @@ fn spawn_agent_fixture() -> AgentFixture {
     let tmp = tempfile::tempdir().expect("tmp");
     let home = tempfile::tempdir().expect("home tmp");
     let guard = spawn_daemon_with(tmp, Some(home.path()));
-    let agent_sock = guard.socket.parent().unwrap().join("agent.sock");
+    // The daemon names the agent socket after its own IPC socket
+    // (baluard-daemon-<...>.sock -> <...>-agent.sock), so two daemons
+    // with different sockets never share the endpoint.
+    let ipc_name = guard
+        .socket
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("baluard.sock")
+        .to_string();
+    let agent_name = ipc_name
+        .strip_suffix(".sock")
+        .map(|base| format!("{base}-agent.sock"))
+        .unwrap_or_else(|| format!("{ipc_name}-agent.sock"));
+    let agent_sock = guard.socket.parent().unwrap().join(agent_name);
     let agent_policy = guard.data_dir.join("agent-policy.json");
     let url_port = url
         .split(':')

@@ -477,9 +477,16 @@ pub async fn handle_agent_route(
             }
             let current = crate::ssh_agent_policy::load();
             let enabled = payload["enabled"].as_bool().unwrap_or(current.enabled);
-            let auto_approve = payload["auto_approve"]
-                .as_bool()
-                .unwrap_or(current.auto_approve);
+            // Turning the agent off always turns silent signing off with
+            // it: a payload that only disables the agent must not
+            // inherit a live auto_approve from the current policy and
+            // then die on the guard below, which would leave the agent
+            // impossible to switch off while auto-approve is on.
+            let auto_approve = payload["auto_approve"].as_bool().unwrap_or(if enabled {
+                current.auto_approve
+            } else {
+                false
+            });
             if auto_approve && !enabled {
                 return err_response(
                     "The SSH agent must be on before signings can be approved automatically",
@@ -509,18 +516,22 @@ pub async fn handle_agent_route(
                 exe_path: "<unresolved local client>".into(),
                 start_ticks: 0,
             });
-            if let Err(error) = audit(
+            let event = if next.enabled != current.enabled {
                 if next.enabled {
                     "agent_policy_enabled"
                 } else {
                     "agent_policy_disabled"
-                },
-                &_slug,
-                &audit_peer,
-                None,
-                &[],
-                "saved",
-            ) {
+                }
+            } else if next.auto_approve != current.auto_approve {
+                if next.auto_approve {
+                    "agent_policy_auto_approve_enabled"
+                } else {
+                    "agent_policy_auto_approve_disabled"
+                }
+            } else {
+                "agent_policy_saved"
+            };
+            if let Err(error) = audit(event, &_slug, &audit_peer, None, &[], "saved") {
                 return err_response(format!("agent audit failed: {error}"));
             }
             if let Err(e) = crate::ssh_agent_policy::save(&next) {

@@ -41,14 +41,23 @@ mod serve {
             .unwrap_or(DEFAULT_APPROVAL_WAIT_SECS)
     }
 
-    /// The agent socket sits beside the IPC socket in the same private
-    /// directory (umask 0177 at bind makes both born-0600).
+    /// The agent socket is named after the IPC socket itself, so two
+    /// daemons with different --socket names in one directory never
+    /// share (or destroy) each other's agent endpoint.
     pub fn agent_socket_path(ipc_socket: &str) -> PathBuf {
         let ipc = Path::new(ipc_socket);
+        let stem = ipc
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("baluard");
+        let agent_name = stem
+            .strip_suffix(".sock")
+            .map(|base| format!("{base}-agent.sock"))
+            .unwrap_or_else(|| format!("{stem}-agent.sock"));
         match ipc.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => parent.join("agent.sock"),
+            Some(parent) if !parent.as_os_str().is_empty() => parent.join(agent_name),
             // Bare filename IPC socket (cwd-relative): sibling in cwd.
-            _ => PathBuf::from("agent.sock"),
+            _ => PathBuf::from(agent_name),
         }
     }
 
@@ -89,9 +98,17 @@ mod serve {
         let std_listener = std::os::unix::net::UnixListener::bind(socket_path)?;
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(socket_path)?.permissions();
-            perms.set_mode(0o600);
-            std::fs::set_permissions(socket_path, perms)?;
+            let chmod = std::fs::metadata(socket_path).and_then(|m| {
+                let mut perms = m.permissions();
+                perms.set_mode(0o600);
+                std::fs::set_permissions(socket_path, perms)
+            });
+            if let Err(e) = chmod {
+                // A socket left behind at default mode because the mode
+                // tightening failed is reachable by every local user.
+                let _ = std::fs::remove_file(socket_path);
+                return Err(e);
+            }
         }
         std_listener.set_nonblocking(true)?;
         let listener = tokio::net::UnixListener::from_std(std_listener)?;
@@ -144,9 +161,20 @@ mod serve {
             let host = host.clone();
             let policy_path = policy_path.clone();
             tokio::spawn(async move {
+                // The slot is a drop guard: a panicked handler must not
+                // leak the counter and wedge every later client out.
+                let _slot = ConnectionSlot;
                 serve_connection(stream, host, peer, policy_path).await;
-                ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             });
+        }
+    }
+
+    /// One unit of the connection cap, released on every exit path
+    /// including a panic mid-handler.
+    struct ConnectionSlot;
+    impl Drop for ConnectionSlot {
+        fn drop(&mut self) {
+            ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -169,9 +197,14 @@ mod serve {
             if !crate::ssh_agent_proto::frame_len_ok(len) {
                 return;
             }
+            // The idle budget covers the whole frame, not just the
+            // header: a client that announces a large body and stalls
+            // must release its slot like any other idle connection.
             let mut body = vec![0u8; len as usize];
-            if stream.read_exact(&mut body).await.is_err() {
-                return;
+            match tokio::time::timeout(CONNECTION_IDLE_TIMEOUT, stream.read_exact(&mut body)).await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) | Err(_) => return,
             }
             let request = match crate::ssh_agent_proto::parse_request(&body) {
                 Ok(r) => r,
@@ -191,7 +224,11 @@ mod serve {
                 }
             };
             let framed = crate::ssh_agent_proto::frame(&answer);
-            if stream.write_all(&framed).await.is_err() {
+            let write_ok = tokio::time::timeout(CONNECTION_IDLE_TIMEOUT, stream.write_all(&framed))
+                .await
+                .map(|r| r.is_ok())
+                .unwrap_or(false);
+            if !write_ok {
                 return;
             }
         }
@@ -236,9 +273,18 @@ mod serve {
                 continue;
             }
             let auto_approve = policy.auto_approve;
-            let Ok(ids) = state.list_cipher_ids().await else {
+            // Metadata carries the cipher kind without decrypting
+            // anything: only SSH-key ciphers are ever decrypted here, so
+            // logins, cards, and notes never leave their vault envelope
+            // on an ssh-add -l or a sign request.
+            let Ok(metas) = state.list_cipher_meta().await else {
                 continue;
             };
+            let ids: Vec<String> = metas
+                .into_iter()
+                .filter(|m| m.cipher_type == baluard_core::types::CipherType::SshKey)
+                .map(|m| m.id.to_string())
+                .collect();
             for id in ids {
                 // The decrypted payload carries the private key text, so
                 // it lives in a zeroizing buffer that is wiped on drop.
@@ -249,6 +295,8 @@ mod serve {
                 let Ok(v) = serde_json::from_str::<serde_json::Value>(&cipher_json) else {
                     continue;
                 };
+                // Defense in depth against metadata drift: the envelope
+                // must still name an ssh key.
                 let is_ssh = v
                     .get("kind")
                     .and_then(|k| k.get("type"))
@@ -304,7 +352,12 @@ mod serve {
         const MAX_LABEL: usize = 120;
         let mut out: String = raw
             .chars()
-            .filter(|c| !c.is_control() && *c != '"' && *c != '\'')
+            .filter(|c| {
+                !c.is_control()
+                    && *c != '"'
+                    && *c != '\''
+                    && !matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+            })
             .take(MAX_LABEL)
             .collect();
         out = out.trim().to_string();
@@ -377,12 +430,27 @@ mod serve {
             return crate::ssh_agent_proto::encode_failure();
         };
         let entry = entry.clone();
+        // The master switch may have been turned off between the scan
+        // and the sign: re-read it before any audit or key work. On the
+        // auto path this runs before the audit, so a refused sign never
+        // leaves an "approved" record behind.
+        if !crate::ssh_agent_policy::load_from(policy_path).enabled {
+            return crate::ssh_agent_proto::encode_failure();
+        }
+        let Some(state) = host.get(&entry.vault_slug).await else {
+            return crate::ssh_agent_proto::encode_failure();
+        };
         if !entry.auto_approve {
             match request_approval(host, peer, &entry).await {
                 Approval::Approved => {}
                 Approval::Denied | Approval::TimedOut => {
                     return crate::ssh_agent_proto::encode_failure();
                 }
+            }
+            // The approval wait can outlive the policy: re-read it after
+            // the user has decided, before any key material loads.
+            if !crate::ssh_agent_policy::load_from(policy_path).enabled {
+                return crate::ssh_agent_proto::encode_failure();
             }
         } else {
             // The audit trail is the record of every signing decision:
@@ -401,16 +469,6 @@ mod serve {
             {
                 return crate::ssh_agent_proto::encode_failure();
             }
-        }
-        // Reload the cipher at sign time: the key may have been edited or
-        // the vault locked since the scan.
-        let Some(state) = host.get(&entry.vault_slug).await else {
-            return crate::ssh_agent_proto::encode_failure();
-        };
-        // The master switch may have been turned off while the approval
-        // was pending: re-read it before signing.
-        if !crate::ssh_agent_policy::load_from(policy_path).enabled {
-            return crate::ssh_agent_proto::encode_failure();
         }
         let Ok(cipher_json) = state.get_cipher(&entry.cipher_id, true).await else {
             return crate::ssh_agent_proto::encode_failure();
@@ -636,12 +694,17 @@ mod tests {
     // --- socket path ---------------------------------------------------------
 
     #[test]
-    fn agent_socket_path_is_a_sibling_of_the_ipc_socket() {
+    fn agent_socket_path_is_named_after_the_ipc_socket() {
         let p = agent_socket_path("/run/user/1000/baluard/baluard.sock");
         assert_eq!(
             p,
-            std::path::PathBuf::from("/run/user/1000/baluard/agent.sock")
+            std::path::PathBuf::from("/run/user/1000/baluard/baluard-agent.sock")
         );
+        // A differently named IPC socket must land on a different agent
+        // socket: two daemons in one directory never share the endpoint.
+        let q = agent_socket_path("/tmp/probe/d.sock");
+        assert_eq!(q, std::path::PathBuf::from("/tmp/probe/d-agent.sock"));
+        assert_ne!(p, q);
     }
 
     // --- identities ----------------------------------------------------------

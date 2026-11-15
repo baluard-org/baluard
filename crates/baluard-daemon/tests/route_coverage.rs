@@ -7265,3 +7265,145 @@ async fn agent_permissive_mode_is_password_gated_and_device_local() {
         "pending"
     );
 }
+
+// ── agent.policy.* (device-local switches) ──────────────────────────
+
+async fn policy_route(
+    host: &Arc<VaultHost>,
+    action: &str,
+    payload: &str,
+    token: &str,
+    slug: &str,
+) -> baluard_daemon::proto::GatewayResponse {
+    let req = GatewayRequest {
+        action: action.to_string(),
+        payload: payload.to_string(),
+        session_token: token.to_string(),
+        slug: slug.to_string(),
+        ipc_version: 1,
+    };
+    route_host_request(req, host).await
+}
+
+/// An unlocked vault wired into the host, the shape agent.policy.set
+/// resolves through: the switch routes ride a vault session.
+async fn policy_vault(
+    host: &Arc<VaultHost>,
+    label: &str,
+) -> (tempfile::TempDir, Arc<VaultState>, String) {
+    let (_dir, state) = open_unlocked(label).await;
+    let slug = format!("route-{label}");
+    host.insert(slug.clone(), state.clone()).await;
+    let token = state.get_session_token().await.expect("session token");
+    (_dir, state, token)
+}
+
+#[tokio::test]
+async fn policy_set_refuses_auto_approve_without_enabled() {
+    let (_sandbox, _guard) = sandboxed_host_env().await;
+    let host = Arc::new(VaultHost::new());
+    let (_dir, _state, token) = policy_vault(&host, "policy-auto").await;
+    let resp = policy_route(
+        &host,
+        "agent.policy.set",
+        r#"{"auto_approve":true}"#,
+        &token,
+        "route-policy-auto",
+    )
+    .await;
+    assert!(!resp.success, "auto_approve without enabled must refuse");
+    assert!(resp.error_message.contains("must be on"));
+}
+
+#[tokio::test]
+async fn policy_set_turning_on_requires_the_master_password() {
+    let (sandbox, _guard) = sandboxed_host_env().await;
+    let host = Arc::new(VaultHost::new());
+    let (_dir, _state, token) = policy_vault(&host, "policy-pw").await;
+    let resp = policy_route(
+        &host,
+        "agent.policy.set",
+        r#"{"enabled":true}"#,
+        &token,
+        "route-policy-pw",
+    )
+    .await;
+    assert!(!resp.success, "turn-on without a password must refuse");
+    assert!(resp.error_message.contains("Master password"));
+    // The audit-first contract: the refusal must not have written the
+    // policy file.
+    assert!(
+        !sandbox.path().join("agent-policy.json").exists(),
+        "a refused turn-on must not persist a policy"
+    );
+}
+
+#[tokio::test]
+async fn policy_turn_on_with_the_right_password_persists() {
+    let (sandbox, _guard) = sandboxed_host_env().await;
+    let host = Arc::new(VaultHost::new());
+    let (_dir, _state, token) = policy_vault(&host, "policy-on").await;
+    let body = format!(r#"{{"enabled":true,"master_password":"{MASTER}"}}"#);
+    let resp = policy_route(&host, "agent.policy.set", &body, &token, "route-policy-on").await;
+    assert!(
+        resp.success,
+        "turn-on with the password: {}",
+        resp.error_message
+    );
+    let saved =
+        baluard_daemon::ssh_agent_policy::load_from(&sandbox.path().join("agent-policy.json"));
+    assert!(saved.enabled, "policy persisted on");
+}
+
+#[tokio::test]
+async fn policy_disable_works_while_auto_approve_is_on() {
+    let (sandbox, _guard) = sandboxed_host_env().await;
+    let host = Arc::new(VaultHost::new());
+    let (_dir, _state, token) = policy_vault(&host, "policy-off").await;
+    // Seed the device policy the way an enabled machine looks.
+    baluard_daemon::ssh_agent_policy::save_to(
+        &sandbox.path().join("agent-policy.json"),
+        &baluard_daemon::ssh_agent_policy::AgentPolicy {
+            enabled: true,
+            auto_approve: true,
+        },
+    )
+    .expect("seed policy");
+    // A disable payload carrying ONLY enabled=false must not inherit
+    // the live auto_approve and die on the auto-requires-enabled guard.
+    let resp = policy_route(
+        &host,
+        "agent.policy.set",
+        r#"{"enabled":false}"#,
+        &token,
+        "route-policy-off",
+    )
+    .await;
+    assert!(resp.success, "disable must succeed: {}", resp.error_message);
+    let saved =
+        baluard_daemon::ssh_agent_policy::load_from(&sandbox.path().join("agent-policy.json"));
+    assert!(!saved.enabled, "agent off");
+    assert!(
+        !saved.auto_approve,
+        "auto-approve coerced off with the agent"
+    );
+}
+
+#[tokio::test]
+async fn policy_get_reports_the_saved_switches() {
+    let (sandbox, _guard) = sandboxed_host_env().await;
+    baluard_daemon::ssh_agent_policy::save_to(
+        &sandbox.path().join("agent-policy.json"),
+        &baluard_daemon::ssh_agent_policy::AgentPolicy {
+            enabled: true,
+            auto_approve: false,
+        },
+    )
+    .expect("seed policy");
+    let host = Arc::new(VaultHost::new());
+    let resp = policy_route(&host, "agent.policy.get", "", "", "").await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(parsed["enabled"], serde_json::json!(true));
+    assert_eq!(parsed["auto_approve"], serde_json::json!(false));
+}
