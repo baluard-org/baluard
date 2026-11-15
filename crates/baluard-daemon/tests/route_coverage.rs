@@ -325,7 +325,7 @@ async fn vault_empty_route_phrase_gated_and_wipes_entries() {
     state.open().await.expect("vault open");
     state.unlock(MASTER).await.expect("vault unlock");
 
-    let added = state
+    let _added = state
         .add_cipher(
             r#"{"name":"GitHub","kind":{"type":"login","data":{"username":"u","password":"p"}}}"#,
         )
@@ -3374,7 +3374,7 @@ async fn pair_space_editor_keeps_flat_adds() {
     // Legacy pair Space: the plaintext space flag on an UNFLIPPED vault.
     // Pair vaults can never flip (the flip demands a family or org
     // purpose), so their editors hold the root key and write flat.
-    baluard_core::vault::space::set_space_flag(&vault_path, true);
+    baluard_core::vault::space::set_space_flag(&vault_path, true).expect("set the space flag");
     let device_id = handle.device_id;
     let (_, founder_row) =
         baluard_core::vault::members::member_file_for_device(&vault_path, device_id)
@@ -3415,7 +3415,8 @@ async fn pair_space_editor_keeps_flat_adds() {
             device_id,
             member_id: member,
         },
-    );
+    )
+    .expect("device binding written");
 
     let state = Arc::new(VaultState::new(vault_path.clone()));
     state.open().await.expect("vault open");
@@ -5631,7 +5632,7 @@ async fn vault_search_fans_out_and_skips_locked_and_ineligible() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
 
-    let (dir_a, path_a) = make_vault("search-a");
+    let (_dir_a, path_a) = make_vault("search-a");
     let state_a = Arc::new(VaultState::new(path_a.clone()));
     state_a.open().await.expect("open a");
     state_a.unlock(MASTER).await.expect("unlock a");
@@ -5641,7 +5642,7 @@ async fn vault_search_fans_out_and_skips_locked_and_ineligible() {
         .expect("add a");
     register_in_registry("search-a", &path_a);
 
-    let (dir_b, path_b) = make_vault("search-b");
+    let (_dir_b, path_b) = make_vault("search-b");
     let state_b = Arc::new(VaultState::new(path_b.clone()));
     state_b.open().await.expect("open b");
     state_b.unlock(MASTER).await.expect("unlock b");
@@ -5653,7 +5654,7 @@ async fn vault_search_fans_out_and_skips_locked_and_ineligible() {
 
     // Org Space: flipped shape, never unlocked-eligible (ceiling cache
     // stays false). Its cipher must never join the fan-out.
-    let (dir_o, path_o) = make_vault("search-org");
+    let (_dir_o, path_o) = make_vault("search-org");
     let state_o = Arc::new(VaultState::new(path_o.clone()));
     state_o.open().await.expect("open org");
     state_o.unlock(MASTER).await.expect("unlock org");
@@ -6121,7 +6122,7 @@ async fn vault_search_explicit_slug_includes_org_space() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
 
-    let (dir_p, path_p) = make_vault("svp-personal");
+    let (_dir_p, path_p) = make_vault("svp-personal");
     let state_p = Arc::new(VaultState::new(path_p.clone()));
     state_p.open().await.expect("open personal");
     state_p.unlock(MASTER).await.expect("unlock personal");
@@ -6131,7 +6132,7 @@ async fn vault_search_explicit_slug_includes_org_space() {
         .expect("add personal");
     register_in_registry("svp-personal", &path_p);
 
-    let (dir_o, path_o) = make_vault("svp-org");
+    let (_dir_o, path_o) = make_vault("svp-org");
     let state_o = Arc::new(VaultState::new(path_o.clone()));
     state_o.open().await.expect("open org");
     state_o.unlock(MASTER).await.expect("unlock org");
@@ -6188,7 +6189,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(VaultHost::new());
 
-    let (dir_p, path_p) = make_vault("g24w-p");
+    let (_dir_p, path_p) = make_vault("g24w-p");
     let state_p = Arc::new(VaultState::new(path_p.clone()));
     state_p.open().await.expect("open personal");
     state_p.unlock(MASTER).await.expect("unlock personal");
@@ -6211,7 +6212,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
     state_f.unlock(MASTER).await.expect("unlock family");
     drop(handle_f);
 
-    let (dir_o, path_o) = make_vault("g24w-org");
+    let (_dir_o, path_o) = make_vault("g24w-org");
     let state_o = Arc::new(VaultState::new(path_o.clone()));
     state_o.open().await.expect("open org");
     state_o.unlock(MASTER).await.expect("unlock org");
@@ -6231,7 +6232,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
 
     // Slug-scoped WRITE: a capture update lands in the family vault even
     // though the active vault is personal (plan §4.6 v1.1).
-    let mut add = login_input("Family Wifi", "home");
+    let add = login_input("Family Wifi", "home");
     let mut v: serde_json::Value = serde_json::to_value(&add).unwrap();
     v["vault_slug"] = serde_json::json!("g24w-f");
     let req = GatewayRequest {
@@ -6263,7 +6264,7 @@ async fn bridge_slug_scoped_write_and_request_unlock() {
     );
 
     // Ineligible slug refuses the write (org Space stays invisible).
-    let mut v2: serde_json::Value = serde_json::to_value(&login_input("Org Wifi", "u")).unwrap();
+    let mut v2: serde_json::Value = serde_json::to_value(login_input("Org Wifi", "u")).unwrap();
     v2["vault_slug"] = serde_json::json!("g24w-org");
     let req = GatewayRequest {
         action: "vault.add".into(),
@@ -6537,7 +6538,7 @@ async fn agent_pending_requests_survive_the_desktop_blur_lock() {
 #[tokio::test]
 async fn agent_deny_respects_the_vault_boundary() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
-    let (_dir, host, state) = agent_host("agent-deny-boundary").await;
+    let (_dir, host, _state) = agent_host("agent-deny-boundary").await;
     let state_b = add_other_vault(&_dir, &host, "deny-other").await;
     let peer = agent_peer(47);
     let requested = baluard_daemon::handler::route_host_request_with_peer(

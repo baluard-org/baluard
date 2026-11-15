@@ -2568,23 +2568,24 @@ async fn search_state_meta(
 /// Where an allowlisted bridge action's `vault_slug` may target a sibling
 /// vault. Reads REQUIRE the page URL for origin binding; provider passkey
 /// ceremonies are exempt because the origin and the credential id are
-/// validated Rust-side against the target vault's index; plain writes stay
-/// refused for a foreign slug (G24 §4.4).
+/// validated Rust-side against the target vault's index; writes carry no
+/// page URL — the C21 preservation gate re-checks the target vault after
+/// the rebind (ADR 0098).
 enum SlugScope {
     Read,
+    Write,
     Passkey,
-    WriteRefused,
     None,
 }
 
 fn slug_scope_kind(action: &str) -> SlugScope {
     match action {
         "vault.get" | "cipher.totp_code" => SlugScope::Read,
+        "vault.add" | "vault.update" => SlugScope::Write,
         "passkey.provider_register"
         | "passkey.provider_assert"
         | "passkey.store_registered"
         | "passkey.consume_assertion" => SlugScope::Passkey,
-        "vault.add" | "vault.update" => SlugScope::WriteRefused,
         _ => SlugScope::None,
     }
 }
@@ -2716,9 +2717,6 @@ async fn route_bridge_request(
                         .unwrap_or(false);
                     if matches!(scope, SlugScope::Read) && !has_url {
                         return err_response("slug-scoped bridge reads require a page URL");
-                    }
-                    if matches!(scope, SlugScope::WriteRefused) {
-                        return err_response("slug-scoped bridge writes are not supported");
                     }
                     let eligible = baluard_core::vault::registry::VaultRegistry::load_locked()
                         .ok()
@@ -2855,9 +2853,9 @@ async fn route_bridge_request(
 /// layer takes discrete args (UniFFI shape); the IPC surface is flat JSON.
 /// `new_login` accepts an object or a pre-serialized string so the
 /// extension never juggles double-encoded JSON.
-fn provider_register_args(
-    payload: &str,
-) -> Result<(String, String, Option<String>, Option<String>, bool), String> {
+type ProviderRegisterArgs = (String, String, Option<String>, Option<String>, bool);
+
+fn provider_register_args(payload: &str) -> Result<ProviderRegisterArgs, String> {
     let v: serde_json::Value =
         serde_json::from_str(payload).map_err(|_| "Invalid JSON".to_string())?;
     let request_json = v
@@ -2887,9 +2885,9 @@ fn provider_register_args(
     ))
 }
 
-fn provider_assert_args(
-    payload: &str,
-) -> Result<(String, String, String, Option<String>, Option<String>, bool), String> {
+type ProviderAssertArgs = (String, String, String, Option<String>, Option<String>, bool);
+
+fn provider_assert_args(payload: &str) -> Result<ProviderAssertArgs, String> {
     let v: serde_json::Value =
         serde_json::from_str(payload).map_err(|_| "Invalid JSON".to_string())?;
     let credential_id = v
@@ -3129,9 +3127,7 @@ fn bridge_write_outside_decision_seven(
         .and_then(|k| k.get("data"))
         .or_else(|| payload.get("data"))
         .or_else(|| payload.get("kind"));
-    let Some(data) = data else {
-        return None;
-    };
+    let data = data?;
     // Capture (vault.add) sends a full LoginData shape including the site
     // URI, so add admits every legitimate LoginData field. Edits
     // (vault.update) stay at Decision 7's strict set; uris and
@@ -8861,14 +8857,8 @@ mod tests {
                 "{a} must be slug-pinnable"
             );
         }
-        assert!(matches!(
-            slug_scope_kind("vault.add"),
-            SlugScope::WriteRefused
-        ));
-        assert!(matches!(
-            slug_scope_kind("vault.update"),
-            SlugScope::WriteRefused
-        ));
+        assert!(matches!(slug_scope_kind("vault.add"), SlugScope::Write));
+        assert!(matches!(slug_scope_kind("vault.update"), SlugScope::Write));
         // The list fans out over every unlocked vault by design; no scope.
         assert!(matches!(slug_scope_kind("passkey.list"), SlugScope::None));
         assert!(matches!(slug_scope_kind("bridge.match"), SlugScope::None));
