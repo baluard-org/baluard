@@ -4,6 +4,8 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+## 0.7.0 - 2026-11-15
+
 - The daemon can act as an OpenSSH agent: turn on SSH agent in Settings, mark individual SSH keys for serving, and terminal apps and git sign through the local agent socket. Signing asks for approval on every use unless you enable automatic approval. The SSH agent switches apply per device, so turning the agent on here does not turn it on anywhere else.
 
 - The browser extension can offer vault passkeys to websites that use WebAuthn: signing in with a saved passkey and saving new ones work in the browser, with a picker when several credentials match. Off by default; turn on Passkeys in the extension settings.
