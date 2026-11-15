@@ -2625,14 +2625,16 @@ async fn route_bridge_request(
         ));
     }
 
-    // 2. Rate-cap secret reads. Only `vault.get` returns plaintext
-    //    credentials; `bridge.match` returns metadata only (no passwords),
-    //    so it is NOT capped — the toolbar badge legitimately calls it on
-    //    every tab activate/update, and capping it would auto-revoke the
-    //    pairing under normal browsing. vault.get remains
-    //    capped to bound a browser-compromise exfil.
-    let is_secret_read = req.action.as_str() == "vault.get";
-    if is_secret_read {
+    // 2. Rate-cap secret reads and assertion minting. `vault.get` returns
+    //    plaintext credentials and `passkey.provider_assert` mints WebAuthn
+    //    signatures on demand; both are useful to a compromised browser
+    //    context, so both are capped to bound the damage.
+    //    `bridge.match` returns metadata only (no passwords), so it is NOT
+    //    capped — the toolbar badge legitimately calls it on every tab
+    //    activate/update, and capping it would auto-revoke the pairing
+    //    under normal browsing.
+    let is_capped = matches!(req.action.as_str(), "vault.get" | "passkey.provider_assert");
+    if is_capped {
         let over_cap = !host.bridge().write().await.charge_read(&pairing_id);
         if over_cap {
             log::warn!(
@@ -8528,9 +8530,9 @@ fn clone_refusal_prefixes_match_the_frontend_matcher() {
 #[cfg(test)]
 mod tests {
     use super::{
-        HOST_ACTIONS, HOST_ONLY_ACTIONS, SENTINEL_FORWARDED_ACTIONS, TOKEN_EXEMPT_ACTIONS,
-        SlugScope, action_requires_session_token, bridge_write_gated, parse_repo_owner_name,
-        repo_web_url_from_remote, route_request, slug_scope_kind,
+        HOST_ACTIONS, HOST_ONLY_ACTIONS, SENTINEL_FORWARDED_ACTIONS, SlugScope,
+        TOKEN_EXEMPT_ACTIONS, action_requires_session_token, bridge_write_gated,
+        parse_repo_owner_name, repo_web_url_from_remote, route_request, slug_scope_kind,
     };
     use crate::proto::GatewayRequest;
     use crate::state::VaultState;
@@ -8844,7 +8846,10 @@ mod tests {
     #[test]
     fn slug_scope_covers_passkey_and_write_actions() {
         assert!(matches!(slug_scope_kind("vault.get"), SlugScope::Read));
-        assert!(matches!(slug_scope_kind("cipher.totp_code"), SlugScope::Read));
+        assert!(matches!(
+            slug_scope_kind("cipher.totp_code"),
+            SlugScope::Read
+        ));
         for a in [
             "passkey.provider_register",
             "passkey.provider_assert",
@@ -8856,8 +8861,14 @@ mod tests {
                 "{a} must be slug-pinnable"
             );
         }
-        assert!(matches!(slug_scope_kind("vault.add"), SlugScope::WriteRefused));
-        assert!(matches!(slug_scope_kind("vault.update"), SlugScope::WriteRefused));
+        assert!(matches!(
+            slug_scope_kind("vault.add"),
+            SlugScope::WriteRefused
+        ));
+        assert!(matches!(
+            slug_scope_kind("vault.update"),
+            SlugScope::WriteRefused
+        ));
         // The list fans out over every unlocked vault by design; no scope.
         assert!(matches!(slug_scope_kind("passkey.list"), SlugScope::None));
         assert!(matches!(slug_scope_kind("bridge.match"), SlugScope::None));

@@ -409,7 +409,8 @@ impl BridgeRegistry {
         Ok(())
     }
 
-    /// Charge a read (bridge.match / vault.get) against this pairing's
+    /// Charge a read (bridge.match / vault.get / passkey.provider_assert)
+    /// against this pairing's
     /// rate window. Returns `false` if the pairing must be auto-revoked for
     /// abuse. Caller is responsible for the actual revoke.
     ///
