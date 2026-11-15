@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::state::{SharedVaultState, VaultState};
 
 /// Per-entry fetch budget. Sites slower than this are skipped.
-const ENTRY_BUDGET_SECS: u64 = 2;
+const ENTRY_BUDGET_SECS: u64 = 5;
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct BackfillProgress {
