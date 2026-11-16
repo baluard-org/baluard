@@ -59,7 +59,7 @@ const waitVisible = (el, { timeout = 30000, reverse = false, timeoutMsg, interva
   return browser.waitUntil(
     () => browser.execute((q, rev) => {
       const n = document.querySelector(q);
-      if (!n) return false;
+      if (!n) return rev; // removed from DOM: success for reverse waits only
       const r = n.getBoundingClientRect();
       const cs = getComputedStyle(n);
       const shown = r.width > 0 && r.height > 0 && cs.display !== "none" && cs.visibility !== "hidden" && Number(cs.opacity) > 0;
