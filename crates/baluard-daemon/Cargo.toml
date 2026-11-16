@@ -37,7 +37,8 @@ prost-build = "0.13"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-ssh-key = { version = "0.7.0-rc.10", features = ["ed25519", "ecdsa", "encryption", "p256"] }
+ssh-key = { version = "0.7.0-rc.10", features = ["ed25519", "ecdsa", "encryption", "p256", "rsa", "sha1"] }
+rsa = { version = "0.10.0-rc.18", features = ["sha2"] }
 rand_core = "0.10"
 signature = "3"
 

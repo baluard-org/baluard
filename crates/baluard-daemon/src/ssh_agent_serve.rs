@@ -217,8 +217,8 @@ mod serve {
                 crate::ssh_agent_proto::AgentRequest::SignRequest {
                     key_blob,
                     data,
-                    flags: _,
-                } => sign_answer(&host, &peer, &key_blob, &data, &policy_path).await,
+                    flags,
+                } => sign_answer(&host, &peer, &key_blob, &data, flags, &policy_path).await,
                 crate::ssh_agent_proto::AgentRequest::Unsupported(_) => {
                     crate::ssh_agent_proto::encode_failure()
                 }
@@ -415,6 +415,7 @@ mod serve {
         peer: &PeerBinding,
         key_blob: &[u8],
         data: &[u8],
+        flags: u32,
         policy_path: &Path,
     ) -> Vec<u8> {
         // Fresh scan: every gate (unlocked, master switch, per-key opt-in)
@@ -496,7 +497,7 @@ mod serve {
         if !still_opted || material.blob != key_blob {
             return crate::ssh_agent_proto::encode_failure();
         }
-        match crate::ssh_agent_keys::sign_wire(&private, data) {
+        match crate::ssh_agent_keys::sign_wire(&private, data, flags) {
             Ok(sig) => crate::ssh_agent_proto::encode_sign_response(&sig),
             Err(_) => crate::ssh_agent_proto::encode_failure(),
         }
@@ -683,11 +684,33 @@ mod tests {
     }
 
     fn sign_body(blob: &[u8], data: &[u8]) -> Vec<u8> {
+        sign_body_with_flags(blob, data, 0)
+    }
+
+    fn sign_body_with_flags(blob: &[u8], data: &[u8], flags: u32) -> Vec<u8> {
         let mut b = vec![13];
         crate::ssh_agent_proto::put_string(&mut b, blob);
         crate::ssh_agent_proto::put_string(&mut b, data);
-        b.extend_from_slice(&0u32.to_be_bytes());
+        b.extend_from_slice(&flags.to_be_bytes());
         b
+    }
+
+    async fn add_rsa_key(state: &VaultState, name: &str, serve: bool) -> String {
+        let private = crate::ssh_agent_keys::test_rsa_openssh_private(2048);
+        let text = private
+            .to_openssh(ssh_key::LineEnding::LF)
+            .unwrap()
+            .to_string();
+        let payload = serde_json::json!({
+            "name": name,
+            "kind": {"type": "sshKey", "data": {
+                "private_key": text,
+                "public_key": "ssh-rsa AAAA test",
+                "serve_via_agent": serve,
+            }}
+        })
+        .to_string();
+        state.add_cipher(&payload).await.unwrap()
     }
 
     // --- socket path ---------------------------------------------------------
@@ -769,6 +792,50 @@ mod tests {
         // Verify the signature against the public key.
         let alg_len = u32::from_be_bytes(out[5..9].try_into().unwrap()) as usize;
         assert_eq!(&out[9..9 + alg_len], b"ssh-ed25519");
+    }
+
+    #[tokio::test]
+    async fn rsa_keys_are_listed_and_sign_with_flag_selected_hashes() {
+        let server = spawn_server().await;
+        let (_dir, state) = make_vault("agent-rsa").await;
+        enable_agent(&server, true);
+        add_rsa_key(&state, "legacy-rsa", true).await;
+        server.host.insert("agent-rsa".into(), state).await;
+
+        let out = ask(&server.socket, &identities_body()).await;
+        assert_eq!(out[0], 12);
+        let count = u32::from_be_bytes(out[1..5].try_into().unwrap());
+        assert_eq!(count, 1, "the rsa key is listed: {out:?}");
+        let hay = String::from_utf8_lossy(&out);
+        assert!(hay.contains("ssh-rsa"), "rsa blob advertised: {hay:?}");
+        // Parse the first identity blob: opcode byte + count, then string-len + blob.
+        let mut at = 5usize;
+        let blob_len = u32::from_be_bytes(out[at..at + 4].try_into().unwrap()) as usize;
+        at += 4;
+        let blob = out[at..at + blob_len].to_vec();
+        // The blob opens with the inner alg string: u32 len 7 + "ssh-rsa".
+        assert_eq!(&blob[..4], &[0, 0, 0, 7]);
+        assert_eq!(String::from_utf8_lossy(&blob[4..11]), "ssh-rsa");
+
+        // Sign with each flag selection and verify shape + signature.
+        for (flags, alg) in [
+            (0u32, "ssh-rsa"),
+            (2u32, "rsa-sha2-256"),
+            (4u32, "rsa-sha2-512"),
+        ] {
+            let out = ask(
+                &server.socket,
+                &sign_body_with_flags(&blob, b"payload", flags),
+            )
+            .await;
+            assert_eq!(out[0], 14, "sign answered for flags {flags}: {out:?}");
+            let alg_len = u32::from_be_bytes(out[5..9].try_into().unwrap()) as usize;
+            assert_eq!(
+                String::from_utf8_lossy(&out[9..9 + alg_len]),
+                alg,
+                "flags {flags} must carry {alg}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -114,3 +114,4 @@ Numbered in design chronology. Each record carries its context, decision, and co
 | [0108](0108-desktop-ui-stack.md) | Desktop UI Stack, Webview (Tauri v2) vs Native Rust (Rune) |
 | [0109](0109-msg-bus-implementation.md) | baluard-msgs Implementation Constants and Activation Record |
 | [0110](0110-ssh-agent-serve.md) | The Daemon Serves Vault SSH Keys Over an OpenSSH Agent Socket |
+| [0111](0111-agent-serves-imported-rsa.md) | The Agent Serves Imported RSA Keys |

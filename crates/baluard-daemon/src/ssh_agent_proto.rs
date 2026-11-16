@@ -32,8 +32,8 @@ pub enum AgentRequest {
     SignRequest {
         key_blob: Vec<u8>,
         data: Vec<u8>,
-        /// RSA SHA-2 variant flags. Only RSA reacts to them; Baluard serves
-        /// ed25519 and P-256 only, so the value is parsed and ignored.
+        /// RSA SHA-2 variant flags (RFC 8332). Only RSA reacts to them;
+        /// ed25519 and ECDSA signatures ignore the value.
         flags: u32,
     },
     /// Anything else: answer with failure.

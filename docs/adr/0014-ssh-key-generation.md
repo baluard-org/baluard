@@ -16,7 +16,7 @@ Key types:
 
 - Ed25519 is the default and recommended type. The keypair is built from a 256-bit seed drawn from `OsRng`, through `ed25519-dalek` (`Ed25519Keypair::from_seed`).
 - ECDSA P-256 is offered for FIPS compliance and uses the `ssh-key` crate with the NIST P-256 curve.
-- RSA 4096 was offered originally for legacy compatibility and was removed in the L7 fix. The `rsa` crate has RUSTSEC-2023-0071, a Marvin Attack timing side channel with no upstream fix, and it is pulled in transitively by the `ssh-key` crate's `rsa` feature. Ed25519 and ECDSA P-256 cover modern needs. Any future RSA support depends on an upstream fix.
+- RSA 4096 was offered originally for legacy compatibility and was removed in the L7 fix. The `rsa` crate has RUSTSEC-2023-0071, a Marvin Attack timing side channel with no upstream fix, and it is pulled in transitively by the `ssh-key` crate's `rsa` feature. Ed25519 and ECDSA P-256 cover modern needs. Any future RSA support depends on an upstream fix. (Update: generation still excludes RSA, but the agent now serves imported RSA keys — see ADR 0111.)
 
 The project uses `rand` 0.8 with `rand_core` 0.6, while `ssh-key` 0.7 requires `rand_core` 0.10. Ed25519 avoids the mismatch by constructing the keypair directly from seed bytes. ECDSA generation uses a small `Adapter` type that implements `ssh_key::rand_core::TryRng` and `TryCryptoRng` by delegating to `rand::rngs::OsRng`, with `Infallible` as the error type because `OsRng` is treated as non-failing.
 
