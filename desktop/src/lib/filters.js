@@ -59,9 +59,21 @@ export function filterByCategory(ciphers, category) {
 }
 
 /**
+ * Sentinel for the sidebar's "No folder" row: a real filter (entries with no
+ * folder), distinct from null which means "no folder filter" (All items).
+ * Never a folder id the daemon could produce.
+ */
+export const NO_FOLDER = "__nofolder__";
+
+/**
  * Filter ciphers by folder, including all descendant folders (BFS).
+ * NO_FOLDER selects entries with no folder at all; null/undefined means no
+ * folder filter (All items).
  */
 export function filterByFolder(ciphers, folders, folderId) {
+  if (folderId === NO_FOLDER) {
+    return ciphers.filter(c => !(c.folder_id || c._meta?.folder_id));
+  }
   if (!folderId) return ciphers;
   const allFolders = folders || [];
   const descendantIds = new Set();

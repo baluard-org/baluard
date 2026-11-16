@@ -7,6 +7,7 @@ import {
   filterByCategory,
   filterByFolder,
   searchCiphers,
+  NO_FOLDER,
 } from "../lib/filters.js";
 
 const makeCipher = (overrides = {}) => ({
@@ -98,6 +99,28 @@ describe("filterByFolder", () => {
 
   it("returns all when no folder selected", () => {
     expect(filterByFolder(ciphers, folders, null)).toHaveLength(4);
+  });
+
+  it("NO_FOLDER keeps only folder-less ciphers", () => {
+    const result = filterByFolder(ciphers, folders, NO_FOLDER);
+    expect(result).toHaveLength(1);
+    expect(result[0].folder_id).toBeNull();
+  });
+
+  it("NO_FOLDER reads the _meta shape too", () => {
+    const rows = [
+      { name: "a", _meta: { folder_id: "f1" } },
+      { name: "b", _meta: { folder_id: null } },
+      { name: "c" },
+    ];
+    const result = filterByFolder(rows, folders, NO_FOLDER);
+    expect(result.map(r => r.name)).toEqual(["b", "c"]);
+  });
+
+  it("NO_FOLDER never matches a real folder id", () => {
+    const folders2 = [{ id: NO_FOLDER, parent_id: null }];
+    const result = filterByFolder(ciphers, folders2, NO_FOLDER);
+    expect(result).toHaveLength(1);
   });
 
   it("includes direct folder and descendants via BFS", () => {

@@ -9,7 +9,7 @@ import BridgeUnlockBanner from "./BridgeUnlockBanner.jsx";
 import { daemon } from "../lib/daemon.js";
 import { buildFolderCreatePayload, buildAttachUploadPayload, buildAttachDeletePayload } from "../lib/payload.js";
 import { categoriesCollapsed as readCategoriesCollapsed, setCategoriesCollapsed, visibleCategories } from "../lib/categories.js";
-import { selectSource, filterByCategory, filterByFolder, filterByTag, filterByCollection, cipherCollectionId, searchCiphers } from "../lib/filters.js";
+import { selectSource, filterByCategory, filterByFolder, filterByTag, filterByCollection, cipherCollectionId, searchCiphers, NO_FOLDER } from "../lib/filters.js";
 import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
 import AskAccessModal from "./AskAccessModal.jsx";
@@ -209,7 +209,7 @@ export default function VaultView() {
     setNewCipher({
       ...EMPTY_CIPHER,
       cipherType: type,
-      folder_id: vault.selectedFolder() || null,
+      folder_id: vault.selectedFolder() === NO_FOLDER ? null : vault.selectedFolder(),
       collection_id: vault.selectedCollection() || null,
     });
     vault.setActivePane("add");
@@ -457,11 +457,11 @@ export default function VaultView() {
                 <FolderTree folders={vault.folders() || []} selectedFolder={vault.selectedFolder} setSelectedFolder={vault.setSelectedFolder} />
               </Show>
               <button
-                onClick={() => vault.setSelectedFolder(null)}
-                class={`w-full flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold text-left cursor-pointer transition-colors min-h-[30px] border ${!vault.selectedFolder() ? "bg-[var(--color-card)] border-[var(--color-border)] text-[var(--color-text)] shadow-sm" : "border-transparent text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
+                onClick={() => vault.setSelectedFolder(NO_FOLDER)}
+                class={`w-full flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold text-left cursor-pointer transition-colors min-h-[30px] border ${vault.selectedFolder() === NO_FOLDER ? "bg-[var(--color-card)] border-[var(--color-border)] text-[var(--color-text)] shadow-sm" : "border-transparent text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
                 style={{ "padding-left": "14px", "padding-right": "14px" }}
               >
-                <IconFolder filled={!vault.selectedFolder()} class={`w-3.5 h-3.5 shrink-0 transition-colors ${!vault.selectedFolder() ? "text-[var(--color-primary)]" : ""}`} />
+                <IconFolder filled={vault.selectedFolder() === NO_FOLDER} class={`w-3.5 h-3.5 shrink-0 transition-colors ${vault.selectedFolder() === NO_FOLDER ? "text-[var(--color-primary)]" : ""}`} />
                 <span>{t("entry.noFolder")}</span>
               </button>
               <Show when={vault.tags() && vault.tags().length > 0}>
