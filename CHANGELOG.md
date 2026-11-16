@@ -4,6 +4,11 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+## 0.7.2 - 2026-11-16
+
+- The SSH agent now serves imported RSA keys, including the legacy PKCS#1 and PKCS#8 PEM formats. Signatures follow what your SSH client asks for: rsa-sha2-256, rsa-sha2-512, or ssh-rsa for older servers.
+- The per-key "Serve via SSH agent" toggle moved into the entry form's top row, next to favorite and require-password-to-view.
+
 ## 0.7.1 - 2026-11-16
 
 - Fixed the master-password prompt not responding on desktop: typing worked, but clicking Confirm or Cancel and pressing Enter did nothing, which blocked enabling the SSH agent, exporting an encrypted backup, revealing the recovery phrase, and any other flow that re-asks for the master password.
