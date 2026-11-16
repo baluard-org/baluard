@@ -184,13 +184,15 @@ fn main() -> anyhow::Result<()> {
             )
             .get_matches();
 
-    // Self-register the browser-bridge manifests: macOS has no installer
-    // step to drop them, and on Windows the installer registry keys point
-    // at a manifest file only the daemon can write with correct path
-    // escaping (crates/baluard-core/src/nmh_register.rs). Runs in the
-    // serve path only, after clap; best effort, and failures log at error
-    // because release builds drop warn-level output.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    // Self-register the browser-bridge manifests: macOS and the Linux
+    // AppImage have no installer step to drop them (AppImage manifests
+    // point at a staged copy under the data dir; the mountpoint changes
+    // every launch), and on Windows the installer registry keys point at
+    // a manifest file only the daemon can write with correct path
+    // escaping (crates/baluard-core/src/nmh_register.rs). On Linux
+    // without an AppImage the pass only sweeps stale AppImage manifests.
+    // Runs in the serve path only, after clap; best effort, and failures
+    // log at error because release builds drop warn-level output.
     {
         let report = baluard_core::nmh_register::register_for_current_exec();
         for e in &report.errors {
@@ -198,7 +200,7 @@ fn main() -> anyhow::Result<()> {
         }
         if report.written > 0 {
             log::debug!(
-                "registered {} native messaging host manifests",
+                "synced {} browser-bridge manifests (written or removed)",
                 report.written
             );
         }
