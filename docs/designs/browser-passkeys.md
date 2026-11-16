@@ -1,6 +1,6 @@
 # Browser passkey interception (WebAuthn) — design proposal
 
-Status: proposal, 2026-11-15; BW claims re-verified in source 2026-11-16. Implements the "Browser extension (not started)" section of ADR 0095. Grounded in a full read of Bitwarden's shipped fido2 implementation (`apps/browser/src/autofill/fido2/`, `apps/browser/src/autofill/popup/fido2/fido2.component.ts`, `apps/browser/src/vault/popup/utils/vault-popout-window.ts`, `libs/common/src/platform/services/fido2/`).
+Status: proposal, 2026-11-15; BW claims re-verified in source 2026-11-16. Implements the "Browser extension (shipped 2026-11-15)" section of ADR 0095. Grounded in a full read of Bitwarden's shipped fido2 implementation (`apps/browser/src/autofill/fido2/`, `apps/browser/src/autofill/popup/fido2/fido2.component.ts`, `apps/browser/src/vault/popup/utils/vault-popout-window.ts`, `libs/common/src/platform/services/fido2/`).
 
 ## Goal
 
