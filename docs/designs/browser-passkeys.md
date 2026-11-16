@@ -1,6 +1,6 @@
 # Browser passkey interception (WebAuthn) — design proposal
 
-Status: proposal, 2026-11-15. Implements the "Browser extension (not started)" section of ADR 0095. Grounded in a full read of Bitwarden's shipped fido2 implementation (`apps/browser/src/autofill/fido2/`, `libs/common/src/platform/services/fido2/`).
+Status: proposal, 2026-11-15; BW claims re-verified in source 2026-11-16. Implements the "Browser extension (not started)" section of ADR 0095. Grounded in a full read of Bitwarden's shipped fido2 implementation (`apps/browser/src/autofill/fido2/`, `apps/browser/src/autofill/popup/fido2/fido2.component.ts`, `apps/browser/src/vault/popup/utils/vault-popout-window.ts`, `libs/common/src/platform/services/fido2/`).
 
 ## Goal
 
@@ -8,7 +8,7 @@ Baluard's browser extension must offer to use stored passkeys (assertion, `navig
 
 ## How Bitwarden does it
 
-Bitwarden runs a four-layer pipeline. Every layer has exactly one job.
+Re-verified against bitwarden/clients @ 4d61897 (2026-11-13). Bitwarden runs a pipeline; each layer has exactly one job.
 
 **1. Page script (MAIN world).** An IIFE (`fido2-page-script.ts`) binds the native `navigator.credentials.create/get`, then replaces them with proxies. Non-`publicKey` calls pass through untouched. Proxied calls serialize the options to plain JSON (BufferSources to base64) and send them over a `window.postMessage` bridge, waiting on a per-request `MessageChannel` port. Responses come back as base64 strings and are rebuilt into `PublicKeyCredential` objects via object literals plus `Object.setPrototypeOf(credential, PublicKeyCredential.prototype)` so site-side `instanceof` checks pass, with `getPublicKey()`, `getTransports()`, `getClientExtensionResults()`, and `toJSON()` implemented by hand. Gates: `text/html` only, `https:` or `http://localhost` only, bail in sandboxed (opaque-origin) iframes, rehydrate `DOMException("NotAllowedError")` that JSON stripping flattens, restore natives on a Disconnect request (extension reload/unload). If the browser lacks WebAuthn entirely it polyfills `PublicKeyCredential` and reports `isUserVerifyingPlatformAuthenticatorAvailable() === true`. If the site requests `authenticatorAttachment: "platform"` and the browser has a platform authenticator, the proxy still answers — but on `fallbackRequested` errors it waits for window focus (Safari rule) and falls through to the native call, so hardware keys and OS passkeys keep working.
 

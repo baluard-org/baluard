@@ -135,7 +135,7 @@ Mobile integrations depend on platform credential APIs, and the Android provider
 |-------|-------|-------|
 | 0 | Schema, Bitwarden import, library spike (ADR 0094) | Complete (2026-06-12) |
 | 1 | Ceremony module, seven daemon routes, CLI, in-process relying-party test harness | Complete; desktop list and management in the entry detail view |
-| 2 | Browser extension: ceremony redesign, SEC-1, page script, conditional mediation | Not started |
+| 2 | Browser extension: ceremony redesign, SEC-1, page script, conditional mediation | Complete (2026-11-15) |
 | 3 | Mobile: Android credential provider | Android shipped, iOS not built |
 | 4 | Cross-device assertion over QR pairing | Not started |
 | 5 | Polish: PRF extension, large blob, AAGUID rotation and metadata service submissions, passkey export from other ecosystems | Not started |
