@@ -224,6 +224,27 @@ describe("AddEditCipherForm schema-field focus retention", () => {
     }
   });
 
+  it("footer renders Cancel before Save under a non-interactive fade", () => {
+    const { container, unmount } = setup("login");
+    const cancel = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "entry.cancel"
+    );
+    const save = container.querySelector('[data-testid="form-save"]');
+    expect(cancel, "cancel button missing").toBeTruthy();
+    expect(save, "save button missing").toBeTruthy();
+    expect(
+      cancel.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING,
+      "save must follow cancel (accept button on the right)"
+    ).toBeTruthy();
+    // The fade overlay above the footer must exist and stay click-through,
+    // or it swallows clicks on content scrolling underneath it.
+    const fade = container.querySelector(".bg-gradient-to-t");
+    expect(fade, "footer fade overlay missing").toBeTruthy();
+    expect(fade.classList.contains("pointer-events-none")).toBe(true);
+    unmount();
+    cleanup();
+  });
+
   it("rejects attachments larger than 1.9 MB", async () => {
     const { getByTestId, getByText, queryByText, unmount } = setup("login");
     const origCreate = document.createElement.bind(document);

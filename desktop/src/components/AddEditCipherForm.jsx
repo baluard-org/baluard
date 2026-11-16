@@ -879,16 +879,19 @@ export default function AddEditCipherForm(props) {
           </div>
         </div>
       </div>
-      <div class="flex gap-3 p-8 pt-0">
-        <button data-testid="form-save" onClick={handleSave} disabled={saving()} class="flex-1 inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
-          <Show when={saving()}>
-            <IconSpinner class="w-4 h-4 shrink-0" />
-          </Show>
-          <span>{t("entry.save")}</span>
-        </button>
-        <button onClick={cancel} disabled={saving()} class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50">
-          {t("entry.cancel")}
-        </button>
+      <div class="relative shrink-0 bg-[var(--color-detail)]">
+        <div class="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-[var(--color-detail)] to-transparent" aria-hidden="true" />
+        <div class="flex gap-3 p-8 pt-5">
+          <button onClick={cancel} disabled={saving()} class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50">
+            {t("entry.cancel")}
+          </button>
+          <button data-testid="form-save" onClick={handleSave} disabled={saving()} class="flex-1 inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
+            <Show when={saving()}>
+              <IconSpinner class="w-4 h-4 shrink-0" />
+            </Show>
+            <span>{t("entry.save")}</span>
+          </button>
+        </div>
       </div>
     </div>
   );
