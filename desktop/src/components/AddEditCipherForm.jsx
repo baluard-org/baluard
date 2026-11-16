@@ -496,6 +496,23 @@ export default function AddEditCipherForm(props) {
             </button>
           </div>
 
+          {/* Serve-via-agent toggle, SSH keys only (the master switch lives
+              in Settings; both must be on for the daemon to serve it) */}
+          <Show when={cipherType() === "sshKey"}>
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.serveViaAgentLabel")}</label>
+              <button
+                onClick={() => setNewCipher({ ...newCipher(), serveViaAgent: !newCipher().serveViaAgent })}
+                class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().serveViaAgent ? "text-green-500" : "text-[var(--color-muted)] hover:text-green-500"}`}
+                title={t("entry.serveViaAgentDesc")}
+              >
+                <svg class="w-5 h-5" stroke="currentColor" fill="none" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" fill={newCipher().serveViaAgent ? "currentColor" : "none"} d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
+                </svg>
+              </button>
+            </div>
+          </Show>
+
           <div>
             <label class={FIELD_LABEL}>{t("entry.itemName")}</label>
             <input data-testid="form-name" placeholder={t("entry.namePlaceholder")} class={INPUT_CLS} value={newCipher().name} onInput={e => update("name", e.target.value)} {...SECURE_INPUT} />
@@ -566,24 +583,6 @@ export default function AddEditCipherForm(props) {
                 setNewCipher({ ...newCipher(), publicKey, privateKey, fingerprint });
               }}
             />
-          </Show>
-
-          {/* SSH agent opt-in for this key (the master switch lives in
-              Settings; both must be on for the daemon to serve it) */}
-          <Show when={cipherType() === "sshKey"}>
-            <div class="flex items-center justify-between py-2 border-t border-[var(--color-border)]">
-              <div class="flex flex-col flex-1 pr-4">
-                <span class="text-xs font-bold text-[var(--color-text)]">{t("entry.serveViaAgentLabel")}</span>
-                <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("entry.serveViaAgentDesc")}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setNewCipher({ ...newCipher(), serveViaAgent: !newCipher().serveViaAgent })}
-                class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${newCipher().serveViaAgent ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
-              >
-                {newCipher().serveViaAgent ? t("settings.enabled") : t("settings.disabled")}
-              </button>
-            </div>
           </Show>
 
           {/* Type-specific fields */}
