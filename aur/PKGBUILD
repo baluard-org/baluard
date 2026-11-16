@@ -32,7 +32,7 @@ provides=('baluard')
 conflicts=('baluard')
 options=('!strip' '!debug')
 source=("https://github.com/baluard-org/baluard/releases/download/${pkgver}/Baluard-amd64.deb")
-sha256sums=('3350d6b1dfb07a9c8f62fdbf4012ec4e4c38bde957747374671de9f71833e5e9')
+sha256sums=('01b1c32a326556f9900928a613ed1cfeadce441401b6ee333af23757530b83b8')
 
 package() {
   local deb="${srcdir}/Baluard-amd64.deb"
