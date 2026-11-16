@@ -13,6 +13,8 @@ set -euo pipefail
 
 die() { echo "stage-release-assets: $*" >&2; exit 1; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 VER=""
 APK=""
 OUT=""
@@ -143,6 +145,11 @@ fi
 if [[ ${#unmapped[@]} -gt 0 ]]; then
   die "unmapped artifacts in $SRC (extend the mapping table or remove them): ${unmapped[*]}"
 fi
+
+# Stamp the updater payload signatures BEFORE summing: the stamp rewrites
+# the .sig bytes and requireSignedVersion clients refuse unstamped comments,
+# so sums written before stamping are stale on arrival.
+"$SCRIPT_DIR/sign-updater-sigs.sh" --version "$VER" "$OUT_ABS"
 
 # Sorted for stable diffs and locale-independent order; names only, no version strings survive
 (cd "$OUT_ABS" && sha256sum ./* | sed 's| \./| |' | LC_ALL=C sort -k2 > SHA256SUMS)

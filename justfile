@@ -1380,9 +1380,7 @@ release-stage dist-dir="dist":
 		--apk "$HOME/.baluard/fdroid/repo/app.baluard.mobile_${code}.apk" \
 		--require "$(IFS=,; echo "${STABLE_REQUIRE[*]}")" \
 		"{{ dist-dir }}"
-	# Version-stamped updater signatures: requireSignedVersion clients
-	# refuse signatures without a version comment.
-	scripts/sign-updater-sigs.sh --version "$version" release-upload
+	# staging stamps the updater sigs itself, before signing SHA256SUMS
 
 # Build release archives (tar.gz + checksums)
 release: build-release

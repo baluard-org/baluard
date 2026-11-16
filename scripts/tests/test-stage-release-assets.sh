@@ -21,10 +21,27 @@ fi
 exit 0
 EOF
 chmod +x "$BIN/npx"
+cat > "$BIN/rsign" <<'EOF'
+#!/usr/bin/env bash
+# Fake rsign for the stamp step: sign -W -s KEY -t COMMENT -x OUT FILE,
+# writing a sig whose content carries the trusted comment like the real one.
+out=""; comment=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -t) comment="$2" ;;
+    -x) out="$2" ;;
+  esac
+  shift
+done
+[[ -n "$out" && -n "$comment" ]] || exit 2
+{ printf 'untrusted comment: %s\n' "$comment"; printf 'FAKE_RSIGN_SIG\n'; } > "$out"
+EOF
+chmod +x "$BIN/rsign"
 
-# Hermetic key: never touch the real ~/.tauri key, and never let an inherited
+# Hermetic key: a base64-wrapped rsign document (the format the stamp step
+# unwraps), never the real ~/.tauri key, and never let an inherited
 # TAURI_SIGNING_PRIVATE_KEY (checked first by the script) leak into the run
-: > "$TMP/fake-updater-key"
+printf 'untrusted comment: fake\nsecret: fake\n' | base64 > "$TMP/fake-updater-key"
 export BALUARD_UPDATER_KEY="$TMP/fake-updater-key"
 export BALUARD_TAURI_BIN="npx --yes @tauri-apps/cli@fake-signer"
 unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
@@ -121,6 +138,19 @@ fi
 if ! grep -q "signer sign .*SHA256SUMS" "$SHIM_LOG"; then
   echo "FAIL: SHA256SUMS was not signed" >&2
   cat "$SHIM_LOG" >&2
+  exit 1
+fi
+
+# Stamping rewrites the updater sigs, so the sums must be computed after the
+# stamp, not before
+if ! grep -q "version:$VER" "$OUT/Baluard-amd64.AppImage.sig"; then
+  echo "FAIL: updater sigs are not version-stamped inside staging" >&2
+  cat "$OUT/Baluard-amd64.AppImage.sig" >&2
+  exit 1
+fi
+if ! (cd "$OUT" && sha256sum --status -c SHA256SUMS); then
+  echo "FAIL: staged SHA256SUMS does not match the staged bytes" >&2
+  (cd "$OUT" && sha256sum -c SHA256SUMS 2>&1 | grep -v ": OK") >&2
   exit 1
 fi
 
