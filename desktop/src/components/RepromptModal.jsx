@@ -1,5 +1,4 @@
 import { createSignal, Show } from "solid-js";
-import { Transition } from "../lib/transition";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import ConsolePanel from "./ConsolePanel.jsx";
@@ -20,10 +19,6 @@ export default function RepromptModal(props) {
   window.__baluardReprompt = {
     show: (cb) => { if (cb) repromptCallback = cb; setShow(true); setPassword(""); setFailed(false); },
     hide: () => setShow(false),
-    // Dev/e2e-only: the delegated onInput signal cannot be driven from a
-    // WebDriver synthetic fill, so automation submits through here. The
-    // production build strips the DEV branch entirely.
-    ...(import.meta.env.DEV ? { submit: (pw) => { setPassword(pw); handleConfirm(); } } : {}),
   };
 
   async function handleConfirm() {
@@ -49,15 +44,19 @@ export default function RepromptModal(props) {
   }
 
   return (
-    <Transition name="fade">
-      <ConsolePanel
-        show={show()}
-        accentClass="border-red-600"
-        minHeightClass="min-h-[20rem]"
-        role="dialog"
-        ariaLabelledby="reprompt-title"
-        onEscape={() => { repromptCallback = null; setShow(false); setPassword(""); setFailed(false); }}
-      >
+    // No <Transition> here: a Portal under createSwitchTransition resolves
+    // through the marker Text node, so the portal's one-shot delegation
+    // registration runs while the marker is detached and document.body never
+    // becomes a delegated container — every click/key inside the dialog
+    // silently dies. ConsolePanel animates itself via animate-console-panel.
+    <ConsolePanel
+      show={show()}
+      accentClass="border-red-600"
+      minHeightClass="min-h-[20rem]"
+      role="dialog"
+      ariaLabelledby="reprompt-title"
+      onEscape={() => { repromptCallback = null; setShow(false); setPassword(""); setFailed(false); }}
+    >
         <div class="w-full max-w-md mx-auto flex flex-col">
           <h3 id="reprompt-title" class="text-sm font-bold uppercase tracking-wider text-[var(--color-text)] mb-1 font-mono flex items-center gap-2">
             <span class="inline-block w-2.5 h-2.5 bg-red-600 rounded-full animate-pulse" />
@@ -78,13 +77,14 @@ export default function RepromptModal(props) {
             placeholder={t("login.passwordPlaceholder")}
             value={password()}
             onInput={e => { setPassword(e.target.value); setFailed(false); }}
-            onKeyPress={e => { if (e.key === "Enter") handleConfirm(); }}
+            onKeyDown={e => { if (e.key === "Enter" && !e.repeat) handleConfirm(); }}
             class="mb-5 font-mono"
             aria-label={t("entry.confirmPassword")}
           />
           
           <div class="flex gap-3">
             <Button
+              data-testid="reprompt-cancel"
               onClick={() => { repromptCallback = null; setShow(false); setPassword(""); setFailed(false); }}
               class="flex-1 py-2.5 font-mono text-xs uppercase"
             >{t("entry.cancel")}</Button>
@@ -97,6 +97,5 @@ export default function RepromptModal(props) {
           </div>
         </div>
       </ConsolePanel>
-    </Transition>
   );
 }

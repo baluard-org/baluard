@@ -36,6 +36,7 @@ export function Input(props) {
       name={props.name}
       value={props.value}
       onInput={props.onInput}
+      onKeyDown={props.onKeyDown}
       onBlur={props.onBlur}
       placeholder={props.placeholder}
       class={`w-full px-3 py-2 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-sm text-[var(--color-text)] placeholder-[var(--color-muted)] outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${props.class || ""}`}

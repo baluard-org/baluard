@@ -5,6 +5,8 @@ import FocusTrap from "./FocusTrap.jsx";
 /**
  * A reusable sliding top-down console panel (Quake 3 console feel).
  * Used for forced actions and high-priority prompts.
+ * Never wrap this component in <Transition>: the portal resolves through the
+ * transition marker while detached, and every delegated event inside dies.
  *
  * Props:
  * - show (boolean, required): Whether to show the panel
