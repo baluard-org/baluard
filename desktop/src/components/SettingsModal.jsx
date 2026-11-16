@@ -170,7 +170,9 @@ export default function SettingsModal() {
   // Dock icon. Frontend renders it only on macOS; the backend stores it
   // app-global like its parent pref.
   const isMac = navigator.userAgent.includes("Mac");
-  const [closeToTray, setCloseToTray] = createSignal(false);
+  // Not setCloseToTray: that name is the Tauri command imported above; a
+  // same-name signal once shadowed it and the toggle silently stopped persisting.
+  const [closeToTray, setCloseToTraySignal] = createSignal(false);
 
   // Linux compatible rendering (WebKitGTK workaround). Setting cycles
   // automatic → on → off → automatic; `active` mirrors what the backend
@@ -449,7 +451,7 @@ export default function SettingsModal() {
       try {
         const prefs = await getDesktopPrefs();
         setRunInBackgroundSignal(prefs.run_in_background !== false);
-        setCloseToTray(!!prefs.close_to_tray);
+        setCloseToTraySignal(!!prefs.close_to_tray);
       } catch {}
 
       // Linux compatible rendering state (also Tauri layer). One call fills
@@ -575,12 +577,12 @@ export default function SettingsModal() {
   // only launcher. Applies on the next close.
   async function toggleCloseToTray() {
     const next = !closeToTray();
-    setCloseToTray(next);
+    setCloseToTraySignal(next);
     try {
       await setCloseToTray(next);
       toastSuccess(t(next ? "settings.closeToTrayEnabled" : "settings.closeToTrayDisabled"));
     } catch (e) {
-      setCloseToTray(!next);
+      setCloseToTraySignal(!next);
       toastError(sanitizeError(e, t));
     }
   }
@@ -1239,6 +1241,7 @@ export default function SettingsModal() {
                         <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.closeToTrayDesc")}</span>
                       </div>
                       <button
+                        data-testid="close-to-tray-toggle"
                         onClick={toggleCloseToTray}
                         class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${closeToTray() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
                       >

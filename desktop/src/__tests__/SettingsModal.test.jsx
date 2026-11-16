@@ -17,7 +17,23 @@ vi.mock("../i18n/index.jsx", () => ({
 }));
 
 const daemonMock = vi.fn();
-vi.mock("../lib/daemon.js", () => ({ daemon: (...args) => daemonMock(...args) }));
+const desktopBridgeMocks = vi.hoisted(() => ({
+  showWindow: vi.fn(() => Promise.resolve()),
+  getDesktopPrefs: vi.fn(() => Promise.resolve({ run_in_background: true, close_to_tray: false })),
+  setRunInBackground: vi.fn(() => Promise.resolve()),
+  setCloseToTray: vi.fn(() => Promise.resolve()),
+  getRenderState: vi.fn(() => Promise.resolve({ linux: false })),
+  setCompatibleRendering: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("../lib/daemon.js", () => ({
+  daemon: (...args) => daemonMock(...args),
+  showWindow: desktopBridgeMocks.showWindow,
+  getDesktopPrefs: desktopBridgeMocks.getDesktopPrefs,
+  setRunInBackground: desktopBridgeMocks.setRunInBackground,
+  setCloseToTray: desktopBridgeMocks.setCloseToTray,
+  getRenderState: desktopBridgeMocks.getRenderState,
+  setCompatibleRendering: desktopBridgeMocks.setCompatibleRendering,
+}));
 
 vi.mock("../lib/biometry.js", () => ({ biometryAvailable: vi.fn().mockResolvedValue(false) }));
 
@@ -677,5 +693,59 @@ describe("SettingsModal import feedback and processing", () => {
         )
       ).toBe(true);
     });
+  });
+});
+
+// Regression: the closeToTray signal setter once shadowed the imported
+// setCloseToTray Tauri command, so toggling updated only the UI and the
+// preference never persisted (close kept showing the Dock icon).
+describe("SettingsModal close-to-tray persistence", () => {
+  beforeEach(() => {
+    daemonMock.mockReset();
+    desktopBridgeMocks.getDesktopPrefs.mockClear();
+    desktopBridgeMocks.setCloseToTray.mockClear();
+    desktopBridgeMocks.setRunInBackground.mockClear();
+    desktopBridgeMocks.getDesktopPrefs.mockResolvedValue({ run_in_background: true, close_to_tray: false });
+    globalThis.window.__baluardReprompt = repromptMock;
+    repromptMock.show.mockClear();
+    vaultMock.showSettingsModal.mockReturnValue(true);
+    daemonMock.mockImplementation((action) => {
+      if (action === "agent.policy.get") {
+        return Promise.resolve(JSON.stringify({ enabled: false, auto_approve: false }));
+      }
+      if (action === "settings.get") {
+        return Promise.resolve(JSON.stringify({ vault_timeout: "15m", fetch_favicons: false }));
+      }
+      if (action === "vault.avatar.get") return Promise.resolve("");
+      if (action === "vault.pin_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+      if (action === "vault.biometric_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+      return Promise.resolve("");
+    });
+    // The tray toggles render on macOS only.
+    Object.defineProperty(window.navigator, "userAgent", {
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) jsdom",
+      configurable: true,
+    });
+  });
+
+  it("close-to-tray toggle invokes the Tauri command, not just the signal", async () => {
+    const { getByTestId } = render(() => <SettingsModal />);
+    const toggle = await waitFor(() => getByTestId("close-to-tray-toggle"));
+    expect(toggle.textContent).toContain("settings.disabled");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(desktopBridgeMocks.setCloseToTray).toHaveBeenCalledWith(true));
+    expect(toggle.textContent).toContain("settings.enabled");
+    expect(daemonMock.mock.calls.some(([a]) => a === "settings.set")).toBe(false);
+  });
+
+  it("cancelling the persist failure reverts the label", async () => {
+    desktopBridgeMocks.setCloseToTray.mockRejectedValueOnce(new Error("write failed"));
+    const { getByTestId } = render(() => <SettingsModal />);
+    const toggle = await waitFor(() => getByTestId("close-to-tray-toggle"));
+    fireEvent.click(toggle);
+    // Optimistic flip, then revert once the persist rejects.
+    await waitFor(() => expect(toggle.textContent).toContain("settings.enabled"));
+    await waitFor(() => expect(toggle.textContent).toContain("settings.disabled"));
+    expect(desktopBridgeMocks.setCloseToTray).toHaveBeenCalledWith(true);
   });
 });
