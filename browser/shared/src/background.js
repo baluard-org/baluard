@@ -562,6 +562,17 @@ export async function ensureOffscreen() {
 // Updates on tab activation + navigation. Queries bridge.match for the URL.
 // Debounced: a burst of tab updates (slow-loading page firing many progress
 // events) collapses to one lookup.
+
+// Badge decision for one tab. A login count wins; otherwise a passkey-enabled
+// browser shows "PK" — ADR 0095 requires a visible sign that WebAuthn
+// requests are being answered by the extension, because silent interception
+// is the fingerprinting risk. Pure so the unit tests pin the precedence.
+export function passkeyBadge(matchCount, passkeysEnabled) {
+  if (matchCount > 0) return { text: String(matchCount), color: "#0a7" };
+  if (passkeysEnabled) return { text: "PK", color: "#b3e55c" };
+  return { text: "", color: "" };
+}
+
 let badgeTimer = null;
 function updateBadgeForTab(tabId, url) {
   if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) {
@@ -571,15 +582,20 @@ function updateBadgeForTab(tabId, url) {
   if (badgeTimer) clearTimeout(badgeTimer);
   badgeTimer = setTimeout(() => {
     send("bridge.match", { url })
-      .then((msg) => {
+      .then(async (msg) => {
         // The internal send resolves the whole NMH message ({ok, payload});
         // only .payload is the JSON string (found by e2e: parsing the message
         // object threw, so the badge silently never rendered).
         const raw = typeof msg === "string" ? msg : (msg && msg.payload) || "{}";
         const data = JSON.parse(raw || "{}");
         const n = (data.matches || []).length;
-        chrome.action.setBadgeText({ tabId, text: n > 0 ? String(n) : "" });
-        chrome.action.setBadgeBackgroundColor({ tabId, color: "#0a7" });
+        let pkOn = false;
+        try {
+          pkOn = (await readSettings()).enablePasskeys === true;
+        } catch {}
+        const { text, color } = passkeyBadge(n, pkOn);
+        chrome.action.setBadgeText({ tabId, text });
+        if (color) chrome.action.setBadgeBackgroundColor({ tabId, color });
       })
       .catch((e) => {
         console.warn("[baluard-badge] match failed:", e?.message);
@@ -672,6 +688,12 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
   if (area === "local" && changes[SETTINGS_KEY]) {
     syncInlineScript();
     syncPasskeyScripts();
+    // The PK badge flips with the passkey toggle; tab events alone would
+    // leave the stale badge until the next navigation.
+    chrome.tabs?.query?.({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs && tabs[0];
+      if (tab && !chrome.runtime.lastError) updateBadgeForTab(tab.id, tab.url);
+    });
   }
 });
 

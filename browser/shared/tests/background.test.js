@@ -17,8 +17,24 @@ import {
   classifyDisconnect,
   buildError,
   senderUrl,
+  passkeyBadge,
 } from "../src/background.js";
 import { originOf } from "../src/url.js";
+
+describe("passkeyBadge (ADR 0095: visible interception indicator)", () => {
+  it("a login count wins over the indicator", () => {
+    expect(passkeyBadge(2, true)).toEqual({ text: "2", color: "#0a7" });
+    expect(passkeyBadge(1, false)).toEqual({ text: "1", color: "#0a7" });
+  });
+
+  it("zero matches with passkeys on show the PK indicator", () => {
+    expect(passkeyBadge(0, true)).toEqual({ text: "PK", color: "#b3e55c" });
+  });
+
+  it("zero matches with passkeys off clear the badge", () => {
+    expect(passkeyBadge(0, false)).toEqual({ text: "", color: "" });
+  });
+});
 
 describe("originOf (B1: fill-time origin binding)", () => {
   it("returns scheme+host+port", () => {
