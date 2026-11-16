@@ -4,6 +4,12 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+## 0.7.1 - 2026-11-16
+
+- Fixed the master-password prompt not responding on desktop: typing worked, but clicking Confirm or Cancel and pressing Enter did nothing, which blocked enabling the SSH agent, exporting an encrypted backup, revealing the recovery phrase, and any other flow that re-asks for the master password.
+
+- Fixed the macOS Close to system tray toggle not saving its state, so closing the window never hid the Dock icon. The setting now persists and the Dock icon hides as described.
+
 ## 0.7.0 - 2026-11-15
 
 - The daemon can act as an OpenSSH agent: turn on SSH agent in Settings, mark individual SSH keys for serving, and terminal apps and git sign through the local agent socket. Signing asks for approval on every use unless you enable automatic approval. The SSH agent switches apply per device, so turning the agent on here does not turn it on anywhere else.
