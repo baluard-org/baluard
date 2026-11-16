@@ -564,44 +564,85 @@ export async function ensureOffscreen() {
 // events) collapses to one lookup.
 
 // Badge decision for one tab. A login count wins; otherwise a passkey-enabled
-// browser shows "PK" — ADR 0095 requires a visible sign that WebAuthn
-// requests are being answered by the extension, because silent interception
-// is the fingerprinting risk. Pure so the unit tests pin the precedence.
-export function passkeyBadge(matchCount, passkeysEnabled) {
+// browser shows "PK" on URLs the passkey scripts actually cover — ADR 0095
+// requires a visible sign that WebAuthn requests are being answered by the
+// extension, because silent interception is the fingerprinting risk. Pure so
+// the unit tests pin the precedence and scope.
+export function passkeyBadge(matchCount, passkeysEnabled, eligible = true) {
   if (matchCount > 0) return { text: String(matchCount), color: "#0a7" };
-  if (passkeysEnabled) return { text: "PK", color: "#b3e55c" };
+  if (passkeysEnabled && eligible) return { text: "PK", color: "#b3e55c" };
   return { text: "", color: "" };
 }
 
-let badgeTimer = null;
+// Do the passkey content scripts run on this URL? Mirrors the
+// syncPasskeyScripts match patterns (https everywhere, http only loopback).
+export function passkeyScopeCovers(url) {
+  if (typeof url !== "string") return false;
+  if (url.startsWith("https://")) return true;
+  if (url.startsWith("http://")) {
+    try {
+      const host = new URL(url).hostname;
+      return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+const badgeTimers = new Map();
 function updateBadgeForTab(tabId, url) {
+  const pending = badgeTimers.get(tabId);
+  if (pending) {
+    clearTimeout(pending);
+    badgeTimers.delete(tabId);
+  }
   if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) {
     chrome.action.setBadgeText({ tabId, text: "" });
     return;
   }
-  if (badgeTimer) clearTimeout(badgeTimer);
-  badgeTimer = setTimeout(() => {
-    send("bridge.match", { url })
-      .then(async (msg) => {
-        // The internal send resolves the whole NMH message ({ok, payload});
-        // only .payload is the JSON string (found by e2e: parsing the message
-        // object threw, so the badge silently never rendered).
-        const raw = typeof msg === "string" ? msg : (msg && msg.payload) || "{}";
-        const data = JSON.parse(raw || "{}");
-        const n = (data.matches || []).length;
-        let pkOn = false;
-        try {
-          pkOn = (await readSettings()).enablePasskeys === true;
-        } catch {}
-        const { text, color } = passkeyBadge(n, pkOn);
-        chrome.action.setBadgeText({ tabId, text });
-        if (color) chrome.action.setBadgeBackgroundColor({ tabId, color });
-      })
-      .catch((e) => {
-        console.warn("[baluard-badge] match failed:", e?.message);
-        chrome.action.setBadgeText({ tabId, text: "" });
-      });
-  }, 250);
+  badgeTimers.set(
+    tabId,
+    setTimeout(() => {
+      badgeTimers.delete(tabId);
+      let pkOn = false;
+      // Settings are read BEFORE the daemon round-trip: a dead daemon kills
+      // match counts, not interception, so the ADR 0095 indicator must
+      // survive it.
+      readSettings()
+        .then((s) => {
+          pkOn =
+            s.enablePasskeys === true && passkeyScriptsRegistered && passkeyScopeCovers(url);
+          return send("bridge.match", { url });
+        })
+        .then((msg) => {
+          // The internal send resolves the whole NMH message ({ok, payload});
+          // only .payload is the JSON string (found by e2e: parsing the message
+          // object threw, so the badge silently never rendered).
+          const raw = typeof msg === "string" ? msg : (msg && msg.payload) || "{}";
+          const n = (JSON.parse(raw || "{}").matches || []).length;
+          const { text, color } = passkeyBadge(n, pkOn);
+          chrome.action.setBadgeText({ tabId, text });
+          if (color) chrome.action.setBadgeBackgroundColor({ tabId, color });
+        })
+        .catch((e) => {
+          console.warn("[baluard-badge] match failed:", e?.message);
+          const { text, color } = passkeyBadge(0, pkOn);
+          chrome.action.setBadgeText({ tabId, text });
+          if (color) chrome.action.setBadgeBackgroundColor({ tabId, color });
+        });
+    }, 250),
+  );
+}
+
+// Refresh every window's active tab: the passkey toggle and the script
+// registration transitions can happen while a tab sits idle, and tab events
+// alone would leave a stale badge until the next navigation.
+function refreshBadgeEverywhere() {
+  chrome.tabs?.query?.({ active: true }, (tabs) => {
+    if (chrome.runtime.lastError) return;
+    for (const t of tabs || []) updateBadgeForTab(t.id, t.url);
+  });
 }
 
 chrome.tabs?.onActivated?.addListener((info) => {
@@ -688,12 +729,10 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
   if (area === "local" && changes[SETTINGS_KEY]) {
     syncInlineScript();
     syncPasskeyScripts();
-    // The PK badge flips with the passkey toggle; tab events alone would
-    // leave the stale badge until the next navigation.
-    chrome.tabs?.query?.({ active: true, currentWindow: true }, (tabs) => {
-      const tab = tabs && tabs[0];
-      if (tab && !chrome.runtime.lastError) updateBadgeForTab(tab.id, tab.url);
-    });
+    const { oldValue, newValue } = changes[SETTINGS_KEY];
+    if ((oldValue?.enablePasskeys ?? false) !== (newValue?.enablePasskeys ?? false)) {
+      refreshBadgeEverywhere();
+    }
   }
 });
 
@@ -741,6 +780,17 @@ async function handlePasskeyUi(msg) {
 // Serialized: overlapping runs raced registerContentScripts (duplicate-id
 // errors) and any error flipped the user's opt-in off. One chain, ever.
 let passkeySyncChain = Promise.resolve();
+let passkeyScriptsRegistered = false;
+
+// Ground truth for the toolbar indicator: the badge may claim interception
+// only while the content scripts are actually registered, so transient
+// registration failures cannot leave a "PK" over an unwrapped browser.
+function setPasskeyScriptsRegistered(v) {
+  if (passkeyScriptsRegistered === v) return;
+  passkeyScriptsRegistered = v;
+  refreshBadgeEverywhere();
+}
+
 function syncPasskeyScripts() {
   passkeySyncChain = passkeySyncChain.catch(() => {}).then(syncPasskeyScriptsOnce);
   return passkeySyncChain;
@@ -749,13 +799,17 @@ export { syncPasskeyScripts };
 
 // Exported for unit tests (esbuild IIFE strips it from the bundle).
 async function syncPasskeyScriptsOnce() {
-  if (!chrome.scripting?.registerContentScripts) return;
+  if (!chrome.scripting?.registerContentScripts) {
+    setPasskeyScriptsRegistered(false);
+    return;
+  }
   const settings = await readSettings();
   const enabled = settings.enablePasskeys === true;
   const registered = await chrome.scripting.getRegisteredContentScripts();
   const hasPage = registered.some((s) => s.id === PASSKEY_PAGE_SCRIPT_ID);
   const hasBridge = registered.some((s) => s.id === PASSKEY_BRIDGE_SCRIPT_ID);
   if (!enabled) {
+    setPasskeyScriptsRegistered(false);
     const stale = [hasPage && PASSKEY_PAGE_SCRIPT_ID, hasBridge && PASSKEY_BRIDGE_SCRIPT_ID].filter(Boolean);
     if (stale.length > 0) {
       try {
@@ -810,6 +864,7 @@ async function syncPasskeyScriptsOnce() {
     // true support gap reverts the setting — a transient error must leave
     // the user's opt-in alone and retry on the next settings change.
     const message = String((e && e.message) || e);
+    setPasskeyScriptsRegistered(false);
     if (!/world/i.test(message)) {
       console.error("[baluard] passkey registration failed:", e);
       return;
@@ -819,6 +874,7 @@ async function syncPasskeyScriptsOnce() {
     await updateSettingsLocal({ enablePasskeys: false });
     return;
   }
+  setPasskeyScriptsRegistered(true);
   // Inject into live tabs once per browser session: registration already
   // covers future documents, and re-running on every unrelated settings
   // change re-executed the MAIN-world script in every open tab.

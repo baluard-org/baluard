@@ -18,6 +18,7 @@ import {
   buildError,
   senderUrl,
   passkeyBadge,
+  passkeyScopeCovers,
 } from "../src/background.js";
 import { originOf } from "../src/url.js";
 
@@ -33,6 +34,39 @@ describe("passkeyBadge (ADR 0095: visible interception indicator)", () => {
 
   it("zero matches with passkeys off clear the badge", () => {
     expect(passkeyBadge(0, false)).toEqual({ text: "", color: "" });
+  });
+
+  it("the indicator stays on when the daemon cannot answer (match failed)", () => {
+    // The catch path renders passkeyBadge(0, pkOn): a dead daemon hides
+    // counts, never the interception marker.
+    expect(passkeyBadge(0, true)).not.toEqual({ text: "", color: "" });
+  });
+
+  it("the indicator only shows where the passkey scripts run", () => {
+    expect(passkeyBadge(0, true, false)).toEqual({ text: "", color: "" });
+    expect(passkeyBadge(0, true, true)).toEqual({ text: "PK", color: "#b3e55c" });
+    expect(passkeyBadge(1, true, false)).toEqual({ text: "1", color: "#0a7" });
+  });
+});
+
+describe("passkeyScopeCovers (badge scope mirrors script matches)", () => {
+  it("covers https everywhere and loopback http", () => {
+    expect(passkeyScopeCovers("https://example.com/login")).toBe(true);
+    expect(passkeyScopeCovers("http://localhost:8080/")).toBe(true);
+    expect(passkeyScopeCovers("http://127.0.0.1/x")).toBe(true);
+    expect(passkeyScopeCovers("http://[::1]:3000/")).toBe(true);
+  });
+
+  it("excludes plain-http hosts and non-http schemes", () => {
+    expect(passkeyScopeCovers("http://intranet.local/")).toBe(false);
+    expect(passkeyScopeCovers("chrome://settings")).toBe(false);
+    expect(passkeyScopeCovers("about:blank")).toBe(false);
+  });
+
+  it("fails closed on junk", () => {
+    expect(passkeyScopeCovers(undefined)).toBe(false);
+    expect(passkeyScopeCovers(42)).toBe(false);
+    expect(passkeyScopeCovers("http://")).toBe(false);
   });
 });
 
