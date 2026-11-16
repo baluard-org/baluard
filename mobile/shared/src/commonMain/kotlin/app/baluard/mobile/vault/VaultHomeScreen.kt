@@ -926,7 +926,7 @@ fun CategoryListScreen(
         ) {
             SectionCard(
                 title = t("home.types"),
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(start = 16.dp, top = 10.dp, end = 16.dp),
                 contentPadding = PaddingValues(vertical = 4.dp),
             ) {
                 rows.forEachIndexed { index, (raw, count) ->
