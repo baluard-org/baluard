@@ -21,7 +21,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.OpenInFull
@@ -95,7 +94,6 @@ fun CipherDetailScreen(
     detailViewModel: CipherDetailViewModel,
     totpViewModel: TotpViewModel,
     onEdit: () -> Unit,
-    onDeleted: (id: String, permanent: Boolean) -> Unit,
     onBack: () -> Unit,
     revision: Int = 0,
 ) {
@@ -104,7 +102,6 @@ fun CipherDetailScreen(
     val state = detailViewModel.state
     val scope = rememberCoroutineScope()
     val attachmentSaver = rememberRecoverySheetSaver()
-    var confirmDelete by remember { mutableStateOf(false) }
     // M7: a non-browser URI waiting for the user's confirmation to launch.
     var pendingExternalUri by remember { mutableStateOf<String?>(null) }
     var showNotesView by remember { mutableStateOf(false) }
@@ -150,13 +147,6 @@ fun CipherDetailScreen(
                         }
                     }) {
                         Icon(Icons.Default.Edit, contentDescription = t("detail.edit"))
-                    }
-                    IconButton(onClick = { confirmDelete = true }, enabled = state != null) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = t("detail.delete"),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
                     }
                 },
             )
@@ -634,32 +624,6 @@ fun CipherDetailScreen(
 
             Spacer(Modifier.height(24.dp))
         }
-    }
-
-    if (confirmDelete && state != null) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text(t(if (detailViewModel.inTrash) "detail.deletePermanentTitle" else "detail.deleteTitle")) },
-            text = { Text(t(if (detailViewModel.inTrash) "detail.deletePermanentBody" else "detail.deleteBody", state.name)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmDelete = false
-                        scope.launch {
-                            detailViewModel.delete(vault, state.id)
-                            if (detailViewModel.error == null) onDeleted(state.id, detailViewModel.inTrash)
-                        }
-                    },
-                ) {
-                    Text(t("detail.delete"), color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) {
-                    Text(t("common.cancel"))
-                }
-            },
-        )
     }
 
     // G18: master-password re-prompt for protected entries. Verify via the

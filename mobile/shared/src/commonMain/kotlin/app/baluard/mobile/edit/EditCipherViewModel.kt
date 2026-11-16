@@ -22,7 +22,6 @@ import app.baluard.mobile.PasswordConfig
 import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.detail.fieldsFor
 import app.baluard.mobile.detail.str
-import app.baluard.mobile.detail.str
 
 /**
  * Drives the cipher edit form for all 8 types (plan §3: create/edit any
@@ -49,11 +48,16 @@ class EditCipherViewModel(private val repo: VaultRepository) {
      * TOTP seed must not outlive their screen. */
     fun clear() {
         _form.value = EditForm()
+        inTrash = false
     }
     val form: StateFlow<EditForm> = _form.asStateFlow()
 
     /** Non-null when loading an existing cipher failed (corrupt JSON, FFI error). */
     var loadError: String? by mutableStateOf(null)
+        private set
+
+    /** Whether the loaded cipher sits in the trash: deleting it there is a purge. */
+    var inTrash: Boolean by mutableStateOf(false)
         private set
 
     private val _folders = MutableStateFlow<List<MobileFolderInfo>>(emptyList())
@@ -194,6 +198,7 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         existingId = null
         originalData = null
         loadError = null
+        inTrash = false
         collectionTouched = false
         _form.value = EditForm()
     }
@@ -263,11 +268,13 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         loadError = null
         existingId = null
         originalData = null
+        inTrash = false
         _form.value = EditForm()
         try {
             val raw = repo.getCipher(vault, id, decrypt = true)
             existingId = id
             originalData = extractData(raw)
+            inTrash = runCatching { repo.listTrash(vault).any { it.id == id } }.getOrDefault(false)
             _form.value = parseLoadedCipher(raw)
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e
@@ -276,6 +283,18 @@ class EditCipherViewModel(private val repo: VaultRepository) {
             platformLogE("EditCipher", "load failed for $id", e)
             loadError = e.message ?: "load failed"
         }
+    }
+
+    /** Delete the cipher (trash semantics — the runtime soft-deletes, and
+     * purges when the cipher is already in the trash). */
+    suspend fun delete(vault: MobileVault, id: String): Result<Unit> = try {
+        repo.deleteCipher(vault, id)
+        Result.success(Unit)
+    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        platformLogE("EditCipher", "delete failed for $id", e)
+        Result.failure(e)
     }
 
     /** Persist: addCipher if new, updateCipher if editing. Returns the cipher id. */

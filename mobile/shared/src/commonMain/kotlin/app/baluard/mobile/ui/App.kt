@@ -781,16 +781,6 @@ fun App(
                                     detailViewModel = detailVm,
                                     totpViewModel = totpVm,
                                     onEdit = { nav = Nav.Edit(n.cipherId) },
-                                    onDeleted = { id, permanent ->
-                                        saveRevision++
-                                        notifyMutation()
-                                        if (permanent) listVm.evictContent(id)
-                                        nav = detailOrigin ?: Nav.List
-                                        detailOrigin = null
-                                        Toast.success(
-                                            t(if (permanent) "toast.deleted" else "toast.trashed"),
-                                        )
-                                    },
                                     onBack = {
                                         nav = detailOrigin ?: Nav.List
                                         detailOrigin = null
@@ -809,6 +799,13 @@ fun App(
                                         notifyMutation()
                                         nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId)
                                         Toast.success(t("toast.saved"))
+                                    },
+                                    onDeleted = { permanent ->
+                                        saveRevision++
+                                        notifyMutation()
+                                        n.cipherId?.takeIf { permanent }?.let(listVm::evictContent)
+                                        nav = Nav.List
+                                        Toast.success(t(if (permanent) "toast.deleted" else "toast.trashed"))
                                     },
                                     onCancelled = { nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId) },
                                 )

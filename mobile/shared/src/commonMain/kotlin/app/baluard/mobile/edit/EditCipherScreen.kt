@@ -26,9 +26,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -106,6 +108,7 @@ fun EditCipherScreen(
     cipherId: String?, // null = new
     viewModel: EditCipherViewModel,
     onSaved: () -> Unit,
+    onDeleted: (permanent: Boolean) -> Unit = {},
     onCancelled: () -> Unit = {},
     // Autofill save handoff (Phase 6 P4): seeds the create form once, then
     // the caller drops the handoff so it cannot re-seed later.
@@ -118,8 +121,10 @@ fun EditCipherScreen(
     val allTags by viewModel.allTags.collectAsState()
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var attachmentError by remember { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val attachPicker = rememberImportFilePicker()
     // Password generator knobs (desktop parity: 8-64 slider + 3 toggles).
     var genLen by remember { mutableStateOf(16) }
@@ -606,7 +611,7 @@ fun EditCipherScreen(
                 },
                 // A failed load leaves an empty form; saving would overwrite
                 // the entry with blank data.
-                enabled = form.name.isNotBlank() && viewModel.loadError == null,
+                enabled = form.name.isNotBlank() && viewModel.loadError == null && !deleting,
                 loading = saving,
                 leadingIcon = Icons.Default.Save,
             )
@@ -614,11 +619,66 @@ fun EditCipherScreen(
             BaluardOutlinedButton(
                 text = t("common.cancel"),
                 onClick = onCancelled,
-                enabled = !saving,
+                enabled = !saving && !deleting,
             )
+
+            if (cipherId != null) {
+                Spacer(Modifier.height(8.dp))
+                TextButton(
+                    onClick = { confirmDelete = true },
+                    // A failed load leaves an empty form; deleting it would
+                    // purge the real entry while the dialog shows a blank name.
+                    enabled = !saving && !deleting && viewModel.loadError == null,
+                    modifier = Modifier
+                        .testTag(E2eTags.EDIT_DELETE)
+                        .align(Alignment.CenterHorizontally),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(t("detail.delete"), color = MaterialTheme.colorScheme.error)
+                }
+            }
 
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    if (confirmDelete && cipherId != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(t(if (viewModel.inTrash) "detail.deletePermanentTitle" else "detail.deleteTitle")) },
+            text = { Text(t(if (viewModel.inTrash) "detail.deletePermanentBody" else "detail.deleteBody", form.name)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        val id = cipherId
+                        deleting = true
+                        scope.launch {
+                            viewModel.delete(vault, id)
+                                .onSuccess { onDeleted(viewModel.inTrash) }
+                                .onFailure {
+                                    deleting = false
+                                    error = it.message?.removePrefix("detail=") ?: it.message
+                                }
+                        }
+                    },
+                    enabled = !deleting,
+                ) {
+                    Text(t("detail.delete"), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text(t("common.cancel"))
+                }
+            },
+        )
     }
 }
 

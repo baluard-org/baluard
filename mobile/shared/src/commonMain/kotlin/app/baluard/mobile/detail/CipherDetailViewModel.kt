@@ -23,10 +23,6 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
         private set
     var error: String? by mutableStateOf(null)
         private set
-
-    /** True when the loaded cipher is already in trash (delete = purge). */
-    var inTrash: Boolean by mutableStateOf(false)
-        private set
     private var loadedId: String? = null
 
     suspend fun load(vault: MobileVault, id: String) {
@@ -35,7 +31,6 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
         // in-place revision bump (favorite, attachment) keeps the screen.
         if (state != null && loadedId != id) state = null
         loadedId = id
-        inTrash = runCatching { repo.listTrash(vault).any { it.id == id } }.getOrDefault(false)
         try {
             val raw = repo.getCipher(vault, id, decrypt = true)
             val obj = Json.parseToJsonElement(raw) as JsonObject
@@ -82,22 +77,6 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
     fun clear() {
         state = null
         error = null
-        inTrash = false
-    }
-
-    /** Delete the loaded cipher (trash semantics — the runtime soft-deletes).
-     * The caller navigates back and bumps its reload revision. */
-    suspend fun delete(vault: MobileVault, id: String) {
-        error = null
-        try {
-            repo.deleteCipher(vault, id)
-            state = null
-        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            platformLogE("CipherDetail", "delete failed for $id", e)
-            error = e.message
-        }
     }
 
     /** Login URIs live under uris: [{uri, matchStrategy}]. */
