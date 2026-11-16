@@ -11793,10 +11793,8 @@ mod pin_hw_escrow_tests {
 
     pub(super) static TEST_STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Store lock held for the entire test body, awaits included: the
-    /// store is process-global, and each #[tokio::test] runs its own
-    /// single-threaded runtime whose code never takes this lock, so the
-    /// span across await points is the design, not a hazard.
+    /// Held for the whole test body, awaits included: the store is
+    /// process-global and each #[tokio::test] runtime never takes this lock.
     pub(super) struct StoreGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
 
     impl StoreGuard {

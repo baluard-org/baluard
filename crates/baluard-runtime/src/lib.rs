@@ -42,10 +42,8 @@ pub(crate) mod test_support {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    /// Env lock held for the entire test body, awaits included: path env
-    /// vars are process-global, and each #[tokio::test] runs its own
-    /// single-threaded runtime whose code never takes this lock, so the
-    /// span across await points is the design, not a hazard.
+    /// Env lock held for the whole test body, awaits included: env vars
+    /// are process-global and each #[tokio::test] runtime never takes it.
     pub(crate) struct EnvGuard(#[allow(dead_code)] MutexGuard<'static, ()>);
 
     /// Hold for the entire test body while any path env var is redirected.
