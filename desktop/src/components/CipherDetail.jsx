@@ -932,12 +932,12 @@ export default function CipherDetail(props) {
             <Show when={!foreign()}>
             <>
               <button
-                data-testid="detail-edit"
-                onClick={startEdit}
-                class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+                data-testid="detail-delete"
+                onClick={() => props.onDelete?.(cipher().id)}
+                class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
               >
-                <IconPencil class="w-4 h-4" />
-                {t("entry.edit")}
+                <IconTrash class="w-4 h-4" />
+                {t("entry.delete")}
               </button>
               <button
                 onClick={() => props.onArchive?.()}
@@ -956,23 +956,16 @@ export default function CipherDetail(props) {
                 </button>
               </Show>
               <button
-                data-testid="detail-delete"
-                onClick={() => props.onDelete?.(cipher().id)}
-                class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
+                data-testid="detail-edit"
+                onClick={startEdit}
+                class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
               >
-                <IconTrash class="w-4 h-4" />
-                {t("entry.delete")}
+                <IconPencil class="w-4 h-4" />
+                {t("entry.edit")}
               </button>
             </>
             </Show>
           }>
-            <button
-              onClick={() => vault.unarchiveCipher(cipher().id, t).then(() => { props.setViewCipher(null); props.setActivePane("welcome"); })}
-              class="flex-1 py-3 px-4 rounded-xl border font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-green"
-            >
-              <IconRefresh class="w-4 h-4" />
-              {t("entry.unarchive")}
-            </button>
             <button
               onClick={() => props.onDelete?.(cipher().id)}
               class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
@@ -980,8 +973,22 @@ export default function CipherDetail(props) {
               <IconTrash class="w-4 h-4" />
               {t("entry.delete")}
             </button>
+            <button
+              onClick={() => vault.unarchiveCipher(cipher().id, t).then(() => { props.setViewCipher(null); props.setActivePane("welcome"); })}
+              class="flex-1 py-3 px-4 rounded-xl border font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-green"
+            >
+              <IconRefresh class="w-4 h-4" />
+              {t("entry.unarchive")}
+            </button>
           </Show>
         }>
+          <button
+            onClick={() => props.onDelete?.(cipher().id)}
+            class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
+          >
+            <IconTrash class="w-4 h-4" />
+            {t("entry.deletePermanently")}
+          </button>
           <button
             data-testid="detail-restore"
             onClick={() => vault.restoreCipher(cipher().id, t).then(() => { props.setViewCipher(null); props.setActivePane("welcome"); })}
@@ -989,13 +996,6 @@ export default function CipherDetail(props) {
           >
             <IconRefresh class="w-4 h-4" />
             {t("entry.restore")}
-          </button>
-          <button
-            onClick={() => props.onDelete?.(cipher().id)}
-            class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
-          >
-            <IconTrash class="w-4 h-4" />
-            {t("entry.deletePermanently")}
           </button>
         </Show>
       </div>

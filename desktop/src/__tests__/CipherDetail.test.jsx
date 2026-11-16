@@ -149,6 +149,41 @@ describe("CipherDetail (Login)", () => {
     }
   });
 
+  it("footer puts the primary action right of the destructive one", () => {
+    // Accept/save/ok sits on the right edge; delete stays far left so the
+    // destructive target never neighbors the primary. Covers all three
+    // footer variants: normal, archive, trash.
+    const cases = [
+      { selectedCategory: undefined, primary: "entry.edit", destructive: "entry.delete" },
+      { selectedCategory: "Archive", primary: "entry.unarchive", destructive: "entry.delete" },
+      { selectedCategory: "Trash", primary: "entry.restore", destructive: "entry.deletePermanently" },
+    ];
+    for (const c of cases) {
+      const { container, unmount } = render(() => (
+        <CipherDetail
+          cipher={LOGIN_CIPHER}
+          setViewCipher={vi.fn()}
+          onEdit={vi.fn()}
+          selectedCategory={c.selectedCategory}
+        />
+      ));
+      const byText = (key) =>
+        Array.from(container.querySelectorAll("button")).find(
+          (b) => b.textContent.trim() === key
+        );
+      const primary = byText(c.primary);
+      const destructive = byText(c.destructive);
+      expect(primary, `${c.primary} button missing`).toBeTruthy();
+      expect(destructive, `${c.destructive} button missing`).toBeTruthy();
+      expect(
+        destructive.compareDocumentPosition(primary) & Node.DOCUMENT_POSITION_FOLLOWING,
+        `${c.primary} must follow ${c.destructive} (primary on the right)`
+      ).toBeTruthy();
+      unmount();
+      cleanup();
+    }
+  });
+
   it("password reveal button is reachable in the DOM (no crash on click)", () => {
     // Same vi.mock limitation: we test that the reveal UI doesn't crash
     // the render, and the click path is wired (i.e. there's a button that
