@@ -49,7 +49,7 @@ const fill = (testid, value) =>
       const i = document.querySelector(`[data-testid="${id}"]`);
       i.value = v;
       i.dispatchEvent(new Event("input", { bubbles: true }));
-      const key = Object.keys(i).find((k) => k.startsWith("$$") && k.endsWith("input"));
+      const key = Object.keys(i).find((k) => k.startsWith("_$$") && k.endsWith("input"));
       if (key && typeof i[key] === "function") i[key]({ target: i, currentTarget: i, type: "input" });
       return i.value;
     },

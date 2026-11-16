@@ -70,9 +70,9 @@ try {
         i.value = v;
         i.dispatchEvent(new Event("input", { bubbles: true }));
         // Solid's delegated onInput lives in an expando the bundler emits
-        // ($$input); a synthetic event can miss the delegation root, so
+        // (_$$input); a synthetic event can miss the delegation root, so
         // invoke the handler directly as a fallback.
-        const key = Object.keys(i).find((k) => k.startsWith("$$") && k.endsWith("input"));
+        const key = Object.keys(i).find((k) => k.startsWith("_$$") && k.endsWith("input"));
         if (key && typeof i[key] === "function") i[key]({ target: i, currentTarget: i, type: "input" });
         return i.value;
       },

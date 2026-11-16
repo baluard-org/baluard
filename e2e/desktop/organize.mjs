@@ -55,7 +55,7 @@ const fill = (testid, value) =>
       const i = document.querySelector(`[data-testid="${id}"]`);
       i.value = v;
       i.dispatchEvent(new Event("input", { bubbles: true }));
-      const key = Object.keys(i).find((k) => k.startsWith("$$") && k.endsWith("input"));
+      const key = Object.keys(i).find((k) => k.startsWith("_$$") && k.endsWith("input"));
       if (key && typeof i[key] === "function") i[key]({ target: i, currentTarget: i, type: "input" });
       return i.value;
     },
@@ -63,13 +63,13 @@ const fill = (testid, value) =>
     value,
   );
 // Solid delegates keydown, so a synthetic event can miss the delegation
-// root: dispatch it AND invoke the emitted $$keydown expando directly.
+// root: dispatch it AND invoke the emitted _$$keydown expando directly.
 const pressEnter = (testid) =>
   browser.execute((id) => {
     const i = document.querySelector(`[data-testid="${id}"]`);
     const ev = { key: "Enter", target: i, currentTarget: i, preventDefault() {} };
     i.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    const key = Object.keys(i).find((k) => k.startsWith("$$") && k.endsWith("keydown"));
+    const key = Object.keys(i).find((k) => k.startsWith("_$$") && k.endsWith("keydown"));
     if (key && typeof i[key] === "function") i[key](ev);
     return i.value;
   }, testid);
@@ -137,7 +137,7 @@ try {
     await browser.execute((id) => {
       const i = document.querySelector(`[data-testid="${id}"]`);
       i.dispatchEvent(new Event("blur"));
-      const key = Object.keys(i).find((k) => k.startsWith("$$") && k.endsWith("blur"));
+      const key = Object.keys(i).find((k) => k.startsWith("_$$") && k.endsWith("blur"));
       if (key && typeof i[key] === "function") i[key]({ target: i, currentTarget: i, type: "blur" });
     }, "form-tags");
   }
