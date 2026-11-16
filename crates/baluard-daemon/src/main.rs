@@ -379,11 +379,10 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     log::info!("Vault path: {vault_path}");
     let _ = vault_path; // kept for log line; host is source of truth
 
-    // SSH-agent listener (unix-only; a Windows named pipe is a follow-up).
-    // Binds regardless of vault state: settings are encrypted and
-    // unknowable pre-unlock, and the socket's existence leaks nothing
-    // (locked vaults protocol-fail identities). Bind failure is logged
-    // and non-fatal so the vault IPC service survives.
+    // SSH-agent listener. Binds regardless of vault state: settings are
+    // encrypted and unknowable pre-unlock, and the endpoint's existence
+    // leaks nothing (locked vaults protocol-fail identities). Bind
+    // failure is logged and non-fatal so the vault IPC service survives.
     #[cfg(unix)]
     let agent_socket_path = baluard_daemon::ssh_agent_serve::agent_socket_path(socket_path);
     #[cfg(unix)]
@@ -398,6 +397,15 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
                 false
             }
         };
+    #[cfg(windows)]
+    if let Err(e) = baluard_daemon::ssh_agent_serve::spawn_listener(
+        &host,
+        &baluard_daemon::ssh_agent_serve::agent_pipe_name(),
+    )
+    .await
+    {
+        log::error!("ssh agent listener disabled: {e}");
+    }
 
     // Graceful shutdown on SIGINT or SIGTERM
     #[cfg(unix)]

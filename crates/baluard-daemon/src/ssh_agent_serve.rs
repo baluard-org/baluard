@@ -1,17 +1,18 @@
 //! SSH-agent listener: serve vault-stored SSH keys over an OpenSSH agent
-//! socket, gated per request by the vault master switch, the per-key
+//! endpoint, gated per request by the vault master switch, the per-key
 //! serve flag, and the vault's lock state.
 //!
-//! Unix-only (a Windows named pipe is an explicit follow-up). The socket
-//! exists whenever the daemon runs — settings are encrypted and unknowable
-//! pre-unlock, so binding cannot depend on them — but a locked vault
-//! protocol-fails identities ("cannot serve") while the master switch off
-//! answers the empty-list form, keeping "no keys" distinct from "cannot
-//! serve". Signing an opted-in key requires either the vault's
-//! auto-approve policy or a desktop approval through the same PendingQueue
-//! the agents.* routes use.
+//! Unix serves a socket beside the IPC socket; Windows serves the
+//! canonical `\\.\pipe\openssh-ssh-agent` named pipe that Windows OpenSSH
+//! clients hardcode. The endpoint exists whenever the daemon runs —
+//! settings are encrypted and unknowable pre-unlock, so binding cannot
+//! depend on them — but a locked vault protocol-fails identities
+//! ("cannot serve") while the master switch off answers the empty-list
+//! form, keeping "no keys" distinct from "cannot serve". Signing an
+//! opted-in key requires either the vault's auto-approve policy or a
+//! desktop approval through the same PendingQueue the agents.* routes
+//! use.
 
-#[cfg(unix)]
 mod serve {
     use crate::host::VaultHost;
 
@@ -40,133 +41,14 @@ mod serve {
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_APPROVAL_WAIT_SECS)
     }
-
-    /// The agent socket is named after the IPC socket itself, so two
-    /// daemons with different --socket names in one directory never
-    /// share (or destroy) each other's agent endpoint.
-    pub fn agent_socket_path(ipc_socket: &str) -> PathBuf {
-        let ipc = Path::new(ipc_socket);
-        let stem = ipc
-            .file_name()
-            .and_then(|f| f.to_str())
-            .unwrap_or("baluard");
-        let agent_name = stem
-            .strip_suffix(".sock")
-            .map(|base| format!("{base}-agent.sock"))
-            .unwrap_or_else(|| format!("{stem}-agent.sock"));
-        match ipc.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => parent.join(agent_name),
-            // Bare filename IPC socket (cwd-relative): sibling in cwd.
-            _ => PathBuf::from(agent_name),
-        }
-    }
-
-    /// Bind the agent socket and spawn the accept loop. The socket file is
-    /// removed by the daemon's shutdown path, not here.
+    /// Bind the endpoint and spawn the accept loop. The unix socket file
+    /// is removed by the daemon's shutdown path, not here; named pipes
+    /// leave no residue.
     pub async fn spawn_listener(
         host: &Arc<VaultHost>,
         socket_path: &Path,
     ) -> std::io::Result<tokio::task::JoinHandle<()>> {
         spawn_listener_with(host, socket_path, crate::ssh_agent_policy::policy_path()).await
-    }
-
-    /// Bind the agent socket with an explicit policy path, so the tests
-    /// never touch the machine's real policy file.
-    pub async fn spawn_listener_with(
-        host: &Arc<VaultHost>,
-        socket_path: &Path,
-        policy_path: PathBuf,
-    ) -> std::io::Result<tokio::task::JoinHandle<()>> {
-        if let Some(parent) = socket_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        // Stale-socket probe, mirroring the IPC listener: a connectable
-        // path means a live agent owns it and startup must fail loudly.
-        if socket_path.exists() {
-            if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
-                return Err(std::io::Error::other(
-                    "another daemon is already listening on the agent socket",
-                ));
-            }
-            std::fs::remove_file(socket_path)?;
-        }
-        // Bind first, then tighten the mode explicitly. The umask dance
-        // cannot be used here: it is process-wide, so a concurrent bind
-        // or vault creation would inherit (or leak) 0177. The exposed
-        // window is one syscall wide, and the parent directory is the
-        // daemon's private runtime dir.
-        let std_listener = std::os::unix::net::UnixListener::bind(socket_path)?;
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let chmod = std::fs::metadata(socket_path).and_then(|m| {
-                let mut perms = m.permissions();
-                perms.set_mode(0o600);
-                std::fs::set_permissions(socket_path, perms)
-            });
-            if let Err(e) = chmod {
-                // A socket left behind at default mode because the mode
-                // tightening failed is reachable by every local user.
-                let _ = std::fs::remove_file(socket_path);
-                return Err(e);
-            }
-        }
-        std_listener.set_nonblocking(true)?;
-        let listener = tokio::net::UnixListener::from_std(std_listener)?;
-        let host = host.clone();
-        let path = socket_path.to_path_buf();
-        Ok(tokio::spawn(async move {
-            log::info!("ssh agent listening on {}", path.display());
-            accept_loop(listener, host, policy_path).await;
-        }))
-    }
-
-    async fn accept_loop(
-        listener: tokio::net::UnixListener,
-        host: Arc<VaultHost>,
-        policy_path: PathBuf,
-    ) {
-        loop {
-            // A transient accept error must not kill the listener.
-            let (stream, _) = match listener.accept().await {
-                Ok(pair) => pair,
-                Err(e) => {
-                    log::warn!("[agent] accept failed: {e}");
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    continue;
-                }
-            };
-            // Another user must never reach the agent, whatever the
-            // socket mode says: the daemon checks the peer uid itself.
-            {
-                use std::os::unix::io::AsRawFd;
-                if !crate::handler::peer_uid_matches_daemon(stream.as_raw_fd()) {
-                    log::warn!("[agent] rejected a connection from another user");
-                    continue;
-                }
-            }
-            // A connection cap keeps a local process from exhausting
-            // descriptors or the pending-approval queue.
-            if ACTIVE_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                >= MAX_CONNECTIONS
-            {
-                ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-                log::warn!("[agent] refused a connection: too many open");
-                continue;
-            }
-            // Peer identity is best-effort: macOS LOCAL_PEERPID, Linux
-            // SO_PEERCRED, an unresolved fallback elsewhere. Serving never
-            // blocks on richer peer data.
-            let peer = crate::handler::peer_binding_unix(&stream)
-                .unwrap_or_else(|| PeerBinding::new(0, "<unresolved local client>".to_string(), 0));
-            let host = host.clone();
-            let policy_path = policy_path.clone();
-            tokio::spawn(async move {
-                // The slot is a drop guard: a panicked handler must not
-                // leak the counter and wedge every later client out.
-                let _slot = ConnectionSlot;
-                serve_connection(stream, host, peer, policy_path).await;
-            });
-        }
     }
 
     /// One unit of the connection cap, released on every exit path
@@ -178,12 +60,16 @@ mod serve {
         }
     }
 
-    async fn serve_connection(
-        mut stream: tokio::net::UnixStream,
+    /// Transport-neutral connection loop: length-prefixed agent protocol
+    /// frames over any byte stream (unix socket or named pipe).
+    async fn serve_connection<S>(
+        mut stream: S,
         host: Arc<VaultHost>,
         peer: PeerBinding,
         policy_path: PathBuf,
-    ) {
+    ) where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + std::marker::Unpin,
+    {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         loop {
             let mut lenb = [0u8; 4];
@@ -561,15 +447,280 @@ mod serve {
             }
         }
     }
+
+    #[cfg(unix)]
+    pub(crate) mod unix {
+        use super::{ACTIVE_CONNECTIONS, ConnectionSlot, MAX_CONNECTIONS, serve_connection};
+        use crate::host::VaultHost;
+        use baluard_runtime::agents::PeerBinding;
+        use std::path::{Path, PathBuf};
+        use std::sync::Arc;
+
+        /// The agent socket is named after the IPC socket itself, so two
+        /// daemons with different --socket names in one directory never
+        /// share (or destroy) each other's agent endpoint.
+        pub fn agent_socket_path(ipc_socket: &str) -> PathBuf {
+            let ipc = Path::new(ipc_socket);
+            let stem = ipc
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("baluard");
+            let agent_name = stem
+                .strip_suffix(".sock")
+                .map(|base| format!("{base}-agent.sock"))
+                .unwrap_or_else(|| format!("{stem}-agent.sock"));
+            match ipc.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent.join(agent_name),
+                // Bare filename IPC socket (cwd-relative): sibling in cwd.
+                _ => PathBuf::from(agent_name),
+            }
+        }
+
+        /// Bind the agent socket with an explicit policy path, so the tests
+        /// never touch the machine's real policy file.
+        pub async fn spawn_listener_with(
+            host: &Arc<VaultHost>,
+            socket_path: &Path,
+            policy_path: PathBuf,
+        ) -> std::io::Result<tokio::task::JoinHandle<()>> {
+            if let Some(parent) = socket_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            // Stale-socket probe, mirroring the IPC listener: a connectable
+            // path means a live agent owns it and startup must fail loudly.
+            if socket_path.exists() {
+                if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+                    return Err(std::io::Error::other(
+                        "another daemon is already listening on the agent socket",
+                    ));
+                }
+                std::fs::remove_file(socket_path)?;
+            }
+            // Bind first, then tighten the mode explicitly. The umask dance
+            // cannot be used here: it is process-wide, so a concurrent bind
+            // or vault creation would inherit (or leak) 0177. The exposed
+            // window is one syscall wide, and the parent directory is the
+            // daemon's private runtime dir.
+            let std_listener = std::os::unix::net::UnixListener::bind(socket_path)?;
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let chmod = std::fs::metadata(socket_path).and_then(|m| {
+                    let mut perms = m.permissions();
+                    perms.set_mode(0o600);
+                    std::fs::set_permissions(socket_path, perms)
+                });
+                if let Err(e) = chmod {
+                    // A socket left behind at default mode because the mode
+                    // tightening failed is reachable by every local user.
+                    let _ = std::fs::remove_file(socket_path);
+                    return Err(e);
+                }
+            }
+            std_listener.set_nonblocking(true)?;
+            let listener = tokio::net::UnixListener::from_std(std_listener)?;
+            let host = host.clone();
+            let path = socket_path.to_path_buf();
+            Ok(tokio::spawn(async move {
+                log::info!("ssh agent listening on {}", path.display());
+                accept_loop(listener, host, policy_path).await;
+            }))
+        }
+
+        async fn accept_loop(
+            listener: tokio::net::UnixListener,
+            host: Arc<VaultHost>,
+            policy_path: PathBuf,
+        ) {
+            loop {
+                // A transient accept error must not kill the listener.
+                let (stream, _) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        log::warn!("[agent] accept failed: {e}");
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        continue;
+                    }
+                };
+                // Another user must never reach the agent, whatever the
+                // socket mode says: the daemon checks the peer uid itself.
+                {
+                    use std::os::unix::io::AsRawFd;
+                    if !crate::handler::peer_uid_matches_daemon(stream.as_raw_fd()) {
+                        log::warn!("[agent] rejected a connection from another user");
+                        continue;
+                    }
+                }
+                // A connection cap keeps a local process from exhausting
+                // descriptors or the pending-approval queue.
+                if ACTIVE_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    >= MAX_CONNECTIONS
+                {
+                    ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    log::warn!("[agent] refused a connection: too many open");
+                    continue;
+                }
+                // Peer identity is best-effort: macOS LOCAL_PEERPID, Linux
+                // SO_PEERCRED, an unresolved fallback elsewhere. Serving never
+                // blocks on richer peer data.
+                let peer = crate::handler::peer_binding_unix(&stream).unwrap_or_else(|| {
+                    PeerBinding::new(0, "<unresolved local client>".to_string(), 0)
+                });
+                let host = host.clone();
+                let policy_path = policy_path.clone();
+                tokio::spawn(async move {
+                    // The slot is a drop guard: a panicked handler must not
+                    // leak the counter and wedge every later client out.
+                    let _slot = ConnectionSlot;
+                    serve_connection(stream, host, peer, policy_path).await;
+                });
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) mod windows {
+        use super::{ACTIVE_CONNECTIONS, ConnectionSlot, MAX_CONNECTIONS, serve_connection};
+        use crate::host::VaultHost;
+        use baluard_runtime::agents::PeerBinding;
+        use std::path::{Path, PathBuf};
+        use std::sync::Arc;
+        use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+
+        /// The canonical Windows OpenSSH agent pipe: ssh.exe clients
+        /// (Microsoft OpenSSH, Git via core.sshCommand) hardcode this
+        /// name, so owning it is the only zero-config way to serve. The
+        /// OpenSSH Authentication Agent service owns it while enabled;
+        /// that service ships Disabled on client Windows, so a default
+        /// install leaves the name free. The same takeover model
+        /// Bitwarden uses; there is no SSH_AUTH_SOCK equivalent to
+        /// point at a private pipe.
+        pub const WINDOWS_AGENT_PIPE_NAME: &str = r"\\.\pipe\openssh-ssh-agent";
+
+        pub fn agent_pipe_name() -> PathBuf {
+            PathBuf::from(WINDOWS_AGENT_PIPE_NAME)
+        }
+
+        /// Create the first pipe instance with an explicit user DACL (the
+        /// default pipe SD grants read to Everyone and Anonymous) and
+        /// fail loudly when another agent owns the name, mirroring the
+        /// unix stale-socket probe.
+        pub async fn spawn_listener_with(
+            host: &Arc<VaultHost>,
+            pipe_path: &Path,
+            policy_path: PathBuf,
+        ) -> std::io::Result<tokio::task::JoinHandle<()>> {
+            let pipe_name = pipe_path
+                .to_str()
+                .ok_or_else(|| std::io::Error::other("agent pipe name is not valid unicode"))?
+                .to_string();
+            let Some(mut attrs) = baluard_core::ipc::user_dacl_security_attributes() else {
+                return Err(std::io::Error::other(
+                    "failed to build the agent pipe security descriptor",
+                ));
+            };
+            // first_pipe_instance: a second creator fails with
+            // ERROR_ACCESS_DENIED while a live agent holds the name. The
+            // DACL is a property of the pipe object set by this first
+            // instance; later instances inherit it, so they carry no
+            // security attributes (same shape as the IPC listener).
+            let server = unsafe {
+                ServerOptions::new()
+                    .first_pipe_instance(true)
+                    .create_with_security_attributes_raw(
+                        &pipe_name,
+                        attrs.as_ptr() as *mut std::ffi::c_void,
+                    )
+            }
+            .map_err(|e| {
+                std::io::Error::other(format!(
+                    "the agent pipe is owned by another process ({e}); \
+                     the OpenSSH Authentication Agent service must be disabled \
+                     for Baluard to serve \\.\\pipe\\openssh-ssh-agent"
+                ))
+            })?;
+            let host = host.clone();
+            Ok(tokio::spawn(async move {
+                log::info!("ssh agent listening on pipe {pipe_name}");
+                accept_loop(server, pipe_name, host, policy_path).await;
+            }))
+        }
+
+        async fn accept_loop(
+            mut server: NamedPipeServer,
+            pipe_name: String,
+            host: Arc<VaultHost>,
+            policy_path: PathBuf,
+        ) {
+            loop {
+                // A transient connect error must not kill the listener:
+                // log, back off, and continue from a fresh instance — a
+                // client that vanished leaves the old one unusable.
+                if let Err(e) = server.connect().await {
+                    log::warn!("[agent] pipe connect failed: {e}");
+                    server = spawn_next_instance(&pipe_name).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    continue;
+                }
+                // A connection cap keeps a local process from exhausting
+                // descriptors or the pending-approval queue. The refused
+                // instance is dropped, closing that client's connection.
+                if ACTIVE_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    >= MAX_CONNECTIONS
+                {
+                    ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    log::warn!("[agent] refused a connection: too many open");
+                    server = spawn_next_instance(&pipe_name).await;
+                    continue;
+                }
+                // Re-arm the listener before serving: a new client must
+                // never wait behind the current connection.
+                let client = server;
+                server = spawn_next_instance(&pipe_name).await;
+                // Peer identity stays unresolved on Windows (the pipe
+                // DACL is the boundary); approvals and audit records
+                // carry the same fallback the IPC path uses.
+                let peer = PeerBinding::new(0, "<unresolved local client>".to_string(), 0);
+                let host = host.clone();
+                let policy_path = policy_path.clone();
+                tokio::spawn(async move {
+                    // The slot is a drop guard: a panicked handler must
+                    // not leak the counter and wedge later clients out.
+                    let _slot = ConnectionSlot;
+                    serve_connection(client, host, peer, policy_path).await;
+                });
+            }
+        }
+
+        /// Keep exactly one listening instance alive. create() is sync;
+        /// a persistent failure retries rather than killing a daemon
+        /// that may hold unlocked vaults.
+        async fn spawn_next_instance(pipe_name: &str) -> NamedPipeServer {
+            loop {
+                match ServerOptions::new().create(pipe_name) {
+                    Ok(server) => return server,
+                    Err(e) => {
+                        log::warn!("[agent] pipe instance create failed: {e}");
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    pub use unix::spawn_listener_with;
+    #[cfg(windows)]
+    pub use windows::spawn_listener_with;
 }
 
-#[cfg(unix)]
-pub use serve::agent_socket_path;
-#[cfg(unix)]
 pub use serve::spawn_listener;
-#[cfg(unix)]
 pub use serve::spawn_listener_with;
-
+#[cfg(unix)]
+pub use serve::unix::agent_socket_path;
+#[cfg(windows)]
+pub use serve::windows::WINDOWS_AGENT_PIPE_NAME;
+#[cfg(windows)]
+pub use serve::windows::agent_pipe_name;
 #[cfg(unix)]
 #[cfg(test)]
 mod tests {
@@ -951,5 +1102,224 @@ mod tests {
             !state.has_live_agent_grants(),
             "an approved SSH sign must never mint an agt_ grant"
         );
+    }
+}
+
+#[cfg(all(windows, test))]
+mod windows_tests {
+    use super::*;
+    use crate::host::VaultHost;
+    use crate::state::VaultState;
+    use baluard_core::vault::creation::VaultCreator;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Synthetic fixed-seed test key. Never a real credential.
+    const SEED: [u8; 32] = [11u8; 32];
+    const PASSWORD: &str = "agent-suite-synthetic-pw";
+
+    fn openssh_text() -> String {
+        let kp = ssh_key::private::Ed25519Keypair::from_seed(&SEED);
+        let private = ssh_key::private::PrivateKey::from(kp);
+        private
+            .to_openssh(ssh_key::LineEnding::LF)
+            .unwrap()
+            .to_string()
+    }
+
+    fn key_blob() -> Vec<u8> {
+        let (_, material) = crate::ssh_agent_keys::load_material(&openssh_text()).unwrap();
+        material.blob
+    }
+
+    async fn make_vault(slug: &str) -> (tempfile::TempDir, Arc<VaultState>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let _ = VaultCreator::new(&path, PASSWORD, slug)
+            .slug(Some(slug.to_string()))
+            .execute()
+            .unwrap();
+        let state = Arc::new(VaultState::new(path));
+        state.open().await.unwrap();
+        state.unlock(PASSWORD).await.unwrap();
+        (dir, state)
+    }
+
+    async fn add_ssh_key(state: &VaultState, name: &str, serve: bool) -> String {
+        let payload = serde_json::json!({
+            "name": name,
+            "kind": {"type": "sshKey", "data": {
+                "private_key": openssh_text(),
+                "public_key": "ssh-ed25519 AAAA test",
+                "serve_via_agent": serve,
+            }}
+        })
+        .to_string();
+        state.add_cipher(&payload).await.unwrap()
+    }
+
+    fn enable_agent(server: &Server, auto_approve: bool) {
+        crate::ssh_agent_policy::save_to(
+            &server.policy_path,
+            &crate::ssh_agent_policy::AgentPolicy {
+                enabled: true,
+                auto_approve,
+            },
+        )
+        .unwrap();
+    }
+
+    struct Server {
+        policy_path: PathBuf,
+        host: Arc<VaultHost>,
+        pipe: PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    async fn spawn_server() -> Server {
+        let host = Arc::new(VaultHost::new());
+        let pipe = PathBuf::from(format!(
+            r"\\.\pipe\baluard-agent-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join("agent-policy.json");
+        super::spawn_listener_with(&host, &pipe, policy_path.clone())
+            .await
+            .unwrap();
+        Server {
+            host,
+            pipe,
+            policy_path,
+            _dir: dir,
+        }
+    }
+
+    /// One framed request over the canonical pipe transport, with a
+    /// busy-retry loop: the listener keeps exactly one instance armed,
+    /// so a second client right after the first can hit ERROR_PIPE_BUSY.
+    async fn ask(pipe: &PathBuf, body: &[u8]) -> Vec<u8> {
+        let name = pipe.to_str().unwrap();
+        let ERROR_PIPE_BUSY: i32 = 231;
+        let mut client = None;
+        for _ in 0..100 {
+            match tokio::net::windows::named_pipe::ClientOptions::new().open(name) {
+                Ok(c) => {
+                    client = Some(c);
+                    break;
+                }
+                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                Err(e) => panic!("pipe open failed: {e}"),
+            }
+        }
+        let mut c = client.expect("pipe never became available");
+        c.write_all(&crate::ssh_agent_proto::frame(body))
+            .await
+            .unwrap();
+        let mut lenb = [0u8; 4];
+        c.read_exact(&mut lenb).await.unwrap();
+        let len = u32::from_be_bytes(lenb) as usize;
+        let mut body = vec![0u8; len];
+        c.read_exact(&mut body).await.unwrap();
+        body
+    }
+
+    fn identities_body() -> Vec<u8> {
+        vec![11]
+    }
+
+    fn sign_body(blob: &[u8], data: &[u8]) -> Vec<u8> {
+        let mut b = vec![13];
+        crate::ssh_agent_proto::put_string(&mut b, blob);
+        crate::ssh_agent_proto::put_string(&mut b, data);
+        b.extend_from_slice(&0u32.to_be_bytes());
+        b
+    }
+
+    #[tokio::test]
+    async fn locked_vault_answers_failure_not_an_empty_list() {
+        let server = spawn_server().await;
+        let (_dir, state) = make_vault("agent-w-locked").await;
+        enable_agent(&server, true);
+        add_ssh_key(&state, "k", true).await;
+        state.lock().await.unwrap();
+        server.host.insert("agent-w-locked".into(), state).await;
+
+        let out = ask(&server.pipe, &identities_body()).await;
+        assert_eq!(out, vec![5], "locked vault must protocol-fail identities");
+    }
+
+    #[tokio::test]
+    async fn enabled_vault_lists_only_opted_in_keys() {
+        let server = spawn_server().await;
+        let (_dir, state) = make_vault("agent-w-list").await;
+        enable_agent(&server, false);
+        add_ssh_key(&state, "github-signing", true).await;
+        add_ssh_key(&state, "local-only", false).await;
+        server.host.insert("agent-w-list".into(), state).await;
+
+        let out = ask(&server.pipe, &identities_body()).await;
+        assert_eq!(out[0], 12);
+        let count = u32::from_be_bytes(out[1..5].try_into().unwrap());
+        assert_eq!(count, 1, "only the opted-in key is listed: {out:?}");
+        let hay = String::from_utf8_lossy(&out);
+        assert!(hay.contains("github-signing"), "{hay:?}");
+        assert!(out.windows(key_blob().len()).any(|w| w == key_blob()));
+    }
+
+    #[tokio::test]
+    async fn master_switch_off_answers_an_empty_list() {
+        let server = spawn_server().await;
+        let (_dir, state) = make_vault("agent-w-off").await;
+        add_ssh_key(&state, "k", true).await;
+        server.host.insert("agent-w-off".into(), state).await;
+
+        let out = ask(&server.pipe, &identities_body()).await;
+        assert_eq!(out, vec![12, 0, 0, 0, 0], "off means empty, not failure");
+    }
+
+    #[tokio::test]
+    async fn auto_approved_sign_round_trips_and_verifies() {
+        let server = spawn_server().await;
+        let (_dir, state) = make_vault("agent-w-auto").await;
+        enable_agent(&server, true);
+        add_ssh_key(&state, "auto-key", true).await;
+        server.host.insert("agent-w-auto".into(), state).await;
+
+        let out = ask(&server.pipe, &sign_body(&key_blob(), b"payload")).await;
+        assert_eq!(out[0], 14, "sign answered: {out:?}");
+        let alg_len = u32::from_be_bytes(out[5..9].try_into().unwrap()) as usize;
+        assert_eq!(&out[9..9 + alg_len], b"ssh-ed25519");
+    }
+
+    #[tokio::test]
+    async fn sign_for_an_unserved_blob_fails() {
+        let server = spawn_server().await;
+        let (_dir, state) = make_vault("agent-w-nosuch").await;
+        enable_agent(&server, true);
+        server.host.insert("agent-w-nosuch".into(), state).await;
+
+        let out = ask(&server.pipe, &sign_body(&[0xAA; 51], b"x")).await;
+        assert_eq!(out, vec![5]);
+    }
+
+    #[tokio::test]
+    async fn second_pipe_creator_fails_loudly() {
+        let server = spawn_server().await;
+        // first_pipe_instance: a second creator of the same name must
+        // get the ownership error, not silently coexist.
+        let mut attrs = baluard_core::ipc::user_dacl_security_attributes().unwrap();
+        let second = unsafe {
+            tokio::net::windows::named_pipe::ServerOptions::new()
+                .first_pipe_instance(true)
+                .create_with_security_attributes_raw(
+                    server.pipe.to_str().unwrap(),
+                    attrs.as_ptr() as *mut std::ffi::c_void,
+                )
+        };
+        assert!(second.is_err(), "second creator must fail");
     }
 }
