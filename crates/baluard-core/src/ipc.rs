@@ -438,6 +438,29 @@ impl UserSecurityAttributes {
     }
 }
 
+/// Send wrapper for [`UserSecurityAttributes`]. The compiler calls the
+/// type !Send because the SD and ACL are raw pointers into the struct's
+/// own buffers, but the buffers are owned, `as_ptr` re-points the DACL
+/// after every move, and only the owning listener task touches it, so
+/// handing it to a spawned task is sound.
+#[cfg(windows)]
+pub struct SendablePipeAttrs(UserSecurityAttributes);
+
+#[cfg(windows)]
+// Safety: see the type doc.
+unsafe impl Send for SendablePipeAttrs {}
+
+#[cfg(windows)]
+impl SendablePipeAttrs {
+    pub fn new(attrs: UserSecurityAttributes) -> Self {
+        Self(attrs)
+    }
+
+    pub fn as_ptr(&mut self) -> *mut std::ffi::c_void {
+        self.0.as_ptr() as *mut std::ffi::c_void
+    }
+}
+
 /// Raw SID bytes for this process's token user, empty on failure.
 #[cfg(windows)]
 fn own_sid() -> Option<Vec<u8>> {

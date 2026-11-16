@@ -228,6 +228,37 @@ mod tests {
         assert_eq!(&material.blob[4..4 + alg_len], b"ssh-ed25519");
     }
 
+    // Windows-borne key text arrives with CRLF endings and sometimes no
+    // trailing newline; serving must not silently drop those keys.
+    #[test]
+    fn crlf_line_endings_are_served() {
+        let private = ed25519_private();
+        let crlf = openssh_text(&private).replace('\n', "\r\n");
+        let (parsed, material) = load_material(&crlf).unwrap();
+        assert!(material.fingerprint.starts_with("SHA256:"));
+        assert!(sign_wire(&parsed, b"hello", 0).is_ok());
+    }
+
+    #[test]
+    fn missing_trailing_newline_is_served() {
+        let private = ed25519_private();
+        let text = openssh_text(&private).trim_end().to_string();
+        let (_, material) = load_material(&text).unwrap();
+        assert!(material.fingerprint.starts_with("SHA256:"));
+    }
+
+    #[test]
+    fn crlf_pkcs8_pem_is_served() {
+        use rsa::pkcs8::EncodePrivateKey;
+        let pem = test_rsa_raw(2048)
+            .to_pkcs8_pem(ssh_key::LineEnding::LF)
+            .unwrap()
+            .to_string()
+            .replace('\n', "\r\n");
+        let (_, material) = load_material(&pem).unwrap();
+        assert_eq!(alg_name(&material.blob), "ssh-rsa");
+    }
+
     #[test]
     fn p256_material_loads_and_signs() {
         let private = p256_random();

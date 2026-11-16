@@ -581,19 +581,21 @@ mod serve {
     pub(crate) mod windows {
         use super::{ACTIVE_CONNECTIONS, ConnectionSlot, MAX_CONNECTIONS, serve_connection};
         use crate::host::VaultHost;
+        use baluard_core::ipc::SendablePipeAttrs;
         use baluard_runtime::agents::PeerBinding;
         use std::path::{Path, PathBuf};
         use std::sync::Arc;
         use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
-        /// The canonical Windows OpenSSH agent pipe: ssh.exe clients
-        /// (Microsoft OpenSSH, Git via core.sshCommand) hardcode this
-        /// name, so owning it is the only zero-config way to serve. The
-        /// OpenSSH Authentication Agent service owns it while enabled;
-        /// that service ships Disabled on client Windows, so a default
-        /// install leaves the name free. The same takeover model
-        /// Bitwarden uses; there is no SSH_AUTH_SOCK equivalent to
-        /// point at a private pipe.
+        /// The canonical Windows OpenSSH agent pipe: Microsoft
+        /// OpenSSH's ssh.exe hardcodes this name, so owning it is the
+        /// only zero-config way to serve. The OpenSSH Authentication
+        /// Agent service owns it while enabled; that service ships
+        /// Disabled on client Windows, so a default install leaves the
+        /// name free. The same takeover model Bitwarden uses; there is
+        /// no SSH_AUTH_SOCK equivalent to point at a private pipe. Git
+        /// for Windows' bundled MSYS ssh ignores this pipe and needs
+        /// core.sshCommand pointed at the Microsoft client.
         pub const WINDOWS_AGENT_PIPE_NAME: &str = r"\\.\pipe\openssh-ssh-agent";
 
         pub fn agent_pipe_name() -> PathBuf {
@@ -613,16 +615,19 @@ mod serve {
                 .to_str()
                 .ok_or_else(|| std::io::Error::other("agent pipe name is not valid unicode"))?
                 .to_string();
-            let Some(mut attrs) = baluard_core::ipc::user_dacl_security_attributes() else {
+            let Some(attrs) = baluard_core::ipc::user_dacl_security_attributes() else {
                 return Err(std::io::Error::other(
                     "failed to build the agent pipe security descriptor",
                 ));
             };
+            let mut attrs = SendablePipeAttrs::new(attrs);
             // first_pipe_instance: a second creator fails with
-            // ERROR_ACCESS_DENIED while a live agent holds the name. The
-            // DACL is a property of the pipe object set by this first
-            // instance; later instances inherit it, so they carry no
-            // security attributes (same shape as the IPC listener).
+            // ERROR_ACCESS_DENIED while a live agent holds the name.
+            // Every instance carries the same user DACL (Go's winio and
+            // .NET do the same): that later instances inherit instance
+            // 1's SD is not a documented guarantee, and a NULL
+            // descriptor would fall back to the default SD that grants
+            // read to Everyone and Anonymous.
             let server = unsafe {
                 ServerOptions::new()
                     .first_pipe_instance(true)
@@ -641,13 +646,14 @@ mod serve {
             let host = host.clone();
             Ok(tokio::spawn(async move {
                 log::info!("ssh agent listening on pipe {pipe_name}");
-                accept_loop(server, pipe_name, host, policy_path).await;
+                accept_loop(server, pipe_name, attrs, host, policy_path).await;
             }))
         }
 
         async fn accept_loop(
             mut server: NamedPipeServer,
             pipe_name: String,
+            mut attrs: SendablePipeAttrs,
             host: Arc<VaultHost>,
             policy_path: PathBuf,
         ) {
@@ -657,7 +663,7 @@ mod serve {
                 // client that vanished leaves the old one unusable.
                 if let Err(e) = server.connect().await {
                     log::warn!("[agent] pipe connect failed: {e}");
-                    server = spawn_next_instance(&pipe_name).await;
+                    server = spawn_next_instance(&pipe_name, &mut attrs).await;
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     continue;
                 }
@@ -669,24 +675,33 @@ mod serve {
                 {
                     ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     log::warn!("[agent] refused a connection: too many open");
-                    server = spawn_next_instance(&pipe_name).await;
+                    server = spawn_next_instance(&pipe_name, &mut attrs).await;
+                    // A hammering client would otherwise spin this loop
+                    // with no backoff between refusals.
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     continue;
                 }
+                // The slot moves into the serve task from here, not
+                // from inside it: the re-arm await below must not lose
+                // the counter slot if the task is cancelled in that gap.
+                let _slot = ConnectionSlot;
                 // Re-arm the listener before serving: a new client must
                 // never wait behind the current connection.
                 let client = server;
-                server = spawn_next_instance(&pipe_name).await;
+                server = spawn_next_instance(&pipe_name, &mut attrs).await;
                 // Peer identity stays unresolved on Windows (the pipe
                 // DACL is the boundary); approvals and audit records
-                // carry the same fallback the IPC path uses.
+                // carry the same fallback the unix unresolved path uses.
+                // Consequence: all Windows signs share one synthetic
+                // executable in the PendingQueue, so its per-executable
+                // pending cap acts as a global cap until client pid
+                // attribution (GetNamedPipeClientProcessId) is wired.
                 let peer = PeerBinding::new(0, "<unresolved local client>".to_string(), 0);
                 let host = host.clone();
                 let policy_path = policy_path.clone();
                 tokio::spawn(async move {
-                    // The slot is a drop guard: a panicked handler must
-                    // not leak the counter and wedge later clients out.
-                    let _slot = ConnectionSlot;
                     serve_connection(client, host, peer, policy_path).await;
+                    drop(_slot);
                 });
             }
         }
@@ -694,9 +709,17 @@ mod serve {
         /// Keep exactly one listening instance alive. create() is sync;
         /// a persistent failure retries rather than killing a daemon
         /// that may hold unlocked vaults.
-        async fn spawn_next_instance(pipe_name: &str) -> NamedPipeServer {
+        async fn spawn_next_instance(
+            pipe_name: &str,
+            attrs: &mut SendablePipeAttrs,
+        ) -> NamedPipeServer {
             loop {
-                match ServerOptions::new().create(pipe_name) {
+                match unsafe {
+                    ServerOptions::new().create_with_security_attributes_raw(
+                        pipe_name,
+                        attrs.as_ptr() as *mut std::ffi::c_void,
+                    )
+                } {
                     Ok(server) => return server,
                     Err(e) => {
                         log::warn!("[agent] pipe instance create failed: {e}");
