@@ -17,6 +17,7 @@ chmod +x "$SANDBOX/scripts/bump-version.sh"
 cp "$ROOT/Cargo.toml" "$SANDBOX/Cargo.toml"
 cp "$ROOT/desktop/src-tauri/Cargo.toml" "$SANDBOX/desktop/src-tauri/Cargo.toml"
 cp "$ROOT/desktop/package.json" "$SANDBOX/desktop/package.json"
+cp "$ROOT/desktop/package-lock.json" "$SANDBOX/desktop/package-lock.json"
 cp "$ROOT/mobile/androidApp/build.gradle.kts" "$SANDBOX/mobile/androidApp/"
 cp "$ROOT/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.kt" \
   "$SANDBOX/mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/"
@@ -71,6 +72,16 @@ run_bump "$BUMP" > "$TMP/happy.out" 2> "$TMP/happy.err"
 expect_new Cargo.toml "^version = \"$BUMP\"$"
 expect_new desktop/src-tauri/Cargo.toml "^version = \"$BUMP\"$"
 expect_new desktop/package.json "\"version\": \"$BUMP\""
+# The lockfile's two root version slots move with the bump so the bump
+# commit can never ship the stale-lockfile leftover again (0.7.1, 0.7.2).
+lock_count=$(grep -c "\"version\": \"$BUMP\"" "$SANDBOX/desktop/package-lock.json" || true)
+[[ "$lock_count" -ge 2 ]] || { echo "desktop/package-lock.json: expected both root slots at $BUMP, got $lock_count" >&2; exit 1; }
+# A dependency pinned to the old version string must stay untouched: only
+# the two root slots may move.
+if grep -q "\"version\": \"$CUR\"" "$SANDBOX/desktop/package-lock.json"; then
+  echo "desktop/package-lock.json: stale $CUR version survived the bump" >&2
+  exit 1
+fi
 expect_new browser/shared/package.json "\"version\": \"$BUMP\""
 expect_new browser/shared/manifest.base.json "\"version\": \"$BUMP\""
 expect_new mobile/androidApp/build.gradle.kts "versionName = \"$BUMP\""

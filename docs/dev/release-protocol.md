@@ -159,12 +159,17 @@ The desktop confirm-first flow: the Rust command surface (`desktop/src-tauri/src
 1. `just check` green (fmt, clippy, audit, tests, build).
 2. `just test-release-scripts` green (the registered suites: fdroid, sync-site-repos, build-extension-packages, submit-extension-stores, build-windows-installer, build-nmh-manifests, bump-version, generate-updates-manifest, publish-updates-manifest, sign-updater-sigs, stage-release-assets, upload-play-release, build-arch-repo, build-apt-repo, verify-release-live, check-changelog, android-launcher-icons).
 3. `just smoke-pkg` for the deb, and the relevant `e2e` recipes for changed surfaces (`e2e-desktop`, `e2e-android` with `just emulator`, `e2e-extension`, `e2e-extension-firefox`).
-4. After `just desktop-build`, confirm the NMH manifests carry the real origin: `grep -r baluard-unconfigured desktop/src-tauri/nmh-manifests/` must find nothing.
-5. Confirm the release binaries carry the real provider client IDs: `strings target/release/baluard-daemon | grep REPLACE_WITH_` must find nothing (GitLab and Codeberg IDs bake at build from `BALUARD_GITLAB_CLIENT_ID` / `BALUARD_CODEBERG_CLIENT_ID` on the release box).
-6. Confirm the newest store zips carry the bumped version (`just ext-package` already refuses a mismatch).
+4. After the build legs, `just release-post-checks <version>` green: it fails on missing sidecars, greps the actual GitLab and Codeberg client IDs in the four consumed release sidecars, and checks the NMH manifests and the store APK version. The `strings <binary> | grep REPLACE_WITH_` probe finds exactly one match on every binary, including healthy ones: `option_env!`'s fallback literal compiles in unconditionally, so that count is inert and greping for it proves nothing.
+5. Confirm the newest store zips carry the bumped version (`just ext-package` already refuses a mismatch).
 
 ## Release-day gotchas
 
+- The build-leg wrappers (`just build-linux|windows|android|macos`) own `/tmp/leg-<leg>.log` and refuse to launch when it exists without its `.rc`: a shell redirect like `just build-linux >log 2>&1 &` pre-creates the log and trips the guard. Launch bare, one subshell per leg; `just legs-status` reads the state.
+- `dist/archive-*/` subtrees are pruned by `release-stage`'s stale-version guard, so superseded artifacts can stay under `dist/archive-<version>/`. Loose old-version files anywhere else under `dist/` still refuse the stage.
+- `repo-out/` is wholesale-mirrored into the packages repo by `repo-sync`; a scratch directory staged there ships silently. `sync-site-repos.sh` now refuses unexpected top-level entries, so add genuinely new outputs to its known set instead of working around the guard.
+- The deb container smoke needs `universe` enabled first: bare `ubuntu:24.04` cannot resolve libwebkit2gtk and friends, and the install dies with rc=100 on unsatisfiable Depends before any Baluard defect is tested. Enable universe, `apt-get update`, then install the deb and check `ldd` reports zero `not found`.
+- `cargo audit` reports RUSTSEC-2023-0071 (rsa crate, Marvin timing side channel) permanently: the agent serves imported RSA as an explicitly accepted risk (ADR 0111), the advisory has no upstream fix, and the report is expected, not a gate failure.
+- The GitHub release carries exactly the 16 stable-name assets `release-upload/` stages. The deb/rpm updater `.sig` files are deliberately absent: the mapping table marks them repo-internal (consumed by the apt/dnf trees), so their absence upstream is correct, not an upload miss.
 - The Windows NSIS leg needs `TAURI_SIGNING_PRIVATE_KEY` in the environment: without it the bundle builds fine and the run then dies at updater signing (`A public key has been found, but no private key`, rc 1). Rerun with the key; the warm rebuild takes a couple of minutes.
 - Probe release assets by their stable names. The `dist/` versioned names match no release asset under the stable-name scheme and 404 by design.
 - Download probes must follow redirects (`curl -L`): release download URLs 302 to signed CDN URLs, and a bare curl returns an empty body that reads like a failure.

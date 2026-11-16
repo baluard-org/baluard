@@ -89,6 +89,19 @@ test ! -e "$PKG_SITE/fdroid/repo/stale.apk"
 test "$(cat "$PKG_SITE/.gitignore")" = keep-dotfile
 test -f "$PKG_SITE/.nojekyll"
 
+# Guard: an unexpected top-level staging entry must refuse the sync before
+# any mutation (the mirror is wholesale; a scratch dir would ship silently).
+mkdir -p "$SRC/dist-archives"
+printf 'old\n' > "$SRC/dist-archives/junk"
+if "$ROOT/scripts/sync-site-repos.sh" "$SRC" "$SITE" "$PKG_SITE" > "$TMP/guard.log" 2>&1; then
+  echo "FAIL: unexpected staging entry must refuse the sync" >&2
+  exit 1
+fi
+grep -q "dist-archives" "$TMP/guard.log" || { echo "FAIL: guard did not name the intruder" >&2; cat "$TMP/guard.log" >&2; exit 1; }
+rm -rf "$SRC/dist-archives"
+# The refused run mutated nothing: the bytes from the happy path still hold.
+test "$(cat "$PKG_SITE/arch/x86_64/baluard.db")" = archdb
+
 # Negative: a lost author-owned file must fail the sync. The deploy workflow
 # is excluded from the rsync, so once it is gone the sync cannot restore it
 # and the post-sync gate is the only defense (the 0.3.0 outage class).

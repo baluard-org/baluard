@@ -115,7 +115,10 @@ while IFS= read -r f; do
     # mutate the staged copy and stale its recorded hash
     cp -p "$f" "$OUT_ABS/$target"
   fi
-done < <(find "$SRC" \( -type f -o -type l \))
+# archive-* subtrees hold superseded release artifacts kept for recovery;
+# they are deliberately never staged, so prune them instead of letting the
+# stale-version guard reject every future release for their presence
+done < <(find "$SRC" -path "$SRC/archive-*" -prune -o \( -type f -o -type l \) -print)
 
 if [[ -n "$APK" ]]; then
   [[ -f "$APK" ]] || die "--apk path not found: $APK"

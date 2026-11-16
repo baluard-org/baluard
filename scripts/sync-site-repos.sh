@@ -31,6 +31,18 @@ git -C "$SITE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "site is 
 [[ ! -e "$SITE/repo" && ! -e "$SITE/fdroid" ]] || fail "site still carries package trees: remove repo/ and fdroid/ from the site repo (packages publish to baluard-packages)"
 [[ -d "$PKG_SITE" ]] || fail "package site clone missing: $PKG_SITE (git clone baluard-org/baluard-packages)"
 
+# The mirror below is wholesale: everything in the staging tree lands in the
+# published packages repo. Anything outside the generated set (scratch dirs,
+# archives, editor droppings) would ship silently, so refuse up front and
+# name the intruder.
+known=" arch baluard-release.asc dists fdroid pool rpms SHA256SUMS SHA256SUMS.sig .nojekyll "
+unexpected=""
+while IFS= read -r -d '' entry; do
+  b=$(basename "$entry")
+  [[ "$known" == *" $b "* ]] || unexpected+="$b "
+done < <(find "$SRC" -mindepth 1 -maxdepth 1 -print0)
+[[ -z "$unexpected" ]] || fail "unexpected staging entries in $SRC (the mirror publishes everything): $unexpected"
+
 # Packages publish straight from staging. The clone's dotfiles, the GitHub
 # workflow that deploys it, and the author-owned install definitions are
 # clone-only content the rsync must never mirror over (see release-common.sh);

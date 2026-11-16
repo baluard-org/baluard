@@ -33,6 +33,7 @@ fi
 CARGO_TOML="Cargo.toml"
 DESKTOP_CARGO_TOML="desktop/src-tauri/Cargo.toml"
 DESKTOP_PKG="desktop/package.json"
+DESKTOP_LOCK="desktop/package-lock.json"
 EXT_PKG="browser/shared/package.json"
 MANIFEST="browser/shared/manifest.base.json"
 GRADLE="mobile/androidApp/build.gradle.kts"
@@ -65,6 +66,27 @@ for f in "$DESKTOP_PKG" "$EXT_PKG" "$MANIFEST"; do
   sed -i "s/^\(\s*\)\"version\": \"[^\"]*\"/\1\"version\": \"$NEW\"/" "$f"
 done
 
+# The desktop lockfile also carries the package version twice (root and
+# packages.""), but a line-anchored sed would hit dependency entries too,
+# so the two root positions move through a targeted JSON rewrite. Without
+# this the lockfile drifts until a build leg's npm run rewrote it, and the
+# bump commit shipped stale (0.7.1, 0.7.2).
+python3 - "$DESKTOP_LOCK" "$CURRENT" "$NEW" <<'PYEOF'
+import json, sys
+path, old, new = sys.argv[1:]
+with open(path, encoding="utf-8") as fh:
+    data = json.load(fh)
+# Both root slots must carry the old version: a slot stale at anything
+# else is unexpected drift and refuses the bump rather than skipping it.
+for slot in (data, data.get("packages", {}).get("")):
+    if not isinstance(slot, dict) or slot.get("version") != old:
+        sys.exit(f"{path}: expected the root version slot at {old}")
+    slot["version"] = new
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2, ensure_ascii=False)
+    fh.write("\n")
+PYEOF
+
 # Android: versionName + derived versionCode (3 digits per component).
 sed -i "s/versionName = \"[^\"]*\"/versionName = \"$NEW\"/; s/versionCode = [0-9]*/versionCode = $VERSION_CODE/" "$GRADLE"
 
@@ -83,6 +105,11 @@ check "$DESKTOP_CARGO_TOML" "^version = \"$NEW\"\$"
 for f in "$DESKTOP_PKG" "$EXT_PKG" "$MANIFEST"; do
   check "$f" "\"version\": \"$NEW\""
 done
+count=$(grep -c "\"version\": \"$NEW\"" "$DESKTOP_LOCK" || true)
+if [[ "$count" -lt 2 ]]; then
+  echo "bump did not land in $DESKTOP_LOCK (expected both root slots at $NEW, found $count)" >&2
+  exit 1
+fi
 check "$GRADLE" "versionName = \"$NEW\""
 check "$GRADLE" "versionCode = $VERSION_CODE"
 check "$STRINGS_EN" "Baluard Mobile v$NEW"

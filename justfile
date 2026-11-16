@@ -247,6 +247,41 @@ updates-publish tag:
 	set -euo pipefail
 	scripts/publish-updates-manifest.sh {{ tag }}
 
+# Post-build release checklist (run after the build legs). Verifies the
+# built artifacts instead of trusting the build: NMH manifests carry real
+# origins, the store APK matches the bump, and every consumed release
+# sidecar has the provider client IDs baked in. REPLACE_WITH_ appearing
+# once per binary is the option_env! fallback literal and is inert; the
+# real check is the presence of the actual IDs.
+release-post-checks version:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	fail() { echo "release-post-checks: $*" >&2; exit 1; }
+	if grep -rq baluard-unconfigured desktop/src-tauri/nmh-manifests/ 2>/dev/null; then
+		fail "NMH manifests carry the unconfigured placeholder"
+	fi
+	grep -q "versionName = \"{{version}}\"" mobile/androidApp/build.gradle.kts \
+		|| fail "store APK versionName is not {{version}}"
+	code=$(printf '{{version}}' | awk -F. '{ print $1 * 1000000 + $2 * 1000 + $3 }')
+	grep -q "versionCode = $code" mobile/androidApp/build.gradle.kts \
+		|| fail "store APK versionCode is not $code"
+	gid=$(grep -m1 '^export BALUARD_GITLAB_CLIENT_ID=' ~/.secrets | cut -d= -f2- | sed -E 's/^"//; s/"$//')
+	cid=$(grep -m1 '^export BALUARD_CODEBERG_CLIENT_ID=' ~/.secrets | cut -d= -f2- | sed -E 's/^"//; s/"$//')
+	[[ -n "$gid" && -n "$cid" ]] || fail "provider client ids missing in ~/.secrets"
+	sidecars=(
+		desktop/src-tauri/binaries/baluard-daemon-x86_64-unknown-linux-gnu
+		target/x86_64-pc-windows-msvc/release/baluard-daemon.exe
+		target/aarch64-apple-darwin/release/baluard-daemon
+		target/release/baluard-daemon
+	)
+	for bin in "${sidecars[@]}"; do
+		[[ -f "$bin" ]] || fail "consumed sidecar missing: $bin (build it before checking)"
+		command -v strings >/dev/null || fail "strings not installed"
+		grep -qF "$gid" <(strings "$bin") || fail "gitlab client id not baked into $bin"
+		grep -qF "$cid" <(strings "$bin") || fail "codeberg client id not baked into $bin"
+		done
+	echo "release-post-checks: all green for {{version}}"
+
 # Read-only sweep: every workspace repo settled before cutting a release.
 release-preflight:
 	#!/usr/bin/env bash

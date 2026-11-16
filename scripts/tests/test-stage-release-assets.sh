@@ -280,6 +280,20 @@ if [[ -d "$OUT" ]]; then
   exit 1
 fi
 
+# --- Case 5: dist/archive-*/ subtrees are pruned, not rejected ---
+rm -rf "$ART" "$OUT"
+make_artifacts
+mkdir -p "$ART/archive-0.0.9"
+: > "$ART/archive-0.0.9/Baluard_0.0.9_amd64.deb"
+: > "$ART/archive-0.0.9/SHA256SUMS"
+PATH="$BIN:$PATH" "$STAGE" \
+  --version "$VER" --apk "$TMP/fake.apk" --output "$OUT" "$ART" > "$TMP/out5.log" 2>&1
+check_set "${EXPECT[@]}"
+if grep -rq "0.0.9" "$OUT/SHA256SUMS"; then
+  echo "FAIL: archived artifacts leaked into the staged sums" >&2
+  exit 1
+fi
+
 # --- Case 6: missing updater key fails fast before staging ---
 rm -rf "$ART" "$OUT"
 make_artifacts
