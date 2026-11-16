@@ -387,25 +387,24 @@ fn remove_appimage_manifests(
     report: &mut RegistrationReport,
 ) {
     let id = chrome_ext_id();
-    let remove_matching = |path: &Path,
-                           expected: Result<String, String>,
-                           report: &mut RegistrationReport| {
-        let expected = match expected {
-            Ok(contents) => contents,
-            Err(e) => {
-                report.errors.push(e);
-                return;
+    let remove_matching =
+        |path: &Path, expected: Result<String, String>, report: &mut RegistrationReport| {
+            let expected = match expected {
+                Ok(contents) => contents,
+                Err(e) => {
+                    report.errors.push(e);
+                    return;
+                }
+            };
+            if fs::read(path).is_ok_and(|cur| cur == expected.as_bytes()) {
+                match fs::remove_file(path) {
+                    Ok(()) => report.written += 1,
+                    Err(e) => report
+                        .errors
+                        .push(format!("remove {}: {e}", path.display())),
+                }
             }
         };
-        if fs::read(path).is_ok_and(|cur| cur == expected.as_bytes()) {
-            match fs::remove_file(path) {
-                Ok(()) => report.written += 1,
-                Err(e) => report
-                    .errors
-                    .push(format!("remove {}: {e}", path.display())),
-            }
-        }
-    };
     for rel in LINUX_CHROME_CONFIG_DIRS {
         let dir = config_home.join(rel).join("NativeMessagingHosts");
         if !dir.is_dir() {
@@ -777,7 +776,8 @@ mod tests {
             )
             .unwrap();
             fs::write(
-                home.join(".mozilla/native-messaging-hosts").join(format!("{name}.json")),
+                home.join(".mozilla/native-messaging-hosts")
+                    .join(format!("{name}.json")),
                 firefox_manifest(name, &stable).unwrap(),
             )
             .unwrap();
@@ -787,12 +787,19 @@ mod tests {
         let foreign = config
             .join("google-chrome/NativeMessagingHosts")
             .join(format!("{LEGACY_HOST_NAME}.json"));
-        fs::write(&foreign, r#"{"name":"xyz.actitud.baluard","path":"/usr/bin/baluard-nmh"}"#).unwrap();
+        fs::write(
+            &foreign,
+            r#"{"name":"xyz.actitud.baluard","path":"/usr/bin/baluard-nmh"}"#,
+        )
+        .unwrap();
 
         let mut report = RegistrationReport::default();
         remove_appimage_manifests(&config, &home, &stable, &mut report);
         assert!(report.is_clean(), "{:?}", report.errors);
-        assert_eq!(report.written, 3, "three own manifests removed; the fourth is foreign");
+        assert_eq!(
+            report.written, 3,
+            "three own manifests removed; the fourth is foreign"
+        );
         assert!(
             !config
                 .join("google-chrome/NativeMessagingHosts")
@@ -800,10 +807,12 @@ mod tests {
                 .exists()
         );
         for name in [HOST_NAME, LEGACY_HOST_NAME] {
-            assert!(!home
-                .join(".mozilla/native-messaging-hosts")
-                .join(format!("{name}.json"))
-                .exists());
+            assert!(
+                !home
+                    .join(".mozilla/native-messaging-hosts")
+                    .join(format!("{name}.json"))
+                    .exists()
+            );
         }
         assert!(foreign.is_file(), "foreign manifest untouched");
     }
@@ -829,10 +838,12 @@ mod tests {
         let mut report = RegistrationReport::default();
         linux_register_body(&dev_exe, false, &config, &home, &stable, &mut report);
         assert_eq!(report.written, 0, "dev run cleans nothing");
-        assert!(config
-            .join("google-chrome/NativeMessagingHosts")
-            .join(format!("{HOST_NAME}.json"))
-            .is_file());
+        assert!(
+            config
+                .join("google-chrome/NativeMessagingHosts")
+                .join(format!("{HOST_NAME}.json"))
+                .is_file()
+        );
 
         // Same dev-tree daemon but flagged as running from an AppImage:
         // it registers (the guard is about installed-ness for cleanup).
