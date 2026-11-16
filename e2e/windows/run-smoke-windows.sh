@@ -62,9 +62,15 @@ if [[ "${BALUARD_SMOKE_WIN_RESET:-0}" == "1" ]]; then
 fi
 
 echo "== Locating the app"
-EXE="$(run_ssh 'if exist "%LOCALAPPDATA%\baluard\baluard-desktop.exe" (echo %LOCALAPPDATA%\baluard\baluard-desktop.exe) else if exist "%LOCALAPPDATA%\Baluard\Baluard.exe" (echo %LOCALAPPDATA%\Baluard\Baluard.exe) else (echo NOTFOUND)' | tr -d '\r')"
+EXE="$(run_ssh 'if exist "%LOCALAPPDATA%\Programs\Baluard\baluard-desktop.exe" (echo %LOCALAPPDATA%\Programs\Baluard\baluard-desktop.exe) else if exist "%LOCALAPPDATA%\baluard\baluard-desktop.exe" (echo %LOCALAPPDATA%\baluard\baluard-desktop.exe) else if exist "%LOCALAPPDATA%\Baluard\Baluard.exe" (echo %LOCALAPPDATA%\Baluard\Baluard.exe) else (echo NOTFOUND)' | tr -d '\r')"
 [[ "$EXE" != "NOTFOUND" && -n "$EXE" ]] || { echo "FAIL: the app is not installed in the guest (install the SMOKE build: scripts/build-windows-installer.sh --smoke)"; exit 1; }
 echo "   $EXE"
+
+# The daemon sits next to the app binary; the NSIS layout moved to
+# Programs\Baluard, so never hardcode the data dir for it.
+EXE_DIR="$(run_ssh "for %F in (\"$EXE\") do @echo %~dpF" | tr -d '\r' | tr -d '\n')"
+DAEMON_EXE="${EXE_DIR}baluard-daemon.exe"
+run_ssh "if exist \"$DAEMON_EXE\" (exit /b 0) else (exit /b 1)" || { echo "FAIL: baluard-daemon.exe not next to the app ($DAEMON_EXE)"; exit 1; }
 
 echo "== Opening CDP tunnel (127.0.0.1:$CDP -> guest)"
 "${SSHBIN[@]}" "${SSH_OPTS[@]}" -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
@@ -80,7 +86,7 @@ run_ssh 'taskkill /F /IM baluard-daemon.exe >nul 2>&1 & taskkill /F /IM baluard-
 # app has no kill sweep (that is #[cfg(unix)]) and adopts a healthy
 # same-version daemon (D79). So: daemon first, then the app.
 DAEMON_BAT='%LOCALAPPDATA%\baluard\smoke-daemon.bat'
-run_ssh "(echo @echo off & echo set BALUARD_DISABLE_KEYRING=1 & echo start \"\" \"%LOCALAPPDATA%\\baluard\\baluard-daemon.exe\") > \"$DAEMON_BAT\""
+run_ssh "(echo @echo off & echo set BALUARD_DISABLE_KEYRING=1 & echo start \"\" \"$DAEMON_EXE\") > \"$DAEMON_BAT\""
 run_ssh 'schtasks /create /f /tn BaluardSmokeDaemon /sc once /st 00:00 /tr "%LOCALAPPDATA%\baluard\smoke-daemon.bat" >nul' || { echo "FAIL: could not create the daemon task"; exit 1; }
 run_ssh 'schtasks /run /tn BaluardSmokeDaemon >nul' || { echo "FAIL: could not run the daemon task"; exit 1; }
 sleep 3

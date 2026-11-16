@@ -103,4 +103,16 @@ BALUARD_SMOKE_WEBDRIVER_PORT="$WDP" \
 BALUARD_SMOKE_ARTIFACTS="$ARTIFACTS" \
 node smoke.mjs
 
+# The toggles only prove the UI flipped; these prove the writes persisted.
+PREFS="$(run_ssh "cat ~/Library/'Application Support'/baluard/desktop-prefs.json" || echo READ-FAILED)"
+echo "$PREFS" | grep -q '"close_to_tray"[[:space:]]*:[[:space:]]*true' || {
+  echo "FAIL: desktop-prefs.json has no close_to_tray=true: $PREFS"; exit 1;
+}
+echo "OK: close_to_tray persisted"
+POLICY="$(run_ssh "cat ~/Library/'Application Support'/baluard/agent-policy.json 2>/dev/null" || echo MISSING)"
+echo "$POLICY" | grep -q '"enabled"[[:space:]]*:[[:space:]]*false' || {
+  echo "FAIL: agent-policy.json is not enabled:false after the cancel step: $POLICY"; exit 1;
+}
+echo "OK: agent policy stayed disabled after cancel"
+
 echo "OK: artifacts in $ARTIFACTS"

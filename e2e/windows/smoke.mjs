@@ -75,9 +75,15 @@ const openDetail = async () => {
 const enterEdit = async () => {
   await openDetail();
   await page.locator('[data-testid="detail-edit"]').click();
-  await page
-    .locator('[data-testid="form-username"]')
-    .waitFor({ state: "visible", timeout: 20000, timeoutMsg: "edit form did not open" });
+  const form = page.locator('[data-testid="form-username"]');
+  await form
+    .waitFor({ state: "visible", timeout: 3000 })
+    .catch(async () => {
+      // WebView2/CDP coordinate clicks on this bottom-bar button are flaky
+      // even when the trusted click reaches it; fall back to a DOM click.
+      await page.evaluate(() => document.querySelector('[data-testid="detail-edit"]').click());
+      await form.waitFor({ state: "visible", timeout: 20000, timeoutMsg: "edit form did not open" });
+    });
 };
 
 await openDetail();
@@ -107,6 +113,46 @@ await enterEdit();
 assert.strictEqual(await username.inputValue(), original, "username restore did not persist");
 await shot(page, "05-restored.png");
 console.log("step: restore PASS");
+
+// SSH agent enable through the reprompt modal — regression flow for the
+// portal event-delivery fix. State is read from the enabled class because
+// WebView2 text reads on this button are unreliable under automation.
+await page.locator('[data-testid="settings-open"]').click();
+await page.locator('[data-testid="settings-tab-general"]').click();
+const sshToggle = page.locator('[data-testid="ssh-agent-toggle"]');
+await sshToggle.waitFor({ state: "visible", timeout: 20000, timeoutMsg: "ssh agent toggle did not render" });
+const sshEnabled = async () => ((await sshToggle.getAttribute("class")) || "").includes("btn-active-green");
+if (await sshEnabled()) {
+  await sshToggle.click(); // disable first so reruns exercise the reprompt
+  await page.waitForFunction(() => !document.querySelector('[data-testid="ssh-agent-toggle"]').className.includes("btn-active-green"), { timeout: 20000 });
+}
+await shot(page, "06-settings-general.png");
+await sshToggle.click();
+const repromptInput = page.locator('[data-testid="reprompt-input"]');
+await repromptInput.waitFor({ state: "visible", timeout: 10000, timeoutMsg: "reprompt modal did not open after ssh agent enable click" });
+await shot(page, "07-reprompt.png");
+await repromptInput.fill(pw);
+await repromptInput.press("Enter");
+await repromptInput.waitFor({ state: "hidden", timeout: 20000, timeoutMsg: "reprompt modal never closed after Enter" });
+await page.waitForFunction(() => document.querySelector('[data-testid="ssh-agent-toggle"]').className.includes("btn-active-green"), { timeout: 20000, timeoutMsg: "ssh agent toggle did not flip to enabled after reprompt" });
+await shot(page, "08-ssh-agent-enabled.png");
+console.log("step: ssh agent enable via reprompt PASS");
+
+// Disable path must not reopen the reprompt.
+await sshToggle.click();
+await page.waitForFunction(() => !document.querySelector('[data-testid="ssh-agent-toggle"]').className.includes("btn-active-green"), { timeout: 20000, timeoutMsg: "ssh agent toggle did not flip back to disabled" });
+assert(!(await repromptInput.isVisible().catch(() => false)), "reprompt opened on the disable path");
+console.log("step: ssh agent disable PASS");
+
+// Cancel path: reopen the reprompt, cancel, verify it closes still disabled.
+await sshToggle.click();
+await repromptInput.waitFor({ state: "visible", timeout: 10000, timeoutMsg: "reprompt modal did not reopen for the cancel step" });
+await repromptInput.fill(pw);
+await page.locator('[data-testid="reprompt-cancel"]').click();
+await repromptInput.waitFor({ state: "hidden", timeout: 20000, timeoutMsg: "reprompt modal never closed after cancel" });
+assert(!(await sshEnabled()), "ssh agent enabled after cancel — cancel leaked a policy write");
+await shot(page, "09-ssh-agent-cancelled.png");
+console.log("step: reprompt cancel PASS");
 
 console.log("WINDOWS SMOKE PASS");
 }

@@ -69,14 +69,17 @@ cp "target/$TARGET/release/baluard-nmh.exe" "$BIN_DIR/baluard-nmh-$TRIPLE.exe"
 echo "Building NSIS installer..."
 cd desktop
 CONFIG_ARGS=()
+FEAT_ARGS=()
 if [[ "$SMOKE" == "1" ]]; then
   CONFIG_ARGS=(--config src-tauri/tauri.smoke.conf.json)
+  FEAT_ARGS=(--features smoke)
 fi
-npm run tauri build -- --bundles nsis --target "$TARGET" --runner cargo-xwin "${CONFIG_ARGS[@]}"
+npm run tauri build -- --bundles nsis --target "$TARGET" --runner cargo-xwin "${CONFIG_ARGS[@]}" "${FEAT_ARGS[@]}"
 
 BUNDLE_DIR="src-tauri/target/$TARGET/release/bundle/nsis"
 if [[ "$SMOKE" == "1" ]]; then
-  SETUP="$(ls "$BUNDLE_DIR"/*-setup.exe 2>/dev/null | head -1)"
+  # Newest setup.exe by mtime: the bundle dir keeps every historical version.
+SETUP="$(ls -t "$BUNDLE_DIR"/*-setup.exe 2>/dev/null | head -1)"
   [[ -n "$SETUP" ]] && cp "$SETUP" "${SETUP/%-setup.exe/-smoke-setup.exe}"
   echo "windows SMOKE installer: $BUNDLE_DIR/*-smoke-setup.exe"
 else
