@@ -19,9 +19,6 @@ depends=(
   'webkit2gtk-4.1'
   'libayatana-appindicator'
   'openssl'
-  # Soname pin, not the package name: pacman resolves provides, so the next
-  # libgit2 ABI bump fails the install loudly instead of crashing at exec.
-  'libgit2.so=1.9-64'
   'libssh2'
   'hicolor-icon-theme'
 )

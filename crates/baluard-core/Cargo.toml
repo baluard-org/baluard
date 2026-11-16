@@ -150,6 +150,10 @@ libgit2-sys = { version = "0.18", features = ["vendored"] }
 # (tpm2-tss-devel). Talks to /dev/tpmrm0 through the kernel resource
 # manager by default; the TSS2_TCTI_* env vars override.
 tss-esapi = { version = "7.6", optional = true }
+# Vendored libgit2: a distro-pinned soname (Ubuntu noble carries 1.7,
+# Fedora 1.9) would make the deb uninstallable. libssh2 and OpenSSL stay
+# dynamic against the system libraries.
+libgit2-sys = { version = "0.18", features = ["vendored"] }
 
 [target.'cfg(all(target_os = "windows"))'.dependencies]
 # The hw-seal PCP (TPM 2.0 over CNG) backend and the daemon IPC named-pipe
