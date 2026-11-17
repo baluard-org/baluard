@@ -61,7 +61,11 @@ fn make_cipher(pk_data: PasskeyData) -> Box<Cipher> {
                 match_strategy: baluard_core::types::UriMatchStrategy::Domain,
             }],
             fido2_credentials: Some(vec![pk_data]),
-            ..Default::default()
+            password: Default::default(),
+            totp_uri: Default::default(),
+            autofill_on_page_load: Default::default(),
+            password_revision_date: Default::default(),
+            favicon: Default::default(),
         }),
         favorite: false,
         reprompt: false,

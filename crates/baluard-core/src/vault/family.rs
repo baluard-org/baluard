@@ -974,7 +974,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("rob".into()),
                 password: Some("hunter2".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             ..Default::default()
         };

@@ -616,7 +616,11 @@ mod tests {
                     username: Some("user".into()),
                     password: Some("pass".into()),
                     uris: vec![LoginUri::new("https://github.com".into())],
-                    ..Default::default()
+                    totp_uri: Default::default(),
+                    autofill_on_page_load: Default::default(),
+                    password_revision_date: Default::default(),
+                    favicon: Default::default(),
+                    fido2_credentials: Default::default(),
                 }),
             ),
             make_cipher(
@@ -643,7 +647,11 @@ mod tests {
                 username: Some("u".into()),
                 password: Some("new_pass".into()),
                 uris: vec![],
-                ..Default::default()
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
         );
         cipher.folder_id = Some(folder_id);

@@ -1117,13 +1117,25 @@ mod tests {
         let mut base_c = base.clone();
         base_c.kind = CipherKind::Login(LoginData {
             fido2_credentials: Some(vec![keyed.clone()]),
-            ..LoginData::default()
+            username: Default::default(),
+            password: Default::default(),
+            uris: Default::default(),
+            totp_uri: Default::default(),
+            autofill_on_page_load: Default::default(),
+            password_revision_date: Default::default(),
+            favicon: Default::default(),
         });
         let local_c = base_c.clone();
         let mut remote_c = base.clone();
         remote_c.kind = CipherKind::Login(LoginData {
             fido2_credentials: Some(vec![redacted]),
-            ..LoginData::default()
+            username: Default::default(),
+            password: Default::default(),
+            uris: Default::default(),
+            totp_uri: Default::default(),
+            autofill_on_page_load: Default::default(),
+            password_revision_date: Default::default(),
+            favicon: Default::default(),
         });
 
         match merge_ciphers(&base_c, &local_c, &remote_c) {
@@ -1308,7 +1320,10 @@ mod tests {
             kind: CipherKind::Card(crate::types::CardData {
                 cardholder_name: Some("Alice".into()),
                 number: Some("1111".into()),
-                ..Default::default()
+                brand: Default::default(),
+                exp_month: Default::default(),
+                exp_year: Default::default(),
+                code: Default::default(),
             }),
             favorite: false,
             notes: None,
@@ -1356,7 +1371,11 @@ mod tests {
             collection_id: None,
             kind: CipherKind::Card(crate::types::CardData {
                 number: Some("1111".into()),
-                ..Default::default()
+                cardholder_name: Default::default(),
+                brand: Default::default(),
+                exp_month: Default::default(),
+                exp_year: Default::default(),
+                code: Default::default(),
             }),
             favorite: false,
             notes: None,

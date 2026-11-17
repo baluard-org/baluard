@@ -688,6 +688,19 @@ pub struct LoginData {
     pub fido2_credentials: Option<Vec<PasskeyData>>,
 }
 
+impl Zeroize for LoginData {
+    fn zeroize(&mut self) {
+        self.password.zeroize();
+        self.totp_uri.zeroize();
+    }
+}
+
+impl Drop for LoginData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// Card-specific cipher data.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CardData {
@@ -703,6 +716,19 @@ pub struct CardData {
     pub exp_year: Option<String>,
     #[serde(default)]
     pub code: Option<String>,
+}
+
+impl Zeroize for CardData {
+    fn zeroize(&mut self) {
+        self.number.zeroize();
+        self.code.zeroize();
+    }
+}
+
+impl Drop for CardData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
 }
 
 /// Identity-specific cipher data.
@@ -746,6 +772,20 @@ pub struct IdentityData {
     pub license_number: Option<String>,
 }
 
+impl Zeroize for IdentityData {
+    fn zeroize(&mut self) {
+        self.ssn.zeroize();
+        self.passport_number.zeroize();
+        self.license_number.zeroize();
+    }
+}
+
+impl Drop for IdentityData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// SSH Key-specific cipher data.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SshKeyData {
@@ -759,6 +799,18 @@ pub struct SshKeyData {
     /// still gate every sign). Absent means off.
     #[serde(default)]
     pub serve_via_agent: bool,
+}
+
+impl Zeroize for SshKeyData {
+    fn zeroize(&mut self) {
+        self.private_key.zeroize();
+    }
+}
+
+impl Drop for SshKeyData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
 }
 
 /// Signing key & certificate cipher data (D81). The private key and the
@@ -847,6 +899,21 @@ pub struct BankAccountData {
     pub bank_contact_phone: Option<String>,
 }
 
+impl Zeroize for BankAccountData {
+    fn zeroize(&mut self) {
+        self.account_number.zeroize();
+        self.routing_number.zeroize();
+        self.pin.zeroize();
+        self.iban.zeroize();
+    }
+}
+
+impl Drop for BankAccountData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// Driver's License-specific cipher data.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DriversLicenseData {
@@ -872,6 +939,18 @@ pub struct DriversLicenseData {
     pub issuing_authority: Option<String>,
     #[serde(default)]
     pub license_class: Option<String>,
+}
+
+impl Zeroize for DriversLicenseData {
+    fn zeroize(&mut self) {
+        self.license_number.zeroize();
+    }
+}
+
+impl Drop for DriversLicenseData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
 }
 
 /// Passport-specific cipher data.
@@ -918,6 +997,19 @@ pub struct PassportData {
 /// like vault-created ones. `private_key_missing` is `true` only when that
 /// key is absent or undecodable, leaving the cipher view-only until the user
 /// re-registers the passkey with the RP. See `docs/adr/0095-passkey-support.md`.
+impl Zeroize for PassportData {
+    fn zeroize(&mut self) {
+        self.passport_number.zeroize();
+        self.national_identification_number.zeroize();
+    }
+}
+
+impl Drop for PassportData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PasskeyData {
     /// Opaque credential ID assigned by the authenticator at registration,
@@ -1111,6 +1203,18 @@ impl CipherInput {
     }
 }
 
+impl Zeroize for CustomField {
+    fn zeroize(&mut self) {
+        self.value.zeroize();
+    }
+}
+
+impl Drop for CustomField {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// Custom field on a cipher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomField {
@@ -1207,6 +1311,18 @@ pub struct PasswordHistoryEntry {
     pub password: String,
     /// Unix timestamp when this password was last used.
     pub last_used_date: u64,
+}
+
+impl Zeroize for PasswordHistoryEntry {
+    fn zeroize(&mut self) {
+        self.password.zeroize();
+    }
+}
+
+impl Drop for PasswordHistoryEntry {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
 }
 
 /// Kind of generated value (password or passphrase).
@@ -1418,6 +1534,15 @@ pub struct Cipher {
     pub tags: Vec<String>,
 }
 
+impl Drop for Cipher {
+    fn drop(&mut self) {
+        self.name.zeroize();
+        self.notes.zeroize();
+        // kind payloads, custom fields, and password history wipe
+        // through their own Drop impls.
+    }
+}
+
 /// Cipher metadata (for listing without decryption).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CipherMeta {
@@ -1590,6 +1715,28 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
 mod tests {
     use super::*;
 
+    /// Regression guard for the wipe-on-drop convention: every struct
+    /// carrying password-class strings must implement Drop so its
+    /// plaintext is zeroized before the allocator reuses the memory.
+    /// Adding a field to these types does not restore the wipe; removing
+    /// an `impl Drop` trips this test.
+    #[test]
+    fn password_class_payloads_wipe_on_drop() {
+        fn asserts_wipe<T: std::ops::Drop>() {}
+        asserts_wipe::<LoginData>;
+        asserts_wipe::<CardData>;
+        asserts_wipe::<IdentityData>;
+        asserts_wipe::<SshKeyData>;
+        asserts_wipe::<BankAccountData>;
+        asserts_wipe::<DriversLicenseData>;
+        asserts_wipe::<PassportData>;
+        asserts_wipe::<SigningKeyData>;
+        asserts_wipe::<PasskeyData>;
+        asserts_wipe::<CustomField>;
+        asserts_wipe::<PasswordHistoryEntry>;
+        asserts_wipe::<Cipher>;
+    }
+
     #[test]
     fn cipher_type_default_is_login() {
         assert_eq!(CipherType::default(), CipherType::Login);
@@ -1752,7 +1899,13 @@ mod tests {
             bank_name: Some("Chase".into()),
             account_number: Some("123456789".into()),
             routing_number: Some("987654321".into()),
-            ..Default::default()
+            name_on_account: Default::default(),
+            account_type: Default::default(),
+            branch_number: Default::default(),
+            pin: Default::default(),
+            swift_code: Default::default(),
+            iban: Default::default(),
+            bank_contact_phone: Default::default(),
         });
         let json = serde_json::to_string(&bank).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();
@@ -1769,7 +1922,15 @@ mod tests {
         let dl = CipherKind::DriversLicense(DriversLicenseData {
             first_name: Some("Jane".into()),
             license_number: Some("D55555".into()),
-            ..Default::default()
+            middle_name: Default::default(),
+            last_name: Default::default(),
+            date_of_birth: Default::default(),
+            issuing_country: Default::default(),
+            issuing_state: Default::default(),
+            issue_date: Default::default(),
+            expiration_date: Default::default(),
+            issuing_authority: Default::default(),
+            license_class: Default::default(),
         });
         let json = serde_json::to_string(&dl).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();
@@ -1785,7 +1946,17 @@ mod tests {
         let passport = CipherKind::Passport(PassportData {
             surname: Some("Smith".into()),
             passport_number: Some("P12345".into()),
-            ..Default::default()
+            given_name: Default::default(),
+            date_of_birth: Default::default(),
+            sex: Default::default(),
+            birth_place: Default::default(),
+            nationality: Default::default(),
+            issuing_country: Default::default(),
+            passport_type: Default::default(),
+            national_identification_number: Default::default(),
+            issuing_authority: Default::default(),
+            issue_date: Default::default(),
+            expiration_date: Default::default(),
         });
         let json = serde_json::to_string(&passport).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();
@@ -1838,7 +2009,7 @@ mod tests {
         match back {
             CipherKind::Login(data) => {
                 assert_eq!(data.username.as_deref(), Some("alex@example.com"));
-                let fido2 = data.fido2_credentials.unwrap();
+                let fido2 = data.fido2_credentials.as_ref().unwrap();
                 assert_eq!(fido2.len(), 1);
                 assert_eq!(fido2[0].rp_id, "github.com");
                 assert_eq!(fido2[0].user_name.as_deref(), Some("alex@example.com"));
@@ -1975,7 +2146,13 @@ mod tests {
         ];
         let login = CipherKind::Login(LoginData {
             uris: uris.clone(),
-            ..Default::default()
+            username: Default::default(),
+            password: Default::default(),
+            totp_uri: Default::default(),
+            autofill_on_page_load: Default::default(),
+            password_revision_date: Default::default(),
+            favicon: Default::default(),
+            fido2_credentials: Default::default(),
         });
         let json = serde_json::to_string(&login).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();
@@ -1998,7 +2175,13 @@ mod tests {
                 uri: "https://example.com".into(),
                 match_strategy: UriMatchStrategy::Exact,
             }],
-            ..Default::default()
+            username: Default::default(),
+            password: Default::default(),
+            totp_uri: Default::default(),
+            autofill_on_page_load: Default::default(),
+            password_revision_date: Default::default(),
+            favicon: Default::default(),
+            fido2_credentials: Default::default(),
         });
         let json = serde_json::to_string(&login).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();
@@ -2018,14 +2201,20 @@ mod tests {
                 data: "base64-bytes".into(),
                 mime: "image/png".into(),
             }),
-            ..Default::default()
+            username: Default::default(),
+            password: Default::default(),
+            uris: Default::default(),
+            totp_uri: Default::default(),
+            autofill_on_page_load: Default::default(),
+            password_revision_date: Default::default(),
+            fido2_credentials: Default::default(),
         });
         let json = serde_json::to_string(&with_fav).unwrap();
         // skip_serializing_if ensures favicon is omitted when absent.
         assert!(json.contains("favicon"));
         match serde_json::from_str::<CipherKind>(&json).unwrap() {
             CipherKind::Login(d) => {
-                let fav = d.favicon.expect("favicon should be present");
+                let fav = d.favicon.as_ref().expect("favicon should be present");
                 assert_eq!(fav.data, "base64-bytes");
                 assert_eq!(fav.mime, "image/png");
             }
@@ -2126,7 +2315,13 @@ mod tests {
             bank_name: Some("Chase".into()),
             account_number: Some("123456789".into()),
             pin: Some("9999".into()),
-            ..Default::default()
+            name_on_account: Default::default(),
+            account_type: Default::default(),
+            routing_number: Default::default(),
+            branch_number: Default::default(),
+            swift_code: Default::default(),
+            iban: Default::default(),
+            bank_contact_phone: Default::default(),
         }));
         assert_eq!(
             resolve_linked_field(&cipher, &LinkedFieldType::BankAccountBankName),
@@ -2158,7 +2353,14 @@ mod tests {
             first_name: Some("Jane".into()),
             license_number: Some("D55555".into()),
             issuing_state: Some("CA".into()),
-            ..Default::default()
+            middle_name: Default::default(),
+            last_name: Default::default(),
+            date_of_birth: Default::default(),
+            issuing_country: Default::default(),
+            issue_date: Default::default(),
+            expiration_date: Default::default(),
+            issuing_authority: Default::default(),
+            license_class: Default::default(),
         }));
         assert_eq!(
             resolve_linked_field(&cipher, &LinkedFieldType::DriversLicenseFirstName),
@@ -2184,7 +2386,16 @@ mod tests {
             surname: Some("Smith".into()),
             passport_number: Some("P12345".into()),
             nationality: Some("US".into()),
-            ..Default::default()
+            given_name: Default::default(),
+            date_of_birth: Default::default(),
+            sex: Default::default(),
+            birth_place: Default::default(),
+            issuing_country: Default::default(),
+            passport_type: Default::default(),
+            national_identification_number: Default::default(),
+            issuing_authority: Default::default(),
+            issue_date: Default::default(),
+            expiration_date: Default::default(),
         }));
         assert_eq!(
             resolve_linked_field(&cipher, &LinkedFieldType::PassportSurname),

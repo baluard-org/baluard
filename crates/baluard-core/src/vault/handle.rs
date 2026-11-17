@@ -7863,18 +7863,19 @@ impl VaultHandle {
         let existing = self.try_decrypt_cipher_at(unlocked, &current, &existing_file)?;
         let existing_envelope = crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
         self.ensure_item_schema_writable(unlocked, &current, &existing_file)?;
+        // Fields clone rather than move: Cipher wipes on drop now.
         let input = CipherInput {
-            name: existing.name,
+            name: existing.name.clone(),
             folder_id: existing.folder_id,
             collection_id: None,
-            kind: existing.kind,
+            kind: existing.kind.clone(),
             favorite: existing.favorite,
             reprompt: existing.reprompt,
-            notes: existing.notes,
-            custom_fields: existing.custom_fields,
+            notes: existing.notes.clone(),
+            custom_fields: existing.custom_fields.clone(),
             created_at: Some(existing.created_at),
-            password_history: existing.password_history,
-            attachments: existing.attachments,
+            password_history: existing.password_history.clone(),
+            attachments: existing.attachments.clone(),
             archived: existing.archived,
             tags: existing.tags.clone(),
         };
@@ -8146,7 +8147,7 @@ impl VaultHandle {
 
             metas.push(crate::types::CipherMeta {
                 id: c.id,
-                name: c.name,
+                name: c.name.clone(),
                 folder_id: c.folder_id,
                 cipher_type: c.kind.cipher_type(),
                 favorite: c.favorite,
@@ -9672,15 +9673,16 @@ impl VaultHandle {
         self.ensure_item_schema_writable(unlocked, &file_path, &existing_file)?;
         let existing = self.try_decrypt_cipher_at(unlocked, &file_path, &existing_file)?;
 
+        // Fields clone rather than move: Cipher wipes on drop now.
         let input = CipherInput {
-            name: existing.name,
+            name: existing.name.clone(),
             folder_id: existing.folder_id,
             collection_id: None,
-            kind: existing.kind,
+            kind: existing.kind.clone(),
             favorite: existing.favorite,
             reprompt: existing.reprompt,
-            notes: existing.notes,
-            custom_fields: existing.custom_fields,
+            notes: existing.notes.clone(),
+            custom_fields: existing.custom_fields.clone(),
             created_at: None,         // fresh timestamp for the clone
             password_history: vec![], // empty history for clone
             attachments: existing.attachments.clone(),
@@ -9725,18 +9727,19 @@ impl VaultHandle {
             return Ok(()); // Already archived, idempotent
         }
 
+        // Fields clone rather than move: Cipher wipes on drop now.
         let input = CipherInput {
-            name: existing.name,
+            name: existing.name.clone(),
             folder_id: existing.folder_id,
             collection_id: None,
-            kind: existing.kind,
+            kind: existing.kind.clone(),
             favorite: existing.favorite,
             reprompt: existing.reprompt,
-            notes: existing.notes,
-            custom_fields: existing.custom_fields,
+            notes: existing.notes.clone(),
+            custom_fields: existing.custom_fields.clone(),
             created_at: Some(existing.created_at),
-            password_history: existing.password_history,
-            attachments: existing.attachments,
+            password_history: existing.password_history.clone(),
+            attachments: existing.attachments.clone(),
             archived: true,
             tags: existing.tags.clone(),
         };
@@ -9767,18 +9770,19 @@ impl VaultHandle {
             return Ok(()); // Already unarchived, idempotent
         }
 
+        // Fields clone rather than move: Cipher wipes on drop now.
         let input = CipherInput {
-            name: existing.name,
+            name: existing.name.clone(),
             folder_id: existing.folder_id,
             collection_id: None,
-            kind: existing.kind,
+            kind: existing.kind.clone(),
             favorite: existing.favorite,
             reprompt: existing.reprompt,
-            notes: existing.notes,
-            custom_fields: existing.custom_fields,
+            notes: existing.notes.clone(),
+            custom_fields: existing.custom_fields.clone(),
             created_at: Some(existing.created_at),
-            password_history: existing.password_history,
-            attachments: existing.attachments,
+            password_history: existing.password_history.clone(),
+            attachments: existing.attachments.clone(),
             archived: false,
             tags: existing.tags.clone(),
         };
@@ -10055,18 +10059,19 @@ impl VaultHandle {
                 updated_tags.sort();
                 updated_tags.dedup();
 
+                // Fields clone rather than move: Cipher wipes on drop.
                 let input = CipherInput {
-                    name: cipher.name,
+                    name: cipher.name.clone(),
                     folder_id: cipher.folder_id,
                     collection_id: None,
-                    kind: cipher.kind,
+                    kind: cipher.kind.clone(),
                     favorite: cipher.favorite,
                     reprompt: cipher.reprompt,
-                    notes: cipher.notes,
-                    custom_fields: cipher.custom_fields,
+                    notes: cipher.notes.clone(),
+                    custom_fields: cipher.custom_fields.clone(),
                     created_at: Some(cipher.created_at),
-                    password_history: cipher.password_history,
-                    attachments: cipher.attachments,
+                    password_history: cipher.password_history.clone(),
+                    attachments: cipher.attachments.clone(),
                     archived: cipher.archived,
                     tags: updated_tags,
                 };
@@ -10112,18 +10117,19 @@ impl VaultHandle {
                     .cloned()
                     .collect();
 
+                // Fields clone rather than move: Cipher wipes on drop.
                 let input = CipherInput {
-                    name: cipher.name,
+                    name: cipher.name.clone(),
                     folder_id: cipher.folder_id,
                     collection_id: None,
-                    kind: cipher.kind,
+                    kind: cipher.kind.clone(),
                     favorite: cipher.favorite,
                     reprompt: cipher.reprompt,
-                    notes: cipher.notes,
-                    custom_fields: cipher.custom_fields,
+                    notes: cipher.notes.clone(),
+                    custom_fields: cipher.custom_fields.clone(),
                     created_at: Some(cipher.created_at),
-                    password_history: cipher.password_history,
-                    attachments: cipher.attachments,
+                    password_history: cipher.password_history.clone(),
+                    attachments: cipher.attachments.clone(),
                     archived: cipher.archived,
                     tags: updated_tags,
                 };
@@ -11731,7 +11737,7 @@ impl VaultHandle {
 
             metas.push(crate::types::CipherMeta {
                 id: c.id,
-                name: c.name,
+                name: c.name.clone(),
                 folder_id: c.folder_id,
                 cipher_type: c.kind.cipher_type(),
                 favorite: c.favorite,
@@ -12697,7 +12703,12 @@ mod tests {
         let mut login_data = crate::types::LoginData {
             username: Some("u".into()),
             password: Some("p".into()),
-            ..Default::default()
+            uris: Default::default(),
+            totp_uri: Default::default(),
+            autofill_on_page_load: Default::default(),
+            password_revision_date: Default::default(),
+            favicon: Default::default(),
+            fido2_credentials: Default::default(),
         };
         login_data.fido2_credentials = Some(vec![passkey]);
         let kind = crate::types::CipherKind::Login(login_data);
@@ -12781,7 +12792,12 @@ mod tests {
             let kind = crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("u".into()),
                 password: Some(pw.into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             });
             crate::types::CipherInput {
                 name: name.into(),
@@ -12891,7 +12907,12 @@ mod tests {
         let kind = crate::types::CipherKind::Login(crate::types::LoginData {
             username: Some("u".into()),
             password: Some("p".into()),
-            ..Default::default()
+            uris: Default::default(),
+            totp_uri: Default::default(),
+            autofill_on_page_load: Default::default(),
+            password_revision_date: Default::default(),
+            favicon: Default::default(),
+            fido2_credentials: Default::default(),
         });
         let cid = h
             .add_cipher(&crate::types::CipherInput {
@@ -13290,7 +13311,7 @@ mod tests {
                         "totp_uri":"otpauth://totp/Example:ada@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"}}"#,
                 )
                 .unwrap(),
-                ..Default::default()
+            ..Default::default()
             })
             .unwrap();
 
@@ -15769,7 +15790,11 @@ mod tests {
             collection_id: None,
             kind: crate::types::CipherKind::Card(crate::types::CardData {
                 brand: Some("Visa".into()),
-                ..Default::default()
+                cardholder_name: Default::default(),
+                number: Default::default(),
+                exp_month: Default::default(),
+                exp_year: Default::default(),
+                code: Default::default(),
             }),
             favorite: false,
             notes: None,
@@ -15806,7 +15831,12 @@ mod tests {
         let mut login = crate::types::LoginData {
             username: Some("alex@example.com".into()),
             password: Some("correct horse".into()),
-            ..Default::default()
+            uris: Default::default(),
+            totp_uri: Default::default(),
+            autofill_on_page_load: Default::default(),
+            password_revision_date: Default::default(),
+            favicon: Default::default(),
+            fido2_credentials: Default::default(),
         };
         let mut passkey = crate::types::PasskeyData::default();
         passkey.credential_id = "cred-1".into();
@@ -15956,7 +15986,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user@gh.com".into()),
                 password: Some("old-pass-1".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: false,
             notes: None,
@@ -15979,7 +16014,12 @@ mod tests {
                 kind: crate::types::CipherKind::Login(crate::types::LoginData {
                     username: Some("user@gh.com".into()),
                     password: Some(pw.into()),
-                    ..Default::default()
+                    uris: Default::default(),
+                    totp_uri: Default::default(),
+                    autofill_on_page_load: Default::default(),
+                    password_revision_date: Default::default(),
+                    favicon: Default::default(),
+                    fido2_credentials: Default::default(),
                 }),
                 favorite: false,
                 notes: None,
@@ -16036,7 +16076,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass1".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: true,
             notes: Some("notes".into()),
@@ -16058,7 +16103,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass2".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: true,
             notes: Some("notes".into()),
@@ -16119,7 +16169,13 @@ mod tests {
             collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 password: Some("pw0".into()),
-                ..Default::default()
+                username: Default::default(),
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: false,
             notes: None,
@@ -16141,7 +16197,13 @@ mod tests {
                 collection_id: None,
                 kind: crate::types::CipherKind::Login(crate::types::LoginData {
                     password: Some(format!("pw{i}")),
-                    ..Default::default()
+                    username: Default::default(),
+                    uris: Default::default(),
+                    totp_uri: Default::default(),
+                    autofill_on_page_load: Default::default(),
+                    password_revision_date: Default::default(),
+                    favicon: Default::default(),
+                    fido2_credentials: Default::default(),
                 }),
                 favorite: false,
                 notes: None,
@@ -16399,7 +16461,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user@gh.com".into()),
                 password: Some("secret123".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: true,
             notes: None,
@@ -16420,7 +16487,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("admin".into()),
                 password: Some("aws-key".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: false,
             notes: None,
@@ -16551,7 +16623,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("arch@example.com".into()),
                 password: Some("s3cret".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             ..Default::default()
         };
@@ -16716,7 +16793,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("member".into()),
                 password: Some("pw".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: false,
             notes: None,
@@ -18626,7 +18708,12 @@ mod tests {
             let kind = crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("u".into()),
                 password: Some(pw.to_string()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             });
             crate::types::CipherInput {
                 name: name.into(),
@@ -20200,7 +20287,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass123".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: false,
             notes: None,
@@ -20408,7 +20500,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass123".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: false,
             notes: Some("sensitive note".into()),
@@ -20544,7 +20641,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: false,
             notes: None,
@@ -20595,7 +20697,12 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("trash".into()),
                 password: Some("trashed-pass".into()),
-                ..Default::default()
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
             }),
             favorite: false,
             notes: None,

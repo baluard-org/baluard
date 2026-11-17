@@ -2511,7 +2511,7 @@ impl VaultState {
                 _ => return Err("Cipher not found".into()),
             };
             if let baluard_core::types::CipherKind::Login(mut data) = cipher.kind.clone() {
-                let mut list = data.fido2_credentials.unwrap_or_default();
+                let mut list = data.fido2_credentials.take().unwrap_or_default();
                 list.push(pk_data.clone());
                 data.fido2_credentials = Some(list);
                 let input = baluard_core::types::CipherInput {
@@ -2541,6 +2541,13 @@ impl VaultState {
             Err("Expected Login kind".into())
         } else {
             // Create new Login cipher with passkey
+            let mut login = baluard_core::types::LoginData::default();
+            login.username = pk_data.user_name.clone();
+            login.uris = vec![baluard_core::types::LoginUri {
+                uri: format!("https://{}", pk_data.rp_id),
+                match_strategy: baluard_core::types::UriMatchStrategy::Domain,
+            }];
+            login.fido2_credentials = Some(vec![pk_data.clone()]);
             let input = baluard_core::types::CipherInput {
                 name: pk_data
                     .rp_name
@@ -2551,15 +2558,7 @@ impl VaultState {
                 favorite: false,
                 reprompt: false,
                 tags: vec!["passkey".to_string()],
-                kind: baluard_core::types::CipherKind::Login(baluard_core::types::LoginData {
-                    username: pk_data.user_name.clone(),
-                    uris: vec![baluard_core::types::LoginUri {
-                        uri: format!("https://{}", pk_data.rp_id),
-                        match_strategy: baluard_core::types::UriMatchStrategy::Domain,
-                    }],
-                    fido2_credentials: Some(vec![pk_data.clone()]),
-                    ..Default::default()
-                }),
+                kind: baluard_core::types::CipherKind::Login(login),
                 notes: None,
                 custom_fields: Vec::new(),
                 created_at: None,
@@ -2700,6 +2699,11 @@ impl VaultState {
                         for pk in fido2_list.iter_mut() {
                             if pk.credential_id == credential_id_b64 {
                                 pk.counter = pk.counter.max(new_counter);
+                                // Field assignment, not struct-update: the
+                                // functional-update tail would move fields out
+                                // of a Drop type.
+                                let mut updated_login = data.clone();
+                                updated_login.fido2_credentials = Some(fido2_list.clone());
                                 let input = baluard_core::types::CipherInput {
                                     name: c.name.clone(),
                                     folder_id: c.folder_id,
@@ -2707,12 +2711,7 @@ impl VaultState {
                                     favorite: c.favorite,
                                     reprompt: c.reprompt,
                                     tags: c.tags.clone(),
-                                    kind: baluard_core::types::CipherKind::Login(
-                                        baluard_core::types::LoginData {
-                                            fido2_credentials: Some(fido2_list.clone()),
-                                            ..data.clone()
-                                        },
-                                    ),
+                                    kind: baluard_core::types::CipherKind::Login(updated_login),
                                     notes: c.notes.clone(),
                                     custom_fields: c.custom_fields.clone(),
                                     created_at: Some(c.created_at),
@@ -2782,10 +2781,10 @@ impl VaultState {
                 // An empty list must stay an explicit Some: the core
                 // merge treats None as "keep existing credentials", so
                 // flattening it here would silently fail the delete.
-                let updated_data = baluard_core::types::LoginData {
-                    fido2_credentials: Some(fido2_list),
-                    ..data.clone()
-                };
+                // Field assignment, not struct-update: the functional-update
+                // tail would move fields out of a Drop type.
+                let mut updated_data = data.clone();
+                updated_data.fido2_credentials = Some(fido2_list);
                 let input = baluard_core::types::CipherInput {
                     name: cipher.name.clone(),
                     folder_id: cipher.folder_id,
@@ -2844,10 +2843,10 @@ impl VaultState {
                     Some(pk) => pk.name = Some(new_name.to_string()),
                     None => return Err(format!("Credential not found: {credential_id}")),
                 }
-                let updated_data = baluard_core::types::LoginData {
-                    fido2_credentials: Some(fido2_list),
-                    ..data.clone()
-                };
+                // Field assignment, not struct-update: the functional-update
+                // tail would move fields out of a Drop type.
+                let mut updated_data = data.clone();
+                updated_data.fido2_credentials = Some(fido2_list);
                 let input = baluard_core::types::CipherInput {
                     name: cipher.name.clone(),
                     folder_id: cipher.folder_id,
@@ -3150,6 +3149,13 @@ impl VaultState {
             .as_str()
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("https://{}", pk_data.rp_id));
+        let mut login = baluard_core::types::LoginData::default();
+        login.username = username;
+        login.uris = vec![baluard_core::types::LoginUri {
+            uri,
+            match_strategy: baluard_core::types::UriMatchStrategy::Domain,
+        }];
+        login.fido2_credentials = Some(vec![pk_data.clone()]);
         let input = baluard_core::types::CipherInput {
             name,
             folder_id: None,
@@ -3157,15 +3163,7 @@ impl VaultState {
             favorite: false,
             reprompt: false,
             tags: vec!["passkey".to_string()],
-            kind: baluard_core::types::CipherKind::Login(baluard_core::types::LoginData {
-                username,
-                uris: vec![baluard_core::types::LoginUri {
-                    uri,
-                    match_strategy: baluard_core::types::UriMatchStrategy::Domain,
-                }],
-                fido2_credentials: Some(vec![pk_data.clone()]),
-                ..Default::default()
-            }),
+            kind: baluard_core::types::CipherKind::Login(login),
             notes: None,
             custom_fields: Vec::new(),
             created_at: None,

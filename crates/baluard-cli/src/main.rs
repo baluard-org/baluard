@@ -1656,7 +1656,9 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
                 state,
                 postal_code,
                 country,
-                ..Default::default()
+                ssn: None,
+                passport_number: None,
+                license_number: None,
             }),
             favorite,
             notes,
@@ -1746,7 +1748,8 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
                     branch_number,
                     swift_code,
                     iban,
-                    ..Default::default()
+                    pin: None,
+                    bank_contact_phone: None,
                 }),
                 favorite,
                 notes,
@@ -1788,7 +1791,8 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
                 issuing_state,
                 issue_date,
                 expiration_date,
-                ..Default::default()
+                issuing_authority: None,
+                license_class: None,
             }),
             favorite,
             notes,
@@ -1831,7 +1835,9 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
                 issuing_country,
                 issue_date,
                 expiration_date,
-                ..Default::default()
+                passport_type: None,
+                national_identification_number: None,
+                issuing_authority: None,
             }),
             favorite,
             notes,

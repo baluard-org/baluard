@@ -5523,13 +5523,13 @@ pub fn handle_passkey_delete(
                         drop(cipher);
                         return handle.delete_cipher(uuid).map_err(|e| e.into());
                     }
-                    let updated_data = baluard_core::types::LoginData {
-                        // None means "don't touch" to update_cipher's merge;
-                        // an explicit empty list is the only way to remove
-                        // the last passkey (same trap as the daemon route).
-                        fido2_credentials: Some(fido2_list),
-                        ..data.clone()
-                    };
+                    // Field assignment, not struct-update: the tail would
+                    // move fields out of a Drop type.
+                    let mut updated_data = data.clone();
+                    // None means "don't touch" to update_cipher's merge; an
+                    // explicit empty list is the only way to remove the last
+                    // passkey (same trap as the daemon route).
+                    updated_data.fido2_credentials = Some(fido2_list);
                     let input = baluard_core::types::CipherInput {
                         name: cipher.name.clone(),
                         folder_id: cipher.folder_id,
@@ -5594,10 +5594,10 @@ pub fn handle_passkey_rename(
                         Some(pk) => pk.name = Some(name.to_string()),
                         None => return Err(format!("Credential not found: {credential_id}").into()),
                     }
-                    let updated_data = baluard_core::types::LoginData {
-                        fido2_credentials: Some(fido2_list),
-                        ..data.clone()
-                    };
+                    // Field assignment, not struct-update: the tail would
+                    // move fields out of a Drop type.
+                    let mut updated_data = data.clone();
+                    updated_data.fido2_credentials = Some(fido2_list);
                     let input = baluard_core::types::CipherInput {
                         name: cipher.name.clone(),
                         folder_id: cipher.folder_id,
