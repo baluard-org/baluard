@@ -73,6 +73,7 @@ android {
         targetSdk = 36
         versionCode = 7003
         versionName = "0.7.3"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Package only ABIs we ship a cdylib for. Alpha default: arm64-v8a
         // (every test phone since ~2016). Also strips the JNA aar's other-ABI
         // .so, which would otherwise let a 32-bit device load libjnidispatch
@@ -214,4 +215,11 @@ dependencies {
     "testImplementation"("junit:junit:4.13.2")
     "testImplementation"("org.json:json:20240303")
     "testImplementation"("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    // Instrumented autofill contract tests run on the emulator (androidTest):
+    // the framework Dataset/SaveInfo shapes are only assertable against the
+    // real android.jar, not Robolectric shadows.
+    "androidTestImplementation"("junit:junit:4.13.2")
+    "androidTestImplementation"("androidx.test:core-ktx:1.6.1")
+    "androidTestImplementation"("androidx.test.ext:junit-ktx:1.2.1")
+    "androidTestImplementation"("androidx.test:runner:1.6.2")
 }

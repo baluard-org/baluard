@@ -55,8 +55,6 @@ class BaluardAutofillService : AutofillService() {
 
     companion object {
         private const val TAG = "BaluardAutofill"
-        private const val MAX_CONTAINER_DEPTH = 10
-
         // M10: onFailure messages can surface in system autofill diagnostics.
         // Static codes only; the real reason goes to logcat, never the callback.
         private const val ERR_NO_STRUCTURE = "no_structure"
@@ -99,6 +97,11 @@ class BaluardAutofillService : AutofillService() {
 
                 val response = runBlocking {
                     AutofillSession.lockIfExpired()
+                    // Save-capture flag policy follows the request mode: the
+                    // invisibility flag is a compat-mode bridge (Bitwarden
+                    // parity); sending it on native responses fires the save
+                    // dialog on any view transition, submitted or not.
+                    val compat = request.flags and FillRequest.FLAG_COMPATIBILITY_MODE_REQUEST != 0
                     if (AutofillSession.ensureOpen()) {
                         AutofillResponseBuilder.filledResponse(
                             applicationContext,
@@ -106,12 +109,14 @@ class BaluardAutofillService : AutofillService() {
                             form.target,
                             inline,
                             form.ignoredIds,
+                            compat,
                         ) ?: AutofillResponseBuilder.saveOnlyResponse(
                             applicationContext,
                             form.fields,
                             form.target,
                             form.ignoredIds,
                             inline,
+                            compat,
                         )
                     } else {
                         AutofillResponseBuilder.authenticationResponse(
@@ -173,8 +178,8 @@ class BaluardAutofillService : AutofillService() {
             packageName = packageName ?: structure.activityComponent?.packageName
             for (i in 0 until structure.windowNodeCount) {
                 val window = structure.getWindowNodeAt(i)
-                walkNode(window.rootViewNode) { node ->
-                    val kind = FieldHeuristics.classify(adapt(node))
+                AutofillFormParser.walkNode(window.rootViewNode) { node ->
+                    val kind = FieldHeuristics.classify(AutofillFormParser.adapt(node))
                     // autofillValue carries the value the target app actually
                     // committed; blank values (password re-type prompts) are
                     // skipped so a confirm-password field cannot win.
@@ -209,150 +214,12 @@ class BaluardAutofillService : AutofillService() {
         return AutofillSavePrefill(username, password, target)
     }
 
-    /** Parsed login form: the fields to fill plus the match target. */
-    data class Form(
-        val usernameId: AutofillId?,
-        val passwordId: AutofillId?,
-        val target: String,
-        val ignoredIds: List<AutofillId> = emptyList(),
-    ) {
-        val fields: AutofillResponseBuilder.TargetFields
-            get() = AutofillResponseBuilder.TargetFields(usernameId, passwordId)
-    }
-
     /**
      * Walk the AssistStructure with the layered heuristics in
      * [FieldHeuristics]. Real ViewNodes are adapted onto [FieldView] so the
      * classification logic stays unit-testable (plan P3).
      */
-    private fun parseForm(structure: AssistStructure): Form? {
-        var usernameId: AutofillId? = null
-        var passwordId: AutofillId? = null
-        val packageName = structure.activityComponent?.packageName
-        val browser = app.baluard.mobile.platform.A11yUri.isBrowserPackage(packageName)
-        var webDomain: String? = null
-        var urlBarText: String? = null
-        // Last editable input-like field seen BEFORE the first password
-        // field: the preceding-field username promotion candidate.
-        var editableBeforePasswordId: AutofillId? = null
-        val ignored = mutableListOf<AutofillId>()
+    private fun parseForm(structure: AssistStructure): AutofillFormParser.Form? =
+        AutofillFormParser.parse(structure)
 
-        for (i in 0 until structure.windowNodeCount) {
-            val window = structure.getWindowNodeAt(i)
-            walkNode(window.rootViewNode) { node ->
-                // Material TextInputLayout redirection (Bitwarden parity):
-                // hint-carrying containers cannot accept values - redirect
-                // to the first text-autofillable descendant.
-                val container = isHintContainer(node)
-                val effective = if (container) firstTextDescendant(node) else node
-                val field = adapt(effective ?: node).let { fv ->
-                    if (container && node.hint != null) fv.copy(hint = node.hint) else fv
-                }
-                val kind = FieldHeuristics.classify(field)
-                val id = field.autofillId as? AutofillId
-                when (kind) {
-                    FieldKind.Password -> {
-                        if (passwordId == null && isEditableInput(effective ?: node)) {
-                            passwordId = id
-                            // Prefer the password field's own web origin.
-                            if (browser) node.webDomain?.let { webDomain = it }
-                        }
-                    }
-                    FieldKind.Username -> {
-                        if (usernameId == null && isEditableInput(effective ?: node)) {
-                            usernameId = id
-                        }
-                    }
-                    // A verification-code box is never a fill target, never
-                    // a promotion candidate, and deliberately not in the
-                    // ignored list (it is not a login field).
-                    FieldKind.Otp -> {}
-                    FieldKind.Other -> {
-                        if (id != null && isEditableInput(effective ?: node)) {
-                            ignored += id
-                            if (passwordId == null) editableBeforePasswordId = id
-                        }
-                    }
-                }
-                // Browser address bar fallback (plan A1/D7 starter table):
-                // scrape when the page origin is missing.
-                if (urlBarText == null && browser &&
-                    app.baluard.mobile.platform.A11yUri.isUrlBar(node.idEntry)) {
-                    node.text?.toString()?.takeIf { it.isNotBlank() }?.let { urlBarText = it }
-                }
-                // WebView containers report the origin without being fields.
-                if (webDomain == null) node.webDomain?.let { webDomain = it }
-            }
-        }
-
-        // Preceding-field promotion (Bitwarden parity): password present but
-        // no username signal - the editable field above it becomes username.
-        if (passwordId != null && usernameId == null && editableBeforePasswordId != null) {
-            usernameId = editableBeforePasswordId
-            // A promoted username must not stay in the ignored list (review #2):
-            // setIgnoredIds would suppress the very field we intend to fill.
-            ignored.removeAll { it == usernameId }
-        }
-
-        if (usernameId == null && passwordId == null) return null
-        val target = webDomain?.let { FieldHeuristics.targetFor(packageName, it) }
-            ?: urlBarText?.let { app.baluard.mobile.platform.A11yUri.normalize(it) }
-            ?: FieldHeuristics.targetFor(packageName, null)
-            ?: return null
-        return Form(usernameId, passwordId, target, ignored)
-    }
-
-    private fun isEditableInput(node: AssistStructure.ViewNode): Boolean =
-        node.autofillType != android.view.View.AUTOFILL_TYPE_NONE &&
-            node.className?.toString()?.contains("EditText") == true
-
-    /**
-     * Hint-carrying container that cannot accept values itself (Material
-     * TextInputLayout pattern): redirects classification to its inner text
-     * field (Bitwarden findFirstAutofillableChild parity).
-     */
-    private fun isHintContainer(node: AssistStructure.ViewNode): Boolean =
-        node.autofillType == android.view.View.AUTOFILL_TYPE_NONE &&
-            node.childCount > 0 &&
-            (!node.hint.isNullOrBlank() || !node.autofillHints.isNullOrEmpty())
-
-    private fun firstTextDescendant(
-        node: AssistStructure.ViewNode,
-        depth: Int = 0,
-    ): AssistStructure.ViewNode? {
-        if (depth > MAX_CONTAINER_DEPTH) return null
-        for (i in 0 until node.childCount) {
-            val child = node.getChildAt(i) ?: continue
-            if (child.autofillType == android.view.View.AUTOFILL_TYPE_TEXT) return child
-            firstTextDescendant(child, depth + 1)?.let { return it }
-        }
-        return null
-    }
-
-    private fun adapt(node: AssistStructure.ViewNode): FieldView {
-        val attrs = node.htmlInfo?.attributes.orEmpty()
-        fun attr(name: String): String? = attrs
-            .firstOrNull { it.first.equals(name, ignoreCase = true) }?.second
-
-        return FieldView(
-            autofillId = node.autofillId,
-            hints = node.autofillHints?.toList().orEmpty(),
-            inputType = node.inputType,
-            idEntry = node.idEntry,
-            hint = node.hint,
-            text = node.text?.toString(),
-            htmlAutocomplete = attr("autocomplete"),
-            webDomain = node.webDomain,
-            htmlTag = node.htmlInfo?.tag,
-            htmlType = attr("type"),
-            htmlName = attr("name"),
-            htmlId = attr("id"),
-            htmlLabel = attr("label"),
-        )
-    }
-
-    private fun walkNode(node: AssistStructure.ViewNode, visit: (AssistStructure.ViewNode) -> Unit) {
-        visit(node)
-        for (i in 0 until node.childCount) walkNode(node.getChildAt(i), visit)
-    }
 }

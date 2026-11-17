@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.service.autofill.Dataset
 import android.service.autofill.Field
+import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
 import android.graphics.drawable.Icon
 import android.service.autofill.InlinePresentation
@@ -19,6 +20,7 @@ import android.widget.RemoteViews
 import androidx.autofill.inline.UiVersions
 import androidx.autofill.inline.v1.InlineSuggestionUi
 import app.baluard.mobile.R
+import app.baluard.mobile.platform.SaveFlags
 import app.baluard.mobile.data.securityKeyChipRequired
 import app.baluard.mobile.i18n.t
 
@@ -87,7 +89,7 @@ object AutofillResponseBuilder {
             listOf(target, fields.usernameId?.toString(), fields.passwordId?.toString())
                 .joinToString("\u0000").hashCode(),
             intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val views = unlockPresentation(context, securityKeyRequired)
 
@@ -128,6 +130,7 @@ object AutofillResponseBuilder {
         target: String,
         inline: InlineStyle? = null,
         ignored: List<AutofillId> = emptyList(),
+        compat: Boolean = false,
     ): FillResponse? {
         val result = AutofillSession.query(target)
         if (securityKeyChipRequired(result.securityKeyRequired, result.matches.size, result.suggestions.size)) {
@@ -199,9 +202,13 @@ object AutofillResponseBuilder {
             )
         }
         builder.addDataset(openBaluardDataset(context, fields, target, inline).build())
-        return applyIgnored(builder.setSaveInfo(saveInfo(fields)), ignored).build()
+        return applyIgnored(builder.setSaveInfo(saveInfo(fields, compat)), ignored).build()
     }
 
+    // Auth PendingIntents must be MUTABLE: the framework only attaches
+    // EXTRA_ASSIST_STRUCTURE through fillIn, which immutable PendingIntents
+    // skip (Bitwarden parity on API 31+). Identity is guarded by the
+    // request code hashed from target and field ids.
     /**
      * Auth dataset for one LOCKED vault: presentations-only fields plus
      * Dataset.setAuthentication into [AutofillActivity] with the vault path
@@ -228,7 +235,7 @@ object AutofillResponseBuilder {
             listOf(vaultPath, target, fields.usernameId?.toString(), fields.passwordId?.toString())
                 .joinToString("\u0000").hashCode(),
             intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val views = RemoteViews(context.packageName, R.layout.autofill_dataset_item).apply {
             setTextViewText(
@@ -271,58 +278,11 @@ object AutofillResponseBuilder {
         target: String,
         ignored: List<AutofillId> = emptyList(),
         inline: InlineStyle? = null,
+        compat: Boolean = false,
     ): FillResponse {
         val builder = FillResponse.Builder()
             .addDataset(openBaluardDataset(context, fields, target, inline).build())
-        return applyIgnored(builder.setSaveInfo(saveInfo(fields)), ignored).build()
-    }
-
-    /**
-     * Response for one manually picked entry (fallback picker flow): the
-     * picker lists all logins, the chosen one is built here and returned via
-     * EXTRA_AUTHENTICATION_RESULT.
-     */
-    suspend fun singleMatchResponse(
-        context: Context,
-        fields: TargetFields,
-        match: AutofillSession.Match,
-        inline: InlineStyle? = null,
-    ): FillResponse? {
-        val (username, password) = AutofillSession.credential(match.vaultPath, match.id) ?: return null
-        val chip = inline?.let { inlineChipOrNull(context, it, 0, match.name, username) }
-        val views = datasetPresentation(context, match.name, username, match.totp)
-        val ds = Dataset.Builder().setId("fill-" + match.id)
-        var hasValue = false
-
-        fun addField(id: AutofillId, value: String) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                val presentations = Presentations.Builder()
-                    .setMenuPresentation(views)
-                    .setDialogPresentation(views)
-                    .apply { chip?.let { setInlinePresentation(it) } }
-                    .build()
-                ds.setField(
-                    id,
-                    Field.Builder()
-                        .setValue(AutofillValue.forText(value))
-                        .setPresentations(presentations)
-                        .build(),
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                ds.setValue(id, AutofillValue.forText(value), views)
-                chip?.let { @Suppress("DEPRECATION") ds.setInlinePresentation(it) }
-            }
-            hasValue = true
-        }
-
-        if (fields.usernameId != null && username != null) addField(fields.usernameId, username)
-        if (fields.passwordId != null && password != null) addField(fields.passwordId, password)
-        if (!hasValue) return null
-        return FillResponse.Builder()
-            .addDataset(ds.setId("fill-" + match.id).build())
-            .setSaveInfo(saveInfo(fields))
-            .build()
+        return applyIgnored(builder.setSaveInfo(saveInfo(fields, compat)), ignored).build()
     }
 
     /**
@@ -378,7 +338,7 @@ object AutofillResponseBuilder {
             ("pick\u0000" + target + "\u0000" + fields.usernameId?.toString() + "\u0000" +
                 fields.passwordId?.toString()).hashCode(),
             intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         // Bitwarden's vault-item chip: the brand row rides the reserved
         // inline slot, and tapping the chip launches the same full-screen
@@ -414,7 +374,7 @@ object AutofillResponseBuilder {
     }
 
     /** Password required; username optional when both exist (review finding #4). */
-    private fun saveInfo(fields: TargetFields): SaveInfo {
+    private fun saveInfo(fields: TargetFields, compat: Boolean): SaveInfo {
         // Required: the password field (or username for username-only forms).
         // Optional: the username, so multi-step flows still save when only
         // one of the two was submitted in this step.
@@ -425,8 +385,85 @@ object AutofillResponseBuilder {
         val builder = SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_PASSWORD, required.toTypedArray())
         if (optional.isNotEmpty()) builder.setOptionalIds(optional.toTypedArray())
         return builder
-            .setFlags(SaveInfo.FLAG_SAVE_ON_ALL_VIEWS_INVISIBLE)
+            .setFlags(saveCaptureFlags(compat))
             .build()
+    }
+
+    /**
+     * The save-capture flag Bitwarden also sends ONLY in compat mode: on
+     * native (non-compat) responses the framework already tracks field
+     * invisibility itself, and forcing the flag makes the save dialog fire
+     * on any view transition - even when nothing was submitted (the
+     * "asks to save every time" bug report).
+     */
+    internal fun saveCaptureFlags(compat: Boolean): Int =
+        SaveFlags.forRequest(if (compat) FillRequest.FLAG_COMPATIBILITY_MODE_REQUEST else 0)
+
+    /**
+     * Credential-to-field binding for the fallback-pick return: which
+     * fields get which value, in dataset field order. Password required;
+     * the username rides along only when both the credential and the form
+     * have it.
+     */
+    internal fun pickFillValues(
+        fields: TargetFields,
+        username: String?,
+        password: String?,
+    ): List<Pair<AutofillId, AutofillValue>> {
+        if (password == null) return emptyList()
+        val fill = mutableListOf<Pair<AutofillId, AutofillValue>>()
+        if (fields.usernameId != null && username != null) {
+            fill += fields.usernameId to AutofillValue.forText(username)
+        }
+        fill += fields.passwordId!! to AutofillValue.forText(password)
+        return fill
+    }
+
+    /**
+     * Fallback-pick return: a DATASET carrying the picked credential,
+     * returned via EXTRA_AUTHENTICATION_RESULT. The "baluard-open" row is
+     * dataset-level authenticated, so the framework expects a Dataset and
+     * applies its values immediately (Session#setAuthenticationResultLocked
+     * -> autoFill), which is also what marks the save baseline. The old
+     * FillResponse return took the replaceResponse path instead: no fill,
+     * no baseline, and Baluard's save dialog on every subsequent submit.
+     * No SaveInfo here - save capture was already armed by the response
+     * that carried the auth row, and a Dataset cannot carry one.
+     */
+    fun pickReturnDataset(
+        context: Context,
+        fields: TargetFields,
+        label: String,
+        username: String?,
+        password: String?,
+        inline: InlineStyle? = null,
+    ): Dataset? {
+        val fill = pickFillValues(fields, username, password)
+        if (fill.isEmpty()) return null
+        val views = datasetPresentation(context, label, username)
+        val chip = inline?.let { inlineChipOrNull(context, it, 0, label, username) }
+        val ds = Dataset.Builder()
+        fill.forEach { (id, value) ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val presentations = Presentations.Builder()
+                    .setMenuPresentation(views)
+                    .setDialogPresentation(views)
+                    .apply { chip?.let { setInlinePresentation(it) } }
+                    .build()
+                ds.setField(
+                    id,
+                    Field.Builder()
+                        .setValue(value)
+                        .setPresentations(presentations)
+                        .build(),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                ds.setValue(id, value, views)
+                chip?.let { @Suppress("DEPRECATION") ds.setInlinePresentation(it) }
+            }
+        }
+        return ds.build()
     }
 
     /**

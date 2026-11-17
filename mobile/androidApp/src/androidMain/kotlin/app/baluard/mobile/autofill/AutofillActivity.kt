@@ -1,6 +1,7 @@
 package app.baluard.mobile.autofill
 
 import android.app.ActivityOptions
+import android.app.assist.AssistStructure
 import android.content.Intent
 import android.os.Bundle
 import android.view.Gravity
@@ -22,6 +23,7 @@ import app.baluard.mobile.R
 import app.baluard.mobile.i18n.t
 import app.baluard.mobile.platform.AppContextHolder
 import app.baluard.mobile.platform.Biometric
+import app.baluard.mobile.platform.FormParser
 import app.baluard.mobile.platform.VaultRegistry
 
 /**
@@ -197,7 +199,7 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                         AutofillResponseBuilder.copyTotpFor(applicationContext, totpMatches[0])
                     }
                 }
-                runOnUiThread { deliverDatasetResponse(response) }
+                runOnUiThread { deliverDatasetResult(response) }
             }
         }
     }
@@ -476,23 +478,50 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
             finish()
             return
         }
-        // Fallback flow: build the response for the picked entry, copy its
-        // TOTP to the clipboard, and return it through
-        // EXTRA_AUTHENTICATION_RESULT.
+        // Fallback flow: return the picked credential as a Dataset bound to
+        // the LIVE field ids, copy its TOTP to the clipboard, and hand it
+        // back through EXTRA_AUTHENTICATION_RESULT.
         AutofillSession.scope.launch {
-            val usernameId = intent?.getParcelableExtra<AutofillId>(EXTRA_USERNAME_ID)
-            val passwordId = intent?.getParcelableExtra<AutofillId>(EXTRA_PASSWORD_ID)
-            val fields = AutofillResponseBuilder.TargetFields(
-                usernameId = usernameId,
-                passwordId = passwordId,
+            // The system attaches the current structure to activities launched
+            // from an authenticated dataset. Re-parsing it binds the dataset to
+            // the field ids as they exist NOW - the pinned request-time ids
+            // stored in this intent can go stale while the picker is open, and
+            // a dataset bound to dead ids fills nothing, which also leaves the
+            // save baseline unset (Baluard then offers to save on every
+            // submit). Pinned ids stay as the fallback for structures the
+            // form parser cannot read.
+            val parsed = intent?.getParcelableExtra<AssistStructure>(AutofillManager.EXTRA_ASSIST_STRUCTURE)
+                ?.let { AutofillFormParser.parse(it) }
+            // Per-slot fallback: a structure slot the parser could not see
+            // keeps the request-time pinned id instead of dropping the fill.
+            val ids = FormParser.resolveFillIds(
+                structureUsername = parsed?.usernameId,
+                structurePassword = parsed?.passwordId,
+                pinnedUsername = intent?.getParcelableExtra<AutofillId>(EXTRA_USERNAME_ID),
+                pinnedPassword = intent?.getParcelableExtra<AutofillId>(EXTRA_PASSWORD_ID),
             )
-            val response = AutofillResponseBuilder.singleMatchResponse(applicationContext, fields, match)
-            if (response == null) {
+            val fields = AutofillResponseBuilder.TargetFields(
+                usernameId = ids.usernameId as? AutofillId,
+                passwordId = ids.passwordId as? AutofillId,
+            )
+            val (username, password) = AutofillSession.credential(match.vaultPath, match.id)
+                ?: run {
+                    failOnUiThread(t("autofill.unlockFailed"))
+                    return@launch
+                }
+            val dataset = AutofillResponseBuilder.pickReturnDataset(
+                applicationContext,
+                fields,
+                label = match.name,
+                username = username,
+                password = password,
+            )
+            if (dataset == null) {
                 failOnUiThread(t("autofill.unlockFailed"))
                 return@launch
             }
             AutofillResponseBuilder.copyTotpFor(applicationContext, match)
-            runOnUiThread { deliverDatasetResponse(response) }
+            runOnUiThread { deliverDatasetResult(dataset) }
         }
     }
 
@@ -620,9 +649,9 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
 
     // ── Dataset-mode result delivery ──
 
-    private fun deliverDatasetResponse(response: android.service.autofill.FillResponse) {
-        val result = Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, response)
-        setResult(RESULT_OK, result)
+    private fun deliverDatasetResult(result: android.os.Parcelable) {
+        val intent = Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, result)
+        setResult(RESULT_OK, intent)
         finish()
         overridePendingTransition(0, 0)
     }
