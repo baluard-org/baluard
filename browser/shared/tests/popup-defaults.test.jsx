@@ -52,11 +52,12 @@ describe("fresh-install settings defaults", () => {
         "toggle knob should paint the on state"
       ).toBe(true);
     }
-    // enablePasskeys defaults OFF: a WebAuthn interceptor is an opt-in
-    // surface (ADR 0095), so a fresh install must never wrap the page.
+    // enablePasskeys defaults ON (1Password/Bitwarden parity): a fresh
+    // install offers passkeys from the vault, and the badge + PK overlay
+    // make interception visible. Users can turn it off.
     const passkeys = toggles[2];
-    expect(passkeys.checked, "passkeys toggle should start off").toBe(false);
-    expect(passkeys.closest(".toggle").classList.contains("on")).toBe(false);
+    expect(passkeys.checked, "passkeys toggle should start on").toBe(true);
+    expect(passkeys.closest(".toggle").classList.contains("on")).toBe(true);
   });
 
   it("getSettings reports both enabled without writing to storage", () => {

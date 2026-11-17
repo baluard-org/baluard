@@ -16,10 +16,12 @@ export const DEFAULT_SETTINGS = {
   inlineAutofill: true,
   copyTotp: true,
   clipboardClearSeconds: 60,
-  // WebAuthn interception (passkeys). Default OFF: a credential-interception
-  // proxy on every https page is a fingerprinting surface, and the feature
-  // needs the desktop app's provider ceremonies (ADR 0095 browser section).
-  enablePasskeys: false,
+  // WebAuthn interception (passkeys). Default ON (1Password/Bitwarden
+  // parity): the PK badge and page overlay make interception visible, and
+  // the feature needs the desktop app's provider ceremonies (ADR 0095
+  // browser section). Installs from before the default flip keep their
+  // stored value; only absent keys inherit the default.
+  enablePasskeys: true,
 };
 
 // The only clipboard auto-clear choices the UI offers (seconds; 0 = never).

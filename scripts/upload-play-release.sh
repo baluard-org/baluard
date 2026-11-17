@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="${BALUARD_PLAY_PACKAGE_NAME:-app.baluard.mobile}"
 TRACK="${BALUARD_PLAY_TRACK:-internal}"
 STATUS="${BALUARD_PLAY_RELEASE_STATUS:-completed}"
-MIN_TARGET_SDK="${BALUARD_PLAY_MIN_TARGET_SDK:-35}"
+MIN_TARGET_SDK="${BALUARD_PLAY_MIN_TARGET_SDK:-36}"
 SA_JSON="${BALUARD_PLAY_SERVICE_ACCOUNT_JSON:-$HOME/.baluard/play-service-account.json}"
 API_BASE="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PKG"
 # Media uploads live under the /upload/ host prefix; the plain URI accepts

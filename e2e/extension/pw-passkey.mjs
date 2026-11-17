@@ -199,10 +199,14 @@ try {
   // (inline autofill, copy code, passkeys) by position, not by string.
   await popupPage.locator(".header-actions button").first().click();
   const passkeyToggle = popupPage.locator(".setting-row input[type=checkbox]").nth(2);
+  // Default ON: cycle off and back on through the real UI so the settings
+  // write, the SW re-registration dance, and the stayed-on guard all still
+  // run (a failed MAIN-world registration flips it back off).
+  await passkeyToggle.click();
+  await sleep(300);
   await passkeyToggle.click();
   // The SW registers both content scripts and injects into open tabs; give
-  // that dance a beat, then confirm the toggle stayed on (a failed MAIN
-  // world registration flips it back off).
+  // that dance a beat, then confirm the toggle stayed on.
   await sleep(1200);
   if (!(await passkeyToggle.isChecked())) {
     fail("passkeys toggle did not stay on (world MAIN unsupported?)");

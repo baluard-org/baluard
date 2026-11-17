@@ -7,7 +7,7 @@
 // Per Decision 2: holds NO secrets in chrome.storage beyond transient request
 // IDs. The bridge token lives in the NMH's memory, never here.
 
-import { normalizeClearSeconds } from "./settings.js";
+import { DEFAULT_SETTINGS, normalizeClearSeconds } from "./settings.js";
 import { originOf } from "./url.js";
 import { createPasskeyClient } from "./passkey-client.js";
 
@@ -674,11 +674,12 @@ const SETTINGS_KEY = "settings";
 // settings.js: absent key means enabled).
 async function readSettings() {
   try {
-    return await chrome.storage.local
-      .get([SETTINGS_KEY])
-      .then((r) => r[SETTINGS_KEY] || {});
+    return await chrome.storage.local.get([SETTINGS_KEY]).then((r) => ({
+      ...DEFAULT_SETTINGS,
+      ...(r[SETTINGS_KEY] || {}),
+    }));
   } catch {
-    return {};
+    return { ...DEFAULT_SETTINGS };
   }
 }
 
@@ -730,7 +731,13 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
     syncInlineScript();
     syncPasskeyScripts();
     const { oldValue, newValue } = changes[SETTINGS_KEY];
-    if ((oldValue?.enablePasskeys ?? false) !== (newValue?.enablePasskeys ?? false)) {
+    // Absent keys mean the defaults, not off (the popup and the SW read
+    // through DEFAULT_SETTINGS): compare resolved values so the toggle-off
+    // of a default-on install still refreshes badges.
+    if (
+      (oldValue?.enablePasskeys ?? DEFAULT_SETTINGS.enablePasskeys) !==
+      (newValue?.enablePasskeys ?? DEFAULT_SETTINGS.enablePasskeys)
+    ) {
       refreshBadgeEverywhere();
     }
   }
@@ -896,8 +903,10 @@ async function syncPasskeyScriptsOnce() {
   }
 }
 
-// enablePasskeys is strictly opt-in (default off, ADR 0095): unlike the
-// ON-by-default settings, check the flag itself, never settingEnabled().
+// enablePasskeys defaults ON for fresh installs (1Password/Bitwarden
+// parity, ADR 0095): stored values always win, so installs that turned the
+// setting off stay off. Unlike the session-scoped settings, read the flag
+// through the merged defaults, never settingEnabled().
 async function passkeysEnabled() {
   const settings = await readSettings();
   return settings.enablePasskeys === true;

@@ -120,6 +120,19 @@ describe("syncPasskeyScripts", () => {
     expect(s.session.passkeysInjected).toBe(true);
   });
 
+  it("registers scripts for a fresh install with no stored settings", async () => {
+    // Default ON (1Password/Bitwarden parity): an install that never wrote
+    // a settings object still gets interception, through the same defaults
+    // the popup reads.
+    const chromeApi = makeChrome();
+    chromeApi.__state.settings = {};
+    const sync = await loadSync(chromeApi);
+    await sync();
+    const s = chromeApi.__state;
+    expect(s.registered).toContain("baluard-passkey-page");
+    expect(s.registered).toContain("baluard-passkey-bridge");
+  });
+
   it("unregisters and restores natives when disabled", async () => {
     const chromeApi = makeChrome();
     chromeApi.__state.settings = { [SETTINGS_KEY]: { enablePasskeys: false } };

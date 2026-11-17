@@ -43,13 +43,18 @@ describe("getSettings", () => {
       inlineAutofill: false,
       copyTotp: true,
       clipboardClearSeconds: 60,
-      enablePasskeys: false,
+      enablePasskeys: true,
     });
   });
 
   it("copyTotp defaults to ON (1Password/Bitwarden parity)", async () => {
     const s = await getSettings();
     expect(s.copyTotp).toBe(true);
+  });
+
+  it("offer passkeys defaults to ON (1Password/Bitwarden parity)", async () => {
+    const s = await getSettings();
+    expect(s.enablePasskeys).toBe(true);
   });
 
   it("clipboard auto-clear defaults to 60 seconds", async () => {
@@ -69,7 +74,7 @@ describe("updateSettings", () => {
       inlineAutofill: false,
       copyTotp: true,
       clipboardClearSeconds: 60,
-      enablePasskeys: false,
+      enablePasskeys: true,
     });
   });
 
@@ -81,7 +86,7 @@ describe("updateSettings", () => {
       inlineAutofill: true,
       copyTotp: true,
       clipboardClearSeconds: 60,
-      enablePasskeys: false,
+      enablePasskeys: true,
       futureKey: 42,
     });
   });
