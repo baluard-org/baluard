@@ -57,6 +57,9 @@ local.properties
 # NOTE: browser/<store>/dist IS committed. The dists are reviewable
 # packaging artifacts (manifest permissions are security-relevant, see B8)
 # and the extension CI job fails when a rebuild diverges from them (B11).
+# The AMO submit flow drops one-upload submission state beside the packaged
+# zip; transient, never part of the reviewable dist.
+.amo-upload-uuid
 browser/shared/node_modules/
 browser/shared/*.tgz
 
