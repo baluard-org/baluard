@@ -594,7 +594,9 @@ fn unlock_daemon(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>>
 
     // Prompt and unlock
     let mut password = daemon_master_password("Master password: ")?;
-    let resp = client::request_to("vault.unlock", &password, socket)?;
+    // Session-establishing: the response's token also refreshes the
+    // slugless alias so plain commands after `unlock --vault` resolve it.
+    let resp = client::request_to_with_alias("vault.unlock", &password, socket)?;
     password.zeroize();
     if !resp.success {
         return Err(resp.error_message.into());

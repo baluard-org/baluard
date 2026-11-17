@@ -129,16 +129,21 @@ fn token_keyring_entry(socket_path: Option<&str>, slug: Option<&str>) -> Option<
 
 /// Set the session token (keyring first, file fallback).
 /// The atomic 0600 file write stays as the fallback path (H6: no TOCTOU).
-/// An unlock made with --vault <slug> also writes the slugless key as an
-/// alias: bare commands resolve the daemon's active vault, and without
-/// the alias they would miss the slug-keyed entry entirely. Same socket,
-/// same trust boundary, one extra keyring entry.
-pub fn set_session_token(token: &str, socket_path: Option<&str>) {
-    let mut keys: Vec<Option<&str>> = Vec::new();
-    if let Some(slug) = vault_slug_override() {
-        keys.push(Some(slug));
+/// The file fallback is inherently slugless, so bare commands always read
+/// the last-written token there.
+/// `alias` writes the slugless keyring key besides the slug-keyed one:
+/// bare commands resolve the daemon's active vault and would otherwise
+/// miss a slug-keyed entry entirely. Only session-establishing calls
+/// (unlock) set it. Non-unlock responses carrying tokens (re-auth,
+/// create) must not clobber the alias, because vault.open does not
+/// switch the daemon's active vault when one exists — the alias would
+/// then name a token the active vault rejects. Same socket, same trust
+/// boundary, one extra keyring entry.
+pub fn set_session_token(token: &str, socket_path: Option<&str>, alias: bool) {
+    let mut keys: Vec<Option<&str>> = vec![vault_slug_override()];
+    if alias {
+        keys.push(None);
     }
-    keys.push(None);
     let mut stored = false;
     for key in keys {
         if let Some(entry) = token_keyring_entry(socket_path, key) {
@@ -252,7 +257,28 @@ fn request_to_with_slug(
     slug: &str,
 ) -> Result<GatewayResponse> {
     let token = get_session_token(socket_path).unwrap_or_default();
-    request_with_session(action, payload, socket_path, slug, token, true)
+    request_with_session(action, payload, socket_path, slug, token, true, false)
+}
+
+/// Like request_to, but a token in the response also refreshes the
+/// slugless keyring alias. Session-establishing commands only (unlock):
+/// the daemon attaches tokens to other responses too, and a non-unlock
+/// echo must not overwrite the alias the active vault is matched to.
+pub fn request_to_with_alias(
+    action: &str,
+    payload: &str,
+    socket_path: Option<&str>,
+) -> Result<GatewayResponse> {
+    let token = get_session_token(socket_path).unwrap_or_default();
+    request_with_session(
+        action,
+        payload,
+        socket_path,
+        vault_slug_override().unwrap_or(""),
+        token,
+        true,
+        true,
+    )
 }
 
 /// D80 agent calls never load or persist the user's stored session token.
@@ -265,6 +291,7 @@ pub fn request_agent(action: &str, payload: &str, token: &str) -> Result<Gateway
         vault_slug_override().unwrap_or(""),
         token.to_string(),
         false,
+        false,
     )
 }
 
@@ -275,6 +302,7 @@ fn request_with_session(
     slug: &str,
     session_token: String,
     persist_response_token: bool,
+    alias_token: bool,
 ) -> Result<GatewayResponse> {
     let socket = socket_path
         .map(PathBuf::from)
@@ -337,9 +365,11 @@ fn request_with_session(
         response.ipc_max_version,
     )?;
 
-    // R7-2: Store session token from daemon if present
+    // R7-2: Store session token from daemon if present. The alias flag
+    // rides with it: only session-establishing calls may rewrite the
+    // slugless key (see set_session_token).
     if persist_response_token && !response.session_token.is_empty() {
-        set_session_token(&response.session_token, socket_path);
+        set_session_token(&response.session_token, socket_path, alias_token);
     }
 
     Ok(response)
@@ -427,7 +457,7 @@ mod c2_tests {
         let sock = dir.path().join("d.sock");
         let sp = sock.to_str().map(str::to_string);
 
-        set_session_token("cap-token-123", sp.as_deref());
+        set_session_token("cap-token-123", sp.as_deref(), true);
         assert_eq!(
             get_session_token(sp.as_deref()).as_deref(),
             Some("cap-token-123")

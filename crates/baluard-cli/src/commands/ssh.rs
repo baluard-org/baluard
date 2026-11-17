@@ -77,7 +77,7 @@ fn daemon_bin() -> PathBuf {
 fn print_setup(agent: &Path) {
     println!();
     println!("Point OpenSSH at the agent for one shell:");
-    println!("  export SSH_AUTH_SOCK={}", agent.display());
+    println!("  export SSH_AUTH_SOCK=\"{}\"", agent.display());
     println!("or persistently in ~/.ssh/config, per host:");
     println!("  IdentityAgent {}", agent.display());
 }
@@ -149,19 +149,34 @@ fn start_detached(bin: &Path, ipc: &Path) -> std::io::Result<()> {
     if let Some(parent) = log.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    #[cfg(unix)]
+    let out = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&log)?
+    };
+    #[cfg(not(unix))]
     let out = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log)?;
     let err = out.try_clone()?;
-    Command::new(bin)
-        .arg("--socket")
+    let mut cmd = Command::new(bin);
+    cmd.arg("--socket")
         .arg(ipc)
         .stdin(std::process::Stdio::null())
         .stdout(out)
-        .stderr(err)
-        .spawn()
-        .map(|_| ())
+        .stderr(err);
+    // Own process group: the terminal's SIGHUP on close must not reach it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.spawn().map(|_| ())
 }
 
 fn serve(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
@@ -181,14 +196,26 @@ fn serve(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
     #[cfg(target_os = "linux")]
-    let via_systemd = Command::new("systemd-run")
-        .args(["--user", "--unit=baluard-daemon", "--collect"])
-        .arg(&bin)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|st| st.success())
-        .unwrap_or(false);
+    let via_systemd = {
+        // Distinct from the installed unit's name: systemd-run fails on a
+        // loaded unit name and its stderr is muted here.
+        let mut sr = Command::new("systemd-run");
+        sr.args(["--user", "--unit=baluard-daemon-serve", "--collect"]);
+        // A service unit starts with a clean environment, so carry the
+        // overrides the caller set or the daemon lands somewhere else and
+        // the readiness ping waits on the wrong socket.
+        for var in ["BALUARD_SOCKET", "BALUARD_DATA_DIR", "BALUARD_LOG_DIR"] {
+            if let Ok(val) = std::env::var(var) {
+                sr.arg(format!("--setenv={var}={val}"));
+            }
+        }
+        sr.arg(&bin)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false)
+    };
     #[cfg(not(target_os = "linux"))]
     let via_systemd = false;
     if !via_systemd {
@@ -210,21 +237,27 @@ fn serve(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// The opt-in systemd user unit. Content lives in one function so the
-/// test can pin what we ship.
+/// test can pin what we ship. ExecStart is quoted with % and $ doubled:
+/// install paths can carry spaces, and systemd would otherwise expand
+/// specifiers and environment variables in them.
 fn systemd_unit_content(bin: &Path) -> String {
+    let exec = bin
+        .to_string_lossy()
+        .replace('%', "%%")
+        .replace('$', "$$")
+        .replace('"', "\\\"");
     format!(
         "[Unit]\n\
          Description=Baluard daemon (vault + SSH agent)\n\
-         After=network-online.target\n\
          \n\
          [Service]\n\
-         ExecStart={}\n\
+         ExecStart=\"{exec}\"\n\
          Restart=on-failure\n\
          RestartSec=2\n\
          \n\
          [Install]\n\
          WantedBy=default.target\n",
-        bin.display()
+        exec = exec
     )
 }
 
@@ -260,16 +293,29 @@ fn install(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
             ));
         }
         let content = systemd_unit_content(&bin);
-        if let Ok(existing) = std::fs::read_to_string(&unit_path) {
-            if existing != content {
+        match std::fs::read_to_string(&unit_path) {
+            Ok(existing) => {
+                if existing != content {
+                    deny(&format!(
+                        "{} already exists with different content; review it first",
+                        unit_path.display()
+                    ));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(parent) = unit_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&unit_path, &content)?;
+            }
+            // An unreadable or non-UTF-8 unit is not ours to overwrite.
+            Err(e) => {
                 deny(&format!(
-                    "{} already exists with different content; review it first",
-                    unit_path.display()
+                    "cannot read {} ({}); remove or fix it first",
+                    unit_path.display(),
+                    e
                 ));
             }
-        } else if let Some(parent) = unit_path.parent() {
-            std::fs::create_dir_all(parent)?;
-            std::fs::write(&unit_path, &content)?;
         }
         let already_running = ping(None);
         let reload = Command::new("systemctl")
@@ -278,11 +324,6 @@ fn install(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
         if !reload.success() {
             deny("systemctl --user daemon-reload failed; is systemd running for this user?");
         }
-        let verb = if already_running {
-            "enable"
-        } else {
-            "enable --now"
-        };
         let enable = Command::new("systemctl")
             .args(["--user", "enable"])
             .args(if already_running {
@@ -293,7 +334,11 @@ fn install(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
             .arg("baluard-daemon.service")
             .status()?;
         if !enable.success() {
-            deny(&format!("systemctl --user {verb} failed"));
+            deny(if already_running {
+                "systemctl --user enable failed"
+            } else {
+                "systemctl --user enable --now failed"
+            });
         }
         if already_running {
             println!("Daemon already running; unit installed and enabled for next boot.");
@@ -327,17 +372,29 @@ fn uninstall(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
             .args(["--user", "disable", "--now", "baluard-daemon.service"])
             .status();
         let unit_path = systemd_user_dir().join("baluard-daemon.service");
-        match std::fs::remove_file(&unit_path) {
-            Ok(()) => {
-                let _ = Command::new("systemctl")
-                    .args(["--user", "daemon-reload"])
-                    .status();
-                println!("Removed {}", unit_path.display());
+        // Only delete what we ship: the marker line identifies the unit
+        // as ours, so a hand-written file at the same path survives.
+        let ours = std::fs::read_to_string(&unit_path)
+            .map(|c| c.contains("Description=Baluard daemon"))
+            .unwrap_or(false);
+        if !ours {
+            if unit_path.exists() {
+                deny(&format!(
+                    "{} was not written by baluard; not touching it",
+                    unit_path.display()
+                ));
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                println!("No installed unit at {}.", unit_path.display());
+            println!("No installed unit at {}.", unit_path.display());
+        } else {
+            match std::fs::remove_file(&unit_path) {
+                Ok(()) => {
+                    let _ = Command::new("systemctl")
+                        .args(["--user", "daemon-reload"])
+                        .status();
+                    println!("Removed {}", unit_path.display());
+                }
+                Err(e) => return Err(e.into()),
             }
-            Err(e) => return Err(e.into()),
         }
         if ping(None) {
             println!(
@@ -355,11 +412,19 @@ mod tests {
     #[test]
     fn unit_pins_binary_and_user_target() {
         let content = systemd_unit_content(Path::new("/usr/bin/baluard-daemon"));
-        assert!(content.contains("ExecStart=/usr/bin/baluard-daemon"));
+        assert!(content.contains("ExecStart=\"/usr/bin/baluard-daemon\""));
         assert!(content.contains("WantedBy=default.target"));
         assert!(content.contains("Restart=on-failure"));
         // No secrets in the unit: the daemon needs none to bind.
         assert!(!content.contains("token"));
         assert!(!content.to_lowercase().contains("password"));
+    }
+
+    #[test]
+    fn unit_escapes_specifier_and_variable_characters() {
+        // systemd would expand %n/%t specifiers and $VARS in ExecStart and
+        // split on spaces; quote and double them instead.
+        let content = systemd_unit_content(Path::new("/opt/my tools/baluard %n $dir"));
+        assert!(content.contains("ExecStart=\"/opt/my tools/baluard %%n $$dir\""));
     }
 }
