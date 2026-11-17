@@ -55,7 +55,14 @@ vi.mock("../components/LegacyBanner.jsx", () => ({ default: () => null }));
 vi.mock("../components/RemovalBanner.jsx", () => ({ default: () => null }));
 
 import VaultView from "../components/VaultView.jsx";
-import { VaultProvider } from "../context/VaultContext.jsx";
+import { VaultProvider, useVault } from "../context/VaultContext.jsx";
+
+// Grabs the live context so tests can drive provider mutations directly.
+let vaultApi;
+function ContextProbe() {
+  vaultApi = useVault();
+  return null;
+}
 
 const C = (id, name) => ({ id, type: "login", name, username: "u" });
 
@@ -116,6 +123,7 @@ async function renderList(count) {
   serveCiphers(count);
   render(() => (
     <VaultProvider>
+      <ContextProbe />
       <VaultView />
     </VaultProvider>
   ));
@@ -156,6 +164,19 @@ describe("VaultView list pagination", () => {
     await waitFor(() => expect(rows().length).toBe(700));
   });
 
+  it("shows rows added after the window reached the list length, no scroll needed", async () => {
+    const el = await renderList(120);
+    scrollToFrac(el, 0.9); // bottom of a short list
+    expect(rows().length).toBe(120);
+
+    // A later sync adds an entry. The window must keep covering the list:
+    // clamping the window down at exhaustion would hide the new row with
+    // no scroll event to earn it back.
+    serveCiphers(121);
+    await vaultApi.refreshCiphers();
+    await waitFor(() => expect(rows().length).toBe(121));
+  });
+
   it("keeps serving pages on repeated deep scrolls until exhausted", async () => {
     const el = await renderList(1200);
     for (let i = 1; i <= 7; i++) {
@@ -176,6 +197,7 @@ describe("VaultView list pagination", () => {
     const input = document.querySelector('[data-testid="vault-search"] input');
     fireEvent.input(input, { target: { value: "Entry" } });
     await waitFor(() => expect(rows().length).toBe(500));
+    expect(el.__geo.top).toBe(0); // scroll returns to the top with the window
   });
 
   it("resets the window when the category changes", async () => {

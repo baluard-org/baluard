@@ -228,7 +228,11 @@ export default function VaultView() {
   function onListScroll(e) {
     const el = e.currentTarget;
     if (el.scrollTop + el.clientHeight < el.scrollHeight * 0.85) return;
-    setVisibleCount((c) => Math.min(c + LIST_PAGE_SIZE, filteredCiphers().length));
+    // No clamp to the list length: the window may only grow, and slice
+    // bounds the render. Clamping at exhaustion would pin the window to
+    // the current list and hide rows added by later syncs (no scroll
+    // event fires to earn them back at the bottom).
+    setVisibleCount((c) => c + LIST_PAGE_SIZE);
   }
 
   // Server-derived admin marker (vault.is_admin_device): true = this
