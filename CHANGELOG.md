@@ -4,6 +4,24 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+## 0.7.3 - 2026-11-17
+
+- Windows: the SSH agent now works there too. Baluard serves vault SSH keys on Windows' standard OpenSSH agent pipe, so ssh and git sign through the vault with no extra setup.
+
+- Linux: AppImage installs now connect the browser extension automatically on first launch, matching the deb and rpm installs; the manual registration step is gone.
+
+- The browser extension shows a badge while passkey interception is on, and the badge now follows the real on/off state instead of going stale.
+
+- CLI: a new `baluard ssh` command group (status, serve, install, uninstall) sets up SSH-agent use in the terminal on Linux, and device enrollment failures on a fresh clone are fixed.
+
+- Sync integrity repair no longer flags trashed entries or shared-folder entries as corruption, so unrelated devices no longer get paused with update prompts over clean data.
+
+- Desktop: the "No folder" row works as a real filter and no longer shows entries that belong to other folders.
+
+- Desktop: entry forms and the entry detail bar now put the primary action on the right and destructive actions on the left, matching the rest of the app.
+
+- Mobile: entry deletion now lives in the edit screen, the Free up space card shows its description above the button instead of a huge empty box, and the categories list no longer runs under the top bar.
+
 ## 0.7.2 - 2026-11-16
 
 - The SSH agent now serves imported RSA keys, including the legacy PKCS#1 and PKCS#8 PEM formats. Signatures follow what your SSH client asks for: rsa-sha2-256, rsa-sha2-512, or ssh-rsa for older servers.
