@@ -3,6 +3,7 @@ package app.baluard.mobile.autofill
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.BlendMode
 import android.os.Build
 import android.os.Bundle
 import android.service.autofill.Dataset
@@ -247,7 +248,7 @@ object AutofillResponseBuilder {
                 t("autofill.unlockVault", vaultName),
             )
             setTextViewText(R.id.autofill_item_subtitle, t("autofill.unlockHint"))
-            setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
+            setImageViewResource(R.id.autofill_item_icon, R.drawable.logo_baluard_lock)
         }
         val ds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val presentations = Presentations.Builder()
@@ -507,7 +508,7 @@ object AutofillResponseBuilder {
         val content = InlineSuggestionUi.newContentBuilder(pi)
             .setTitle(name)
             .setSubtitle(username?.takeIf { it.isNotBlank() } ?: t("autofill.noUsername"))
-            .setStartIcon(Icon.createWithResource(context, R.mipmap.ic_launcher))
+            .setStartIcon(brandIcon(context))
             .build()
         return InlinePresentation(content.slice, spec, false)
     }
@@ -532,10 +533,19 @@ object AutofillResponseBuilder {
         val content = InlineSuggestionUi.newContentBuilder(pending)
             .setTitle(t("autofill.openBaluard"))
             .setSubtitle(t("autofill.pickLogin"))
-            .setStartIcon(Icon.createWithResource(context, R.mipmap.ic_launcher))
+            .setStartIcon(brandIcon(context))
             .build()
         return InlinePresentation(content.slice, spec, false)
     }
+
+    /**
+     * Flat brand mark, never the adaptive launcher tile: IMEs tint inline
+     * icons with the chip text color, and DST makes that tint a no-op
+     * (Bitwarden parity), so the mark keeps its own colors on any pill.
+     */
+    private fun brandIcon(context: Context): Icon =
+        Icon.createWithResource(context, R.drawable.logo_baluard_lock)
+            .setTintBlendMode(BlendMode.DST)
 
     private fun unlockPresentation(context: Context, securityKeyRequired: Boolean = false): RemoteViews =
         RemoteViews(context.packageName, R.layout.autofill_dataset_item).apply {
@@ -547,14 +557,14 @@ object AutofillResponseBuilder {
                 R.id.autofill_item_subtitle,
                 t(if (securityKeyRequired) "autofill.securityKeyHint" else "autofill.unlockHint"),
             )
-            setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
+            setImageViewResource(R.id.autofill_item_icon, R.drawable.logo_baluard_lock)
         }
 
     private fun openBaluardPresentation(context: Context): RemoteViews =
         RemoteViews(context.packageName, R.layout.autofill_dataset_item).apply {
             setTextViewText(R.id.autofill_item_title, t("autofill.openBaluard"))
             setTextViewText(R.id.autofill_item_subtitle, t("autofill.pickLogin"))
-            setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
+            setImageViewResource(R.id.autofill_item_icon, R.drawable.logo_baluard_lock)
         }
 
     private fun datasetPresentation(context: Context, name: String, username: String?, totp: Boolean = false): RemoteViews =
@@ -570,6 +580,6 @@ object AutofillResponseBuilder {
                     if (totp) append(" (").append(t("autofill.totpWillCopy")).append(")")
                 },
             )
-            setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
+            setImageViewResource(R.id.autofill_item_icon, R.drawable.logo_baluard_lock)
         }
 }

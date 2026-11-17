@@ -12,6 +12,8 @@ Notable user-facing changes per release.
 
 - Desktop: the update banner links release notes on baluard.app/changelog, opened at the offered version.
 
+- Mobile and desktop: a failed master password attempt now empties the password field, so no wrong guess stays in the form for the next try.
+
 ## 0.7.3 - 2026-11-17
 
 - Windows: the SSH agent now works there too. Baluard serves vault SSH keys on Windows' standard OpenSSH agent pipe, so ssh and git sign through the vault with no extra setup.
