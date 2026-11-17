@@ -454,7 +454,7 @@
     "switchToDark": "Cambiar al tema oscuro",
     "tabAbout": "Acerca de",
     "aboutTitle": "Acerca de Baluard",
-    "aboutSubtitle": "Gestor de contraseñas nativo git • GPL-3.0",
+    "aboutSubtitle": "Gestor de contraseñas nativo git • GPL-3.0-or-later",
     "sshAgentLabel": "Agente SSH",
     "sshAgentDesc": "Permite que apps de terminal y git pidan firmas de las claves SSH de tu bóveda mediante el socket local del agente. Desactivado por defecto. Cada clave también debe marcarse para compartirse.",
     "sshAgentAutoApproveLabel": "Aprobar firmas automáticamente",

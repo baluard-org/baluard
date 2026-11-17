@@ -495,7 +495,7 @@
     "switchToDark": "Mudar para o tema escuro",
     "tabAbout": "Sobre",
     "aboutTitle": "Sobre o Baluard",
-    "aboutSubtitle": "Gerenciador de senhas com git nativo e criptografia ponta a ponta.",
+    "aboutSubtitle": "Gerenciador de senhas com git nativo e criptografia ponta a ponta • GPL-3.0-or-later",
     "sshAgentLabel": "Agente SSH",
     "sshAgentDesc": "Permite que apps de terminal e git peçam assinaturas das chaves SSH do seu cofre pelo socket local do agente. Desativado por padrão. Cada chave também precisa estar marcada para compartilhamento.",
     "sshAgentAutoApproveLabel": "Aprovar assinaturas automaticamente",

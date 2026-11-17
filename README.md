@@ -105,6 +105,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Start with `just check` b
 
 ## License
 
-[GPL-3.0](LICENSE)
+[GPL-3.0-or-later](LICENSE): GNU General Public License, version 3, or any later version.
 
-The Baluard name, logo, and brand assets are not covered by the GPL-3.0 license; all rights are reserved. Use requires prior written authorization and consent from the project owner.
+The Baluard name, logo, and brand assets are not covered by the GPL-3.0-or-later license; all rights are reserved. Use requires prior written authorization and consent from the project owner.

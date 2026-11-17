@@ -1,8 +1,8 @@
 # OVERVIEW
 Project: **Baluard** (Git-native password manager)
 Stack: Rust (core crypto + daemon runtime + CLI + NMH + UniFFI), SolidJS/Tailwind/Tauri v2 (desktop), JS/MV3 (browser extension), Kotlin Multiplatform/Compose (mobile), Protobuf (IPC schema)
-License: GPL-3.0
-Trademark: All rights reserved on name, logo, and brand assets; GPL-3.0 covers code only.
+License: GPL-3.0-or-later
+Trademark: All rights reserved on name, logo, and brand assets; GPL-3.0-or-later covers code only.
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets.
 Absolute primary focuses: Security, privacy, and ease of use for non-technical users.

@@ -13,7 +13,7 @@ pkgrel=1
 pkgdesc="Git-native password manager. No accounts, no servers."
 arch=('x86_64')
 url="https://baluard.app"
-license=('GPL-3.0-only')
+license=('GPL-3.0-or-later')
 depends=(
   'gtk3'
   'webkit2gtk-4.1'

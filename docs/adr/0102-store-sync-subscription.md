@@ -4,7 +4,7 @@
 
 ## Context
 
-Baluard is GPL-3.0 free software with no vault server backend. Sync is the user's own Git repository on their own provider, so serving a user costs Baluard nothing per user. The project's costs are structural, recurring, and independent of user count:
+Baluard is GPL-3.0-or-later free software with no vault server backend. Sync is the user's own Git repository on their own provider, so serving a user costs Baluard nothing per user. The project's costs are structural, recurring, and independent of user count:
 
 | Cost | Nature | Status |
 |---|---|---|

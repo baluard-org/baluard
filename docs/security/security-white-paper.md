@@ -2,7 +2,7 @@
 
 This paper describes how Baluard protects your data, in enough detail to check our claims against the source code. It covers the 0.1.0 release. Every mechanism named here exists in the repository you can read; where a claim depends on deeper detail, we link the document that carries it.
 
-Baluard is a local-first password manager: your vault lives on your devices as encrypted files, and nothing in the product's normal operation talks to a Baluard server, because there is no Baluard server. Sync, when you enable it, rides any ordinary git host, and that host stores only ciphertext. Baluard is free software under GPL-3.0 and we built it as an independent project; section 12 covers assurance: what we have verified, what we still owe, and how to report a vulnerability.
+Baluard is a local-first password manager: your vault lives on your devices as encrypted files, and nothing in the product's normal operation talks to a Baluard server, because there is no Baluard server. Sync, when you enable it, rides any ordinary git host, and that host stores only ciphertext. Baluard is free software under GPL-3.0-or-later and we built it as an independent project; section 12 covers assurance: what we have verified, what we still owe, and how to report a vulnerability.
 
 ## 1. Why the architecture is the security model
 
@@ -22,7 +22,7 @@ The principles below decide every design dispute in the codebase. The [architect
 - Fail closed. Missing keys, unknown formats, mismatched hardware, expired grants, and torn writes all refuse the operation. Every unlock path verifies the master password before any optional work runs.
 - One credential. The app collects exactly one secret in its life: your master password. Any second password prompt is treated as phishing-shaped and is forbidden in the UI.
 - Memory hygiene. Key material is zeroized when it is no longer needed, the vault root key is kept out of swap where the OS allows it, and lock purges keys from every active session.
-- Readable source over attestations. The full source is public under GPL-3.0. Section 12 is explicit about the assurance work still owed.
+- Readable source over attestations. The full source is public under GPL-3.0-or-later. Section 12 is explicit about the assurance work still owed.
 
 ## 3. Protecting the vault
 
@@ -179,7 +179,7 @@ Named residuals: trust on first use at the first clone; the passphrase identity 
 
 ## 12. Assurance, and what is still owed
 
-This is the section hosted vendors fill with certification logos, and honesty is worth more than logos. Baluard 0.1.0 has no third-party security audit, no formal certification, and no bug bounty. It has a single maintainer, public source under GPL-3.0, a recorded architecture-decision history, and a development process that treated adversarial review (of the whole repository, of every security-critical wave, with fixes landed red-first and re-reviewed) as part of the work rather than a launch checkbox. That process found and fixed real defects; it is not a substitute for outside eyes.
+This is the section hosted vendors fill with certification logos, and honesty is worth more than logos. Baluard 0.1.0 has no third-party security audit, no formal certification, and no bug bounty. It has a single maintainer, public source under GPL-3.0-or-later, a recorded architecture-decision history, and a development process that treated adversarial review (of the whole repository, of every security-critical wave, with fixes landed red-first and re-reviewed) as part of the work rather than a launch checkbox. That process found and fixed real defects; it is not a substitute for outside eyes.
 
 What we owe the project next, in order: enforcing the dependency audit in CI, a Windows Authenticode certificate and a macOS Developer ID, and an independent code audit before we call 1.0 security-hardened. The disclosure policy itself is written down in SECURITY.md at the repository root, with the acknowledgement and coordination commitments beside it. If you find a vulnerability, please report it privately through GitHub security advisories on the repository; we will credit every reporter who wants credit, and none who does not.
 

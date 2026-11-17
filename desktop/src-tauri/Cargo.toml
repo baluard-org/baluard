@@ -3,7 +3,7 @@ name = "baluard-desktop"
 version = "0.7.3"
 description = "Baluard desktop app"
 authors = ["EstebanForge"]
-license = "GPL-3.0"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/baluard-org/baluard"
 edition = "2024"
 
