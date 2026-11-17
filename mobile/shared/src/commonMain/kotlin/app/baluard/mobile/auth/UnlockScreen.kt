@@ -179,7 +179,13 @@ fun UnlockScreen(
                     onClick = {
                         state = AuthState.Unlocking
                         scope.launch {
-                            when (val result = authViewModel.openAndUnlock(vaultPath, password)) {
+                            val result = authViewModel.openAndUnlock(vaultPath, password)
+                            if (result !is UnlockResult.Success) {
+                                // A rejected attempt must not leave a guess
+                                // sitting in the field for the next try.
+                                password = ""
+                            }
+                            when (result) {
                                 is UnlockResult.Success -> {
                                     state = AuthState.Unlocked
                                     // Offer quick-unlock enrollment once, right
