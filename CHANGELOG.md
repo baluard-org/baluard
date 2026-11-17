@@ -14,6 +14,8 @@ Notable user-facing changes per release.
 
 - Mobile and desktop: a failed master password attempt now empties the password field, so no wrong guess stays in the form for the next try.
 
+- Desktop: large vaults now render the entry list in pages (500 on first paint, 100 more as you scroll near the bottom), so startup stays fast with thousands of entries. The entry count in the header still reflects the full list, and searching narrows the page to your matches.
+
 ## 0.7.3 - 2026-11-17
 
 - Windows: the SSH agent now works there too. Baluard serves vault SSH keys on Windows' standard OpenSSH agent pipe, so ssh and git sign through the vault with no extra setup.

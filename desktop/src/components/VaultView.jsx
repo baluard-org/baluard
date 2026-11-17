@@ -207,6 +207,30 @@ export default function VaultView() {
     return list;
   });
 
+  // List pagination: a vault with thousands of entries must not pay the
+  // full DOM cost at startup. First paint renders 500 rows; each scroll
+  // past 85% depth appends 100 more until the filtered list is exhausted.
+  // Any filter that reshapes the list resets the window and the scroll,
+  // otherwise a stale window strands the viewport past the rendered rows.
+  const LIST_INITIAL_COUNT = 500;
+  const LIST_PAGE_SIZE = 100;
+  const [visibleCount, setVisibleCount] = createSignal(LIST_INITIAL_COUNT);
+  const visibleCiphers = createMemo(() => filteredCiphers().slice(0, visibleCount()));
+  let listScrollRef;
+  createEffect(
+    () =>
+      `${vault.selectedCategory()}|${vault.selectedFolder() || ""}|${vault.selectedTag() || ""}|${vault.selectedCollection() || ""}|${vault.searchQuery()}|${switcher.activeSlug()}`,
+    () => {
+      setVisibleCount(LIST_INITIAL_COUNT);
+      if (listScrollRef) listScrollRef.scrollTop = 0;
+    },
+  );
+  function onListScroll(e) {
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight < el.scrollHeight * 0.85) return;
+    setVisibleCount((c) => Math.min(c + LIST_PAGE_SIZE, filteredCiphers().length));
+  }
+
   // Server-derived admin marker (vault.is_admin_device): true = this
   // device manages the space; members see the ask-for-access entry
   // instead of management controls. null = unknown, hide both.
@@ -666,7 +690,7 @@ export default function VaultView() {
           </div>
 
           {/* Scrollable list items */}
-          <div class="flex-1 overflow-y-auto p-3">
+          <div class="flex-1 overflow-y-auto p-3" ref={listScrollRef} data-testid="cipher-list-scroll" onScroll={onListScroll}>
             <Show when={`${vault.selectedCategory()}|${vault.selectedFolder() || ""}|${vault.selectedTag() || ""}`} keyed>
               {() => (
                 <div class="motion-list-enter space-y-1">
@@ -677,7 +701,7 @@ export default function VaultView() {
                     </div>
                   </Show>
 
-                  <For each={filteredCiphers()}>
+                  <For each={visibleCiphers()}>
                     {(cipher) => <CipherRow cipher={cipher} onSelect={(c) => { setViewCipher(c); vault.setActivePane("detail"); }} active={(viewCipher()?._vault?.slug || "") + ":" + (viewCipher()?.id || "") === (cipher._vault?.slug || "") + ":" + (cipher.id || "")} />}
                   </For>
                 </div>
