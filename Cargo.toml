@@ -74,7 +74,7 @@ hex = "0.4"
 base64 = { version = "0.22", features = ["alloc"] }
 
 # Secure memory
-zeroize = { version = "1", features = ["derive"] }
+zeroize = { version = "1", features = ["derive", "serde"] }
 
 # Git provider clients
 # Webpki bundled roots: rustls-native-certs (the default) cannot probe the

@@ -14,6 +14,30 @@
 //! use.
 
 mod serve {
+
+    /// Typed view of a decrypted ssh-key cipher. Sensitive fields are
+    /// Zeroizing so the view wipes them on drop; parsing straight into
+    /// these structs keeps a decrypted payload from fanning out into a
+    /// serde_json::Value tree, whose strings Rust frees without wiping.
+    /// Unknown payload fields are skipped by serde and never allocated.
+    #[derive(serde::Deserialize)]
+    pub(crate) struct SshCipherView {
+        pub(crate) name: Option<zeroize::Zeroizing<String>>,
+        pub(crate) kind: Option<SshCipherKindView>,
+    }
+
+    #[derive(serde::Deserialize)]
+    pub(crate) struct SshCipherKindView {
+        #[serde(rename = "type")]
+        pub(crate) kind_type: Option<String>,
+        pub(crate) data: Option<SshCipherDataView>,
+    }
+
+    #[derive(serde::Deserialize)]
+    pub(crate) struct SshCipherDataView {
+        pub(crate) serve_via_agent: Option<bool>,
+        pub(crate) private_key: Option<zeroize::Zeroizing<String>>,
+    }
     use crate::host::VaultHost;
 
     use baluard_runtime::agents::PeerBinding;
@@ -177,48 +201,33 @@ mod serve {
                     continue;
                 };
                 let cipher_json = zeroize::Zeroizing::new(cipher_json);
-                let Ok(v) = serde_json::from_str::<serde_json::Value>(&cipher_json) else {
+                let Ok(v) = serde_json::from_str::<SshCipherView>(&cipher_json) else {
                     continue;
                 };
                 // Defense in depth against metadata drift: the envelope
                 // must still name an ssh key.
-                let is_ssh = v
-                    .get("kind")
-                    .and_then(|k| k.get("type"))
-                    .and_then(|t| t.as_str())
-                    == Some("sshKey");
-                let opted_in = v
-                    .get("kind")
-                    .and_then(|k| k.get("data"))
-                    .and_then(|d| d.get("serve_via_agent"))
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false);
+                let is_ssh = v.kind.as_ref().and_then(|k| k.kind_type.as_deref()) == Some("sshKey");
+                let cipher_data = v.kind.as_ref().and_then(|k| k.data.as_ref());
+                let opted_in = cipher_data.and_then(|d| d.serve_via_agent).unwrap_or(false);
                 if !is_ssh || !opted_in {
                     continue;
                 }
-                let private_text = zeroize::Zeroizing::new(
-                    v.get("kind")
-                        .and_then(|k| k.get("data"))
-                        .and_then(|d| d.get("private_key"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                );
                 // Unreadable, encrypted, or unsupported keys are skipped
                 // from the listing at debug level; the agent serves the
                 // rest rather than failing the whole answer.
-                let Ok((_, material)) = crate::ssh_agent_keys::load_material(&private_text) else {
+                let Some(private_text) = cipher_data.and_then(|d| d.private_key.as_ref()) else {
+                    continue;
+                };
+                let Ok((_, material)) = crate::ssh_agent_keys::load_material(private_text.as_str())
+                else {
                     log::debug!("[agent] key {id} is not serveable; skipped");
                     continue;
                 };
                 // The entry name travels into an approval prompt, so it
                 // is capped and stripped of control characters: a shared
                 // folder entry name must not be able to spoof the prompt.
-                let name = sanitize_label(
-                    v.get("name")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("ssh key"),
-                );
+                let name =
+                    sanitize_label(v.name.as_deref().map(|s| s.as_str()).unwrap_or("ssh key"));
                 entries.push(ServeEntry {
                     vault_slug: slug.clone(),
                     cipher_id: id,
@@ -360,24 +369,16 @@ mod serve {
             return crate::ssh_agent_proto::encode_failure();
         };
         let cipher_json = zeroize::Zeroizing::new(cipher_json);
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&cipher_json) else {
+        let Ok(v) = serde_json::from_str::<SshCipherView>(&cipher_json) else {
             return crate::ssh_agent_proto::encode_failure();
         };
-        let still_opted = v
-            .get("kind")
-            .and_then(|k| k.get("data"))
-            .and_then(|d| d.get("serve_via_agent"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        let private_text = zeroize::Zeroizing::new(
-            v.get("kind")
-                .and_then(|k| k.get("data"))
-                .and_then(|d| d.get("private_key"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        );
-        let Ok((private, material)) = crate::ssh_agent_keys::load_material(&private_text) else {
+        let cipher_data = v.kind.as_ref().and_then(|k| k.data.as_ref());
+        let still_opted = cipher_data.and_then(|d| d.serve_via_agent).unwrap_or(false);
+        let Some(private_text) = cipher_data.and_then(|d| d.private_key.as_ref()) else {
+            return crate::ssh_agent_proto::encode_failure();
+        };
+        let Ok((private, material)) = crate::ssh_agent_keys::load_material(private_text.as_str())
+        else {
             return crate::ssh_agent_proto::encode_failure();
         };
         if !still_opted || material.blob != key_blob {
@@ -744,6 +745,73 @@ pub use serve::unix::agent_socket_path;
 pub use serve::windows::WINDOWS_AGENT_PIPE_NAME;
 #[cfg(windows)]
 pub use serve::windows::agent_pipe_name;
+
+#[cfg(test)]
+mod cipher_view_tests {
+    use super::serve::{SshCipherDataView, SshCipherView};
+
+    fn full_payload() -> String {
+        serde_json::json!({
+            "id": "9f0c1b2a-0000-4000-8000-000000000001",
+            "name": "gh",
+            "notes": "rotate quarterly",
+            "kind": {"type": "sshKey", "data": {
+                "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n",
+                "public_key": "ssh-ed25519 AAAA test",
+                "serve_via_agent": true,
+            }},
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn view_parses_nested_kind_and_keeps_key_text_exact() {
+        let v: SshCipherView = serde_json::from_str(&full_payload()).unwrap();
+        assert_eq!(v.name.as_deref().map(|s| s.as_str()), Some("gh"));
+        let kind = v.kind.as_ref().unwrap();
+        assert_eq!(kind.kind_type.as_deref(), Some("sshKey"));
+        let data = kind.data.as_ref().unwrap();
+        assert_eq!(data.serve_via_agent, Some(true));
+        // CRLF-free but multi-line: every byte must survive the parse.
+        let pk = data.private_key.as_ref().unwrap();
+        assert!(pk.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----\n"));
+        assert!(pk.ends_with("-----END OPENSSH PRIVATE KEY-----\n"));
+    }
+
+    #[test]
+    fn view_defaults_missing_fields_to_none() {
+        let v: SshCipherView = serde_json::from_str("{}").unwrap();
+        assert!(v.name.is_none());
+        assert!(v.kind.is_none());
+        let v: SshCipherView = serde_json::from_str("{\"kind\":{}}").unwrap();
+        let kind = v.kind.as_ref().unwrap();
+        assert!(kind.kind_type.is_none());
+        assert!(kind.data.is_none());
+    }
+
+    #[test]
+    fn view_ignores_non_ssh_and_foreign_fields() {
+        let v: SshCipherView = serde_json::from_str(
+            r#"{"name":"bank","kind":{"type":"login","data":{"password":"hunter2"}}}"#,
+        )
+        .unwrap();
+        let kind = v.kind.as_ref().unwrap();
+        assert_eq!(kind.kind_type.as_deref(), Some("login"));
+        let data = kind.data.as_ref().unwrap();
+        assert_eq!(data.serve_via_agent, None);
+        assert!(data.private_key.is_none());
+        // The typed struct has no password field, so the login secret
+        // in the payload is skipped by serde and never allocated.
+    }
+
+    #[test]
+    fn data_view_flags_absent_serve_as_none() {
+        let v: SshCipherDataView = serde_json::from_str("{}").unwrap();
+        assert_eq!(v.serve_via_agent, None);
+        assert!(v.private_key.is_none());
+    }
+}
+
 #[cfg(unix)]
 #[cfg(test)]
 mod tests {
