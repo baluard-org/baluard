@@ -181,6 +181,15 @@ ext-submit artifacts="dist":
 # Sign release artifacts (minisign sidecars + signed SHA256SUMS). The updater
 # key lives at ~/.tauri/baluard-updater.key; see docs/dev/linux-repositories.md.
 # Defaults to ./dist, the gitignored local staging dir.
+# Collect this release's desktop bundles into dist/ and remove the
+# previous release's loose files. The build legs never write dist/ (only
+# the macOS deliverable, ext-package, and the CLI archive do), so this
+# runs before anything signs or stages from dist/. Refuses to delete
+# anything when a bundle is missing, so a partial build cannot destroy
+# the previous run's staged set.
+dist-collect artifacts="dist":
+	./scripts/collect-dist.sh {{ artifacts }}
+
 release-sign artifacts="dist":
 	./scripts/sign-release-artifacts.sh {{ artifacts }}
 
@@ -211,6 +220,7 @@ repo-sync out="repo-out" site="../baluard-org":
 # Sign existing release artifacts, regenerate all repository metadata, and
 # synchronize the website worktree in one fail-fast pipeline.
 release-repositories artifacts="dist" out="repo-out" site="../baluard-org":
+	just dist-collect {{ artifacts }}
 	just ext-package {{ artifacts }}
 	just fdroid-stage mobile/androidApp/build/outputs/apk/fdroid/release/androidApp-fdroid-release.apk {{ out }}
 	just release-sign {{ artifacts }}
@@ -221,6 +231,8 @@ release-repositories artifacts="dist" out="repo-out" site="../baluard-org":
 
 # Test release repository generation and website synchronization.
 test-release-scripts:
+	./scripts/tests/test-collect-dist.sh
+	./scripts/tests/test-sign-release-artifacts.sh
 	./scripts/tests/test-build-fdroid-repo.sh
 	./scripts/tests/test-sync-site-repos.sh
 	./scripts/tests/test-build-extension-packages.sh

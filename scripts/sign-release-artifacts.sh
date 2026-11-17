@@ -8,6 +8,12 @@
 set -euo pipefail
 
 DIR="${1:?usage: sign-release-artifacts.sh <artifacts-dir>}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORKSPACE_VERSION="$(awk -F'"' '/^\[workspace.package\]/{section=1; next} section && /^version =/{print $2; exit}' "$ROOT/Cargo.toml")"
+[[ "$WORKSPACE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
+  || { echo "cannot read workspace version from $ROOT/Cargo.toml" >&2; exit 1; }
+WORKSPACE_CORE="${WORKSPACE_VERSION%%-*}"
+
 KEY="${BALUARD_UPDATER_KEY:-$HOME/.tauri/baluard-updater.key}"
 [[ -f "$KEY" ]] || { echo "updater key not found at $KEY" >&2; exit 1; }
 export TAURI_SIGNING_PRIVATE_KEY
@@ -16,6 +22,22 @@ TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY")"
 TAURI_CLI="@tauri-apps/cli@2.12.4"
 
 cd "$DIR"
+
+# Refuse files from another release before signing anything: the stage
+# guard that would reject them runs only later, after the repositories
+# are already packaged. Only the X.Y.Z core is compared so the rpm
+# release suffix (-1) and prerelease tags stay out of the way.
+stale=()
+while IFS= read -r f; do
+  v="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"${f##*/}" | head -n1 || true)"
+  [[ -z "$v" || "$v" == "$WORKSPACE_CORE" ]] || stale+=("${f##*/}")
+done < <(find . -maxdepth 1 -type f)
+if [[ ${#stale[@]} -gt 0 ]]; then
+  echo "refusing: files from another release than workspace version $WORKSPACE_VERSION:" >&2
+  printf '  %s\n' "${stale[@]}" >&2
+  exit 1
+fi
+
 shopt -s nullglob
 files=()
 for f in *.AppImage *.deb *.rpm *.tar.gz *.zip *.exe; do
