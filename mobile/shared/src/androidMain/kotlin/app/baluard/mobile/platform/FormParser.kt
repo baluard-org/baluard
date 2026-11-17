@@ -80,8 +80,8 @@ object FormParser {
                 }
             }
             // Browser address bar fallback (plan A1/D7 starter table):
-            // scrape when the page origin is missing.
-            if (urlBarText == null && A11yUri.isUrlBar(node.idEntry)) {
+            // scrape when the page origin is missing, browsers only.
+            if (urlBarText == null && browser && A11yUri.isUrlBar(node.idEntry)) {
                 node.text?.toString()?.takeIf { it.isNotBlank() }?.let { urlBarText = it }
             }
             if (webDomain == null) node.webDomain?.let { webDomain = it }

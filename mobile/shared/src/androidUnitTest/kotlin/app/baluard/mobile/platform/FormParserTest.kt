@@ -117,6 +117,7 @@ class FormParserTest {
         val form = parse(
             field("url", idEntry = "url_bar", text = "https://login.example.org/signin"),
             field("p", hints = listOf("current-password")),
+            browser = true,
         ) ?: error("form expected")
         assertTrue(form.target.startsWith("https://login.example.org"))
     }

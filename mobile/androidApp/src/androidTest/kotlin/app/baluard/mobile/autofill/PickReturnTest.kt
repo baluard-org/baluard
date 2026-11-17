@@ -81,13 +81,34 @@ class PickReturnTest {
     }
 
     @Test
-    fun pickFillIsEmptyWithoutPassword() {
+    fun usernameOnlyFormFillsOnlyTheUsername() {
         val usernameId = fakeId("username")
         val fields = AutofillResponseBuilder.TargetFields(usernameId, null)
 
-        val fill = AutofillResponseBuilder.pickFillValues(fields, username = "ada@example.com", password = null)
+        val fill = AutofillResponseBuilder.pickFillValues(
+            fields,
+            username = "ada@example.com",
+            password = "s3cret",
+        )
 
-        assertTrue(fill.isEmpty())
+        assertEquals(1, fill.size)
+        assertEquals(usernameId, fill[0].first)
+    }
+
+    @Test
+    fun passwordlessCredentialStillFillsItsUsername() {
+        val usernameId = fakeId("username")
+        val passwordId = fakeId("password")
+        val fields = AutofillResponseBuilder.TargetFields(usernameId, passwordId)
+
+        val fill = AutofillResponseBuilder.pickFillValues(
+            fields,
+            username = "ada@example.com",
+            password = null,
+        )
+
+        assertEquals(1, fill.size)
+        assertEquals(usernameId, fill[0].first)
     }
 
     @Test

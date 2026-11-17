@@ -70,12 +70,14 @@ object AutofillResponseBuilder {
         fields: TargetFields,
         target: String,
         securityKeyRequired: Boolean = false,
+        compat: Boolean = false,
     ): FillResponse {
         val intent = if (securityKeyRequired) {
             Intent(context, app.baluard.mobile.MainActivity::class.java)
         } else {
             Intent(context, AutofillActivity::class.java).apply {
                 putExtra(AutofillActivity.EXTRA_TARGET, target)
+                putExtra(AutofillActivity.EXTRA_COMPAT_MODE, compat)
                 fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
                 fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
             }
@@ -198,10 +200,10 @@ object AutofillResponseBuilder {
         // own auth dataset - one explicit biometric prompt each.
         for ((lockedPath, lockedName) in AutofillSession.lockedVaults()) {
             builder.addDataset(
-                lockedVaultDataset(context, fields, target, lockedPath, lockedName).build(),
+                lockedVaultDataset(context, fields, target, lockedPath, lockedName, compat).build(),
             )
         }
-        builder.addDataset(openBaluardDataset(context, fields, target, inline).build())
+        builder.addDataset(openBaluardDataset(context, fields, target, compat = compat, inline = inline).build())
         return applyIgnored(builder.setSaveInfo(saveInfo(fields, compat)), ignored).build()
     }
 
@@ -220,10 +222,12 @@ object AutofillResponseBuilder {
         target: String,
         vaultPath: String,
         vaultName: String,
+        compat: Boolean = false,
     ): Dataset.Builder {
         val intent = Intent(context, AutofillActivity::class.java).apply {
             putExtra(AutofillActivity.EXTRA_TARGET, target)
             putExtra(AutofillActivity.EXTRA_VAULT_PATH, vaultPath)
+            putExtra(AutofillActivity.EXTRA_COMPAT_MODE, compat)
             fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
             fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
         }
@@ -281,7 +285,7 @@ object AutofillResponseBuilder {
         compat: Boolean = false,
     ): FillResponse {
         val builder = FillResponse.Builder()
-            .addDataset(openBaluardDataset(context, fields, target, inline).build())
+            .addDataset(openBaluardDataset(context, fields, target, compat = compat, inline = inline).build())
         return applyIgnored(builder.setSaveInfo(saveInfo(fields, compat)), ignored).build()
     }
 
@@ -316,12 +320,14 @@ object AutofillResponseBuilder {
         context: Context,
         fields: TargetFields,
         target: String,
+        compat: Boolean = false,
         inline: InlineStyle? = null,
     ): Dataset.Builder {
         val views = openBaluardPresentation(context)
         val intent = Intent(context, AutofillActivity::class.java).apply {
             putExtra(AutofillActivity.EXTRA_MODE, AutofillActivity.MODE_FALLBACK_PICK)
             putExtra(AutofillActivity.EXTRA_TARGET, target)
+            putExtra(AutofillActivity.EXTRA_COMPAT_MODE, compat)
             // The picker's Trust / Not-now actions need the raw package
             // (review finding #1): without it both buttons were silent no-ops.
             if (target.startsWith("androidapp://")) {
@@ -410,12 +416,16 @@ object AutofillResponseBuilder {
         username: String?,
         password: String?,
     ): List<Pair<AutofillId, AutofillValue>> {
-        if (password == null) return emptyList()
+        // Per slot: fill only when BOTH the form and the credential carry
+        // the value. A username-only form (multi-step login step) has no
+        // password slot; a passwordless credential still fills its username.
         val fill = mutableListOf<Pair<AutofillId, AutofillValue>>()
         if (fields.usernameId != null && username != null) {
             fill += fields.usernameId to AutofillValue.forText(username)
         }
-        fill += fields.passwordId!! to AutofillValue.forText(password)
+        if (fields.passwordId != null && password != null) {
+            fill += fields.passwordId to AutofillValue.forText(password)
+        }
         return fill
     }
 

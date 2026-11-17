@@ -47,6 +47,7 @@ class AutofillActivity : FragmentActivity() {
         const val EXTRA_PASSWORD_ID = "baluard.autofill.extra.PASSWORD_ID"
         const val EXTRA_MODE = "baluard.autofill.extra.MODE"
         const val EXTRA_TARGET_PACKAGE = "baluard.autofill.extra.TARGET_PACKAGE"
+        const val EXTRA_COMPAT_MODE = "baluard.autofill.extra.COMPAT_MODE"
 const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
         const val MODE_DATASETS = "datasets"
 
@@ -175,6 +176,10 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                 // The :autofill process may have died during the prompt:
                 // reopen so merge eligibility and the vault map are live.
                 AutofillSession.ensureOpen()
+                // The cached response is about to be replaced: it must keep
+                // the save-capture policy of the ORIGINAL request, so the
+                // compat bit rides the auth intent instead of being guessed.
+                val compat = intent?.getBooleanExtra(EXTRA_COMPAT_MODE, false) ?: false
                 val response = AutofillResponseBuilder.filledResponse(
                     applicationContext,
                     fields,
@@ -183,7 +188,13 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
                     // empty list renders popup-only, same as the direct path.
                     InlineStyle(AutofillInlineCache.specs, AutofillInlineCache.maxCount)
                         .takeIf { AutofillInlineCache.specs.isNotEmpty() },
-                ) ?: AutofillResponseBuilder.saveOnlyResponse(applicationContext, fields, target)
+                    compat = compat,
+                ) ?: AutofillResponseBuilder.saveOnlyResponse(
+                    applicationContext,
+                    fields,
+                    target,
+                    compat = compat,
+                )
                 // Bitwarden-parity clipboard copy (Claude review, minimal
                 // shape): the framework sheet gives no per-dataset pick
                 // callback, so copy only when exactly one match carries
@@ -651,6 +662,9 @@ const val EXTRA_VAULT_PATH = "baluard.autofill.extra.VAULT_PATH"
 
     private fun deliverDatasetResult(result: android.os.Parcelable) {
         val intent = Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, result)
+        // Without this the framework overwrites the cached auth row with the
+        // picked dataset on the next re-show of the same session.
+        intent.putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT_EPHEMERAL_DATASET, true)
         setResult(RESULT_OK, intent)
         finish()
         overridePendingTransition(0, 0)
