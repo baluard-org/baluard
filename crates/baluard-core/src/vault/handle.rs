@@ -353,29 +353,11 @@ impl VaultHandle {
             // and the epoch state below may still need operator attention.
         }
 
-        // H3 fix: Rollback detection on vault open.
-        // Load integrity manifest and compare against actual file state.
-        // Warn on rollback (don't block: manifest is in writable tree, not externally anchored).
-        if let Ok(manifest) = crate::integrity::IntegrityManifest::load(path) {
-            let mut actual_seqs = HashMap::new();
-            let ciphers_dir = path.join("ciphers");
-            if ciphers_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&ciphers_dir) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name();
-                        let name_str = name.to_string_lossy();
-                        if name_str.ends_with(".enc") {
-                            let object_id = name_str.trim_end_matches(".enc").to_string();
-                            if let Ok(data) = std::fs::read(entry.path()) {
-                                if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
-                                    actual_seqs.insert(object_id, envelope.header.update_seq);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            let rollbacks = manifest.detect_rollback(&actual_seqs);
+        // H3 fix: rollback detection on vault open. Trash envelopes count
+        // as present (a trashed object is not a rollback); checkpoints for
+        // objects absent everywhere are stale bookkeeping and heal here.
+        if let Ok(mut manifest) = crate::integrity::IntegrityManifest::load(path) {
+            let rollbacks = scan_and_heal_integrity(path, &mut manifest);
             if !rollbacks.is_empty() {
                 eprintln!(
                     "WARNING: rollback detected! {} object(s) have lower sequence numbers than expected:",
@@ -12055,11 +12037,133 @@ fn parse_privkey_json(json: &str) -> Result<DevicePrivKeys, BaluardError> {
     })
 }
 
+/// Compare on-disk cipher and trash envelopes against the integrity
+/// manifest. Trashed objects are present (a trash move is not a rollback);
+/// checkpoints for objects absent from both directories are stale
+/// bookkeeping left by pre-fix purges and are dropped in place, so a
+/// purge can never park a permanent rollback warning on every open.
+/// Returns only the genuine rollbacks (file exists, seq went backward).
+fn scan_and_heal_integrity(
+    path: &std::path::Path,
+    manifest: &mut crate::integrity::IntegrityManifest,
+) -> Vec<crate::integrity::RollbackEntry> {
+    let mut actual_seqs = HashMap::new();
+    for dir in ["ciphers", "trash"] {
+        let dir_path = path.join(dir);
+        if !dir_path.exists() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir_path) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.ends_with(".enc") {
+                    let object_id = name_str.trim_end_matches(".enc").to_string();
+                    if let Ok(data) = std::fs::read(entry.path()) {
+                        if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
+                            actual_seqs.insert(object_id, envelope.header.update_seq);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let rollbacks = manifest.detect_rollback(&actual_seqs);
+    let healed: Vec<String> = rollbacks
+        .iter()
+        .map(|rb| &rb.object_id)
+        .filter(|id| !actual_seqs.contains_key(*id))
+        .cloned()
+        .collect();
+    if !healed.is_empty() {
+        for id in &healed {
+            manifest.checkpoints.remove(id);
+        }
+        let _ = manifest.save(path);
+        eprintln!(
+            "Cleaned {} stale tracking entries from vault bookkeeping.",
+            healed.len()
+        );
+    }
+    rollbacks
+        .into_iter()
+        .filter(|rb| actual_seqs.contains_key(&rb.object_id))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::KdfProfile;
     use crate::vault::creation;
+
+    #[test]
+    fn integrity_scan_counts_trash_and_heals_absent_checkpoints() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path();
+        std::fs::create_dir_all(vault.join("ciphers")).unwrap();
+        std::fs::create_dir_all(vault.join("trash")).unwrap();
+
+        let env_at = |seq: u64| {
+            crate::vault::envelope::serialize(&crate::types::CipherEnvelope {
+                header: crate::types::EnvelopeHeader {
+                    version: 2,
+                    alg_id: 0x0001,
+                    key_epoch: 1,
+                    update_seq: seq,
+                    tier: None,
+                },
+                nonce: [0u8; 12],
+                aad: Vec::new(),
+                ciphertext: Vec::new(),
+                tag: [0u8; 16],
+            })
+            .unwrap()
+        };
+
+        let live = "11111111-1111-1111-1111-111111111111";
+        let trashed = "22222222-2222-2222-2222-222222222222";
+        let ghost = "33333333-3333-3333-3333-333333333333";
+        std::fs::write(vault.join("ciphers").join(format!("{live}.enc")), env_at(1)).unwrap();
+        std::fs::write(
+            vault.join("trash").join(format!("{trashed}.enc")),
+            env_at(1),
+        )
+        .unwrap();
+
+        let checkpoint = |object_id: &str| crate::integrity::Checkpoint {
+            object_id: object_id.to_string(),
+            seq: 1,
+            device_id: "d".into(),
+            signature: String::new(),
+        };
+        let mut manifest = crate::integrity::IntegrityManifest {
+            checkpoints: HashMap::from([
+                (live.to_string(), checkpoint(live)),
+                (trashed.to_string(), checkpoint(trashed)),
+                (ghost.to_string(), checkpoint(ghost)),
+            ]),
+            last_writer: "d".into(),
+        };
+
+        let rollbacks = scan_and_heal_integrity(vault, &mut manifest);
+        assert!(
+            rollbacks.is_empty(),
+            "trash counts as present: {rollbacks:?}"
+        );
+        assert!(manifest.checkpoints.contains_key(live));
+        assert!(manifest.checkpoints.contains_key(trashed));
+        assert!(
+            !manifest.checkpoints.contains_key(ghost),
+            "absent checkpoint heals"
+        );
+
+        // A file present but behind its checkpoint is still a real rollback.
+        std::fs::write(vault.join("ciphers").join(format!("{live}.enc")), env_at(0)).unwrap();
+        let rollbacks = scan_and_heal_integrity(vault, &mut manifest);
+        assert_eq!(rollbacks.len(), 1);
+        assert_eq!(rollbacks[0].object_id, live);
+    }
 
     #[test]
     fn approve_join_records_wrap_pubkey_from_intro_card() {
