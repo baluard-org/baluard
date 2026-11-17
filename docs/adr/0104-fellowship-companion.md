@@ -1,6 +1,6 @@
 # ADR 0104. Fellowship Companion Entitlement
 
-> Status: Accepted. A signature-verified companion app unlocks Play-gated features for invited testers while it remains installed.
+> Status: Accepted (Amended 2026-11-16). A signature-verified companion app unlocks Play-gated features for invited testers while it remains installed. Public 90.00 USD lifetime purchases are planned as an in-app non-consumable product inside Baluard itself (ADR 0102), keeping Fellowship invite-only on Play internal testing.
 
 ## Context
 

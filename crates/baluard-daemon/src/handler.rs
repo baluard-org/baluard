@@ -4355,16 +4355,23 @@ async fn handle_enroll_with_phrase(
                 return err_response(format!("vault '{target_slug}' not found in registry"));
             };
             let path = entry.path.clone();
-            let state = host
-                .get_or_insert_with(&target_slug, move || {
-                    Arc::new(VaultState::new(path.clone()))
-                })
-                .await;
-            if let Err(e) = state.open().await {
-                phrase.zeroize();
-                master_password.zeroize();
-                return err_response(e);
-            }
+            let fresh = Arc::new(VaultState::new(path.clone()));
+            // try_insert keeps a concurrent request's state untouched (an
+            // unconditional open here would re-lock a vault mid-unlock),
+            // and a failed open evicts our entry so a retry gets a clean
+            // open (same recovery as daemon startup).
+            let state = match host.try_insert(target_slug.clone(), fresh).await {
+                Ok(ours) => {
+                    if let Err(e) = ours.open().await {
+                        host.close(&target_slug).await;
+                        phrase.zeroize();
+                        master_password.zeroize();
+                        return err_response(e);
+                    }
+                    ours
+                }
+                Err(existing) => existing,
+            };
             state
         }
     };

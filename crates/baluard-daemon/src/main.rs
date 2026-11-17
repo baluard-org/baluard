@@ -304,6 +304,28 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
         std::fs::remove_file(socket_path)?;
     }
 
+    // Bind here, before any vault state: the loser of a simultaneous
+    // start must bail having touched nothing. Named pipes bind in their
+    // own block below (first_pipe_instance is the bind there).
+    #[cfg(unix)]
+    let listener = {
+        if let Some(parent) = std::path::Path::new(socket_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Restrictive umask BEFORE bind so socket is born with 0600, then
+        // restore so subsequent mkdir calls keep the execute bit.
+        let prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
+        let l = UnixListener::bind(socket_path).map_err(|e| {
+            anyhow::anyhow!(
+                "another daemon is already listening on {socket_path} ({e}); use the baluard CLI against it, or stop it before starting another"
+            )
+        })?;
+        unsafe {
+            libc::umask(prev);
+        }
+        l
+    };
+
     // Lazy-load the resolved active vault into the host map (opened but
     // locked). The map starts with at most one entry; the rest fill as the
     // user switches/unlocks. We do NOT unlock here — the user still has to
@@ -334,27 +356,6 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     // Spawn the single multi-vault auto-lock checker. Iterates the host map
     // every 30s and applies each vault's own vault_timeout policy.
     host.spawn_auto_lock_checker();
-
-    // Ensure socket parent directory exists (named pipes have none).
-    #[cfg(unix)]
-    if let Some(parent) = std::path::Path::new(socket_path).parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    // Clean stale socket residue: a connectable path was already handled
-    // above, so anything left here is a dead socket file from a crash.
-
-    // Set restrictive umask BEFORE bind so socket is born with 0600,
-    // then restore original umask so subsequent mkdir calls keep the execute bit.
-    #[cfg(unix)]
-    let listener = {
-        let prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
-        let l = UnixListener::bind(socket_path)?;
-        unsafe {
-            libc::umask(prev);
-        }
-        l
-    };
 
     // first_pipe_instance makes startup fail loudly when another daemon
     // already owns the pipe name (the unix stale-socket probe equivalent).
