@@ -44,7 +44,13 @@ describe("getSettings", () => {
       copyTotp: true,
       clipboardClearSeconds: 60,
       enablePasskeys: true,
+      defaultPasswordManager: true,
     });
+  });
+
+  it("defaultPasswordManager defaults to ON (Baluard claims the manager role on install)", async () => {
+    const s = await getSettings();
+    expect(s.defaultPasswordManager).toBe(true);
   });
 
   it("copyTotp defaults to ON (1Password/Bitwarden parity)", async () => {
@@ -75,6 +81,7 @@ describe("updateSettings", () => {
       copyTotp: true,
       clipboardClearSeconds: 60,
       enablePasskeys: true,
+      defaultPasswordManager: true,
     });
   });
 
@@ -87,6 +94,7 @@ describe("updateSettings", () => {
       copyTotp: true,
       clipboardClearSeconds: 60,
       enablePasskeys: true,
+      defaultPasswordManager: true,
       futureKey: 42,
     });
   });

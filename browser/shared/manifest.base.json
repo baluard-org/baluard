@@ -22,6 +22,6 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["nativeMessaging", "storage", "activeTab", "scripting", "offscreen", "clipboardWrite"],
+  "permissions": ["nativeMessaging", "storage", "activeTab", "scripting", "offscreen", "clipboardWrite", "privacy"],
   "host_permissions": ["http://*/*", "https://*/*"]
 }

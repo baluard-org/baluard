@@ -28,7 +28,8 @@
     "activeTab",
     "scripting",
     "offscreen",
-    "clipboardWrite"
+    "clipboardWrite",
+    "privacy"
   ],
   "host_permissions": [
     "http://*/*",

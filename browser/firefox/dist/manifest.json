@@ -28,7 +28,8 @@
     "storage",
     "activeTab",
     "scripting",
-    "clipboardWrite"
+    "clipboardWrite",
+    "privacy"
   ],
   "host_permissions": [
     "http://*/*",

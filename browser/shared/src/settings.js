@@ -22,6 +22,14 @@ export const DEFAULT_SETTINGS = {
   // browser section). Installs from before the default flip keep their
   // stored value; only absent keys inherit the default.
   enablePasskeys: true,
+  // "Make Baluard the default password manager" (1Password General-toggle
+  // parity). Default ON: Baluard claims the manager role on install by
+  // turning the browser's own offer-to-save prompt off via
+  // chrome.privacy.services.passwordSavingEnabled (the API name Chrome and
+  // Firefox both ship; PasswordManagerEnabled is the enterprise policy, not
+  // this API). OFF clears the override — never force-on, because the user
+  // may have disabled the built-in manager themselves.
+  defaultPasswordManager: true,
 };
 
 // The only clipboard auto-clear choices the UI offers (seconds; 0 = never).

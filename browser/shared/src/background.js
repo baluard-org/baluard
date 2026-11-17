@@ -740,6 +740,14 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
     ) {
       refreshBadgeEverywhere();
     }
+    // Default-manager flips only: unchanged settings never re-clear the
+    // browser's own privacy override.
+    if (
+      (oldValue?.defaultPasswordManager ?? DEFAULT_SETTINGS.defaultPasswordManager) !==
+      (newValue?.defaultPasswordManager ?? DEFAULT_SETTINGS.defaultPasswordManager)
+    ) {
+      applyDefaultPasswordManager(newValue);
+    }
   }
 });
 
@@ -922,7 +930,31 @@ async function updateSettingsLocal(patch) {
 // Support flag write-back lives in syncPasskeyScripts (storage), so no
 // dedicated message route is needed here.
 
+// ── Default password manager (chrome.privacy; 1Password General-toggle parity) ──
+// ON turns the browser's offer-to-save prompt off (passwordSavingEnabled —
+// the only password property the API ships; PasswordManagerEnabled is the
+// enterprise policy name) so only Baluard asks to save. OFF clears the
+// override — never force-on, because the user may have disabled the
+// built-in manager themselves before installing. Matches 1Password's
+// shipped pattern exactly (set {value:false} / clear({})).
+async function applyDefaultPasswordManager(settings) {
+  const ctrl = chrome.privacy?.services?.passwordSavingEnabled;
+  if (!ctrl) return;
+  try {
+    if (settings?.defaultPasswordManager === true) await ctrl.set({ value: false });
+    else await ctrl.clear({});
+  } catch (e) {
+    console.error("[baluard] default-manager control failed:", e);
+  }
+}
+
 // Connect on worker start.
 connect();
 syncInlineScript();
 syncPasskeyScripts();
+// Startup applies the control only when the setting is ON (the MV3 worker
+// wakes many times a day; the off case must not re-clear the browser pref
+// every wake — the storage-change handler owns transitions).
+readSettings().then((s) => {
+  if (s.defaultPasswordManager === true) applyDefaultPasswordManager(s);
+});

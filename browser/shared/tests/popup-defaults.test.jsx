@@ -39,11 +39,11 @@ describe("fresh-install settings defaults", () => {
     await new Promise((r) => setTimeout(r, 0));
   });
 
-  it("renders the autofill toggles enabled and passkeys off on first run", () => {
+  it("renders the settings toggles with correct fresh-install defaults", () => {
     const toggles = [
       ...document.querySelectorAll(".setting-row input[type=checkbox]"),
     ];
-    expect(toggles.length).toBe(3);
+    expect(toggles.length).toBe(4);
     // inlineAutofill + copyTotp default ON (1Password/Bitwarden parity).
     for (const input of toggles.slice(0, 2)) {
       expect(input.checked, "checkbox should be checked").toBe(true);
@@ -58,6 +58,12 @@ describe("fresh-install settings defaults", () => {
     const passkeys = toggles[2];
     expect(passkeys.checked, "passkeys toggle should start on").toBe(true);
     expect(passkeys.closest(".toggle").classList.contains("on")).toBe(true);
+    // defaultPasswordManager defaults ON (1Password General-toggle parity):
+    // a fresh install claims the manager role; the browser's offer-to-save
+    // prompt is turned off by the service worker via chrome.privacy.
+    const defaultManager = toggles[3];
+    expect(defaultManager.checked, "default-manager toggle should start on").toBe(true);
+    expect(defaultManager.closest(".toggle").classList.contains("on")).toBe(true);
   });
 
   it("getSettings reports both enabled without writing to storage", () => {

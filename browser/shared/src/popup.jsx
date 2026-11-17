@@ -112,6 +112,8 @@ const STRINGS = {
     passkeysTitle: "Offer passkeys",
     passkeysDesc: "Baluard fills sign-in requests with passkeys stored in your vault. Requires the Baluard app.",
     passkeysUnsupported: "This browser cannot offer passkeys.",
+    defaultMgrTitle: "Make Baluard the default password manager",
+    defaultMgrDesc: "Turns off the browser's offer to save passwords, so only Baluard asks to save your logins.",
   },
   es: {
     title: "Baluard",
@@ -194,6 +196,8 @@ const STRINGS = {
     passkeysTitle: "Ofrecer llaves de acceso",
     passkeysDesc: "Baluard completa inicios de sesión con llaves de acceso guardadas en tu caja fuerte. Requiere la app de Baluard.",
     passkeysUnsupported: "Este navegador no puede ofrecer llaves de acceso.",
+    defaultMgrTitle: "Hacer de Baluard el gestor de contraseñas por defecto",
+    defaultMgrDesc: "Desactiva la oferta del navegador de guardar contraseñas, para que solo Baluard te pida guardar tus inicios de sesión.",
   },
   pt: {
     title: "Baluard",
@@ -277,6 +281,8 @@ const STRINGS = {
     passkeysTitle: "Oferecer chaves de acesso",
     passkeysDesc: "O Baluard completa logins com chaves de acesso guardadas no seu cofre. Requer o app Baluard.",
     passkeysUnsupported: "Este navegador não pode oferecer chaves de acesso.",
+    defaultMgrTitle: "Tornar o Baluard o gerenciador de senhas padrão",
+    defaultMgrDesc: "Desativa a oferta do navegador de salvar senhas, para que só o Baluard peça para salvar seus logins.",
   },
 };
 
@@ -300,6 +306,12 @@ const [copied, setCopied] = createSignal("");
 const [settingsOpen, setSettingsOpen] = createSignal(false);
 const [inlineAutofill, setInlineAutofill] = createSignal(true);
 const [copyTotpEnabled, setCopyTotpEnabled] = createSignal(true);
+const [defaultMgrEnabled, setDefaultMgrEnabled] = createSignal(false);
+// Row renders only where the browser ships the control (Chrome-family and
+// Firefox do; the guard keeps honest UI on anything else).
+const defaultMgrAvailable = Boolean(
+  chrome.privacy?.services?.passwordSavingEnabled
+);
 const [clipboardClear, setClipboardClear] = createSignal(60);
 const [passkeysEnabled, setPasskeysEnabled] = createSignal(false);
 const [passkeysSupported, setPasskeysSupported] = createSignal(true);
@@ -754,6 +766,7 @@ onMount(async () => {
   setCopyTotpEnabled(Boolean(s.copyTotp));
   setClipboardClear(normalizeClearSeconds(s.clipboardClearSeconds));
   setPasskeysEnabled(Boolean(s.enablePasskeys));
+  setDefaultMgrEnabled(Boolean(s.defaultPasswordManager));
   // Support = the SW never recorded a failed MAIN-world registration (old
   // Firefox) and the scripting API exists. Read straight from storage so
   // no extra message route is needed.
@@ -801,6 +814,14 @@ async function togglePasskeys() {
     const cur = await getSettings();
     setPasskeysEnabled(Boolean(cur.enablePasskeys));
   }, 400);
+}
+
+// Flip the default-manager control. The service worker listens for the
+// storage change and applies chrome.privacy (see background.js
+// applyDefaultPasswordManager). Takes effect immediately.
+async function toggleDefaultMgr() {
+  const next = await updateSettings({ defaultPasswordManager: !defaultMgrEnabled() });
+  setDefaultMgrEnabled(Boolean(next.defaultPasswordManager));
 }
 
 function App() {
@@ -899,6 +920,23 @@ function App() {
               <span class="toggle-knob" aria-hidden="true"></span>
             </span>
           </label>
+          <Show when={defaultMgrAvailable}>
+            <label class="setting-row">
+              <div class="setting-text">
+                <div class="setting-name">{t("defaultMgrTitle")}</div>
+                <div class="state-desc">{t("defaultMgrDesc")}</div>
+              </div>
+              <span class={`toggle ${defaultMgrEnabled() ? "on" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={defaultMgrEnabled()}
+                  onChange={toggleDefaultMgr}
+                  aria-label={t("defaultMgrTitle")}
+                />
+                <span class="toggle-knob" aria-hidden="true"></span>
+              </span>
+            </label>
+          </Show>
           <label class="setting-row">
             <div class="setting-text">
               <div class="setting-name">{t("clipboardClearTitle")}</div>

@@ -41,6 +41,15 @@ const chromeMock = {
     setBadgeBackgroundColor: noop,
   },
   scripting: { executeScript: noop },
+  privacy: {
+    services: {
+      passwordSavingEnabled: {
+        get: (_opts, cb) => cb && cb({ value: true, levelOfControl: "controllable_by_this_extension" }),
+        set: (_opts, cb) => cb && cb(),
+        clear: (_opts, cb) => cb && cb(),
+      },
+    },
+  },
   offscreen: {
     createDocument: async () => undefined,
     hasDocument: async () => false,

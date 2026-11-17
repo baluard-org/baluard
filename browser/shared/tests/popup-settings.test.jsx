@@ -57,9 +57,21 @@ describe("popup settings toggles", () => {
 
   it("renders the inline/copy toggles OFF from stored false values (bug state)", () => {
     const rows = toggleRows();
-    expect(rows.length).toBe(3);
+    expect(rows.length).toBe(4);
     expect(rows[0].querySelector(".toggle").classList.contains("on")).toBe(false);
     expect(rows[1].querySelector(".toggle").classList.contains("on")).toBe(false);
+    // Stored settings carry no defaultPasswordManager key: the default (on)
+    // claims the manager role without a storage write.
+    expect(rows[3].querySelector(".toggle").classList.contains("on")).toBe(true);
+  });
+
+  it("default-manager toggle flips off on click and persists", async () => {
+    const rows = toggleRows();
+    rows[3].querySelector('input[type="checkbox"]').click();
+    await flush();
+
+    expect(rows[3].querySelector(".toggle").classList.contains("on")).toBe(false);
+    expect(storedSettings().defaultPasswordManager).toBe(false);
   });
 
   it("first toggle flips on click and persists", async () => {
