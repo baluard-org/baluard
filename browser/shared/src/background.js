@@ -955,6 +955,22 @@ syncPasskeyScripts();
 // Startup applies the control only when the setting is ON (the MV3 worker
 // wakes many times a day; the off case must not re-clear the browser pref
 // every wake — the storage-change handler owns transitions).
-readSettings().then((s) => {
-  if (s.defaultPasswordManager === true) applyDefaultPasswordManager(s);
+readSettings().then(async (s) => {
+  if (s.defaultPasswordManager === true) {
+    applyDefaultPasswordManager(s);
+    return;
+  }
+  // A clear() that failed while the worker was asleep leaves our control
+  // holding the browser pref with the setting off. Reconcile from the real
+  // control state instead of re-clearing on every wake: release only what
+  // we still hold; foreign or policy control is left alone. The flip
+  // handler owns transitions; this heals its rare failure on the next wake.
+  const ctrl = chrome.privacy?.services?.passwordSavingEnabled;
+  if (!ctrl?.get) return;
+  try {
+    const cur = await ctrl.get({});
+    if (cur.levelOfControl === "controlled_by_this_extension") await ctrl.clear({});
+  } catch (e) {
+    console.error("[baluard] default-manager reconcile failed:", e);
+  }
 });

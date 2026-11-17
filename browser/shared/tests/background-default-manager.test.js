@@ -65,6 +65,10 @@ function makeChrome({ settings = {} } = {}) {
   api.privacy = {
     services: {
       passwordSavingEnabled: {
+        get: vi.fn(async () => ({
+          value: state.privacyValue ?? false,
+          levelOfControl: state.privacyLevel ?? "controllable_by_this_extension",
+        })),
         set: vi.fn(async ({ value }) => state.privacyCalls.push(["set", value])),
         clear: vi.fn(async () => state.privacyCalls.push(["clear"])),
       },
@@ -135,6 +139,35 @@ describe("default password manager control", () => {
     const state = await loadBackground(
       makeChrome({ settings: { [SETTINGS_KEY]: { defaultPasswordManager: false } } })
     );
+    expect(state.privacyCalls).toEqual([]);
+  });
+
+  it("retries a failed clear at startup when the stale control is still held", async () => {
+    // The setting flipped off while the worker was asleep and clear()
+    // failed then: our control still holds the browser pref off. Startup
+    // must reconcile from the real control state and release it once.
+    const chromeApi = makeChrome({
+      settings: { [SETTINGS_KEY]: { defaultPasswordManager: false } },
+    });
+    chromeApi.__state.privacyLevel = "controlled_by_this_extension";
+    const state = await loadBackground(chromeApi);
+    expect(state.privacyCalls).toEqual([["clear"]]);
+  });
+
+  it("leaves foreign and policy control alone at startup", async () => {
+    const chromeApi = makeChrome({
+      settings: { [SETTINGS_KEY]: { defaultPasswordManager: false } },
+    });
+    chromeApi.__state.privacyLevel = "controlled_by_other_extensions";
+    let state = await loadBackground(chromeApi);
+    expect(state.privacyCalls).toEqual([]);
+
+    vi.resetModules();
+    const policyApi = makeChrome({
+      settings: { [SETTINGS_KEY]: { defaultPasswordManager: false } },
+    });
+    policyApi.__state.privacyLevel = "not_controllable";
+    state = await loadBackground(policyApi);
     expect(state.privacyCalls).toEqual([]);
   });
 
