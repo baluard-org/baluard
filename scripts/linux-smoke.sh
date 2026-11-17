@@ -54,6 +54,9 @@ export BIN WORK ARTIFACTS
 # is a throwaway container, not a user machine: disabling it is the
 # standard CI practice and does not affect real installations.
 export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+# Under bare Xvfb, WebKitGTK paints a blank webview unless software GL and
+# the X11 backend are forced; the screenshot is the human-inspection gate.
+export GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1
 xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- bash -c '
   set -u
   "$BIN" >/dev/null 2>"$WORK/app.stderr" &
