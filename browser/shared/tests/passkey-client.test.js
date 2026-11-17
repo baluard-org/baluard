@@ -197,7 +197,7 @@ describe("create flow", () => {
 });
 
 describe("assertion flow", () => {
-  it("signs silently for a single credential without UV", async () => {
+  it("shows the picker even for a single credential without UV (Bitwarden parity)", async () => {
     const calls = [];
     const send = vi.fn(async (action, payload) => {
       calls.push([action, P(payload)]);
@@ -209,7 +209,7 @@ describe("assertion flow", () => {
       if (action === "passkey.consume_assertion") return daemonOk({ recorded: 0 });
       throw new Error("unexpected " + action);
     });
-    const { client, pushed } = makeClient({ sendScript: send });
+    const { client, pushed, popovers } = makeClient({ sendScript: send });
     const r = await client.handleGetRequest(sender, {
       sessionId: "s-2",
       contextId: "ctx-1",
@@ -217,6 +217,10 @@ describe("assertion flow", () => {
       requested: { origin: "https://rp.example", sameOriginWithAncestors: true },
     });
     expect(r.accepted).toBe(true);
+    // Nothing is signed until the user confirms the popout.
+    expect(popovers).toEqual(["pickAssertion"]);
+    expect(calls.some(([a]) => a === "passkey.provider_assert")).toBe(false);
+    await client.uiDecide(onlySession(client).id, { kind: "pickAssertion", credential_id: "cred-1" });
     const assertCall = calls.find(([a]) => a === "passkey.provider_assert");
     expect(assertCall[1].credential_id).toBe("cred-1");
     expect(assertCall[1].user_verified).toBe(false);
@@ -416,6 +420,10 @@ describe("popout lifecycle", () => {
     locked = false;
     const r = await client.uiDecide(sid, { kind: "retryUnlock" });
     expect(r.ok).toBe(true);
+    // Unlocking alone never signs; the picker still needs a decision.
+    expect(client.uiState(sid).kind).toBe("pickAssertion");
+    expect(pushed).toHaveLength(0);
+    await client.uiDecide(sid, { kind: "pickAssertion", credential_id: "cred-1" });
     expect(pushed[0].data.type).toBe("success");
   });
 });
@@ -457,6 +465,7 @@ describe("review fixes", () => {
       }
     );
     expect(r.accepted).toBe(true);
+    await client.uiDecide(onlySession(client).id, { kind: "pickAssertion", credential_id: "cred-1" });
     expect(pushed[0].data.type).toBe("success");
   });
 
@@ -534,6 +543,7 @@ describe("review fixes", () => {
       requested: { origin: "https://rp.example", sameOriginWithAncestors: true },
     });
     expect(r.accepted).toBe(true);
+    await client.uiDecide(onlySession(client).id, { kind: "pickAssertion", credential_id: "cred-1" });
     expect(client.activeSessions()).toHaveLength(0);
   });
 
@@ -577,6 +587,7 @@ describe("review fixes", () => {
       options: { challenge: "Y2g", rpId: "rp.example" },
       requested: { origin: "https://rp.example", sameOriginWithAncestors: true },
     });
+    await client.uiDecide(onlySession(client).id, { kind: "pickAssertion", credential_id: "cred-good" });
     expect(pushed[0].data.type).toBe("success");
   });
 });

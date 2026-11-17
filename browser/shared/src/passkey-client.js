@@ -402,10 +402,8 @@ export function createPasskeyClient(send, opts = {}) {
       openModal(session, "notFound");
       return { accepted: true };
     }
-    if (usable.length === 1 && !session.requiresUv) {
-      await runAssertion(session, usable[0], false);
-      return { accepted: true };
-    }
+    // Bitwarden parity: a credential is never served without an explicit
+    // user decision, even when only one candidate exists.
     session.rows = usable;
     openModal(session, "pickAssertion");
     return { accepted: true };
@@ -604,11 +602,6 @@ export function createPasskeyClient(send, opts = {}) {
         const rows = rowsForRequest(await listPasskeys(s.rpId), s.options).map(rowView);
         if (rows.length === 0) {
           s.uiKind = "notFound";
-        } else if (rows.length === 1 && !s.requiresUv) {
-          s.uiKind = undefined;
-          closeSessionWindow(s);
-          await runAssertion(s, rows[0], false);
-          return { ok: true };
         } else {
           s.rows = rows;
           s.uiKind = "pickAssertion";
