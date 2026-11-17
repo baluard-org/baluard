@@ -2,18 +2,31 @@
 // errors and progress live here too. Fixed to the top center so it reads as
 // app-level, above auth screens and the vault alike.
 
-import { Show, Switch, Match } from "solid-js";
+import { createMemo, For, Show, Switch, Match } from "solid-js";
 import { Transition } from "../lib/transition";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toastError } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { useUpdater } from "../context/UpdateContext.jsx";
-import { formatProgress } from "../lib/update.js";
+import { formatProgress, releaseChangelogEntries } from "../lib/update.js";
+
+const CHANGELOG_ENTRY_LIMIT = 5;
 
 export default function UpdateBanner() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const u = useUpdater();
   if (!u) return null;
+
+  const changelogEntries = createMemo(() => releaseChangelogEntries(u.available()?.notes));
+  const visibleEntries = createMemo(() => changelogEntries().slice(0, CHANGELOG_ENTRY_LIMIT));
+  const hasMoreEntries = createMemo(() => changelogEntries().length > CHANGELOG_ENTRY_LIMIT);
+  const releaseDate = createMemo(() => {
+    const value = u.available()?.date;
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return new Intl.DateTimeFormat(locale(), { dateStyle: "medium" }).format(date);
+  });
 
   const visible = () =>
     (u.available() && u.available().version !== u.dismissedVersion()) ||
@@ -85,25 +98,41 @@ export default function UpdateBanner() {
             </div>
           </Match>
 
-          {/* Update available: version, notes, changelog + install + dismiss. */}
+          {/* Update available: version, date, changelog + install + dismiss. */}
           <Match when={u.available() && u.available().version !== u.dismissedVersion()}>
             <div class="flex items-start gap-3">
               <div class="flex-1 min-w-0">
-                <div class="text-xs font-bold text-[var(--color-text)]">
-                  {t("update.availableTitle", { version: u.available().version })}
+                <div class="flex items-center gap-2">
+                  <span class="rounded-full bg-[var(--color-primary)] px-2 py-0.5 text-[10px] font-bold text-[var(--color-primary-text)]">
+                    {u.available().version}
+                  </span>
+                  <span class="text-[10px] font-bold text-[var(--color-muted)]">{t("update.latest")}</span>
+                  <Show when={releaseDate()}>
+                    <span class="ml-auto text-[10px] text-[var(--color-muted)]">{releaseDate()}</span>
+                  </Show>
                 </div>
-                <Show when={u.available().notes}>
-                  <p class="text-[10px] text-[var(--color-muted)] mt-0.5 whitespace-pre-line line-clamp-6">
-                    {u.available().notes}
-                  </p>
+                <Show when={visibleEntries().length > 0}>
+                  <ul class="mt-3 space-y-1.5 pl-1 text-xs leading-relaxed text-[var(--color-text)]">
+                    <For each={visibleEntries()}>
+                      {(entry) => (
+                        <li data-testid="update-changelog-entry" class="flex items-start gap-2">
+                          <span aria-hidden="true" class="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-[var(--color-muted)]" />
+                          <span>{entry}</span>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
                 </Show>
-                <div class="mt-2 flex items-center justify-between gap-2">
+                <Show when={hasMoreEntries()}>
+                  <p class="mt-2 text-[10px] text-[var(--color-muted)]">{t("update.moreChanges")}</p>
+                </Show>
+                <div class="mt-3 flex items-center justify-between gap-2">
                   <button
                     data-testid="update-changelog"
                     onClick={() => {
                       const version = u.available()?.version;
                       if (!version) return;
-                      openUrl(`https://github.com/baluard-org/baluard/releases/tag/${version}`).catch(() =>
+                      openUrl(`https://baluard.app/changelog/#v-${version.replaceAll(".", "-")}`).catch(() =>
                         toastError(t("errors.openFailed")),
                       );
                     }}

@@ -78,3 +78,34 @@ export function formatProgress(received, total) {
   if (!total || total <= 0) return null;
   return Math.min(100, Math.floor((received / total) * 100));
 }
+
+export function releaseChangelogEntries(notes) {
+  if (!notes) return [];
+
+  const blocks = notes.trim().split(/\n\s*\n/);
+  const entries = [];
+  for (const block of blocks) {
+    const text = block.trim();
+    if (!text) continue;
+
+    const lines = text.split("\n");
+    const isList = lines.every((line) => /^\s*[-*+]\s+/.test(line));
+    if (isList) {
+      for (const line of lines) {
+        const entry = line.replace(/^\s*[-*+]\s+/, "").trim();
+        if (entry) entries.push(entry);
+      }
+      continue;
+    }
+
+    entries.push(text.replace(/\s*\n\s*/g, " "));
+  }
+
+  const closing = /^As always, thanks for trying Baluard :\)$/i;
+  const distribution = /^(Desktop, mobile, the browser extension, and all package channels carry|No other surfaces changed\. Desktop, mobile, the browser extension, and all package channels carry).*$/i;
+  const first = entries[0]?.match(/^Baluard\s+\S+\s+is out\.?$/i);
+  const filtered = entries.filter(
+    (entry, index) => !(index === 0 && first) && !closing.test(entry) && !distribution.test(entry),
+  );
+  return filtered.length > 0 ? filtered : entries;
+}

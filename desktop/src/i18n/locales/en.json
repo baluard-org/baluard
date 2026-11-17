@@ -1420,7 +1420,9 @@
     "versionMismatchTitle": "Baluard's background service is out of date",
     "versionMismatchBody": "The app and its background service are different versions.\nQuit Baluard completely and start it again.",
     "viewChangelog": "View changelog",
-    "notNow": "Not now"
+    "notNow": "Not now",
+    "latest": "Latest",
+    "moreChanges": "More changes are available on the web."
   },
   "agents": {
     "title": "Credential request",

@@ -7,10 +7,14 @@ import { createSignal } from "solid-js";
 import { render, fireEvent, cleanup } from "@solidjs/testing-library";
 
 vi.mock("../i18n/index.jsx", () => ({
-  useI18n: () => ({ t: (k, vars) => (vars ? `${k}(${JSON.stringify(vars)})` : k) }),
+  useI18n: () => ({
+    t: (k, vars) => (vars ? `${k}(${JSON.stringify(vars)})` : k),
+    locale: () => "en-US",
+  }),
 }));
 
-vi.mock("../lib/update.js", () => ({
+vi.mock("../lib/update.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   formatProgress: (received, total) =>
     !total || total <= 0 ? null : Math.min(100, Math.floor((received / total) * 100)),
 }));
@@ -67,30 +71,49 @@ describe("UpdateBanner", () => {
     expect(store.dismiss).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the GitHub changelog entry for the offered version", async () => {
+  it("opens the changelog page anchored at the offered version", async () => {
     store.available = () => ({ version: "0.3.0", notes: "Notes", date: null, current_version: "0.2.0" });
     const { getByTestId } = render(() => <UpdateBanner />);
     fireEvent.click(getByTestId("update-changelog"));
     await Promise.resolve();
-    expect(openUrlMock).toHaveBeenCalledWith("https://github.com/baluard-org/baluard/releases/tag/0.3.0");
+    expect(openUrlMock).toHaveBeenCalledWith("https://baluard.app/changelog/#v-0-3-0");
   });
 
-  it("clamps the notes to six lines and offers not-now beside install", () => {
+  it("shows the release date and the first five changelog entries", () => {
     store.available = () => ({
       version: "0.3.0",
-      notes: "line1\nline2\nline3\nline4\nline5\nline6\nline7",
-      date: null,
+      notes: "- First change\n- Second change\n- Third change\n- Fourth change\n- Fifth change\n- Sixth change",
+      date: "2026-11-17T14:22:54Z",
       current_version: "0.2.0",
     });
     const { getByTestId, container } = render(() => <UpdateBanner />);
-    const notes = container.querySelector(".line-clamp-6");
-    expect(notes).not.toBeNull();
-    expect(notes.textContent).toContain("line7");
+    const entries = container.querySelectorAll("[data-testid=update-changelog-entry]");
+    expect(entries).toHaveLength(5);
+    expect(entries[0].textContent).toContain("First change");
+    expect(entries[4].textContent).toContain("Fifth change");
+    expect(container.textContent).not.toContain("Sixth change");
+    expect(container.textContent).toContain("Nov 17, 2026");
     const row = getByTestId("update-install").closest("div").parentElement;
     expect(row.firstElementChild).toBe(getByTestId("update-changelog"));
     const right = getByTestId("update-install").closest("div");
     expect(right.firstElementChild).toBe(getByTestId("update-dismiss"));
     expect(right.lastElementChild).toBe(getByTestId("update-install"));
+  });
+
+  it("shows release-note paragraphs as changelog entries", () => {
+    store.available = () => ({
+      version: "0.3.0",
+      notes: "Baluard 0.3.0 is out.\n\nFirst change.\n\nSecond change.\n\nDesktop, mobile, the browser extension, and all package channels carry 0.3.0.\n\nAs always, thanks for trying Baluard :)",
+      date: null,
+      current_version: "0.2.0",
+    });
+    const { container } = render(() => <UpdateBanner />);
+    const entries = container.querySelectorAll("[data-testid=update-changelog-entry]");
+    expect(entries).toHaveLength(2);
+    expect(entries[0].textContent).toContain("First change.");
+    expect(entries[1].textContent).toContain("Second change.");
+    expect(container.textContent).not.toContain("As always");
+    expect(container.textContent).not.toContain("package channels carry");
   });
 
   it("hides the banner for a dismissed version", () => {

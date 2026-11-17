@@ -1420,7 +1420,9 @@
     "versionMismatchTitle": "O serviço em segundo plano do Baluard está desatualizado",
     "versionMismatchBody": "O aplicativo e o serviço em segundo plano são de versões diferentes.\nFeche o Baluard completamente e abra-o novamente.",
     "viewChangelog": "Ver mudanças",
-    "notNow": "Agora não"
+    "notNow": "Agora não",
+    "latest": "Mais recente",
+    "moreChanges": "Mais mudanças estão disponíveis na web."
   },
   "agents": {
     "title": "Pedido de credenciais",

@@ -1420,7 +1420,9 @@
     "versionMismatchTitle": "Le service d'arrière-plan de Baluard n'est pas à jour",
     "versionMismatchBody": "L'application et son service d'arrière-plan utilisent des versions différentes.\nQuittez complètement Baluard et relancez-le.",
     "viewChangelog": "Voir les changements",
-    "notNow": "Pas maintenant"
+    "notNow": "Pas maintenant",
+    "latest": "Dernière version",
+    "moreChanges": "D'autres changements sont disponibles sur le web."
   },
   "agents": {
     "title": "Demande d'identifiants",

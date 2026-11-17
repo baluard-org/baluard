@@ -12,6 +12,7 @@ import {
   noteCheckNow,
   backgroundCheckDue,
   formatProgress,
+  releaseChangelogEntries,
 } from "../lib/update.js";
 
 function fakeStore(initial = {}) {
@@ -91,5 +92,30 @@ describe("formatProgress", () => {
   it("computes a bounded percentage", () => {
     expect(formatProgress(50, 200)).toBe(25);
     expect(formatProgress(500, 200)).toBe(100);
+  });
+});
+
+describe("releaseChangelogEntries", () => {
+  it("splits Markdown lists into individual entries", () => {
+    expect(releaseChangelogEntries("- First\n- Second\n- Third")).toEqual([
+      "First",
+      "Second",
+      "Third",
+    ]);
+  });
+
+  it("keeps prose paragraphs as separate entries", () => {
+    expect(releaseChangelogEntries("First paragraph.\n\nSecond paragraph.")).toEqual([
+      "First paragraph.",
+      "Second paragraph.",
+    ]);
+  });
+
+  it("removes the release announcement and standing closing", () => {
+    expect(
+      releaseChangelogEntries(
+        "Baluard 1.2.3 is out.\n\nA useful change.\n\nAs always, thanks for trying Baluard :)",
+      ),
+    ).toEqual(["A useful change."]);
   });
 });
