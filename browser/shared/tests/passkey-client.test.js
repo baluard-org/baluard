@@ -493,8 +493,8 @@ describe("review fixes", () => {
         if (action === "passkey.consume_assertion") return daemonOk({});
         throw new Error("unexpected " + action);
       });
-      // Single candidate would normally sign instantly; keep it pending by
-      // requiring UV (popout picker) so the timer is observable.
+      // The popout picker keeps the ceremony pending; requiring UV pins the
+      // UV-confirm path while the timer is observable.
       const { client, pushed } = makeClient({ sendScript: send });
       await client.handleGetRequest(sender, {
         sessionId: "s-timeout",

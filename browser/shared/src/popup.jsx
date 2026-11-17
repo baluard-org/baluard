@@ -1187,6 +1187,9 @@ function PasskeyPopout(props) {
   }
 
   async function decide(decision) {
+    // One decision per ceremony: a rapid double Enter/click must not push
+    // the assertion twice to the service worker.
+    if (busy()) return;
     setBusy(true);
     const r = await chrome.runtime
       .sendMessage({ action: "passkey.ui.decide", sessionId: props.sessionId, decision })

@@ -44,7 +44,11 @@ const chromeMock = {
   privacy: {
     services: {
       passwordSavingEnabled: {
-        get: (_opts, cb) => cb && cb({ value: true, levelOfControl: "controllable_by_this_extension" }),
+        get: (_opts, cb) => {
+          const out = { value: true, levelOfControl: "controllable_by_this_extension" };
+          if (cb) cb(out);
+          return Promise.resolve(out);
+        },
         set: (_opts, cb) => cb && cb(),
         clear: (_opts, cb) => cb && cb(),
       },
