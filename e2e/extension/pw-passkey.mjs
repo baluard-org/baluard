@@ -31,6 +31,21 @@ if (!EXT_ID || !EXT_DIR || !RP_PORT) fail("EXT_ID / EXT_DIR / RP_PORT missing");
 const RP_URL = `http://localhost:${RP_PORT}/`;
 const HOST_ATTR = "data-baluard-inline";
 
+// Every assertion lands on the picker popout now (Bitwarden parity): wait
+// for it, confirm the first row, and return it for extra assertions.
+async function pickInPopout(ctx) {
+  let popout = null;
+  for (let i = 0; i < 40; i++) {
+    popout = ctx.pages().find((p) => p.url().includes("popup.html#/passkey/"));
+    if (popout) break;
+    await sleep(300);
+  }
+  if (!popout) return null;
+  await popout.waitForSelector(".match-card", { timeout: 10000 });
+  await popout.locator(".match-card").first().click();
+  return popout;
+}
+
 function fail(msg) {
   console.error(`FAIL: ${msg}`);
   process.exit(1);
@@ -248,9 +263,14 @@ try {
   );
   console.log("PASS register (RP verified attestation)");
 
-  // ── 2. Silent assertion (single credential, no UV) ──
-  const popoutsBefore = ctx.pages().filter((p) => p.url().includes("#/passkey/")).length;
+  // ── 2. Single-credential assertion rides the picker (Bitwarden parity) ──
+  // One matching credential used to sign silently; every assertion now
+  // opens the picker and waits for the explicit confirm.
   await page.click("#signin");
+  if (!(await pickInPopout(ctx))) {
+    await dumpPage(page);
+    fail("single-credential picker never opened");
+  }
   await waitFor(
     page,
     () => {
@@ -259,10 +279,7 @@ try {
     },
     "RP assertion signature verification"
   );
-  if (ctx.pages().filter((p) => p.url().includes("#/passkey/")).length !== popoutsBefore) {
-    fail("silent assertion opened a window");
-  }
-  console.log("PASS assert (RP verified ECDSA signature)");
+  console.log("PASS assert (picker confirmed, RP verified ECDSA signature)");
 
   // ── 3. Conditional mediation via the inline dropdown ──
   await page.click("#conditional"); // pending conditional get
@@ -377,6 +394,7 @@ try {
   await page.evaluate(() => history.pushState({}, "", "/spa-navigated"));
   await sleep(400);
   await page.click("#signin");
+  if (!(await pickInPopout(ctx))) fail("post-pushState picker never opened");
   await waitFor(
     page,
     () => {
@@ -406,6 +424,7 @@ try {
   await settings.close();
   // The re-armed wrap must still serve a full ceremony.
   await page.click("#signin");
+  if (!(await pickInPopout(ctx))) fail("post-re-enable picker never opened");
   await waitFor(
     page,
     () => {
