@@ -4,6 +4,14 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+- Browser: the extension offers passkeys by default on new installs, matching 1Password and Bitwarden. Installs from before this change keep their current setting.
+
+- Browser: every passkey sign-in now shows the credential picker first, so nothing is sent to a site without a confirm, even when only one credential matches.
+
+- Browser: a new Default password manager setting turns off the browser's own offer to save passwords, so only Baluard asks to save your logins. It is on for new installs; turning it off hands saving back to the browser. The next extension update asks to re-approve a permission for this.
+
+- Desktop: the update banner links release notes on baluard.app/changelog, opened at the offered version.
+
 ## 0.7.3 - 2026-11-17
 
 - Windows: the SSH agent now works there too. Baluard serves vault SSH keys on Windows' standard OpenSSH agent pipe, so ssh and git sign through the vault with no extra setup.
@@ -37,7 +45,7 @@ Notable user-facing changes per release.
 
 - The daemon can act as an OpenSSH agent: turn on SSH agent in Settings, mark individual SSH keys for serving, and terminal apps and git sign through the local agent socket. Signing asks for approval on every use unless you enable automatic approval. The SSH agent switches apply per device, so turning the agent on here does not turn it on anywhere else.
 
-- The browser extension can offer vault passkeys to websites that use WebAuthn: signing in with a saved passkey and saving new ones work in the browser, with a picker when several credentials match. Off by default; turn on Passkeys in the extension settings.
+- The browser extension can offer vault passkeys to websites that use WebAuthn: signing in with a saved passkey and saving new ones work in the browser, with a picker when several credentials match. New installs offer them by default; the Passkeys toggle lives in the extension settings.
 
 - Android: sites whose passkey sign-in requires user verification now ask for the master password instead of failing.
 
