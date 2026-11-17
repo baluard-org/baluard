@@ -39,6 +39,19 @@ struct Cli {
     command: Commands,
 }
 
+/// Where the OpenSSH agent setup commands land.
+#[derive(Subcommand)]
+enum SshAction {
+    /// Show daemon and agent endpoint state (default).
+    Status,
+    /// Start the daemon if it is not running; the agent comes with it.
+    Serve,
+    /// Install and start an opt-in systemd user unit (Linux).
+    Install,
+    /// Disable and remove the installed systemd user unit (Linux).
+    Uninstall,
+}
+
 #[derive(Subcommand)]
 enum AgentAction {
     /// List requests waiting for a human decision.
@@ -75,6 +88,12 @@ enum Commands {
     Agents {
         #[command(subcommand)]
         action: AgentAction,
+    },
+
+    /// Set up the OpenSSH agent the daemon serves for this machine.
+    Ssh {
+        #[command(subcommand)]
+        action: Option<SshAction>,
     },
 
     /// Create a new vault with master password.
@@ -497,7 +516,7 @@ enum VaultAction {
     /// another machine or restored from a backup) so it appears in the
     /// app again. Non-destructive: no key material is touched. If this
     /// device was never enrolled into the vault, run
-    /// `baluard enroll-with-phrase` afterwards.
+    /// `baluard devices enroll-with-phrase` afterwards.
     Add {
         /// Path to the vault directory (must contain a .baluard marker).
         path: String,
@@ -1957,6 +1976,9 @@ fn main() {
     let result = match cli.command {
         Commands::Agents { action } => {
             commands::agent::handle_agent_action(action, cli.socket.as_deref())
+        }
+        Commands::Ssh { action } => {
+            commands::ssh::handle(action.unwrap_or(SshAction::Status), cli.socket.as_deref())
         }
         // Init always direct (creates vault on disk)
         Commands::Init {

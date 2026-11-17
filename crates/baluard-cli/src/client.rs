@@ -129,14 +129,29 @@ fn token_keyring_entry(socket_path: Option<&str>, slug: Option<&str>) -> Option<
 
 /// Set the session token (keyring first, file fallback).
 /// The atomic 0600 file write stays as the fallback path (H6: no TOCTOU).
+/// An unlock made with --vault <slug> also writes the slugless key as an
+/// alias: bare commands resolve the daemon's active vault, and without
+/// the alias they would miss the slug-keyed entry entirely. Same socket,
+/// same trust boundary, one extra keyring entry.
 pub fn set_session_token(token: &str, socket_path: Option<&str>) {
-    if let Some(entry) = token_keyring_entry(socket_path, vault_slug_override()) {
-        if entry.set_password(token).is_ok() {
-            // A stale fallback token from a previous keyring-less run must
-            // not linger on disk now that the keyring holds the capability.
-            let _ = std::fs::remove_file(token_file_path(socket_path));
-            return;
+    let mut keys: Vec<Option<&str>> = Vec::new();
+    if let Some(slug) = vault_slug_override() {
+        keys.push(Some(slug));
+    }
+    keys.push(None);
+    let mut stored = false;
+    for key in keys {
+        if let Some(entry) = token_keyring_entry(socket_path, key) {
+            if entry.set_password(token).is_ok() {
+                stored = true;
+            }
         }
+    }
+    if stored {
+        // A stale fallback token from a previous keyring-less run must
+        // not linger on disk now that the keyring holds the capability.
+        let _ = std::fs::remove_file(token_file_path(socket_path));
+        return;
     }
     write_token_file(token, socket_path);
 }
@@ -195,10 +210,18 @@ pub fn get_session_token(socket_path: Option<&str>) -> Option<String> {
 }
 
 /// Clear the session token (called after lock). Removes both stores so a
-/// switch between keyring and fallback modes never leaves a stale copy.
+/// switch between keyring and fallback modes never leaves a stale copy,
+/// plus the slugless alias a --vault unlock may have written.
 pub fn clear_session_token(socket_path: Option<&str>) {
-    if let Some(entry) = token_keyring_entry(socket_path, vault_slug_override()) {
-        let _ = entry.delete_credential();
+    let mut keys: Vec<Option<&str>> = Vec::new();
+    if let Some(slug) = vault_slug_override() {
+        keys.push(Some(slug));
+    }
+    keys.push(None);
+    for key in keys {
+        if let Some(entry) = token_keyring_entry(socket_path, key) {
+            let _ = entry.delete_credential();
+        }
     }
     let _ = std::fs::remove_file(token_file_path(socket_path));
 }

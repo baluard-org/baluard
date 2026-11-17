@@ -1125,8 +1125,8 @@ fn spawn_git_server() -> (GitServerGuard, String, &'static str, &'static str) {
         .arg(&key)
         .arg("-out")
         .arg(&cert)
-        .args(["-days", "1", "-nodes", "-subj", "/CN=127.0.0.1"])
-        .args(["-addext", "subjectAltName=IP:127.0.0.1"])
+        .args(["-days", "1", "-nodes", "-subj", "/CN=localhost"])
+        .args(["-addext", "subjectAltName=DNS:localhost"])
         .status()
         .expect("openssl must be on PATH");
     assert!(ok.success(), "cert generation failed");
@@ -1159,7 +1159,9 @@ fn spawn_git_server() -> (GitServerGuard, String, &'static str, &'static str) {
         .spawn()
         .expect("python3 must be on PATH");
     std::thread::sleep(Duration::from_millis(1200));
-    let url = format!("https://127.0.0.1:{port}/custom.git");
+    // DNS-name cert, not IP SAN: libgit2's host check treats a literal
+    // IP as a DNS name, so an IP SAN never matches and pushes refuse.
+    let url = format!("https://localhost:{port}/custom.git");
     (GitServerGuard { child, port, dir }, url, "alex", "secret")
 }
 
@@ -1203,7 +1205,7 @@ fn e2e_custom_remote_https_push_pull() {
             "credentials",
             "set",
             "--host",
-            "127.0.0.1",
+            "localhost",
             "--token",
             pass,
             "--username",
@@ -1249,12 +1251,31 @@ fn e2e_custom_remote_https_push_pull() {
         .path()
         .join("data/vaults/baluard-e2e-cr/meta/git-credentials.json");
     let raw = std::fs::read_to_string(&cred_file).expect("credential file exists");
-    assert!(raw.contains("\"host\":\"127.0.0.1\""));
+    assert!(raw.contains("\"host\":\"localhost\""));
 }
 
 /// The throwaway CA the server was started with (OpenSSL trust root).
 fn server_dir_cert(server: &GitServerGuard) -> std::path::PathBuf {
     server.dir.path().join("cert.pem")
+}
+
+/// `baluard ssh` reports the daemon and the agent endpoint it serves.
+#[test]
+fn e2e_ssh_status_reports_agent_endpoint() {
+    let guard = spawn_daemon(tempfile::Builder::new().prefix("e2essh").tempdir().unwrap());
+    baluard_daemon(&guard)
+        .args(["ssh", "status"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Daemon:       running"))
+        .stdout(predicates::str::contains("d-agent.sock"))
+        .stdout(predicates::str::contains("IdentityAgent"));
+    // Bare `ssh` defaults to status.
+    baluard_daemon(&guard)
+        .args(["ssh"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Agent socket:"));
 }
 
 #[test]
@@ -1300,16 +1321,21 @@ fn e2e_multi_device_join_and_sync() {
         .assert()
         .success()
         .stdout(predicates::str::contains("Cloned vault 'baluard-devb'"));
+    // Pre-enrollment reads must point at enrollment, not leak internals.
     baluard_daemon(&guard)
-        .args(["vaults", "switch", "baluard-devb"])
+        .args(["devices", "list", "--vault", "baluard-devb"])
         .assert()
-        .success();
-    // Enrollment MUST work on the locked clone: unlocking is impossible
-    // until a device key exists (chicken-and-egg regression guard).
+        .failure()
+        .stderr(predicates::str::contains("enroll-with-phrase"));
+    // Enrollment MUST work straight after clone on the locked vault: no
+    // prefetch step, no switch (chicken-and-egg regression guard). The
+    // slug is pinned so B cannot silently fall back to A's active vault.
     baluard_daemon(&guard)
         .args([
             "devices",
             "enroll-with-phrase",
+            "--vault",
+            "baluard-devb",
             "--phrase",
             &phrase,
             "--yes",
@@ -1318,7 +1344,7 @@ fn e2e_multi_device_join_and_sync() {
         .success()
         .stdout(predicates::str::contains("Device enrolled"));
     baluard_daemon(&guard)
-        .args(["unlock"])
+        .args(["unlock", "--vault", "baluard-devb"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Vault unlocked (daemon)."));
@@ -1328,6 +1354,8 @@ fn e2e_multi_device_join_and_sync() {
         .args([
             "add",
             "login",
+            "--vault",
+            "baluard-devb",
             "--name",
             "FromDeviceB",
             "--username",
@@ -1338,7 +1366,7 @@ fn e2e_multi_device_join_and_sync() {
         .assert()
         .success();
     baluard_daemon(&guard)
-        .args(["sync", "push"])
+        .args(["sync", "push", "--vault", "baluard-devb"])
         .assert()
         .success();
 

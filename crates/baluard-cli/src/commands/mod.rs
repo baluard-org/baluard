@@ -15,6 +15,7 @@ use crate::client;
 use std::path::Path;
 
 pub mod agent;
+pub mod ssh;
 
 use baluard_core::types::{CipherInput, KdfProfile};
 use baluard_core::vault::handle::{CipherRead, VaultHandle};
@@ -3284,6 +3285,27 @@ pub fn handle_unarchive(
 
 // ── Devices (direct only, not yet routed through daemon) ──
 
+/// A device the vault was never enrolled on hits a locked error it can
+/// never act on (no device key to unwrap); swap in the one command that
+/// fixes it. Any usable local claim (a sealed key counts) keeps the
+/// original error.
+fn unenrolled_or(err: String, vault_path: &str) -> String {
+    let actionable = err.contains("Vault is locked")
+        || err.contains("Vault not opened")
+        || err.contains("matching device keywrap not found");
+    if actionable
+        && baluard_core::vault::device_privkey::device_unenrolled(std::path::Path::new(vault_path))
+    {
+        return match client::vault_slug_override() {
+            Some(slug) => format!(
+                "This device is not enrolled into '{slug}' yet. Enroll it with: baluard devices enroll-with-phrase --vault {slug}"
+            ),
+            None => "This device is not enrolled into this vault yet. Enroll it with: baluard devices enroll-with-phrase".to_string(),
+        };
+    }
+    err
+}
+
 pub fn handle_devices(
     mode: ConnectMode,
     vault_path: &str,
@@ -3294,11 +3316,11 @@ pub fn handle_devices(
             // Open vault in daemon first if needed
             let open_resp = client::request_to("vault.open", "", socket)?;
             if !open_resp.success {
-                return Err(open_resp.error_message.into());
+                return Err(unenrolled_or(open_resp.error_message, vault_path).into());
             }
             let resp = client::request_to("vault.devices", "", socket)?;
             if !resp.success {
-                return Err(resp.error_message.into());
+                return Err(unenrolled_or(resp.error_message, vault_path).into());
             }
             let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
             let devices = data["devices"].as_array().cloned().unwrap_or_default();
@@ -3315,7 +3337,8 @@ pub fn handle_devices(
         }
         ConnectMode::Direct => {
             let path = Path::new(vault_path);
-            let handle = VaultHandle::open(path)?;
+            let handle =
+                VaultHandle::open(path).map_err(|e| unenrolled_or(e.to_string(), vault_path))?;
             println!("Enrolled devices:");
             for entry in handle.registry.devices.values() {
                 println!("  {} ({})", entry.name, entry.device_id);
@@ -3611,7 +3634,10 @@ pub fn handle_enroll_with_phrase(
                 return Err(resp.error_message.into());
             }
             println!("Device enrolled into existing vault via recovery phrase.");
-            println!("Reload the vault to use the new enrollment.");
+            match client::vault_slug_override() {
+                Some(slug) => println!("Unlock with: baluard unlock --vault {slug}"),
+                None => println!("Unlock with: baluard unlock"),
+            }
             Ok(())
         }
         ConnectMode::Direct => {
@@ -3929,9 +3955,9 @@ pub fn handle_sync_clone(
         &start_clone_job(&clone_url, Some(provider), &slug, &slug, socket)?,
         socket,
     )?;
-    println!("Unlock with: baluard --vault {out_slug} unlock");
+    println!("Unlock with: baluard unlock --vault {out_slug}");
     println!(
-        "If this device was never enrolled, run: baluard enroll-with-phrase --vault {out_slug}"
+        "If this device was never enrolled, run: baluard devices enroll-with-phrase --vault {out_slug}"
     );
     Ok(())
 }
@@ -4056,9 +4082,9 @@ pub fn handle_sync_clone_url(
 
     let job_id = start_clone_job(url, provider_override, &slug, &slug, socket)?;
     let (out_slug, path) = poll_clone_job(&job_id, socket)?;
-    println!("Unlock with: baluard --vault {out_slug} unlock");
+    println!("Unlock with: baluard unlock --vault {out_slug}");
     println!(
-        "If this device was never enrolled, run: baluard enroll-with-phrase --vault {out_slug}"
+        "If this device was never enrolled, run: baluard devices enroll-with-phrase --vault {out_slug}"
     );
     let _ = path;
     Ok(())
@@ -5862,7 +5888,9 @@ fn vaults_add(
 
     println!("Registered vault '{slug}' at {}.", path.display());
     println!("Open it with:     baluard vaults switch {slug}");
-    println!("If this device was never enrolled, run: baluard enroll-with-phrase --vault {slug}");
+    println!(
+        "If this device was never enrolled, run: baluard devices enroll-with-phrase --vault {slug}"
+    );
     Ok(())
 }
 

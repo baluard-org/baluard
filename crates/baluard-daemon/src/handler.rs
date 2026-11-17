@@ -4309,21 +4309,64 @@ async fn handle_enroll_with_phrase(
             Some(s) => s,
             None => match host.active_slug().await {
                 Some(s) => s,
-                None => {
-                    phrase.zeroize();
-                    master_password.zeroize();
-                    return err_response("No active vault".to_string());
-                }
+                // Clone finalize runs off-host and only flips the registry
+                // active pointer, so the registry is the only trail to a
+                // just-cloned vault.
+                None => match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                    Ok(reg) => match reg.active() {
+                        Some(entry) if std::path::Path::new(&entry.path).exists() => {
+                            entry.slug.clone()
+                        }
+                        _ => {
+                            phrase.zeroize();
+                            master_password.zeroize();
+                            return err_response("No active vault".to_string());
+                        }
+                    },
+                    Err(_) => {
+                        phrase.zeroize();
+                        master_password.zeroize();
+                        return err_response("No active vault".to_string());
+                    }
+                },
             },
         }
     } else {
         req.slug.clone()
     };
     req.payload.zeroize();
-    let Some(state) = host.get(&target_slug).await else {
-        phrase.zeroize();
-        master_password.zeroize();
-        return err_response(format!("vault '{target_slug}' not found"));
+    // A fresh clone never enters the host map, and enrollment is the only
+    // way to mint a device key for it: resolve from the registry and open
+    // instead of failing (same pattern as vaults.switch).
+    let state = match host.get(&target_slug).await {
+        Some(state) => state,
+        None => {
+            let reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                Ok(r) => r,
+                Err(e) => {
+                    phrase.zeroize();
+                    master_password.zeroize();
+                    return err_response(format!("Registry error: {e}"));
+                }
+            };
+            let Some(entry) = reg.get(&target_slug) else {
+                phrase.zeroize();
+                master_password.zeroize();
+                return err_response(format!("vault '{target_slug}' not found in registry"));
+            };
+            let path = entry.path.clone();
+            let state = host
+                .get_or_insert_with(&target_slug, move || {
+                    Arc::new(VaultState::new(path.clone()))
+                })
+                .await;
+            if let Err(e) = state.open().await {
+                phrase.zeroize();
+                master_password.zeroize();
+                return err_response(e);
+            }
+            state
+        }
     };
     let vault_key = state.vault_path.to_string_lossy().into_owned();
     let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {

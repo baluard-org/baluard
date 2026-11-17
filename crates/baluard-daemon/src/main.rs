@@ -291,6 +291,19 @@ fn main() -> anyhow::Result<()> {
 async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) -> Result<()> {
     let host: SharedVaultHost = VaultHost::shared();
 
+    // Own the socket before touching any vault state: a second daemon
+    // must fail here, not probe a live vault's files on its way down.
+    // Named pipes have no filesystem residue, so this is unix-only.
+    #[cfg(unix)]
+    if std::path::Path::new(socket_path).exists() {
+        if baluard_core::ipc::IpcStream::connect(std::path::Path::new(socket_path)).is_ok() {
+            anyhow::bail!(
+                "A Baluard daemon is already running (socket: {socket_path}). Use the baluard CLI against it, or stop it before starting another."
+            );
+        }
+        std::fs::remove_file(socket_path)?;
+    }
+
     // Lazy-load the resolved active vault into the host map (opened but
     // locked). The map starts with at most one entry; the rest fill as the
     // user switches/unlocks. We do NOT unlock here — the user still has to
@@ -328,17 +341,8 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
         std::fs::create_dir_all(parent)?;
     }
 
-    // Clean stale socket — but never steal a live daemon's socket: probe
-    // with a connect first (a connectable path means another daemon owns
-    // it and startup must fail loudly instead of silently taking over).
-    // Named pipes have no filesystem residue, so this is unix-only.
-    #[cfg(unix)]
-    if std::path::Path::new(socket_path).exists() {
-        if baluard_core::ipc::IpcStream::connect(std::path::Path::new(socket_path)).is_ok() {
-            anyhow::bail!("another daemon is already listening on this socket");
-        }
-        std::fs::remove_file(socket_path)?;
-    }
+    // Clean stale socket residue: a connectable path was already handled
+    // above, so anything left here is a dead socket file from a crash.
 
     // Set restrictive umask BEFORE bind so socket is born with 0600,
     // then restore original umask so subsequent mkdir calls keep the execute bit.

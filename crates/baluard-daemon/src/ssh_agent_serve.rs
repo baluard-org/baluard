@@ -461,20 +461,7 @@ mod serve {
         /// daemons with different --socket names in one directory never
         /// share (or destroy) each other's agent endpoint.
         pub fn agent_socket_path(ipc_socket: &str) -> PathBuf {
-            let ipc = Path::new(ipc_socket);
-            let stem = ipc
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("baluard");
-            let agent_name = stem
-                .strip_suffix(".sock")
-                .map(|base| format!("{base}-agent.sock"))
-                .unwrap_or_else(|| format!("{stem}-agent.sock"));
-            match ipc.parent() {
-                Some(parent) if !parent.as_os_str().is_empty() => parent.join(agent_name),
-                // Bare filename IPC socket (cwd-relative): sibling in cwd.
-                _ => PathBuf::from(agent_name),
-            }
+            baluard_core::paths::agent_socket_path(ipc_socket)
         }
 
         /// Bind the agent socket with an explicit policy path, so the tests

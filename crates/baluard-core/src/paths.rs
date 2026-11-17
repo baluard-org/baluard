@@ -7,7 +7,7 @@
 //! | Socket       | `$XDG_RUNTIME_DIR/baluard/baluard.sock`| data_dir `/baluard.sock`                   | Named Pipe               |
 //! | Logs         | `$XDG_STATE_HOME/baluard/`           | `~/Library/Logs/baluard/`                  | `%LOCALAPPDATA%\baluard\logs\` |
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const APP_NAME: &str = "baluard";
 
@@ -77,6 +77,29 @@ pub fn socket_path() -> PathBuf {
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         data_dir().join("baluard.sock")
+    }
+}
+
+/// Agent endpoint path for a given IPC socket.
+///
+/// Named after the IPC socket itself, so two daemons with different
+/// --socket names in one directory never share (or destroy) each other's
+/// SSH agent endpoint. Shared here because the CLI must print the path
+/// the daemon will bind without depending on the daemon crate.
+pub fn agent_socket_path(ipc_socket: &str) -> PathBuf {
+    let ipc = Path::new(ipc_socket);
+    let stem = ipc
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("baluard");
+    let agent_name = stem
+        .strip_suffix(".sock")
+        .map(|base| format!("{base}-agent.sock"))
+        .unwrap_or_else(|| format!("{stem}-agent.sock"));
+    match ipc.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(agent_name),
+        // Bare filename IPC socket (cwd-relative): sibling in cwd.
+        _ => PathBuf::from(agent_name),
     }
 }
 
@@ -180,6 +203,25 @@ mod tests {
 
         assert!(data.to_string_lossy().contains("baluard"));
         assert!(logs.to_string_lossy().contains("baluard"));
+    }
+
+    #[test]
+    fn agent_socket_path_is_named_after_the_ipc_socket() {
+        let p = agent_socket_path("/run/user/1000/baluard/baluard.sock");
+        assert_eq!(
+            p,
+            std::path::PathBuf::from("/run/user/1000/baluard/baluard-agent.sock")
+        );
+        // A differently named IPC socket must land on a different agent
+        // socket: two daemons in one directory never share the endpoint.
+        let q = agent_socket_path("/tmp/probe/d.sock");
+        assert_eq!(q, std::path::PathBuf::from("/tmp/probe/d-agent.sock"));
+        assert_ne!(p, q);
+        // A bare filename (cwd-relative IPC socket) lands in cwd.
+        assert_eq!(
+            agent_socket_path("d.sock"),
+            std::path::PathBuf::from("d-agent.sock")
+        );
     }
 
     #[test]

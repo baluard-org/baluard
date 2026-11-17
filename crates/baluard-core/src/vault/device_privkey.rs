@@ -149,6 +149,28 @@ pub fn file_kind(path: &Path) -> PrivkeyFileKind {
     }
 }
 
+/// True when this machine demonstrably has no usable claim on the vault:
+/// no local device id, an id with no keywrap (evicted), or an id written
+/// by the single-keywrap adoption fallback with no private key behind it.
+/// A sealed private key counts as enrolled — the locked error is the
+/// right guidance there, not enrollment.
+pub fn device_unenrolled(vault_path: &Path) -> bool {
+    let Some(id) = read_device_id(vault_path) else {
+        return true;
+    };
+    if !vault_path
+        .join("meta/keywrap")
+        .join(format!("{id}.json"))
+        .exists()
+    {
+        return true;
+    }
+    matches!(
+        file_kind(&vault_path.join("meta/device-privkey.json")),
+        PrivkeyFileKind::Absent
+    )
+}
+
 /// Build the sealed file bytes for an inner privkey JSON payload.
 pub fn seal_bytes(
     seal_key: &[u8; 32],

@@ -162,6 +162,48 @@ fn spawn_daemon() -> DaemonHandle {
 
 // ── Tests ────────────────────────────────────────────────────
 
+/// A second daemon on an owned socket must exit nonzero with guidance,
+/// not probe the live vault's files on its way down.
+#[test]
+fn second_daemon_fails_with_guidance() {
+    let handle = spawn_daemon();
+
+    let mut child = Command::new(DAEMON_BIN)
+        .arg("--socket")
+        .arg(&handle.socket_path)
+        .env("BALUARD_DATA_DIR", handle._data_dir.path())
+        .env("BALUARD_DAEMON_DIE_WITH_PARENT", "1")
+        .env("BALUARD_DISABLE_KEYRING", "1")
+        .env_remove("BALUARD_SOCKET")
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn second daemon");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if child.try_wait().expect("wait second daemon").is_some() {
+            break;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("second daemon did not exit within 5s");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let status = child.wait().expect("status");
+    assert!(!status.success(), "must exit nonzero");
+    let mut stderr_buf = String::new();
+    if let Some(mut err) = child.stderr.take() {
+        use std::io::Read;
+        let _ = err.read_to_string(&mut stderr_buf);
+    }
+    assert!(
+        stderr_buf.contains("already running"),
+        "stderr: {stderr_buf}"
+    );
+}
+
 #[test]
 fn daemon_starts_and_accepts_connections() {
     let _h = spawn_daemon();
