@@ -195,6 +195,12 @@ export default function VaultView() {
     }
     list = filterByCategory(list, cat);
     list = filterByCollection(list, vault.selectedCollection());
+    if (vault.selectedFolder() === NO_FOLDER) {
+      // Foreign merged-view rows carry no folder of their own, so the
+      // folder-less match would surface other vaults' entries here even
+      // though real-folder filters never surface foreign rows at all.
+      list = list.filter(c => !c._vault);
+    }
     list = filterByFolder(list, vault.folders(), vault.selectedFolder());
     list = filterByTag(list, vault.selectedTag());
     list = searchCiphers(list, vault.searchQuery());
