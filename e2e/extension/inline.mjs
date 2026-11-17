@@ -300,9 +300,12 @@ try {
       "inline fill of the practice login form"
     );
     await pageA.click("#submit");
+    // Assert on the redirect, not the h1: only a successful login lands on
+    // this path, and a site overlay can hide the heading from innerText
+    // without changing where the browser is.
     await pageWait(
       pageA,
-      () => document.body.innerText.includes("Logged In Successfully"),
+      () => location.pathname.includes("logged-in-successfully"),
       25000,
       "practice-site successful login"
     );
@@ -418,5 +421,10 @@ try {
   console.error(`sw console: ${JSON.stringify(swLogs ?? [])}`);
   process.exitCode = 1;
 } finally {
-  await ctx.close().catch(() => {});
+  // A wedged browser must not turn a fast FAIL into an hour-long just
+  // hang: bound the teardown, then force the exit past lingering handles.
+  await Promise.race([ctx.close(), new Promise((r) => setTimeout(r, 10000))]).catch(
+    () => {},
+  );
+  process.exit(process.exitCode || 0);
 }

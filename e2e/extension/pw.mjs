@@ -139,6 +139,11 @@ try {
   console.error("sw console:", JSON.stringify(swLogs.slice(-8)));
   process.exitCode = 1;
 } finally {
-  await ctx.close();
+  // A wedged browser must not turn a fast FAIL into an hour-long just
+  // hang: bound the teardown, then force the exit past lingering handles.
+  await Promise.race([ctx.close(), new Promise((r) => setTimeout(r, 10000))]).catch(
+    () => {},
+  );
+  process.exit(process.exitCode || 0);
   site.close();
 }

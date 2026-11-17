@@ -81,5 +81,8 @@ DESKTOP_TOKEN=$(cat "$WORK/d.tok")
 # header documents the sender-classification chain that makes that work).
 cd e2e/extension
 export HOME="$HOME_SBOX"
+# Firefox 141+ moved remote-agent system access from the CLI flag to this
+# env var; geckodriver and firefox both inherit it from here.
+export MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1
 export DESKTOP_TOKEN DAEMON_SOCKET="$SOCK" SITE_URL FF_DIST="$REPO/browser/firefox/dist" FF_PROFILE
 node ff.mjs
