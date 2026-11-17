@@ -218,6 +218,20 @@ describe("LoginScreen Quick Unlock auto-prompt", () => {
     switcherState.vaults = [{ slug: "baluard-x", display_name: "X" }];
   });
 });
+describe("LoginScreen wrong-password failure", () => {
+  test("a failed password unlock empties the field", async () => {
+    authMock.unlock.mockResolvedValue(false);
+    authState.lastUnlockError = "master password verification failed";
+    render(() => <LoginScreen />);
+    const pw = await screen.findByTestId("login-password");
+    fireEvent.input(pw, { target: { value: "master-pw" } });
+    await Promise.resolve();
+    fireEvent.click(screen.getAllByTestId("login-unlock")[0]);
+
+    await waitFor(() => expect(pw.value).toBe(""));
+  });
+});
+
 describe("LoginScreen downloaded-vault enrollment", () => {
 	const PHRASE_ERROR =
 		"This downloaded vault has no device key on this machine. Unlock with your 24-word recovery phrase to enroll it.";

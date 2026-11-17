@@ -40,6 +40,9 @@ export default function RepromptModal(props) {
       if (cb) cb(pw);
     } catch {
       setFailed(true);
+      // The wrong guess must not survive the field (no delay gates this
+      // retry loop, so a leftover guess is pure brute-force aid).
+      setPassword("");
     }
   }
 

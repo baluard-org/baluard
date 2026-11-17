@@ -114,5 +114,8 @@ describe("RepromptModal portal event delivery", () => {
     });
     expect(callback).not.toHaveBeenCalled();
     expect(q("reprompt-input")).toBeTruthy();
+    // A rejected password must not survive in the field: a leftover guess
+    // helps a human brute-force the next try.
+    expect(q("reprompt-input").value).toBe("");
   });
 });

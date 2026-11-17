@@ -273,6 +273,9 @@ export default function LoginScreen() {
       }
       setWrongPassword(true);
       setBruteLock(true);
+      // A rejected password must not survive the field: a leftover guess
+      // helps a human brute-force around the delay.
+      if (passwordRef) passwordRef.value = "";
       setTimeout(() => {
         setWrongPassword(false);
       }, 500);
