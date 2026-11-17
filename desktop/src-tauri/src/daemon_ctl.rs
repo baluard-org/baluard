@@ -120,24 +120,91 @@ pub(crate) fn version_from_ping_payload(payload: &str) -> Option<String> {
 }
 
 #[cfg(unix)]
-fn terminate_stale_daemon() {
-    // Reached only when no same-version daemon answered the ping, so this
-    // can never kill a healthy CLI/NMH-started daemon — that is the whole
-    // point of replacing the old unconditional pgrep sweep.
+/// The endpoint a candidate daemon process serves, as far as its argv and
+/// environment can tell. None means no explicit endpoint anywhere: the
+/// process resolves the global default, subject to BALUARD_DATA_DIR.
+#[cfg(unix)]
+fn candidate_explicit_socket(argv: &[String], env_pairs: &[(String, String)]) -> Option<String> {
+    let mut args = argv.iter();
+    while let Some(a) = args.next() {
+        if a == "--socket" {
+            return args.next().cloned();
+        }
+    }
+    env_pairs
+        .iter()
+        .find(|(k, _)| k == "BALUARD_SOCKET")
+        .map(|(_, v)| v.clone())
+}
+
+/// Kill decision for one baluard-daemon process. The name-based sweep this
+/// replaces killed daemons serving OTHER sockets — on dogfooding machines
+/// that is the user's production daemon, so a stale replacement may only
+/// ever match processes bound to this app's own endpoint.
+#[cfg(unix)]
+fn should_kill_daemon(
+    argv: &[String],
+    env_pairs: &[(String, String)],
+    expected_socket: &str,
+) -> bool {
+    let exe = argv.first().map(|a| a.rsplit('/').next().unwrap_or(a));
+    if exe != Some("baluard-daemon") {
+        return false;
+    }
+    if candidate_explicit_socket(argv, env_pairs).as_deref() == Some(expected_socket) {
+        return true;
+    }
+    // No explicit endpoint anywhere: the daemon serves the global default,
+    // which this app targets only when it has no overrides of its own. A
+    // candidate carrying BALUARD_DATA_DIR stays untouched — its default is
+    // unknowable here, so coexistence beats a guess.
+    let has_data_dir = env_pairs.iter().any(|(k, _)| k == "BALUARD_DATA_DIR");
+    !has_data_dir
+        && std::env::var_os("BALUARD_SOCKET").is_none()
+        && std::env::var_os("BALUARD_DATA_DIR").is_none()
+        && default_socket_path().to_string_lossy() == expected_socket
+}
+
+#[cfg(unix)]
+fn terminate_stale_daemon(expected_socket: &std::path::Path) {
+    let expected = expected_socket.to_string_lossy().to_string();
     let mut pids: Vec<i32> = Vec::new();
-    if let Ok(output) = std::process::Command::new("pgrep")
-        .args(["-x", "baluard-daemon"])
-        .output()
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for pid in stdout.split_whitespace() {
-            if let Ok(p) = pid.parse::<i32>() {
-                unsafe {
-                    libc::kill(p, libc::SIGTERM);
-                }
-                pids.push(p);
-                log::info!("Stopped stale daemon pid={p}");
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
+                continue;
+            };
+            let Ok(argv_bytes) = std::fs::read(entry.path().join("cmdline")) else {
+                continue;
+            };
+            let argv: Vec<String> = argv_bytes
+                .split(|b| *b == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf8_lossy(s).to_string())
+                .collect();
+            let env_pairs: Vec<(String, String)> = std::fs::read(entry.path().join("environ"))
+                .map(|bytes| {
+                    bytes
+                        .split(|b| *b == 0)
+                        .filter(|s| !s.is_empty())
+                        .map(|kv| {
+                            let kv = String::from_utf8_lossy(kv).to_string();
+                            match kv.split_once('=') {
+                                Some((k, v)) => (k.to_string(), v.to_string()),
+                                None => (kv, String::new()),
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !should_kill_daemon(&argv, &env_pairs, &expected) {
+                continue;
             }
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+            }
+            pids.push(pid);
+            log::info!("Stopped stale daemon pid={pid} socket={expected}");
         }
     }
     // SIGTERM should be enough (the daemon zeroizes and exits on it), but a
@@ -307,7 +374,7 @@ pub(crate) fn start_daemon(app: &AppHandle) -> Result<(), String> {
             // it may not have spawned, and the pipe dies with its owner —
             // the new daemon's create failure names the conflict instead.
             #[cfg(unix)]
-            terminate_stale_daemon();
+            terminate_stale_daemon(&socket);
             #[cfg(not(unix))]
             log::warn!("quit the running Baluard daemon before updating");
         }
@@ -315,7 +382,7 @@ pub(crate) fn start_daemon(app: &AppHandle) -> Result<(), String> {
             // No answer: either nothing is running or a hung daemon is
             // squatting on the socket path. Clear both possibilities.
             #[cfg(unix)]
-            terminate_stale_daemon();
+            terminate_stale_daemon(&socket);
         }
     }
     ADOPTED.store(false, Ordering::SeqCst);
@@ -509,5 +576,63 @@ mod tests {
             true,
             RESPAWN_COOLDOWN
         ));
+    }
+
+    #[test]
+    fn stale_daemon_on_the_expected_socket_is_killed() {
+        let argv = vec![
+            "/x/baluard-daemon".to_string(),
+            "--socket".to_string(),
+            "/tmp/e2e/d.sock".to_string(),
+        ];
+        assert!(should_kill_daemon(&argv, &[], "/tmp/e2e/d.sock"));
+    }
+
+    #[test]
+    fn daemon_on_a_foreign_socket_is_never_killed() {
+        // The dogfooding case: the app runs in a sandbox while the user's
+        // production daemon serves the default path.
+        let argv = vec![
+            "/x/baluard-daemon".to_string(),
+            "--socket".to_string(),
+            "/run/user/1000/baluard/baluard.sock".to_string(),
+        ];
+        assert!(!should_kill_daemon(&argv, &[], "/tmp/e2e/d.sock"));
+    }
+
+    #[test]
+    fn default_daemon_matches_an_unoverridden_app() {
+        let argv = vec!["/x/baluard-daemon".to_string()];
+        let expected = default_socket_path().to_string_lossy().to_string();
+        assert!(should_kill_daemon(&argv, &[], &expected));
+    }
+
+    #[test]
+    fn default_daemon_survives_a_sandboxed_app() {
+        let argv = vec!["/x/baluard-daemon".to_string()];
+        assert!(!should_kill_daemon(&argv, &[], "/tmp/e2e/d.sock"));
+    }
+
+    #[test]
+    fn non_daemon_processes_are_never_killed() {
+        let argv = vec!["/usr/bin/baluard".to_string()];
+        assert!(!should_kill_daemon(&argv, &[], "/tmp/e2e/d.sock"));
+    }
+
+    #[test]
+    fn env_socket_match_is_killed() {
+        let argv = vec!["/x/baluard-daemon".to_string()];
+        let env = vec![("BALUARD_SOCKET".to_string(), "/tmp/e2e/d.sock".to_string())];
+        assert!(should_kill_daemon(&argv, &env, "/tmp/e2e/d.sock"));
+    }
+
+    #[test]
+    fn data_dir_daemon_survives_even_on_the_default() {
+        // Its effective default is unknowable here; coexistence beats a
+        // guess.
+        let argv = vec!["/x/baluard-daemon".to_string()];
+        let env = vec![("BALUARD_DATA_DIR".to_string(), "/tmp/other".to_string())];
+        let expected = default_socket_path().to_string_lossy().to_string();
+        assert!(!should_kill_daemon(&argv, &env, &expected));
     }
 }
