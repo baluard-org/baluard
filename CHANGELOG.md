@@ -4,11 +4,13 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-- Browser: the extension offers passkeys by default on new installs, matching 1Password and Bitwarden. Installs from before this change keep their current setting.
+- Browser: the extension offers passkeys by default, matching 1Password and Bitwarden. Installs that already turned the setting off keep it off; installs that never touched it turn on with this update.
 
 - Browser: every passkey sign-in now shows the credential picker first, so nothing is sent to a site without a confirm, even when only one credential matches.
 
-- Browser: a new Default password manager setting turns off the browser's own offer to save passwords, so only Baluard asks to save your logins. It is on for new installs; turning it off hands saving back to the browser. The next extension update asks to re-approve a permission for this.
+- Browser: a new Default password manager setting turns off the browser's own offer to save passwords, so only Baluard asks to save your logins. It turns on with this update; turning it off hands saving back to the browser. The next extension update asks to re-approve a permission for this.
+
+- Browser and mobile: autofill gets the brand lock icon, and the mobile keyboard no longer offers to save a login when Baluard itself filled the fields. Picking a username without a password still saves both.
 
 - Desktop: the update banner links release notes on baluard.app/changelog, opened at the offered version.
 

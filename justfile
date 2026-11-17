@@ -178,9 +178,6 @@ ext-package artifacts="dist":
 ext-submit artifacts="dist":
 	./scripts/submit-extension-stores.sh {{ artifacts }}
 
-# Sign release artifacts (minisign sidecars + signed SHA256SUMS). The updater
-# key lives at ~/.tauri/baluard-updater.key; see docs/dev/linux-repositories.md.
-# Defaults to ./dist, the gitignored local staging dir.
 # Collect this release's desktop bundles into dist/ and remove the
 # previous release's loose files. The build legs never write dist/ (only
 # the macOS deliverable, ext-package, and the CLI archive do), so this
@@ -190,6 +187,9 @@ ext-submit artifacts="dist":
 dist-collect artifacts="dist":
 	./scripts/collect-dist.sh {{ artifacts }}
 
+# Sign release artifacts (minisign sidecars + signed SHA256SUMS). The updater
+# key lives at ~/.tauri/baluard-updater.key; see docs/dev/linux-repositories.md.
+# Defaults to ./dist, the gitignored local staging dir.
 release-sign artifacts="dist":
 	./scripts/sign-release-artifacts.sh {{ artifacts }}
 
