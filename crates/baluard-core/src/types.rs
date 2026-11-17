@@ -1722,19 +1722,22 @@ mod tests {
     /// an `impl Drop` trips this test.
     #[test]
     fn password_class_payloads_wipe_on_drop() {
+        // The Drop bound is the point: removing any impl Drop below fails
+        // this compile-time pin.
+        #[allow(drop_bounds)]
         fn asserts_wipe<T: std::ops::Drop>() {}
-        asserts_wipe::<LoginData>;
-        asserts_wipe::<CardData>;
-        asserts_wipe::<IdentityData>;
-        asserts_wipe::<SshKeyData>;
-        asserts_wipe::<BankAccountData>;
-        asserts_wipe::<DriversLicenseData>;
-        asserts_wipe::<PassportData>;
-        asserts_wipe::<SigningKeyData>;
-        asserts_wipe::<PasskeyData>;
-        asserts_wipe::<CustomField>;
-        asserts_wipe::<PasswordHistoryEntry>;
-        asserts_wipe::<Cipher>;
+        asserts_wipe::<LoginData>();
+        asserts_wipe::<CardData>();
+        asserts_wipe::<IdentityData>();
+        asserts_wipe::<SshKeyData>();
+        asserts_wipe::<BankAccountData>();
+        asserts_wipe::<DriversLicenseData>();
+        asserts_wipe::<PassportData>();
+        asserts_wipe::<SigningKeyData>();
+        asserts_wipe::<PasskeyData>();
+        asserts_wipe::<CustomField>();
+        asserts_wipe::<PasswordHistoryEntry>();
+        asserts_wipe::<Cipher>();
     }
 
     #[test]

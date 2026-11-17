@@ -4360,7 +4360,7 @@ async fn handle_enroll_with_phrase(
             // unconditional open here would re-lock a vault mid-unlock),
             // and a failed open evicts our entry so a retry gets a clean
             // open (same recovery as daemon startup).
-            let state = match host.try_insert(target_slug.clone(), fresh).await {
+            match host.try_insert(target_slug.clone(), fresh).await {
                 Ok(ours) => {
                     if let Err(e) = ours.open().await {
                         host.close(&target_slug).await;
@@ -4371,8 +4371,7 @@ async fn handle_enroll_with_phrase(
                     ours
                 }
                 Err(existing) => existing,
-            };
-            state
+            }
         }
     };
     let vault_key = state.vault_path.to_string_lossy().into_owned();
