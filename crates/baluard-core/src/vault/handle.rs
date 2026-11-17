@@ -12048,18 +12048,26 @@ fn scan_and_heal_integrity(
     manifest: &mut crate::integrity::IntegrityManifest,
 ) -> Vec<crate::integrity::RollbackEntry> {
     let mut actual_seqs = HashMap::new();
-    for dir in ["ciphers", "trash"] {
-        let dir_path = path.join(dir);
-        if !dir_path.exists() {
-            continue;
-        }
-        if let Ok(entries) = std::fs::read_dir(&dir_path) {
+    // Collection ciphers live one level down (ciphers/<dir>/<id>.enc),
+    // so walk subdirectories the same way the sync-side existence check
+    // does; a flat read would misread live objects as deleted and heal
+    // away their checkpoints.
+    for root in ["ciphers", "trash"] {
+        let mut stack = vec![path.join(root)];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
+                let p = entry.path();
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    stack.push(p);
+                    continue;
+                }
+                let name_str = entry.file_name().to_string_lossy().to_string();
                 if name_str.ends_with(".enc") {
                     let object_id = name_str.trim_end_matches(".enc").to_string();
-                    if let Ok(data) = std::fs::read(entry.path()) {
+                    if let Ok(data) = std::fs::read(&p) {
                         if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
                             actual_seqs.insert(object_id, envelope.header.update_seq);
                         }
@@ -12076,13 +12084,17 @@ fn scan_and_heal_integrity(
         .cloned()
         .collect();
     if !healed.is_empty() {
+        let mut details = Vec::new();
         for id in &healed {
-            manifest.checkpoints.remove(id);
+            if let Some(seq) = manifest.checkpoints.remove(id) {
+                details.push(format!("{} (last seq {})", &id[..8], seq.seq));
+            }
         }
         let _ = manifest.save(path);
         eprintln!(
-            "Cleaned {} stale tracking entries from vault bookkeeping.",
-            healed.len()
+            "Cleaned {} stale tracking entries from vault bookkeeping: {}",
+            healed.len(),
+            details.join(", ")
         );
     }
     rollbacks
@@ -12163,6 +12175,58 @@ mod tests {
         let rollbacks = scan_and_heal_integrity(vault, &mut manifest);
         assert_eq!(rollbacks.len(), 1);
         assert_eq!(rollbacks[0].object_id, live);
+    }
+
+    #[test]
+    fn integrity_scan_sees_collection_subdirectories() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path();
+        let team = vault.join("ciphers").join("team");
+        std::fs::create_dir_all(&team).unwrap();
+
+        let env_at = |seq: u64| {
+            crate::vault::envelope::serialize(&crate::types::CipherEnvelope {
+                header: crate::types::EnvelopeHeader {
+                    version: 2,
+                    alg_id: 0x0001,
+                    key_epoch: 1,
+                    update_seq: seq,
+                    tier: None,
+                },
+                nonce: [0u8; 12],
+                aad: Vec::new(),
+                ciphertext: Vec::new(),
+                tag: [0u8; 16],
+            })
+            .unwrap()
+        };
+
+        // A collection cipher must keep its checkpoint: a flat walk would
+        // call it absent and heal away live rollback detection.
+        let shared = "44444444-4444-4444-4444-444444444444";
+        std::fs::write(team.join(format!("{shared}.enc")), env_at(7)).unwrap();
+        let checkpoint = crate::integrity::Checkpoint {
+            object_id: shared.to_string(),
+            seq: 7,
+            device_id: "d".into(),
+            signature: String::new(),
+        };
+        let mut manifest = crate::integrity::IntegrityManifest {
+            checkpoints: HashMap::from([(shared.to_string(), checkpoint)]),
+            last_writer: "d".into(),
+        };
+
+        let rollbacks = scan_and_heal_integrity(vault, &mut manifest);
+        assert!(rollbacks.is_empty());
+        assert!(
+            manifest.checkpoints.contains_key(shared),
+            "collection checkpoint must survive the scan"
+        );
+        // And a genuine collection-cipher rollback is still reported.
+        std::fs::write(team.join(format!("{shared}.enc")), env_at(3)).unwrap();
+        let rollbacks = scan_and_heal_integrity(vault, &mut manifest);
+        assert_eq!(rollbacks.len(), 1);
+        assert_eq!(rollbacks[0].object_id, shared);
     }
 
     #[test]
