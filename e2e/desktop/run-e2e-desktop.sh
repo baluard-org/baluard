@@ -82,11 +82,12 @@ command -v Xvfb > /dev/null || { echo "missing Xvfb"; exit 1; }
 export BALUARD_E2E_PW="${BALUARD_E2E_PW:-e2e-desktop-pw1}"
 export BALUARD_E2E_NAME="${BALUARD_E2E_NAME:-E2E Desk}"
 
-# The app kills every baluard-daemon system-wide at its own startup
-# (E7's escape hatch is future work); warn loudly before that happens.
+# Since the scoped stale-daemon sweep (daemon_ctl), the app only kills
+# daemons bound to ITS sandbox socket; daemons on other sockets coexist.
+# A daemon sharing THIS app's socket path still gets replaced.
 stray=$(pgrep -x baluard-daemon 2>/dev/null | grep -vc "^$$") || true
 if [[ "${stray:-0}" -gt 0 ]]; then
-  echo "WARNING: $stray baluard-daemon process(es) are running; the app will kill them at startup." >&2
+  echo "note: $stray baluard-daemon process(es) running; only ones on this run's socket get replaced, the rest coexist." >&2
 fi
 
 # Fake display: WebKit needs software GL headless and the DMABUF
