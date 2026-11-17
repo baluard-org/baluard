@@ -2982,55 +2982,54 @@ val entitlement by Entitlements.state.collectAsState()
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        t("settings.attachDesc"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    BaluardPrimaryButton(
-                        text = if (compactBusy) t("common.pleaseWait") else t("settings.attachCompact"),
-                        enabled = !compactBusy,
-                        loading = compactBusy,
-                        onClick = {
-                            scope.launch {
-                                compactBusy = true
-                                try {
-                                    val r = repo.attachCompact(vault)
-                                    val kb = r.reclaimedBytes / 1024.0
-                                    // One decimal without String.format (JVM-only).
-                                    val size = if (kb >= 1024) "${(kb / 1024 * 10).toInt() / 10.0} MB" else "${(kb * 10).toInt() / 10.0} KB"
-                                    compactResult = t(
-                                        "settings.attachResult",
-                                        r.reclaimed, size, r.kept,
-                                    )
-                                } catch (e: CancellationException) {
-                                    throw e
-                                } catch (e: Exception) {
-                                    val msg = e.message.orEmpty()
-                                    compactResult = null
-                                    when {
-                                        msg.contains("not finished syncing") ->
-                                            Toast.error(t("settings.attachPending"))
-                                        msg.contains("needs every entry readable") ->
-                                            Toast.error(t("settings.attachReadable"))
-                                        msg.contains("older app version") ->
-                                            Toast.error(t("settings.attachLegacy"))
-                                        else ->
-                                            Toast.error(msg.ifEmpty { t("settings.attachFailed") })
-                                    }
-                                } finally {
-                                    compactBusy = false
+                // Description and action stack, never share a Row: the
+                // button is unweighted and fillMaxWidth, so in a Row it
+                // measures first and starves a weighted text to zero
+                // width, which wraps the description one character per
+                // line and blows the card up to screen height.
+                Text(
+                    t("settings.attachDesc"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                BaluardPrimaryButton(
+                    text = if (compactBusy) t("common.pleaseWait") else t("settings.attachCompact"),
+                    enabled = !compactBusy,
+                    loading = compactBusy,
+                    onClick = {
+                        scope.launch {
+                            compactBusy = true
+                            try {
+                                val r = repo.attachCompact(vault)
+                                val kb = r.reclaimedBytes / 1024.0
+                                // One decimal without String.format (JVM-only).
+                                val size = if (kb >= 1024) "${(kb / 1024 * 10).toInt() / 10.0} MB" else "${(kb * 10).toInt() / 10.0} KB"
+                                compactResult = t(
+                                    "settings.attachResult",
+                                    r.reclaimed, size, r.kept,
+                                )
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                val msg = e.message.orEmpty()
+                                compactResult = null
+                                when {
+                                    msg.contains("not finished syncing") ->
+                                        Toast.error(t("settings.attachPending"))
+                                    msg.contains("needs every entry readable") ->
+                                        Toast.error(t("settings.attachReadable"))
+                                    msg.contains("older app version") ->
+                                        Toast.error(t("settings.attachLegacy"))
+                                    else ->
+                                        Toast.error(msg.ifEmpty { t("settings.attachFailed") })
                                 }
+                            } finally {
+                                compactBusy = false
                             }
-                        },
-                    )
-                }
+                        }
+                    },
+                )
                 compactResult?.let {
                     Text(
                         it,
