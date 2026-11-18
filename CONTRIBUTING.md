@@ -36,7 +36,7 @@ Behaviour which can be reasonably considered harassment will not be tolerated.
 
 ## Issue content licensing
 
-The issue tracker is the public channel for reports and ideas. By submitting an issue, you license its contents, including any code or patches you include, to Esteban Cuevas and any successor that maintains the Baluard project, under GPL-3.0-or-later, and you confirm you have the right to grant that license. You keep ownership of your words and code, and the license covers nothing outside the issue itself. The issue templates record your acceptance with a required checkbox.
+The issue tracker is the public channel for reports and ideas. By submitting an issue, you license its contents, including any code or patches you include, to Esteban Cuevas and any successor that maintains the Baluard project, under GPL-3.0-or-later, and you confirm you have the right to grant that license. You keep ownership of your words and code, and the license covers nothing outside the issue itself. The notice sits at the top of every issue template, so the only way to opt out is not to submit.
 
 ## Testing
 
