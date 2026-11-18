@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an idea for Baluard
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Issue content license.** By submitting this issue, you license its contents, including any code or patches you include, to Esteban Cuevas and any successor that maintains the Baluard project, under [GPL-3.0-or-later](https://github.com/baluard-org/baluard/blob/main/LICENSE), and you confirm you have the right to grant that license. You keep ownership of your words and code. The full statement is in [CONTRIBUTING.md](https://github.com/baluard-org/baluard/blob/main/CONTRIBUTING.md#issue-content-licensing).
+  - type: checkboxes
+    id: acceptance
+    attributes:
+      label: Before you submit
+      options:
+        - label: I accept the issue content license above.
+          required: true
+        - label: I searched existing issues and found no duplicate.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem you want solved
+      description: What are you trying to do, and what stands in the way today?
+      placeholder: I manage shared credentials for my family and cannot tell which entries my partner already updated.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like Baluard to do
+      description: Your idea in plain words. Describe the behavior, not the screens.
+      placeholder: Show a shared indicator on entries that another family member changed.
+    validations:
+      required: true
