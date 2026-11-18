@@ -24,7 +24,7 @@ use std::sync::Arc;
 use baluard_core::types::{CipherInput, CipherKind, LoginData, LoginUri};
 use baluard_core::vault::creation::VaultCreator;
 use baluard_core::vault::registry::{VaultEntry, VaultRegistry};
-use baluard_daemon::handler::route_host_request;
+use baluard_daemon::handler::{route_host_request, route_host_request_with_peer};
 use baluard_daemon::host::VaultHost;
 use baluard_daemon::proto::GatewayRequest;
 use baluard_daemon::state::VaultState;
@@ -4842,13 +4842,14 @@ async fn agent_run_captures_output_from_a_slow_command() {
     )
     .await;
     assert!(approved.success, "err: {}", approved.error_message);
-    let polled = route_host_request(
+    let polled = route_host_request_with_peer(
         agent_request(
             "agents.poll",
             serde_json::json!({"request_id": request_id}),
             String::new(),
         ),
         &host,
+        Some(&peer),
     )
     .await;
     let agent_token = serde_json::from_str::<serde_json::Value>(&polled.payload).unwrap()["token"]
@@ -4931,13 +4932,14 @@ async fn agent_run_output_capture_cannot_hang_on_a_pipe_holder() {
     )
     .await;
     assert!(approved.success, "err: {}", approved.error_message);
-    let polled = route_host_request(
+    let polled = route_host_request_with_peer(
         agent_request(
             "agents.poll",
             serde_json::json!({"request_id": request_id}),
             String::new(),
         ),
         &host,
+        Some(&peer),
     )
     .await;
     let agent_token = serde_json::from_str::<serde_json::Value>(&polled.payload).unwrap()["token"]
@@ -6420,6 +6422,111 @@ fn agent_peer(pid: u32) -> baluard_runtime::agents::PeerBinding {
     )
 }
 
+/// Field 22 of /proc/self/stat (clock ticks since boot): the real start
+/// time of THIS test process, so owner bindings can match its actual tree.
+#[cfg(target_os = "linux")]
+fn own_start_ticks() -> u64 {
+    let stat = std::fs::read_to_string("/proc/self/stat").expect("procfs");
+    let after_comm = stat.rsplit_once(')').expect("stat comm field").1;
+    after_comm
+        .split_whitespace()
+        .nth(19) // fields 3.. live here; 22 - 3 = 19
+        .and_then(|f| f.parse::<u64>().ok())
+        .expect("stat starttime")
+}
+
+/// A binding that matches THIS test process's real tree, so polls pass the
+/// process-tree ownership check the poll endpoint enforces.
+#[cfg(target_os = "linux")]
+fn real_tree_peer(label: &str) -> baluard_runtime::agents::PeerBinding {
+    baluard_runtime::agents::PeerBinding::new(
+        std::process::id(),
+        label.to_string(),
+        own_start_ticks(),
+    )
+}
+
+/// BL0014: an approved outcome carries a live agent token; polling with a
+/// binding outside the requester's process tree (same uid, forged start
+/// ticks) must fail instead of handing the token over.
+#[tokio::test]
+#[cfg(target_os = "linux")]
+async fn agent_poll_releases_outcomes_only_to_the_requester_tree() {
+    let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
+    let (_dir, host, _state) = agent_host("agent-poll-binding").await;
+    let real_pid = std::process::id();
+    let real_ticks = own_start_ticks();
+    let owner = baluard_runtime::agents::PeerBinding::new(
+        real_pid,
+        "poll-owner-test".to_string(),
+        real_ticks,
+    );
+    let request_id = host
+        .pending_requests()
+        .push(
+            Some("personal".into()),
+            owner.clone(),
+            "Poll agent".into(),
+            "waiting for approval".into(),
+            vec!["item-1".into()],
+            baluard_runtime::agents::PendingPurpose::Credential,
+        )
+        .unwrap();
+    let _taken = host.pending_requests().take(&request_id).unwrap();
+    host.pending_requests()
+        .complete_approved(&request_id, "poll-token".into(), owner.clone());
+
+    // The requester's own tree still collects the one-shot outcome.
+    let req = agent_request(
+        "agents.poll",
+        serde_json::json!({"request_id": request_id}),
+        String::new(),
+    );
+    let resp =
+        baluard_daemon::handler::route_host_request_with_peer(req, &host, Some(&owner)).await;
+    assert!(
+        resp.success && resp.payload.contains("poll-token"),
+        "the requester tree must still get its outcome: {:?}",
+        resp
+    );
+
+    // A second lifecycle in the same pid slot (the first requester died)
+    // records a different start time; the still-live outcome from that
+    // recorded tree must not reach the live process polling with its own
+    // real binding.
+    let reused = baluard_runtime::agents::PeerBinding::new(
+        real_pid,
+        "poll-owner-test".to_string(),
+        real_ticks.wrapping_add(1),
+    );
+    let request_id2 = host
+        .pending_requests()
+        .push(
+            Some("personal".into()),
+            reused.clone(),
+            "Poll agent".into(),
+            "waiting for approval".into(),
+            vec!["item-1".into()],
+            baluard_runtime::agents::PendingPurpose::Credential,
+        )
+        .unwrap();
+    let _taken2 = host.pending_requests().take(&request_id2).unwrap();
+    host.pending_requests()
+        .complete_approved(&request_id2, "poll-token-2".into(), reused.clone());
+    let req = agent_request(
+        "agents.poll",
+        serde_json::json!({"request_id": request_id2}),
+        String::new(),
+    );
+    let resp =
+        baluard_daemon::handler::route_host_request_with_peer(req, &host, Some(&owner)).await;
+    assert!(
+        !resp.payload.contains("poll-token-2"),
+        "an outcome must not reach a reused pid slot: {:?}",
+        resp
+    );
+}
+
 async fn agent_host(label: &str) -> (tempfile::TempDir, Arc<VaultHost>, Arc<VaultState>) {
     let (dir, state) = open_unlocked(label).await;
     let host = Arc::new(VaultHost::new());
@@ -6530,7 +6637,7 @@ async fn agent_pending_requests_survive_the_desktop_blur_lock() {
     assert!(state.is_unlocked().await);
     // Once the prompt is gone the vault is blurrable again.
     host.pending_requests().deny(&request_id);
-    host.pending_requests().complete_denied(&request_id);
+    host.pending_requests().complete_denied(&request_id, None);
     let locked = host.lock_blur_vaults().await;
     assert_eq!(locked, vec!["personal".to_string()]);
 }
@@ -6685,7 +6792,7 @@ async fn agent_audit_is_filtered_to_the_requesting_vault() {
 async fn agent_approval_is_one_time_and_lock_kills_the_grant() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-approval").await;
-    let peer = agent_peer(42);
+    let peer = real_tree_peer("approval-one-time");
     let requested = baluard_daemon::handler::route_host_request_with_peer(
         agent_request(
             "agents.request",
@@ -6715,7 +6822,7 @@ async fn agent_approval_is_one_time_and_lock_kills_the_grant() {
     .await;
     assert!(pending.success, "err: {}", pending.error_message);
     let pending_json: serde_json::Value = serde_json::from_str(&pending.payload).unwrap();
-    assert_eq!(pending_json["pending"][0]["exe_path"], "/usr/bin/agent-42");
+    assert_eq!(pending_json["pending"][0]["exe_path"], "approval-one-time");
 
     let approved = route_host_request(
         agent_request(
@@ -6732,13 +6839,14 @@ async fn agent_approval_is_one_time_and_lock_kills_the_grant() {
         "desktop never receives the agent token"
     );
 
-    let polled = route_host_request(
+    let polled = route_host_request_with_peer(
         agent_request(
             "agents.poll",
             serde_json::json!({"request_id": request_id}),
             String::new(),
         ),
         &host,
+        Some(&peer),
     )
     .await;
     let poll_json: serde_json::Value = serde_json::from_str(&polled.payload).unwrap();
@@ -6747,13 +6855,14 @@ async fn agent_approval_is_one_time_and_lock_kills_the_grant() {
     assert!(agent_token.starts_with("agt_"));
     assert!(state.verify_agent_token(&agent_token).is_ok());
 
-    let replay = route_host_request(
+    let replay = route_host_request_with_peer(
         agent_request(
             "agents.poll",
             serde_json::json!({"request_id": request_id}),
             String::new(),
         ),
         &host,
+        Some(&peer),
     )
     .await;
     assert_eq!(
@@ -6785,7 +6894,7 @@ async fn agent_approval_is_one_time_and_lock_kills_the_grant() {
 async fn agent_denial_is_reported_without_a_grant() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-denial").await;
-    let peer = agent_peer(43);
+    let peer = real_tree_peer("denial-report");
     let requested = baluard_daemon::handler::route_host_request_with_peer(
         agent_request(
             "agents.request",
@@ -6816,13 +6925,14 @@ async fn agent_denial_is_reported_without_a_grant() {
     )
     .await;
     assert!(denied.success, "err: {}", denied.error_message);
-    let polled = route_host_request(
+    let polled = route_host_request_with_peer(
         agent_request(
             "agents.poll",
             serde_json::json!({"request_id": request_id}),
             String::new(),
         ),
         &host,
+        Some(&peer),
     )
     .await;
     assert_eq!(
@@ -6951,13 +7061,14 @@ async fn agent_run_honors_the_caller_working_directory() {
     )
     .await;
     assert!(approved.success, "err: {}", approved.error_message);
-    let polled = route_host_request(
+    let polled = route_host_request_with_peer(
         agent_request(
             "agents.poll",
             serde_json::json!({"request_id": request_id}),
             String::new(),
         ),
         &host,
+        Some(&peer),
     )
     .await;
     let agent_token = serde_json::from_str::<serde_json::Value>(&polled.payload).unwrap()["token"]
@@ -7057,13 +7168,14 @@ async fn agent_run_injects_only_approved_fields_and_scrubs_both_streams() {
     )
     .await;
     assert!(approved.success, "err: {}", approved.error_message);
-    let polled = route_host_request(
+    let polled = route_host_request_with_peer(
         agent_request(
             "agents.poll",
             serde_json::json!({"request_id": request_id}),
             String::new(),
         ),
         &host,
+        Some(&peer),
     )
     .await;
     let agent_token = serde_json::from_str::<serde_json::Value>(&polled.payload).unwrap()["token"]

@@ -776,20 +776,11 @@ pub fn enroll_device_pre_unlock(
         "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
     });
     let privkey_path = vault_path.join("meta/device-privkey.json");
-    let privkey_tmp = privkey_path.with_extension("json.tmp");
     let mut privkey_json_str = serde_json::to_string_pretty(&privkey_data)
         .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
 
-    std::fs::write(&privkey_tmp, privkey_json_str.as_bytes())
+    baluard_core::secret_file::write_secret_file(&privkey_path, privkey_json_str.as_bytes())
         .map_err(|e| VaultError::Metadata(format!("write privkey: {e}")))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
-    }
-    std::fs::rename(&privkey_tmp, &privkey_path)
-        .map_err(|e| VaultError::Metadata(format!("rename privkey: {e}")))?;
 
     privkey_json_str.zeroize();
     // The hex private keys live in heap Strings that a plain remove would

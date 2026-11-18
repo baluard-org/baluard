@@ -8449,11 +8449,12 @@ pub(crate) fn peer_binding_unix(
         return None;
     }
     let exe_path = String::from_utf8_lossy(&buf[..len as usize]).into_owned();
-    // NEW-2: the process start time binds the approval against pid reuse
-    // exactly like the Linux start ticks; 0 only when the kernel refuses.
-    let start_ticks = crate::agent_run::macos_proc_info(pid as u32)
-        .map(|(_, start)| start)
-        .unwrap_or(0);
+    // NEW-2: the start time binds the approval against pid reuse exactly
+    // like Linux start ticks; refused rather than 0 so a same-pid binding
+    // can never match pid_in_process_tree's wildcard arm.
+    let Some((_, start_ticks)) = crate::agent_run::macos_proc_info(pid as u32) else {
+        return None;
+    };
     Some(baluard_runtime::agents::PeerBinding::new(
         pid as u32,
         exe_path,

@@ -55,36 +55,13 @@ pub fn save(policy: &AgentPolicy) -> Result<(), String> {
 
 /// Write the policy to an explicit path.
 pub fn save_to(path: &std::path::Path, policy: &AgentPolicy) -> Result<(), String> {
-    let path = path.to_path_buf();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("agent policy dir: {e}"))?;
-    }
     let body = serde_json::json!({
         "enabled": policy.enabled,
         "auto_approve": policy.auto_approve,
     })
     .to_string();
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, body.as_bytes()).map_err(|e| format!("agent policy write: {e}"))?;
-    set_owner_only(&tmp)?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("agent policy rename: {e}"))?;
-    Ok(())
-}
-
-/// Owner-only on unix; the Windows build keeps the default ACL.
-#[cfg(unix)]
-fn set_owner_only(path: &std::path::Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(path)
-        .map_err(|e| format!("agent policy stat: {e}"))?
-        .permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(path, perms).map_err(|e| format!("agent policy chmod: {e}"))
-}
-
-#[cfg(not(unix))]
-fn set_owner_only(_path: &std::path::Path) -> Result<(), String> {
-    Ok(())
+    baluard_core::secret_file::write_secret_file(path, body.as_bytes())
+        .map_err(|e| format!("agent policy write: {e}"))
 }
 
 #[cfg(test)]

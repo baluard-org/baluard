@@ -1130,7 +1130,7 @@ mod tests {
         server
             .host
             .pending_requests()
-            .complete_approved(&request_id, token);
+            .complete_approved(&request_id, token, pending.peer.clone());
         let _ = pending;
         let out = client.await.unwrap();
         assert_eq!(out[0], 14, "approved sign must succeed: {out:?}");
@@ -1170,10 +1170,11 @@ mod tests {
         );
         // Mirror the daemon approve arm: an SshSign request completes with
         // an empty token and mints nothing.
-        server
-            .host
-            .pending_requests()
-            .complete_approved(&request_id, String::new());
+        server.host.pending_requests().complete_approved(
+            &request_id,
+            String::new(),
+            pending.peer.clone(),
+        );
         let out = client.await.unwrap();
         assert_eq!(out[0], 14, "approved sign must succeed: {out:?}");
         assert!(

@@ -286,7 +286,7 @@ fn valid_env_name(name: &str) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn process_chain(pid: u32) -> Option<Vec<(u32, u64)>> {
+pub(crate) fn process_chain(pid: u32) -> Option<Vec<(u32, u64)>> {
     let mut chain = Vec::new();
     let mut current = pid;
     for _ in 0..8 {
@@ -306,7 +306,7 @@ fn process_chain(pid: u32) -> Option<Vec<(u32, u64)>> {
 }
 
 #[cfg(target_os = "macos")]
-fn process_chain(pid: u32) -> Option<Vec<(u32, u64)>> {
+pub(crate) fn process_chain(pid: u32) -> Option<Vec<(u32, u64)>> {
     let mut chain = Vec::new();
     let mut current = pid;
     for _ in 0..8 {
@@ -348,6 +348,6 @@ pub(crate) fn macos_proc_info(pid: u32) -> Option<(u32, u64)> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn process_chain(_pid: u32) -> Option<Vec<(u32, u64)>> {
+pub(crate) fn process_chain(_pid: u32) -> Option<Vec<(u32, u64)>> {
     None
 }

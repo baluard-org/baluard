@@ -42,8 +42,9 @@ pub const DEFAULT_TTL_SECS: u64 = 900;
 pub struct PeerBinding {
     pub pid: u32,
     pub exe_path: String,
-    /// Linux /proc/<pid>/stat field 22 (clock ticks since boot). 0 where the
-    /// platform cannot provide it (macOS); the pid+exe pair still binds.
+    /// Linux /proc/<pid>/stat field 22 (clock ticks since boot). Bindings
+    /// are refused when the platform cannot provide it, so 0 never binds a
+    /// peer to this struct.
     pub start_ticks: u64,
 }
 
@@ -242,7 +243,7 @@ fn sha256(data: &[u8]) -> [u8; 32] {
 /// vault is active, and the target vault may be locked).
 pub struct PendingQueue {
     entries: RwLock<HashMap<String, PendingRequest>>,
-    outcomes: RwLock<HashMap<String, (PendingOutcome, u64)>>,
+    outcomes: RwLock<HashMap<String, (PendingOutcome, u64, Option<PeerBinding>)>>,
 }
 
 /// What a pending request asks for. The purpose decides what approval
@@ -351,18 +352,33 @@ impl PendingQueue {
         self.entries.write().unwrap().remove(request_id)
     }
 
-    pub fn complete_approved(&self, request_id: &str, token: String) {
+    pub fn complete_approved(&self, request_id: &str, token: String, peer: PeerBinding) {
         self.outcomes.write().unwrap().insert(
             request_id.to_string(),
-            (PendingOutcome::Approved { token }, now_ms() + 120_000),
+            (
+                PendingOutcome::Approved { token },
+                now_ms() + 120_000,
+                Some(peer),
+            ),
         );
     }
 
-    pub fn complete_denied(&self, request_id: &str) {
+    pub fn complete_denied(&self, request_id: &str, peer: Option<PeerBinding>) {
         self.outcomes.write().unwrap().insert(
             request_id.to_string(),
-            (PendingOutcome::Denied, now_ms() + 120_000),
+            (PendingOutcome::Denied, now_ms() + 120_000, peer),
         );
+    }
+
+    /// The requester recorded for a finished outcome, so callers can verify
+    /// the collecting process tree before the one-shot take_outcome runs.
+    pub fn outcome_owner(&self, request_id: &str) -> Option<PeerBinding> {
+        let mut outcomes = self.outcomes.write().unwrap();
+        let now = now_ms();
+        outcomes.retain(|_, (_, expires, _)| *expires > now);
+        outcomes
+            .get(request_id)
+            .and_then(|(_, _, peer)| peer.clone())
     }
 
     /// One-time outcome read. Approval tokens are removed on retrieval, so
@@ -370,8 +386,8 @@ impl PendingQueue {
     pub fn take_outcome(&self, request_id: &str) -> Option<PendingOutcome> {
         let mut outcomes = self.outcomes.write().unwrap();
         let now = now_ms();
-        outcomes.retain(|_, (_, expires)| *expires > now);
-        outcomes.remove(request_id).map(|(outcome, _)| outcome)
+        outcomes.retain(|_, (_, expires, _)| *expires > now);
+        outcomes.remove(request_id).map(|(outcome, _, _)| outcome)
     }
 
     /// Requests older than the approval window are dropped so a vanished

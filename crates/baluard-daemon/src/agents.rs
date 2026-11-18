@@ -1,11 +1,12 @@
 //! D80 agent approval routes. Secret delivery is deliberately not here yet:
 //! this module owns requests, human decisions, grant lifecycle, and polling.
 
+use crate::agent_run::process_chain;
 use crate::handler::{err_response, ok_resp};
 use crate::host::{SharedVaultHost, SnapshotError};
 use crate::proto::{GatewayRequest, GatewayResponse};
 use crate::state::SharedVaultState;
-use baluard_runtime::agents::{DEFAULT_TTL_SECS, PeerBinding, PendingOutcome};
+use baluard_runtime::agents::{DEFAULT_TTL_SECS, PeerBinding, PendingOutcome, pid_in_process_tree};
 
 #[derive(serde::Deserialize)]
 struct AgentRequestPayload {
@@ -193,6 +194,25 @@ pub async fn handle_agent_route(
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid agent poll: {e}")),
             };
+            let Some(peer) = peer else {
+                return err_response("agent peer identity is unavailable");
+            };
+            // BL0014: a request and its outcome belong to the process tree
+            // that made the request; a same-uid peer with a different tree
+            // must learn nothing and collect nothing.
+            let recorded = host
+                .pending_requests()
+                .get(&payload.request_id)
+                .map(|p| p.peer)
+                .or_else(|| host.pending_requests().outcome_owner(&payload.request_id));
+            if let Some(owner) = recorded {
+                let Some(chain) = process_chain(peer.pid) else {
+                    return err_response("agent process tree is unavailable");
+                };
+                if !pid_in_process_tree(&owner, &chain) {
+                    return err_response("agent outcome belongs to a different process tree");
+                }
+            }
             if host.pending_requests().get(&payload.request_id).is_some() {
                 return ok_resp(serde_json::json!({"status": "pending"}).to_string(), None);
             }
@@ -286,8 +306,11 @@ pub async fn handle_agent_route(
                 state.revoke_agent_token(&token);
                 return err_response(format!("agent audit failed: {error}"));
             }
-            host.pending_requests()
-                .complete_approved(&payload.request_id, token);
+            host.pending_requests().complete_approved(
+                &payload.request_id,
+                token,
+                audit_pending.peer.clone(),
+            );
             ok_resp(serde_json::json!({"approved": true}).to_string(), None)
         }
         "agents.deny" => {
@@ -315,7 +338,10 @@ pub async fn handle_agent_route(
             if !host.pending_requests().deny(&payload.request_id) {
                 return err_response("agent request is no longer pending");
             }
-            host.pending_requests().complete_denied(&payload.request_id);
+            host.pending_requests().complete_denied(
+                &payload.request_id,
+                pending.as_ref().map(|p| p.peer.clone()),
+            );
             if let Some(pending) = pending {
                 audit_best_effort(
                     "denied",
@@ -564,7 +590,13 @@ fn yolo_enabled(slug: &str) -> bool {
         == Some(true)
 }
 
+static YOLO_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn write_yolo(slug: &str, enabled: bool) -> Result<(), String> {
+    // Read-modify-write of the whole map must not lose concurrent updates.
+    let _lock = YOLO_WRITE_LOCK
+        .lock()
+        .map_err(|_| "agent setting lock poisoned".to_string())?;
     let path = yolo_path();
     let mut value = std::fs::read_to_string(&path)
         .ok()
@@ -574,17 +606,6 @@ fn write_yolo(slug: &str, enabled: bool) -> Result<(), String> {
         value = serde_json::json!({});
     }
     value[slug] = serde_json::Value::Bool(enabled);
-    let parent = path
-        .parent()
-        .ok_or("agent setting has no parent directory")?;
-    std::fs::create_dir_all(parent).map_err(|e| format!("create agent setting directory: {e}"))?;
-    let tmp = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
-    std::fs::write(&tmp, value.to_string()).map_err(|e| format!("write agent setting: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("secure agent setting: {e}"))?;
-    }
-    std::fs::rename(&tmp, &path).map_err(|e| format!("commit agent setting: {e}"))
+    baluard_core::secret_file::write_secret_file(&path, value.to_string().as_bytes())
+        .map_err(|e| format!("write agent setting: {e}"))
 }
