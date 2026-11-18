@@ -144,7 +144,7 @@ internal val ES: Map<String, String> = mapOf(
     // device code (RFC 8628)
     "deviceCode.title" to "Autoriza en tu navegador",
     "deviceCode.subtitle" to
-        "Inicia sesión en tu cuenta en el navegador, luego introduce este código y apruébalo. " +
+        "Inicia sesión en tu cuenta en el navegador, luego ingresa este código y apruébalo. " +
             "Esta pantalla espera por sí sola.",
     "deviceCode.openBrowser" to "Abrir navegador",
     "deviceCode.copy" to "Copiar código",
@@ -162,18 +162,18 @@ internal val ES: Map<String, String> = mapOf(
 
     // device enrollment
     "enroll.subtitle" to
-        "Este dispositivo aún no es de confianza para la bóveda. Introduce tu frase de " +
-            "recuperación de 24 palabras y la contraseña maestra para añadirlo.",
+        "Este dispositivo aún no es de confianza para la bóveda. Ingresa tu frase de " +
+            "recuperación de 24 palabras y la contraseña maestra para agregarlo.",
     "enroll.phraseLabel" to "Frase de recuperación ({0}/24 palabras)",
     "enroll.phraseHint" to "Escribe las 24 palabras, en orden.",
     "enroll.phrasePlaceholder" to "Escribe las 24 palabras de recuperación...",
-    "enroll.button" to "Añadir este dispositivo",
+    "enroll.button" to "Agregar este dispositivo",
 
     // vault list
     "vault.title" to "Bóveda",
     "vault.lockVault" to "Bloquear bóveda",
     "vault.empty" to "Aún no hay entradas",
-    "vault.addEntry" to "Añadir entrada",
+    "vault.addEntry" to "Agregar entrada",
 
     // generator screen title
     "generator.title" to "Generador",
@@ -297,7 +297,7 @@ internal val ES: Map<String, String> = mapOf(
     "edit.password" to "Contraseña",
     "edit.notes" to "Notas",
     "edit.attachments" to "Adjuntos",
-    "edit.addAttachment" to "Añadir adjunto",
+    "edit.addAttachment" to "Agregar adjunto",
     "edit.attachmentTooLarge" to "El archivo supera el límite de 1.9 MB",
     "edit.pendingAttachment" to "Pendiente de subida",
     "edit.removeAttachment" to "Eliminar adjunto",
@@ -310,13 +310,13 @@ internal val ES: Map<String, String> = mapOf(
     "edit.collectionNone" to "Sin carpeta compartida",
     "edit.noFolder" to "Sin carpeta",
     "edit.tags" to "Etiquetas",
-    "edit.tagPlaceholder" to "Añadir etiqueta...",
-    "edit.addTag" to "Añadir etiqueta",
+    "edit.tagPlaceholder" to "Agregar etiqueta...",
+    "edit.addTag" to "Agregar etiqueta",
     "edit.removeTag" to "Quitar etiqueta",
     "edit.uris" to "Sitios web",
     "edit.uriField" to "Sitio web",
     "edit.uriPlaceholder" to "https://example.com",
-    "edit.addUri" to "Añadir sitio",
+    "edit.addUri" to "Agregar sitio",
     "edit.removeUri" to "Quitar sitio",
     "edit.reorderUri" to "Arrastra para reordenar",
     "edit.match" to "Detección de coincidencia",
@@ -342,7 +342,7 @@ internal val ES: Map<String, String> = mapOf(
     "edit.sshGenerate" to "Generar par de claves",
     "edit.sshGenerateFailed" to "No se pudo generar la clave SSH",
     "edit.customFields" to "Campos personalizados",
-    "edit.addField" to "Añadir campo",
+    "edit.addField" to "Agregar campo",
     "edit.removeField" to "Quitar campo",
     "edit.fieldName" to "Nombre del campo",
     "edit.fieldValue" to "Valor",
@@ -483,7 +483,7 @@ internal val ES: Map<String, String> = mapOf(
     "settings.allowScreenshotsHint" to "Permite que capturas, grabaciones de pantalla y el multitarea muestren el contenido de la app. Apagado es más seguro.",
     "settings.vaultSection" to "Bóveda",
     "settings.removeVault" to "Quitar de este dispositivo",
-    "settings.removeVaultHint" to "Borra la copia de la bóveda en este dispositivo. Tu copia remota sincronizada se conserva: puedes añadir la bóveda de nuevo cuando quieras.",
+    "settings.removeVaultHint" to "Borra la copia de la bóveda en este dispositivo. Tu copia remota sincronizada se conserva: puedes agregar la bóveda de nuevo cuando quieras.",
     "settings.healthTitle" to "Revisión de seguridad",
     "settings.healthChecking" to "Revisando tus entradas…",
     "settings.healthClean" to "Todo está en orden.",
@@ -496,7 +496,7 @@ internal val ES: Map<String, String> = mapOf(
     "settings.healthRSequential" to "Caracteres secuenciales",
     "settings.healthROld" to "Sin cambiar hace {0} d\u00edas",
     "settings.healthRReused" to "Usada en {0} entradas",
-    "settings.avatarTap" to "Añadir una imagen para esta bóveda",
+    "settings.avatarTap" to "Agregar una imagen para esta bóveda",
     "settings.avatarChange" to "Cambiar imagen",
     "settings.avatarRemove" to "Quitar imagen",
     "settings.avatarBadType" to "Usa una imagen png, jpg, gif o webp.",
@@ -569,7 +569,7 @@ internal val ES: Map<String, String> = mapOf(
     "settings.rotatePhraseBtn" to "Rotar",
     "settings.rotatePhraseHint" to "Reemplaza las 24 palabras que pueden abrir esta bóveda. Las nuevas palabras se muestran una sola vez.",
     "settings.rotatePhraseTitle" to "Confirma la contraseña maestra",
-    "settings.rotatePhraseBody" to "Introduce la contraseña maestra de la bóveda para rotar la frase de recuperación.",
+    "settings.rotatePhraseBody" to "Ingresa la contraseña maestra de la bóveda para rotar la frase de recuperación.",
     "settings.rotatePhraseBad" to "No se pudo rotar. Revisa la contraseña e inténtalo de nuevo.",
     "settings.rotatePhraseDoneTitle" to "Nueva frase de recuperación",
     "settings.rotatePhraseDoneBody" to "Anota estas palabras ahora. Se muestran solo una vez.",
@@ -594,7 +594,7 @@ internal val ES: Map<String, String> = mapOf(
 
     "settings.backupPassDesc" to "Esta frase de contraseña es la única forma de abrir el archivo. Si la pierdes, pierdes la copia para siempre. No es tu contraseña maestra, y Baluard nunca la guarda.",
 
-    "settings.backupPassImportDesc" to "Introduce la frase que guardaste al crear esta copia. No es tu contraseña maestra.",
+    "settings.backupPassImportDesc" to "Ingresa la frase que guardaste al crear esta copia. No es tu contraseña maestra.",
 
     "settings.backupPassConfirmLabel" to "Confirma la frase",
 
@@ -606,7 +606,7 @@ internal val ES: Map<String, String> = mapOf(
 
     "settings.backupFailed" to "La copia cifrada falló",
     "settings.removeVaultTitle" to "¿Quitar la bóveda de este dispositivo?",
-    "settings.removeVaultBody" to "Esto borra los datos de la bóveda en este dispositivo, incluida su clave. Tus datos permanecen a salvo en tu copia remota sincronizada: puedes añadir la bóveda de nuevo cuando quieras.",
+    "settings.removeVaultBody" to "Esto borra los datos de la bóveda en este dispositivo, incluida su clave. Tus datos permanecen a salvo en tu copia remota sincronizada: puedes agregar la bóveda de nuevo cuando quieras.",
     "settings.removeVaultConfirm" to "Quitar",
     "settings.removeVaultPending" to "Hay cambios sin sincronizar o sin conexión. Usa el botón Sincronizar de la pantalla principal y vuelve a intentarlo.",
     "settings.removeVaultFailed" to "No se pudieron borrar los datos de la bóveda. Inténtalo de nuevo.",
@@ -622,7 +622,7 @@ internal val ES: Map<String, String> = mapOf(
     "home.trash" to "Papelera",
     "home.allEntries" to "Todas las entradas",
     "home.noFolder" to "Sin carpeta",
-    "home.addVault" to "Añadir bóveda",
+    "home.addVault" to "Agregar bóveda",
     "home.detach" to "Quitar de la lista",
     "home.detachTitle" to "¿Quitar {0}?",
     "home.detachDesc" to "Esta bóveda desaparece de la lista. Sus archivos siguen en este dispositivo y puedes volver a añadirla sincronizando desde tu remoto.",
@@ -739,11 +739,11 @@ internal val ES: Map<String, String> = mapOf(
     "a11y.noMatches" to "Sin credenciales guardadas para esta app",
     "a11y.totpCopied" to "Código TOTP copiado",
     "settings.equivalentDomainsTitle" to "Dominios equivalentes",
-    "settings.equivalentDomainsAdd" to "Añadir grupo",
+    "settings.equivalentDomainsAdd" to "Agregar grupo",
     "settings.equivalentDomainsAddHint" to "Dos o más sitios que comparten la misma cuenta, separados por comas.",
     "settings.equivalentDomainsAddError" to "Escribe al menos dos dominios, separados por comas.",
     "settings.equivalentDomainsEmpty" to "Aún no hay grupos personalizados. Los dominios de un grupo se autocompletan entre sí.",
-    "settings.equivalentDomainsHint" to "Añade grupos de dominios que comparten credenciales (p. ej. el portal de tu empresa y su sitio público).",
+    "settings.equivalentDomainsHint" to "Agrega grupos de dominios que comparten credenciales (p. ej. el portal de tu empresa y su sitio público).",
     "settings.suggestAppLogins" to "Sugerir credenciales web en apps",
     "settings.suggestAppLoginsHint" to "Tras confiar en una app una vez, las credenciales guardadas de su sitio web se autocompletan dentro de la app. Confirmas cada app.",
     "settings.trustedAppsTitle" to "Apps de confianza",
@@ -827,7 +827,7 @@ internal val ES: Map<String, String> = mapOf(
         "people.groupCreate" to "Crear",
         "people.groupSave" to "Guardar",
         "people.groupMembers" to "Miembros de este grupo",
-        "people.groupAddMember" to "Añadir",
+        "people.groupAddMember" to "Agregar",
         "people.groupRemove" to "Quitar",
         "people.groupDelete" to "Eliminar grupo",
         "people.groupDeleteConfirm" to "Toca de nuevo para eliminar \"{0}\". El acceso dado solo por este grupo se retira.",
