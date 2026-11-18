@@ -119,8 +119,8 @@ internal val PT: Map<String, String> = mapOf(
     "provider.patConnect" to "Conectar",
     "provider.errorConnection" to "Não foi possível conectar ao provedor. Verifique sua conexão.",
     "provider.errorAuth" to "Falha na autenticação. Verifique seu token ou autorização.",
-    "provider.errorListRepos" to "Não foi possível listar os repositórios da sua conta.",
-    "provider.errorClone" to "Não foi possível clonar o repositório selecionado.",
+    "provider.errorListRepos" to "Não foi possível carregar os cofres da sua conta.",
+    "provider.errorClone" to "Não foi possível baixar o cofre selecionado.",
     "provider.errorEnroll" to "Falha ao registrar o dispositivo no cofre.",
     "deviceCode.title" to "Autorização do dispositivo",
     "deviceCode.subtitle" to "Abra o link abaixo e confirme o código:",
@@ -459,7 +459,7 @@ internal val PT: Map<String, String> = mapOf(
     "settings.msgChanged" to "O quadro mudou enquanto você o revisava. Verifique uma vez mais.",
     "settings.cleanupTitle" to "O armazenamento foi limpo em outro dispositivo",
     "settings.cleanupBody" to "Outro dispositivo organizou o armazenamento compartilhado do Baluard. Obtenha as últimas atualizações para terminar a limpeza. Até lá, você pode ver e preencher seus logins, mas salvar alterações está pausado.",
-    "settings.cleanupAdvanced" to "O que o Baluard está fazendo",
+    "settings.cleanupAdvanced" to "O que o Baluard está fazendo?",
     "settings.cleanupAdvancedBody" to "O Baluard guarda arquivos anexos criptografados em um histórico git separado. Outro dispositivo reescreveu esse histórico para remover arquivos que nenhuma entrada usa. Este dispositivo ainda tem cópias locais dos arquivos removidos; sincronizar as gravaria de novo para todos. Obter as atualizações aceita o histórico reescrito e apaga apenas essas cópias locais obsoletas.",
     "settings.cleanupAction" to "Obter atualizações",
     "settings.cleanupKeepReading" to "Continuar lendo",
@@ -473,10 +473,10 @@ internal val PT: Map<String, String> = mapOf(
     "settings.attachCompact" to "Liberar espaço",
     "settings.attachResult" to "Recuperados {0} arquivos ({1}), mantidos {2}.",
     "settings.attachPending" to "Alguns arquivos ainda estão sincronizando. Sincronize uma vez e tente novamente.",
-    "settings.attachReadable" to "A compactação precisa que todas as entradas sejam legíveis neste dispositivo.",
+    "settings.attachReadable" to "Para liberar espaço, todas as entradas precisam estar legíveis neste dispositivo.",
     "settings.attachLegacy" to "Algumas entradas foram salvas pela última vez em uma versão anterior do app. Atualize todos os dispositivos, salve novamente essas entradas e tente de novo.",
     "settings.attachFailed" to "Não foi possível liberar o espaço dos anexos.",
-    "settings.attachForeign" to "O armazenamento compartilhado de anexos desta cofre está sincronizado em um lugar que este dispositivo não reconhece. Abra o Baluard e verifique Sync antes de aceitar qualquer coisa.",
+    "settings.attachForeign" to "O armazenamento compartilhado de anexos deste cofre está sincronizado em um lugar que este dispositivo não reconhece. Abra o Baluard e verifique Sincronização antes de aceitar qualquer coisa.",
     "settings.attachCleanedVerified" to "A limpeza foi feita por um dispositivo verificado.",
     "settings.attachCleanedDetails" to "A limpeza foi feita pelo dispositivo {0}: {1} arquivo(s), {2} liberados.",
     "settings.dataSection" to "Dados",
@@ -679,7 +679,7 @@ internal val PT: Map<String, String> = mapOf(
     "settings.browserIntegration.brave" to "Usar integração de preenchimento do Brave",
     "settings.browserIntegration.chrome" to "Usar integração de preenchimento do Chrome",
     "settings.browserIntegration.vivaldi" to "Usar integração de preenchimento do Vivaldi",
-    "settings.browserIntegrationHint" to "Navegadores suportados para preenchimento de páginas web.",
+    "settings.browserIntegrationHint" to "Melhora o preenchimento em sites compatíveis. Tocar abre as configurações de preenchimento do navegador.",
     "settings.a11yTitle" to "Preenchimento por acessibilidade",
     "settings.a11ySummary" to
         "Preencha credenciais em aplicativos que não suportam o preenchimento " +
@@ -688,7 +688,7 @@ internal val PT: Map<String, String> = mapOf(
     "settings.a11yDisclosureBody" to
         "O serviço de acessibilidade do Baluard serve apenas para preencher senhas " +
         "em aplicativos onde o preenchimento automático padrão do sistema falha. Ele " +
-        "lê a tela somente quando você clica no atalho de preenchimento nas " +
+        "lê a tela somente quando você toca no atalho de preenchimento nas " +
         "Configurações Rápidas. O Baluard nunca armazena nem envia dados de tela.",
     "settings.a11yDisclosureAccept" to "Entendi e desejo ativar",
     "settings.a11yOpenSystem" to "Abrir configurações de acessibilidade",
@@ -777,7 +777,7 @@ internal val PT: Map<String, String> = mapOf(
         "people.removed" to "removido",
         "people.reset" to "redefinição pendente",
         "people.inviteTitle" to "Convidar alguém",
-        "people.transportUsername" to "Utilizador Git (opcional, concede acesso de clonagem)",
+        "people.transportUsername" to "Usuário Git (opcional, concede acesso para baixar)",
         "people.inviteAction" to "Criar código de convite",
         "people.inviteCodeTitle" to "Código de convite",
         "people.inviteCodeBody" to "Envie este código de uso único à pessoa convidada. Expira após o uso.",
@@ -817,7 +817,7 @@ internal val PT: Map<String, String> = mapOf(
         "people.actionReset" to "Redefinir",
         "people.actionReplace" to "Substituir dispositivo",
         "people.replaceTitle" to "Substituir o dispositivo de {0}",
-        "people.replaceBody" to "Reinicia esta membership com um convite de substituição que mantém as pastas compartilhadas, revoga os dispositivos roubados e rotaciona o que podia abrir. O dispositivo antigo deixa de funcionar.",
+        "people.replaceBody" to "Redefine este membro com um convite de substituição que mantém as pastas compartilhadas, revoga os dispositivos roubados e rotaciona o que ele podia abrir. O dispositivo antigo deixa de funcionar.",
         "people.replaceConfirm" to "Substituir",
         "people.replaceDone" to "Dispositivo substituído.",
         "people.replaceCodeTitle" to "Código de convite de substituição",
@@ -870,13 +870,13 @@ internal val PT: Map<String, String> = mapOf(
         "collections.renameToast" to "Pasta compartilhada renomeada",
         "collections.deleteAction" to "Excluir",
         "collections.deleteTitle" to "Excluir pasta compartilhada",
-        "collections.deleteBody" to "Excluir \"{0}\"? Os acessos morrem com ela; itens são mantidos.",
+        "collections.deleteBody" to "Excluir \"{0}\"? As permissões são removidas com ela; as entradas são mantidas.",
         "collections.deleteToast" to "Pasta compartilhada excluída",
-        "collections.catalogTitle" to "Catálogo de pedidos",
+        "collections.catalogTitle" to "Catálogo de solicitações",
         "collections.catalogHint" to "Quem pede acesso vê estes nomes. Limpar o catálogo os oculta; dá para colar um id.",
         "collections.catalogPublish" to "Publicar",
         "collections.catalogClear" to "Limpar",
-        "collections.catalogClearBody" to "Ocultar todos os nomes no diálogo de pedidos?",
+        "collections.catalogClearBody" to "Ocultar todos os nomes na janela de solicitações?",
         "collections.catalogPublishedToast" to "Catálogo atualizado",
 
     // S3-9b: Space policy (admin card on Settings).
@@ -935,7 +935,7 @@ internal val PT: Map<String, String> = mapOf(
     "space.teamPrepared" to "Membros preparados.",
     "space.teamDone" to "O modo equipe está ativado.",
     "space.teamConfirmTitle" to "Ativar o modo equipe?",
-    "space.teamConfirmBody" to "Isto é em um sentido. Os membros mantêm acesso às entradas compartilhadas com eles e deixam de ver todo o resto, a partir do próximo desbloqueio. Digite \"team\" para confirmar.",
+    "space.teamConfirmBody" to "Esta ação não pode ser revertida. Os membros mantêm acesso às entradas compartilhadas com eles e deixam de ver todo o resto, a partir do próximo desbloqueio. Digite \"team\" para confirmar.",
     "space.teamConfirmWord" to "Digite \"team\" para confirmar",
     "space.teamOnBadge" to "Ativado",
     "space.joinApprovalLabel" to "Aprovação de entrada",
@@ -960,7 +960,7 @@ internal val PT: Map<String, String> = mapOf(
     "space.opReset" to "Redefinição de membro",
     "space.opMigrate" to "Mudar endereço de sincronização",
     "space.opClaim" to "Reivindicação de propriedade",
-    "space.opLower" to "Abaixar barra de aprovação",
+    "space.opLower" to "Reduzir aprovações necessárias",
     "space.opKitReplace" to "Substituir kit de recuperação",
     "space.opKitDisable" to "Desativar kit de recuperação",
 

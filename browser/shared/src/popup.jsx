@@ -213,7 +213,7 @@ const STRINGS = {
     notPaired: "Conectar ao Baluard",
     notPairedIntro: "Vincule este navegador ao app Baluard para preencher suas senhas automaticamente.",
     step1: "Abra o app Baluard neste computador",
-    step2: "Em Configurações, adicione uma nova extensão do navegador",
+    step2: 'Em Configurações, abra a aba "Extensões do navegador" e clique em "Adicionar extensão"',
     step3: "Digite o código exibido no app e conecte",
     pairCodeLabel: "Código de pareamento",
     pairCodePlaceholder: "Código de 8 caracteres",
@@ -239,13 +239,13 @@ const STRINGS = {
     copyUsername: "Copiar usuário",
     copyPassword: "Copiar senha",
     copyTotp: "Copiar código",
-    viewInApp: "Ver en la app de Baluard",
+    viewInApp: "Ver no app Baluard",
     copied: "Copiado",
     refresh: "Atualizar",
     // G24 merged surfaces
     lockedChip: "está bloqueado. Abra o Baluard.",
     spaceRemoved: "Pode ser que você não tenha mais acesso a este espaço.",
-    askUnlock: "Toque para pedir ao app Baluard para desbloquear este cofre",
+    askUnlock: "Clique para pedir ao app Baluard para desbloquear este cofre",
     unlockRequested: "Desbloqueio solicitado.",
     // Settings
     settings: "Configurações",
@@ -281,8 +281,8 @@ const STRINGS = {
     passkeysTitle: "Oferecer chaves de acesso",
     passkeysDesc: "O Baluard completa logins com chaves de acesso guardadas no seu cofre. Requer o app Baluard.",
     passkeysUnsupported: "Este navegador não pode oferecer chaves de acesso.",
-    defaultMgrTitle: "Tornar o Baluard o gerenciador de senhas padrão",
-    defaultMgrDesc: "Desativa a oferta do navegador de salvar senhas, para que só o Baluard peça para salvar seus logins.",
+    defaultMgrTitle: "Usar o Baluard como gerenciador de senhas padrão",
+    defaultMgrDesc: "Desativa o aviso do navegador para salvar senhas, para que apenas o Baluard peça para salvar seus logins.",
   },
 };
 
