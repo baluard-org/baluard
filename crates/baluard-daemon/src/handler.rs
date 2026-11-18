@@ -125,6 +125,39 @@ fn export_carries_out_path(payload: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Typed credential payloads (BL0010): a serde_json::Value tree cannot
+/// zeroize its strings, so every route carrying a password parses into
+/// Zeroizing fields instead of indexing a Value.
+#[derive(serde::Deserialize)]
+struct UnlockPayload {
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    password: Option<zeroize::Zeroizing<String>>,
+}
+
+#[derive(serde::Deserialize)]
+struct ChangePasswordPayload {
+    #[serde(default)]
+    old_password: Option<zeroize::Zeroizing<String>>,
+    #[serde(default)]
+    new_password: Option<zeroize::Zeroizing<String>>,
+}
+
+#[derive(serde::Deserialize)]
+struct RotateRecoveryPayload {
+    #[serde(default)]
+    old_password: Option<zeroize::Zeroizing<String>>,
+}
+
+#[derive(serde::Deserialize)]
+struct CloneFinalizePayload {
+    #[serde(default)]
+    phrase: Option<zeroize::Zeroizing<String>>,
+    #[serde(default)]
+    master_password: Option<zeroize::Zeroizing<String>>,
+}
+
 /// Typed extraction for the vault.import baluard-encrypted payload (§8).
 #[derive(serde::Deserialize)]
 struct EncryptedImportPayload {
@@ -3395,20 +3428,15 @@ fn hostname_of(url: &str) -> String {
 async fn handle_vault_unlock(mut req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
     // Payload is the master password (plaintext) OR JSON {"slug":"...", "password":"..."}.
     // Support both: try JSON first, fall back to plain-string for backward compat.
-    let (slug, password) = match serde_json::from_str::<serde_json::Value>(&req.payload) {
+    let (slug, password) = match serde_json::from_str::<UnlockPayload>(&req.payload) {
         // A payload without a password key is a plaintext password that
         // happens to parse as JSON (e.g. {"slug":"x"}); treat it as the
         // password string, not as an empty-password envelope.
-        Ok(v) if v.get("password").is_some() => {
-            let s = v.get("slug").and_then(|x| x.as_str()).map(String::from);
-            let p = v
-                .get("password")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string();
-            (s, zeroize::Zeroizing::new(p))
-        }
-        _ => (None, zeroize::Zeroizing::new(req.payload.clone())),
+        Ok(p) => match p.password {
+            Some(pw) => (p.slug, pw),
+            None => (None, zeroize::Zeroizing::new(req.payload.clone())),
+        },
+        Err(_) => (None, zeroize::Zeroizing::new(req.payload.clone())),
     };
 
     // Resolve the slug: req.slug (proto field, M2) > payload `slug` > active.
@@ -4292,25 +4320,23 @@ async fn handle_enroll_with_phrase(
     mut req: GatewayRequest,
     host: &SharedVaultHost,
 ) -> GatewayResponse {
-    let v: serde_json::Value = match serde_json::from_str(&req.payload) {
-        Ok(v) => v,
+    let payload: CloneFinalizePayload = match serde_json::from_str(&req.payload) {
+        Ok(p) => p,
         Err(e) => return err_response(format!("Invalid JSON: {e}")),
     };
-    // PR-5: take ownership of the phrase so we can zeroize it after use.
+    // PR-5: Zeroizing owns both secrets, so the wipe happens on scope exit
+    // (BL0010) and no serde_json::Value tree retains plaintext copies.
     use zeroize::Zeroize;
-    let mut phrase = match v["phrase"].as_str() {
-        Some(p) => p.to_string(),
+    let phrase = match payload.phrase {
+        Some(p) => p,
         None => return err_response("missing phrase".to_string()),
     };
     // The seal-at-birth contract: the password seals the fresh device key
     // during enrollment (and is canary-proven before any write). A caller
     // that cannot collect it has no sealed-enroll path.
-    let mut master_password = match v["master_password"].as_str() {
-        Some(p) => p.to_string(),
-        None => {
-            phrase.zeroize();
-            return err_response("missing master_password".to_string());
-        }
+    let master_password = match payload.master_password {
+        Some(p) => p,
+        None => return err_response("missing master_password".to_string()),
     };
     // The payload still carries the phrase; scrub it now that the owned
     // copy exists (host-level routes bypass route_request's blanket
@@ -4329,14 +4355,10 @@ async fn handle_enroll_with_phrase(
                             entry.slug.clone()
                         }
                         _ => {
-                            phrase.zeroize();
-                            master_password.zeroize();
                             return err_response("No active vault".to_string());
                         }
                     },
                     Err(_) => {
-                        phrase.zeroize();
-                        master_password.zeroize();
                         return err_response("No active vault".to_string());
                     }
                 },
@@ -4355,14 +4377,10 @@ async fn handle_enroll_with_phrase(
             let reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
                 Ok(r) => r,
                 Err(e) => {
-                    phrase.zeroize();
-                    master_password.zeroize();
                     return err_response(format!("Registry error: {e}"));
                 }
             };
             let Some(entry) = reg.get(&target_slug) else {
-                phrase.zeroize();
-                master_password.zeroize();
                 return err_response(format!("vault '{target_slug}' not found in registry"));
             };
             let path = entry.path.clone();
@@ -4375,8 +4393,6 @@ async fn handle_enroll_with_phrase(
                 Ok(ours) => {
                     if let Err(e) = ours.open().await {
                         host.close(&target_slug).await;
-                        phrase.zeroize();
-                        master_password.zeroize();
                         return err_response(e);
                     }
                     ours
@@ -4389,16 +4405,12 @@ async fn handle_enroll_with_phrase(
     let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
         crate::rate_limit::ClaimResult::Allowed(p) => p,
         crate::rate_limit::ClaimResult::Backoff(d) => {
-            phrase.zeroize();
-            master_password.zeroize();
             return err_response(format!(
                 "Too many failed attempts. Wait {}s before retrying.",
                 d.as_secs()
             ));
         }
         crate::rate_limit::ClaimResult::LockedOut(d) => {
-            phrase.zeroize();
-            master_password.zeroize();
             return err_response(format!(
                 "Vault locked due to too many failed attempts. Wait {}s.",
                 d.as_secs()
@@ -4411,14 +4423,10 @@ async fn handle_enroll_with_phrase(
     match result {
         Ok(json) => {
             permit.commit_success();
-            phrase.zeroize();
-            master_password.zeroize();
             ok_resp(json, None)
         }
         Err(e) => {
             permit.commit_failure();
-            phrase.zeroize();
-            master_password.zeroize();
             err_response(e)
         }
     }
@@ -5174,15 +5182,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         // H1 fix: master password change (token required)
         "vault.change_password" => {
-            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+            let payload: ChangePasswordPayload = match serde_json::from_str(&req.payload) {
                 Ok(v) => v,
                 Err(e) => return err_response(format!("Invalid JSON: {e}")),
             };
-            let old_pw = match payload["old_password"].as_str() {
+            let old_pw = match payload.old_password.as_deref() {
                 Some(s) => s,
                 None => return err_response("missing old_password"),
             };
-            let new_pw = match payload["new_password"].as_str() {
+            let new_pw = match payload.new_password.as_deref() {
                 Some(s) => s,
                 None => return err_response("missing new_password"),
             };
@@ -5216,11 +5224,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         // remote copy, and a lost device would recover against the stale
         // escrow with a phrase the ceremony said was dead (review F1).
         "vault.rotate_recovery" => {
-            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+            let payload: RotateRecoveryPayload = match serde_json::from_str(&req.payload) {
                 Ok(v) => v,
                 Err(e) => return err_response(format!("Invalid JSON: {e}")),
             };
-            let old_pw = match payload["old_password"].as_str() {
+            let old_pw = match payload.old_password.as_deref() {
                 Some(s) => s,
                 None => return err_response("missing old_password"),
             };

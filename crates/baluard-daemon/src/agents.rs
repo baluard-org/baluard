@@ -8,6 +8,26 @@ use crate::proto::{GatewayRequest, GatewayResponse};
 use crate::state::SharedVaultState;
 use baluard_runtime::agents::{DEFAULT_TTL_SECS, PeerBinding, PendingOutcome, pid_in_process_tree};
 
+/// Typed policy payloads (BL0010): the master password rides a Zeroizing
+/// field so no serde_json::Value tree retains a plaintext copy.
+#[derive(serde::Deserialize)]
+struct YoloPayload {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    master_password: Option<zeroize::Zeroizing<String>>,
+}
+
+#[derive(serde::Deserialize)]
+struct AgentPolicyPayload {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    auto_approve: Option<bool>,
+    #[serde(default)]
+    master_password: Option<zeroize::Zeroizing<String>>,
+}
+
 #[derive(serde::Deserialize)]
 struct AgentRequestPayload {
     #[serde(default)]
@@ -419,11 +439,11 @@ pub async fn handle_agent_route(
         }
         "agents.run" => crate::agent_run::run(req, host, peer).await,
         "agents.set_yolo" => {
-            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+            let payload: YoloPayload = match serde_json::from_str(&req.payload) {
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid agent setting: {e}")),
             };
-            let enabled = payload["enabled"].as_bool().unwrap_or(false);
+            let enabled = payload.enabled.unwrap_or(false);
             let (slug, state) = match target_state(req, host, None).await {
                 Ok(pair) => pair,
                 Err(resp) => return resp,
@@ -432,7 +452,7 @@ pub async fn handle_agent_route(
                 return resp;
             }
             if enabled {
-                let Some(password) = payload["master_password"].as_str() else {
+                let Some(password) = payload.master_password.as_deref() else {
                     return err_response(
                         "Master password required to allow agent access without prompts",
                     );
@@ -490,7 +510,7 @@ pub async fn handle_agent_route(
             )
         }
         "agent.policy.set" => {
-            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+            let payload: AgentPolicyPayload = match serde_json::from_str(&req.payload) {
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid agent policy: {e}")),
             };
@@ -502,17 +522,16 @@ pub async fn handle_agent_route(
                 return resp;
             }
             let current = crate::ssh_agent_policy::load();
-            let enabled = payload["enabled"].as_bool().unwrap_or(current.enabled);
+            let enabled = payload.enabled.unwrap_or(current.enabled);
             // Turning the agent off always turns silent signing off with
             // it: a payload that only disables the agent must not
             // inherit a live auto_approve from the current policy and
             // then die on the guard below, which would leave the agent
             // impossible to switch off while auto-approve is on.
-            let auto_approve = payload["auto_approve"].as_bool().unwrap_or(if enabled {
-                current.auto_approve
-            } else {
-                false
-            });
+            let auto_approve =
+                payload
+                    .auto_approve
+                    .unwrap_or(if enabled { current.auto_approve } else { false });
             if auto_approve && !enabled {
                 return err_response(
                     "The SSH agent must be on before signings can be approved automatically",
@@ -523,7 +542,7 @@ pub async fn handle_agent_route(
             // way the permissive agent mode does.
             let turns_on = (enabled && !current.enabled) || (auto_approve && !current.auto_approve);
             if turns_on {
-                let Some(password) = payload["master_password"].as_str() else {
+                let Some(password) = payload.master_password.as_deref() else {
                     return err_response(
                         "Master password required to turn on the SSH agent for this device",
                     );
