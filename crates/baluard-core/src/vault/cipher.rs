@@ -173,17 +173,18 @@ pub fn decrypt_cipher(
     let raw_data: CipherEnvelopeData =
         raw_data_result.map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
 
-    let data = raw_data.migrate();
-
-    Ok(Cipher {
+    // CipherEnvelopeData wipes on drop, so field moves are a compile error;
+    // take each field, leaving empty placeholders for the Drop glue.
+    let mut data = raw_data.migrate();
+    let cipher = Cipher {
         id: cipher_id,
-        name: data.name,
-        folder_id: data.folder_id,
-        kind: data.kind,
+        name: std::mem::take(&mut data.name),
+        folder_id: data.folder_id.take(),
+        kind: std::mem::replace(&mut data.kind, crate::types::CipherKind::SecureNote),
         favorite: data.favorite,
         reprompt: data.reprompt,
-        notes: data.notes,
-        custom_fields: data.custom_fields,
+        notes: data.notes.take(),
+        custom_fields: std::mem::take(&mut data.custom_fields),
         key_epoch: enc_envelope.header.key_epoch,
         update_seq: enc_envelope.header.update_seq,
         tier: enc_envelope
@@ -192,11 +193,12 @@ pub fn decrypt_cipher(
             .ok_or_else(|| VaultError::Corrupt("cipher envelope missing tier".into()))?,
         created_at: data.created_at,
         updated_at: data.updated_at,
-        password_history: data.password_history,
-        attachments: data.attachments,
+        password_history: std::mem::take(&mut data.password_history),
+        attachments: std::mem::take(&mut data.attachments),
         archived: data.archived,
-        tags: data.tags,
-    })
+        tags: std::mem::take(&mut data.tags),
+    };
+    Ok(cipher)
 }
 
 /// Seal already-serialized cipher JSON without a typed parse. Rotation

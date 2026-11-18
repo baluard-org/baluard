@@ -1167,6 +1167,22 @@ pub enum CipherKind {
     SigningKey(SigningKeyData),
 }
 
+impl Zeroize for CipherKind {
+    fn zeroize(&mut self) {
+        match self {
+            CipherKind::Login(d) => d.zeroize(),
+            CipherKind::SecureNote => {}
+            CipherKind::Card(d) => d.zeroize(),
+            CipherKind::Identity(d) => d.zeroize(),
+            CipherKind::SshKey(d) => d.zeroize(),
+            CipherKind::BankAccount(d) => d.zeroize(),
+            CipherKind::DriversLicense(d) => d.zeroize(),
+            CipherKind::Passport(d) => d.zeroize(),
+            CipherKind::SigningKey(d) => d.zeroize(),
+        }
+    }
+}
+
 impl CipherKind {
     /// The cipher type discriminator.
     pub fn cipher_type(&self) -> CipherType {
@@ -1540,6 +1556,26 @@ pub struct CipherEnvelopeData {
 
 /// Item schema version understood (and written) by this build.
 pub const ITEM_SCHEMA_VERSION: u32 = 1;
+
+impl Zeroize for CipherEnvelopeData {
+    fn zeroize(&mut self) {
+        self.name.zeroize();
+        self.kind.zeroize();
+        self.notes.zeroize();
+        self.totp_uri.zeroize();
+        self.custom_fields.zeroize();
+        self.username.zeroize();
+        self.password.zeroize();
+        self.uris.zeroize();
+        self.password_history.zeroize();
+    }
+}
+
+impl Drop for CipherEnvelopeData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
 
 impl CipherEnvelopeData {
     /// Migrate from flat format to typed CipherKind after deserialization.
