@@ -114,6 +114,17 @@ struct ExportPayload {
     passphrase: Option<String>,
 }
 
+/// Contact-view export gate: decide from the DECODED payload. serde resolves
+/// escapes like "out\u005fpath" that a substring check on raw text misses
+/// (BL0009); an unparseable payload carries no out_path. This parse must stay
+/// in lockstep with the export branch's `from_str::<ExportPayload>` - any
+/// parser differential reopens the bypass.
+fn export_carries_out_path(payload: &str) -> bool {
+    serde_json::from_str::<ExportPayload>(payload)
+        .map(|p| p.out_path.is_some())
+        .unwrap_or(false)
+}
+
 /// Typed extraction for the vault.import baluard-encrypted payload (§8).
 #[derive(serde::Deserialize)]
 struct EncryptedImportPayload {
@@ -5141,8 +5152,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // Export is allowed, but only in-process (the desktop
             // Rust-side dialog commands); out_path would hand a token
             // holder a file-write primitive.
-            || (req.action == "vault.export"
-                && String::from_utf8_lossy(req.payload.as_ref()).contains("out_path")))
+            || (req.action == "vault.export" && export_carries_out_path(&req.payload)))
     {
         return err_response("This is a read-only view of the vault.");
     }
@@ -8833,6 +8843,87 @@ mod tests {
         };
         let resp = route_request(req, &state).await;
         assert!(resp.success, "vault.info must pass on a contact view");
+    }
+
+    /// BL0009: the export gate must decide from the DECODED payload. serde
+    /// resolves JSON escapes, so "out\u005fpath" bypassed the old substring
+    /// check while deserializing to a real out_path — the path-transport
+    /// export (attacker-chosen passphrase and path) that a read-only token
+    /// must never reach.
+    #[tokio::test]
+    async fn contact_view_export_gate_decodes_escapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_dir = dir.path().join("v");
+        let (handle, _secrets) =
+            baluard_core::vault::creation::VaultCreator::new(&vault_dir, "test password 123", "t")
+                .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
+                .initialize_git(false)
+                .execute()
+                .unwrap();
+        let state = std::sync::Arc::new(VaultState::with_contact_view(handle.path.clone(), true));
+        state.contact_attach(handle).await;
+        let token = state.get_session_token().await.unwrap();
+        let steal = dir.path().join("steal.enc").display().to_string();
+        for payload in [
+            format!(
+                r#"{{"format":"baluard-encrypted","out_path":"{steal}","passphrase":"reknit-pass"}}"#
+            ),
+            format!(
+                r#"{{"format":"baluard-encrypted","out\u005fpath":"{steal}","passphrase":"reknit-pass"}}"#
+            ),
+            format!(
+                r#"{{"format":"baluard-encrypted","out\u005Fpath":"{steal}","passphrase":"reknit-pass"}}"#
+            ),
+        ] {
+            let req = GatewayRequest {
+                action: "vault.export".to_string(),
+                payload,
+                session_token: token.clone(),
+                ..Default::default()
+            };
+            let resp = route_request(req, &state).await;
+            assert!(
+                !resp.success && resp.error_message.contains("read-only"),
+                "out_path export must be refused as read-only, got: {:?}",
+                resp.error_message
+            );
+        }
+        assert!(
+            !dir.path().join("steal.enc").exists(),
+            "the export must never write the attacker-chosen path"
+        );
+        // The gate must not over-block: an export without out_path (the
+        // summary-only transport) and a raw format token ride past it.
+        // Duplicate "out_path" keys fail both parses (derived Deserialize
+        // rejects duplicates) and a BOM breaks the '{' sniff, so neither
+        // writes a file either.
+        for payload in [
+            format!(r#"{{"format":"baluard-encrypted","passphrase":"reknit-pass"}}"#),
+            "baluard".to_string(),
+            format!(
+                r#"{{"out_path":"{steal}","out_path":"{steal}","format":"baluard-encrypted","passphrase":"reknit-pass"}}"#
+            ),
+            format!(
+                "\u{feff}{{\"format\":\"baluard-encrypted\",\"out_path\":\"{steal}\",\"passphrase\":\"reknit-pass\"}}"
+            ),
+        ] {
+            let req = GatewayRequest {
+                action: "vault.export".to_string(),
+                payload,
+                session_token: token.clone(),
+                ..Default::default()
+            };
+            let resp = route_request(req, &state).await;
+            assert!(
+                !resp.error_message.contains("read-only"),
+                "gate must not over-block out_path-free exports, got: {:?}",
+                resp.error_message
+            );
+        }
+        assert!(
+            !dir.path().join("steal.enc").exists(),
+            "no over-block leg may write the attacker-chosen path"
+        );
     }
 
     #[tokio::test]
