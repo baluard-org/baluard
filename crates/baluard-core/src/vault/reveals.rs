@@ -83,7 +83,19 @@ pub const MAX_REVEAL_PAYLOAD_BYTES: usize = 256 * 1024;
 pub const MAX_REVEAL_FILE_BYTES: usize = 1024 * 1024;
 
 /// The revealed fields. Built from a Login cipher; nothing else travels.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// Manual Debug: password/totp_uri are the revealed credentials.
+impl std::fmt::Debug for RevealFields {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RevealFields")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("totp_uri", &self.totp_uri.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct RevealFields {
     pub url: Option<String>,
     pub username: Option<String>,
@@ -140,7 +152,24 @@ pub struct RevealPackage {
 
 /// What the opening app shows. The TOTP seed never leaves this module;
 /// only the current code and its validity window do.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// Manual Debug: password/totp_code are the revealed credentials.
+impl std::fmt::Debug for OpenedReveal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenedReveal")
+            .field("item_name", &self.item_name)
+            .field("sender_name", &self.sender_name)
+            .field("created_at", &self.created_at)
+            .field("expires_at", &self.expires_at)
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("totp_code", &self.totp_code.as_ref().map(|_| "[REDACTED]"))
+            .field("totp_valid_until", &self.totp_valid_until)
+            .finish()
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct OpenedReveal {
     pub item_name: String,
     pub sender_name: Option<String>,
@@ -514,6 +543,40 @@ pub fn open_guest_reveal(
 
 #[cfg(test)]
 mod tests {
+
+    /// BL0011: reveal debug output must not carry the revealed secret.
+    #[test]
+    fn reveal_fields_debug_redacts_secrets() {
+        let rf = RevealFields {
+            url: Some("https://example.com/login".into()),
+            username: Some("user@example.com".into()),
+            password: Some("reveal-pw-21".into()),
+            totp_uri: Some("otpauth://totp/r?secret=REVEALSEED7".into()),
+        };
+        let dbg = format!("{rf:?}");
+        assert!(!dbg.contains("reveal-pw-21"), "{dbg}");
+        assert!(!dbg.contains("REVEALSEED7"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
+
+    #[test]
+    fn opened_reveal_debug_redacts_secrets() {
+        let or = OpenedReveal {
+            item_name: "Bank".into(),
+            sender_name: Some("peer".into()),
+            created_at: 1,
+            expires_at: 2,
+            url: Some("https://example.com".into()),
+            username: Some("user@example.com".into()),
+            password: Some("opened-pw-22".into()),
+            totp_code: Some("102938".into()),
+            totp_valid_until: Some(42),
+        };
+        let dbg = format!("{or:?}");
+        assert!(!dbg.contains("opened-pw-22"), "{dbg}");
+        assert!(!dbg.contains("102938"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
     use super::*;
 
     fn fields() -> RevealFields {

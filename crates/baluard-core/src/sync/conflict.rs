@@ -66,7 +66,18 @@ impl Drop for ConflictInfo {
 /// A single field conflict.
 /// Intentionally does NOT derive Serialize/Deserialize to prevent
 /// accidental serialization of plaintext passwords.
-#[derive(Debug, Clone)]
+// Manual Debug: local/remote carry the conflicting plaintext values.
+impl std::fmt::Debug for FieldConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FieldConflict")
+            .field("field_name", &self.field_name)
+            .field("local_value", &"[REDACTED]")
+            .field("remote_value", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct FieldConflict {
     pub field_name: String,
     pub local_value: String,
@@ -1019,6 +1030,43 @@ fn get_field_value<'a>(input: &'a CipherInput, field: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+
+    /// BL0011: conflict debug output must not render plaintext values.
+    #[test]
+    fn field_conflict_debug_redacts_values() {
+        let fc = FieldConflict {
+            field_name: "password".into(),
+            local_value: "local-secret-31".into(),
+            remote_value: "remote-secret-32".into(),
+        };
+        let dbg = format!("{fc:?}");
+        assert!(!dbg.contains("local-secret-31"), "{dbg}");
+        assert!(!dbg.contains("remote-secret-32"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
+
+    #[test]
+    fn conflict_info_debug_redacts_merged_secrets() {
+        let info = ConflictInfo {
+            conflicting_fields: vec![FieldConflict {
+                field_name: "password".into(),
+                local_value: "info-local-33".into(),
+                remote_value: "info-remote-34".into(),
+            }],
+            merged_base: {
+                let mut inner = LoginData::default();
+                inner.password = Some("info-merged-35".into());
+                CipherInput {
+                    kind: CipherKind::Login(inner),
+                    ..Default::default()
+                }
+            },
+        };
+        let dbg = format!("{info:?}");
+        assert!(!dbg.contains("info-local-33"), "{dbg}");
+        assert!(!dbg.contains("info-merged-35"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
     use super::*;
     use crate::types::{CipherKind, LoginData};
 

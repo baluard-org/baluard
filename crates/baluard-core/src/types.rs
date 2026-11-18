@@ -661,7 +661,23 @@ pub struct FaviconData {
 }
 
 /// Login-specific cipher data.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+// Manual Debug: password/totp_uri are credentials.
+impl std::fmt::Debug for LoginData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoginData")
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("uris", &self.uris)
+            .field("totp_uri", &self.totp_uri.as_ref().map(|_| "[REDACTED]"))
+            .field("autofill_on_page_load", &self.autofill_on_page_load)
+            .field("password_revision_date", &self.password_revision_date)
+            .field("favicon", &self.favicon)
+            .field("fido2_credentials", &self.fido2_credentials)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct LoginData {
     #[serde(default)]
     pub username: Option<String>,
@@ -1010,7 +1026,39 @@ impl Drop for PassportData {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+// Manual Debug: key_value/prf_key/private_key carry private key material.
+impl std::fmt::Debug for PasskeyData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasskeyData")
+            .field("credential_id", &self.credential_id)
+            .field("key_type", &self.key_type)
+            .field("key_algorithm", &self.key_algorithm)
+            .field("key_curve", &self.key_curve)
+            .field("key_value", &"[REDACTED]")
+            .field("rp_id", &self.rp_id)
+            .field("rp_name", &self.rp_name)
+            .field(
+                "user_handle",
+                &self.user_handle.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("user_name", &self.user_name)
+            .field("user_display_name", &self.user_display_name)
+            .field("counter", &self.counter)
+            .field("aaguid", &self.aaguid)
+            .field("prf_key", &self.prf_key.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "private_key",
+                &self.private_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("private_key_missing", &self.private_key_missing)
+            .field("linked_login_id", &self.linked_login_id)
+            .field("creation_date", &self.creation_date)
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct PasskeyData {
     /// Opaque credential ID assigned by the authenticator at registration,
     /// base64url-encoded. Min 16 bytes / 100 bits entropy per spec.
@@ -1145,7 +1193,28 @@ impl Default for CipherKind {
 // ── Cipher Input ──
 
 /// Input for creating or updating a cipher.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+// Manual Debug: notes are free-text; members redact their own secrets.
+impl std::fmt::Debug for CipherInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CipherInput")
+            .field("name", &self.name)
+            .field("folder_id", &self.folder_id)
+            .field("collection_id", &self.collection_id)
+            .field("kind", &self.kind)
+            .field("favorite", &self.favorite)
+            .field("reprompt", &self.reprompt)
+            .field("notes", &self.notes.as_ref().map(|_| "[REDACTED]"))
+            .field("custom_fields", &self.custom_fields)
+            .field("created_at", &self.created_at)
+            .field("password_history", &self.password_history)
+            .field("attachments", &self.attachments)
+            .field("archived", &self.archived)
+            .field("tags", &self.tags)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct CipherInput {
     pub name: String,
     #[serde(default)]
@@ -1216,7 +1285,19 @@ impl Drop for CustomField {
 }
 
 /// Custom field on a cipher.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Manual Debug: values are frequently credentials (Hidden fields), so the
+// value is redacted regardless of field_type.
+impl std::fmt::Debug for CustomField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustomField")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .field("field_type", &self.field_type)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CustomField {
     pub name: String,
     pub value: String,
@@ -1306,7 +1387,17 @@ pub enum LinkedFieldType {
 }
 
 /// A single password history entry.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// Manual Debug: the password is a credential.
+impl std::fmt::Debug for PasswordHistoryEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordHistoryEntry")
+            .field("password", &"[REDACTED]")
+            .field("last_used_date", &self.last_used_date)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct PasswordHistoryEntry {
     pub password: String,
     /// Unix timestamp when this password was last used.
@@ -1378,7 +1469,33 @@ impl Drop for GeneratorHistoryEntry {
 /// - **Old (pre-Phase-1)**: flat fields (`username`, `password`, `uris`, etc.)
 ///   with no `kind` field. Deserialized as Login.
 /// - **New**: `kind: CipherKind` with type-specific data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Manual Debug: flat + kind fields carry credentials; members redact theirs.
+impl std::fmt::Debug for CipherEnvelopeData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CipherEnvelopeData")
+            .field("name", &self.name)
+            .field("folder_id", &self.folder_id)
+            .field("kind", &self.kind)
+            .field("favorite", &self.favorite)
+            .field("reprompt", &self.reprompt)
+            .field("notes", &self.notes.as_ref().map(|_| "[REDACTED]"))
+            .field("totp_uri", &self.totp_uri.as_ref().map(|_| "[REDACTED]"))
+            .field("custom_fields", &self.custom_fields)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("uris", &self.uris)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("password_history", &self.password_history)
+            .field("attachments", &self.attachments)
+            .field("archived", &self.archived)
+            .field("tags", &self.tags)
+            .field("schema", &self.schema)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CipherEnvelopeData {
     pub name: String,
     #[serde(default)]
@@ -1714,6 +1831,77 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BL0011: Debug output must never carry credential plaintext.
+    #[test]
+    fn login_data_debug_redacts_secrets() {
+        let mut login = LoginData::default();
+        login.username = Some("user@example.com".into());
+        login.password = Some("hunter2-secret-pw".into());
+        login.totp_uri = Some("otpauth://totp/x?secret=TOPSEED123".into());
+        let dbg = format!("{login:?}");
+        assert!(!dbg.contains("hunter2-secret-pw"), "{dbg}");
+        assert!(!dbg.contains("TOPSEED123"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
+
+    #[test]
+    fn cipher_input_debug_redacts_notes_and_history() {
+        let mut inner = LoginData::default();
+        inner.password = Some("inner-pw-77".into());
+        let input = CipherInput {
+            name: "Bank".into(),
+            notes: Some("recovery-codes-in-notes".into()),
+            kind: CipherKind::Login(inner),
+            custom_fields: vec![CustomField {
+                name: "pin".into(),
+                value: "992233".into(),
+                field_type: CustomFieldType::Hidden,
+            }],
+            ..Default::default()
+        };
+        let dbg = format!("{input:?}");
+        assert!(!dbg.contains("recovery-codes-in-notes"), "{dbg}");
+        assert!(!dbg.contains("inner-pw-77"), "{dbg}");
+        assert!(!dbg.contains("992233"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
+
+    #[test]
+    fn cipher_envelope_data_debug_redacts_secrets() {
+        let env: CipherEnvelopeData = serde_json::from_str(
+            r#"{"name":"Mail","created_at":1,"updated_at":2,"notes":"envelope-notes-secret",
+                "totp_uri":"otpauth://totp/y?secret=ENVSEED9"}"#,
+        )
+        .expect("envelope parse");
+        let dbg = format!("{env:?}");
+        assert!(!dbg.contains("envelope-notes-secret"), "{dbg}");
+        assert!(!dbg.contains("ENVSEED9"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
+
+    #[test]
+    fn password_history_debug_redacts_passwords() {
+        let entry = PasswordHistoryEntry {
+            password: "old-pw-555".into(),
+            last_used_date: 42,
+        };
+        let dbg = format!("{entry:?}");
+        assert!(!dbg.contains("old-pw-555"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
+
+    #[test]
+    fn custom_field_debug_redacts_value() {
+        let cf = CustomField {
+            name: "visible-name".into(),
+            value: "cf-value-81".into(),
+            field_type: CustomFieldType::Text,
+        };
+        let dbg = format!("{cf:?}");
+        assert!(!dbg.contains("cf-value-81"), "{dbg}");
+        assert!(dbg.contains("visible-name"), "{dbg}");
+    }
 
     /// Regression guard for the wipe-on-drop convention: every struct
     /// carrying password-class strings must implement Drop so its

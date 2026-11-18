@@ -48,7 +48,17 @@ const SPACE_WRAP_FORMAT: u64 = 1;
 const MAX_SPACE_FILE_BYTES: usize = 64 * 1024;
 
 /// The sealed store payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Manual Debug: smk is the hex Space Meta Key.
+impl std::fmt::Debug for SpaceStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpaceStore")
+            .field("smk", &"[REDACTED]")
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 struct SpaceStore {
     /// Hex-encoded 32-byte Space Meta Key.
     pub smk: String,
@@ -497,6 +507,18 @@ pub fn clear_smk_pending(vault_path: &Path) {
 
 #[cfg(test)]
 mod tests {
+
+    /// BL0011: the sealed store's key hex must not reach Debug output.
+    #[test]
+    fn space_store_debug_redacts_smk() {
+        let store = SpaceStore {
+            smk: "aabbcc-secret-hex-77".into(),
+            created_at: 1,
+        };
+        let dbg = format!("{store:?}");
+        assert!(!dbg.contains("aabbcc-secret-hex-77"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
     use super::*;
     use crate::keys::hierarchy::SpaceGroupKey;
     use crate::vault::collections;

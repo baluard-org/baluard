@@ -112,7 +112,26 @@ pub struct AliveRecord {
 /// Owner-side secrets for one armed kit, sealed into `meta/legacy.enc`
 /// under the Root Key. Re-exporting a lost kit reuses `kit_letter` and
 /// `kit_armor` so the resend is byte-identical.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Manual Debug: lk_seed/ek are the kit owner-secrets.
+impl std::fmt::Debug for LegacyStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LegacyStore")
+            .field("kit_id", &self.kit_id)
+            .field("lk_seed", &"[REDACTED]")
+            .field("ek", &"[REDACTED]")
+            .field("kit_letter", &self.kit_letter)
+            .field("kit_armor", &self.kit_armor)
+            .field("deploy_key_fingerprint", &self.deploy_key_fingerprint)
+            .field("forge_key_id", &self.forge_key_id)
+            .field("provider", &self.provider)
+            .field("owner", &self.owner)
+            .field("repo", &self.repo)
+            .field("origin_url", &self.origin_url)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LegacyStore {
     pub kit_id: String,
     /// Hex of the `LK` private seed.
@@ -1341,6 +1360,28 @@ pub fn resend(
 
 #[cfg(test)]
 mod tests {
+
+    /// BL0011: kit owner-secrets must not reach Debug output.
+    #[test]
+    fn legacy_store_debug_redacts_seeds() {
+        let store = LegacyStore {
+            kit_id: "kit-1".into(),
+            lk_seed: "lkseed-hex-91".into(),
+            ek: "ek-hex-92".into(),
+            kit_letter: "Dear recoverer".into(),
+            kit_armor: "-----BEGIN BALUARD KIT-----".into(),
+            deploy_key_fingerprint: "SHA256:abc".into(),
+            forge_key_id: Some(7),
+            provider: crate::providers::types::Provider::GitHub,
+            owner: "estebanforge".into(),
+            repo: "vault".into(),
+            origin_url: "https://github.com/estebanforge/vault".into(),
+        };
+        let dbg = format!("{store:?}");
+        assert!(!dbg.contains("lkseed-hex-91"), "{dbg}");
+        assert!(!dbg.contains("ek-hex-92"), "{dbg}");
+        assert!(dbg.contains("REDACTED"), "{dbg}");
+    }
     use super::*;
     use crate::providers::types::ProviderToken;
     use crate::providers::types::mock::MockProvider;
