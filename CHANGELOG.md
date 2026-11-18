@@ -18,6 +18,8 @@ Notable user-facing changes per release.
 
 - Desktop: large vaults now render the entry list in pages (500 on first paint, 100 more as you scroll near the bottom), so startup stays fast with thousands of entries. The entry count in the header still reflects the full list, and searching narrows the page to your matches.
 
+- All apps: Baluard is now licensed GPL-3.0-or-later. The About screen shows the new notice in every language.
+
 ## 0.7.3 - 2026-11-17
 
 - Windows: the SSH agent now works there too. Baluard serves vault SSH keys on Windows' standard OpenSSH agent pipe, so ssh and git sign through the vault with no extra setup.
