@@ -286,9 +286,8 @@ No user-facing changes yet.
 - New app icon on desktop and mobile: a larger lock with a light rim, plus a clearer tray glyph.
 - Known gaps: the Windows installer is unsigned (SmartScreen warns) and does not yet bundle the VC++ redistributable; the macOS app stays a dev-smoke handoff build while a signed pipeline is pending.
 
-## 0.1.0 - 2026-11-04
+## 0.1.0 - 2026-11-01
 
-- First tagged release.
 - Desktop for Linux: deb, rpm, and AppImage. The deb and rpm register the browser bridge system-wide for Chrome, Chromium, Edge, and Firefox.
 - Desktop for Windows: NSIS installer bundling the CLI, daemon, and browser bridge.
 - CLI and daemon in `Baluard-cli-amd64.tar.gz`.
