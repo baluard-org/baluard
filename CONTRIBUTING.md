@@ -26,6 +26,10 @@ Behaviour which can be reasonably considered harassment will not be tolerated.
 
 ## How to Contribute
 
+Bug reports and feature requests go through the issue templates. Pull requests are disabled on this repository.
+
+If pull requests open later, the code flow is:
+
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes
@@ -115,7 +119,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`
 
 ## PR Review
 
-All PRs require review. Reviewers check for:
+Applies when pull requests are open. All PRs require review. Reviewers check for:
 - Correctness and edge cases
 - Security implications
 - Test coverage
