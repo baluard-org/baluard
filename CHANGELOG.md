@@ -298,6 +298,10 @@ No user-facing changes yet.
 - Every artifact listed in the signed SHA256SUMS; update signatures use the minisign public key pinned at <https://baluard.app/security/>.
 - Known gap: no macOS builds yet.
 
+## 0.0.1 - 2026-10-01
+
+- First beta.
+
 ## 2026-05-04 - Project begins
 
 - Work on Baluard starts. The repository's visible history begins with the migration from a dual Rust+Go codebase to a pure-Rust core with UniFFI bindings for mobile.
