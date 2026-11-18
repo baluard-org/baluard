@@ -3694,7 +3694,8 @@ pub fn handle_enroll_with_phrase(
                     .as_secs(),
                 nonce: {
                     let mut bytes = [0u8; 32];
-                    getrandom::getrandom(&mut bytes).expect("OS RNG");
+                    getrandom::getrandom(&mut bytes)
+                        .map_err(|error| anyhow::anyhow!("OS RNG unavailable: {error}"))?;
                     hex::encode(bytes)
                 },
                 name: hostname().unwrap_or_else(|| "New Device".to_string()),

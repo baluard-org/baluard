@@ -4857,18 +4857,37 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
     }
 
     let state_arc = state.clone();
+    let panic_target = target.clone();
     tokio::task::spawn_blocking(move || {
-        run_clone_to_completion(CloneParams {
-            state: state_arc,
-            progress,
-            clone_url,
-            target,
-            slug,
-            display_name,
-            provider,
-            provider_str: provider_str_owned,
-            creds,
-        })
+        // A panicked worker would otherwise leave the job in "cloning"
+        // until the TTL evicts it; contain the panic and mark it failed.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_clone_to_completion(CloneParams {
+                state: state_arc.clone(),
+                progress,
+                clone_url,
+                target,
+                slug,
+                display_name,
+                provider,
+                provider_str: provider_str_owned,
+                creds,
+            })
+        }));
+        if outcome.is_err() {
+            // The panic may have poisoned the state lock mid-write; the
+            // marker must land anyway, so recover the guard. A panic after
+            // the success write would poison a done job - leave its
+            // registered directory alone in that case.
+            let mut s = state_arc
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if s.phase != "done" {
+                let _ = std::fs::remove_dir_all(&panic_target);
+                s.phase = "failed".to_string();
+                s.error = Some("clone worker panicked; the partial clone was removed".to_string());
+            }
+        }
     });
 
     ok_resp(

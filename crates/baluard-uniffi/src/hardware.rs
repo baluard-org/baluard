@@ -78,19 +78,30 @@ fn map_core_hardware_error(error: baluard_core::error::BaluardError) -> BaluardE
 struct TransportScope;
 
 impl TransportScope {
-    fn enter(transport: Arc<dyn MobileHardwareTransport>) -> Self {
-        *ACTIVE_TRANSPORT.lock().expect("transport lock") = Some(transport);
+    fn enter(transport: Arc<dyn MobileHardwareTransport>) -> Result<Self, BaluardError> {
+        *ACTIVE_TRANSPORT
+            .lock()
+            .map_err(|_| BaluardError::SecurityKey {
+                detail: "hardware transport state is unavailable; reconnect the security key"
+                    .into(),
+            })? = Some(transport);
         if let Ok(mut slot) = LAST_TRANSPORT_ERROR.lock() {
             *slot = None;
         }
         baluard_core::hwkey::install(Arc::new(FidoStore::new(Box::new(MobileToken))));
-        Self
+        Ok(Self)
     }
 }
 
 impl Drop for TransportScope {
     fn drop(&mut self) {
-        if let Some(transport) = ACTIVE_TRANSPORT.lock().expect("transport lock").take() {
+        // Drop cannot error; a poisoned slot skips shutdown (the process
+        // teardown covers it) but the registry uninstall below still runs.
+        let taken = ACTIVE_TRANSPORT
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(transport) = taken {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 transport.shutdown();
             }));
@@ -118,15 +129,16 @@ impl CallbackLink {
     fn remember(&self, error: BaluardError) {
         let detail = error.to_string();
         record_transport_error(detail.clone());
-        *self.callback_error.lock().expect("callback error lock") = Some(detail);
+        if let Ok(mut slot) = self.callback_error.lock() {
+            *slot = Some(detail);
+        }
     }
 
     fn map_operation_error(&self, error: TokenError) -> TokenError {
-        let detail = self
-            .callback_error
-            .lock()
-            .expect("callback error lock")
-            .take();
+        let detail = match self.callback_error.lock() {
+            Ok(mut slot) => slot.take(),
+            Err(_) => None,
+        };
         match (error, detail) {
             (TokenError::KeyMissing | TokenError::Device(_), Some(detail)) => {
                 TokenError::Device(detail)
@@ -136,12 +148,10 @@ impl CallbackLink {
     }
 
     fn map_error(&self, error: ClientError) -> TokenError {
-        match self
-            .callback_error
-            .lock()
-            .expect("callback error lock")
-            .take()
-        {
+        match match self.callback_error.lock() {
+            Ok(mut slot) => slot.take(),
+            Err(_) => None,
+        } {
             Some(detail) => TokenError::Device(detail),
             None => token::map_client_error(error),
         }
@@ -203,7 +213,19 @@ impl MobileToken {
         operation: impl FnOnce(CtapClient<'_>) -> Result<R, TokenError>,
     ) -> Result<R, TokenError> {
         let link = Self::link()?;
-        match link.transport.protocol() {
+        // protocol() is a foreign callback; a throw on the foreign side
+        // unwinds into Rust here. Contain it at the bridge.
+        let protocol =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| link.transport.protocol()));
+        let protocol = match protocol {
+            Ok(protocol) => protocol,
+            Err(_) => {
+                return Err(TokenError::Device(
+                    "security key transport failed before the operation".into(),
+                ));
+            }
+        };
+        match protocol {
             MobileTransportProtocol::Nfc => {
                 let extended = link
                     .transport
@@ -272,7 +294,7 @@ impl MobileVault {
         transport: Arc<dyn MobileHardwareTransport>,
     ) -> Result<String, BaluardError> {
         let _operation = MOBILE_OPERATION_LOCK.lock().await;
-        let _scope = TransportScope::enter(transport);
+        let _scope = TransportScope::enter(transport)?;
         match self.state.hw_enable(false, Some("fido2".into())).await {
             Ok(response) => Ok(response),
             Err(error) => Err(map_runtime_hardware_error(error)),
@@ -284,7 +306,7 @@ impl MobileVault {
         transport: Arc<dyn MobileHardwareTransport>,
     ) -> Result<String, BaluardError> {
         let _operation = MOBILE_OPERATION_LOCK.lock().await;
-        let _scope = TransportScope::enter(transport);
+        let _scope = TransportScope::enter(transport)?;
         match self.state.hw_disable().await {
             Ok(response) => Ok(response),
             Err(error) => Err(map_runtime_hardware_error(error)),
@@ -297,7 +319,7 @@ impl MobileVault {
         transport: Arc<dyn MobileHardwareTransport>,
     ) -> Result<(), BaluardError> {
         let _operation = MOBILE_OPERATION_LOCK.lock().await;
-        let _scope = TransportScope::enter(transport);
+        let _scope = TransportScope::enter(transport)?;
         let master_password = zeroize::Zeroizing::new(master_password);
         self.state
             .unlock(&master_password)
@@ -311,7 +333,7 @@ impl MobileVault {
         transport: Arc<dyn MobileHardwareTransport>,
     ) -> Result<(), BaluardError> {
         let _operation = MOBILE_OPERATION_LOCK.lock().await;
-        let _scope = TransportScope::enter(transport);
+        let _scope = TransportScope::enter(transport)?;
         let kek = zeroize::Zeroizing::new(kek);
         let mut arr = zeroize::Zeroizing::new([0u8; 32]);
         if kek.len() != 32 {
@@ -355,6 +377,36 @@ mod tests {
             unreachable!()
         }
         fn shutdown(&self) {}
+    }
+
+    struct PanickingProtocolTransport;
+
+    impl MobileHardwareTransport for PanickingProtocolTransport {
+        fn protocol(&self) -> MobileTransportProtocol {
+            panic!("foreign callback threw before the operation ran");
+        }
+        fn supports_extended_apdu(&self) -> Result<bool, BaluardError> {
+            Ok(false)
+        }
+        fn transceive(&self, _request: Vec<u8>) -> Result<Vec<u8>, BaluardError> {
+            unreachable!()
+        }
+        fn write(&self, _report: Vec<u8>) -> Result<(), BaluardError> {
+            unreachable!()
+        }
+        fn read(&self) -> Result<Vec<u8>, BaluardError> {
+            unreachable!()
+        }
+        fn shutdown(&self) {}
+    }
+
+    /// A panic inside a foreign callback method must surface as a mapped
+    /// error at the bridge, not unwind across the FFI boundary.
+    #[test]
+    fn protocol_callback_panic_maps_to_device_error() {
+        let _scope = TransportScope::enter(Arc::new(PanickingProtocolTransport)).unwrap();
+        let outcome = MobileToken.info();
+        assert!(matches!(outcome, Err(TokenError::Device(_))), "{outcome:?}");
     }
 
     #[test]
@@ -425,7 +477,7 @@ mod tests {
         let transport = Arc::new(PanickingShutdown(AtomicBool::new(false)));
         let flag = transport.clone();
         {
-            let _scope = TransportScope::enter(transport);
+            let _scope = TransportScope::enter(transport).unwrap();
             assert!(ACTIVE_TRANSPORT.lock().unwrap().is_some());
         }
         assert!(flag.0.load(Ordering::SeqCst));

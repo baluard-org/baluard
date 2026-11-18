@@ -484,6 +484,14 @@ struct DaemonResponse {
     error: String,
 }
 
+fn session_store_unavailable() -> DaemonResponse {
+    DaemonResponse {
+        success: false,
+        payload: String::new(),
+        error: "Vault session store is unavailable; restart the desktop app".into(),
+    }
+}
+
 #[tauri::command]
 async fn daemon_request(
     action: String,
@@ -525,7 +533,10 @@ async fn daemon_request(
     // per-vault, so we must send the ACTIVE vault's token. Fall back to the
     // tracked active_slug to look it up. (M2/Phase 6: no-slug requests like
     // `vault.list_full` would otherwise send an empty token and be rejected.)
-    let active_slug = store.lock().unwrap().active_slug.clone();
+    let active_slug = match store.lock() {
+        Ok(st) => st.active_slug.clone(),
+        Err(_) => return session_store_unavailable(),
+    };
     let effective_slug = slug.clone().or(active_slug.clone());
     let stored_token = effective_slug
         .as_ref()
@@ -565,7 +576,10 @@ async fn daemon_request(
                 "[desktop] <- action={action} success=true payload_len={}",
                 data.len()
             );
-            let mut st = store.lock().unwrap();
+            let mut st = match store.lock() {
+                Ok(st) => st,
+                Err(_) => return session_store_unavailable(),
+            };
             // On lock for a slug, drop that slug's token. On unlock/create,
             // store the returned token under the slug.
             if action == "vault.lock" {
@@ -635,7 +649,10 @@ async fn daemon_request(
             if is_token_or_lock_err {
                 let target = slug.as_ref().or(active_slug.as_ref());
                 if let Some(s) = target {
-                    let mut st = store.lock().unwrap();
+                    let mut st = match store.lock() {
+                        Ok(st) => st,
+                        Err(_) => return session_store_unavailable(),
+                    };
                     st.tokens.remove(s);
                     if st.active_slug.as_deref() == Some(s.as_str()) {
                         st.active_slug = None;
@@ -1132,7 +1149,9 @@ fn today_stamp() -> String {
 /// dialogs only make sense inside an open vault anyway.
 fn active_session(app: &AppHandle) -> Result<(String, String), String> {
     let store = app.state::<Mutex<SessionStore>>();
-    let st = store.lock().unwrap();
+    let st = store
+        .lock()
+        .map_err(|_| "Vault session store is unavailable".to_string())?;
     let slug = st.active_slug.clone().ok_or("No active vault")?;
     let token = st
         .tokens
@@ -2087,8 +2106,10 @@ pub fn run() {
                         blur.blurred
                             .store(true, std::sync::atomic::Ordering::Relaxed);
                         // Cancel any previously-armed lock.
-                        if let Some(handle) = blur.pending.lock().unwrap().take() {
-                            handle.abort();
+                        if let Ok(mut pending) = blur.pending.lock() {
+                            if let Some(handle) = pending.take() {
+                                handle.abort();
+                            }
                         }
                         // The whole debounce (sleep + recheck + lock + clear)
                         // runs on the blocking pool. This avoids needing
@@ -2154,7 +2175,9 @@ pub fn run() {
                             // The daemon remains authoritative; the frontend's
                             // 30s heartbeat re-syncs per-vault presence.
                         });
-                        *blur.pending.lock().unwrap() = Some(handle);
+                        if let Ok(mut pending) = blur.pending.lock() {
+                            *pending = Some(handle);
+                        }
                     }
                 }
                 WindowEvent::Focused(true) => {
@@ -2163,8 +2186,10 @@ pub fn run() {
                     if let Some(blur) = window.app_handle().try_state::<BlurLockState>() {
                         blur.blurred
                             .store(false, std::sync::atomic::Ordering::Relaxed);
-                        if let Some(handle) = blur.pending.lock().unwrap().take() {
-                            handle.abort();
+                        if let Ok(mut pending) = blur.pending.lock() {
+                            if let Some(handle) = pending.take() {
+                                handle.abort();
+                            }
                         }
                     }
                 }
