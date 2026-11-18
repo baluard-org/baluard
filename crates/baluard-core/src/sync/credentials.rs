@@ -482,6 +482,23 @@ fn credentials_attempt(
     Err(git2::Error::from_str("no credential source available"))
 }
 
+/// Token-release gate for callers that build their own callbacks instead of
+/// riding build_callbacks (the provider-backed clone arm keeps its own
+/// clone-trust certificate check). Same allowed_hosts semantics as
+/// credentials_attempt, but fail-closed when the URL's host cannot be
+/// determined: a provider token never flies to a host we cannot name.
+/// `None` allowed_hosts keeps the documented unbound-fallback semantics.
+#[cfg(feature = "git-sync")]
+pub(crate) fn token_host_allowed(allowed_hosts: &Option<Vec<String>>, url: &str) -> bool {
+    let Some(allowed) = allowed_hosts else {
+        return true;
+    };
+    match extract_host(url) {
+        Some(host) => allowed.iter().any(|h| h.eq_ignore_ascii_case(&host)),
+        None => false,
+    }
+}
+
 /// Build RemoteCallbacks with credential handling for both SSH and HTTPS.
 /// Strict known_hosts enforcement (M5) rides `certificate_check`; unknown
 /// SSH host keys are stashed as pending observations for the trust flow.
@@ -1065,6 +1082,26 @@ mod tests {
                 .iter()
                 .any(|h| h == "github.com")
         );
+    }
+
+    /// BL0008: the provider-backed clone arm releases its token through this
+    /// gate; host binding and fail-closed handling of unknown hosts are the
+    /// contract, and userinfo spoofs must not smuggle a trusted name past it.
+    #[test]
+    fn token_host_allowed_binds_provider_token_release() {
+        let bound = Some(vec!["github.com".to_string()]);
+        assert!(token_host_allowed(&bound, "https://github.com/o/v.git"));
+        assert!(token_host_allowed(&bound, "https://GitHub.COM/o/v.git"));
+        assert!(!token_host_allowed(&bound, "https://evil.com/o/v.git"));
+        assert!(!token_host_allowed(
+            &bound,
+            "https://github.com@evil.com/o/v.git"
+        ));
+        // Fail closed: a URL with no determinable host never gets the token.
+        assert!(!token_host_allowed(&bound, "file:///tmp/vault"));
+        assert!(!token_host_allowed(&bound, "/tmp/vault"));
+        // Unbound config keeps the documented fallback semantics.
+        assert!(token_host_allowed(&None, "https://anywhere.example/v.git"));
     }
 }
 

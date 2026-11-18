@@ -6172,6 +6172,7 @@ impl SyncEngine {
             None => {
                 let cred_config = CredentialConfig::load_with_hint(target, provider);
                 let https_token = cred_config.expose_token();
+                let allowed_hosts = cred_config.allowed_hosts.clone();
                 let last_url_ref = std::cell::RefCell::new(url.to_string());
                 let mut cb = git2::RemoteCallbacks::new();
                 cb.credentials(move |_url, username_from_url, allowed_types| {
@@ -6184,6 +6185,16 @@ impl SyncEngine {
                     if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
                         if let Some(ref token) = https_token {
                             let user = username_from_url.unwrap_or("git");
+                            // BL0008: _url is the post-redirect target, not the
+                            // configured remote; bind the token release to the
+                            // provider's allowed_hosts, fail-closed on unknown.
+                            if !crate::sync::credentials::token_host_allowed(&allowed_hosts, _url) {
+                                return Err(git2::Error::from_str(&format!(
+                                    "refusing to send provider token to untrusted host: {}",
+                                    crate::sync::credentials::extract_host(_url)
+                                        .unwrap_or_else(|| "<undetermined>".to_string())
+                                )));
+                            }
                             return git2::Cred::userpass_plaintext(user, token.as_str());
                         }
                     }
