@@ -9,7 +9,11 @@ use sha2::Sha256;
 use crate::error::CryptoError;
 
 /// The three keys a contact-view derivation yields.
-pub type ContactViewKeys = ([u8; 32], [u8; 32], [u8; 32]);
+pub type ContactViewKeys = (
+    zeroize::Zeroizing<[u8; 32]>,
+    zeroize::Zeroizing<[u8; 32]>,
+    zeroize::Zeroizing<[u8; 32]>,
+);
 
 const SESSION_INFO: &[u8] = b"baluard-session-v1";
 const SYNC_INFO: &[u8] = b"baluard-sync-v1";
@@ -37,7 +41,7 @@ const ROLE_TEMPLATES_INFO: &[u8] = b"baluard-role-templates-v1";
 ///
 /// Session Key encrypts the local vault cache (SQLite).
 /// Purged from OS keystore on vault lock.
-pub fn derive_session_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_session_key(kek: &[u8; 32]) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     derive_key(kek, SESSION_INFO)
 }
 
@@ -53,9 +57,9 @@ pub fn derive_session_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
 /// derivation path with the KEK subkeys a normal unlock produces.
 pub fn derive_contact_view_keys(root: &[u8; 64]) -> Result<ContactViewKeys, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root);
-    let expand = |info: &[u8]| -> Result<[u8; 32], CryptoError> {
-        let mut key = [0u8; 32];
-        hkdf.expand(info, &mut key)
+    let expand = |info: &[u8]| -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
+        let mut key = zeroize::Zeroizing::new([0u8; 32]);
+        hkdf.expand(info, &mut *key)
             .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
         Ok(key)
     };
@@ -65,7 +69,7 @@ pub fn derive_contact_view_keys(root: &[u8; 64]) -> Result<ContactViewKeys, Cryp
     Ok((session, sync, devkey_seal))
 }
 
-pub fn derive_sync_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_sync_key(kek: &[u8; 32]) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     derive_key(kek, SYNC_INFO)
 }
 
@@ -74,7 +78,7 @@ pub fn derive_sync_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
 /// Seals `meta/device-privkey.json` for keystore-less vaults. The KEK
 /// itself is never retained post-unlock; the unlocked handle keeps only
 /// this subkey.
-pub fn derive_devkey_seal_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_devkey_seal_key(kek: &[u8; 32]) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     derive_key(kek, DEVKEY_SEAL_INFO)
 }
 
@@ -87,27 +91,29 @@ pub fn derive_devkey_seal_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
 pub fn derive_identity_hw_key(
     hw_content_key: &[u8; 32],
 ) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
-    derive_key(hw_content_key, IDENTITY_HW_INFO).map(zeroize::Zeroizing::new)
+    derive_key(hw_content_key, IDENTITY_HW_INFO)
 }
 
 /// Derive a 32-byte Sequence Key from Root Key.
 ///
 /// Sequence Key encrypts per-device sequence manifests.
-pub fn derive_sequence_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_sequence_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     // For 64-byte Root Key, use first 32 bytes as HKDF input
     // (HKDF-SHA256 accepts any length IKM)
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(SEQUENCE_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(SEQUENCE_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
 
 /// Derive a 32-byte Index Key from Root Key.
-pub fn derive_index_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_index_key(root_key: &[u8; 64]) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(INDEX_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(INDEX_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -117,40 +123,46 @@ pub fn derive_index_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
 /// Seals the recovery kit's root_check blob: a git-writer without the
 /// Root Key cannot mint or re-bind a kit, so rotation and recovery
 /// refuse kits whose public fields were swapped in git history.
-pub fn derive_kit_check_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_kit_check_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(b"baluard-kit-root-check-v1", &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(b"baluard-kit-root-check-v1", &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
 
 /// Derive a 32-byte Folders Key from Root Key.
 /// Used to encrypt/decrypt `meta/folders.enc`.
-pub fn derive_folders_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_folders_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(FOLDERS_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(FOLDERS_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
 
 /// Derive a 32-byte Tags Key from Root Key.
 /// Used to encrypt/decrypt `meta/tags.enc`.
-pub fn derive_tags_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_tags_key(root_key: &[u8; 64]) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(TAGS_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(TAGS_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
 
 /// Derive a 32-byte Profile Key from Root Key.
 /// Used to encrypt/decrypt `meta/profile.enc` (user identity fields).
-pub fn derive_profile_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_profile_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(PROFILE_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(PROFILE_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -160,10 +172,10 @@ pub fn derive_profile_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> 
 /// Domain-separated from the legacy epoch-bound SGK avatar derivation
 /// (SpaceGroupKey::derive_avatar_key) so pre-re-home avatars stay
 /// readable through the explicit fallback path.
-pub fn derive_avatar_key(meta_ikm: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_avatar_key(meta_ikm: &[u8; 64]) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, meta_ikm);
-    let mut key = [0u8; 32];
-    hkdf.expand(AVATAR_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(AVATAR_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -173,10 +185,12 @@ pub fn derive_avatar_key(meta_ikm: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
 /// Settings Key encrypts meta/settings.enc (vault_timeout, default_uri_match,
 /// fetch_favicons, slug, enrollment_policy — the post-unlock settings that
 /// leak vault identity/policy if plaintext on the remote).
-pub fn derive_settings_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_settings_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(SETTINGS_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(SETTINGS_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -190,19 +204,23 @@ pub fn derive_settings_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
 /// derived from the ROOT key so flipped-vault members (no Root Key)
 /// can neither read nor write them. Deliberately a different info from
 /// every member-visible meta key.
-pub fn derive_minor_record_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_minor_record_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     const MINOR_INFO: &[u8] = b"baluard-minor-record-v1";
     let hk = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hk.expand(MINOR_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hk.expand(MINOR_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
 
-pub fn derive_enrollment_proof_seed(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_enrollment_proof_seed(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(ENROLL_PROOF_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(ENROLL_PROOF_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -210,10 +228,12 @@ pub fn derive_enrollment_proof_seed(root_key: &[u8; 64]) -> Result<[u8; 32], Cry
 /// Derive a 32-byte Device Activity Key from Root Key.
 ///
 /// Activity Key encrypts meta/activity.enc (device last-push metadata).
-pub fn derive_activity_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_activity_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(ACTIVITY_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(ACTIVITY_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -223,10 +243,12 @@ pub fn derive_activity_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
 /// Contacts Key encrypts the local address book (meta/contacts.enc).
 /// S1a-3 artifact: covered by rotation like the other RootKey-derived
 /// metadata keys.
-pub fn derive_contacts_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_contacts_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(CONTACTS_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(CONTACTS_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -239,10 +261,10 @@ pub fn derive_contacts_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
 /// `derive_*_key` keeps its signature and info constant; only the IKM
 /// source moves. Admins and members compute the identical value from
 /// the same SMK, so no file is re-encrypted per reader.
-pub fn meta_root_from_smk(smk: &[u8; 32]) -> [u8; 64] {
+pub fn meta_root_from_smk(smk: &[u8; 32]) -> zeroize::Zeroizing<[u8; 64]> {
     let hkdf = Hkdf::<Sha256>::new(None, smk);
-    let mut ikm = [0u8; 64];
-    hkdf.expand(b"baluard-meta-root-v1", &mut ikm)
+    let mut ikm = zeroize::Zeroizing::new([0u8; 64]);
+    hkdf.expand(b"baluard-meta-root-v1", &mut *ikm)
         .expect("meta root expand cannot fail (valid length)");
     ikm
 }
@@ -252,20 +274,22 @@ pub fn meta_root_from_smk(smk: &[u8; 32]) -> [u8; 64] {
 /// Events Key encrypts the sharing activity log (meta/share-events.enc).
 /// S1b-1 artifact: covered by rotation like the other RootKey-derived
 /// metadata keys.
-pub fn derive_events_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_events_key(root_key: &[u8; 64]) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(EVENTS_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(EVENTS_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
 
 /// Derive a 32-byte Generator History Key from Root Key.
 /// Used to encrypt/decrypt `meta/generator-history.enc`.
-pub fn derive_generator_history_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_generator_history_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(GENERATOR_HISTORY_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(GENERATOR_HISTORY_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -275,26 +299,28 @@ pub fn derive_generator_history_key(root_key: &[u8; 64]) -> Result<[u8; 32], Cry
 /// Outbox Key encrypts the per-recipient outbox registries
 /// (meta/outbox-owner.enc and meta/outbox-links.enc). S2 artifact:
 /// covered by rotation like the other RootKey-derived metadata keys.
-pub fn derive_templates_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_templates_key(
+    root_key: &[u8; 64],
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(ROLE_TEMPLATES_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(ROLE_TEMPLATES_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
 
-pub fn derive_outbox_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+pub fn derive_outbox_key(root_key: &[u8; 64]) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
-    let mut key = [0u8; 32];
-    hkdf.expand(OUTBOX_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(OUTBOX_INFO, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
 
-fn derive_key(kek: &[u8; 32], info: &[u8]) -> Result<[u8; 32], CryptoError> {
+fn derive_key(kek: &[u8; 32], info: &[u8]) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, kek);
-    let mut key = [0u8; 32];
-    hkdf.expand(info, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(info, &mut *key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -309,6 +335,16 @@ mod tests {
         let k1 = derive_session_key(&kek).unwrap();
         let k2 = derive_session_key(&kek).unwrap();
         assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn derived_keys_are_zeroizing() {
+        let _: zeroize::Zeroizing<[u8; 32]> = derive_session_key(&[42u8; 32]).unwrap();
+        let _: zeroize::Zeroizing<[u8; 32]> = derive_sequence_key(&[42u8; 64]).unwrap();
+        let _: zeroize::Zeroizing<[u8; 64]> = meta_root_from_smk(&[42u8; 32]);
+        let (a, b, _) = derive_contact_view_keys(&[42u8; 64]).unwrap();
+        let _: zeroize::Zeroizing<[u8; 32]> = a;
+        let _: zeroize::Zeroizing<[u8; 32]> = b;
     }
 
     #[test]
@@ -377,7 +413,7 @@ mod tests {
         // Distinct from feeding the same bytes as a Root Key IKM.
         let mut as_root = [0u8; 64];
         as_root[..32].copy_from_slice(&[1u8; 32]);
-        assert_ne!(a, as_root);
+        assert_ne!(*a, as_root);
     }
 
     #[test]

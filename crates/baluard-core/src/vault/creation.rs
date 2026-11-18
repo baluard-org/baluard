@@ -43,9 +43,9 @@ pub struct VaultCreationResult {
     /// SHA-256 fingerprint of the initial trust anchor.
     pub trust_fingerprint: [u8; 32],
     /// Session key (for local cache encryption).
-    pub session_key: [u8; 32],
+    pub session_key: zeroize::Zeroizing<[u8; 32]>,
     /// Sync-only key (for locked desktop background sync).
-    pub sync_key: [u8; 32],
+    pub sync_key: zeroize::Zeroizing<[u8; 32]>,
     /// HPKE-wrapped Root Key for this device (to store in meta/keywrap/).
     pub wrapped_root_key: (Vec<u8>, Vec<u8>, [u8; 16]),
     /// HPKE-wrapped Root Key via recovery phrase (to store in meta/recovery.enc).
@@ -592,7 +592,7 @@ impl<'a> VaultCreator<'a> {
                         let mut wrap_key = [0u8; 32];
                         adapter.fill_bytes(&mut wrap_key);
                         keystore.store_secret(&format!("identity:{vault_id}"), &wrap_key)?;
-                        (wrap_key, "keystore", None)
+                        (zeroize::Zeroizing::new(wrap_key), "keystore", None)
                     }
                     None => {
                         // WARNED fallback (keystore-less systems): Argon2id
@@ -744,7 +744,7 @@ impl<'a> VaultCreator<'a> {
                         item_keys: HashMap::new(),
                         current_epoch: 1,
                         identity: Some(identity_keys),
-                        identity_wrap_key: Some(zeroize::Zeroizing::new(identity_wrap_key)),
+                        identity_wrap_key: Some(identity_wrap_key),
                         identity_hw_key: None,
                     }),
                 };
@@ -944,7 +944,7 @@ impl<'a> VaultCreator<'a> {
                         let mut wrap_key = [0u8; 32];
                         adapter.fill_bytes(&mut wrap_key);
                         keystore.store_secret(&format!("identity:{vault_id}"), &wrap_key)?;
-                        (wrap_key, "keystore", None)
+                        (zeroize::Zeroizing::new(wrap_key), "keystore", None)
                     }
                     None => {
                         let mut salt = [0u8; 32];
@@ -1029,7 +1029,7 @@ impl<'a> VaultCreator<'a> {
                         item_keys: HashMap::new(),
                         current_epoch: 1,
                         identity: Some(identity_keys),
-                        identity_wrap_key: Some(zeroize::Zeroizing::new(identity_wrap_key)),
+                        identity_wrap_key: Some(identity_wrap_key),
                         identity_hw_key: None,
                     }),
                 };

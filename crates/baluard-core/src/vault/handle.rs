@@ -136,16 +136,16 @@ pub struct UnlockedState {
     /// admin: from the sealed store; member: from the identity wrap).
     pub smk: Option<zeroize::Zeroizing<[u8; 32]>>,
     /// Session Key (for local cache encryption).
-    pub session_key: [u8; 32],
+    pub session_key: zeroize::Zeroizing<[u8; 32]>,
     /// Sync-Only Key (for locked background sync).
-    pub sync_key: [u8; 32],
+    pub sync_key: zeroize::Zeroizing<[u8; 32]>,
     /// Cached Item Keys: cipher_id → ItemKey.
     /// Loaded on-demand, cached for performance.
     pub item_keys: HashMap<Uuid, ItemKey>,
     /// Device-privkey seal subkey (C1): HKDF(KEK, "baluard-devkey-v1").
     /// Lets post-unlock consumers (sync signing, password change) open the
     /// sealed `meta/device-privkey.json` without keeping the KEK resident.
-    pub devkey_seal: [u8; 32],
+    pub devkey_seal: zeroize::Zeroizing<[u8; 32]>,
     /// Current key epoch (read from RK canary or envelope).
     pub current_epoch: u64,
     /// P1a: the per-human identity (cached unsealed while unlocked).
@@ -189,9 +189,7 @@ impl UnlockedState {
     /// leaves a stale derivation input behind.
     pub fn meta_ikm(&self) -> zeroize::Zeroizing<[u8; 64]> {
         match (&self.smk, &self.root_key) {
-            (Some(smk), _) => {
-                zeroize::Zeroizing::new(crate::crypto::hkdf_derive::meta_root_from_smk(smk))
-            }
+            (Some(smk), _) => crate::crypto::hkdf_derive::meta_root_from_smk(smk),
             (None, Some(rk)) => zeroize::Zeroizing::new(*rk.as_bytes()),
             // Unreachable (locked handles never expose UnlockedState);
             // a zeroed IKM fails every read closed instead of panicking.
@@ -1644,20 +1642,20 @@ impl VaultHandle {
 
     // ── S1a-3: contact cards + trust dial ──
 
-    fn contacts_key(&self) -> Result<[u8; 32], BaluardError> {
+    fn contacts_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, BaluardError> {
         crate::crypto::hkdf_derive::derive_contacts_key(&self.unlocked().meta_ikm())
             .map_err(BaluardError::from)
     }
 
     fn load_contacts(&self) -> Result<Vec<crate::vault::contacts::ContactEntry>, BaluardError> {
-        crate::vault::contacts::load_contacts(&self.path, &self.contacts_key()?)
+        crate::vault::contacts::load_contacts(&self.path, &*self.contacts_key()?)
     }
 
     fn save_contacts(
         &self,
         entries: &[crate::vault::contacts::ContactEntry],
     ) -> Result<(), BaluardError> {
-        crate::vault::contacts::save_contacts(&self.path, &self.contacts_key()?, entries)
+        crate::vault::contacts::save_contacts(&self.path, &*self.contacts_key()?, entries)
     }
 
     /// S2: this vault member's identity-signed contact card (card v2,
@@ -1724,7 +1722,7 @@ impl VaultHandle {
             .as_secs();
         crate::vault::contacts::upsert_contact(
             &self.path,
-            &self.contacts_key()?,
+            &*self.contacts_key()?,
             &card.card,
             crate::vault::contacts::ContactTrust::Channel,
             now,
@@ -1755,7 +1753,7 @@ impl VaultHandle {
             .as_secs();
         crate::vault::contacts::upsert_contact(
             &self.path,
-            &self.contacts_key()?,
+            &*self.contacts_key()?,
             &card.card,
             crate::vault::contacts::ContactTrust::Channel,
             now,
@@ -1774,7 +1772,7 @@ impl VaultHandle {
         }
         crate::vault::contacts::mark_verified(
             &self.path,
-            &self.contacts_key()?,
+            &*self.contacts_key()?,
             identity_signing_pubkey,
         )
     }
@@ -1788,7 +1786,7 @@ impl VaultHandle {
         }
         crate::vault::contacts::remove_contact(
             &self.path,
-            &self.contacts_key()?,
+            &*self.contacts_key()?,
             identity_signing_pubkey,
         )
     }
@@ -2031,7 +2029,7 @@ impl VaultHandle {
 
     // ── S2 IS-4b: per-recipient outboxes (live mirror) ──
 
-    fn outbox_key(&self) -> Result<[u8; 32], BaluardError> {
+    fn outbox_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, BaluardError> {
         crate::crypto::hkdf_derive::derive_outbox_key(self.unlocked().root()?.as_bytes())
             .map_err(BaluardError::from)
     }
@@ -2215,7 +2213,7 @@ impl VaultHandle {
             outbox_path,
             &card,
             identity.signing_key(),
-            &self.outbox_key()?,
+            &*self.outbox_key()?,
             cipher_id,
             &item,
             &contact.identity_signing_pubkey,
@@ -2339,7 +2337,7 @@ impl VaultHandle {
         crate::vault::outbox::unpublish_entry(
             &self.path,
             outbox_path,
-            &self.outbox_key()?,
+            &*self.outbox_key()?,
             cipher_id,
         )
     }
@@ -2350,7 +2348,7 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        crate::vault::outbox::revoke_outbox(&self.path, outbox_path, &self.outbox_key()?)
+        crate::vault::outbox::revoke_outbox(&self.path, outbox_path, &*self.outbox_key()?)
     }
 
     /// The owner's outbox records (which folder belongs to whom, what
@@ -2359,7 +2357,7 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        crate::vault::outbox::load_owner_registry(&self.path, &self.outbox_key()?)
+        crate::vault::outbox::load_owner_registry(&self.path, &*self.outbox_key()?)
     }
 
     /// Recipient side: link an outbox folder (view-only; nothing is
@@ -2374,21 +2372,21 @@ impl VaultHandle {
         let identity = self.identity().ok_or_else(|| {
             VaultError::InvalidOperation("identity not available on this device".into())
         })?;
-        crate::vault::outbox::link_outbox(&self.path, &self.outbox_key()?, identity, outbox_path)
+        crate::vault::outbox::link_outbox(&self.path, &*self.outbox_key()?, identity, outbox_path)
     }
 
     pub fn outbox_links(&self) -> Result<Vec<crate::vault::outbox::OutboxLink>, BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        crate::vault::outbox::load_links(&self.path, &self.outbox_key()?)
+        crate::vault::outbox::load_links(&self.path, &*self.outbox_key()?)
     }
 
     pub fn outbox_forget(&mut self, outbox_id: Uuid) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        crate::vault::outbox::forget_link(&self.path, &self.outbox_key()?, outbox_id)
+        crate::vault::outbox::forget_link(&self.path, &*self.outbox_key()?, outbox_id)
     }
 
     /// Read one shared entry from a linked outbox (view-only; the item
@@ -2401,7 +2399,7 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        let link = crate::vault::outbox::load_links(&self.path, &self.outbox_key()?)?
+        let link = crate::vault::outbox::load_links(&self.path, &*self.outbox_key()?)?
             .into_iter()
             .find(|l| l.outbox_id == outbox_id)
             .ok_or_else(|| {
@@ -2418,7 +2416,7 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        let link = crate::vault::outbox::load_links(&self.path, &self.outbox_key()?)?
+        let link = crate::vault::outbox::load_links(&self.path, &*self.outbox_key()?)?
             .into_iter()
             .find(|l| l.outbox_id == outbox_id)
             .ok_or_else(|| {
@@ -3650,7 +3648,7 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         let downgraded =
-            crate::vault::contacts::reconcile_stale_contacts(&self.path, &self.contacts_key()?)?;
+            crate::vault::contacts::reconcile_stale_contacts(&self.path, &*self.contacts_key()?)?;
         // S1b-1: activity log (best-effort).
         if !downgraded.is_empty() {
             self.emit_share_event(
@@ -3825,7 +3823,7 @@ impl VaultHandle {
         }
         {
             let seal_key = self.devkey_seal();
-            load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())?;
+            load_device_privkeys(&self.path, self.device_id, seal_key.as_deref())?;
         }
         let mut seen = std::collections::BTreeSet::new();
         // P8c: transport seats to strike at the provider BEFORE the
@@ -4887,7 +4885,7 @@ impl VaultHandle {
             let kek = kdf::derive_kek(master_password, &member.kdf_params)?;
             let canary = hex::decode(&member.kek_canary)
                 .map_err(|_| VaultError::Corrupt("member canary".into()))?;
-            let devkey_seal_m = Zeroizing::new(hkdf_derive::derive_devkey_seal_key(&kek)?);
+            let devkey_seal_m = hkdf_derive::derive_devkey_seal_key(&kek)?;
             // Failed attempts record against the same counter as the
             // master-password path: brute-force protection applies to
             // member passwords too.
@@ -5043,9 +5041,7 @@ impl VaultHandle {
                     let Some(params) = Self::identity_passphrase_params(&meta) else {
                         return;
                     };
-                    kdf::derive_kek(pw, &params)
-                        .ok()
-                        .map(zeroize::Zeroizing::new)
+                    kdf::derive_kek(pw, &params).ok()
                 }
                 _ => None,
             };
@@ -5307,9 +5303,9 @@ impl VaultHandle {
     fn unlock_tail_member(
         &mut self,
         member: &crate::vault::members::MemberUnlock,
-        session_key: [u8; 32],
-        sync_key: [u8; 32],
-        devkey_seal: [u8; 32],
+        session_key: zeroize::Zeroizing<[u8; 32]>,
+        sync_key: zeroize::Zeroizing<[u8; 32]>,
+        devkey_seal: zeroize::Zeroizing<[u8; 32]>,
     ) -> Result<(), BaluardError> {
         let sealed_hex = member.identity_seed_sealed.as_deref().ok_or_else(|| {
             VaultError::InvalidOperation(
@@ -5399,7 +5395,7 @@ impl VaultHandle {
         // hw-bound key takes over (C1 review fix).
         let identity_wrap_key = identity_hw_key
             .clone()
-            .unwrap_or_else(|| Zeroizing::new(devkey_seal));
+            .unwrap_or_else(|| devkey_seal.clone());
 
         self.state = VaultState::Unlocked(UnlockedState {
             root_key: None,
@@ -6015,7 +6011,7 @@ impl VaultHandle {
             let path = self.path.join("meta/device-privkey.json");
             let _ = crate::vault::device_privkey::reseal_if_legacy(
                 &path,
-                &devkey_seal,
+                &self.unlocked().devkey_seal,
                 Some(self.device_id),
             );
             let _ = crate::vault::device_privkey::write_device_id(&self.path, self.device_id);
@@ -6177,8 +6173,8 @@ impl VaultHandle {
     /// and the next unlock verifies them.
     pub fn apply_master_password_change(
         &mut self,
-        new_session_key: [u8; 32],
-        new_devkey_seal: [u8; 32],
+        new_session_key: zeroize::Zeroizing<[u8; 32]>,
+        new_devkey_seal: zeroize::Zeroizing<[u8; 32]>,
     ) {
         if let VaultState::Unlocked(ref mut u) = self.state {
             u.session_key = new_session_key;
@@ -6198,7 +6194,7 @@ impl VaultHandle {
         root_key: &RootKey,
         old_password: &str,
         new_password: &str,
-    ) -> Result<([u8; 32], [u8; 32]), BaluardError> {
+    ) -> Result<(zeroize::Zeroizing<[u8; 32]>, zeroize::Zeroizing<[u8; 32]>), BaluardError> {
         // Step 1: Verify old password
         let old_kek = kdf::derive_kek(old_password, kdf_params)?;
         let old_session_key = hkdf_derive::derive_session_key(&old_kek)?;
@@ -6464,9 +6460,9 @@ impl VaultHandle {
     /// subkey lives in `UnlockedState` and is dropped on lock, exactly like
     /// the session key. Consumers: daemon sync signing (autosync), direct
     /// CLI sync after an in-process unlock.
-    pub fn devkey_seal(&self) -> Option<[u8; 32]> {
+    pub fn devkey_seal(&self) -> Option<zeroize::Zeroizing<[u8; 32]>> {
         match &self.state {
-            VaultState::Unlocked(u) => Some(u.devkey_seal),
+            VaultState::Unlocked(u) => Some(u.devkey_seal.clone()),
             VaultState::Locked => None,
         }
     }
@@ -6508,7 +6504,7 @@ impl VaultHandle {
     /// domain (raw root bytes pre-flip, HKDF-expanded SMK post-flip).
     /// Domain-separated from the legacy epoch-bound SGK derivation; on
     /// member devices this works wherever the profile does.
-    pub fn derive_avatar_key(&self) -> Result<[u8; 32], BaluardError> {
+    pub fn derive_avatar_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, BaluardError> {
         crate::crypto::hkdf_derive::derive_avatar_key(&self.unlocked().meta_ikm())
             .map_err(BaluardError::from)
     }
@@ -6518,7 +6514,7 @@ impl VaultHandle {
     /// written before the re-home. Convergent: any rewrite migrates the
     /// blob; a rotation migrates the rest.
     pub fn decrypt_avatar_blob(&self, blob: &[u8]) -> Result<Vec<u8>, BaluardError> {
-        match crate::vault::avatar::decrypt_avatar(&self.derive_avatar_key()?, blob) {
+        match crate::vault::avatar::decrypt_avatar(&*self.derive_avatar_key()?, blob) {
             Ok(bytes) => Ok(bytes),
             Err(_) => match self.unlocked().sgk() {
                 Ok(sgk) => {
@@ -10629,7 +10625,7 @@ impl VaultHandle {
 
         // Phase 3: Write new keywrap file (staged)
         let seal_key = self.devkey_seal();
-        let privkeys = match load_device_privkeys(&self.path, self.device_id, seal_key.as_ref()) {
+        let privkeys = match load_device_privkeys(&self.path, self.device_id, seal_key.as_deref()) {
             Ok(k) => k,
             Err(_) => {
                 // Cleanup staged files on error
@@ -10840,8 +10836,8 @@ impl VaultHandle {
         // S1a-3: address book re-encrypted under the new contacts key.
         self.save_contacts(&old_contacts)?;
         // S2 IS-4b: outbox registries re-encrypted under the new key.
-        crate::vault::outbox::save_owner_registry(&self.path, &self.outbox_key()?, &old_outboxes)?;
-        crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
+        crate::vault::outbox::save_owner_registry(&self.path, &*self.outbox_key()?, &old_outboxes)?;
+        crate::vault::outbox::save_links(&self.path, &*self.outbox_key()?, &old_links)?;
         crate::vault::templates::save_templates(
             &self.path,
             self.unlocked().root()?.as_bytes(),
@@ -11123,7 +11119,7 @@ impl VaultHandle {
 
         // ── Precheck: validate privkey accessible BEFORE any irreversible change ──
         let seal_key = self.devkey_seal();
-        let privkeys = load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())?;
+        let privkeys = load_device_privkeys(&self.path, self.device_id, seal_key.as_deref())?;
 
         // ── Write crash-recovery marker and setup cleanup guard ──
         let pending_marker = self.path.join("meta/.rotation-pending");
@@ -11487,8 +11483,8 @@ impl VaultHandle {
         // S1a-3: address book re-encrypted under the new contacts key.
         self.save_contacts(&old_contacts)?;
         // S2 IS-4b: outbox registries re-encrypted under the new key.
-        crate::vault::outbox::save_owner_registry(&self.path, &self.outbox_key()?, &old_outboxes)?;
-        crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
+        crate::vault::outbox::save_owner_registry(&self.path, &*self.outbox_key()?, &old_outboxes)?;
+        crate::vault::outbox::save_links(&self.path, &*self.outbox_key()?, &old_links)?;
         crate::vault::templates::save_templates(
             &self.path,
             self.unlocked().root()?.as_bytes(),
@@ -11599,7 +11595,8 @@ impl VaultHandle {
             Some(key) => key,
             None => {
                 let seal_key = self.devkey_seal();
-                let privkeys = load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())?;
+                let privkeys =
+                    load_device_privkeys(&self.path, self.device_id, seal_key.as_deref())?;
                 cache_device_signing_key(&self.path, self.device_id, &privkeys);
                 privkeys.ed25519
             }
@@ -11772,7 +11769,7 @@ impl VaultHandle {
             None => {
                 let seal_key = self.devkey_seal();
                 let Ok(privkeys) =
-                    load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())
+                    load_device_privkeys(&self.path, self.device_id, seal_key.as_deref())
                 else {
                     return;
                 };
@@ -12247,7 +12244,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
         engine_o.commit_all(&repo_o, "invite").unwrap();
@@ -12325,7 +12322,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
         engine_o.commit_all(&repo_o, "invite").unwrap();
@@ -12598,7 +12595,7 @@ mod tests {
         };
         crate::vault::members::write_member(dir.path(), &row).unwrap();
 
-        let engine = crate::sync::engine::SyncEngine::new(dir.path(), &device, seal.as_ref());
+        let engine = crate::sync::engine::SyncEngine::new(dir.path(), &device, seal.as_deref());
         let repo = engine.open_repo().unwrap();
         engine.commit_all(&repo, "member row").unwrap();
 
@@ -13931,7 +13928,7 @@ mod tests {
         let phrase = handle.space_recovery_kit_enable().unwrap();
         let owner_seal = handle.devkey_seal();
         let device_o = handle.device_id.to_string();
-        let engine_o = crate::sync::engine::SyncEngine::new(&dir, &device_o, owner_seal.as_ref());
+        let engine_o = crate::sync::engine::SyncEngine::new(&dir, &device_o, owner_seal.as_deref());
         let repo_o = engine_o.open_repo().unwrap();
         // The kit file must be committed BEFORE the clone, or the
         // peers' parent-tree lookup finds no verifier.
@@ -13973,7 +13970,7 @@ mod tests {
         let engine_r = crate::sync::engine::SyncEngine::new(
             &clone_path,
             &device_id.to_string(),
-            clone_seal.as_ref(),
+            clone_seal.as_deref(),
         );
         let input = CipherInput {
             name: "FromRecovered".into(),
@@ -16547,7 +16544,7 @@ mod tests {
     fn write_test_avatar(
         handle: &VaultHandle,
         dir: &std::path::Path,
-    ) -> (Vec<u8>, Vec<u8>, [u8; 32]) {
+    ) -> (Vec<u8>, Vec<u8>, zeroize::Zeroizing<[u8; 32]>) {
         let plaintext = b"fake-png-image-bytes".to_vec();
         let old_key = handle.derive_avatar_key().expect("avatar key in test");
         let blob = crate::vault::avatar::encrypt_avatar(&old_key, &plaintext).unwrap();
@@ -16903,7 +16900,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -16983,7 +16980,7 @@ mod tests {
         let engine_j2 = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner.device_id.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         engine_j2.commit_all(&repo_j, "member cipher").unwrap();
 
@@ -17055,7 +17052,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
         engine_o.commit_all(&repo_o, "invite").unwrap();
@@ -17120,7 +17117,7 @@ mod tests {
         let engine_j2 = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner.device_id.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         engine_j2.commit_all(&repo_j, "admin meta").unwrap();
         repo_o
@@ -17167,7 +17164,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -17347,7 +17344,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -17424,7 +17421,7 @@ mod tests {
         let engine_js = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         let repo_js = engine_js.open_repo().unwrap();
         engine_js.commit_all(&repo_js, "joiner rotation").unwrap();
@@ -17498,7 +17495,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -17547,7 +17544,7 @@ mod tests {
         let engine_js = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         let repo_js = engine_js.open_repo().unwrap();
         engine_js.commit_all(&repo_js, "claim").unwrap();
@@ -17617,7 +17614,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -17672,7 +17669,7 @@ mod tests {
             joiner_engines.push(crate::sync::engine::SyncEngine::new(
                 path,
                 &device.to_string(),
-                seal.as_ref(),
+                seal.as_deref(),
             ));
             joiner_handles.push(h);
             let _ = i;
@@ -17761,7 +17758,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -18015,7 +18012,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -18214,7 +18211,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -18288,7 +18285,7 @@ mod tests {
         let engine_j_signed = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner.device_id.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         let repo_j_signed = engine_j_signed.open_repo().unwrap();
         engine_j_signed
@@ -18374,7 +18371,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -18464,7 +18461,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -18566,7 +18563,7 @@ mod tests {
         let engine_js = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         let repo_js = engine_js.open_repo().unwrap();
         engine_js.commit_all(&repo_js, "joiner rotation").unwrap();
@@ -18658,7 +18655,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -18712,7 +18709,7 @@ mod tests {
         let engine_j = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         let repo_j = engine_j.open_repo().unwrap();
         let before = repo_j.head().unwrap().peel_to_commit().unwrap();
@@ -18808,7 +18805,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -18855,7 +18852,7 @@ mod tests {
         let engine_j = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         let repo_j = engine_j.open_repo().unwrap();
         engine_j.pull(&repo_j, "origin").unwrap();
@@ -19041,7 +19038,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -19112,7 +19109,7 @@ mod tests {
         let engine_j_signed = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         engine_j_signed
             .commit_all(&repo_j, "access requests")
@@ -19234,7 +19231,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
         engine_o.commit_all(&repo_o, "invite").unwrap();
@@ -19294,7 +19291,7 @@ mod tests {
         let engine_j_signed = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         engine_j_signed
             .commit_all(&repo_j, "identity rotation")
@@ -19360,7 +19357,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
         engine_o.commit_all(&repo_o, "invite").unwrap();
@@ -19472,7 +19469,7 @@ mod tests {
         let engine_j_signed = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         engine_j_signed
             .commit_all(&repo_j, "rogue edit after reset")
@@ -19585,7 +19582,7 @@ mod tests {
         let engine_j2_signed = crate::sync::engine::SyncEngine::new(
             &joiner2_path,
             &j2_device.to_string(),
-            j2_seal.as_ref(),
+            j2_seal.as_deref(),
         );
         engine_j2_signed
             .commit_all(&repo_j2, "member rejoined")
@@ -19645,7 +19642,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
         engine_o.commit_all(&repo_o, "invite").unwrap();
@@ -19815,7 +19812,7 @@ mod tests {
         let engine_j_signed = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         engine_j_signed
             .commit_all(&repo_j, "edit after removal")
@@ -19887,7 +19884,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -19984,7 +19981,7 @@ mod tests {
         );
         drop(c_handle);
         let engine_c_signed =
-            crate::sync::engine::SyncEngine::new(&c_path, &c_device.to_string(), c_seal.as_ref());
+            crate::sync::engine::SyncEngine::new(&c_path, &c_device.to_string(), c_seal.as_deref());
         let repo_c = engine_c_signed.open_repo().unwrap();
         engine_c_signed
             .commit_all(&repo_c, "transfer back")
@@ -20029,7 +20026,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -20169,7 +20166,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
 
@@ -20235,7 +20232,7 @@ mod tests {
         let engine_j_signed = crate::sync::engine::SyncEngine::new(
             &joiner_path,
             &joiner_device.to_string(),
-            joiner_seal.as_ref(),
+            joiner_seal.as_deref(),
         );
         engine_j_signed
             .commit_all(&repo_j, "identity rotation")
@@ -21493,7 +21490,7 @@ mod tests {
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner,
             &handle.device_id.to_string(),
-            owner_seal.as_ref(),
+            owner_seal.as_deref(),
         );
         let repo_o = engine_o.open_repo().unwrap();
         engine_o.commit_all(&repo_o, "invite").unwrap();

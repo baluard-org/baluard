@@ -81,7 +81,7 @@ impl PinEscrow {
     /// `kek` is the Argon2id-derived KEK for this vault. The PIN is hashed
     /// with a fresh random salt; neither the raw PIN nor the master password
     /// is retained.
-    pub fn new(kek: [u8; 32], pin: &str) -> Result<Self, String> {
+    pub fn new(kek: zeroize::Zeroizing<[u8; 32]>, pin: &str) -> Result<Self, String> {
         validate_pin(pin)?;
         let mut pin_salt = [0u8; PIN_SALT_LEN];
         use rand::RngCore;
@@ -90,7 +90,7 @@ impl PinEscrow {
         Ok(Self {
             pin_hash: zeroize::Zeroizing::new(pin_hash),
             pin_salt,
-            kek: zeroize::Zeroizing::new(kek),
+            kek,
         })
     }
 
@@ -188,15 +188,15 @@ mod tests {
 
     #[test]
     fn verify_correct_pin_returns_kek() {
-        let kek = [0xABu8; 32];
-        let escrow = PinEscrow::new(kek, "482910").unwrap();
+        let kek = zeroize::Zeroizing::new([0xABu8; 32]);
+        let escrow = PinEscrow::new(kek.clone(), "482910").unwrap();
         let got = escrow.verify("482910").unwrap();
-        assert_eq!(got.as_ref(), &kek);
+        assert_eq!(got.as_ref(), kek.as_ref());
     }
 
     #[test]
     fn verify_wrong_pin_fails() {
-        let escrow = PinEscrow::new([0xCDu8; 32], "111111").unwrap();
+        let escrow = PinEscrow::new(zeroize::Zeroizing::new([0xCDu8; 32]), "111111").unwrap();
         assert!(escrow.verify("111112").is_err());
     }
 
@@ -204,8 +204,8 @@ mod tests {
     fn same_pin_different_salt_yields_different_hash() {
         // Two escrows with the same PIN must have independent salts/hashes
         // (fresh OsRng per escrow) so an old escrow leak does not help.
-        let a = PinEscrow::new([0u8; 32], "000000").unwrap();
-        let b = PinEscrow::new([0u8; 32], "000000").unwrap();
+        let a = PinEscrow::new(zeroize::Zeroizing::new([0u8; 32]), "000000").unwrap();
+        let b = PinEscrow::new(zeroize::Zeroizing::new([0u8; 32]), "000000").unwrap();
         // Both verify the same PIN, but their internal salts differ.
         assert!(a.verify("000000").is_ok());
         assert_ne!(a.pin_salt, b.pin_salt);

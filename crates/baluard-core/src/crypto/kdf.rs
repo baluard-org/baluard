@@ -12,7 +12,10 @@ use crate::types::{KdfKind, KdfParams, KdfProfile};
 ///
 /// D3: KEK is never stored. Exists in memory only for the duration of an unlock operation.
 /// Used exclusively as HKDF input for Session Key and Sync-Only Key.
-pub fn derive_kek(password: &str, params: &KdfParams) -> Result<[u8; 32], CryptoError> {
+pub fn derive_kek(
+    password: &str,
+    params: &KdfParams,
+) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
     validate_params(params)?;
 
     if params.salt.len() != 32 {
@@ -41,7 +44,7 @@ pub fn derive_kek(password: &str, params: &KdfParams) -> Result<[u8; 32], Crypto
             argon2
                 .hash_password_into(password.as_bytes(), &params.salt, &mut kek)
                 .map_err(|e| CryptoError::KdfFailed(e.to_string()))?;
-            Ok(kek)
+            Ok(zeroize::Zeroizing::new(kek))
         }
     }
 }

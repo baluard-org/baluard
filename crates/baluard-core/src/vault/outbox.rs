@@ -976,7 +976,7 @@ mod tests {
 
     /// A minimal fake vault: the registry layer only needs
     /// meta/kdf-params.json (vault_id derivation) and meta/.
-    fn fake_vault() -> (tempfile::TempDir, [u8; 32], PathBuf) {
+    fn fake_vault() -> (tempfile::TempDir, zeroize::Zeroizing<[u8; 32]>, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let params = crate::crypto::kdf::create_params(crate::types::KdfProfile::MobileLow);
         std::fs::create_dir_all(dir.path().join("meta")).unwrap();

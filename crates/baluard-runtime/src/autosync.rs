@@ -193,7 +193,7 @@ struct Inner {
     /// Device-privkey seal subkey (C1) captured at `activate`, dropped and
     /// zeroized on `deactivate`. Opens the sealed devkey file for commit
     /// signing; the subkey, never the KEK, lives here.
-    devkey_seal: Option<[u8; 32]>,
+    devkey_seal: Option<zeroize::Zeroizing<[u8; 32]>>,
     /// Enrollment-proof verifier (self-proving roster extension) captured
     /// at `activate`; a plain verifying key, nothing secret. Threads
     /// root-keyed proof checks into background pulls.
@@ -518,7 +518,7 @@ impl AutoSyncHandle {
     pub async fn activate(
         &self,
         device_id: String,
-        devkey_seal: Option<[u8; 32]>,
+        devkey_seal: Option<zeroize::Zeroizing<[u8; 32]>>,
         enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
     ) {
         let mut g = self.inner.lock().await;
@@ -578,11 +578,8 @@ impl AutoSyncHandle {
         // the previous unlock must not survive a lock/relock (review F6).
         g.access_denied_streak = 0;
         g.pending_conflicts.clear();
-        // C1: drop the devkey seal subkey with the session.
-        if let Some(mut k) = g.devkey_seal.take() {
-            use zeroize::Zeroize;
-            k.zeroize();
-        }
+        // C1: the Zeroizing seal subkey wipes itself on drop.
+        g.devkey_seal = None;
         g.enroll_vk = None;
         if let Some(h) = g.debounce.take() {
             h.abort();
@@ -688,7 +685,7 @@ impl AutoSyncHandle {
                 log::debug!("[autosync] pull_only skipped: conflict paused (NeedsDecision)");
                 return (PullReport::Paused, None);
             }
-            (g.generation, g.devkey_seal, g.enroll_vk)
+            (g.generation, g.devkey_seal.clone(), g.enroll_vk)
         };
         // Don't race a debounce push or another cycle: the owned try-lock
         // below bails (safe: an in-flight push cycle includes a pull).
@@ -704,12 +701,8 @@ impl AutoSyncHandle {
             SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || {
                 let _cycle_guard = lock_guard;
-                let out = run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk);
-                // The closure owns a Copy of the seal subkey; wipe it with the closure.
-                if let Some(mut k) = devkey_seal {
-                    use zeroize::Zeroize;
-                    k.zeroize();
-                }
+                let out = run_pull_only(&vault_path, &device_id, devkey_seal.as_deref(), enroll_vk);
+                // The closure owns the seal; Zeroizing wipes it on drop.
                 out
             }),
         )
@@ -884,7 +877,7 @@ impl AutoSyncHandle {
                 g.pending = 0;
             }
             g.state = AutoSyncState::Syncing;
-            (g.devkey_seal, g.enroll_vk)
+            (g.devkey_seal.clone(), g.enroll_vk)
         };
 
         // C3: the cycle guard lives INSIDE the spawn_blocking closure —
@@ -927,7 +920,7 @@ impl AutoSyncHandle {
                         match classify_line_rewrite(
                             &vault_path,
                             &device_id,
-                            devkey_seal.as_ref(),
+                            devkey_seal.as_deref(),
                             ack_ctx.0.as_deref(),
                             ack_ctx.1.as_deref(),
                         ) {
@@ -945,15 +938,11 @@ impl AutoSyncHandle {
                         // Pull without pushing (stale blob copies would
                         // republish); the tail keeps the queue and never
                         // reports synced.
-                        run_pull_only(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
+                        run_pull_only(&vault_path, &device_id, devkey_seal.as_deref(), enroll_vk)
                             .map(|_| SyncOutcome::Synced { conflicts: 0 })
                     } else {
-                        run_sync_cycle(&vault_path, &device_id, devkey_seal.as_ref(), enroll_vk)
+                        run_sync_cycle(&vault_path, &device_id, devkey_seal.as_deref(), enroll_vk)
                     };
-                    if let Some(mut k) = devkey_seal {
-                        use zeroize::Zeroize;
-                        k.zeroize();
-                    }
                     (out, downgrade, fresh_pending, adopt)
                 }
             }),
@@ -1130,7 +1119,7 @@ impl AutoSyncHandle {
                 if !g.active || g.generation != generation {
                     return;
                 }
-                (g.devkey_seal, g.enroll_vk)
+                (g.devkey_seal.clone(), g.enroll_vk)
             };
             let vault_path = self.vault_path.clone();
             let dn = device_id.clone();
@@ -1139,11 +1128,8 @@ impl AutoSyncHandle {
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
                     let _cycle_guard = lock_guard;
-                    let out = run_pull_only(&vault_path, &dn, devkey_seal.as_ref(), enroll_vk);
-                    if let Some(mut k) = devkey_seal {
-                        use zeroize::Zeroize;
-                        k.zeroize();
-                    }
+                    let out = run_pull_only(&vault_path, &dn, devkey_seal.as_deref(), enroll_vk);
+                    // The closure owns the seal; Zeroizing wipes it on drop.
                     out
                 }),
             )

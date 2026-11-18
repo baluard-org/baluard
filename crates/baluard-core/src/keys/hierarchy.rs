@@ -271,7 +271,7 @@ impl SpaceGroupKey {
     /// M1 fix: Derive a dedicated key for encrypting the user avatar.
     /// Domain-separated from item keys so a leak of one cannot decrypt the other.
     /// Epoch-bound so avatar is re-wrapped on root key rotation.
-    pub fn derive_avatar_key(&self, epoch: u64) -> [u8; 32] {
+    pub fn derive_avatar_key(&self, epoch: u64) -> zeroize::Zeroizing<[u8; 32]> {
         debug_assert_eq!(
             epoch, self.epoch,
             "SpaceGroupKey epoch mismatch: SGK bound to epoch {} but derive_avatar_key called with epoch {}",
@@ -287,8 +287,8 @@ impl SpaceGroupKey {
         info.extend_from_slice(&epoch.to_le_bytes());
 
         let hkdf = Hkdf::<Sha256>::new(None, self.key.as_slice());
-        let mut key = [0u8; 32];
-        hkdf.expand(&info, &mut key)
+        let mut key = zeroize::Zeroizing::new([0u8; 32]);
+        hkdf.expand(&info, &mut *key)
             .expect("32 bytes is valid output length for HKDF-SHA256");
 
         key

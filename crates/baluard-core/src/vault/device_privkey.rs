@@ -2604,7 +2604,7 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
         let (handle, _password, _phrase) = audit_vault(dir.path());
-        let seal = handle.unlocked().devkey_seal;
+        let seal = handle.unlocked().devkey_seal.clone();
         let vault = handle.path.clone();
         let devkey = vault.join("meta/device-privkey.json");
 
@@ -2699,7 +2699,7 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
         let (handle, _password, _phrase) = audit_vault(dir.path());
-        let seal = handle.unlocked().devkey_seal;
+        let seal = handle.unlocked().devkey_seal.clone();
         let vault = handle.path.clone();
         let devkey = vault.join("meta/device-privkey.json");
         let privkey_before = std::fs::read(&devkey).unwrap();
@@ -2792,7 +2792,7 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
         let (mut handle, password, _phrase) = audit_vault(dir.path());
-        let seal = handle.unlocked().devkey_seal;
+        let seal = handle.unlocked().devkey_seal.clone();
         let vault = handle.path.clone();
         let identity_enc = vault.join("meta/identity.enc");
         assert!(identity_enc.exists(), "fixture needs an identity file");
@@ -2952,7 +2952,7 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
         let (mut handle, password, _phrase) = audit_vault(dir.path());
-        let seal = handle.unlocked().devkey_seal;
+        let seal = handle.unlocked().devkey_seal.clone();
         // Sabotage the repo so the rotation's commit fails mid-flight.
         std::fs::remove_dir_all(handle.path.join(".git/objects")).unwrap();
 
@@ -3002,7 +3002,7 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
         let (handle, _password, _phrase) = audit_vault(dir.path());
-        let seal = handle.unlocked().devkey_seal;
+        let seal = handle.unlocked().devkey_seal.clone();
         let vault = handle.path.clone();
         let devkey = vault.join("meta/device-privkey.json");
         let roster_path = vault.join("meta/devices.json");
@@ -3099,7 +3099,7 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
         let (mut handle, password, _phrase) = audit_vault(dir.path());
-        let seal = handle.unlocked().devkey_seal;
+        let seal = handle.unlocked().devkey_seal.clone();
         let root_bytes = *handle.unlocked().root().unwrap().as_bytes();
         let devkey = handle.path.join("meta/device-privkey.json");
         let old_inner = read_privkey_file(&devkey, Some(&seal)).unwrap();
@@ -3206,7 +3206,7 @@ mod tests {
     }
 
     fn seal_to_tap(handle: &mut VaultHandle) {
-        let seal_key = handle.unlocked().devkey_seal;
+        let seal_key = handle.unlocked().devkey_seal.clone();
         let p = handle.path.join("meta/device-privkey.json");
         assert!(
             enable_hw_seal(
@@ -3223,7 +3223,7 @@ mod tests {
         handle.lock();
     }
 
-    fn kek_of(vault_path: &std::path::Path, password: &str) -> [u8; 32] {
+    fn kek_of(vault_path: &std::path::Path, password: &str) -> zeroize::Zeroizing<[u8; 32]> {
         let kdf_json = std::fs::read_to_string(vault_path.join("meta/kdf-params.json")).unwrap();
         let params: crate::types::KdfParams = serde_json::from_str(&kdf_json).unwrap();
         crate::crypto::kdf::derive_kek(password, &params).unwrap()
@@ -3367,7 +3367,7 @@ mod tests {
         let _env = hw_env_clear();
         let dir = tempfile::tempdir().unwrap();
         let (mut handle, _, _) = audit_vault(dir.path());
-        let devkey_seal = handle.unlocked().devkey_seal;
+        let devkey_seal = handle.unlocked().devkey_seal.clone();
         handle.lock();
         crate::hwkey::install(std::sync::Arc::new(DriftingMock));
         let devkey = dir.path().join("meta/device-privkey.json");
@@ -3414,7 +3414,7 @@ mod tests {
         let with_seal = crate::sync::engine::SyncEngine::new(
             dir.path(),
             &h.device_id.to_string(),
-            h.devkey_seal().as_ref(),
+            h.devkey_seal().as_deref(),
         );
         let cached =
             crate::vault::handle::cached_device_signing_key(dir.path(), h.device_id).unwrap();
@@ -3620,7 +3620,7 @@ mod tests {
         crate::hwkey::install(std::sync::Arc::new(TapMock));
         let dir = tempfile::tempdir().unwrap();
         let (mut handle, _password, _phrase) = audit_vault(dir.path());
-        let seal = handle.unlocked().devkey_seal;
+        let seal = handle.unlocked().devkey_seal.clone();
         seal_to_tap(&mut handle);
         let path = dir.path().join("meta/device-privkey.json");
         assert!(!set_hw_seal_consent(&path, &seal, None, true).unwrap());
@@ -3786,7 +3786,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut handle, password, _phrase) = audit_vault(dir.path());
         handle.unlock(&password).unwrap();
-        let seal_key = handle.unlocked().devkey_seal;
+        let seal_key = handle.unlocked().devkey_seal.clone();
         enable_hw_seal(
             &dir.path().join("meta/device-privkey.json"),
             &seal_key,
@@ -3881,7 +3881,7 @@ mod tests {
 
         // Device-local member unlock row in the pre-fix shape: the seed
         // sealed under the bare KEK subkey.
-        let devkey_seal = handle.unlocked().devkey_seal;
+        let devkey_seal = handle.unlocked().devkey_seal.clone();
         let identity = crate::vault::identity::IdentityKeys::generate().unwrap();
         let seed_sealed =
             hex::encode(crate::vault::identity::seal_identity(&devkey_seal, &identity).unwrap());

@@ -421,7 +421,7 @@ impl VaultState {
         let engine = baluard_core::sync::engine::SyncEngine::new(
             &self.vault_path,
             &device_id,
-            devkey_seal.as_ref(),
+            devkey_seal.as_deref(),
         );
         if let Ok(repo) = engine.open_repo() {
             let _ = engine.cover_commit(&repo);
@@ -554,7 +554,7 @@ impl VaultState {
         let has_remote = baluard_core::sync::engine::SyncEngine::new(
             &self.vault_path,
             &device_id,
-            devkey_seal.as_ref(),
+            devkey_seal.as_deref(),
         )
         .open_repo()
         .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
@@ -566,7 +566,7 @@ impl VaultState {
         }
     }
 
-    pub async fn devkey_seal(&self) -> Option<[u8; 32]> {
+    pub async fn devkey_seal(&self) -> Option<zeroize::Zeroizing<[u8; 32]>> {
         let g = self.inner.read().await;
         g.as_ref().and_then(|h| h.devkey_seal())
     }
@@ -816,7 +816,7 @@ impl VaultState {
                 let has_remote = baluard_core::sync::engine::SyncEngine::new(
                     &self.vault_path,
                     &device_id,
-                    devkey_seal.as_ref(),
+                    devkey_seal.as_deref(),
                 )
                 .open_repo()
                 .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
@@ -1915,16 +1915,14 @@ impl VaultState {
             let enc_path = handle.path.join("meta").join("avatar.enc");
             let legacy_path = handle.path.join("meta").join(format!("avatar.{ext}"));
             if enc_path.exists() {
-                let key = Zeroizing::new(
-                    handle
-                        .derive_avatar_key()
-                        .map_err(|e| format!("avatar key: {e}"))?,
-                );
+                let key = handle
+                    .derive_avatar_key()
+                    .map_err(|e| format!("avatar key: {e}"))?;
                 let legacy_key = handle
                     .unlocked()
                     .sgk()
                     .ok()
-                    .map(|sgk| Zeroizing::new(sgk.derive_avatar_key(sgk.epoch())));
+                    .map(|sgk| sgk.derive_avatar_key(sgk.epoch()));
                 Job::Encrypted {
                     path: enc_path,
                     key,
@@ -2002,11 +2000,9 @@ impl VaultState {
                 // owns the outcome, so migrate only if it still exists. The
                 // key derives here so a rotation during the read is honored.
                 if legacy_path.exists() {
-                    let fresh_key = Zeroizing::new(
-                        handle
-                            .derive_avatar_key()
-                            .map_err(|e| format!("avatar key: {e}"))?,
-                    );
+                    let fresh_key = handle
+                        .derive_avatar_key()
+                        .map_err(|e| format!("avatar key: {e}"))?;
                     let blob = baluard_core::vault::avatar::encrypt_avatar(&fresh_key, &data)
                         .map_err(|e| format!("{e}"))?;
                     baluard_core::vault::write_vault_file(&enc_path, &blob)
@@ -2089,11 +2085,9 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
-        let key = Zeroizing::new(
-            handle
-                .derive_avatar_key()
-                .map_err(|e| format!("avatar key: {e}"))?,
-        );
+        let key = handle
+            .derive_avatar_key()
+            .map_err(|e| format!("avatar key: {e}"))?;
         let blob = baluard_core::vault::avatar::encrypt_avatar(&key, &bytes)
             .map_err(|e| format!("{e}"))?;
         baluard_core::vault::write_vault_file(&vault_path.join("meta").join("avatar.enc"), &blob)
@@ -5807,7 +5801,7 @@ impl VaultState {
                     let engine = baluard_core::sync::engine::SyncEngine::new(
                         &vault_path,
                         &device_id_str,
-                        devkey_seal.as_ref(),
+                        devkey_seal.as_deref(),
                     );
                     let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                     engine
@@ -6189,7 +6183,7 @@ impl VaultState {
                 let mut engine = baluard_core::sync::engine::SyncEngine::new(
                     &vault_path,
                     &device_id,
-                    seal.as_ref(),
+                    seal.as_deref(),
                 );
                 if let Some(vk) = enroll_vk {
                     engine = engine.with_enroll_verify_key(vk);
@@ -7770,7 +7764,7 @@ impl VaultState {
         let (root_oid, note, pushed) = tokio::time::timeout(
             sync_budget,
             tokio::task::spawn_blocking(move || -> Result<(String, String, bool), String> {
-                let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
+                let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_deref());
                 let Ok(repo) = engine.open_repo() else {
                     // Never-synced vault: entries are gone locally, and
                     // there is nothing to publish or rewrite.
@@ -7989,7 +7983,7 @@ impl VaultState {
             tokio::task::spawn_blocking(
                 #[allow(clippy::type_complexity)]
                 move || -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
-                    let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
+                    let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_deref());
                     let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                     let merge_base = repo
                         .merge_base(local_oid, remote_oid)
@@ -8111,7 +8105,8 @@ impl VaultState {
                 let push_failed = tokio::time::timeout(
                     crate::autosync::SYNC_OP_TIMEOUT,
                     tokio::task::spawn_blocking(move || -> Result<bool, String> {
-                        let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
+                        let engine =
+                            SyncEngine::new(&vault_path, &device_id, devkey_seal.as_deref());
                         let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                         match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
                             Ok(_) => Ok(false),
@@ -8234,7 +8229,7 @@ impl VaultState {
         let (local_bytes, remote_bytes) = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
-                let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
+                let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_deref());
                 let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                 let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
                     .map_err(|e| format!("read local: {e}"))?;
@@ -8322,7 +8317,7 @@ impl VaultState {
         let push_failed = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> Result<bool, String> {
-                let engine = SyncEngine::new(&vault_path, &device_id_str, devkey_seal.as_ref());
+                let engine = SyncEngine::new(&vault_path, &device_id_str, devkey_seal.as_deref());
                 let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                 match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
                     Ok(_) => Ok(false),
@@ -8388,7 +8383,7 @@ impl VaultState {
         let join_result = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> (bool, Option<String>) {
-                let engine = SyncEngine::new(&vault_path, &device, devkey_seal.as_ref());
+                let engine = SyncEngine::new(&vault_path, &device, devkey_seal.as_deref());
                 let repo = match engine.open_repo() {
                     Ok(r) => r,
                     Err(e) => return (false, Some(format!("open repo: {e}"))),
@@ -8740,7 +8735,7 @@ impl VaultState {
                 return Err("Vault is locked. Unlock first.".into());
             }
             (
-                handle.unlocked().devkey_seal,
+                handle.unlocked().devkey_seal.clone(),
                 handle.unlocked().root().ok().cloned(),
                 handle.device_id,
             )
@@ -8920,8 +8915,8 @@ impl VaultState {
         // two Argon2id runs would otherwise pin the worker ~2s.
         let vault_path = self.vault_path.clone();
         let password = Zeroizing::new(password.to_string());
-        let (_temp, kek) =
-            tokio::task::spawn_blocking(move || -> Result<(VaultHandle, [u8; 32]), String> {
+        let (_temp, kek) = tokio::task::spawn_blocking(
+            move || -> Result<(VaultHandle, zeroize::Zeroizing<[u8; 32]>), String> {
                 let mut temp =
                     VaultHandle::open(&vault_path).map_err(|e| format!("Open failed: {e}"))?;
                 // Confirm the password is correct (raises clear error +
@@ -8931,9 +8926,10 @@ impl VaultState {
                 let kek = baluard_core::crypto::kdf::derive_kek(&password, &temp.kdf_params)
                     .map_err(|e| format!("derive kek: {e}"))?;
                 Ok((temp, kek))
-            })
-            .await
-            .map_err(|e| format!("verify task: {e}"))??;
+            },
+        )
+        .await
+        .map_err(|e| format!("verify task: {e}"))??;
 
         let escrow = crate::pin::PinEscrow::new(kek, pin)?;
         *self.pin.lock().await = Some(escrow);
@@ -9262,7 +9258,7 @@ impl VaultState {
                     let engine = baluard_core::sync::engine::SyncEngine::new(
                         &vault_path,
                         &device_id,
-                        devkey_seal.as_ref(),
+                        devkey_seal.as_deref(),
                     );
                     let repo = engine.open_repo()?;
                     engine.fetch_attachment_blob(&repo, "origin", &pin)
@@ -9380,7 +9376,7 @@ impl VaultState {
                 let engine = baluard_core::sync::engine::SyncEngine::new(
                     &vault_path,
                     &device_id,
-                    devkey_seal.as_ref(),
+                    devkey_seal.as_deref(),
                 );
                 let repo = engine.open_repo()?;
                 engine.msg_board_status(&repo, "origin", ack.as_deref())
@@ -9424,7 +9420,7 @@ impl VaultState {
                 let engine = baluard_core::sync::engine::SyncEngine::new(
                     &vault_path,
                     &device_id,
-                    devkey_seal.as_ref(),
+                    devkey_seal.as_deref(),
                 );
                 let repo = engine.open_repo()?;
                 engine.msg_board_status(&repo, "origin", None)
@@ -9466,7 +9462,7 @@ impl VaultState {
                 let engine = baluard_core::sync::engine::SyncEngine::new(
                     &vault_path,
                     &device_id,
-                    devkey_seal.as_ref(),
+                    devkey_seal.as_deref(),
                 );
                 let repo = engine.open_repo()?;
                 engine.compact_message_board(&repo, "origin")
@@ -9506,7 +9502,7 @@ impl VaultState {
                 let engine = baluard_core::sync::engine::SyncEngine::new(
                     &vault_path,
                     &device_id,
-                    devkey_seal.as_ref(),
+                    devkey_seal.as_deref(),
                 );
                 let repo = engine.open_repo()?;
                 engine.attachment_line_status(
@@ -9576,7 +9572,7 @@ impl VaultState {
                 let engine = baluard_core::sync::engine::SyncEngine::new(
                     &vault_path,
                     &device_id,
-                    devkey_seal.as_ref(),
+                    devkey_seal.as_deref(),
                 );
                 let repo = engine.open_repo()?;
                 engine.attachment_line_status(&repo, "origin", None)
@@ -9683,7 +9679,7 @@ impl VaultState {
                 let report = crate::autosync::run_pull_only(
                     &vault_path,
                     &device_id_for_task,
-                    devkey_seal.as_ref(),
+                    devkey_seal.as_deref(),
                     enroll_vk,
                 )
                 .map_err(|e| e.to_string())?;
@@ -9702,7 +9698,7 @@ impl VaultState {
                 let engine = baluard_core::sync::engine::SyncEngine::new(
                     &vault_path,
                     &device_id_for_task,
-                    devkey_seal.as_ref(),
+                    devkey_seal.as_deref(),
                 );
                 let repo = engine.open_repo().map_err(|e| e.to_string())?;
                 let status = engine
@@ -9800,7 +9796,7 @@ impl VaultState {
                 let engine = baluard_core::sync::engine::SyncEngine::new(
                     &vault_path,
                     &device_id,
-                    devkey_seal.as_ref(),
+                    devkey_seal.as_deref(),
                 );
                 let repo = engine.open_repo()?;
                 engine.compact_attachment_line(&repo, "origin", &keep)
@@ -10363,18 +10359,12 @@ impl VaultState {
             .map_err(|e| format!("reading kdf params: {e}"))?;
         let kdf_params = baluard_core::crypto::kdf::parse_kdf_params(&kdf_json)
             .map_err(|e| format!("kdf params: {e}"))?;
-        let kek = zeroize::Zeroizing::new(
-            baluard_core::crypto::kdf::derive_kek(master_password, &kdf_params)
-                .map_err(|e| format!("kdf: {e}"))?,
-        );
-        let session_key = zeroize::Zeroizing::new(
-            baluard_core::crypto::hkdf_derive::derive_session_key(&kek)
-                .map_err(|e| format!("kdf: {e}"))?,
-        );
-        let devkey_seal = zeroize::Zeroizing::new(
-            baluard_core::crypto::hkdf_derive::derive_devkey_seal_key(&kek)
-                .map_err(|e| format!("kdf: {e}"))?,
-        );
+        let kek = baluard_core::crypto::kdf::derive_kek(master_password, &kdf_params)
+            .map_err(|e| format!("kdf: {e}"))?;
+        let session_key = baluard_core::crypto::hkdf_derive::derive_session_key(&kek)
+            .map_err(|e| format!("kdf: {e}"))?;
+        let devkey_seal = baluard_core::crypto::hkdf_derive::derive_devkey_seal_key(&kek)
+            .map_err(|e| format!("kdf: {e}"))?;
         let canary = std::fs::read(vault_path.join("meta/kek-canary.enc"))
             .map_err(|e| format!("reading kek canary: {e}"))?;
         baluard_core::vault::canary::verify_kek_canary(&session_key, &canary)
@@ -11975,7 +11965,7 @@ mod pin_hw_escrow_tests {
             let guard = state.inner.read().await;
             let handle = guard.as_ref().expect("unlocked");
             (
-                handle.unlocked().devkey_seal,
+                handle.unlocked().devkey_seal.clone(),
                 handle.vault_id,
                 handle.device_id,
                 handle.path.clone(),

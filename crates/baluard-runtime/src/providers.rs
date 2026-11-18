@@ -174,7 +174,7 @@ pub async fn detect_vault_repos(provider: Provider) -> Result<Vec<VaultRepo>, Ba
 #[cfg(feature = "git-sync")]
 pub async fn setup_sync_remote(
     vault_path: &Path,
-    devkey_seal: Option<[u8; 32]>,
+    devkey_seal: Option<zeroize::Zeroizing<[u8; 32]>>,
     provider: Provider,
     repo_name: &str,
     clone_url: Option<String>,
@@ -247,7 +247,7 @@ pub async fn setup_sync_remote(
     let provider_str = provider.to_string();
     let remote_for_block = remote_url.clone();
     let _ = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let engine = SyncEngine::new(&git_path, &device_id, devkey_seal.as_ref());
+        let engine = SyncEngine::new(&git_path, &device_id, devkey_seal.as_deref());
         let git_repo = match engine.open_repo() {
             Ok(r) => r,
             Err(open_err) => {
@@ -549,7 +549,7 @@ pub fn clone_and_register_with_credentials(
 #[cfg(feature = "git-sync")]
 pub async fn setup_sync_remote_custom(
     vault_path: &Path,
-    devkey_seal: Option<[u8; 32]>,
+    devkey_seal: Option<zeroize::Zeroizing<[u8; 32]>>,
     clone_url: String,
     device_id: &str,
 ) -> Result<String, String> {
@@ -558,7 +558,7 @@ pub async fn setup_sync_remote_custom(
     let device_id = device_id.to_string();
     let remote_url = tokio::task::spawn_blocking(move || -> Result<String, String> {
         let mut added_origin = false;
-        let engine = SyncEngine::new(&git_path, &device_id, seal.as_ref());
+        let engine = SyncEngine::new(&git_path, &device_id, seal.as_deref());
         let git_repo = match engine.open_repo() {
             Ok(r) => r,
             Err(open_err) => {

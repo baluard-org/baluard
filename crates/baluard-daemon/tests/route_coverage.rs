@@ -4691,7 +4691,7 @@ async fn bridge_writes_stay_inside_decision_seven() {
 }
 
 #[tokio::test]
-async fn agent_request_refuses_non_login_items() {
+async fn agent_request_accepts_non_login_items() {
     let (_sandbox, _sandbox_guard) = sandboxed_host_env().await;
     let (_dir, host, state) = agent_host("agent-card-item").await;
     state
@@ -4726,9 +4726,8 @@ async fn agent_request_refuses_non_login_items() {
     )
     .await;
     assert!(
-        !accepted.success && accepted.error_message.contains("logins"),
-        "agents.request must refuse non-Login items, got success={} err={}",
         accepted.success,
+        "agents.request must accept non-Login items since the taxonomy batch expanded the policy (BL0022), got err={}",
         accepted.error_message
     );
 }

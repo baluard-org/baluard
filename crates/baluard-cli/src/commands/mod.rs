@@ -3078,7 +3078,7 @@ fn vault_empty_direct(
     let engine = baluard_core::sync::engine::SyncEngine::new(
         path,
         &first_device_id(vault_path),
-        handle.devkey_seal().as_ref(),
+        handle.devkey_seal().as_deref(),
     );
     let note = match engine.open_repo() {
         Err(_) => "no git repository; entries removed locally".to_string(),
@@ -3713,13 +3713,8 @@ pub fn handle_enroll_with_phrase(
             // ghost device (same guard as the daemon route).
             let kdf_json = std::fs::read_to_string(path.join("meta/kdf-params.json"))?;
             let kdf_params = baluard_core::crypto::kdf::parse_kdf_params(&kdf_json)?;
-            let kek = zeroize::Zeroizing::new(baluard_core::crypto::kdf::derive_kek(
-                &master_password,
-                &kdf_params,
-            )?);
-            let session_key = zeroize::Zeroizing::new(
-                baluard_core::crypto::hkdf_derive::derive_session_key(&kek)?,
-            );
+            let kek = baluard_core::crypto::kdf::derive_kek(&master_password, &kdf_params)?;
+            let session_key = baluard_core::crypto::hkdf_derive::derive_session_key(&kek)?;
             let canary = std::fs::read(path.join("meta/kek-canary.enc"))?;
             baluard_core::vault::canary::verify_kek_canary(&session_key, &canary)
                 .map_err(|_| "master password incorrect")?;
@@ -3743,9 +3738,7 @@ pub fn handle_enroll_with_phrase(
                 "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
             });
             let privkey_json = serde_json::to_string_pretty(&privkey_data)?;
-            let devkey_seal = zeroize::Zeroizing::new(
-                baluard_core::crypto::hkdf_derive::derive_devkey_seal_key(&kek)?,
-            );
+            let devkey_seal = baluard_core::crypto::hkdf_derive::derive_devkey_seal_key(&kek)?;
             baluard_core::vault::device_privkey::seal_file(
                 &path.join("meta/device-privkey.json"),
                 &privkey_json,
@@ -3908,7 +3901,7 @@ fn sync_revoke_direct(
     let engine = baluard_core::sync::engine::SyncEngine::new(
         path,
         &first_device_id(vault_path),
-        seal.as_ref(),
+        seal.as_deref(),
     );
     engine.recover_state()?;
     let repo = engine.open_repo()?;
@@ -4137,7 +4130,7 @@ fn sync_init_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
     let engine = baluard_core::sync::engine::SyncEngine::new(
         path,
         &first_device_id(vault_path),
-        seal.as_ref(),
+        seal.as_deref(),
     );
     let repo = engine.init_repo()?;
     println!("Git repo initialized at {}", path.display());
@@ -4168,7 +4161,7 @@ fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
     let engine = baluard_core::sync::engine::SyncEngine::new(
         path,
         &first_device_id(vault_path),
-        seal.as_ref(),
+        seal.as_deref(),
     );
     let repo = engine.open_repo()?;
     let status = engine.status(&repo)?;
@@ -4190,7 +4183,7 @@ fn sync_commit_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>
     let engine = baluard_core::sync::engine::SyncEngine::new(
         path,
         &first_device_id(vault_path),
-        seal.as_ref(),
+        seal.as_deref(),
     );
     let repo = engine.open_repo()?;
     let status = engine.status(&repo)?;
@@ -4214,7 +4207,7 @@ fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
     let mut engine = baluard_core::sync::engine::SyncEngine::new(
         path,
         &first_device_id(vault_path),
-        seal.as_ref(),
+        seal.as_deref(),
     );
     if let Some(vk) = handle.enroll_verify_key() {
         engine = engine.with_enroll_verify_key(vk);

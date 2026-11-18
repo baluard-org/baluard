@@ -6122,7 +6122,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // C1: manual sync routes run token-gated (vault unlocked), so the
             // seal subkey is available for signed commits.
             let seal = state.devkey_seal().await;
-            match sync_init(&state.vault_path, seal.as_ref()) {
+            match sync_init(&state.vault_path, seal.as_deref()) {
                 Ok(msg) => ok_resp(msg, token_str),
                 Err(e) => err_response(e),
             }
@@ -6143,7 +6143,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
-                    sync_remote(&vault_path, &payload, seal.as_ref())
+                    sync_remote(&vault_path, &payload, seal.as_deref())
                 }),
             )
             .await;
@@ -6204,7 +6204,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
                     let _cycle_guard = cycle_guard;
-                    sync_push(&vault_path, seal.as_ref())
+                    sync_push(&vault_path, seal.as_deref())
                 }),
             )
             .await;
@@ -6232,7 +6232,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
                     let _cycle_guard = cycle_guard;
-                    sync_pull(&vault_path, seal.as_ref(), enroll_vk)
+                    sync_pull(&vault_path, seal.as_deref(), enroll_vk)
                 }),
             )
             .await;
@@ -6260,7 +6260,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
                     let _cycle_guard = cycle_guard;
-                    sync_revoke(&vault_path, seal.as_ref(), &commit, &reason)
+                    sync_revoke(&vault_path, seal.as_deref(), &commit, &reason)
                 }),
             )
             .await;
@@ -6341,7 +6341,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
         "sync.disconnect" => {
             let seal = state.devkey_seal().await;
-            match sync_disconnect(&state.vault_path, &req.payload, seal.as_ref()).await {
+            match sync_disconnect(&state.vault_path, &req.payload, seal.as_deref()).await {
                 Ok(json) => ok_resp(json, token_str),
                 Err(e) => err_response(e),
             }

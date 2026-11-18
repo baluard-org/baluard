@@ -84,7 +84,7 @@ fn edit_assigns_tags() {
     // Cross-check via `tags delete` which reports how many ciphers it
     // updated — if the edit worked, deleting one tag removes exactly 1.
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("delete")
         .arg("work")
         .assert()
