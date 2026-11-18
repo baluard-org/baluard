@@ -59,6 +59,29 @@ chmod 700 "$SEC"
 # approval-timeout 0 exits after the upload is accepted instead of waiting on
 # human review. `|| return 1` matters: the caller runs submit_amo through
 # `|| amo_rc=$?`, which disables set -e inside this function.
+  # AMO rejects a re-upload of an existing version with 409 "Version X.Y.Z
+  # already exists." That state is the desired end of a completed submission,
+  # so a resubmit after an earlier partial run treats it as success instead of
+  # failing the whole script before the Chrome leg runs.
+  webext_submit_or_exists() {
+    local out rc
+    out="$(mktemp)"
+    if "$@" >"$out" 2>&1; then
+      rm -f "$out"
+      return 0
+    else
+      rc=$?
+    fi
+    if grep -q "already exists" "$out"; then
+      rm -f "$out"
+      echo "firefox/AMO: version already exists on AMO (already submitted)"
+      return 0
+    fi
+    cat "$out" >&2
+    rm -f "$out"
+    return "$rc"
+  }
+
 submit_amo() {
   if [[ -z "${BALUARD_AMO_JWT_KEY:-}" || -z "${BALUARD_AMO_JWT_SECRET:-}" ]]; then
     if [[ -z "${BALUARD_AMO_JWT_KEY:-}${BALUARD_AMO_JWT_SECRET:-}" ]]; then
@@ -74,12 +97,12 @@ submit_amo() {
   [[ -n "${AMO_UPLOAD_SOURCE:-}" ]] && args+=(--upload-source-code "$AMO_UPLOAD_SOURCE")
   if command -v web-ext >/dev/null 2>&1; then
     WEB_EXT_API_KEY="$BALUARD_AMO_JWT_KEY" WEB_EXT_API_SECRET="$BALUARD_AMO_JWT_SECRET" \
-      web-ext "${args[@]}" || return 1
+      webext_submit_or_exists web-ext "${args[@]}" || return 1
   else
     command -v npx >/dev/null 2>&1 \
       || { echo "firefox/AMO: neither web-ext nor npx found" >&2; return 1; }
     WEB_EXT_API_KEY="$BALUARD_AMO_JWT_KEY" WEB_EXT_API_SECRET="$BALUARD_AMO_JWT_SECRET" \
-      npx --yes web-ext@10.8.0 "${args[@]}" || return 1
+      webext_submit_or_exists npx --yes web-ext@10.8.0 "${args[@]}" || return 1
   fi
   echo "firefox/AMO: submitted for listing (review happens on addons.mozilla.org)"
 }

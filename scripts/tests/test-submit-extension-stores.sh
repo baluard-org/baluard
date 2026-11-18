@@ -65,7 +65,14 @@ cat > "$TMP/bin/npx" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "${SUB_TEST_NPX_LOG:?}"
-[[ "${SUB_TEST_AMO_FAIL:-0}" == 1 ]] && exit 1
+if [[ "${SUB_TEST_AMO_FAIL:-0}" == 1 ]]; then
+  echo 'WebExtError: Submission failed (2): 409' >&2
+  exit 1
+fi
+if [[ "${SUB_TEST_AMO_EXISTS:-0}" == 1 ]]; then
+  echo '{"version": ["Version 0.7.4 already exists."]}' >&2
+  exit 1
+fi
 exit 0
 EOF
 chmod +x "$TMP/bin/curl" "$TMP/bin/npx"
@@ -184,6 +191,14 @@ fi
 # The chrome store is independent and still submits; only the run must fail.
 grep -q 'chrome/store: uploaded and submitted' "$TMP/amofail.out"
 grep -q ':upload' "$CURL_LOG"
+
+# ── AMO version-already-exists is tolerated; chrome still submits ────────────
+rm -f "$CURL_LOG" "$NPX_LOG"
+env "${UNSET[@]/#/-u}" "${AMO_ENV[@]}" "${CHROME_ENV[@]}" \
+  SUB_TEST_AMO_EXISTS=1 "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" \
+  > "$TMP/amoexists.out"
+grep -q 'firefox/AMO: version already exists on AMO (already submitted)' "$TMP/amoexists.out"
+grep -q 'chrome/store: uploaded and submitted' "$TMP/amoexists.out"
 
 # ── Nothing configured: loud guidance, no submissions ────────────────────────
 rm -f "$CURL_LOG" "$NPX_LOG"
