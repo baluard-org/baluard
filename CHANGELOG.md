@@ -4,6 +4,10 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
+No user-facing changes yet.
+
+## 0.7.4 - 2026-11-18
+
 - Browser: the extension offers passkeys by default, matching 1Password and Bitwarden. Installs that already turned the setting off keep it off; installs that never touched it turn on with this update.
 
 - Browser: every passkey sign-in now shows the credential picker first, so nothing is sent to a site without a confirm, even when only one credential matches.
