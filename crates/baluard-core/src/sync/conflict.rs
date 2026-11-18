@@ -1056,9 +1056,10 @@ mod tests {
             merged_base: {
                 let mut inner = LoginData::default();
                 inner.password = Some("info-merged-35".into());
-                CipherInput {
-                    kind: CipherKind::Login(inner),
-                    ..Default::default()
+                {
+                    let mut ci = CipherInput::default();
+                    ci.kind = CipherKind::Login(inner);
+                    ci
                 }
             },
         };

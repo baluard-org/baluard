@@ -969,9 +969,10 @@ mod tests {
         let survivor_wrap_before = std::fs::read(&survivor_wrap).unwrap();
 
         // One entry inside, so the rotation must re-encrypt it.
-        let input = crate::types::CipherInput {
-            name: "Shared Login".into(),
-            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+        let input = {
+            let mut ci = crate::types::CipherInput::default();
+            ci.name = "Shared Login".into();
+            ci.kind = crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("rob".into()),
                 password: Some("hunter2".into()),
                 uris: Default::default(),
@@ -980,8 +981,8 @@ mod tests {
                 password_revision_date: Default::default(),
                 favicon: Default::default(),
                 fido2_credentials: Default::default(),
-            }),
-            ..Default::default()
+            });
+            ci
         };
         let cipher_id = handle
             .add_cipher_in_collection(&input, Some(roles.id))

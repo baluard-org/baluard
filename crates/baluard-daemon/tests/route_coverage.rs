@@ -2575,10 +2575,11 @@ async fn import_restores_folder_hierarchy() {
         name: "Empty".into(),
         parent: Some(0),
     });
-    result.ciphers.push(CipherInput {
-        name: "Filed Entry".into(),
-        kind: CipherKind::Login(Default::default()),
-        ..Default::default()
+    result.ciphers.push({
+        let mut ci = CipherInput::default();
+        ci.name = "Filed Entry".into();
+        ci.kind = CipherKind::Login(Default::default());
+        ci
     });
     result.cipher_folders.push(Some(1));
 
@@ -2625,10 +2626,11 @@ async fn import_bulk_ciphers_lands_every_entry() {
 
     let mut result = baluard_core::import::ImportResult::new();
     for i in 0..300 {
-        result.ciphers.push(CipherInput {
-            name: format!("Bulk Entry {i}"),
-            kind: CipherKind::Login(Default::default()),
-            ..Default::default()
+        result.ciphers.push({
+            let mut ci = CipherInput::default();
+            ci.name = format!("Bulk Entry {i}");
+            ci.kind = CipherKind::Login(Default::default());
+            ci
         });
     }
 

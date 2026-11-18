@@ -1332,17 +1332,15 @@ pub fn handle_ssh_keygen(
     println!("{private}");
 
     if let Some(name) = store {
-        let input = CipherInput {
-            name: name.to_string(),
-            kind: baluard_core::types::CipherKind::SshKey(baluard_core::types::SshKeyData {
-                private_key: Some(private.to_string()),
-                public_key: Some(public.to_string()),
-                key_fingerprint: Some(fingerprint.to_string()),
-                // Imports/adds never auto-serve; the user opts in.
-                serve_via_agent: false,
-            }),
-            ..Default::default()
-        };
+        let mut input = CipherInput::default();
+        input.name = name.to_string();
+        input.kind = baluard_core::types::CipherKind::SshKey(baluard_core::types::SshKeyData {
+            private_key: Some(private.to_string()),
+            public_key: Some(public.to_string()),
+            key_fingerprint: Some(fingerprint.to_string()),
+            // Imports/adds never auto-serve; the user opts in.
+            serve_via_agent: false,
+        });
         handle_add(mode, "", socket, input)?;
         println!("Stored as '{name}'.");
     }

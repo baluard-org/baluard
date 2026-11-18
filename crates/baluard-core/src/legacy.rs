@@ -1832,9 +1832,10 @@ mod tests {
         let mut handle = open_vault(&dir);
 
         // Something to recover: one entry only the Root Key can open.
-        let input = crate::types::CipherInput {
-            name: "Safe deposit".into(),
-            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+        let input = {
+            let mut ci = crate::types::CipherInput::default();
+            ci.name = "Safe deposit".into();
+            ci.kind = crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("esteban".into()),
                 password: Some("opensesame".into()),
                 uris: Default::default(),
@@ -1843,8 +1844,8 @@ mod tests {
                 password_revision_date: Default::default(),
                 favicon: Default::default(),
                 fido2_credentials: Default::default(),
-            }),
-            ..Default::default()
+            });
+            ci
         };
         let cipher_id = handle.add_cipher(&input).unwrap();
 

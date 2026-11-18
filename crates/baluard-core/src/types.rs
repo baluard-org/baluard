@@ -1264,6 +1264,22 @@ pub struct CipherInput {
     pub tags: Vec<String>,
 }
 
+impl Zeroize for CipherInput {
+    fn zeroize(&mut self) {
+        self.name.zeroize();
+        self.kind.zeroize();
+        self.notes.zeroize();
+        self.custom_fields.zeroize();
+        self.password_history.zeroize();
+    }
+}
+
+impl Drop for CipherInput {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl CipherInput {
     /// Build a `CipherInput` from a decrypted `Cipher`, dropping the
     /// id/epoch/seq/tier/timestamps (those are assigned on write). Used by
@@ -1885,16 +1901,17 @@ mod tests {
     fn cipher_input_debug_redacts_notes_and_history() {
         let mut inner = LoginData::default();
         inner.password = Some("inner-pw-77".into());
-        let input = CipherInput {
-            name: "Bank".into(),
-            notes: Some("recovery-codes-in-notes".into()),
-            kind: CipherKind::Login(inner),
-            custom_fields: vec![CustomField {
+        let input = {
+            let mut ci = CipherInput::default();
+            ci.name = "Bank".into();
+            ci.notes = Some("recovery-codes-in-notes".into());
+            ci.kind = CipherKind::Login(inner);
+            ci.custom_fields = vec![CustomField {
                 name: "pin".into(),
                 value: "992233".into(),
                 field_type: CustomFieldType::Hidden,
-            }],
-            ..Default::default()
+            }];
+            ci
         };
         let dbg = format!("{input:?}");
         assert!(!dbg.contains("recovery-codes-in-notes"), "{dbg}");
@@ -2320,9 +2337,10 @@ mod tests {
 
     #[test]
     fn cipher_input_default_is_login() {
-        let input = CipherInput {
-            name: "test".into(),
-            ..Default::default()
+        let input = {
+            let mut ci = CipherInput::default();
+            ci.name = "test".into();
+            ci
         };
         // Verify default kind is Login
         assert!(matches!(input.kind, CipherKind::Login(_)));

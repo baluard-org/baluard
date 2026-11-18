@@ -9430,10 +9430,8 @@ impl VaultHandle {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
         let validated_tags = Self::validate_tags(&input.tags)?;
-        let mut input = CipherInput {
-            tags: validated_tags,
-            ..input.clone()
-        };
+        let mut input = input.clone();
+        input.tags = validated_tags;
         cipher::finalize_signing_key_metadata(&mut input.kind);
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
@@ -9489,10 +9487,8 @@ impl VaultHandle {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
         let validated_tags = Self::validate_tags(&input.tags)?;
-        let mut input = CipherInput {
-            tags: validated_tags,
-            ..input.clone()
-        };
+        let mut input = input.clone();
+        input.tags = validated_tags;
         cipher::finalize_signing_key_metadata(&mut input.kind);
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
@@ -12391,9 +12387,10 @@ mod tests {
         let mut h = VaultHandle::open(dir.path()).unwrap();
         h.unlock(&password).unwrap();
         let id = h
-            .add_cipher(&crate::types::CipherInput {
-                name: "Release Key".into(),
-                kind: crate::types::CipherKind::SigningKey(crate::types::SigningKeyData {
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Release Key".into();
+                ci.kind = crate::types::CipherKind::SigningKey(crate::types::SigningKeyData {
                     private_key: None,
                     passphrase: None,
                     public_key: None,
@@ -12403,8 +12400,8 @@ mod tests {
                     issuer: None,
                     subject: None,
                     fingerprint: None,
-                }),
-                ..crate::types::CipherInput::default()
+                });
+                ci
             })
             .unwrap();
         let metas = h.list_cipher_meta().unwrap();
@@ -12430,9 +12427,10 @@ mod tests {
             "intermediate",
         );
         let id = h
-            .add_cipher(&crate::types::CipherInput {
-                name: "Release Key".into(),
-                kind: crate::types::CipherKind::SigningKey(crate::types::SigningKeyData {
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Release Key".into();
+                ci.kind = crate::types::CipherKind::SigningKey(crate::types::SigningKeyData {
                     private_key: None,
                     passphrase: None,
                     public_key: None,
@@ -12442,8 +12440,8 @@ mod tests {
                     issuer: None,
                     subject: Some("user typed this".into()),
                     fingerprint: None,
-                }),
-                ..crate::types::CipherInput::default()
+                });
+                ci
             })
             .unwrap();
         let CipherRead::Decrypted(c) = h.get_cipher(id).unwrap() else {
@@ -12469,9 +12467,10 @@ mod tests {
         // intermediate would mislabel the entry, so the user-typed fields
         // stand untouched.
         let id = h
-            .add_cipher(&crate::types::CipherInput {
-                name: "Broken Chain".into(),
-                kind: crate::types::CipherKind::SigningKey(crate::types::SigningKeyData {
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Broken Chain".into();
+                ci.kind = crate::types::CipherKind::SigningKey(crate::types::SigningKeyData {
                     private_key: None,
                     passphrase: None,
                     public_key: None,
@@ -12488,8 +12487,8 @@ mod tests {
                     issuer: None,
                     subject: Some("user typed this".into()),
                     fingerprint: None,
-                }),
-                ..crate::types::CipherInput::default()
+                });
+                ci
             })
             .unwrap();
         let CipherRead::Decrypted(c) = h.get_cipher(id).unwrap() else {
@@ -12752,14 +12751,15 @@ mod tests {
         .unwrap();
         let foreign_folder = Uuid::new_v4();
         let source_id = a
-            .add_cipher(&crate::types::CipherInput {
-                name: "Bank".into(),
-                folder_id: Some(foreign_folder),
-                collection_id: None,
-                kind,
-                archived: true,
-                created_at: Some(1_600_000_000),
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Bank".into();
+                ci.folder_id = Some(foreign_folder);
+                ci.collection_id = None;
+                ci.kind = kind;
+                ci.archived = true;
+                ci.created_at = Some(1_600_000_000);
+                ci
             })
             .unwrap();
 
@@ -12809,10 +12809,11 @@ mod tests {
             serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
                 .unwrap();
         let source_id = a
-            .add_cipher(&crate::types::CipherInput {
-                name: "Bank".into(),
-                kind,
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Bank".into();
+                ci.kind = kind;
+                ci
             })
             .unwrap();
 
@@ -12877,10 +12878,11 @@ mod tests {
         login_data.fido2_credentials = Some(vec![passkey]);
         let kind = crate::types::CipherKind::Login(login_data);
         let source_id = a
-            .add_cipher(&crate::types::CipherInput {
-                name: "Bank".into(),
-                kind,
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Bank".into();
+                ci.kind = kind;
+                ci
             })
             .unwrap();
 
@@ -12913,14 +12915,12 @@ mod tests {
             r#"{"type":"login","data":{"username":"u","password":"new-pass"}}"#,
         )
         .unwrap();
-        a.update_cipher(
-            source_id,
-            &crate::types::CipherInput {
-                name: "Bank".into(),
-                kind: kind2,
-                ..Default::default()
-            },
-        )
+        a.update_cipher(source_id, &{
+            let mut ci = crate::types::CipherInput::default();
+            ci.name = "Bank".into();
+            ci.kind = kind2;
+            ci
+        })
         .unwrap();
         let resync = a.outbox_resync_all().unwrap();
         assert!(
@@ -12963,10 +12963,11 @@ mod tests {
                 favicon: Default::default(),
                 fido2_credentials: Default::default(),
             });
-            crate::types::CipherInput {
-                name: name.into(),
-                kind,
-                ..Default::default()
+            {
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = name.into();
+                ci.kind = kind;
+                ci
             }
         };
         let id = h.add_cipher(&mk_input("In Collection", "p")).unwrap();
@@ -13079,10 +13080,11 @@ mod tests {
             fido2_credentials: Default::default(),
         });
         let cid = h
-            .add_cipher(&crate::types::CipherInput {
-                name: "E".into(),
-                kind,
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "E".into();
+                ci.kind = kind;
+                ci
             })
             .unwrap();
         // No grant: refused before any commit can be created.
@@ -13384,10 +13386,11 @@ mod tests {
             serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
                 .unwrap();
         let source_id = a
-            .add_cipher(&crate::types::CipherInput {
-                name: "Bank".into(),
-                kind,
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Bank".into();
+                ci.kind = kind;
+                ci
             })
             .unwrap();
         let card_code = b.contact_card_create().unwrap();
@@ -13424,10 +13427,11 @@ mod tests {
             serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
                 .unwrap();
         let source_id = a
-            .add_cipher(&crate::types::CipherInput {
-                name: "Bank".into(),
-                kind,
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Bank".into();
+                ci.kind = kind;
+                ci
             })
             .unwrap();
         let card_code = b.contact_card_create().unwrap();
@@ -13466,17 +13470,19 @@ mod tests {
         a.save_settings(&settings).unwrap();
 
         let source_id = a
-            .add_cipher(&crate::types::CipherInput {
-                name: "Team login".into(),
-                kind: serde_json::from_str(
-                    r#"{"type":"login","data":{"username":"ada",
-                        "password":"hunter2",
-                        "uris":[{"uri":"https://app.example.com"}],
-                        "totp_uri":"otpauth://totp/Example:ada@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"}}"#,
-                )
-                .unwrap(),
-            ..Default::default()
-            })
+            .add_cipher(&{
+    let mut ci = crate::types::CipherInput::default();
+    ci.name = "Team login".into();
+    ci.kind =
+        serde_json::from_str(
+        r#"{"type":"login","data":{"username":"ada",
+        "password":"hunter2",
+        "uris":[{"uri":"https://app.example.com"}],
+        "totp_uri":"otpauth://totp/Example:ada@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"}}"#,
+        )
+        .unwrap();
+    ci
+})
             .unwrap();
 
         // B's card lands in A's book at Channel (Level 1 is enough).
@@ -13530,10 +13536,11 @@ mod tests {
 
         // Non-Login ciphers refuse.
         let note_id = a
-            .add_cipher(&crate::types::CipherInput {
-                name: "Note".into(),
-                kind: serde_json::from_str(r#"{"type":"secureNote"}"#).unwrap(),
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Note".into();
+                ci.kind = serde_json::from_str(r#"{"type":"secureNote"}"#).unwrap();
+                ci
             })
             .unwrap();
         let err = a
@@ -13576,15 +13583,16 @@ mod tests {
         assert_ne!(settings.guest_enabled, Some(true));
 
         let source_id = handle
-            .add_cipher(&crate::types::CipherInput {
-                name: "Team login".into(),
-                kind: serde_json::from_str(
+            .add_cipher(&{
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = "Team login".into();
+                ci.kind = serde_json::from_str(
                     r#"{"type":"login","data":{"username":"ada",
-                        "password":"hunter2",
-                        "uris":[{"uri":"https://app.example.com"}]}}"#,
+        "password":"hunter2",
+        "uris":[{"uri":"https://app.example.com"}]}}"#,
                 )
-                .unwrap(),
-                ..Default::default()
+                .unwrap();
+                ci
             })
             .unwrap();
         let expires = std::time::SystemTime::now()
@@ -14163,13 +14171,14 @@ mod tests {
         );
 
         let work = handle.collection_create("Work").unwrap();
-        let mk_login = |name: &str| crate::types::CipherInput {
-            name: name.into(),
-            kind: serde_json::from_str(
+        let mk_login = |name: &str| {
+            let mut ci = crate::types::CipherInput::default();
+            ci.name = name.into();
+            ci.kind = serde_json::from_str(
                 r#"{"type":"login","data":{"username":"ada","password":"pw"}}"#,
             )
-            .unwrap(),
-            ..Default::default()
+            .unwrap();
+            ci
         };
         let t1 = handle
             .add_cipher_in_collection(&mk_login("One"), Some(work))
@@ -16737,16 +16746,18 @@ mod tests {
 
         // 2. Add some ciphers - should automatically update index
         let _id1 = handle
-            .add_cipher(&CipherInput {
-                name: "GH1".into(),
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = CipherInput::default();
+                ci.name = "GH1".into();
+                ci
             })
             .unwrap();
 
         let _id2 = handle
-            .add_cipher(&CipherInput {
-                name: "AWS1".into(),
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = CipherInput::default();
+                ci.name = "AWS1".into();
+                ci
             })
             .unwrap();
 
@@ -16782,9 +16793,10 @@ mod tests {
         handle.unlock(&password).unwrap();
 
         // Add a cipher
-        let input = CipherInput {
-            name: "ArchiveMe".into(),
-            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+        let input = {
+            let mut ci = CipherInput::default();
+            ci.name = "ArchiveMe".into();
+            ci.kind = crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("arch@example.com".into()),
                 password: Some("s3cret".into()),
                 uris: Default::default(),
@@ -16793,8 +16805,8 @@ mod tests {
                 password_revision_date: Default::default(),
                 favicon: Default::default(),
                 fido2_credentials: Default::default(),
-            }),
-            ..Default::default()
+            });
+            ci
         };
         let cipher_id = handle.add_cipher(&input).unwrap();
 
@@ -16848,9 +16860,10 @@ mod tests {
         let mut handle = VaultHandle::open(path).unwrap();
         handle.unlock(&password).unwrap();
 
-        let input = CipherInput {
-            name: "DoubleArchive".into(),
-            ..Default::default()
+        let input = {
+            let mut ci = CipherInput::default();
+            ci.name = "DoubleArchive".into();
+            ci
         };
         let cipher_id = handle.add_cipher(&input).unwrap();
 
@@ -18879,10 +18892,11 @@ mod tests {
                 favicon: Default::default(),
                 fido2_credentials: Default::default(),
             });
-            crate::types::CipherInput {
-                name: name.into(),
-                kind,
-                ..Default::default()
+            {
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = name.into();
+                ci.kind = kind;
+                ci
             }
         };
 
@@ -21045,10 +21059,11 @@ mod tests {
 
         // Seed via the regular add so a real on-disk index exists.
         handle
-            .add_cipher(&CipherInput {
-                name: "Seed".into(),
-                kind: crate::types::CipherKind::Login(Default::default()),
-                ..Default::default()
+            .add_cipher(&{
+                let mut ci = CipherInput::default();
+                ci.name = "Seed".into();
+                ci.kind = crate::types::CipherKind::Login(Default::default());
+                ci
             })
             .unwrap();
 
@@ -21064,10 +21079,11 @@ mod tests {
 
         for i in 0..4 {
             handle
-                .add_cipher_batch(&CipherInput {
-                    name: format!("Batch {i}"),
-                    kind: crate::types::CipherKind::Login(Default::default()),
-                    ..Default::default()
+                .add_cipher_batch(&{
+                    let mut ci = CipherInput::default();
+                    ci.name = format!("Batch {i}");
+                    ci.kind = crate::types::CipherKind::Login(Default::default());
+                    ci
                 })
                 .unwrap();
         }
