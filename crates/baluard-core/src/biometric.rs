@@ -94,6 +94,8 @@ mod platform {
         let access_control = SecAccessControl::create_with_flags(AC_FLAGS.bits())
             .map_err(|e| format!("access control create: {e}"))?;
 
+        // SAFETY: keys are static CFStringRefs and values are owned CFTypes;
+        // from_CFType_pairs retains them.
         let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
             vec![
                 unsafe_pair(
@@ -129,6 +131,7 @@ mod platform {
         };
 
         let params = CFDictionary::from_CFType_pairs(&query);
+        // SAFETY: params is a valid CFDictionary from the query above; the result out-param is unused (null).
         let status = unsafe {
             security_framework_sys::keychain_item::SecItemAdd(
                 params.as_concrete_TypeRef(),
@@ -163,6 +166,8 @@ mod platform {
         //   errSecSuccess(0) = item exists
         //   errSecInteractionNotAllowed(-25308) = item exists, biometric-protected
         //   errSecItemNotFound = no item
+        // SAFETY: keys are static CFStringRefs and values are owned CFTypes;
+        // from_CFType_pairs retains them.
         let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
             vec![
                 unsafe_pair(
@@ -199,6 +204,7 @@ mod platform {
 
         let params = CFDictionary::from_CFType_pairs(&query);
         let mut ret: core_foundation_sys::base::CFTypeRef = std::ptr::null();
+        // SAFETY: params is a valid CFDictionary; ret receives a retained CFType or stays null.
         let status = unsafe {
             security_framework_sys::keychain_item::SecItemCopyMatching(
                 params.as_concrete_TypeRef(),
@@ -207,6 +213,7 @@ mod platform {
         };
 
         if !ret.is_null() {
+            // SAFETY: ret was retained by SecItemCopyMatching above, so the release balances it.
             unsafe { core_foundation_sys::base::CFRelease(ret) };
         }
 
@@ -217,6 +224,8 @@ mod platform {
     /// Retrieve stored master password. Triggers Touch ID / biometric prompt.
     /// The returned bytes are zeroized after conversion.
     pub fn unlock(account: &str) -> Result<String, String> {
+        // SAFETY: keys are static CFStringRefs and values are owned CFTypes;
+        // from_CFType_pairs retains them.
         let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
             vec![
                 unsafe_pair(
@@ -247,6 +256,7 @@ mod platform {
 
         let params = CFDictionary::from_CFType_pairs(&query);
         let mut ret: core_foundation_sys::base::CFTypeRef = std::ptr::null();
+        // SAFETY: params is a valid CFDictionary; ret receives a retained CFType or stays null.
         let status = unsafe {
             security_framework_sys::keychain_item::SecItemCopyMatching(
                 params.as_concrete_TypeRef(),
@@ -263,6 +273,7 @@ mod platform {
         }
 
         // Wrap in Zeroizing for secure cleanup of the CFData.
+        // SAFETY: ptr/len describe the live CFData buffer; the bytes are copied before CFRelease runs.
         let cf_data = unsafe {
             let data_ref = ret as core_foundation_sys::data::CFDataRef;
             let len = core_foundation_sys::data::CFDataGetLength(data_ref) as usize;
@@ -276,6 +287,8 @@ mod platform {
     }
 
     fn delete(account: &str) -> Result<(), String> {
+        // SAFETY: keys are static CFStringRefs and values are owned CFTypes;
+        // from_CFType_pairs retains them.
         let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
             vec![
                 unsafe_pair(
@@ -301,6 +314,7 @@ mod platform {
         };
 
         let params = CFDictionary::from_CFType_pairs(&query);
+        // SAFETY: params is a valid CFDictionary from the query above.
         let status = unsafe {
             security_framework_sys::keychain_item::SecItemDelete(params.as_concrete_TypeRef())
         };
@@ -322,6 +336,8 @@ mod platform {
         key: core_foundation_sys::string::CFStringRef,
         value: V,
     ) -> (CFString, core_foundation::base::CFType) {
+        // SAFETY: key must be a valid CFStringRef. wrap_under_get_rule retains
+        // it (Get rule) and the CFString wrapper releases that retain on drop.
         (
             unsafe { CFString::wrap_under_get_rule(key) },
             value.into_CFType(),

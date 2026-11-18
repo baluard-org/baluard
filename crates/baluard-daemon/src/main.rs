@@ -146,6 +146,7 @@ fn main() -> anyhow::Result<()> {
     #[cfg(unix)]
     if std::env::var("BALUARD_DAEMON_DIE_WITH_PARENT").as_deref() == Ok("1") {
         std::thread::spawn(|| {
+            // SAFETY: getppid takes no pointers and cannot fail.
             let ppid = unsafe { libc::getppid() };
             // Already orphaned before we captured the parent (parent
             // died inside the spawn race): init re-parented us, exit
@@ -157,6 +158,7 @@ fn main() -> anyhow::Result<()> {
             }
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(2));
+                // SAFETY: getppid takes no pointers and cannot fail.
                 if unsafe { libc::getppid() } != ppid {
                     std::process::exit(0);
                 }
@@ -314,12 +316,14 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
         }
         // Restrictive umask BEFORE bind so socket is born with 0600, then
         // restore so subsequent mkdir calls keep the execute bit.
+        // SAFETY: umask takes no pointers and cannot fail.
         let prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
         let l = UnixListener::bind(socket_path).map_err(|e| {
             anyhow::anyhow!(
                 "another daemon is already listening on {socket_path} ({e}); use the baluard CLI against it, or stop it before starting another"
             )
         })?;
+        // SAFETY: umask takes no pointers and cannot fail.
         unsafe {
             libc::umask(prev);
         }
@@ -376,6 +380,7 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
         use tokio::net::windows::named_pipe::ServerOptions;
 
         let pipe_name: &str = socket_path;
+        // SAFETY: attrs points at a SECURITY_ATTRIBUTES whose descriptor and DACL stay valid and unmoved for the duration of the call.
         unsafe {
             ServerOptions::new()
                 .first_pipe_instance(true)
@@ -516,6 +521,7 @@ async fn spawn_next_pipe_instance(
     use tokio::net::windows::named_pipe::ServerOptions;
 
     loop {
+        // SAFETY: attrs points at a SECURITY_ATTRIBUTES whose descriptor and DACL stay valid and unmoved for the duration of the call.
         match unsafe {
             ServerOptions::new().create_with_security_attributes_raw(
                 pipe_name,

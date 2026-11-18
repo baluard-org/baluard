@@ -129,6 +129,7 @@ impl NcryptHandle {
 
     fn release(&mut self) {
         if self.0 != 0 {
+            // SAFETY: handle is nonzero (checked above) and owned solely by this wrapper.
             unsafe {
                 nc::NCryptFreeObject(self.0);
             }
@@ -150,6 +151,7 @@ struct BcryptKey(*mut core::ffi::c_void);
 impl Drop for BcryptKey {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // SAFETY: handle is non-null and owned solely by this wrapper.
             unsafe {
                 nc::BCryptDestroyKey(self.0);
             }
@@ -163,6 +165,7 @@ struct BcryptAlg(*mut core::ffi::c_void);
 impl Drop for BcryptAlg {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // SAFETY: handle is non-null and owned solely by this wrapper.
             unsafe {
                 nc::BCryptCloseAlgorithmProvider(self.0, 0);
             }
@@ -177,6 +180,7 @@ fn mint_ephemeral_point() -> Result<Handshake, BaluardError> {
     let alg_name = wide(BCRYPT_ECDH_ALG);
     let mut alg: *mut core::ffi::c_void = std::ptr::null_mut();
     // BCrypt returns NTSTATUS, also 0 on success.
+    // SAFETY: alg is a writable out-slot and alg_name is a NUL-terminated UTF-16 string.
     if unsafe { nc::BCryptOpenAlgorithmProvider(&mut alg, alg_name.as_ptr(), std::ptr::null(), 0) }
         != 0
     {
@@ -185,16 +189,19 @@ fn mint_ephemeral_point() -> Result<Handshake, BaluardError> {
     let alg = BcryptAlg(alg);
 
     let mut key: *mut core::ffi::c_void = std::ptr::null_mut();
+    // SAFETY: alg is a live provider handle and key is a writable out-slot.
     if unsafe { nc::BCryptGenerateKeyPair(alg.0, &mut key, 256, 0) } != 0 {
         return Err(crate::hwkey::hw_unavailable_error());
     }
     let key = BcryptKey(key);
+    // SAFETY: key is a live generated keypair.
     if unsafe { nc::BCryptFinalizeKeyPair(key.0, 0) } != 0 {
         return Err(crate::hwkey::hw_unavailable_error());
     }
 
     let blob_type = wide(ECC_PUBLIC_BLOB);
     let mut len: u32 = 0;
+    // SAFETY: key is live, blob_type is NUL-terminated UTF-16, and the null buffer sizes the export.
     if unsafe {
         nc::BCryptExportKey(
             key.0,
@@ -210,6 +217,7 @@ fn mint_ephemeral_point() -> Result<Handshake, BaluardError> {
         return Err(crate::hwkey::hw_unavailable_error());
     }
     let mut blob = vec![0u8; len as usize];
+    // SAFETY: key is live and blob is writable for len bytes as sized by the call above.
     if unsafe {
         nc::BCryptExportKey(
             key.0,
@@ -241,6 +249,7 @@ impl PcpStore {
     fn open_provider() -> Result<NcryptHandle, BaluardError> {
         let name = wide(PROVIDER_NAME);
         let mut prov: usize = 0;
+        // SAFETY: prov is a writable out-slot and name is a NUL-terminated UTF-16 string.
         check(unsafe { nc::NCryptOpenStorageProvider(&mut prov, name.as_ptr(), 0) })?;
         Ok(NcryptHandle(prov))
     }
@@ -249,6 +258,7 @@ impl PcpStore {
     fn open_key(prov: usize, binding: &str) -> Result<Option<NcryptHandle>, BaluardError> {
         let name = wide(&key_name(binding)?);
         let mut key: usize = 0;
+        // SAFETY: prov is a live provider handle, key is a writable out-slot, and name is NUL-terminated UTF-16.
         let status = unsafe { nc::NCryptOpenKey(prov, &mut key, name.as_ptr(), 0, 0) };
         if status == NTE_BAD_KEYSET {
             return Ok(None);
@@ -263,6 +273,7 @@ impl PcpStore {
         let blob = point_to_blob(peer)?;
         let blob_type = wide(ECC_PUBLIC_BLOB);
         let mut peer_key: usize = 0;
+        // SAFETY: prov is live, blob and blob_type are valid buffers, and peer_key is a writable out-slot.
         check(unsafe {
             nc::NCryptImportKey(
                 prov,
@@ -278,11 +289,13 @@ impl PcpStore {
         let mut peer_key = NcryptHandle(peer_key);
 
         let mut secret: usize = 0;
+        // SAFETY: both key handles are live and secret is a writable out-slot.
         check(unsafe { nc::NCryptSecretAgreement(chip_key, peer_key.0, &mut secret, 0) })?;
         let mut secret = NcryptHandle(secret);
 
         let kdf = wide(KDF_RAW_SECRET);
         let mut len: u32 = 0;
+        // SAFETY: secret is live, kdf is NUL-terminated UTF-16, and the null buffer sizes the derivation.
         check(unsafe {
             nc::NCryptDeriveKey(
                 secret.0,
@@ -300,6 +313,7 @@ impl PcpStore {
             ));
         }
         let mut raw = vec![0u8; len as usize];
+        // SAFETY: secret is live and raw is writable for len bytes as sized by the call above.
         check(unsafe {
             nc::NCryptDeriveKey(
                 secret.0,
@@ -342,6 +356,7 @@ impl HardwareKeyStore for PcpStore {
             rand::Rng::gen::<u32>(&mut rand::thread_rng())
         ));
         let mut key: usize = 0;
+        // SAFETY: prov is live, key is a writable out-slot, and both names are NUL-terminated UTF-16.
         if unsafe {
             nc::NCryptCreatePersistedKey(
                 prov.0,
@@ -358,11 +373,13 @@ impl HardwareKeyStore for PcpStore {
             };
         }
         let mut key = NcryptHandle(key);
+        // SAFETY: key is a live created keypair.
         if unsafe { nc::NCryptFinalizeKey(key.0, 0) } != 0 {
             return HwCapability::Unavailable {
                 reason: "driver-error".into(),
             };
         }
+        // SAFETY: key is a live persisted key; DeleteKey consumes the handle (invalidated below).
         unsafe {
             nc::NCryptDeleteKey(key.0, 0);
         }
@@ -392,6 +409,7 @@ impl HardwareKeyStore for PcpStore {
         }
         let name = wide(&key_name(&binding)?);
         let mut key: usize = 0;
+        // SAFETY: prov is live, key is a writable out-slot, and both names are NUL-terminated UTF-16.
         let status = unsafe {
             nc::NCryptCreatePersistedKey(
                 prov.0,
@@ -411,6 +429,7 @@ impl HardwareKeyStore for PcpStore {
         }
         check(status)?;
         let mut key = NcryptHandle(key);
+        // SAFETY: key is a live created keypair.
         check(unsafe { nc::NCryptFinalizeKey(key.0, 0) })?;
         key.release();
         Ok(crate::hwkey::BindingInfo {
@@ -459,6 +478,7 @@ impl HardwareKeyStore for PcpStore {
             return Ok(());
         };
         let mut key = key;
+        // SAFETY: key is a live persisted key; DeleteKey consumes the handle (invalidated below).
         check(unsafe { nc::NCryptDeleteKey(key.0, 0) })?;
         key.invalidate();
         Ok(())

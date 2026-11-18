@@ -516,6 +516,7 @@ impl VaultHost {
             // M5: check getrlimit's return value; on failure log "unknown"
             // instead of the misleading "0 B" (a zeroed struct yields
             // rlim_cur = 0 on failure, which is a valid limit value).
+            // SAFETY: limit is zeroed and writable; getrlimit fills at most sizeof(rlimit) and returns its status.
             let rlim_result = unsafe {
                 let mut limit: libc::rlimit = std::mem::zeroed();
                 let rc = libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut limit);

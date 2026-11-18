@@ -62,6 +62,7 @@ impl Drop for Daemon {
         {
             if let Some(ref child) = self.0 {
                 let pid = child.pid() as i32;
+                // SAFETY: pid is our own spawned daemon child; kill only signals.
                 unsafe {
                     libc::kill(pid, libc::SIGTERM);
                 }
@@ -969,6 +970,7 @@ mod clipboard_conceal {
         ] {
             let mut wide: Vec<u16> = name.encode_utf16().collect();
             wide.push(0);
+            // SAFETY: wide is a NUL-terminated UTF-16 buffer; every handle is checked before use and released on every path.
             unsafe {
                 // Transient ownership races are not uncommon on Windows: skip
                 // THIS marker, still try the next one.

@@ -700,14 +700,18 @@ pub fn handle_get(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let output = if json { "json" } else { output };
     let resolved_id = if matches!(mode, ConnectMode::Daemon) {
-        agent::resolve_item_id_for_cli(id_or_name, socket).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?
+        agent::resolve_item_id_for_cli(id_or_name, socket)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?
     } else {
         id_or_name.to_string()
     };
     let cipher_id = match uuid::Uuid::parse_str(&resolved_id) {
         Ok(id) => id,
         Err(_) => {
-            return Err("Searching by name is not supported in --direct mode; the entry id is required.".into());
+            return Err(
+                "Searching by name is not supported in --direct mode; the entry id is required."
+                    .into(),
+            );
         }
     };
 
@@ -1054,7 +1058,11 @@ pub fn handle_list(
     }
 }
 
-fn list_direct(vault_path: &str, archived: bool, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn list_direct(
+    vault_path: &str,
+    archived: bool,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
     // Auto-unlock when BALUARD_PASSWORD is set, so scripting/tests get full
     // cipher metadata (name, type, username) without an explicit `unlock`

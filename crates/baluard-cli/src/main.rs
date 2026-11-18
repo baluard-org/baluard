@@ -1966,7 +1966,10 @@ fn main() {
 
     // Daily update check + notice; skipped for self-update (it fetches on
     // its own) and run (D80 agents parse output, no noise).
-    if !matches!(cli.command, Commands::SelfUpdate | Commands::Run { .. } | Commands::Inject { .. }) {
+    if !matches!(
+        cli.command,
+        Commands::SelfUpdate | Commands::Run { .. } | Commands::Inject { .. }
+    ) {
         update::startup_notice();
     }
 
@@ -2274,7 +2277,14 @@ fn main() {
             all,
             vault,
             json,
-        } => commands::handle_search(mode, cli.socket.as_deref(), &query, all, vault.as_deref(), json),
+        } => commands::handle_search(
+            mode,
+            cli.socket.as_deref(),
+            &query,
+            all,
+            vault.as_deref(),
+            json,
+        ),
 
         Commands::Generate {
             kind,
@@ -2310,9 +2320,7 @@ fn main() {
             commands::handle_members(mode, cli.socket.as_deref(), &action)
         }
 
-        Commands::Group { action } => {
-            commands::handle_groups(mode, cli.socket.as_deref(), &action)
-        }
+        Commands::Group { action } => commands::handle_groups(mode, cli.socket.as_deref(), &action),
 
         Commands::Policy { action } => {
             commands::handle_policies(mode, cli.socket.as_deref(), &action)

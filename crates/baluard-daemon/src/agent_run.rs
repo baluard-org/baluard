@@ -300,6 +300,7 @@ fn kill_process_group(child: &tokio::process::Child) {
     // kill(-1, sig) signals every process the user owns and kill(0, sig)
     // signals our own group, so only a real child pid may be negated.
     if let Some(pid) = child.id().filter(|pid| *pid > 1) {
+        // SAFETY: pid is a live child greater than 1, so the negated pid targets only its own process group.
         unsafe {
             libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
         }
@@ -363,7 +364,9 @@ pub(crate) fn process_chain(pid: u32) -> Option<Vec<(u32, u64)>> {
 /// The start time replaces the wildcard zero in the macOS peer binding.
 #[cfg(target_os = "macos")]
 pub(crate) fn macos_proc_info(pid: u32) -> Option<(u32, u64)> {
+    // SAFETY: zeroed proc_bsdinfo is a valid all-zero value; proc_pidinfo fills the real fields.
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    // SAFETY: info is writable with buffersize sizeof(proc_bsdinfo); proc_pidinfo writes at most buffersize bytes.
     let ret = unsafe {
         libc::proc_pidinfo(
             pid as libc::c_int,
@@ -431,7 +434,11 @@ async fn resolve_item_field(
                 fields
                     .iter()
                     .find(|entry| entry["name"] == wanted)
-                    .and_then(|entry| entry["value"].as_str().map(|s| Zeroizing::new(s.to_string())))
+                    .and_then(|entry| {
+                        entry["value"]
+                            .as_str()
+                            .map(|s| Zeroizing::new(s.to_string()))
+                    })
             })
         }
         scalar => cipher
@@ -580,7 +587,12 @@ fn file_record(path: &std::path::Path) -> Result<InjectedRecord, String> {
     #[cfg(unix)]
     let (dev, ino, mtime_secs, mtime_nanos) = {
         use std::os::unix::fs::MetadataExt;
-        (meta.dev(), meta.ino(), meta.mtime(), meta.mtime_nsec() as u32)
+        (
+            meta.dev(),
+            meta.ino(),
+            meta.mtime(),
+            meta.mtime_nsec() as u32,
+        )
     };
     #[cfg(not(unix))]
     let (dev, ino, mtime_secs, mtime_nanos) = (0, 0, 0, 0);
@@ -639,7 +651,9 @@ struct StreamingRunSession {
 }
 
 static STREAMING_RUNS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::Mutex<StreamingRunSession>>>>,
+    std::sync::Mutex<
+        std::collections::HashMap<String, std::sync::Arc<std::sync::Mutex<StreamingRunSession>>>,
+    >,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 #[derive(serde::Deserialize)]
@@ -737,7 +751,10 @@ pub async fn run_start(
     };
     if payload.argv.is_empty()
         || payload.argv.len() > 64
-        || payload.argv.iter().any(|arg| arg.len() > 4096 || arg.contains('\0'))
+        || payload
+            .argv
+            .iter()
+            .any(|arg| arg.len() > 4096 || arg.contains('\0'))
         || payload.inject.len() > 32
     {
         return err_response("agent command exceeds its size limits");
@@ -899,30 +916,29 @@ pub async fn run_start(
     let audit_items = verdict.grant_item_ids.clone();
     let session_wait = std::sync::Arc::clone(&session);
     tokio::spawn(async move {
-        let (exit_code, exit_signal) =
-            match tokio::time::timeout(timeout_dur, child.wait()).await {
-                Ok(Ok(status)) => {
-                    #[cfg(unix)]
-                    let sig = {
-                        use std::os::unix::process::ExitStatusExt;
-                        status.signal()
-                    };
-                    #[cfg(not(unix))]
-                    let sig: Option<i32> = None;
-                    let code = match (status.code(), sig) {
-                        (Some(c), _) => c,
-                        (None, Some(s)) => 128 + s,
-                        (None, None) => -1,
-                    };
-                    (code, sig)
-                }
-                Ok(Err(_)) => (-1, None),
-                Err(_) => {
-                    kill_process_group(&child);
-                    let _ = child.kill().await;
-                    (-1, Some(9))
-                }
-            };
+        let (exit_code, exit_signal) = match tokio::time::timeout(timeout_dur, child.wait()).await {
+            Ok(Ok(status)) => {
+                #[cfg(unix)]
+                let sig = {
+                    use std::os::unix::process::ExitStatusExt;
+                    status.signal()
+                };
+                #[cfg(not(unix))]
+                let sig: Option<i32> = None;
+                let code = match (status.code(), sig) {
+                    (Some(c), _) => c,
+                    (None, Some(s)) => 128 + s,
+                    (None, None) => -1,
+                };
+                (code, sig)
+            }
+            Ok(Err(_)) => (-1, None),
+            Err(_) => {
+                kill_process_group(&child);
+                let _ = child.kill().await;
+                (-1, Some(9))
+            }
+        };
         let _ = tokio::time::timeout(AGENT_DRAIN_GRACE, stdout_task).await;
         let _ = tokio::time::timeout(AGENT_DRAIN_GRACE, stderr_task).await;
         if let Ok(mut guard) = session_wait.lock() {
@@ -999,7 +1015,8 @@ pub async fn run_poll(
         let secrets = guard.secrets.clone();
         let out = drain_scrubbed_buf(&mut guard.stdout_buf, &secrets, flush_out);
         let err = drain_scrubbed_buf(&mut guard.stderr_buf, &secrets, flush_err);
-        let fully_drained = guard.done && guard.stdout_buf.is_empty() && guard.stderr_buf.is_empty();
+        let fully_drained =
+            guard.done && guard.stdout_buf.is_empty() && guard.stderr_buf.is_empty();
         (
             guard.done,
             guard.status,

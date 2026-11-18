@@ -8425,8 +8425,11 @@ pub(crate) fn peer_binding_unix(
     stream: &impl std::os::unix::io::AsRawFd,
 ) -> Option<baluard_runtime::agents::PeerBinding> {
     let fd = stream.as_raw_fd();
+    // SAFETY: ucred is plain data; all-zero is a valid value for the kernel to overwrite.
     let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
     let mut cred_len: libc::socklen_t = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: cred_len carries sizeof(ucred); getsockopt writes at most
+    // *cred_len bytes into cred.
     let ret = unsafe {
         libc::getsockopt(
             fd,
@@ -8467,6 +8470,7 @@ pub(crate) fn peer_binding_unix(
 ) -> Option<baluard_runtime::agents::PeerBinding> {
     let fd = stream.as_raw_fd();
     let mut pid: libc::pid_t = 0;
+    // SAFETY: pid is a writable pid_t and the length arg pins the write to one pid_t.
     let ret = unsafe {
         libc::getsockopt(
             fd,
@@ -8480,6 +8484,7 @@ pub(crate) fn peer_binding_unix(
         return None;
     }
     let mut buf = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: buf holds PROC_PIDPATHINFO_MAXSIZE bytes; proc_pidpath writes at most bufsize bytes and returns the length written.
     let len =
         unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr() as *mut libc::c_void, buf.len() as u32) };
     if len <= 0 {
@@ -8524,9 +8529,12 @@ fn verify_peer_uid_unix(stream: &UnixStream) -> Result<()> {
     use std::os::unix::io::AsRawFd;
 
     let fd = stream.as_raw_fd();
+    // SAFETY: ucred is plain data; all-zero is a valid value for the kernel to overwrite.
     let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
     let mut cred_len: libc::socklen_t = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
 
+    // SAFETY: cred_len carries sizeof(ucred); getsockopt writes at most
+    // *cred_len bytes into cred.
     let ret = unsafe {
         libc::getsockopt(
             fd,
@@ -8541,6 +8549,7 @@ fn verify_peer_uid_unix(stream: &UnixStream) -> Result<()> {
         anyhow::bail!("Failed to get peer credentials: SO_PEERCRED failed");
     }
 
+    // SAFETY: geteuid takes no pointers and cannot fail.
     let my_uid = unsafe { libc::geteuid() };
     if cred.uid != my_uid {
         anyhow::bail!(
@@ -8562,11 +8571,13 @@ fn verify_peer_uid_unix(stream: &UnixStream) -> Result<()> {
     let mut uid: libc::uid_t = 0;
     let mut gid: libc::gid_t = 0;
 
+    // SAFETY: uid/gid are valid writable uid_t/gid_t and fd is a live connected socket; getpeereid writes one of each.
     let ret = unsafe { getpeereid(fd, &mut uid, &mut gid) };
     if ret != 0 {
         anyhow::bail!("Failed to get peer credentials");
     }
 
+    // SAFETY: geteuid takes no pointers and cannot fail.
     let my_uid = unsafe { geteuid() };
     if uid != my_uid {
         anyhow::bail!(
@@ -8587,8 +8598,11 @@ fn verify_peer_uid_unix(stream: &UnixStream) -> Result<()> {
 pub(crate) fn peer_uid_matches_daemon(fd: std::os::unix::io::RawFd) -> bool {
     #[cfg(target_os = "linux")]
     {
+        // SAFETY: ucred is plain data; all-zero is a valid value for the kernel to overwrite.
         let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
         let mut cred_len: libc::socklen_t = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: cred_len carries sizeof(ucred); getsockopt writes at most
+        // *cred_len bytes into cred.
         let ret = unsafe {
             libc::getsockopt(
                 fd,
@@ -8601,12 +8615,15 @@ pub(crate) fn peer_uid_matches_daemon(fd: std::os::unix::io::RawFd) -> bool {
         if ret != 0 {
             return false;
         }
+        // SAFETY: geteuid takes no pointers and cannot fail.
         cred.uid == unsafe { libc::geteuid() }
     }
     #[cfg(not(target_os = "linux"))]
     {
         let mut uid: libc::uid_t = 0;
         let mut gid: libc::gid_t = 0;
+        // SAFETY: getpeereid writes one uid_t/gid_t each into writable
+        // out-args on a live socket; geteuid takes no pointers.
         let ret = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
         ret == 0 && uid == unsafe { libc::geteuid() }
     }

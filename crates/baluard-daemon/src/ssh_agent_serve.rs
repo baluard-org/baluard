@@ -621,6 +621,7 @@ mod serve {
             // 1's SD is not a documented guarantee, and a NULL
             // descriptor would fall back to the default SD that grants
             // read to Everyone and Anonymous.
+            // SAFETY: attrs points at a SECURITY_ATTRIBUTES whose descriptor and DACL stay valid and unmoved for the duration of the call.
             let server = unsafe {
                 ServerOptions::new()
                     .first_pipe_instance(true)
@@ -707,6 +708,7 @@ mod serve {
             attrs: &mut SendablePipeAttrs,
         ) -> NamedPipeServer {
             loop {
+                // SAFETY: attrs points at a SECURITY_ATTRIBUTES whose descriptor and DACL stay valid and unmoved for the duration of the call.
                 match unsafe {
                     ServerOptions::new().create_with_security_attributes_raw(
                         pipe_name,

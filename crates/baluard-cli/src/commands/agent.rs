@@ -89,7 +89,9 @@ pub fn handle_run(
         Err(e) => deny(&e),
     };
     if plan.injections.is_empty() {
-        deny("at least one secret reference (--env, --env-file, or inherited baluard:// env) is required");
+        deny(
+            "at least one secret reference (--env, --env-file, or inherited baluard:// env) is required",
+        );
     }
 
     let vault_slug = match single_vault_slug(plan.injections.values()) {
@@ -123,9 +125,8 @@ pub fn handle_run(
     };
     let mut agent_token = zeroize::Zeroizing::new(String::new());
     if requested["status"] == "approved" {
-        agent_token = zeroize::Zeroizing::new(
-            requested["token"].as_str().unwrap_or_default().to_string(),
-        );
+        agent_token =
+            zeroize::Zeroizing::new(requested["token"].as_str().unwrap_or_default().to_string());
     } else {
         let Some(request_id) = requested["request_id"].as_str().map(str::to_string) else {
             deny("daemon returned no agent request id");
@@ -247,9 +248,18 @@ fn install_signal_forwarder() -> SignalGuard {
     PENDING_SIGNAL.store(0, std::sync::atomic::Ordering::SeqCst);
     // SAFETY: `on_unix_signal` is async-signal-safe (only performs an atomic store).
     unsafe {
-        libc::signal(libc::SIGINT, on_unix_signal as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, on_unix_signal as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGHUP, on_unix_signal as *const () as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            on_unix_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            on_unix_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGHUP,
+            on_unix_signal as *const () as libc::sighandler_t,
+        );
     }
     SignalGuard
 }
@@ -340,9 +350,8 @@ pub fn handle_inject(
     };
     let mut agent_token = zeroize::Zeroizing::new(String::new());
     if requested["status"] == "approved" {
-        agent_token = zeroize::Zeroizing::new(
-            requested["token"].as_str().unwrap_or_default().to_string(),
-        );
+        agent_token =
+            zeroize::Zeroizing::new(requested["token"].as_str().unwrap_or_default().to_string());
     } else {
         let Some(request_id) = requested["request_id"].as_str().map(str::to_string) else {
             deny("daemon returned no agent request id");
@@ -384,17 +393,15 @@ pub fn handle_inject(
             })
         })
         .collect();
-    let abs_output = output
-        .filter(|p| *p != std::path::Path::new("-"))
-        .map(|p| {
-            if p.is_absolute() {
-                p.to_path_buf()
-            } else {
-                std::env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .join(p)
-            }
-        });
+    let abs_output = output.filter(|p| *p != std::path::Path::new("-")).map(|p| {
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(p)
+        }
+    });
     let mut inject_payload = serde_json::json!({
         "template": template,
         "placeholders": resolved_placeholders,
@@ -426,7 +433,8 @@ pub fn handle_read(
     if matches!(mode, crate::ConnectMode::Direct) {
         return Err("read requires daemon mode; drop --direct".into());
     }
-    let inj = parse_target_ref("READ_REF", reference).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let inj = parse_target_ref("READ_REF", reference)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     crate::commands::ensure_unlocked_daemon(socket)?;
     let resolved = resolve_injections(std::iter::once(&inj))?;
     let item_id = &resolved[0].item_id;
@@ -437,7 +445,11 @@ pub fn handle_read(
     }
     let cipher: serde_json::Value = serde_json::from_str(&resp.payload)?;
     let value = if inj.field == "totp" {
-        let totp_resp = client::request_to("vault.totp", &serde_json::json!({"id": item_id}).to_string(), socket)?;
+        let totp_resp = client::request_to(
+            "vault.totp",
+            &serde_json::json!({"id": item_id}).to_string(),
+            socket,
+        )?;
         if !totp_resp.success {
             return Err(totp_resp.error_message.into());
         }
@@ -507,10 +519,9 @@ pub fn handle_agent_action(
             "agents.approve",
             serde_json::json!({"request_id": request_id}),
         ),
-        crate::AgentAction::Deny { request_id } => (
-            "agents.deny",
-            serde_json::json!({"request_id": request_id}),
-        ),
+        crate::AgentAction::Deny { request_id } => {
+            ("agents.deny", serde_json::json!({"request_id": request_id}))
+        }
         crate::AgentAction::List => ("agents.list", serde_json::json!({})),
         crate::AgentAction::Revoke => ("agents.revoke", serde_json::json!({})),
         crate::AgentAction::AutoApprove {
@@ -712,7 +723,10 @@ struct VaultItemMeta {
     item_type: String,
 }
 
-pub(crate) fn resolve_item_id_for_cli(id_or_name: &str, socket: Option<&str>) -> Result<String, String> {
+pub(crate) fn resolve_item_id_for_cli(
+    id_or_name: &str,
+    socket: Option<&str>,
+) -> Result<String, String> {
     if uuid::Uuid::parse_str(id_or_name).is_ok() {
         return Ok(id_or_name.to_string());
     }
@@ -838,10 +852,13 @@ fn parse_env_file_contents(contents: &str, plan: &mut EnvPlan) -> Result<(), Str
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let line = line.strip_prefix("export ").map(str::trim_start).unwrap_or(line);
-        let (key, raw_val) = line.split_once('=').ok_or_else(|| {
-            format!("invalid env-file line {}: expected KEY=VALUE", idx + 1)
-        })?;
+        let line = line
+            .strip_prefix("export ")
+            .map(str::trim_start)
+            .unwrap_or(line);
+        let (key, raw_val) = line
+            .split_once('=')
+            .ok_or_else(|| format!("invalid env-file line {}: expected KEY=VALUE", idx + 1))?;
         let key = key.trim();
         let val = unquote_env_value(raw_val.trim());
         if val.starts_with("baluard://") {
@@ -897,9 +914,9 @@ fn parse_target_ref(name: &str, target: &str) -> Result<PendingInjection, String
         });
     }
 
-    let (item_id, field) = target
-        .split_once(':')
-        .ok_or_else(|| format!("invalid injection '{name}={target}': expected baluard://... or ITEM_ID:FIELD"))?;
+    let (item_id, field) = target.split_once(':').ok_or_else(|| {
+        format!("invalid injection '{name}={target}': expected baluard://... or ITEM_ID:FIELD")
+    })?;
     uuid::Uuid::parse_str(item_id).map_err(|_| format!("invalid item id '{item_id}'"))?;
     validate_field_name(field)?;
     Ok(PendingInjection {
@@ -1047,7 +1064,10 @@ mod tests {
         let tpl = "key={{ baluard://Stripe/custom:api_key }}\nhelm={{ .Values.host }}\n";
         let parsed = parse_template_placeholders(tpl).unwrap();
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].placeholder, "{{ baluard://Stripe/custom:api_key }}");
+        assert_eq!(
+            parsed[0].placeholder,
+            "{{ baluard://Stripe/custom:api_key }}"
+        );
         assert_eq!(parsed[0].inj.item_ref, "Stripe");
         assert_eq!(parsed[0].inj.field, "custom:api_key");
     }
@@ -1107,9 +1127,21 @@ mod tests {
             match_item_ref("abcd1", &entries).unwrap(),
             "abcd1111-0000-0000-0000-000000000000"
         );
-        assert!(match_item_ref("abcd", &entries).unwrap_err().contains("ambiguous"));
-        assert!(match_item_ref("Duplicate", &entries).unwrap_err().contains("ambiguous"));
-        assert!(match_item_ref("Missing", &entries).unwrap_err().contains("not found"));
+        assert!(
+            match_item_ref("abcd", &entries)
+                .unwrap_err()
+                .contains("ambiguous")
+        );
+        assert!(
+            match_item_ref("Duplicate", &entries)
+                .unwrap_err()
+                .contains("ambiguous")
+        );
+        assert!(
+            match_item_ref("Missing", &entries)
+                .unwrap_err()
+                .contains("not found")
+        );
     }
 
     #[test]
@@ -1126,10 +1158,25 @@ mod tests {
     #[test]
     fn classifies_structured_error_codes() {
         assert_eq!(classify_error("Vault 'personal' is locked"), ("locked", 3));
-        assert_eq!(classify_error("agent credential request was denied"), ("denied", 4));
-        assert_eq!(classify_error("agent credential request expired"), ("expired", 4));
-        assert_eq!(classify_error("item 'gh' is ambiguous: a, b"), ("ambiguous", 2));
-        assert_eq!(classify_error("agent request rate limit exceeded"), ("rate_limited", 5));
-        assert_eq!(classify_error("item 'foo' not found in active vault"), ("not_found", 1));
+        assert_eq!(
+            classify_error("agent credential request was denied"),
+            ("denied", 4)
+        );
+        assert_eq!(
+            classify_error("agent credential request expired"),
+            ("expired", 4)
+        );
+        assert_eq!(
+            classify_error("item 'gh' is ambiguous: a, b"),
+            ("ambiguous", 2)
+        );
+        assert_eq!(
+            classify_error("agent request rate limit exceeded"),
+            ("rate_limited", 5)
+        );
+        assert_eq!(
+            classify_error("item 'foo' not found in active vault"),
+            ("not_found", 1)
+        );
     }
 }

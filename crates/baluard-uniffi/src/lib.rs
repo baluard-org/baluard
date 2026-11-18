@@ -157,6 +157,7 @@ pub fn mobile_version() -> u32 {
 /// Set the platform-specific data directory (used by Android/iOS to point at app storage).
 #[uniffi::export]
 pub fn init_data_dir(data_dir: String) {
+    // SAFETY: set_var is not thread-safe; the mobile host must call this during startup before any worker thread reads the environment.
     unsafe { std::env::set_var("BALUARD_DATA_DIR", data_dir) };
 }
 

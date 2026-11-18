@@ -200,6 +200,7 @@ fn terminate_stale_daemon(expected_socket: &std::path::Path) {
             if !should_kill_daemon(&argv, &env_pairs, &expected) {
                 continue;
             }
+            // SAFETY: pid passed the argv/env probe above and belongs to a process we mean to stop; kill only signals.
             unsafe {
                 libc::kill(pid, libc::SIGTERM);
             }
@@ -213,6 +214,7 @@ fn terminate_stale_daemon(expected_socket: &std::path::Path) {
     // children (no waitpid possible here).
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !pids.is_empty() && std::time::Instant::now() < deadline {
+        // SAFETY: kill(pid, 0) probes liveness and signals nothing.
         pids.retain(|p| unsafe { libc::kill(*p, 0) } == 0);
         if pids.is_empty() {
             return;
@@ -220,6 +222,7 @@ fn terminate_stale_daemon(expected_socket: &std::path::Path) {
         std::thread::sleep(Duration::from_millis(50));
     }
     for p in &pids {
+        // SAFETY: pid passed the liveness probe above; kill only signals.
         unsafe {
             libc::kill(*p, libc::SIGKILL);
         }
@@ -235,6 +238,7 @@ fn terminate_stale_daemon(expected_socket: &std::path::Path) {
 fn wait_for_pid_exit(pid: i32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
+        // SAFETY: WNOHANG with a null status pointer only reports; pid may already be reaped, which the return value carries.
         let ret = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
         // pid: we reaped it. -1/EINVAL: not our child or already reaped
         // (the shell-event loop may get there first) — either way it is not
@@ -266,6 +270,7 @@ pub(crate) fn stop_daemon_and_wait(
         return Ok(());
     };
     let pid = child.pid() as i32;
+    // SAFETY: pid is our own spawned daemon child; kill only signals.
     unsafe {
         libc::kill(pid, libc::SIGTERM);
     }
@@ -274,6 +279,7 @@ pub(crate) fn stop_daemon_and_wait(
         return Ok(());
     }
     log::warn!("daemon ignored SIGTERM for 8s; sending SIGKILL");
+    // SAFETY: pid is our own spawned daemon child; kill only signals.
     unsafe {
         libc::kill(pid, libc::SIGKILL);
     }
@@ -320,6 +326,7 @@ fn wait_for_pid_exit(pid: u32, timeout: Duration) -> bool {
 
     let deadline = Instant::now() + timeout;
     loop {
+        // SAFETY: pid comes from our own update flow; the handle is checked before the wait and closed on every path.
         unsafe {
             // SYNCHRONIZE (in FILE_ACCESS_RIGHTS) lets us wait on the process.
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | 0x00100000, 0, pid);

@@ -62,6 +62,7 @@ impl IpcStream {
         // probe truthful.
         let mut handle = std::ptr::null_mut();
         for attempt in 0..3u32 {
+            // SAFETY: wide is a NUL-terminated UTF-16 path; the handle is validated before any use.
             handle = unsafe {
                 CreateFileW(
                     wide.as_ptr(),
@@ -80,6 +81,7 @@ impl IpcStream {
             }
             let err = io::Error::last_os_error();
             if err.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && attempt < 2 {
+                // SAFETY: wide is the same NUL-terminated UTF-16 pipe name opened above.
                 unsafe {
                     WaitNamedPipeW(wide.as_ptr(), 100);
                 }
@@ -100,14 +102,17 @@ impl IpcStream {
         // verify the process on the other end runs as this user; a rogue
         // same-named server would otherwise receive unlock payloads.
         let mut server_pid: u32 = 0;
+        // SAFETY: handle is a live pipe handle and server_pid is writable.
         if unsafe { GetNamedPipeServerProcessId(handle, &mut server_pid) } == 0 {
             let err = io::Error::last_os_error();
+            // SAFETY: handle is a live pipe handle; CloseHandle only releases it.
             unsafe {
                 windows_sys::Win32::Foundation::CloseHandle(handle);
             }
             return Err(err);
         }
         if !server_is_same_user(server_pid) {
+            // SAFETY: handle is a live pipe handle; CloseHandle only releases it.
             unsafe {
                 windows_sys::Win32::Foundation::CloseHandle(handle);
             }
@@ -226,6 +231,7 @@ impl io::Read for IpcStream {
             // cannot lose data to a competing reader.
             loop {
                 let mut available: u32 = 0;
+                // SAFETY: handle is live; the null pointers select the availability-only form and available is writable.
                 let ok = unsafe {
                     PeekNamedPipe(
                         self.handle,
@@ -262,6 +268,7 @@ impl io::Read for IpcStream {
             }
             let len = buf.len().min(u32::MAX as usize) as u32;
             let mut read: u32 = 0;
+            // SAFETY: buf is writable for len bytes, read is writable, and the handle is live.
             let ok = unsafe {
                 ReadFile(
                     self.handle,
@@ -293,6 +300,7 @@ impl io::Write for IpcStream {
 
             let len = buf.len().min(u32::MAX as usize) as u32;
             let mut written: u32 = 0;
+            // SAFETY: buf is readable for len bytes, written is writable, and the handle is live.
             let ok = unsafe {
                 WriteFile(
                     self.handle,
@@ -318,6 +326,7 @@ impl io::Write for IpcStream {
 
 impl Drop for IpcStream {
     fn drop(&mut self) {
+        // SAFETY: handle is live until this Drop runs exactly once.
         #[cfg(windows)]
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.handle);
@@ -357,6 +366,7 @@ pub fn user_dacl_security_attributes() -> Option<UserSecurityAttributes> {
     if acl_len > acl_buf.len() {
         return None;
     }
+    // SAFETY: sd is zeroed and writable; acl_buf covers acl_len bytes, size-checked above.
     unsafe {
         let mut sd: SECURITY_DESCRIPTOR = std::mem::zeroed();
         if InitializeSecurityDescriptor(&mut sd as *mut _ as *mut _, SECURITY_DESCRIPTOR_REVISION)
@@ -425,6 +435,9 @@ impl UserSecurityAttributes {
         // Re-point the SD's DACL after the move: the stored Dacl still
         // references the buffer's pre-move stack slot.
         use windows_sys::Win32::Security::SetSecurityDescriptorDacl;
+        // SAFETY: sd.Dacl points into self.acl; the struct must not move again
+        // between as_ptr() and the end of the pipe-create call, or the DACL
+        // pointer dangles.
         unsafe {
             SetSecurityDescriptorDacl(
                 &mut self.sd as *mut _ as *mut _,
@@ -470,6 +483,8 @@ fn own_sid() -> Option<Vec<u8>> {
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
+    // SAFETY: token out-slots are written by OpenProcessToken and closed on every
+    // path; the token buffer is sized by the first GetTokenInformation call.
     unsafe {
         let mut token = std::ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
@@ -530,6 +545,7 @@ fn server_is_same_user(pid: u32) -> bool {
         OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
+    // SAFETY: process/token handles are checked before use and closed on every path.
     unsafe {
         let Some(own) = own_sid() else {
             return false;

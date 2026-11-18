@@ -21,12 +21,14 @@ use zeroize::Zeroize;
 /// Attempt to mlock a memory region. Best-effort: silent on failure.
 #[cfg(unix)]
 fn mlock_key(ptr: *const u8, len: usize) {
+    // SAFETY: ptr/len describe a live allocation; mlock only pins its pages.
     let _ = unsafe { libc::mlock(ptr as *const libc::c_void, len) };
 }
 
 /// Attempt to munlock a memory region. Best-effort.
 #[cfg(unix)]
 fn munlock_key(ptr: *const u8, len: usize) {
+    // SAFETY: ptr/len describe a live allocation pinned by mlock_key; munlock only releases the pin. mlock is per-page and not reference-counted, so neighbours sharing a page lose their lock too.
     let _ = unsafe { libc::munlock(ptr as *const libc::c_void, len) };
 }
 

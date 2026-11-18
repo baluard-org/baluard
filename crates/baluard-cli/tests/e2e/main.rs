@@ -1241,7 +1241,15 @@ fn e2e_custom_remote_https_push_pull() {
 
     // Probe with a wrong token is refused by the server.
     baluard_daemon(&guard)
-        .args(["sync", "probe", &url, "--token", "wrong", "--username", user])
+        .args([
+            "sync",
+            "probe",
+            &url,
+            "--token",
+            "wrong",
+            "--username",
+            user,
+        ])
         .assert()
         .failure();
 
@@ -1433,13 +1441,7 @@ fn e2e_multi_device_enrollment_proof_forgery_refused() {
         .assert()
         .success();
     baluard_daemon(&guard)
-        .args([
-            "device",
-            "enroll-with-phrase",
-            "--phrase",
-            &phrase,
-            "--yes",
-        ])
+        .args(["device", "enroll-with-phrase", "--phrase", &phrase, "--yes"])
         .assert()
         .success();
 
@@ -1767,7 +1769,8 @@ fn e2e_cli_parity_generate_totp_ssh_collections_rotation() {
     // SshKey entry whose get shows the fingerprint.
     baluard_daemon(&guard)
         .args([
-            "ssh", "keygen",
+            "ssh",
+            "keygen",
             "--comment",
             "e2e@test",
             "--store",
