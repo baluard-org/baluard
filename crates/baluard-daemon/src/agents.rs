@@ -512,7 +512,9 @@ pub async fn handle_agent_route(
             let expires_at = if !enabled || indefinite {
                 None
             } else {
-                let ttl = payload.duration_secs.unwrap_or(DEFAULT_AUTO_APPROVE_TTL_SECS);
+                let ttl = payload
+                    .duration_secs
+                    .unwrap_or(DEFAULT_AUTO_APPROVE_TTL_SECS);
                 if ttl == 0 {
                     return err_response("duration_secs must be positive");
                 }
@@ -541,23 +543,23 @@ pub async fn handle_agent_route(
                 exe_path: "<unresolved local client>".into(),
                 start_ticks: 0,
             });
-            if let Err(error) = audit(
-                if enabled {
-                    "yolo_enabled"
-                } else {
-                    "yolo_disabled"
-                },
-                &slug,
-                &audit_peer,
-                None,
-                &[],
-                "saved",
-            ) {
+            // Fail-closed like the agent socket's "no audit record, no
+            // request": the attempt is recorded before the write, then
+            // the outcome rides best-effort so a store hiccup cannot
+            // strand a live change without any audit line.
+            let event = if enabled {
+                "yolo_enabled"
+            } else {
+                "yolo_disabled"
+            };
+            if let Err(error) = audit(event, &slug, &audit_peer, None, &[], "requested") {
                 return err_response(format!("agent audit failed: {error}"));
             }
             if let Err(e) = write_yolo(&slug, enabled, expires_at) {
+                let _ = audit(event, &slug, &audit_peer, None, &[], "failed");
                 return err_response(e);
             }
+            let _ = audit(event, &slug, &audit_peer, None, &[], "saved");
             ok_resp(
                 serde_json::json!({
                     "enabled": enabled,
@@ -658,12 +660,16 @@ pub async fn handle_agent_route(
             } else {
                 "agent_policy_saved"
             };
-            if let Err(error) = audit(event, &_slug, &audit_peer, None, &[], "saved") {
+            // Fail-closed: the attempt is recorded before the write,
+            // then the outcome rides best-effort.
+            if let Err(error) = audit(event, &_slug, &audit_peer, None, &[], "requested") {
                 return err_response(format!("agent audit failed: {error}"));
             }
             if let Err(e) = crate::ssh_agent_policy::save(&next) {
+                let _ = audit(event, &_slug, &audit_peer, None, &[], "failed");
                 return err_response(e);
             }
+            let _ = audit(event, &_slug, &audit_peer, None, &[], "saved");
             ok_resp(
                 serde_json::json!({
                     "enabled": next.enabled,

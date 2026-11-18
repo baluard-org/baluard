@@ -442,7 +442,12 @@ mod serve {
                     return Approval::Approved;
                 }
                 Some(baluard_runtime::agents::PendingOutcome::Denied) => return Approval::Denied,
-                Some(baluard_runtime::agents::PendingOutcome::TimedOut) | None => {
+                // The queue already expired this request: waiting longer
+                // only holds the client past its own deadline.
+                Some(baluard_runtime::agents::PendingOutcome::TimedOut) => {
+                    return Approval::TimedOut;
+                }
+                None => {
                     tokio::time::sleep(std::time::Duration::from_millis(APPROVAL_POLL_MS)).await;
                 }
             }

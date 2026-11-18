@@ -216,8 +216,7 @@ pub fn collect_untracked_blob_paths(repo: &git2::Repository) -> Vec<std::path::P
 pub fn line_entries(tip: &git2::Tree<'_>) -> Vec<(String, Oid)> {
     raw_entries(tip)
         .into_iter()
-        .filter(|(name, _)| entry_pin(name).is_some())
-        .map(|(name, oid)| (entry_pin(&name).unwrap().to_string(), oid))
+        .filter_map(|(name, oid)| entry_pin(&name).map(|pin| (pin.to_string(), oid)))
         .collect()
 }
 

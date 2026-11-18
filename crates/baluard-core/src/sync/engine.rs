@@ -1644,12 +1644,11 @@ impl SyncEngine {
         if json == data {
             return;
         }
-        let tmp_path = reg_path.with_file_name(format!(
-            "{}.tmp",
-            reg_path.file_name().unwrap_or_default().to_string_lossy()
-        ));
+        let tmp_path = crate::sync::unique_tmp_path(&reg_path);
         if std::fs::write(&tmp_path, &json).is_ok() {
-            let _ = std::fs::rename(&tmp_path, &reg_path);
+            if std::fs::rename(&tmp_path, &reg_path).is_err() {
+                let _ = std::fs::remove_file(&tmp_path);
+            }
         }
     }
 
@@ -3231,11 +3230,18 @@ impl SyncEngine {
             if v.get("type").and_then(|x| x.as_str()) != Some(BOARD_COMPACTED_TYPE) {
                 continue;
             }
-            let at = v.get("at").and_then(|x| x.as_u64())?;
-            let compacted = v
+            // Junk is inert: a malformed notice blob must not abort the
+            // scan of the remaining cleanup leaves.
+            let Some(at) = v.get("at").and_then(|x| x.as_u64()) else {
+                continue;
+            };
+            let Some(compacted) = v
                 .get("body")
                 .and_then(|b| b.get("compacted_entries"))
-                .and_then(|x| x.as_u64())?;
+                .and_then(|x| x.as_u64())
+            else {
+                continue;
+            };
             if best.map(|(a, _)| at > a).unwrap_or(true) {
                 best = Some((at, compacted));
             }

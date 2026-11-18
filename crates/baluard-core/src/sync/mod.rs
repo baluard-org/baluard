@@ -22,3 +22,21 @@ pub mod tls;
 
 #[cfg(feature = "git-sync")]
 pub mod engine;
+
+use rand::RngCore;
+
+/// Unique tmp path for an atomic replace: fixed tmp names collide when
+/// the CLI and the daemon sync the same vault concurrently (the
+/// known_hosts writer uses this random-suffix pattern). The extension is
+/// REPLACED (foo.json -> foo.tmp.<hex>), not appended.
+pub(crate) fn unique_tmp_path(path: &std::path::Path) -> std::path::PathBuf {
+    let mut suffix = [0u8; 4];
+    rand::rngs::OsRng.fill_bytes(&mut suffix);
+    path.with_extension(format!(
+        "tmp.{}",
+        suffix
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    ))
+}

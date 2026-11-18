@@ -307,7 +307,9 @@ pub fn prune_entries(entries: &[(String, git2::Oid)], now: u64) -> Vec<(String, 
         let Some((topic, at, id)) = path_is_conforming(path) else {
             continue;
         };
-        if at + MSG_TTL_SECS < now || at > now.saturating_add(CLOCK_SKEW_SECS) {
+        // Saturating form: `at` comes from attacker-writable board
+        // filenames and u64::MAX would overflow the add.
+        if at < now.saturating_sub(MSG_TTL_SECS) || at > now.saturating_add(CLOCK_SKEW_SECS) {
             continue;
         }
         kept.push((topic, at, id, *oid));
@@ -472,7 +474,9 @@ pub fn read_board_tree<'r>(
         let Some((topic, at, path_id)) = path_is_conforming(path) else {
             continue;
         };
-        if at + MSG_TTL_SECS < now || at > now.saturating_add(CLOCK_SKEW_SECS) {
+        // Saturating form: `at` comes from attacker-writable board
+        // filenames and u64::MAX would overflow the add.
+        if at < now.saturating_sub(MSG_TTL_SECS) || at > now.saturating_add(CLOCK_SKEW_SECS) {
             continue;
         }
         let Ok(blob) = repo.find_blob(*oid) else {
@@ -641,6 +645,20 @@ mod tests {
         assert!(!verify_message_sig(&roster, &hex_id(0x01), sig));
         // A key absent from the roster fails.
         assert!(!verify_message_sig(&Default::default(), id, sig));
+    }
+
+    #[test]
+    fn prune_survives_overflowing_board_filenames() {
+        let now: u64 = 1_800_000_000;
+        let z = git2::Oid::from_str(&"0".repeat(40)).unwrap();
+        let entries = vec![
+            // u64::MAX at: at + MSG_TTL_SECS overflows in debug builds.
+            (mk_path("x", u64::MAX, &hex_id(1)), z),
+            (mk_path("x", now - 100, &hex_id(2)), z), // kept
+        ];
+        let kept = prune_entries(&entries, now);
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].0.contains(&hex_id(2)));
     }
 
     #[test]

@@ -288,11 +288,15 @@ impl VaultRegistry {
         Ok(())
     }
 
-    /// The slug registered for a vault path, if any.
+    /// The slug registered for a vault path, if any. Deterministic when
+    /// two slugs share one path: the dirname-matching slug wins, then the
+    /// lexicographic smallest.
     pub fn slug_for_path(&self, path: &Path) -> Option<String> {
+        let dir_name = path.file_name().and_then(|n| n.to_str());
         self.vaults
             .values()
-            .find(|e| e.path == path)
+            .filter(|e| e.path == path)
+            .min_by_key(|e| (Some(e.slug.as_str()) != dir_name, e.slug.clone()))
             .map(|e| e.slug.clone())
     }
 
@@ -556,6 +560,20 @@ mod tests {
             vault_id: Uuid::new_v4(),
             merge_opt_in: None,
             merge_ceiling_seen: false,
+        }
+    }
+
+    #[test]
+    fn slug_for_path_is_deterministic_when_slugs_share_a_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("shared-vault");
+        let mut reg = VaultRegistry::default();
+        reg.add(entry_for("zz-slug", &shared)).unwrap();
+        reg.add(entry_for("shared-vault", &shared)).unwrap();
+        // The dirname-matching slug wins regardless of HashMap order;
+        // the lexicographic smallest slug breaks any residual tie.
+        for _ in 0..8 {
+            assert_eq!(reg.slug_for_path(&shared).as_deref(), Some("shared-vault"));
         }
     }
 

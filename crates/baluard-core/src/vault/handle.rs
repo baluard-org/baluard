@@ -61,6 +61,15 @@ fn collect_descendant_ids(
     result
 }
 
+/// Header-only crash-convergence probe: the surviving copy of a
+/// dual-domain id is the one with the greater update_seq.
+fn envelope_update_seq(path: &std::path::Path) -> Option<u64> {
+    let bytes = std::fs::read(path).ok()?;
+    crate::vault::envelope::deserialize(&bytes)
+        .ok()
+        .map(|e| e.header.update_seq)
+}
+
 /// Parse the cipher id out of a `ciphers/` or `trash/` envelope path.
 fn cipher_id_of_envelope(path: &std::path::Path) -> Option<Uuid> {
     path.file_stem()?
@@ -7730,17 +7739,29 @@ impl VaultHandle {
     /// here; callers handle trash separately.
     pub fn cipher_file_path(&self, cipher_id: Uuid) -> Option<std::path::PathBuf> {
         let flat = self.path.join(format!("ciphers/{cipher_id}.enc"));
-        if flat.exists() {
-            return Some(flat);
-        }
         let dirs = crate::vault::collections::load_dir_map(&self.path);
-        for (d, _) in &dirs {
+        let scoped = dirs.iter().find_map(|(d, _)| {
             let p = self.path.join(format!("ciphers/{d}/{cipher_id}.enc"));
-            if p.exists() {
-                return Some(p);
+            p.exists().then_some(p)
+        });
+        match (flat.exists(), scoped) {
+            // Crash mid-move left both key domains holding this id: the
+            // greater update_seq is the surviving copy.
+            (true, Some(scoped)) => {
+                let flat_seq = envelope_update_seq(&flat);
+                let scoped_seq = envelope_update_seq(&scoped);
+                match (flat_seq, scoped_seq) {
+                    (Some(a), Some(b)) if b > a => Some(scoped),
+                    // A corrupt flat copy must not shadow the parseable
+                    // collection copy.
+                    (None, Some(_)) => Some(scoped),
+                    _ => Some(flat),
+                }
             }
+            (true, None) => Some(flat),
+            (false, Some(scoped)) => Some(scoped),
+            (false, None) => None,
         }
-        None
     }
 
     /// Assign (or unassign) a live cipher to a collection by MOVING its
@@ -7818,7 +7839,71 @@ impl VaultHandle {
         }
         let target = self.path.join(target_rel);
         if current == target {
+            // Converge crash residue in every OTHER key domain: a stale
+            // copy with a lower seq (flat or any collection dir) is
+            // removed; this target is the surviving copy.
+            if let Some(c) = envelope_update_seq(current.as_path()) {
+                let mut stale: Vec<std::path::PathBuf> = Vec::new();
+                let flat = self.path.join(format!("ciphers/{cipher_id}.enc"));
+                // Only a copy that PARSES with a lower seq is stale. An
+                // unparseable twin may be a newer envelope version from
+                // a newer client, never junk - resolution already skips
+                // it, so it is left on disk.
+                if flat != current
+                    && flat.exists()
+                    && envelope_update_seq(&flat).is_some_and(|f| f < c)
+                {
+                    stale.push(flat);
+                }
+                // Non-admins only hold write scope on collections the
+                // gate above checked; sweeping other members' domains is
+                // an admin surface.
+                let dirs = if is_admin {
+                    crate::vault::collections::load_dir_map(&self.path)
+                } else {
+                    Vec::new()
+                };
+                for (d, _) in dirs {
+                    let p = self.path.join(format!("ciphers/{d}/{cipher_id}.enc"));
+                    if p != current && p.exists() && envelope_update_seq(&p).is_some_and(|s| s < c)
+                    {
+                        stale.push(p);
+                    }
+                }
+                if !stale.is_empty() {
+                    for p in &stale {
+                        let _ = std::fs::remove_file(p);
+                    }
+                    self.rebuild_index()?;
+                }
+            }
             return Ok(());
+        }
+        // Crash convergence: a prior interrupted move may have left both
+        // key domains holding this id. Keep whichever copy is fresher;
+        // never destroy a copy when a header is unreadable.
+        if target.exists() {
+            match (envelope_update_seq(&current), envelope_update_seq(&target)) {
+                // Fresh target from a prior interrupted move: keep it,
+                // drop the stale source.
+                (Some(a), Some(b)) if b >= a => {
+                    std::fs::remove_file(&current)?;
+                    self.rebuild_index()?;
+                    return Ok(());
+                }
+                // Source unreadable: the target may be the only good
+                // copy. Refuse instead of moving at all.
+                (None, Some(_)) | (None, None) => {
+                    return Err(VaultError::InvalidOperation(
+                        "This cipher's existing envelope is unreadable; sync to converge, then retry the move."
+                            .into(),
+                    )
+                    .into());
+                }
+                // A stale target from an older interrupted move: the
+                // move's own write below overwrites it.
+                _ => {}
+            }
         }
         // S3-7c: the path IS the key domain. A cross-domain move must
         // re-encrypt under the target domain's item key (same envelope
@@ -12946,6 +13031,144 @@ mod tests {
     /// would otherwise wedge every later resync on the outbox).
     /// S3-1: collection lifecycle end-to-end on the handle, plus rotation
     /// coverage (content keys re-wrapped under the new SGK epoch).
+    #[test]
+    fn assign_refuses_when_source_envelope_is_unreadable() {
+        let (dir, pw) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&pw).unwrap();
+
+        let mk_input = |name: &str, pw: &str| {
+            let kind = crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("u".into()),
+                password: Some(pw.into()),
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
+            });
+            {
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = name.into();
+                ci.kind = kind;
+                ci
+            }
+        };
+        let id = h.add_cipher(&mk_input("Corrupt Source", "p")).unwrap();
+        let flat = dir.path().join(format!("ciphers/{id}.enc"));
+        let good = std::fs::read(&flat).unwrap();
+        let col = h.collection_create("W").unwrap();
+        h.assign_cipher_to_collection(id, Some(col)).unwrap();
+        let dirs = crate::vault::collections::load_dir_map(dir.path());
+        let scoped = dir.path().join(format!("ciphers/{}/{}.enc", dirs[0].0, id));
+        // Crash residue: the source copy is corrupt, the target copy is
+        // the only good one.
+        std::fs::write(&flat, b"garbage-not-an-envelope").unwrap();
+        // Resolution skips the corrupt copy and reads the good one.
+        assert!(matches!(h.get_cipher(id), Ok(CipherRead::Decrypted(_))));
+        // A same-collection assign converges nothing here: the corrupt
+        // residue may be a newer envelope version, so it stays on disk
+        // (resolution already skips it) and the good copy is untouched.
+        h.assign_cipher_to_collection(id, Some(col)).unwrap();
+        assert!(flat.exists());
+        assert!(scoped.exists());
+        assert!(matches!(h.get_cipher(id), Ok(CipherRead::Decrypted(_))));
+        // Every copy unreadable: the move refuses rather than guessing.
+        std::fs::write(&scoped, b"garbage-two").unwrap();
+        std::fs::write(&flat, b"garbage-three").unwrap();
+        assert!(h.assign_cipher_to_collection(id, Some(col)).is_err());
+        let _ = good;
+    }
+
+    #[test]
+    fn unassign_converges_a_stale_scoped_copy() {
+        let (dir, pw) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&pw).unwrap();
+
+        let mk_input = |name: &str, pw: &str| {
+            let kind = crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("u".into()),
+                password: Some(pw.into()),
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
+            });
+            {
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = name.into();
+                ci.kind = kind;
+                ci
+            }
+        };
+        let id = h.add_cipher(&mk_input("Unassign Crash", "p")).unwrap();
+        let flat = dir.path().join(format!("ciphers/{id}.enc"));
+        let col = h.collection_create("W").unwrap();
+        h.assign_cipher_to_collection(id, Some(col)).unwrap();
+        let dirs = crate::vault::collections::load_dir_map(dir.path());
+        let scoped = dir.path().join(format!("ciphers/{}/{}.enc", dirs[0].0, id));
+        let scoped_bytes = std::fs::read(&scoped).unwrap();
+        // Crash mid-unassign: the fresh flat copy exists, the stale
+        // scoped copy was never removed.
+        h.assign_cipher_to_collection(id, None).unwrap();
+        std::fs::write(&scoped, &scoped_bytes).unwrap();
+        // A retry converges: the stale scoped copy is dropped.
+        h.assign_cipher_to_collection(id, None).unwrap();
+        assert!(!scoped.exists());
+        assert!(flat.exists());
+        assert!(matches!(h.get_cipher(id), Ok(CipherRead::Decrypted(_))));
+    }
+
+    #[test]
+    fn dual_domain_presence_resolves_by_update_seq() {
+        let (dir, pw) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&pw).unwrap();
+
+        let mk_input = |name: &str, pw: &str| {
+            let kind = crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("u".into()),
+                password: Some(pw.into()),
+                uris: Default::default(),
+                totp_uri: Default::default(),
+                autofill_on_page_load: Default::default(),
+                password_revision_date: Default::default(),
+                favicon: Default::default(),
+                fido2_credentials: Default::default(),
+            });
+            {
+                let mut ci = crate::types::CipherInput::default();
+                ci.name = name.into();
+                ci.kind = kind;
+                ci
+            }
+        };
+        let id = h.add_cipher(&mk_input("Crash Window", "p")).unwrap();
+
+        let flat = dir.path().join(format!("ciphers/{id}.enc"));
+        let stale = std::fs::read(&flat).unwrap();
+        let col = h.collection_create("W").unwrap();
+        h.assign_cipher_to_collection(id, Some(col)).unwrap();
+        let dirs = crate::vault::collections::load_dir_map(dir.path());
+        let scoped = dir.path().join(format!("ciphers/{}/{}.enc", dirs[0].0, id));
+        // Crash simulation: the stale flat envelope is back on disk
+        // alongside the fresh collection copy.
+        std::fs::write(&flat, &stale).unwrap();
+        // Resolution must prefer the fresher collection copy, not the
+        // flat path by file layout.
+        assert_eq!(h.cipher_file_path(id).unwrap(), scoped);
+        // Assigning to the same collection again converges: the stale
+        // flat copy is removed.
+        h.assign_cipher_to_collection(id, Some(col)).unwrap();
+        assert!(!flat.exists());
+        assert!(scoped.exists());
+        assert!(matches!(h.get_cipher(id), Ok(CipherRead::Decrypted(_))));
+    }
+
     #[test]
     fn cipher_collection_assignment_moves_files() {
         let (dir, pw) = create_test_vault();

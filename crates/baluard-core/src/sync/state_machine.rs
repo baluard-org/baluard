@@ -91,9 +91,14 @@ impl SyncStateMachine {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("create meta dir: {e}"))?;
         }
-        let tmp_path = path.with_extension("json.tmp");
+        let tmp_path = crate::sync::unique_tmp_path(&path);
         std::fs::write(&tmp_path, &data).map_err(|e| format!("write state tmp: {e}"))?;
-        std::fs::rename(&tmp_path, &path).map_err(|e| format!("rename state into place: {e}"))?;
+        if let Err(e) = std::fs::rename(&tmp_path, &path) {
+            // Unique names accumulate litter on failure; the fixed name
+            // used to overwrite itself.
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(format!("rename state into place: {e}"));
+        }
         Ok(())
     }
 
