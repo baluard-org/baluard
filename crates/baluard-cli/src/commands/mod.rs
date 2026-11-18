@@ -696,11 +696,18 @@ pub fn handle_get(
     id_or_name: &str,
     decrypt: bool,
     output: &str,
+    json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let cipher_id = match uuid::Uuid::parse_str(id_or_name) {
+    let output = if json { "json" } else { output };
+    let resolved_id = if matches!(mode, ConnectMode::Daemon) {
+        agent::resolve_item_id_for_cli(id_or_name, socket).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?
+    } else {
+        id_or_name.to_string()
+    };
+    let cipher_id = match uuid::Uuid::parse_str(&resolved_id) {
         Ok(id) => id,
         Err(_) => {
-            return Err("Searching by name is not supported yet; the entry id is required.".into());
+            return Err("Searching by name is not supported in --direct mode; the entry id is required.".into());
         }
     };
 
@@ -969,6 +976,7 @@ pub fn handle_list(
     vault_path: &str,
     socket: Option<&str>,
     archived: bool,
+    json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
@@ -980,6 +988,10 @@ pub fn handle_list(
             let resp = client::request_to(action, "", socket)?;
             if !resp.success {
                 return Err(resp.error_message.into());
+            }
+            if json {
+                println!("{}", resp.payload);
+                return Ok(());
             }
             let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
             let ciphers = data["ciphers"].as_array();
@@ -1038,11 +1050,11 @@ pub fn handle_list(
             }
             Ok(())
         }
-        ConnectMode::Direct => list_direct(vault_path, archived),
+        ConnectMode::Direct => list_direct(vault_path, archived, json),
     }
 }
 
-fn list_direct(vault_path: &str, archived: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn list_direct(vault_path: &str, archived: bool, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
     // Auto-unlock when BALUARD_PASSWORD is set, so scripting/tests get full
     // cipher metadata (name, type, username) without an explicit `unlock`
@@ -1062,6 +1074,22 @@ fn list_direct(vault_path: &str, archived: bool) -> Result<(), Box<dyn std::erro
         } else {
             handle.list_cipher_meta()?
         };
+        if json {
+            let rows: Vec<serde_json::Value> = metas
+                .iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "id": m.id.to_string(),
+                        "name": m.name,
+                        "type": format!("{:?}", m.cipher_type).to_lowercase(),
+                        "username": m.username,
+                        "favorite": m.favorite,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::json!({"ciphers": rows}));
+            return Ok(());
+        }
         if metas.is_empty() {
             println!("No entries found.");
             return Ok(());
@@ -2727,7 +2755,7 @@ pub fn handle_git_probe(
             if inner["known_other_type"].as_bool() == Some(true) {
                 println!("Note: this host already has a key of another type in known_hosts.");
             }
-            println!("Trust it with: baluard git-trust {aid}");
+            println!("Trust it with: baluard sync trust {aid}");
             // Exit code 2 is a scripting contract: probe ran, host untrusted.
             std::process::exit(2);
         }
@@ -2750,7 +2778,7 @@ pub fn handle_git_trust(
     socket: Option<&str>,
     attempt_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    require_daemon(mode, "git-trust")?;
+    require_daemon(mode, "sync trust")?;
     let payload = serde_json::json!({ "attempt_id": attempt_id }).to_string();
     let resp = client::request_to("git.git_hostkey_trust", &payload, socket)?;
     if !resp.success {
@@ -2771,6 +2799,7 @@ pub fn handle_search(
     query: &str,
     all: bool,
     vault_slug: Option<&str>,
+    json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if matches!(mode, ConnectMode::Direct) {
         return Err("search requires daemon mode (multi-vault fan-out); drop --direct".into());
@@ -2784,6 +2813,10 @@ pub fn handle_search(
     let resp = client::request_to("vault.search", &payload.to_string(), socket)?;
     if !resp.success {
         return Err(resp.error_message.into());
+    }
+    if json {
+        println!("{}", resp.payload);
+        return Ok(());
     }
     let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
     let rows = data["matches"].as_array().cloned().unwrap_or_default();

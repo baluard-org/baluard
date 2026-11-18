@@ -1445,6 +1445,7 @@
     "yoloDisabled": "O acesso de agentes pedirá aprovação.",
     "notifyTitle": "Pedido de credenciais do Baluard",
     "notifyBody": "{name} está pedindo para usar itens do cofre.",
+    "unlockPrompt": "Um agente ({name}) aguarda aprovação ({need}). Desbloqueie para revisar e aprovar.",
     "recentActivity": "Atividade recente",
     "event": {
       "requested": "Acesso solicitado",

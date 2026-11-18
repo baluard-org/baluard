@@ -64,6 +64,7 @@ vi.mock("../lib/biometry.js", () => ({
 vi.mock("../lib/daemon.js", () => ({
   daemon: vi.fn(),
   getRenderState: vi.fn(() => Promise.resolve({ linux: false, recovery: false })),
+  getPendingAgentSummary: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("../i18n/index.jsx", () => ({
   useI18n: () => ({ t: (k) => k, locale: () => "en", setLocale: vi.fn() }),

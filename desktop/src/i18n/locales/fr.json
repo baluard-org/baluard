@@ -1445,6 +1445,7 @@
     "yoloDisabled": "L'accès des agents demandera désormais une confirmation.",
     "notifyTitle": "Demande d'identifiants Baluard",
     "notifyBody": "{name} demande à utiliser des entrées du coffre.",
+    "unlockPrompt": "Un agent ({name}) attend votre approbation ({need}). Déverrouillez pour examiner et approuver.",
     "recentActivity": "Activité récente",
     "event": {
       "requested": "Accès demandé",

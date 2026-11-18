@@ -12,7 +12,7 @@ fn folder_create_returns_uuid_and_appears_in_list() {
     init_vault(tmp.path(), "Folders", "folders-vault");
 
     let assert = baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("create")
         .arg("Work")
         .assert()
@@ -24,7 +24,7 @@ fn folder_create_returns_uuid_and_appears_in_list() {
     let id = re.find(&out).expect("folder id").as_str().to_string();
 
     baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("list")
         .assert()
         .success()
@@ -38,7 +38,7 @@ fn folder_list_empty_vault() {
     init_vault(tmp.path(), "EmptyFolders", "empty-folders-vault");
 
     baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("list")
         .assert()
         .success()
@@ -51,7 +51,7 @@ fn folder_rename_changes_name() {
     init_vault(tmp.path(), "Rename", "rename-folder-vault");
 
     let assert = baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("create")
         .arg("old")
         .assert()
@@ -62,7 +62,7 @@ fn folder_rename_changes_name() {
     let id = re.find(&out).expect("folder id").as_str().to_string();
 
     baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("rename")
         .arg(&id)
         .arg("new")
@@ -71,7 +71,7 @@ fn folder_rename_changes_name() {
         .stdout(predicate::str::contains("Folder renamed."));
 
     baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("list")
         .assert()
         .success()
@@ -85,7 +85,7 @@ fn folder_rename_rejects_invalid_uuid() {
     init_vault(tmp.path(), "BadRename", "bad-rename-folder-vault");
 
     baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("rename")
         .arg("not-a-uuid")
         .arg("newname")
@@ -100,7 +100,7 @@ fn folder_delete_removes_folder() {
     init_vault(tmp.path(), "DelFolder", "del-folder-vault");
 
     let assert = baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("create")
         .arg("Doomed")
         .assert()
@@ -111,14 +111,14 @@ fn folder_delete_removes_folder() {
     let id = re.find(&out).expect("folder id").as_str().to_string();
 
     baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("delete")
         .arg(&id)
         .assert()
         .success();
 
     baluard(tmp.path())
-        .arg("folders")
+        .arg("folder")
         .arg("list")
         .assert()
         .success()

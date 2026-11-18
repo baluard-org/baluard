@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import BridgeUnlockBanner from "./BridgeUnlockBanner.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
-import { daemon, getRenderState } from "../lib/daemon.js";
+import { daemon, getRenderState, getPendingAgentSummary } from "../lib/daemon.js";
 import { biometryAvailable, biometryPrompt } from "../lib/biometry.js";
 import { toastError } from "../context/toastSignal.js";
 import { sanitizeError, isHardwareError } from "../lib/utils.js";
@@ -45,6 +45,26 @@ export default function LoginScreen() {
       if (rs.linux && rs.recovery) setRenderRecovery(true);
     })
     .catch(() => {});
+
+  const [pendingAgent, setPendingAgent] = createSignal(null);
+  if (typeof getPendingAgentSummary === "function") {
+    let active = true;
+    const pollPendingAgent = () => {
+      getPendingAgentSummary()
+        .then((data) => {
+          if (active) setPendingAgent(data);
+        })
+        .catch(() => {
+          if (active) setPendingAgent(null);
+        });
+    };
+    pollPendingAgent();
+    const timer = setInterval(pollPendingAgent, 2000);
+    onCleanup(() => {
+      active = false;
+      clearInterval(timer);
+    });
+  }
 
   // Plugin truth: the daemon reports per-vault Quick Unlock state, but only
   // this plugin can actually show a prompt (Linux holds keyring escrow with
@@ -364,6 +384,20 @@ export default function LoginScreen() {
               <p class="text-sm text-[var(--color-muted)] mt-1">
                 {t("login.subtitle")}
               </p>
+              <Show when={pendingAgent()}>
+                {(summary) => (
+                  <div
+                    role="status"
+                    data-testid="agent-unlock-banner"
+                    class="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-left text-xs text-amber-200"
+                  >
+                    {t("agents.unlockPrompt", {
+                      name: summary().first.claimed_name || "agent",
+                      need: summary().first.need || "",
+                    })}
+                  </div>
+                )}
+              </Show>
               <BridgeUnlockBanner
                 onUnlock={async (row) => {
                   // Same handoff as picking a locked vault in the switcher:

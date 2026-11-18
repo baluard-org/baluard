@@ -16,6 +16,10 @@ struct YoloPayload {
     enabled: Option<bool>,
     #[serde(default)]
     master_password: Option<zeroize::Zeroizing<String>>,
+    #[serde(default)]
+    duration_secs: Option<u64>,
+    #[serde(default)]
+    indefinite: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
@@ -38,6 +42,8 @@ struct AgentRequestPayload {
     need: String,
     #[serde(default)]
     item_ids: Vec<String>,
+    #[serde(default)]
+    wait_for_unlock: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -120,6 +126,9 @@ pub async fn handle_agent_route(
             let Some(peer) = peer else {
                 return err_response("agent peer identity is unavailable");
             };
+            if !check_agent_request_rate(peer) {
+                return err_response("agent request rate limit exceeded");
+            }
             let payload: AgentRequestPayload = match serde_json::from_str(&req.payload) {
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid agent request: {e}")),
@@ -137,12 +146,42 @@ pub async fn handle_agent_route(
                 Err(resp) => return resp,
             };
             if !state.is_unlocked().await {
-                return err_response(format!("Vault '{slug}' is locked"));
+                if !payload.wait_for_unlock {
+                    return err_response(format!("Vault '{slug}' is locked"));
+                }
+                let audit_slug = slug.clone();
+                let audit_item_ids = payload.item_ids.clone();
+                return match host.pending_requests().push(
+                    Some(slug),
+                    peer.clone(),
+                    payload.claimed_name,
+                    payload.need,
+                    payload.item_ids,
+                    baluard_runtime::agents::PendingPurpose::Credential,
+                ) {
+                    Ok(request_id) => {
+                        audit_best_effort(
+                            "requested_locked",
+                            &audit_slug,
+                            peer,
+                            Some(&request_id),
+                            &audit_item_ids,
+                            "locked_pending",
+                        );
+                        ok_resp(
+                            serde_json::json!({
+                                "request_id": request_id,
+                                "status": "locked_pending",
+                            })
+                            .to_string(),
+                            None,
+                        )
+                    }
+                    Err(_) => err_response("agent approval queue is full"),
+                };
             }
-            // L4 (D81 review): refuse non-Login items at request time, so
-            // the user never approves a grant whose run must fail. Items
-            // that do not resolve stay request-time-legal; agents.run
-            // remains the final validator.
+            // Refuse SSH/signing key items at request time so the user never
+            // approves a grant whose run must fail.
             for item_id in &payload.item_ids {
                 if let Ok(cipher_json) = state.get_cipher(item_id, true).await {
                     let kind = serde_json::from_str::<serde_json::Value>(&cipher_json)
@@ -154,8 +193,8 @@ pub async fn handle_agent_route(
                                 .map(String::from)
                         })
                         .unwrap_or_default();
-                    if kind != "login" {
-                        return err_response("agents may only request logins");
+                    if matches!(kind.as_str(), "ssh_key" | "signing_key") {
+                        return err_response("agents may not read SSH or signing key items");
                     }
                 }
             }
@@ -248,6 +287,24 @@ pub async fn handle_agent_route(
                     ok_resp(serde_json::json!({"status": "unknown"}).to_string(), None)
                 }
             }
+        }
+        "agents.pending_summary" => {
+            let pending = host.pending_requests().list();
+            let first = pending.first().map(|p| {
+                serde_json::json!({
+                    "claimed_name": p.claimed_name,
+                    "need": p.need,
+                    "vault_slug": p.vault_slug,
+                })
+            });
+            ok_resp(
+                serde_json::json!({
+                    "count": pending.len(),
+                    "first": first,
+                })
+                .to_string(),
+                None,
+            )
         }
         "agents.pending" => {
             let (slug, state) = match target_state(req, host, None).await {
@@ -438,12 +495,29 @@ pub async fn handle_agent_route(
             )
         }
         "agents.run" => crate::agent_run::run(req, host, peer).await,
+        "agents.run_start" => crate::agent_run::run_start(req, host, peer).await,
+        "agents.run_poll" => crate::agent_run::run_poll(req, host, peer).await,
+        "agents.run_signal" => crate::agent_run::run_signal(req, host, peer).await,
+        "agents.inject" => crate::agent_run::inject(req, host, peer).await,
         "agents.set_yolo" => {
             let payload: YoloPayload = match serde_json::from_str(&req.payload) {
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid agent setting: {e}")),
             };
             let enabled = payload.enabled.unwrap_or(false);
+            let indefinite = payload.indefinite.unwrap_or(false);
+            if indefinite && payload.duration_secs.is_some() {
+                return err_response("indefinite and duration_secs are mutually exclusive");
+            }
+            let expires_at = if !enabled || indefinite {
+                None
+            } else {
+                let ttl = payload.duration_secs.unwrap_or(DEFAULT_AUTO_APPROVE_TTL_SECS);
+                if ttl == 0 {
+                    return err_response("duration_secs must be positive");
+                }
+                Some(now_unix_secs().saturating_add(ttl))
+            };
             let (slug, state) = match target_state(req, host, None).await {
                 Ok(pair) => pair,
                 Err(resp) => return resp,
@@ -481,10 +555,18 @@ pub async fn handle_agent_route(
             ) {
                 return err_response(format!("agent audit failed: {error}"));
             }
-            if let Err(e) = write_yolo(&slug, enabled) {
+            if let Err(e) = write_yolo(&slug, enabled, expires_at) {
                 return err_response(e);
             }
-            ok_resp(serde_json::json!({"enabled": enabled}).to_string(), None)
+            ok_resp(
+                serde_json::json!({
+                    "enabled": enabled,
+                    "expires_at": expires_at,
+                    "indefinite": enabled && expires_at.is_none(),
+                })
+                .to_string(),
+                None,
+            )
         }
         "agents.revoke_own" => {
             let (_slug, state) = match target_state(req, host, None).await {
@@ -597,21 +679,68 @@ pub async fn handle_agent_route(
 
 // D80: permissive mode is a device-local policy file, never vault settings
 // and therefore never git-synced to another machine.
+const DEFAULT_AUTO_APPROVE_TTL_SECS: u64 = 300;
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 fn yolo_path() -> std::path::PathBuf {
     baluard_core::paths::data_dir().join("agent-yolo.json")
 }
 
+fn yolo_entry_active(entry: &serde_json::Value, now: u64) -> bool {
+    if let Some(flag) = entry.as_bool() {
+        return flag;
+    }
+    if entry.get("enabled").and_then(serde_json::Value::as_bool) != Some(true) {
+        return false;
+    }
+    match entry.get("expires_at").and_then(serde_json::Value::as_u64) {
+        Some(expires_at) => now < expires_at,
+        None => true,
+    }
+}
+
 fn yolo_enabled(slug: &str) -> bool {
-    std::fs::read_to_string(yolo_path())
-        .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|value| value.get(slug).and_then(serde_json::Value::as_bool))
-        == Some(true)
+    let Some(raw) = std::fs::read_to_string(yolo_path()).ok() else {
+        return false;
+    };
+    let Some(value) = serde_json::from_str::<serde_json::Value>(&raw).ok() else {
+        return false;
+    };
+    let Some(entry) = value.get(slug) else {
+        return false;
+    };
+    yolo_entry_active(entry, now_unix_secs())
 }
 
 static YOLO_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static AGENT_REQUEST_RATE: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<(u32, u64), Vec<std::time::Instant>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-fn write_yolo(slug: &str, enabled: bool) -> Result<(), String> {
+const AGENT_RATE_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+const AGENT_RATE_MAX_PER_WINDOW: usize = 10;
+
+fn check_agent_request_rate(peer: &PeerBinding) -> bool {
+    let Ok(mut map) = AGENT_REQUEST_RATE.lock() else {
+        return true;
+    };
+    let now = std::time::Instant::now();
+    let bucket = map.entry((peer.pid, peer.start_ticks)).or_default();
+    bucket.retain(|ts| now.duration_since(*ts) < AGENT_RATE_WINDOW);
+    if bucket.len() >= AGENT_RATE_MAX_PER_WINDOW {
+        return false;
+    }
+    bucket.push(now);
+    true
+}
+
+fn write_yolo(slug: &str, enabled: bool, expires_at: Option<u64>) -> Result<(), String> {
     // Read-modify-write of the whole map must not lose concurrent updates.
     let _lock = YOLO_WRITE_LOCK
         .lock()
@@ -624,7 +753,14 @@ fn write_yolo(slug: &str, enabled: bool) -> Result<(), String> {
     if !value.is_object() {
         value = serde_json::json!({});
     }
-    value[slug] = serde_json::Value::Bool(enabled);
+    value[slug] = if enabled {
+        serde_json::json!({
+            "enabled": true,
+            "expires_at": expires_at,
+        })
+    } else {
+        serde_json::Value::Bool(false)
+    };
     baluard_core::secret_file::write_secret_file(&path, value.to_string().as_bytes())
         .map_err(|e| format!("write agent setting: {e}"))
 }

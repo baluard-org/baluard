@@ -1445,6 +1445,7 @@
     "yoloDisabled": "Agent access will ask for approval.",
     "notifyTitle": "Baluard credential request",
     "notifyBody": "{name} is asking to use vault entries.",
+    "unlockPrompt": "An agent ({name}) is waiting for approval ({need}). Unlock to review and approve.",
     "recentActivity": "Recent activity",
     "event": {
       "requested": "Access requested",

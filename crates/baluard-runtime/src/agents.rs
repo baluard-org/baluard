@@ -105,7 +105,15 @@ pub fn pid_in_process_tree(bound: &PeerBinding, chain: &[(u32, u64)]) -> bool {
 
 /// Route allowlist for the agent token class. Everything not listed is
 /// refused by prefix, mirroring CONTACT_VIEW_ALLOWED's default-deny shape.
-pub const AGENT_ALLOWED_ACTIONS: &[&str] = &["agents.poll", "agents.run", "agents.revoke_own"];
+pub const AGENT_ALLOWED_ACTIONS: &[&str] = &[
+    "agents.poll",
+    "agents.run",
+    "agents.run_start",
+    "agents.run_poll",
+    "agents.run_signal",
+    "agents.inject",
+    "agents.revoke_own",
+];
 
 impl AgentGrants {
     pub(crate) fn new() -> Self {

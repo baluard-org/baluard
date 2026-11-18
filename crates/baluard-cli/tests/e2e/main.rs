@@ -909,7 +909,7 @@ fn e2e_ssh_custom_remote_trust_push() {
     let url_for_probe = url.clone();
     let out = baluard_daemon(&guard)
         .env("HOME", &home_path)
-        .args(["git-probe", &url_for_probe, "--key-file"])
+        .args(["sync", "probe", &url_for_probe, "--key-file"])
         .arg(&client_key)
         .output()
         .expect("probe");
@@ -923,14 +923,14 @@ fn e2e_ssh_custom_remote_trust_push() {
         "no fingerprint: {probe_out}"
     );
     let aid: String = probe_out
-        .split("git-trust ")
+        .split("sync trust ")
         .nth(1)
         .map(|rest| rest.trim().to_string())
         .expect("trust command printed");
     assert!(!aid.is_empty(), "empty attempt id");
 
     // 2) Trusting the observed key succeeds and names the host.
-    let out = cmd(&["git-trust", &aid]);
+    let out = cmd(&["sync", "trust", &aid]);
     let trust_out = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "trust failed: {trust_out}");
     assert!(
@@ -1019,17 +1019,17 @@ fn e2e_ssh_changed_hostkey_refused() {
     // Trusted first contact, exactly as the happy-path flow proves it.
     let out = baluard_daemon(&guard)
         .env("HOME", &home_path)
-        .args(["git-probe", &url, "--key-file"])
+        .args(["sync", "probe", &url, "--key-file"])
         .arg(&_client_key)
         .output()
         .expect("probe");
     let probe_out = String::from_utf8_lossy(&out.stdout);
     let aid: String = probe_out
-        .split("git-trust ")
+        .split("sync trust ")
         .nth(1)
         .map(|rest| rest.trim().to_string())
         .expect("trust command printed");
-    let out = cmd(&["git-trust", &aid]);
+    let out = cmd(&["sync", "trust", &aid]);
     assert!(out.status.success(), "trust failed");
 
     // The operator rotates the host key; sshd reloads it in place.
@@ -1070,7 +1070,7 @@ fn e2e_ssh_changed_hostkey_refused() {
     // The probe now refuses as host-changed and offers NO trust command.
     let out = baluard_daemon(&guard)
         .env("HOME", &home_path)
-        .args(["git-probe", &url, "--key-file"])
+        .args(["sync", "probe", &url, "--key-file"])
         .arg(&_client_key)
         .output()
         .expect("probe after rotation");
@@ -1084,11 +1084,11 @@ fn e2e_ssh_changed_hostkey_refused() {
         "expected the changed-key message: {rotated}"
     );
     assert!(
-        !rotated.contains("git-trust"),
+        !rotated.contains("sync trust"),
         "a changed key must offer no trust command: {rotated}"
     );
     assert!(
-        !rotated.contains("git-trust "),
+        !rotated.contains("sync trust "),
         "a changed key must never offer one-click trust: {rotated}"
     );
 
@@ -1102,7 +1102,7 @@ fn e2e_ssh_changed_hostkey_refused() {
     );
 
     // And a stale/bogus id still refuses with the usual message.
-    let out = cmd(&["git-trust", "deadbeefdeadbeefdeadbeefdeadbeef"]);
+    let out = cmd(&["sync", "trust", "deadbeefdeadbeefdeadbeefdeadbeef"]);
     assert!(!out.status.success(), "stale trust must fail");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -1231,7 +1231,7 @@ fn e2e_custom_remote_https_push_pull() {
 
     // The probe with candidate credentials reports a healthy connection.
     let probe = baluard_daemon(&guard)
-        .args(["git-probe", &url, "--token", pass, "--username", user])
+        .args(["sync", "probe", &url, "--token", pass, "--username", user])
         .assert()
         .success()
         .get_output()
@@ -1241,7 +1241,7 @@ fn e2e_custom_remote_https_push_pull() {
 
     // Probe with a wrong token is refused by the server.
     baluard_daemon(&guard)
-        .args(["git-probe", &url, "--token", "wrong", "--username", user])
+        .args(["sync", "probe", &url, "--token", "wrong", "--username", user])
         .assert()
         .failure();
 
@@ -1323,7 +1323,7 @@ fn e2e_multi_device_join_and_sync() {
         .stdout(predicates::str::contains("Cloned vault 'baluard-devb'"));
     // Pre-enrollment reads must point at enrollment, not leak internals.
     baluard_daemon(&guard)
-        .args(["devices", "list", "--vault", "baluard-devb"])
+        .args(["device", "list", "--vault", "baluard-devb"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("enroll-with-phrase"));
@@ -1332,7 +1332,7 @@ fn e2e_multi_device_join_and_sync() {
     // slug is pinned so B cannot silently fall back to A's active vault.
     baluard_daemon(&guard)
         .args([
-            "devices",
+            "device",
             "enroll-with-phrase",
             "--vault",
             "baluard-devb",
@@ -1434,7 +1434,7 @@ fn e2e_multi_device_enrollment_proof_forgery_refused() {
         .success();
     baluard_daemon(&guard)
         .args([
-            "devices",
+            "device",
             "enroll-with-phrase",
             "--phrase",
             &phrase,
@@ -1767,7 +1767,7 @@ fn e2e_cli_parity_generate_totp_ssh_collections_rotation() {
     // SshKey entry whose get shows the fingerprint.
     baluard_daemon(&guard)
         .args([
-            "ssh-keygen",
+            "ssh", "keygen",
             "--comment",
             "e2e@test",
             "--store",
@@ -1820,7 +1820,7 @@ fn e2e_cli_parity_generate_totp_ssh_collections_rotation() {
     // keeps serving decrypted reads afterwards (keys re-derived in
     // place; other devices adopt on their next unlock).
     baluard_daemon(&guard)
-        .arg("rotate-root")
+        .args(["vault", "rotate-key"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Root key rotated"));

@@ -12,7 +12,7 @@ fn tag_create_then_list() {
     init_vault(tmp.path(), "Tags", "tags-vault");
 
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("create")
         .arg("important")
         .assert()
@@ -20,7 +20,7 @@ fn tag_create_then_list() {
         .stdout(predicate::str::contains("Tag 'important' created."));
 
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("list")
         .assert()
         .success()
@@ -33,7 +33,7 @@ fn tag_list_empty_vault() {
     init_vault(tmp.path(), "EmptyTags", "empty-tags-vault");
 
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("list")
         .assert()
         .success()
@@ -46,7 +46,7 @@ fn tag_rename_updates_all_ciphers() {
     init_vault(tmp.path(), "RenameTag", "rename-tag-vault");
 
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("create")
         .arg("old")
         .assert()
@@ -65,7 +65,7 @@ fn tag_rename_updates_all_ciphers() {
         .success();
 
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("rename")
         .arg("old")
         .arg("new")
@@ -75,7 +75,7 @@ fn tag_rename_updates_all_ciphers() {
         .stdout(predicate::str::contains("1 entries updated"));
 
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("list")
         .assert()
         .success()
@@ -89,7 +89,7 @@ fn tag_delete_removes_from_all_ciphers() {
     init_vault(tmp.path(), "DelTag", "del-tag-vault");
 
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("create")
         .arg("doomed")
         .assert()
@@ -108,7 +108,7 @@ fn tag_delete_removes_from_all_ciphers() {
         .success();
 
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("delete")
         .arg("doomed")
         .assert()
@@ -116,7 +116,7 @@ fn tag_delete_removes_from_all_ciphers() {
         .stdout(predicate::str::contains("removed from 1 entries"));
 
     baluard(tmp.path())
-        .arg("tags")
+        .arg("tag")
         .arg("list")
         .assert()
         .success()

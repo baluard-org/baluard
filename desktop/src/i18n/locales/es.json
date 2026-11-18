@@ -1445,6 +1445,7 @@
     "yoloDisabled": "El acceso de agentes pedirá aprobación.",
     "notifyTitle": "Solicitud de credenciales de Baluard",
     "notifyBody": "{name} pide usar entradas de la bóveda.",
+    "unlockPrompt": "Un agente ({name}) espera aprobación ({need}). Desbloquea para revisar y aprobar.",
     "recentActivity": "Actividad reciente",
     "event": {
       "requested": "Acceso solicitado",

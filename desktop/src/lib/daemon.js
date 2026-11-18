@@ -92,4 +92,10 @@ async function setCloseToTray(enabled) {
   return invoke("set_close_to_tray", { enabled });
 }
 
-export { daemon, showWindow, getDesktopPrefs, setRunInBackground, setCloseToTray, getRenderState, setCompatibleRendering };
+async function getPendingAgentSummary() {
+  const raw = await daemon("agents.pending_summary");
+  const data = JSON.parse(raw);
+  return data && data.count > 0 && data.first ? data : null;
+}
+
+export { daemon, showWindow, getDesktopPrefs, setRunInBackground, setCloseToTray, getRenderState, setCompatibleRendering, getPendingAgentSummary };

@@ -34,6 +34,9 @@ semver.workspace = true
 tar.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 prost-build = "0.13"
 

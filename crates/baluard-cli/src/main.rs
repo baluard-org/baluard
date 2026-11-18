@@ -50,6 +50,32 @@ enum SshAction {
     Install,
     /// Disable and remove the installed systemd user unit (Linux).
     Uninstall,
+    /// Generate an SSH keypair daemon-side.
+    Keygen {
+        /// ed25519 | ecdsa256
+        #[arg(long, default_value = "ed25519")]
+        key_type: String,
+        #[arg(long, default_value = "")]
+        comment: String,
+        /// Also store as a new SSH-key entry with this name.
+        #[arg(long)]
+        store: Option<String>,
+    },
+    /// Show or change what this device may do with vault SSH keys.
+    Policy {
+        /// Turn the SSH agent on for this device.
+        #[arg(long)]
+        enable: bool,
+        /// Turn the SSH agent off for this device.
+        #[arg(long)]
+        disable: bool,
+        /// Sign without asking for approval on every use.
+        #[arg(long)]
+        auto_approve: bool,
+        /// Ask for approval on every sign.
+        #[arg(long)]
+        no_auto_approve: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -64,6 +90,21 @@ enum AgentAction {
     List,
     /// Revoke every agent grant for this vault.
     Revoke,
+    /// Enable or disable agent auto-approval (5m default; --yolo for indefinite).
+    AutoApprove {
+        /// Turn auto-approval on.
+        #[arg(long)]
+        on: bool,
+        /// Turn auto-approval off.
+        #[arg(long)]
+        off: bool,
+        /// Duration before auto-approval expires (e.g. 5m, 4h, 1h30m). Defaults to 5m.
+        #[arg(long)]
+        duration: Option<String>,
+        /// Keep auto-approval on indefinitely until turned off.
+        #[arg(long)]
+        yolo: bool,
+    },
     /// Show or change what this device may do with vault SSH keys.
     Policy {
         /// Turn the SSH agent on for this device.
@@ -85,7 +126,7 @@ enum AgentAction {
 #[allow(clippy::large_enum_variant)] // Pre-existing: Commands has unit + struct variants of widely different sizes
 enum Commands {
     /// Inspect and decide agent credential requests (human approver surface).
-    Agents {
+    Agent {
         #[command(subcommand)]
         action: AgentAction,
     },
@@ -153,13 +194,22 @@ enum Commands {
         /// Output format for decrypted content.
         #[arg(long, default_value = "quiet")]
         output: String,
+        /// Machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Run a command with human-approved credentials injected into its environment.
     Run {
-        /// Environment injection: NAME=ITEM_ID:FIELD. Repeat for each value.
-        #[arg(long = "inject", required = true)]
-        inject: Vec<String>,
+        /// Environment injection: NAME=baluard://[vault/]item/field or NAME=ITEM_ID:FIELD.
+        #[arg(long = "env", visible_alias = "inject")]
+        env: Vec<String>,
+        /// Template env file (KEY=baluard://... or literal KEY=VALUE lines). Repeat for multiple files.
+        #[arg(long = "env-file")]
+        env_file: Vec<std::path::PathBuf>,
+        /// Command execution timeout (e.g. 60s, 5m, 1h; default 60s, max 1h).
+        #[arg(long)]
+        timeout: Option<String>,
         /// Plain-language reason shown on the approval prompt.
         #[arg(long, default_value = "credential access")]
         need: String,
@@ -168,11 +218,36 @@ enum Commands {
         command: Vec<String>,
     },
 
+    /// Render a configuration template containing {{ baluard://... }} references.
+    Inject {
+        /// Input template file (defaults to stdin, or pass - for stdin).
+        #[arg(short = 'i', long = "in")]
+        input: Option<std::path::PathBuf>,
+        /// Output file path (written 0600; omit or pass - for stdout).
+        #[arg(short = 'o', long = "out")]
+        output: Option<std::path::PathBuf>,
+        /// Overwrite an existing output file even if modified outside baluard inject.
+        #[arg(long)]
+        force: bool,
+        /// Plain-language reason shown on the approval prompt.
+        #[arg(long, default_value = "template injection")]
+        need: String,
+    },
+
+    /// Read a single field value by reference (baluard://[vault/]item/field) using your unlocked session.
+    Read {
+        /// Secret reference URI (baluard://[vault/]item/field).
+        reference: String,
+    },
+
     /// List all ciphers.
     List {
         /// Show archived entries instead of active ones.
         #[arg(long)]
         archived: bool,
+        /// Machine-readable JSON output (metadata only).
+        #[arg(long)]
+        json: bool,
     },
 
     /// Delete a cipher by ID.
@@ -212,7 +287,7 @@ enum Commands {
     },
 
     /// Manage enrolled devices.
-    Devices {
+    Device {
         #[command(subcommand)]
         action: DeviceCommands,
     },
@@ -239,30 +314,10 @@ enum Commands {
     /// Custom Git remote: store the vault's access credentials
     /// (device-local, gitignored, 0600). Present flags update; flags with
     /// empty values clear that field. Absent flags stay untouched.
-    Credentials {
+    Credential {
         #[command(subcommand)]
         action: CredentialsAction,
     },
-    /// Custom Git remote: test the connection (an ls-remote pre-flight).
-    /// Candidate credentials ride the flags; with none, the vault's
-    /// stored credentials apply.
-    GitProbe {
-        /// The repository URL to test.
-        url: String,
-        #[arg(long)]
-        token: Option<String>,
-        #[arg(long)]
-        username: Option<String>,
-        #[arg(long)]
-        ssh_passphrase: Option<String>,
-        /// PEM private key material (device file or paste).
-        #[arg(long)]
-        key_file: Option<String>,
-    },
-    /// Custom Git remote: bless an SSH host key the daemon observed
-    /// (by attempt id from a failed operation). Never accepts key
-    /// material — the daemon commits what it saw.
-    GitTrust { attempt_id: String },
     Search {
         /// Text to match (case-insensitive substring).
         query: String,
@@ -272,6 +327,9 @@ enum Commands {
         /// Search one explicit vault by slug (an organization Space included).
         #[arg(long, value_name = "SLUG")]
         vault: Option<String>,
+        /// Machine-readable JSON output (metadata only).
+        #[arg(long)]
+        json: bool,
     },
 
     /// Generate a password or passphrase. Printed once, never stored
@@ -306,55 +364,38 @@ enum Commands {
         target: String,
     },
 
-    /// Generate an SSH keypair daemon-side. The private key is printed
-    /// once; store it with --store or keep it out of the vault.
-    SshKeygen {
-        /// ed25519 | ecdsa256
-        #[arg(long, default_value = "ed25519")]
-        key_type: String,
-        #[arg(long, default_value = "")]
-        comment: String,
-        /// Also store as a new SSH-key entry with this name.
-        #[arg(long)]
-        store: Option<String>,
-    },
-
     /// Git provider accounts: connect, status, repositories.
     Provider {
         #[command(subcommand)]
         action: ProviderAction,
     },
 
-    /// Rotate this vault's root key. Other enrolled devices adopt the
-    /// rekey on their next unlock; the recovery phrase rotates too.
-    RotateRoot,
-
     /// Space collections: list, create, assign entries, manage grants.
-    Collections {
+    Collection {
         #[command(subcommand)]
         action: CollectionAction,
     },
 
     /// Space members and their pending asks (joins, access requests).
-    Members {
+    Member {
         #[command(subcommand)]
         action: MemberAction,
     },
 
     /// Manage shared-folder access groups (admin).
-    Groups {
+    Group {
         #[command(subcommand)]
         action: GroupAction,
     },
 
     /// Advisory policy recommendations (admin).
-    Policies {
+    Policy {
         #[command(subcommand)]
         action: PolicyAction,
     },
 
     /// Pending sensitive-op approvals (quorum asks) for this vault.
-    Approvals {
+    Approval {
         #[command(subcommand)]
         action: ApprovalAction,
     },
@@ -381,19 +422,19 @@ enum Commands {
     },
 
     /// Contact cards and the Level 2 identity check.
-    Contacts {
+    Contact {
         #[command(subcommand)]
         action: ContactAction,
     },
 
     /// Manage folders.
-    Folders {
+    Folder {
         #[command(subcommand)]
         action: FolderAction,
     },
 
     /// Manage tags.
-    Tags {
+    Tag {
         #[command(subcommand)]
         action: TagAction,
     },
@@ -433,39 +474,10 @@ enum Commands {
     /// Show password health report (weak, reused, old passwords).
     Health,
 
-    /// Upload a file attachment to a cipher.
-    AttachUpload {
-        /// Cipher ID.
-        cipher_id: String,
-        /// Path to file to attach.
-        file: String,
-    },
-
-    /// Download an attachment from a cipher.
-    AttachDownload {
-        /// Cipher ID.
-        cipher_id: String,
-        /// Attachment ID.
-        attachment_id: String,
-        /// Output file path.
-        output: String,
-    },
-
-    /// Delete an attachment from a cipher.
-    AttachDelete {
-        /// Cipher ID.
-        cipher_id: String,
-        /// Attachment ID.
-        attachment_id: String,
-    },
-
-    /// Reclaim encrypted attachment files no entry references anymore.
-    AttachCompact,
-
-    /// List attachments on a cipher.
-    AttachList {
-        /// Cipher ID.
-        cipher_id: String,
+    /// Manage file attachments on vault entries.
+    Attachment {
+        #[command(subcommand)]
+        action: AttachmentAction,
     },
 
     /// Ping the daemon to check connectivity.
@@ -673,6 +685,43 @@ enum VaultSubAction {
         /// Quiet scripting run: no banner. The phrase is still required.
         #[arg(long)]
         yes: bool,
+    },
+    /// Rotate this vault's root key. Other enrolled devices adopt the
+    /// rekey on their next unlock; the recovery phrase rotates too.
+    RotateKey,
+}
+
+#[derive(Subcommand)]
+enum AttachmentAction {
+    /// Upload a file attachment to an entry.
+    Upload {
+        /// Entry ID.
+        item_id: String,
+        /// Path to file to attach.
+        file: String,
+    },
+    /// Download an attachment from an entry.
+    Download {
+        /// Entry ID.
+        item_id: String,
+        /// Attachment ID.
+        attachment_id: String,
+        /// Output file path.
+        output: String,
+    },
+    /// Delete an attachment from an entry.
+    Delete {
+        /// Entry ID.
+        item_id: String,
+        /// Attachment ID.
+        attachment_id: String,
+    },
+    /// Reclaim encrypted attachment files no entry references anymore.
+    Compact,
+    /// List attachments on an entry.
+    List {
+        /// Entry ID.
+        item_id: String,
     },
 }
 
@@ -1177,6 +1226,22 @@ enum SyncAction {
     },
     /// Show sync status.
     Status,
+    /// Custom Git remote: test the connection (an ls-remote pre-flight).
+    Probe {
+        /// The repository URL to test.
+        url: String,
+        #[arg(long)]
+        token: Option<String>,
+        #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
+        ssh_passphrase: Option<String>,
+        /// PEM private key material (device file or paste).
+        #[arg(long)]
+        key_file: Option<String>,
+    },
+    /// Custom Git remote: bless an SSH host key the daemon observed.
+    Trust { attempt_id: String },
     /// Show commit log.
     Log {
         /// Number of commits to show.
@@ -1901,7 +1966,7 @@ fn main() {
 
     // Daily update check + notice; skipped for self-update (it fetches on
     // its own) and run (D80 agents parse output, no noise).
-    if !matches!(cli.command, Commands::SelfUpdate | Commands::Run { .. }) {
+    if !matches!(cli.command, Commands::SelfUpdate | Commands::Run { .. } | Commands::Inject { .. }) {
         update::startup_notice();
     }
 
@@ -1940,7 +2005,7 @@ fn main() {
     // D80: a self-declared agent must use the scoped approval path instead
     // of the stored user session token.
     if std::env::var("BALUARD_AGENT").ok().as_deref() == Some("1")
-        && !matches!(&cli.command, Commands::Run { .. })
+        && !matches!(&cli.command, Commands::Run { .. } | Commands::Inject { .. })
     {
         eprintln!(
             "{}",
@@ -1949,7 +2014,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    let forced_direct = if matches!(&cli.command, Commands::Run { .. }) {
+    let forced_direct = if matches!(&cli.command, Commands::Run { .. } | Commands::Inject { .. }) {
         // D80 run refuses --direct/--socket in its handler; do not even ping
         // a caller-selected daemon before that refusal.
         false
@@ -1974,7 +2039,7 @@ fn main() {
     };
 
     let result = match cli.command {
-        Commands::Agents { action } => {
+        Commands::Agent { action } => {
             commands::agent::handle_agent_action(action, cli.socket.as_deref())
         }
         Commands::Ssh { action } => {
@@ -2031,6 +2096,24 @@ fn main() {
             SyncAction::Status => {
                 commands::handle_sync_status(mode, &vault_path, cli.socket.as_deref())
             }
+            SyncAction::Probe {
+                url,
+                token,
+                username,
+                ssh_passphrase,
+                key_file,
+            } => commands::handle_git_probe(
+                mode,
+                cli.socket.as_deref(),
+                &url,
+                token,
+                username,
+                ssh_passphrase,
+                key_file,
+            ),
+            SyncAction::Trust { attempt_id } => {
+                commands::handle_git_trust(mode, cli.socket.as_deref(), &attempt_id)
+            }
             SyncAction::Log { limit } => {
                 commands::handle_sync_log(mode, &vault_path, cli.socket.as_deref(), limit)
             }
@@ -2068,6 +2151,7 @@ fn main() {
             id,
             decrypt,
             output,
+            json,
         } => commands::handle_get(
             mode,
             &vault_path,
@@ -2075,16 +2159,41 @@ fn main() {
             &id,
             decrypt,
             &output,
+            json,
         ),
         Commands::Run {
-            inject,
+            env,
+            env_file,
+            timeout,
             need,
             command,
-        } => {
-            commands::agent::handle_run(cli.direct, cli.socket.as_deref(), &inject, &need, &command)
+        } => commands::agent::handle_run(
+            cli.direct,
+            cli.socket.as_deref(),
+            &env,
+            &env_file,
+            timeout.as_deref(),
+            &need,
+            &command,
+        ),
+        Commands::Inject {
+            input,
+            output,
+            force,
+            need,
+        } => commands::agent::handle_inject(
+            cli.direct,
+            cli.socket.as_deref(),
+            input.as_deref(),
+            output.as_deref(),
+            force,
+            &need,
+        ),
+        Commands::Read { reference } => {
+            commands::agent::handle_read(mode, cli.socket.as_deref(), &reference)
         }
-        Commands::List { archived } => {
-            commands::handle_list(mode, &vault_path, cli.socket.as_deref(), archived)
+        Commands::List { archived, json } => {
+            commands::handle_list(mode, &vault_path, cli.socket.as_deref(), archived, json)
         }
         Commands::Delete { id } => {
             commands::handle_delete(mode, &vault_path, cli.socket.as_deref(), &id)
@@ -2116,7 +2225,7 @@ fn main() {
         ),
 
         // Devices
-        Commands::Devices { action } => match action {
+        Commands::Device { action } => match action {
             DeviceCommands::List => {
                 commands::handle_devices(mode, &vault_path, cli.socket.as_deref())
             }
@@ -2157,30 +2266,15 @@ fn main() {
             }
         },
 
-        Commands::Credentials { action } => {
+        Commands::Credential { action } => {
             commands::handle_credentials(mode, cli.socket.as_deref(), action)
         }
-        Commands::GitProbe {
-            url,
-            token,
-            username,
-            ssh_passphrase,
-            key_file,
-        } => commands::handle_git_probe(
-            mode,
-            cli.socket.as_deref(),
-            &url,
-            token,
-            username,
-            ssh_passphrase,
-            key_file,
-        ),
-        Commands::GitTrust { attempt_id } => {
-            commands::handle_git_trust(mode, cli.socket.as_deref(), &attempt_id)
-        }
-        Commands::Search { query, all, vault } => {
-            commands::handle_search(mode, cli.socket.as_deref(), &query, all, vault.as_deref())
-        }
+        Commands::Search {
+            query,
+            all,
+            vault,
+            json,
+        } => commands::handle_search(mode, cli.socket.as_deref(), &query, all, vault.as_deref(), json),
 
         Commands::Generate {
             kind,
@@ -2204,41 +2298,27 @@ fn main() {
 
         Commands::Totp { target } => commands::handle_totp(mode, cli.socket.as_deref(), &target),
 
-        Commands::SshKeygen {
-            key_type,
-            comment,
-            store,
-        } => commands::handle_ssh_keygen(
-            mode,
-            cli.socket.as_deref(),
-            &key_type,
-            &comment,
-            store.as_deref(),
-        ),
-
         Commands::Provider { action } => {
             commands::handle_provider(mode, cli.socket.as_deref(), &action)
         }
 
-        Commands::RotateRoot => commands::handle_rotate_root(mode, cli.socket.as_deref()),
-
-        Commands::Collections { action } => {
+        Commands::Collection { action } => {
             commands::handle_collections(mode, cli.socket.as_deref(), &action)
         }
 
-        Commands::Members { action } => {
+        Commands::Member { action } => {
             commands::handle_members(mode, cli.socket.as_deref(), &action)
         }
 
-        Commands::Groups { action } => {
+        Commands::Group { action } => {
             commands::handle_groups(mode, cli.socket.as_deref(), &action)
         }
 
-        Commands::Policies { action } => {
+        Commands::Policy { action } => {
             commands::handle_policies(mode, cli.socket.as_deref(), &action)
         }
 
-        Commands::Approvals { action } => {
+        Commands::Approval { action } => {
             commands::handle_approvals(mode, cli.socket.as_deref(), &action)
         }
 
@@ -2252,7 +2332,7 @@ fn main() {
             commands::handle_activity(mode, cli.socket.as_deref(), limit)
         }
 
-        Commands::Contacts { action } => {
+        Commands::Contact { action } => {
             commands::handle_contacts(mode, cli.socket.as_deref(), &action)
         }
 
@@ -2269,6 +2349,7 @@ fn main() {
                 phrase.as_deref(),
                 yes,
             ),
+            VaultSubAction::RotateKey => commands::handle_rotate_root(mode, cli.socket.as_deref()),
         },
 
         Commands::Trash { action } => match action {
@@ -2283,7 +2364,7 @@ fn main() {
             }
         },
 
-        Commands::Folders { action } => match action {
+        Commands::Folder { action } => match action {
             FolderAction::Create { name } => {
                 commands::handle_folder_create(mode, &vault_path, cli.socket.as_deref(), &name)
             }
@@ -2298,7 +2379,7 @@ fn main() {
             }
         },
 
-        Commands::Tags { action } => match action {
+        Commands::Tag { action } => match action {
             TagAction::Create { name } => {
                 commands::handle_tag_create(mode, &vault_path, cli.socket.as_deref(), &name)
             }
@@ -2360,31 +2441,29 @@ fn main() {
 
         Commands::Health => commands::handle_health(cli.socket.as_deref()),
 
-        Commands::AttachUpload { cipher_id, file } => {
-            commands::handle_attach_upload(cli.socket.as_deref(), &cipher_id, &file)
-        }
-
-        Commands::AttachDownload {
-            cipher_id,
-            attachment_id,
-            output,
-        } => commands::handle_attach_download(
-            cli.socket.as_deref(),
-            &cipher_id,
-            &attachment_id,
-            &output,
-        ),
-
-        Commands::AttachDelete {
-            cipher_id,
-            attachment_id,
-        } => commands::handle_attach_delete(cli.socket.as_deref(), &cipher_id, &attachment_id),
-
-        Commands::AttachCompact => commands::handle_attach_compact(cli.socket.as_deref()),
-
-        Commands::AttachList { cipher_id } => {
-            commands::handle_attach_list(cli.socket.as_deref(), &cipher_id)
-        }
+        Commands::Attachment { action } => match action {
+            AttachmentAction::Upload { item_id, file } => {
+                commands::handle_attach_upload(cli.socket.as_deref(), &item_id, &file)
+            }
+            AttachmentAction::Download {
+                item_id,
+                attachment_id,
+                output,
+            } => commands::handle_attach_download(
+                cli.socket.as_deref(),
+                &item_id,
+                &attachment_id,
+                &output,
+            ),
+            AttachmentAction::Delete {
+                item_id,
+                attachment_id,
+            } => commands::handle_attach_delete(cli.socket.as_deref(), &item_id, &attachment_id),
+            AttachmentAction::Compact => commands::handle_attach_compact(cli.socket.as_deref()),
+            AttachmentAction::List { item_id } => {
+                commands::handle_attach_list(cli.socket.as_deref(), &item_id)
+            }
+        },
 
         Commands::SelfUpdate => update::self_update().map_err(Box::<dyn std::error::Error>::from),
 

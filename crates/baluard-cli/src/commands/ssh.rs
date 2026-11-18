@@ -24,6 +24,31 @@ pub fn handle(
         SshAction::Serve => serve(socket),
         SshAction::Install => install(socket),
         SshAction::Uninstall => uninstall(socket),
+        SshAction::Keygen {
+            key_type,
+            comment,
+            store,
+        } => crate::commands::handle_ssh_keygen(
+            crate::ConnectMode::Daemon,
+            socket,
+            &key_type,
+            &comment,
+            store.as_deref(),
+        ),
+        SshAction::Policy {
+            enable,
+            disable,
+            auto_approve,
+            no_auto_approve,
+        } => crate::commands::agent::handle_agent_action(
+            crate::AgentAction::Policy {
+                enable,
+                disable,
+                auto_approve,
+                no_auto_approve,
+            },
+            socket,
+        ),
     }
 }
 

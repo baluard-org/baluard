@@ -276,10 +276,10 @@ baluard get <uuid>
 baluard edit <uuid> --name "New Name" --favorite
 
 # Folder management
-baluard folders create "Personal"
-baluard folders list
-baluard folders rename <id> "Work"
-baluard folders delete <id>
+baluard folder create "Personal"
+baluard folder list
+baluard folder rename <id> "Work"
+baluard folder delete <id>
 
 # Sync
 baluard sync init
