@@ -3,3 +3,6 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/baluard-org/baluard/security/advisories/new
     about: Report security issues privately. Security reports do not use the public issue tracker.
+  - name: Security vulnerability (email)
+    url: mailto:security@baluard.app
+    about: Same private channel, by email, if you cannot use GitHub advisories.

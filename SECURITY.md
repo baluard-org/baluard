@@ -8,7 +8,7 @@ Security fixes land on the latest release line only. Use the newest 0.1.x releas
 
 ## How to report
 
-Please use GitHub's private security advisory on this repository. If you cannot use it, open a normal issue saying only that you have something to report privately and we will arrange a channel.
+Please use GitHub's private security advisory on this repository, or email security@baluard.app. If you cannot use either, open a normal issue saying only that you have something to report privately and we will arrange a channel.
 
 Include the Baluard version, your platform, and steps to reproduce. A proof of concept is welcome; secrets from a real vault are not, ever.
 
