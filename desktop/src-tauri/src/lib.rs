@@ -137,14 +137,14 @@ fn send_request_with_token(
         .set_timeouts(Duration::from_secs(30), Duration::from_secs(5))
         .map_err(|e| format!("Set timeout: {e}"))?;
 
-    let req = GatewayRequest {
+    let mut req = GatewayRequest {
         action: action.to_string(),
         payload: payload.to_string(),
         session_token: token.to_string(),
         slug: slug.to_string(),
         ipc_version: baluard_core::IPC_PROTOCOL_VERSION,
     };
-    let body = req.encode_to_vec();
+    let mut body = req.encode_to_vec();
 
     let mut header = Vec::with_capacity(10);
     encode_varint(body.len() as u64, &mut header);
@@ -154,6 +154,11 @@ fn send_request_with_token(
     stream.write_all(&body).map_err(|e| format!("Write: {e}"))?;
     stream.flush().map_err(|e| format!("Flush: {e}"))?;
     stream.shutdown().map_err(|e| format!("Shutdown: {e}"))?;
+
+    // Zeroize wire bytes and the request copies (payload may carry passwords).
+    body.zeroize();
+    req.payload.zeroize();
+    req.session_token.zeroize();
 
     // One length-prefixed response frame; read_to_end would hang on
     // Windows, where the client cannot half-close the pipe.
@@ -839,10 +844,10 @@ async fn save_recovery_phrase(
     // sheet borrows this command's locals. Rendering is microseconds; only
     // the dialog wait + file write belong on the pool. Bonus: the secret
     // String is no longer moved into (and copied across) the closure.
-    let bytes = match sheet_format {
+    let bytes = zeroize::Zeroizing::new(match sheet_format {
         baluard_core::recovery_sheet::SheetFormat::Txt => sheet.to_txt().into_bytes(),
         baluard_core::recovery_sheet::SheetFormat::Pdf => sheet.to_pdf(),
-    };
+    });
     let default_stem = file_stem
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "baluard-recovery-phrase".to_string());

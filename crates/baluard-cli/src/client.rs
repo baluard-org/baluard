@@ -335,6 +335,7 @@ fn request_with_session(
     // Zeroize wire bytes and request payload (password may be in payload)
     body.zeroize();
     req.payload.zeroize();
+    req.session_token.zeroize();
 
     // Read exactly one length-prefixed response frame; read_to_end would
     // hang on Windows, where the client cannot half-close the pipe.

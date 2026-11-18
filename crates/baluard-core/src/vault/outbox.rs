@@ -751,9 +751,10 @@ pub fn open_entry(
             "this shared folder has changed: ask the sender to share it again",
         ));
     }
-    let key: [u8; 32] = hex::decode(&link.content_key_hex)
+    let key: zeroize::Zeroizing<[u8; 32]> = hex::decode(&link.content_key_hex)
         .ok()
         .and_then(|b| b.as_slice().try_into().ok())
+        .map(zeroize::Zeroizing::new)
         .ok_or_else(|| deny("outbox link is broken: ask the sender to share again"))?;
     let entry_path = outbox_path
         .join(ENTRIES_DIR)
@@ -767,7 +768,7 @@ pub fn open_entry(
     )?;
     let purpose = format!("{ENTRY_PURPOSE_PREFIX}/{}", marker.outbox_id);
     let purpose = format!("{purpose}/{cipher_id}");
-    let doc = crate::secret_file::open_secret_blob(&key, &blob, &purpose)
+    let doc = crate::secret_file::open_secret_blob(&*key, &blob, &purpose)
         .map_err(|e| deny(&format!("entry does not open: {e}")))?;
     if doc.len() > MAX_ENTRY_PAYLOAD_BYTES {
         return Err(deny("shared entry is too large"));
@@ -861,10 +862,10 @@ pub fn link_outbox(
         identity.wrapping_secret(),
         OUTBOX_KEYWRAP_CONTEXT,
     )?);
-    let key_arr: [u8; 32] = content_key
-        .as_slice()
-        .try_into()
-        .map_err(|_| deny("outbox content key length invalid"))?;
+    if content_key.len() != 32 {
+        return Err(deny("outbox content key length invalid"));
+    }
+    let key_hex = hex::encode(content_key.as_slice());
     drop(content_key);
 
     // The keywrap signature binds the recipient wrap pubkey + outbox
@@ -901,7 +902,7 @@ pub fn link_outbox(
     let link = OutboxLink {
         outbox_id: marker.outbox_id,
         path: norm_path(outbox_path),
-        content_key_hex: hex::encode(key_arr),
+        content_key_hex: key_hex,
         owner_signing_pubkey: marker.owner_card.card.identity_signing_pubkey.clone(),
         owner_name: marker.owner_card.card.display_name.clone(),
         owner_vault_id: marker.owner_vault_id,

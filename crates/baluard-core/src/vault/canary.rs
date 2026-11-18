@@ -23,10 +23,10 @@ const RK_CANARY_PT: &[u8] = b"baluard-rk-ok";
 const RK_CANARY_AAD: &[u8] = b"baluard-rk-canary-v1";
 
 /// Derive a canary-specific key from a Root Key via HKDF-SHA256.
-pub fn derive_rk_canary_key(root_key: &RootKey) -> [u8; 32] {
+pub fn derive_rk_canary_key(root_key: &RootKey) -> zeroize::Zeroizing<[u8; 32]> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
-    let mut key = [0u8; 32];
-    hkdf.expand(RK_CANARY_INFO, &mut key)
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    hkdf.expand(RK_CANARY_INFO, &mut *key)
         .expect("32 bytes is valid for HKDF-SHA256");
     key
 }
@@ -40,7 +40,7 @@ pub fn create_rk_canary(
     vault_id: Uuid,
     epoch: u64,
 ) -> Result<Vec<u8>, BaluardError> {
-    let mut canary_key = derive_rk_canary_key(root_key);
+    let canary_key = derive_rk_canary_key(root_key);
 
     let nonce = crate::crypto::aead::build_nonce(0, vault_id);
     let header = EnvelopeHeader {
@@ -52,7 +52,6 @@ pub fn create_rk_canary(
     };
     let envelope =
         crate::crypto::aead::encrypt(&canary_key, RK_CANARY_PT, RK_CANARY_AAD, &nonce, header)?;
-    canary_key.zeroize();
 
     crate::vault::envelope::serialize(&envelope).map_err(Into::into)
 }
@@ -61,12 +60,9 @@ pub fn create_rk_canary(
 ///
 /// Decrypts the envelope and checks the plaintext matches `RK_CANARY_PT`.
 pub fn verify_rk_canary(root_key: &RootKey, canary_bytes: &[u8]) -> Result<(), BaluardError> {
-    let mut canary_key = derive_rk_canary_key(root_key);
+    let canary_key = derive_rk_canary_key(root_key);
     let envelope = crate::vault::envelope::deserialize(canary_bytes)?;
-    let pt = crate::crypto::aead::decrypt(&canary_key, &envelope).inspect_err(|_| {
-        canary_key.zeroize();
-    });
-    canary_key.zeroize();
+    let pt = crate::crypto::aead::decrypt(&canary_key, &envelope);
     let pt =
         pt.map_err(|_| crate::error::VaultError::Corrupt("root key verification failed".into()))?;
     if pt != RK_CANARY_PT {

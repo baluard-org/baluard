@@ -492,13 +492,23 @@ pub fn write_smk_pending(
 }
 
 /// Read the recorded outgoing SMK hex; None when absent or malformed.
-pub fn read_smk_pending(vault_path: &Path) -> Option<String> {
+/// None = no marker file (caller keeps waiting). Some(Err) = marker
+/// present but its SMK hex is corrupt (caller clears it). Some(Ok) = the
+/// decoded outgoing SMK; the hex String copy is wiped before returning
+/// (the raw file bytes and the serde parse scratch are not).
+pub fn read_smk_pending(vault_path: &Path) -> Option<Result<zeroize::Zeroizing<[u8; 32]>, ()>> {
     let bytes = std::fs::read(vault_path.join(SMK_PENDING_PATH)).ok()?;
     let doc = serde_json::from_slice::<serde_json::Value>(&bytes).ok()?;
     if doc["format"].as_u64() != Some(1) {
         return None;
     }
-    doc["smk"].as_str().map(|s| s.to_string())
+    let mut hex_str = doc["smk"].as_str()?.to_string();
+    let decoded = hex::decode(&hex_str)
+        .ok()
+        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+        .map(zeroize::Zeroizing::new);
+    zeroize::Zeroize::zeroize(&mut hex_str);
+    Some(decoded.ok_or(()))
 }
 
 pub fn clear_smk_pending(vault_path: &Path) {

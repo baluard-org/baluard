@@ -213,7 +213,10 @@ pub fn seal_bytes(
 }
 
 /// Open sealed file bytes back into the inner privkey JSON.
-pub fn open_bytes(seal_key: &[u8; 32], file: &[u8]) -> Result<String, BaluardError> {
+pub fn open_bytes(
+    seal_key: &[u8; 32],
+    file: &[u8],
+) -> Result<zeroize::Zeroizing<String>, BaluardError> {
     let v: serde_json::Value = serde_json::from_slice(file)
         .map_err(|e| VaultError::Corrupt(format!("sealed devkey json: {e}")))?;
     if v["type"].as_str() != Some(SEAL_TYPE) {
@@ -239,7 +242,7 @@ pub fn open_bytes(seal_key: &[u8; 32], file: &[u8]) -> Result<String, BaluardErr
     let inner = String::from_utf8(pt.clone())
         .map_err(|e| VaultError::Corrupt(format!("devkey plaintext utf8: {e}")))?;
     pt.zeroize();
-    Ok(inner)
+    Ok(zeroize::Zeroizing::new(inner))
 }
 
 /// Atomically write the sealed file (0600 via the WS1-backed writer).
@@ -305,7 +308,7 @@ pub fn read_privkey_file_with_ck(
             })?;
             let file = std::fs::read_to_string(path)
                 .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
-            open_bytes(key, file.as_bytes()).map(|inner| (zeroize::Zeroizing::new(inner), None))
+            open_bytes(key, file.as_bytes()).map(|inner| (inner, None))
         }
         PrivkeyFileKind::SealedHw => {
             let key = seal_key.ok_or_else(|| BaluardError::from(VaultError::Locked))?;
@@ -372,7 +375,7 @@ pub fn rotate_seal_key(
                     })
             });
             let inner = open_bytes(old_seal_key, file.as_bytes())?;
-            seal_file(path, &inner, new_seal_key, id)?;
+            seal_file(path, &*inner, new_seal_key, id)?;
             Ok(true)
         }
         PrivkeyFileKind::SealedHw => {
@@ -1106,12 +1109,14 @@ fn rotate_and_seal(
     rand_core::OsRng.fill_bytes(&mut seed);
     let new_x25519 = x25519_dalek::StaticSecret::from(seed);
     let new_signing = ed25519_dalek::SigningKey::generate(&mut rand_core::OsRng);
-    let inner = serde_json::json!({
-        "device_id": device_id.to_string(),
-        "x25519_private": hex::encode(new_x25519.to_bytes()),
-        "ed25519_private": hex::encode(new_signing.to_bytes()),
-    })
-    .to_string();
+    let inner = zeroize::Zeroizing::new(
+        serde_json::json!({
+            "device_id": device_id.to_string(),
+            "x25519_private": hex::encode(new_x25519.to_bytes()),
+            "ed25519_private": hex::encode(new_signing.to_bytes()),
+        })
+        .to_string(),
+    );
     let info = hw.create_binding(vault_id, mode)?;
     let out = seal_bytes_hw(
         &*hw,

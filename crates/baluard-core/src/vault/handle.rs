@@ -5559,18 +5559,13 @@ impl VaultHandle {
     /// files load under it and re-seal under the current one. Any load
     /// or save failure keeps the marker for the next attempt.
     fn heal_smk_pending_after_unlock(&mut self) {
-        let Some(old_hex) = crate::vault::space_meta::read_smk_pending(&self.path) else {
-            return;
-        };
-        let old = match hex::decode(&old_hex)
-            .ok()
-            .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
-        {
-            Some(arr) => zeroize::Zeroizing::new(arr),
-            None => {
+        let old = match crate::vault::space_meta::read_smk_pending(&self.path) {
+            None => return,
+            Some(Err(())) => {
                 crate::vault::space_meta::clear_smk_pending(&self.path);
                 return;
             }
+            Some(Ok(arr)) => arr,
         };
         let saved = match &mut self.state {
             VaultState::Unlocked(u) => u.smk.replace(old),
@@ -12016,17 +12011,21 @@ fn parse_privkey_json(json: &str) -> Result<DevicePrivKeys, BaluardError> {
     let data: serde_json::Value = serde_json::from_str(json)
         .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
 
-    let x_bytes = hex::decode(data["x25519_private"].as_str().unwrap_or(""))
+    let mut x_bytes = hex::decode(data["x25519_private"].as_str().unwrap_or(""))
         .map_err(|e| VaultError::Corrupt(format!("x25519 hex: {e}")))?;
     let x_arr: [u8; 32] = x_bytes
+        .as_slice()
         .try_into()
         .map_err(|_| VaultError::Corrupt("invalid x25519 key length".into()))?;
+    x_bytes.zeroize();
 
-    let ed_bytes = hex::decode(data["ed25519_private"].as_str().unwrap_or(""))
+    let mut ed_bytes = hex::decode(data["ed25519_private"].as_str().unwrap_or(""))
         .map_err(|e| VaultError::Corrupt(format!("ed25519 hex: {e}")))?;
     let ed_arr: [u8; 32] = ed_bytes
+        .as_slice()
         .try_into()
         .map_err(|_| VaultError::Corrupt("invalid ed25519 key length".into()))?;
+    ed_bytes.zeroize();
 
     Ok(DevicePrivKeys {
         x25519: x25519_dalek::StaticSecret::from(x_arr),

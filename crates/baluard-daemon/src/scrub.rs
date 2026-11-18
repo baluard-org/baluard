@@ -3,7 +3,7 @@
 //! exfiltrate its own environment in ways no scrubber can recognize.
 
 use base64::Engine;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const REDACTED: &str = "[REDACTED]";
 
@@ -28,10 +28,11 @@ pub fn scrub_output(input: &[u8], secrets: &[Zeroizing<String>]) -> String {
         // recognizable suffix behind.
         forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
         forms.dedup();
-        for form in forms {
+        for mut form in forms {
             if !form.is_empty() {
                 out = out.replace(&form, REDACTED);
             }
+            form.zeroize();
         }
     }
     out

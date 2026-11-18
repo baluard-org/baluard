@@ -98,9 +98,12 @@ impl std::fmt::Debug for ItemKey {
 impl ItemKey {
     /// Generate a new random Item Key. mlock'd to prevent swap.
     pub fn generate() -> Self {
-        let mut key = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut key);
-        Self::from_bytes(key)
+        // Fill inside the Box so the key never lives as an unwiped stack copy.
+        let mut key = Box::new([0u8; 32]);
+        rand::rngs::OsRng.fill_bytes(&mut *key);
+        let s = Self(key);
+        mlock_key(s.0.as_ptr(), s.0.len());
+        s
     }
 
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -158,12 +161,10 @@ impl SpaceGroupKey {
     /// Generate a new random Space Group Key. mlock'd to prevent swap.
     /// For multi-user/org scenarios where the SGK is not derived from RootKey.
     pub fn generate(epoch: u64) -> Self {
-        let mut key = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut key);
-        let s = Self {
-            key: Box::new(key),
-            epoch,
-        };
+        // Fill inside the Box so the key never lives as an unwiped stack copy.
+        let mut key = Box::new([0u8; 32]);
+        rand::rngs::OsRng.fill_bytes(&mut *key);
+        let s = Self { key, epoch };
         mlock_key(s.key.as_ptr(), s.key.len());
         s
     }
@@ -180,14 +181,12 @@ impl SpaceGroupKey {
         info.extend_from_slice(&epoch.to_le_bytes());
 
         let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
-        let mut key = [0u8; 32];
-        hkdf.expand(&info, &mut key)
+        // Expand inside the Box so the key never lives as an unwiped stack copy.
+        let mut key = Box::new([0u8; 32]);
+        hkdf.expand(&info, &mut *key)
             .expect("32 bytes is valid output length for HKDF-SHA256");
 
-        let s = Self {
-            key: Box::new(key),
-            epoch,
-        };
+        let s = Self { key, epoch };
         mlock_key(s.key.as_ptr(), s.key.len());
         s
     }
@@ -253,11 +252,14 @@ impl SpaceGroupKey {
         info.extend_from_slice(cipher_id.as_bytes());
 
         let hk = Hkdf::<Sha256>::new(None, ikm);
-        let mut key = [0u8; 32];
-        hk.expand(&info, &mut key)
+        // Expand inside the Box so the key never lives as an unwiped stack copy.
+        let mut key = Box::new([0u8; 32]);
+        hk.expand(&info, &mut *key)
             .expect("32 bytes is valid output length for HKDF-SHA256");
 
-        ItemKey::from_bytes(key)
+        let s = ItemKey(key);
+        mlock_key(s.0.as_ptr(), s.0.len());
+        s
     }
 
     /// Derive an Item Key from a collection content key. S3-7c: ciphers
