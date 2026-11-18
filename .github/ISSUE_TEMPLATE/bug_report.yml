@@ -48,3 +48,16 @@ body:
         - Other
     validations:
       required: true
+  - type: dropdown
+    id: git-sync
+    attributes:
+      label: Git sync
+      description: If sync is on, which service hosts the vault's git remote?
+      options:
+        - No, sync is off
+        - Yes, GitHub
+        - Yes, GitLab
+        - Yes, Codeberg
+        - Yes, another or custom git server
+    validations:
+      required: true
