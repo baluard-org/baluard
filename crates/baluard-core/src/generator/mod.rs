@@ -154,18 +154,23 @@ pub fn generate_passphrase(opts: &PassphraseOptions) -> Result<String, GenerateE
     }
     if opts.number {
         let n: u32 = rng.gen_range(0..100);
-        let pos = rng.gen_range(0..=result.len()); // insert at 0..=len ( inclusive, mirrors JS slice(0, idx) )
-        let (head, tail) = result.split_at(pos);
-        result = format!("{head}{n}{tail}");
+        let pos = char_offset(&result, rng.gen_range(0..=result.chars().count()));
+        result = format!("{}{n}{}", &result[..pos], &result[pos..]);
     }
     if opts.symbol {
         let syms: Vec<char> = PASSPHRASE_SYMBOLS.chars().collect();
         let s = syms[rng.gen_range(0..syms.len())];
-        let pos = rng.gen_range(0..=result.len());
-        let (head, tail) = result.split_at(pos);
-        result = format!("{head}{s}{tail}");
+        let pos = char_offset(&result, rng.gen_range(0..=result.chars().count()));
+        result = format!("{}{s}{}", &result[..pos], &result[pos..]);
     }
     Ok(result)
+}
+
+/// Byte offset of the nth char (the string end when nth equals the char
+/// count), so insert positions stay on char boundaries for multibyte
+/// separators.
+fn char_offset(s: &str, nth: usize) -> usize {
+    s.char_indices().nth(nth).map_or(s.len(), |(i, _)| i)
 }
 
 /// Generator errors.
@@ -180,6 +185,31 @@ pub enum GenerateError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BL0016: the number/symbol insert position is a char offset, not a
+    /// byte offset; a multibyte separator must not steer split_at into a
+    /// char boundary.
+    #[test]
+    fn passphrase_positions_survive_multibyte_separators() {
+        let opts = PassphraseOptions {
+            separator: "日本語".to_string(),
+            word_count: 4,
+            number: true,
+            symbol: true,
+            ..Default::default()
+        };
+        for _ in 0..64 {
+            let out = generate_passphrase(&opts).expect("multibyte separator must not panic");
+            assert!(
+                out.chars().any(|c| c.is_ascii_digit()),
+                "number must land somewhere: {out}"
+            );
+            assert!(
+                out.chars().any(|c| PASSPHRASE_SYMBOLS.contains(c)),
+                "symbol must land somewhere: {out}"
+            );
+        }
+    }
 
     #[test]
     fn password_default_length_and_charset() {

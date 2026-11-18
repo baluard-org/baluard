@@ -612,11 +612,10 @@ fn forward(action: &str, payload: &str, token: &str) -> anyhow::Result<GatewayRe
     }
 
     let (resp_len, offset) = decode_varint(&buf)?;
-    let end = offset + resp_len as usize;
-    if end > buf.len() {
+    let Some((start, end)) = locate_response(&buf, offset, resp_len) else {
         anyhow::bail!("response frame truncated");
-    }
-    let resp = GatewayResponse::decode(&buf[offset..end])?;
+    };
+    let resp = GatewayResponse::decode(&buf[start..end])?;
     check_daemon_ipc_range(resp.ipc_version, resp.ipc_min_version, resp.ipc_max_version)?;
     Ok(resp)
 }
@@ -666,6 +665,18 @@ fn decode_varint(data: &[u8]) -> anyhow::Result<(u64, usize)> {
     anyhow::bail!("varint truncated");
 }
 
+/// Range-safe frame location: a hostile length varint must not wrap or
+/// truncate into a panicking slice; any unrepresentable or oversized frame
+/// is refused.
+fn locate_response(buf: &[u8], offset: usize, resp_len: u64) -> Option<(usize, usize)> {
+    let len = usize::try_from(resp_len).ok()?;
+    let end = offset.checked_add(len)?;
+    if end > buf.len() {
+        return None;
+    }
+    Some((offset, end))
+}
+
 #[cfg(test)]
 mod tests {
     //! Unit tests for the baluard-nmh bridge. Covers:
@@ -682,6 +693,22 @@ mod tests {
     use std::io::Cursor;
     use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
+
+    /// BL0016: a hostile length varint must not wrap or truncate into a
+    /// panicking slice; any unrepresentable or oversized frame is refused.
+    #[test]
+    fn locate_response_refuses_hostile_lengths() {
+        let buf = [0u8; 20];
+        // u64::MAX wraps offset + len in usize arithmetic on 64-bit.
+        assert_eq!(locate_response(&buf, 10, u64::MAX), None);
+        // Longer than the buffer.
+        assert_eq!(locate_response(&buf, 0, 21), None);
+        // A normal frame inside the buffer still resolves.
+        assert_eq!(locate_response(&buf, 10, 10), Some((10, 20)));
+        // Exact end is valid; one past is not.
+        assert_eq!(locate_response(&buf, 20, 0), Some((20, 20)));
+        assert_eq!(locate_response(&buf, 20, 1), None);
+    }
 
     /// Process-wide BALUARD_DATA_DIR override so `PairingFile::load()` (called
     /// transitively by `resolve_token` for non-bootstrap actions) returns an

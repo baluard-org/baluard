@@ -517,11 +517,12 @@ pub fn open_kit(armor: &str, passphrase: &str) -> Result<KitBody, BaluardError> 
     let end_at = normalized.find(ARMOR_END).ok_or_else(|| {
         VaultError::Corrupt("wrong passphrase or damaged file: legacy key footer missing".into())
     })?;
-    if end_at < begin_at {
+    let body_start = begin_at + ARMOR_BEGIN.len() + 1;
+    if end_at < body_start || !normalized.is_char_boundary(body_start) {
         return Err(VaultError::Corrupt("legacy key armor structure".into()).into());
     }
     let letter = &normalized[..begin_at];
-    let body_region = &normalized[begin_at + ARMOR_BEGIN.len() + 1..end_at];
+    let body_region = &normalized[body_start..end_at];
     let b64: String = body_region.chars().filter(|c| !c.is_whitespace()).collect();
     let sealed_json = base64::engine::general_purpose::STANDARD
         .decode(b64.as_bytes())
@@ -1343,6 +1344,23 @@ mod tests {
     use super::*;
     use crate::providers::types::ProviderToken;
     use crate::providers::types::mock::MockProvider;
+
+    /// BL0016: the body slice starts at begin + header + 1, so abutting
+    /// armor markers (start past end) and a multibyte char at that byte
+    /// offset must both fail closed instead of panicking.
+    #[test]
+    fn open_kit_refuses_abutting_armor_markers_instead_of_panicking() {
+        let armor = format!("{ARMOR_BEGIN}{ARMOR_END}");
+        let err = open_kit(&armor, "pw").expect_err("abutting armor must fail closed");
+        assert!(err.to_string().contains("armor structure"), "{err}");
+    }
+
+    #[test]
+    fn open_kit_refuses_multibyte_body_offset_instead_of_panicking() {
+        let armor = format!("{ARMOR_BEGIN}\u{e9}{ARMOR_END}");
+        let err = open_kit(&armor, "pw").expect_err("mid-char slice offset must fail closed");
+        assert!(err.to_string().contains("armor structure"), "{err}");
+    }
 
     /// Open a fresh vault for the owner-op tests: create, drop the
     /// ceremony handle, re-open, unlock.
