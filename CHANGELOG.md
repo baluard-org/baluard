@@ -6,6 +6,24 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.7.5 - 2026-11-19
+
+- Browser: passkey interception now survives the browser pausing the extension in the background, the top cause of Baluard's passkey offer never appearing on a site. Registration state self-repairs when it goes stale, and a sign-in waiting in the credential picker keeps waiting through a pause instead of silently dying.
+
+- Sync: vaults can now sync or back up to a plain folder on disk, including a cloud-synced folder, with the encryption unchanged. Desktop settings, mobile settings, and the CLI (`baluard sync clone-url --folder`) all reach it, and an optional direct device-to-device channel syncs between your own devices over the internet with no server in the middle.
+
+- Windows and macOS: fixed cloning a vault and then enrolling a passkey failing with a misleading "Vault is not unlocked" error. A fresh clone now asks for the recovery phrase as it should, and a failed attempt no longer wedges the clone screen.
+
+- Desktop: the About tab now shows the running daemon version next to the app version, so support asks for both in one screenshot.
+
+- Browser: saving a login no longer leaves a stale save prompt behind after it expires, and the entry form keeps your typed password when the vault merely needs unlocking rather than an auth failure.
+
+- CLI: new `baluard agent` commands for scripted vault access (URI and environment lookups, structured output, streaming) and a tidied command list; the old names keep working in scripts.
+
+- All apps: a deep security-hardening pass. Secrets are wiped from memory as soon as each operation ends, damaged vault files and hostile inputs fail closed instead of crashing, and crashes at app boundaries can no longer take the whole daemon down.
+
+- All apps: wording improvements across the Spanish, French, and Brazilian Portuguese translations.
+
 ## 0.7.4 - 2026-11-18
 
 - Browser: the extension offers passkeys by default, matching 1Password and Bitwarden. Installs that already turned the setting off keep it off; installs that never touched it turn on with this update.
