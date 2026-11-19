@@ -149,9 +149,32 @@ export function createPasskeyClient(send, opts = {}) {
   // waking SW never answers from an empty map. storage.session.get is an
   // in-memory read; the promise memoizes so late calls pay nothing.
   let restoreReady = null;
+  let restoreHasSettled = false;
   function awaitingRestore() {
-    if (!restoreReady) restoreReady = restoreParked().catch(() => {});
+    if (!restoreReady) {
+      restoreReady = restoreParked()
+        .then((n) => {
+          restoreHasSettled = true;
+          return n;
+        })
+        .catch(() => {
+          restoreHasSettled = true;
+        });
+    }
     return restoreReady;
+  }
+
+  // False only in the first moments of a SW life (before the first restore
+  // attempt lands); callers use it to hold off destructive cleanup while
+  // the bridge reconnect is still in flight.
+  const restoreSettled = () => restoreHasSettled;
+
+  async function clearParked() {
+    const store = sessionStore();
+    if (!store) return;
+    try {
+      await store.remove(PARK_KEY);
+    } catch {}
   }
 
   // SW-side breadcrumb trail: content-script consoles are invisible to
@@ -858,6 +881,8 @@ export function createPasskeyClient(send, opts = {}) {
     popoutClosed,
     cleanupTab: cleanupTabAfterRestore,
     restoreParked,
+    restoreSettled,
+    clearParked,
     hasTabPort: (tabId) => tabPorts.has(tabId),
     activeSessions,
   };

@@ -841,6 +841,11 @@ chrome.tabs?.onUpdated?.addListener((tabId, change) => {
   // cannot discriminate: only treat it as a navigation when the bridge
   // port is already gone, because the port dies with the old document.
   if (change.status === "loading" && !PASSKEY_CLIENT.hasTabPort(tabId)) {
+    // Wake window: the bridge reconnect lands at delay 0, so a loading
+    // event seen before the parked restore settled is more likely a wake
+    // phantom than a navigation. A real navigation still converges - the
+    // new document's HELLO supersedes the stale session.
+    if (!PASSKEY_CLIENT.restoreSettled()) return;
     PASSKEY_CLIENT.cleanupTab(tabId);
   }
 });
@@ -957,6 +962,7 @@ async function syncPasskeyScriptsOnce() {
     try {
       await chrome.storage.session.remove("passkeysInjected");
     } catch {}
+    await PASSKEY_CLIENT.clearParked();
     return;
   }
   try {

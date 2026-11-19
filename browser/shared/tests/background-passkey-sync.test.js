@@ -24,6 +24,8 @@ function makeChrome({ worldError = false } = {}) {
     session: {},
     settingWrites: [],
     errors: [],
+    onMessageListeners: [],
+    onUpdatedListeners: [],
   };
   const api = {
     __state: state,
@@ -31,7 +33,8 @@ function makeChrome({ worldError = false } = {}) {
       // NMH connect must fail fast and harmlessly at import time.
       connectNative: undefined,
       lastError: null,
-      onMessage: { addListener: () => {} },
+      getURL: (path) => `chrome-extension://test-ext/${path}`,
+      onMessage: { addListener: (cb) => state.onMessageListeners.push(cb) },
       onConnect: { addListener: () => {} },
     },
     storage: {
@@ -86,7 +89,7 @@ function makeChrome({ worldError = false } = {}) {
       query: vi.fn(async () => [{ id: 11 }, { id: 12 }]),
       sendMessage: vi.fn(async () => {}),
       onActivated: { addListener: () => {} },
-      onUpdated: { addListener: () => {} },
+      onUpdated: { addListener: (cb) => state.onUpdatedListeners.push(cb) },
       onRemoved: { addListener: () => {} },
     },
     windows: { onRemoved: { addListener: () => {} } },
@@ -322,5 +325,74 @@ describe("syncPasskeyScripts", () => {
     chromeApi.__state.settings = { [SETTINGS_KEY]: { enablePasskeys: true } };
     await mod.syncPasskeyScripts();
     expect(mod.passkeyRegistrationVerified()).toBe(false);
+  });
+});
+
+function parkedEntry(tabId = 11) {
+  return {
+    id: `park-${tabId}`,
+    pageId: `page-${tabId}`,
+    contextId: "ctx-1",
+    tabId,
+    mode: "get",
+    conditional: true,
+    origin: "https://example.com",
+    rpId: "example.com",
+    requiresUv: false,
+    options: { challenge: "Y2hhbGxlbmdl" },
+    expiresAt: Date.now() + 60_000,
+  };
+}
+
+async function flush() {
+  await new Promise((r) => setTimeout(r, 10));
+}
+
+describe("parked-session lifecycle in background", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("clears parked sessions when passkeys are disabled", async () => {
+    const chromeApi = makeChrome();
+    const s = chromeApi.__state;
+    s.settings = { [SETTINGS_KEY]: { enablePasskeys: false } };
+    s.session.pkParked = [parkedEntry()];
+    const sync = await loadSync(chromeApi);
+    await sync();
+    expect(s.session.pkParked).toBeUndefined();
+  });
+
+  it("skips navigation cleanup before the wake restore settles", async () => {
+    const chromeApi = makeChrome();
+    const s = chromeApi.__state;
+    s.settings = { [SETTINGS_KEY]: { enablePasskeys: true } };
+    s.session.pkParked = [parkedEntry()];
+    await loadMod(chromeApi);
+    expect(s.onUpdatedListeners.length).toBeGreaterThan(0);
+    s.onUpdatedListeners.forEach((cb) => cb(11, { status: "loading" }));
+    await flush();
+    expect(Array.isArray(s.session.pkParked)).toBe(true);
+    expect(s.session.pkParked).toHaveLength(1);
+  });
+
+  it("cleans up a parked session after the restore has settled", async () => {
+    const chromeApi = makeChrome();
+    const s = chromeApi.__state;
+    s.settings = { [SETTINGS_KEY]: { enablePasskeys: true } };
+    s.session.pkParked = [parkedEntry()];
+    await loadMod(chromeApi);
+    // Settle the wake restore the way any ceremony entry point would.
+    expect(s.onMessageListeners.length).toBeGreaterThan(0);
+    s.onMessageListeners.forEach((cb) => {
+      void Promise.resolve(
+        cb({ action: "passkey.abortRequest", sessionId: "nope" }, { tab: { id: 11 } }, () => {})
+      ).catch(() => {});
+    });
+    await flush();
+    s.onUpdatedListeners.forEach((cb) => cb(11, { status: "loading" }));
+    await flush();
+    expect(Array.isArray(s.session.pkParked)).toBe(true);
+    expect(s.session.pkParked).toHaveLength(0);
   });
 });

@@ -613,6 +613,9 @@ describe("parked session survival", () => {
       set: async (obj) => {
         for (const [k, v] of Object.entries(obj)) map.set(k, v);
       },
+      remove: async (key) => {
+        map.delete(key);
+      },
     };
   };
 
@@ -752,4 +755,15 @@ describe("parked session survival", () => {
     expect(store.map.get("pkParked")).toHaveLength(1);
     expect(store.map.get("pkParked")[0].id).toBe("park-ok");
   });
+  it("clearParked empties the park so the next restore resumes nothing", async () => {
+    const store = makeStore();
+    const { client } = makeClient({ sessionStore: store });
+    await client.handleGetRequest({ tab: { id: 7 }, origin: "https://rp.example", frameId: 0 }, conditionalPayload());
+    expect(store.map.get("pkParked").length).toBe(1);
+    await client.clearParked();
+    expect(store.map.has("pkParked")).toBe(false);
+    const second = makeClient({ sessionStore: store }).client;
+    expect(await second.restoreParked()).toBe(0);
+  });
+
 });
