@@ -756,7 +756,10 @@ mod real_vault {
         let host: SharedVaultHost = VaultHost::shared();
         let state_a = Arc::new(VaultState::new(path_a));
         state_a.open().await.expect("open");
-        state_a.unlock("test-master-password-123").await.expect("unlock");
+        state_a
+            .unlock("test-master-password-123")
+            .await
+            .expect("unlock");
         assert!(state_a.is_unlocked().await);
         host.insert("alpha".into(), state_a.clone()).await;
 
@@ -768,7 +771,11 @@ mod real_vault {
             ipc_version: 1,
         };
         let resp = route_host_request(req, &host).await;
-        assert!(resp.success, "vault.open must succeed: {}", resp.error_message);
+        assert!(
+            resp.success,
+            "vault.open must succeed: {}",
+            resp.error_message
+        );
         assert!(
             state_a.is_unlocked().await,
             "vault.open on an already-unlocked vault must not replace the unlocked handle"

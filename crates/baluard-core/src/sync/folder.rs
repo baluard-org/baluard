@@ -275,7 +275,10 @@ mod tests {
 
         let eng_b = crate::sync::engine::SyncEngine::new(dir_b.path(), "dev-b", None);
         let repo_b = git2::Repository::clone(&url, dir_b.path()).unwrap();
-        assert_eq!(std::fs::read(dir_b.path().join("note.txt")).unwrap(), b"hello");
+        assert_eq!(
+            std::fs::read(dir_b.path().join("note.txt")).unwrap(),
+            b"hello"
+        );
 
         std::fs::write(dir_a.path().join("note2.txt"), b"world").unwrap();
         eng_a.commit_all(&repo_a, "second").unwrap();
@@ -288,6 +291,9 @@ mod tests {
                 | crate::sync::engine::PullResult::AlreadyUpToDate
                 | crate::sync::engine::PullResult::Merged
         ));
-        assert_eq!(std::fs::read(dir_b.path().join("note2.txt")).unwrap(), b"world");
+        assert_eq!(
+            std::fs::read(dir_b.path().join("note2.txt")).unwrap(),
+            b"world"
+        );
     }
 }
