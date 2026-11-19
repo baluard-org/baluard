@@ -404,6 +404,13 @@ mod tests {
     /// error at the bridge, not unwind across the FFI boundary.
     #[test]
     fn protocol_callback_panic_maps_to_device_error() {
+        // Serialized with the other global-transport tests: an enter landing
+        // between another test's drop and its is-none assert would fail that
+        // assert purely by timing. Tolerant so one failing test cannot
+        // poison the lock and cascade.
+        let _guard = ERROR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _scope = TransportScope::enter(Arc::new(PanickingProtocolTransport)).unwrap();
         let outcome = MobileToken.info();
         assert!(matches!(outcome, Err(TokenError::Device(_))), "{outcome:?}");
@@ -411,7 +418,9 @@ mod tests {
 
     #[test]
     fn callback_detail_survives_transport_mapping() {
-        let _guard = ERROR_TEST_LOCK.lock().unwrap();
+        let _guard = ERROR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let link = CallbackLink::new(Arc::new(FailingTransport));
         let error = match CtapClient::new_apdu_form(&link, ApduForm::Chained) {
             Ok(_) => panic!("failing transport unexpectedly connected"),
@@ -425,7 +434,9 @@ mod tests {
 
     #[test]
     fn transport_detail_never_replaces_a_credential_failure() {
-        let _guard = ERROR_TEST_LOCK.lock().unwrap();
+        let _guard = ERROR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         record_transport_error("Turn on NFC and retry".into());
         let wrong =
             map_core_hardware_error(baluard_core::error::VaultError::PasswordMismatch.into());
@@ -473,7 +484,9 @@ mod tests {
 
     #[test]
     fn scope_clears_transport_and_contains_shutdown_panics() {
-        let _guard = ERROR_TEST_LOCK.lock().unwrap();
+        let _guard = ERROR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let transport = Arc::new(PanickingShutdown(AtomicBool::new(false)));
         let flag = transport.clone();
         {
