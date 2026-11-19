@@ -3499,22 +3499,9 @@ async fn handle_vault_unlock(mut req: GatewayRequest, host: &SharedVaultHost) ->
                     return err_response(format!("Registry error: {e}"));
                 }
             };
-            // A downloaded (cloned) vault carries no device key:
-            // meta/device-privkey.json is device-local and deliberately never
-            // syncs, so the keywrap cannot be unwrapped and the master
-            // password alone can never unlock. Say so instead of letting the
-            // core surface a cryptic vault-not-found. Recovery.json must
-            // exist for the phrase path to be real; member devices carry
-            // member-unlock.json instead.
-            if !path.join("meta/device-privkey.json").exists()
-                && !path.join("meta/member-unlock.json").exists()
-                && path.join("meta/recovery.json").exists()
-            {
+            if let Some(msg) = cloned_vault_needs_phrase_enroll(&path) {
                 req.payload.zeroize();
-                return err_response(
-                    "This downloaded vault has no device key on this machine. Unlock with your 24-word recovery phrase to enroll it."
-                        .to_string(),
-                );
+                return err_response(msg);
             }
             let state = host
                 .get_or_insert_with(&s, move || {
@@ -3600,6 +3587,23 @@ async fn handle_vault_unlock(mut req: GatewayRequest, host: &SharedVaultHost) ->
     }
 }
 
+/// A downloaded (cloned) vault carries no device key: `meta/device-privkey.json`
+/// is device-local and never syncs, so `vault.open` and `vault.unlock` cannot
+/// unwrap the keywrap until the 24-word recovery phrase enrolls this device.
+fn cloned_vault_needs_phrase_enroll(path: &std::path::Path) -> Option<String> {
+    if !path.join("meta/device-privkey.json").exists()
+        && !path.join("meta/member-unlock.json").exists()
+        && path.join("meta/recovery.json").exists()
+    {
+        Some(
+            "This downloaded vault has no device key on this machine. Unlock with your 24-word recovery phrase to enroll it."
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
 /// `vault.open` (Phase 6): ensures the vault is loaded in the host map
 /// (locked). Idempotent — no-op if already present. Backward-compat shim
 /// for clients that call `vault.open` before `vault.unlock`.
@@ -3649,8 +3653,17 @@ async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> Gatew
         }
     };
 
-    // Already in map? Done (no registry read needed).
+    // Already in map? Heal only if an unopened placeholder (`inner = None`)
+    // is present; never call `open()` on an already-open/unlocked vault.
     if let Some(state) = host.get(&slug).await {
+        if let Some(msg) = cloned_vault_needs_phrase_enroll(&state.vault_path) {
+            return err_response(msg);
+        }
+        if !state.has_handle().await {
+            if let Err(e) = state.open().await {
+                return err_response(e);
+            }
+        }
         // Make this vault the active focus in the host if there is no active slug set.
         if host.active_slug().await.is_none() {
             let _ = host.switch(&slug).await;
@@ -3661,7 +3674,8 @@ async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> Gatew
         };
     }
 
-    // Not in map: resolve path from registry, then atomic get-or-insert (H1).
+    // Not in map: resolve path from registry, then atomic try_insert so a
+    // failed open evicts only the entry this call inserted.
     let reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
         Ok(r) => r,
         Err(e) => return err_response(format!("Registry error: {e}")),
@@ -3670,18 +3684,27 @@ async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> Gatew
         return err_response(format!("Vault '{slug}' not found in registry"));
     };
     let path = entry.path.clone();
-    let state = host
-        .get_or_insert_with(&slug, move || {
-            // Runs at most once, under the host write lock.
-            Arc::new(VaultState::new(path.clone()))
-        })
-        .await;
-    // Open runs outside the closure (it's async + we don't want to hold the
-    // host write lock across disk I/O). If another caller already opened it,
-    // open() is a redundant no-op (sets inner = Some(handle); harmless).
-    if let Err(e) = state.open().await {
-        return err_response(e);
+    if let Some(msg) = cloned_vault_needs_phrase_enroll(&path) {
+        return err_response(msg);
     }
+    let fresh = Arc::new(VaultState::new(path));
+    let state = match host.try_insert(slug.clone(), fresh).await {
+        Ok(ours) => {
+            if let Err(e) = ours.open().await {
+                host.close_if_same(&slug, &ours).await;
+                return err_response(e);
+            }
+            ours
+        }
+        Err(existing) => {
+            if !existing.has_handle().await {
+                if let Err(e) = existing.open().await {
+                    return err_response(e);
+                }
+            }
+            existing
+        }
+    };
 
     // Make this vault the active focus in the host if there is no active slug set.
     if host.active_slug().await.is_none() {

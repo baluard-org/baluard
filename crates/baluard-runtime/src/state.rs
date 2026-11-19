@@ -1196,6 +1196,11 @@ impl VaultState {
         Ok(serde_json::json!({ "phrase": phrase }).to_string())
     }
 
+    /// Check if vault is currently opened (locked or unlocked).
+    pub async fn has_handle(&self) -> bool {
+        self.inner.read().await.is_some()
+    }
+
     /// Check if vault is currently unlocked.
     pub async fn is_unlocked(&self) -> bool {
         let guard = self.inner.read().await;

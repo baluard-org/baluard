@@ -255,6 +255,24 @@ impl VaultHost {
     /// not used as a synchronization primitive.
     pub async fn close(&self, slug: &str) -> bool {
         let mut guard = self.inner.write().await;
+        Self::remove_locked(&mut guard, slug).await
+    }
+
+    /// Remove `slug` only if the map still points to `expected`, preventing a
+    /// failed `open()` from evicting a newer or healed entry inserted concurrently.
+    pub async fn close_if_same(&self, slug: &str, expected: &Arc<VaultState>) -> bool {
+        let mut guard = self.inner.write().await;
+        if !guard
+            .vaults
+            .get(slug)
+            .is_some_and(|s| Arc::ptr_eq(s, expected))
+        {
+            return false;
+        }
+        Self::remove_locked(&mut guard, slug).await
+    }
+
+    async fn remove_locked(guard: &mut VaultHostInner, slug: &str) -> bool {
         // Deactivate BEFORE dropping the map entry: the background loop
         // owns an AutoSyncHandle clone, so without this it would keep
         // pulling (and holding the devkey seal) against a closed or

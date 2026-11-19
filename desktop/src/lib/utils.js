@@ -9,7 +9,7 @@ export const ERROR_PATTERNS = [
   { pattern: /have not finished syncing/i, key: "errors.attachPending" },
   { pattern: /needs every entry readable/i, key: "errors.attachReadable" },
   { pattern: /older app version/i, key: "errors.attachLegacy" },
-  { pattern: /Vault not/i, key: "errors.vaultNotUnlocked" },
+  { pattern: /Vault not opened/i, key: "errors.vaultNotUnlocked" },
   { pattern: /timeout/i, key: "errors.timeout" },
   { pattern: /Frame too large/i, key: "errors.responseTooLarge" },
   { pattern: /Invalid session token/i, key: "errors.sessionExpired" },

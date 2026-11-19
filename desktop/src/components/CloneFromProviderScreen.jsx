@@ -263,11 +263,10 @@ export default function CloneFromProviderScreen(props) {
     if (!phrase.trim()) return;
     const slug = chosenRepo()?.vault_slug || chosenRepo()?.name;
     try {
-      await daemon("vault.open", "", slug);
       // A downloaded vault never carries the device-private key (it is
-      // gitignored inside the vault and never syncs), so the master
-      // password alone can never open it — the phrase recovers the
-      // root key and the password seals this device's fresh key.
+      // gitignored inside the vault and never syncs), so vault.open and
+      // the master password alone can never open it — the phrase recovers
+      // the root key and the password seals this device's fresh key.
       await daemon(
         "vault.enroll_with_phrase",
         JSON.stringify({

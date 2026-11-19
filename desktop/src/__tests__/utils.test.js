@@ -60,6 +60,12 @@ describe("sanitizeError", () => {
     expect(sanitizeError("Vault not opened", t)).toBe("errors.vaultNotUnlocked");
     expect(
       sanitizeError(
+        "Failed to open vault: vault error: vault not found at matching device keywrap not found for this device",
+        t,
+      ),
+    ).not.toBe("errors.vaultNotUnlocked");
+    expect(
+      sanitizeError(
         "This downloaded vault has no device key on this machine. Unlock with your 24-word recovery phrase to enroll it.",
         t,
       ),

@@ -340,7 +340,8 @@ describe("CloneFromProviderScreen enroll-and-unlock step", () => {
 			slug: "baluard-vault",
 			password: "master-pw",
 		});
-		// enroll must precede unlock
+		// enroll must precede unlock, and vault.open must not run before enroll
+		expect(calls.some((c) => c.action === "vault.open")).toBe(false);
 		expect(calls.indexOf(enroll)).toBeLessThan(calls.indexOf(unlock));
 		// secrets scrubbed from the DOM after the attempt
 		await waitFor(() => {

@@ -680,4 +680,98 @@ mod real_vault {
              not an empty string"
         );
     }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn vault_open_unenrolled_clone_returns_phrase_enroll_without_poisoning_host() {
+        use baluard_daemon::handler::route_host_request;
+        use baluard_daemon::proto::GatewayRequest;
+
+        let (_dir_vault, path_a) = make_real_vault("cloned");
+        let meta_dir = path_a.join("meta");
+        std::fs::remove_file(meta_dir.join("device-privkey.json")).unwrap();
+
+        let data_dir = tempfile::tempdir().unwrap();
+        struct DataDirGuard(Option<std::ffi::OsString>);
+        impl Drop for DataDirGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    match self.0.take() {
+                        Some(v) => std::env::set_var("BALUARD_DATA_DIR", v),
+                        None => std::env::remove_var("BALUARD_DATA_DIR"),
+                    }
+                }
+            }
+        }
+        let _guard = DataDirGuard(std::env::var_os("BALUARD_DATA_DIR"));
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", data_dir.path());
+        }
+
+        let mut reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap();
+        let entry = baluard_core::vault::registry::VaultEntry {
+            slug: "cloned".into(),
+            vault_id: uuid::Uuid::new_v4(),
+            display_name: "Cloned".into(),
+            path: path_a,
+            provider: None,
+            remote_url: None,
+            last_synced: None,
+            last_opened: None,
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
+        };
+        reg.add(entry).unwrap();
+        reg.save_locked().unwrap();
+
+        let host: SharedVaultHost = VaultHost::shared();
+        for attempt in 1..=2 {
+            let req = GatewayRequest {
+                action: "vault.open".into(),
+                payload: String::new(),
+                session_token: String::new(),
+                slug: "cloned".into(),
+                ipc_version: 1,
+            };
+            let resp = route_host_request(req, &host).await;
+            assert!(!resp.success, "attempt {attempt}: vault.open must fail");
+            assert!(
+                resp.error_message.contains("24-word recovery phrase"),
+                "attempt {attempt}: expected phrase-enroll error, got: {}",
+                resp.error_message
+            );
+            assert!(
+                host.get("cloned").await.is_none(),
+                "attempt {attempt}: failed vault.open must not leave a poisoned state in host"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn vault_open_preserves_unlocked_vault_idempotently() {
+        use baluard_daemon::handler::route_host_request;
+        use baluard_daemon::proto::GatewayRequest;
+
+        let (_dir_vault, path_a) = make_real_vault("alpha");
+        let host: SharedVaultHost = VaultHost::shared();
+        let state_a = Arc::new(VaultState::new(path_a));
+        state_a.open().await.expect("open");
+        state_a.unlock("test-master-password-123").await.expect("unlock");
+        assert!(state_a.is_unlocked().await);
+        host.insert("alpha".into(), state_a.clone()).await;
+
+        let req = GatewayRequest {
+            action: "vault.open".into(),
+            payload: String::new(),
+            session_token: String::new(),
+            slug: "alpha".into(),
+            ipc_version: 1,
+        };
+        let resp = route_host_request(req, &host).await;
+        assert!(resp.success, "vault.open must succeed: {}", resp.error_message);
+        assert!(
+            state_a.is_unlocked().await,
+            "vault.open on an already-unlocked vault must not replace the unlocked handle"
+        );
+    }
 }
