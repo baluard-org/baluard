@@ -256,26 +256,23 @@ pub async fn handle_agent_route(
             let Some(peer) = peer else {
                 return err_response("agent peer identity is unavailable");
             };
-            // BL0014: a request and its outcome belong to the process tree
-            // that made the request; a same-uid peer with a different tree
-            // must learn nothing and collect nothing.
-            let recorded = host
-                .pending_requests()
-                .get(&payload.request_id)
-                .map(|p| p.peer)
-                .or_else(|| host.pending_requests().outcome_owner(&payload.request_id));
-            if let Some(owner) = recorded {
-                let Some(chain) = process_chain(peer.pid) else {
-                    return err_response("agent process tree is unavailable");
-                };
-                if !pid_in_process_tree(&owner, &chain) {
-                    return err_response("agent outcome belongs to a different process tree");
+            let Some(chain) = process_chain(peer.pid) else {
+                return err_response("agent process tree is unavailable");
+            };
+            // BL0014 / BL0027: a request and its outcome belong to the process
+            // tree that made the request; foreign peers see the same "unknown"
+            // status as a missing id, and outcome check+take is atomic under one lock.
+            if let Some(pending) = host.pending_requests().get(&payload.request_id) {
+                if !pid_in_process_tree(&pending.peer, &chain) {
+                    return ok_resp(serde_json::json!({"status": "unknown"}).to_string(), None);
                 }
-            }
-            if host.pending_requests().get(&payload.request_id).is_some() {
                 return ok_resp(serde_json::json!({"status": "pending"}).to_string(), None);
             }
-            match host.pending_requests().take_outcome(&payload.request_id) {
+            match host
+                .pending_requests()
+                .take_outcome_if(&payload.request_id, |owner| {
+                    pid_in_process_tree(owner, &chain)
+                }) {
                 Some(PendingOutcome::Approved { token }) => ok_resp(
                     serde_json::json!({"status": "approved", "token": token}).to_string(),
                     None,

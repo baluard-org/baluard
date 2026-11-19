@@ -1409,7 +1409,7 @@ fn e2e_multi_device_enrollment_proof_forgery_refused() {
 
     let remote = guard.path().join("remote.git");
     let st = Command::new("git")
-        .args(["init", "-q", "--bare"])
+        .args(["init", "-q", "--bare", "-b", "main"])
         .arg(&remote)
         .status()
         .expect("git must be on PATH (vault creation shells out to git)");
@@ -1466,6 +1466,34 @@ fn e2e_multi_device_enrollment_proof_forgery_refused() {
         }
     }
     assert!(forged.is_some(), "enrollment proof not found for tampering");
+
+    // Put the forged proof inside commit 1 (the admission commit) so the
+    // pull batch exercises enrollment_proof_fallback directly instead of
+    // riding a post-admission commit.
+    let repo_dir = guard.path().join("data/vaults/baluard-devb");
+    let st = Command::new("git")
+        .args(["-C"])
+        .arg(&repo_dir)
+        .args(["add", "--", "meta/enrollments"])
+        .status()
+        .expect("git add");
+    assert!(st.success(), "git add forged proof failed");
+    let st = Command::new("git")
+        .args(["-C"])
+        .arg(&repo_dir)
+        .args([
+            "-c",
+            "user.name=Baluard Test",
+            "-c",
+            "user.email=test@baluard.local",
+            "commit",
+            "--amend",
+            "--no-edit",
+            "--no-gpg-sign",
+        ])
+        .status()
+        .expect("git commit --amend");
+    assert!(st.success(), "git commit --amend forged proof failed");
 
     baluard_daemon(&guard)
         .args([

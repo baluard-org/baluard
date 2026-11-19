@@ -484,6 +484,7 @@ async fn accept_task(
     mut ipc_pipe_attrs: baluard_core::ipc::SendablePipeAttrs,
     host: SharedVaultHost,
 ) -> Result<()> {
+    let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_GATEWAY_CONNECTIONS));
     loop {
         // A transient connect error must not kill the daemon and lock out
         // every vault: log, back off, and start from a fresh instance — a
@@ -496,8 +497,15 @@ async fn accept_task(
         }
         let client = server;
         server = spawn_next_pipe_instance(pipe_name, &mut ipc_pipe_attrs).await;
+        let Ok(permit) = slots.clone().try_acquire_owned() else {
+            log::warn!(
+                "[daemon] gateway connection cap ({MAX_GATEWAY_CONNECTIONS}) reached; dropping client"
+            );
+            continue;
+        };
         let host = host.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = baluard_daemon::handler::handle_connection(
                 baluard_daemon::handler::IpcStream::Pipe(client),
                 host,
@@ -537,8 +545,12 @@ async fn spawn_next_pipe_instance(
     }
 }
 
+/// Concurrent gateway connections allowed before new clients are dropped.
+const MAX_GATEWAY_CONNECTIONS: usize = 64;
+
 #[cfg(unix)]
 async fn accept_loop(listener: &UnixListener, host: SharedVaultHost) -> Result<()> {
+    let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_GATEWAY_CONNECTIONS));
     loop {
         // A transient accept error (EMFILE, ECONNABORTED) must not kill
         // the daemon and lock out every vault: log, back off, continue.
@@ -550,8 +562,15 @@ async fn accept_loop(listener: &UnixListener, host: SharedVaultHost) -> Result<(
                 continue;
             }
         };
+        let Ok(permit) = slots.clone().try_acquire_owned() else {
+            log::warn!(
+                "[daemon] gateway connection cap ({MAX_GATEWAY_CONNECTIONS}) reached; dropping client"
+            );
+            continue;
+        };
         let host = host.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = baluard_daemon::handler::handle_connection(
                 baluard_daemon::handler::IpcStream::Unix(stream),
                 host,

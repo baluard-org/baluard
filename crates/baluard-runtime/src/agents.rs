@@ -378,24 +378,28 @@ impl PendingQueue {
         );
     }
 
-    /// The requester recorded for a finished outcome, so callers can verify
-    /// the collecting process tree before the one-shot take_outcome runs.
-    pub fn outcome_owner(&self, request_id: &str) -> Option<PeerBinding> {
+    /// Atomic one-time outcome read gated by `matches_owner` under the same
+    /// write lock, so a foreign poller cannot race between check and take.
+    pub fn take_outcome_if(
+        &self,
+        request_id: &str,
+        matches_owner: impl FnOnce(&PeerBinding) -> bool,
+    ) -> Option<PendingOutcome> {
         let mut outcomes = self.outcomes.write().unwrap();
         let now = now_ms();
         outcomes.retain(|_, (_, expires, _)| *expires > now);
-        outcomes
-            .get(request_id)
-            .and_then(|(_, _, peer)| peer.clone())
+        if let Some((_, _, Some(owner))) = outcomes.get(request_id) {
+            if !matches_owner(owner) {
+                return None;
+            }
+        }
+        outcomes.remove(request_id).map(|(outcome, _, _)| outcome)
     }
 
     /// One-time outcome read. Approval tokens are removed on retrieval, so
     /// a later poll cannot replay the grant.
     pub fn take_outcome(&self, request_id: &str) -> Option<PendingOutcome> {
-        let mut outcomes = self.outcomes.write().unwrap();
-        let now = now_ms();
-        outcomes.retain(|_, (_, expires, _)| *expires > now);
-        outcomes.remove(request_id).map(|(outcome, _, _)| outcome)
+        self.take_outcome_if(request_id, |_| true)
     }
 
     /// Requests older than the approval window are dropped so a vanished
@@ -682,5 +686,36 @@ mod tests {
             .unwrap();
         assert_ne!(id1, id2);
         assert_eq!(q.list().len(), 1);
+    }
+
+    #[test]
+    fn take_outcome_if_rejects_foreign_owner_without_consuming() {
+        let q = PendingQueue::new();
+        let owner = peer(10);
+        let foreign = peer(20);
+        let id = q
+            .push(
+                None,
+                owner.clone(),
+                "A".into(),
+                "n".into(),
+                vec![],
+                PendingPurpose::Credential,
+            )
+            .unwrap();
+        q.take(&id).unwrap();
+        q.complete_approved(&id, "tok-123".into(), owner.clone());
+
+        assert!(
+            q.take_outcome_if(&id, |o| o.pid == foreign.pid).is_none(),
+            "foreign owner must not see or consume the outcome"
+        );
+        assert_eq!(
+            q.take_outcome_if(&id, |o| o.pid == owner.pid),
+            Some(PendingOutcome::Approved {
+                token: "tok-123".into()
+            })
+        );
+        assert!(q.take_outcome_if(&id, |_| true).is_none());
     }
 }

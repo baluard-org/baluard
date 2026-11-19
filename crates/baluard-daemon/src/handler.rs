@@ -178,9 +178,19 @@ const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
 // daemon re-exports the module so the bare name resolves unchanged.
 use crate::autosync::SYNC_OP_TIMEOUT;
 
+const GATEWAY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Handle a single client connection (length-delimited Protobuf frames).
 /// Verifies peer UID matches daemon UID on Linux (SO_PEERCRED).
 pub async fn handle_connection(stream: IpcStream, host: SharedVaultHost) -> Result<()> {
+    handle_connection_with_timeout(stream, host, GATEWAY_IDLE_TIMEOUT).await
+}
+
+async fn handle_connection_with_timeout(
+    stream: IpcStream,
+    host: SharedVaultHost,
+    idle_timeout: std::time::Duration,
+) -> Result<()> {
     // Peer credential check: reject connections from different UIDs
     verify_peer_uid(&stream)?;
     let peer = peer_binding(&stream);
@@ -189,15 +199,16 @@ pub async fn handle_connection(stream: IpcStream, host: SharedVaultHost) -> Resu
     let mut buf = BytesMut::with_capacity(4096);
 
     loop {
-        let frame_len = match read_length(&mut reader, &mut buf).await {
-            Ok(Some(len)) => len,
-            Ok(None) => return Ok(()),
-            Err(e) => {
-                let resp = error_response(format!("Read error: {e}"));
-                let _ = write_frame(&mut writer, &resp).await;
-                return Err(e);
-            }
-        };
+        let frame_len =
+            match tokio::time::timeout(idle_timeout, read_length(&mut reader, &mut buf)).await {
+                Ok(Ok(Some(len))) => len,
+                Ok(Ok(None)) | Err(_) => return Ok(()),
+                Ok(Err(e)) => {
+                    let resp = error_response(format!("Read error: {e}"));
+                    let _ = write_frame(&mut writer, &resp).await;
+                    return Err(e);
+                }
+            };
 
         if frame_len > MAX_FRAME_SIZE {
             // Close connection on oversized frames — draining the body
@@ -208,7 +219,10 @@ pub async fn handle_connection(stream: IpcStream, host: SharedVaultHost) -> Resu
         }
 
         while buf.len() < frame_len {
-            let read = reader.read_buf(&mut buf).await?;
+            let read = match tokio::time::timeout(idle_timeout, reader.read_buf(&mut buf)).await {
+                Ok(res) => res?,
+                Err(_) => return Ok(()),
+            };
             if read == 0 {
                 return Ok(());
             }
@@ -9425,5 +9439,23 @@ mod tests {
         let uriless = serde_json::json!({ "type": "login", "data": { "username": "u" } });
         let omits = serde_json::json!({ "type": "login", "data": { "password": "x" } });
         assert!(kind_omits_or_shrinks_protected(Some(&uriless), Some(&omits)).is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn gateway_idle_connection_closes_without_answering() {
+        use tokio::io::AsyncReadExt;
+
+        let (server, mut client) = tokio::net::UnixStream::pair().unwrap();
+        let host = std::sync::Arc::new(baluard_runtime::VaultHost::new());
+        let task = tokio::spawn(super::handle_connection_with_timeout(
+            super::IpcStream::Unix(server),
+            host,
+            std::time::Duration::from_millis(40),
+        ));
+        let mut buf = [0u8; 16];
+        let n = client.read(&mut buf).await.unwrap();
+        assert_eq!(n, 0, "idle gateway connection should close with EOF");
+        task.await.unwrap().unwrap();
     }
 }

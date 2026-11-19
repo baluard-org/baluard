@@ -132,18 +132,38 @@ fn run() -> anyhow::Result<()> {
     // the whole extension (badge updates, other popup actions, etc.) for the
     // full ceremony TTL.
     let stdout = std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout()));
-    // In-flight worker handles. On stdin EOF (browser closed the port) we
-    // drain these so pending responses are flushed before the process exits;
-    // without this, a fast ping could lose the race against main-loop exit.
-    let workers: std::sync::Arc<std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    const MAX_WORKERS: usize = 8;
+    let (tx, rx) = std::sync::mpsc::sync_channel::<serde_json::Value>(MAX_WORKERS);
+    let rx = std::sync::Arc::new(std::sync::Mutex::new(rx));
+    let mut workers = Vec::with_capacity(MAX_WORKERS);
+    for _ in 0..MAX_WORKERS {
+        let rx = rx.clone();
+        let stdout = stdout.clone();
+        workers.push(std::thread::spawn(move || {
+            loop {
+                let msg = {
+                    let Ok(guard) = rx.lock() else {
+                        break;
+                    };
+                    match guard.recv() {
+                        Ok(m) => m,
+                        Err(_) => break,
+                    }
+                };
+                if let Err(err) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    dispatch_nmh_message(msg, &stdout);
+                })) {
+                    dlog(&format!("[baluard-nmh] worker panic recovered: {err:?}"));
+                }
+            }
+        }));
+    }
 
     loop {
         let msg = match read_message(&mut stdin)? {
             Some(m) => m,
             None => break, // EOF — browser closed the port; finish in-flight work.
         };
-        let stdout = stdout.clone();
         let mid = msg
             .get("id")
             .and_then(|v| v.as_str())
@@ -155,60 +175,69 @@ fn run() -> anyhow::Result<()> {
             .unwrap_or("")
             .to_string();
         dlog(&format!("[baluard-nmh] recv id='{mid}' action='{maction}'"));
-        let handle = std::thread::spawn(move || {
-            let resp = handle_message(msg);
-            let resp_json = match serde_json::to_vec(&resp) {
-                Ok(b) => b,
-                Err(e) => {
-                    dlog(&format!("[baluard-nmh] response encode error: {e}"));
-                    return;
-                }
-            };
-            let mut out = stdout.lock().unwrap();
-            let write_result = if resp_json.len() > MAX_RESPONSE_BYTES {
-                let truncated = serde_json::json!({
-                    "id": resp.get("id").cloned().unwrap_or(serde_json::Value::Null),
-                    "ok": false,
-                    "error": "response too large",
-                    "code": "proto",
-                });
-                write_frame(&mut *out, &truncated)
-            } else {
-                write_frame_bytes(&mut *out, &resp_json)
-            };
-            if let Err(e) = write_result {
-                dlog(&format!("[baluard-nmh] stdout write error: {e}"));
-            } else {
-                dlog(&format!(
-                    "[baluard-nmh] wrote response for action='{maction}'"
-                ));
+        if let Err(std::sync::mpsc::TrySendError::Full(rejected)) = tx.try_send(msg) {
+            dlog(&format!(
+                "[baluard-nmh] worker pool saturated; rejecting id='{mid}' action='{maction}'"
+            ));
+            let busy = serde_json::json!({
+                "id": rejected.get("id").cloned().unwrap_or(serde_json::Value::Null),
+                "ok": false,
+                "error": "too many concurrent requests",
+                "code": "busy",
+            });
+            if let Ok(mut out) = stdout.lock() {
+                let _ = write_frame(&mut *out, &busy);
             }
-        });
-        if let Ok(mut w) = workers.lock() {
-            // Drop completed handles so a long browser session doesn't
-            // accumulate one Vec entry (and its output slot) per message.
-            w.retain(|h| !h.is_finished());
-            w.push(handle);
         }
     }
 
-    // Drain in-flight workers so pending responses reach the browser before
-    // exit. Cap the wait so a wedged/long-running ceremony (e.g. pair_complete
-    // held 120s) can't keep a dead NMH process alive after the browser left;
-    // nobody is reading the response once the port closed anyway. JoinHandle
-    // has no join_timeout, so we race each join against a deadline thread.
-    let pending: Vec<_> = workers
-        .lock()
-        .map(|mut w| std::mem::take(&mut *w))
-        .unwrap_or_default();
+    drop(tx);
     let grace = std::time::Duration::from_secs(2);
-    for h in pending {
+    for h in workers {
         if join_with_timeout(h, grace).is_err() {
             // Timed out: detach the worker so it doesn't block process exit;
             // its response (if any) is already unwritable — browser is gone.
         }
     }
     Ok(())
+}
+
+fn dispatch_nmh_message(
+    msg: serde_json::Value,
+    stdout: &std::sync::Arc<std::sync::Mutex<std::io::Stdout>>,
+) {
+    let maction = msg
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let resp = handle_message(msg);
+    let resp_json = match serde_json::to_vec(&resp) {
+        Ok(b) => b,
+        Err(e) => {
+            dlog(&format!("[baluard-nmh] response encode error: {e}"));
+            return;
+        }
+    };
+    let mut out = stdout.lock().unwrap();
+    let write_result = if resp_json.len() > MAX_RESPONSE_BYTES {
+        let truncated = serde_json::json!({
+            "id": resp.get("id").cloned().unwrap_or(serde_json::Value::Null),
+            "ok": false,
+            "error": "response too large",
+            "code": "proto",
+        });
+        write_frame(&mut *out, &truncated)
+    } else {
+        write_frame_bytes(&mut *out, &resp_json)
+    };
+    if let Err(e) = write_result {
+        dlog(&format!("[baluard-nmh] stdout write error: {e}"));
+    } else {
+        dlog(&format!(
+            "[baluard-nmh] wrote response for action='{maction}'"
+        ));
+    }
 }
 
 /// Join a thread with a deadline. JoinHandle lacks join_timeout, so we spawn a

@@ -8439,6 +8439,19 @@ impl SyncEngine {
         if bootstrap_key.is_some() {
             return Ok(());
         }
+        // BL0001: enrollment proofs are only valid on the admission commit
+        // (bootstrap_key.is_some()). Refuse non-deletion writes on regular
+        // commits so forged or corrupted proofs never land in verified history.
+        if path.starts_with("meta/enrollments/")
+            && path.ends_with(".proof")
+            && delta.status() != git2::Delta::Deleted
+        {
+            return Err(SyncError::PolicyViolation {
+                device: signer.to_string(),
+                path,
+            }
+            .into());
+        }
         // S1a-4: member records (flat meta/members/<id>.json) written by a
         // non-admin signer: only the signer's OWN record, and only the
         // identity-rotation fields may change. Role, display name, and

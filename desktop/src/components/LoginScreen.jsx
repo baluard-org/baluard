@@ -326,7 +326,10 @@ export default function LoginScreen() {
       // scrubs the password field itself.
       await auth.unlock(t);
     } catch (e) {
-      if (passwordRef) passwordRef.value = "";
+      if (enrollPhraseRef) {
+        enrollPhraseRef.value = "";
+        enrollPhraseRef.focus();
+      }
       toastError(sanitizeError(e, t));
     }
   }
