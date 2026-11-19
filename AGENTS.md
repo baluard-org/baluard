@@ -61,12 +61,12 @@ baluard/
 | Ubuntu | 26.04 | Secret Service (gnome-keyring or compatible) at runtime for keyring storage. |
 | Fedora | 43 | Secret Service (gnome-keyring or compatible) at runtime for keyring storage. |
 
-Rust edition 2024, MSRV 1.85. The optional `fido2` feature requires Rust 1.89 (ctap-hid-fido2 requirement); default builds stay 1.85. The floor is enforced by `just msrv-check` (rustup 1.85.0 workspace check) and mirrored by the dispatch-only `.github/workflows/msrv.yml`; Cargo.lock stays untracked on purpose (the MSRV-aware resolver pins compatible dependency lines from `rust-version` alone).
+Rust edition 2024, MSRV 1.85. The optional `fido2` feature requires Rust 1.89 (ctap-hid-fido2 requirement); default builds stay 1.85. The desktop app (`desktop/src-tauri`, outside the workspace) needs Rust 1.90 (tauri 2.12 MSRV) and is excluded from `just msrv-check`. The floor is enforced by `just msrv-check` (rustup 1.85.0 workspace check) and mirrored by the dispatch-only `.github/workflows/msrv.yml`; Cargo.lock stays untracked on purpose (the MSRV-aware resolver pins compatible dependency lines from `rust-version` alone).
 Linux build dependencies: `protoc`, WebKitGTK/GTK dev headers. Run `just sysdeps` for distro-specific packages.
 
 ## CODING STANDARDS
 * **Compatibility:** Pre-1.0 WIP (see STATUS). Backwards compatibility is not a goal yet. You can break vault format, IPC routes/payloads, CLI flags, protobuf, and config freely, but update all call sites in the same change.
-* **Rust:** Edition 2024, MSRV 1.85. Feature flags: `full` (default) = `git-sync` + `passkey-ceremony` + `uri-match`. Use `thiserror` for library errors, `anyhow` for CLI, and `proptest` for property-based tests.
+* **Rust:** Edition 2024, MSRV 1.85 (desktop app: 1.90). Feature flags: `full` (default) = `git-sync` + `passkey-ceremony` + `uri-match`. Use `thiserror` for library errors, `anyhow` for CLI, and `proptest` for property-based tests.
 * **JS/TS:** ES modules, SolidJS, Vite, Tailwind. Use `crypto.getRandomValues` only (never `Math.random`).
 * **Protobuf:** proto3, `baluard.vault` package. Compiled via prost in daemon and CLI.
 * **Security:** AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket permissions 0600. Zeroize on drop for key material, TOTP secrets, and passkey private keys.

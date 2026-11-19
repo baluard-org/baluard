@@ -6,7 +6,7 @@ Everything you need to build, test, and develop Baluard locally.
 
 | Tool | Version | Install |
 |------|---------|---------|
-| Rust | 1.85+ (edition 2024) | [rustup.rs](https://rustup.rs) |
+| Rust | 1.85+ workspace, 1.90+ desktop app (edition 2024) | [rustup.rs](https://rustup.rs) |
 | just | latest | `cargo install just` |
 | protoc | 3.x | `brew install protobuf` (macOS/Linux) |
 | Node.js | 18+ | [nodejs.org](https://nodejs.org) |
