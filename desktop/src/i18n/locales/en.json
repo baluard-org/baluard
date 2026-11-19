@@ -496,6 +496,7 @@
     "tabAbout": "About",
     "aboutTitle": "About Baluard",
     "aboutSubtitle": "Git-native password manager • GPL-3.0-or-later",
+    "aboutDaemon": "Daemon",
     "sshAgentLabel": "SSH agent",
     "sshAgentDesc": "Let terminal apps and git request signatures from your vault's SSH keys over the local agent socket. Off by default. Each key must also be marked for serving.",
     "sshAgentAutoApproveLabel": "Approve signing automatically",
