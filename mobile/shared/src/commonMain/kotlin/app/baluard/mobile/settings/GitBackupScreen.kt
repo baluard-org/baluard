@@ -1,5 +1,7 @@
 package app.baluard.mobile.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,8 +14,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -43,6 +52,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import app.baluard.mobile.MobileDeviceFlow
 import app.baluard.mobile.MobileDeviceFlowStatus
 import app.baluard.mobile.MobileProvider
+import app.baluard.mobile.platform.copyToClipboard
 import app.baluard.mobile.MobileVault
 import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.i18n.t
@@ -831,12 +841,54 @@ fun GitBackupScreen(
                         color = MaterialTheme.colorScheme.error,
                     )
                     p2pNodeId?.let { nid ->
-                        Spacer(Modifier.height(4.dp))
+                        var copied by remember(nid) { mutableStateOf(false) }
+                        Spacer(Modifier.height(6.dp))
                         Text(
-                            "${t("settings.p2pNodeIdLabel")}: $nid",
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            t("settings.p2pNodeIdLabel"),
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    RoundedCornerShape(8.dp),
+                                )
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outlineVariant,
+                                    RoundedCornerShape(8.dp),
+                                )
+                                .padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            SelectionContainer(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    nid,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    copyToClipboard(nid)
+                                    copied = true
+                                    scope.launch {
+                                        delay(2000)
+                                        copied = false
+                                    }
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                                    contentDescription = t("common.copy"),
+                                    tint = if (copied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     BaluardTextField(

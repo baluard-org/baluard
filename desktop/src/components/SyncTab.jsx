@@ -880,8 +880,14 @@ const [customError, setCustomError] = createSignal(null);
                       {t("sync.p2pNoRecoveryWarn")}
                     </div>
                     <Show when={p2pStatus().node_id}>
-                      <div class="text-[10px] font-mono text-[var(--color-muted)] break-all">
-                        {t("sync.p2pNodeIdLabel")}: {p2pStatus().node_id}
+                      <div class="space-y-1">
+                        <div class="text-[10px] text-[var(--color-muted)]">{t("sync.p2pNodeIdLabel")}</div>
+                        <div class="flex items-center justify-between gap-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5">
+                          <code class="text-[11px] font-mono text-[var(--color-text)] break-all select-all">
+                            {p2pStatus().node_id}
+                          </code>
+                          <CopyButton value={p2pStatus().node_id} />
+                        </div>
                       </div>
                     </Show>
                     <div class="flex items-center gap-2">
