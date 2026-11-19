@@ -24,6 +24,8 @@ pub mod tls;
 pub mod engine;
 #[cfg(feature = "git-sync")]
 pub mod folder;
+#[cfg(feature = "p2p")]
+pub mod p2p;
 
 use rand::RngCore;
 

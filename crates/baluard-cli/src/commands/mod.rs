@@ -3885,6 +3885,30 @@ pub fn handle_sync_push(
     }
 }
 
+#[cfg(feature = "p2p")]
+pub fn handle_sync_p2p(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    op: &str,
+    payload: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if matches!(mode, ConnectMode::Direct) {
+        return Err("P2P sync requires the daemon. Run without --direct.".into());
+    }
+    let route = match op {
+        "enable" => "sync.p2p.enable",
+        "disable" => "sync.p2p.disable",
+        "sync" => "sync.p2p.sync",
+        _ => "sync.p2p.status",
+    };
+    let resp = client::request_to(route, payload, socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    println!("{}", resp.payload);
+    Ok(())
+}
+
 /// Commit pending local changes without touching the network. Deliberately
 /// direct-only: there is no daemon route because committing is local-only
 /// state, and the seed/demo flow needs it headless.

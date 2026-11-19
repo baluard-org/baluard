@@ -37,3 +37,7 @@ serde_json = { workspace = true }
 # Test-only: cheap vault-fixture KDF (see baluard-core's feature docs);
 # applies to this crate's test targets, never to shipped binaries.
 baluard-core = { path = "../baluard-core", features = ["test-cheap-kdf"] }
+
+[features]
+default = []
+p2p = ["baluard-core/p2p", "baluard-runtime/p2p"]

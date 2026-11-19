@@ -772,6 +772,28 @@ impl MobileVault {
         Ok(new)
     }
 
+    /// Local-folder sync setup (ADR 0112): initialize or open a bare repo
+    /// inside `folder_path` (or an app-private SAF / iCloud mirror) and push.
+    pub async fn setup_sync_folder(&self, folder_path: String) -> Result<String, BaluardError> {
+        if !self.state.is_unlocked().await {
+            return Err(BaluardError::Vault {
+                detail: "Vault is locked. Unlock first.".into(),
+            });
+        }
+        let seal = self.state.devkey_seal().await;
+        let device_id = self.state.device_id().await;
+        let new = baluard_runtime::providers::setup_sync_remote_folder(
+            &self.state.vault_path,
+            seal,
+            std::path::Path::new(&folder_path),
+            &device_id,
+        )
+        .await
+        .map_err(|e| BaluardError::Vault { detail: e })?;
+        self.state.activate_autosync_after_remote().await;
+        Ok(new)
+    }
+
     /// Fleet snapshot: {devices: [{name, device_id, enrolled_at, ...}],
     /// total}. Key material is masked daemon-side.
     pub async fn devices_list(&self) -> Result<String, BaluardError> {
@@ -1125,6 +1147,60 @@ impl MobileVault {
     /// process within seconds; the 5s timer would be dropped).
     pub async fn sync_on_background(&self) {
         self.state.autosync.on_background().await;
+        #[cfg(feature = "p2p")]
+        self.state.p2p.stop().await;
+    }
+
+    /// P2P sync status JSON (ADR 0113); returns disabled when built without `p2p`.
+    pub async fn p2p_status(&self) -> String {
+        #[cfg(feature = "p2p")]
+        {
+            let st = self.state.p2p.status().await;
+            serde_json::to_string(&st).unwrap_or_else(|_| "{\"enabled\":false}".into())
+        }
+        #[cfg(not(feature = "p2p"))]
+        {
+            "{\"enabled\":false,\"running\":false}".to_string()
+        }
+    }
+
+    /// Enable foreground P2P sync on mobile using the enrolled device signing key.
+    pub async fn p2p_enable(&self) -> Result<String, BaluardError> {
+        #[cfg(feature = "p2p")]
+        {
+            if !self.state.is_unlocked().await {
+                return Err(BaluardError::Vault {
+                    detail: "Vault is locked. Unlock first.".into(),
+                });
+            }
+            let seal = self.state.devkey_seal().await;
+            let device_id = self.state.device_id().await;
+            let vp = self.state.vault_path.clone();
+            let seed = baluard_core::sync::engine::SyncEngine::load_device_signing_seed(
+                &vp,
+                seal.as_deref(),
+                Some(&device_id),
+            )?;
+            let pubkeys = baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(&vp);
+            self.state
+                .p2p
+                .start(&seed, vp, &pubkeys)
+                .await
+                .map_err(|detail| BaluardError::Vault { detail })
+        }
+        #[cfg(not(feature = "p2p"))]
+        Err(BaluardError::Vault {
+            detail: "P2P sync is not enabled in this build".into(),
+        })
+    }
+
+    /// Disable P2P sync and stop the mobile endpoint.
+    pub async fn p2p_disable(&self) {
+        #[cfg(feature = "p2p")]
+        {
+            self.state.p2p.set_enabled(false);
+            self.state.p2p.stop().await;
+        }
     }
 
     /// User pull-to-refresh / "Sync now". Returns the pull report tag
@@ -1135,6 +1211,13 @@ impl MobileVault {
     pub async fn sync_pull_now(&self) -> SyncPullOutcome {
         let dn = self.device_id().await;
         let (report, detail) = self.state.autosync.pull_now_detailed(dn).await;
+        #[cfg(feature = "p2p")]
+        {
+            let pubkeys = baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(
+                &self.state.vault_path,
+            );
+            self.state.p2p.update_roster_pubkeys(&pubkeys).await;
+        }
         SyncPullOutcome {
             tag: report.tag().to_string(),
             detail,

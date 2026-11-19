@@ -132,6 +132,9 @@ pub struct VaultState {
     /// Auto-sync coordinator. Activated on unlock when the vault has a remote
     /// + connected provider. Cheap clone (Arc inside).
     pub autosync: crate::autosync::AutoSyncHandle,
+    /// Optional P2P sync lifecycle manager (ADR 0113).
+    #[cfg(feature = "p2p")]
+    pub p2p: crate::p2p::P2pManager,
     /// ADR 0102: the mobile app layer flips this off so a locked store build
     /// never auto-activates sync on unlock. Arc so all clones share one switch.
     autosync_allowed: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -257,6 +260,8 @@ impl VaultState {
             pin_failures: std::sync::atomic::AtomicU32::new(0),
             agent_grants: crate::agents::AgentGrants::new(),
             autosync,
+            #[cfg(feature = "p2p")]
+            p2p: crate::p2p::P2pManager::new(),
             autosync_allowed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
@@ -1070,6 +1075,8 @@ impl VaultState {
         // Stop cover timer + auto-sync first
         self.stop_cover_timer().await;
         self.autosync.deactivate().await;
+        #[cfg(feature = "p2p")]
+        self.p2p.stop().await;
         self.cover_pending.store(false, Ordering::Relaxed);
         self.cover_session.fetch_add(1, Ordering::Relaxed);
 
@@ -10244,6 +10251,13 @@ impl VaultState {
         let enroll_vk = handle.enroll_verify_key();
         drop(guard);
         self.autosync.refresh_enroll_vk(enroll_vk).await;
+        #[cfg(feature = "p2p")]
+        {
+            let pubkeys = baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(
+                &self.vault_path,
+            );
+            self.p2p.update_roster_pubkeys(&pubkeys).await;
+        }
         Ok(json.to_string())
     }
 

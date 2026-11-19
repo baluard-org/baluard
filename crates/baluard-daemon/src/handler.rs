@@ -6272,6 +6272,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             match joined {
                 Ok(Ok(Ok(msg))) => {
                     baluard_runtime::autosync::stamp_last_synced(&state.vault_path);
+                    #[cfg(feature = "p2p")]
+                    {
+                        let pubkeys =
+                            baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(
+                                &state.vault_path,
+                            );
+                        state.p2p.update_roster_pubkeys(&pubkeys).await;
+                    }
                     ok_resp(msg, token_str)
                 }
                 Ok(Ok(Err(e))) => err_response(e),
@@ -6386,6 +6394,104 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let dn = first_device_id(&state.vault_path);
             state.autosync.nudge_focus_pull(dn).await;
             ok_resp("ok".to_string(), token_str)
+        }
+        "sync.p2p.status" => {
+            #[cfg(feature = "p2p")]
+            {
+                let st = state.p2p.status().await;
+                ok_resp(serde_json::to_string(&st).unwrap_or_default(), token_str)
+            }
+            #[cfg(not(feature = "p2p"))]
+            {
+                let body = serde_json::json!({ "enabled": false, "running": false, "node_id": null, "supported": false });
+                ok_resp(body.to_string(), token_str)
+            }
+        }
+        "sync.p2p.enable" => {
+            #[cfg(feature = "p2p")]
+            {
+                if !state.is_unlocked().await {
+                    return err_response("Vault is locked. Unlock first.".to_string());
+                }
+                let seal = state.devkey_seal().await;
+                let device_id = state.device_id().await;
+                let vp = state.vault_path.clone();
+                let seed = match baluard_core::sync::engine::SyncEngine::load_device_signing_seed(
+                    &vp,
+                    seal.as_deref(),
+                    Some(&device_id),
+                ) {
+                    Ok(s) => s,
+                    Err(e) => return err_response(format!("P2P identity unavailable: {e}")),
+                };
+                let pubkeys =
+                    baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(&vp);
+                match state.p2p.start(&seed, vp, &pubkeys).await {
+                    Ok(node_id) => ok_resp(
+                        serde_json::json!({ "enabled": true, "running": true, "node_id": node_id })
+                            .to_string(),
+                        token_str,
+                    ),
+                    Err(e) => err_response(e),
+                }
+            }
+            #[cfg(not(feature = "p2p"))]
+            err_response("P2P sync is not enabled in this build".to_string())
+        }
+        "sync.p2p.disable" => {
+            #[cfg(feature = "p2p")]
+            {
+                state.p2p.set_enabled(false);
+                state.p2p.stop().await;
+                ok_resp(
+                    serde_json::json!({ "enabled": false, "running": false }).to_string(),
+                    token_str,
+                )
+            }
+            #[cfg(not(feature = "p2p"))]
+            ok_resp(
+                serde_json::json!({ "enabled": false, "running": false }).to_string(),
+                token_str,
+            )
+        }
+        "sync.p2p.sync" => {
+            #[cfg(feature = "p2p")]
+            {
+                if !state.is_unlocked().await {
+                    return err_response("Vault is locked. Unlock first.".to_string());
+                }
+                let peer_str = req.payload.trim();
+                let peer: iroh::NodeId = match peer_str.parse() {
+                    Ok(id) => id,
+                    Err(e) => return err_response(format!("Invalid peer NodeId: {e}")),
+                };
+                let _cycle = state.autosync.cycle_lock_guard().await;
+                let seal = state.devkey_seal().await;
+                let device_id = state.device_id().await;
+                let vp = state.vault_path.clone();
+                let pubkeys =
+                    baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(&vp);
+                state.p2p.update_roster_pubkeys(&pubkeys).await;
+                match state
+                    .p2p
+                    .sync_peer(peer, "main", &vp, &device_id, seal.as_deref().copied())
+                    .await
+                {
+                    Ok(res) => {
+                        let pubkeys_after =
+                            baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(&vp);
+                        state.p2p.update_roster_pubkeys(&pubkeys_after).await;
+                        ok_resp(
+                            serde_json::json!({ "synced": true, "outcome": format!("{res:?}") })
+                                .to_string(),
+                            token_str,
+                        )
+                    }
+                    Err(e) => err_response(e),
+                }
+            }
+            #[cfg(not(feature = "p2p"))]
+            err_response("P2P sync is not enabled in this build".to_string())
         }
         // Phase 2b: read the head conflict paused for user decision. Returns
         // masked details (no secret values). The frontend ConflictResolution

@@ -77,6 +77,7 @@ public-suffix = { workspace = true, optional = true }
 regex-lite = { workspace = true, optional = true }
 coset = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
+iroh = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -120,6 +121,8 @@ passkey-ceremony = ["dep:passkey", "dep:passkey-types", "passkey-types/serialize
 # pulled by passkey-ceremony; regex-lite is matcher-only.
 uri-match = ["dep:url", "dep:public-suffix", "dep:regex-lite"]
 git-sync = ["dep:git2"]
+# Optional P2P sync transport (ADR 0113) using iroh QUIC + relays.
+p2p = ["dep:iroh", "dep:tokio", "git-sync"]
 # Test-only transport relaxation: lets compiled binaries accept file:// (and
 # absolute-path) git remotes so the E2E harness can use local bare repos.
 # Never enabled in release builds; the just test-e2e recipe turns it on.

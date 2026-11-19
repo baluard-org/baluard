@@ -4711,6 +4711,43 @@ impl SyncEngine {
             (r_oid, l_oid)
         }; // fetch_opts dropped here, releasing credential borrow
 
+        self.pull_from_oids(repo, remote_name, remote_oid, local_oid)
+    }
+
+    /// Integrate a peer-fetched commit OID (e.g. from P2P packfile sync)
+    /// through the full `SyncEngine` verification, signature check, path
+    /// policy, merge, and force-checkout pipeline.
+    pub fn integrate_p2p_tip(
+        &self,
+        repo: &Repository,
+        remote_oid: Oid,
+    ) -> Result<PullResult, BaluardError> {
+        let local_oid = repo
+            .head()
+            .map_err(|e| SyncError::Git(format!("head: {e}")))?
+            .peel_to_commit()
+            .map_err(|e| SyncError::Git(format!("peel local: {e}")))?
+            .id();
+        self.transition_state(SyncState::Pulling)?;
+        let result = self.pull_from_oids(repo, "p2p", remote_oid, local_oid);
+        if result.is_err() {
+            let mut sm = self.state_machine.borrow_mut();
+            sm.current = SyncState::Idle;
+            sm.operation_id += 1;
+            sm.pending_ciphers.clear();
+            sm.pending_since = None;
+            let _ = sm.save_to_file(&self.vault_path);
+        }
+        result
+    }
+
+    fn pull_from_oids(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        remote_oid: Oid,
+        local_oid: Oid,
+    ) -> Result<PullResult, BaluardError> {
         // S1b-3: rollback detection via head gossip — runs BEFORE any
         // state decision; an announced head missing from the fetched main
         // history refuses the pull outright. Recorded to the local
@@ -6665,6 +6702,38 @@ impl SyncEngine {
         use zeroize::Zeroize;
         bytes.zeroize();
         Ok(Some(key))
+    }
+
+    /// Load the 32-byte Ed25519 signing seed for this device so P2P
+    /// (`iroh`) uses the exact same cryptographic identity as commit signing.
+    pub fn load_device_signing_seed(
+        vault_path: &Path,
+        devkey_seal: Option<&[u8; 32]>,
+        device_id: Option<&str>,
+    ) -> Result<zeroize::Zeroizing<[u8; 32]>, BaluardError> {
+        let key = Self::load_signing_key(vault_path, devkey_seal, device_id)?
+            .ok_or_else(|| SyncError::Git("device signing key not found".into()))?;
+        Ok(zeroize::Zeroizing::new(key.to_bytes()))
+    }
+
+    /// Read active (non-revoked) enrolled device Ed25519 public keys from
+    /// `meta/devices.json` (`DeviceRegistry`) for P2P peer authentication.
+    pub fn load_active_roster_pubkeys(vault_path: &Path) -> Vec<[u8; 32]> {
+        let Ok(raw) = std::fs::read_to_string(vault_path.join("meta/devices.json")) else {
+            return Vec::new();
+        };
+        let Ok(reg) = serde_json::from_str::<crate::devices::DeviceRegistry>(&raw) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for entry in reg.devices.values() {
+            if let Ok(bytes) = hex::decode(&entry.signing_public_key) {
+                if let Ok(arr32) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                    out.push(arr32);
+                }
+            }
+        }
+        out
     }
 
     /// Load Ed25519 signing key from meta/device-privkey.json.

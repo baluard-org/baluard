@@ -20,6 +20,7 @@ bytes = { workspace = true }
 uuid = { workspace = true }
 clap = { workspace = true }
 zeroize = { workspace = true }
+iroh = { workspace = true, optional = true }
 argon2 = { workspace = true }
 chrono = "0.4"
 hex = { workspace = true }
@@ -45,6 +46,7 @@ libc = "0.2"
 [features]
 default = ["git-sync"]
 git-sync = ["baluard-core/git-sync"]
+p2p = ["baluard-core/p2p", "baluard-runtime/p2p", "dep:iroh"]
 e2e-hooks = ["baluard-core/e2e-hooks"]
 # TPM-backed devkey seal (ADR 0097 Phase 3); the
 # daemon installs the platform store at startup when built with it.

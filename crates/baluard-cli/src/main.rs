@@ -1125,6 +1125,22 @@ enum ContactAction {
     },
 }
 
+#[cfg(feature = "p2p")]
+#[derive(Subcommand)]
+enum P2pAction {
+    /// Enable P2P sync and start the endpoint.
+    Enable,
+    /// Disable P2P sync and stop the endpoint.
+    Disable,
+    /// Show P2P sync status and NodeId.
+    Status,
+    /// Sync directly with an enrolled peer NodeId.
+    Sync {
+        /// Peer NodeId (Ed25519 public key).
+        peer: String,
+    },
+}
+
 #[derive(Subcommand)]
 enum FolderAction {
     /// Create a new folder.
@@ -1230,6 +1246,12 @@ enum SyncAction {
     },
     /// Show sync status.
     Status,
+    /// Manage optional P2P sync (ADR 0113).
+    #[cfg(feature = "p2p")]
+    P2p {
+        #[command(subcommand)]
+        action: P2pAction,
+    },
     /// Custom Git remote: test the connection (an ls-remote pre-flight).
     Probe {
         /// The repository URL to test.
@@ -2107,6 +2129,21 @@ fn main() {
             SyncAction::Status => {
                 commands::handle_sync_status(mode, &vault_path, cli.socket.as_deref())
             }
+            #[cfg(feature = "p2p")]
+            SyncAction::P2p { action } => match action {
+                P2pAction::Enable => {
+                    commands::handle_sync_p2p(mode, cli.socket.as_deref(), "enable", "")
+                }
+                P2pAction::Disable => {
+                    commands::handle_sync_p2p(mode, cli.socket.as_deref(), "disable", "")
+                }
+                P2pAction::Status => {
+                    commands::handle_sync_p2p(mode, cli.socket.as_deref(), "status", "")
+                }
+                P2pAction::Sync { peer } => {
+                    commands::handle_sync_p2p(mode, cli.socket.as_deref(), "sync", &peer)
+                }
+            },
             SyncAction::Probe {
                 url,
                 token,

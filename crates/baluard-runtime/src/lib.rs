@@ -28,6 +28,8 @@ pub mod crypto;
 pub mod founding;
 pub mod host;
 pub mod legacy;
+#[cfg(feature = "p2p")]
+pub mod p2p;
 pub mod pin;
 pub mod providers;
 pub mod rate_limit;
