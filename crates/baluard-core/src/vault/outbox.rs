@@ -768,7 +768,7 @@ pub fn open_entry(
     )?;
     let purpose = format!("{ENTRY_PURPOSE_PREFIX}/{}", marker.outbox_id);
     let purpose = format!("{purpose}/{cipher_id}");
-    let doc = crate::secret_file::open_secret_blob(&*key, &blob, &purpose)
+    let doc = crate::secret_file::open_secret_blob(&key, &blob, &purpose)
         .map_err(|e| deny(&format!("entry does not open: {e}")))?;
     if doc.len() > MAX_ENTRY_PAYLOAD_BYTES {
         return Err(deny("shared entry is too large"));

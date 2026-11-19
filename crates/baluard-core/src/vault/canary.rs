@@ -6,7 +6,7 @@
 use hkdf::Hkdf;
 use sha2::Sha256;
 use uuid::Uuid;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use crate::error::BaluardError;
 use crate::keys::hierarchy::RootKey;

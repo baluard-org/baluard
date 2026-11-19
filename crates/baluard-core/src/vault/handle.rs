@@ -279,6 +279,10 @@ pub(crate) struct QuorumGrant {
     pub ask_initiated_at: u64,
 }
 
+/// Master-password derivation pair: the session key and the device-key
+/// seal key, both 32-byte secrets.
+pub type MasterDerivationPair = (zeroize::Zeroizing<[u8; 32]>, zeroize::Zeroizing<[u8; 32]>);
+
 impl VaultHandle {
     /// Open a vault from disk (locked state).
     /// Reads metadata files but does NOT decrypt anything.
@@ -6198,7 +6202,7 @@ impl VaultHandle {
         root_key: &RootKey,
         old_password: &str,
         new_password: &str,
-    ) -> Result<(zeroize::Zeroizing<[u8; 32]>, zeroize::Zeroizing<[u8; 32]>), BaluardError> {
+    ) -> Result<MasterDerivationPair, BaluardError> {
         // Step 1: Verify old password
         let old_kek = kdf::derive_kek(old_password, kdf_params)?;
         let old_session_key = hkdf_derive::derive_session_key(&old_kek)?;

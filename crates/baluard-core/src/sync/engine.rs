@@ -1689,10 +1689,10 @@ impl SyncEngine {
             return;
         }
         let tmp_path = crate::sync::unique_tmp_path(&reg_path);
-        if std::fs::write(&tmp_path, &json).is_ok() {
-            if std::fs::rename(&tmp_path, &reg_path).is_err() {
-                let _ = std::fs::remove_file(&tmp_path);
-            }
+        if std::fs::write(&tmp_path, &json).is_ok()
+            && std::fs::rename(&tmp_path, &reg_path).is_err()
+        {
+            let _ = std::fs::remove_file(&tmp_path);
         }
     }
 

@@ -375,7 +375,7 @@ pub fn rotate_seal_key(
                     })
             });
             let inner = open_bytes(old_seal_key, file.as_bytes())?;
-            seal_file(path, &*inner, new_seal_key, id)?;
+            seal_file(path, &inner, new_seal_key, id)?;
             Ok(true)
         }
         PrivkeyFileKind::SealedHw => {

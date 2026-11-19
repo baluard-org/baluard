@@ -58,13 +58,10 @@ pub fn handle_run(
     if argv.is_empty() {
         deny("missing command after --");
     }
-    let timeout_secs = match timeout {
-        Some(raw) => Some(match parse_duration_secs(raw) {
-            Ok(secs) => secs,
-            Err(e) => deny(&e),
-        }),
-        None => None,
-    };
+    let timeout_secs = timeout.map(|raw| match parse_duration_secs(raw) {
+        Ok(secs) => secs,
+        Err(e) => deny(&e),
+    });
     let stdin_b64 = if !std::io::stdin().is_terminal() {
         use base64::Engine;
         use std::io::Read;
@@ -237,7 +234,7 @@ fn take_pending_signal() -> Option<i32> {
 
 #[cfg(unix)]
 extern "C" fn on_unix_signal(sig: libc::c_int) {
-    PENDING_SIGNAL.store(sig as i32, std::sync::atomic::Ordering::SeqCst);
+    PENDING_SIGNAL.store(sig, std::sync::atomic::Ordering::SeqCst);
 }
 
 #[cfg(unix)]

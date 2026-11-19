@@ -722,9 +722,9 @@ fn yolo_enabled(slug: &str) -> bool {
 }
 
 static YOLO_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-static AGENT_REQUEST_RATE: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<(u32, u64), Vec<std::time::Instant>>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+type AgentRateMap = std::collections::HashMap<(u32, u64), Vec<std::time::Instant>>;
+static AGENT_REQUEST_RATE: std::sync::LazyLock<std::sync::Mutex<AgentRateMap>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 const AGENT_RATE_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 const AGENT_RATE_MAX_PER_WINDOW: usize = 10;

@@ -247,11 +247,15 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// An outcome plus its bookkeeping: the pending id's sequence and the peer
+/// binding recorded with it, so polling can be bound to the requester.
+type OutcomeRecord = (PendingOutcome, u64, Option<PeerBinding>);
+
 /// Pending approval requests, owned by `VaultHost` (an agent asks before any
 /// vault is active, and the target vault may be locked).
 pub struct PendingQueue {
     entries: RwLock<HashMap<String, PendingRequest>>,
-    outcomes: RwLock<HashMap<String, (PendingOutcome, u64, Option<PeerBinding>)>>,
+    outcomes: RwLock<HashMap<String, OutcomeRecord>>,
 }
 
 /// What a pending request asks for. The purpose decides what approval

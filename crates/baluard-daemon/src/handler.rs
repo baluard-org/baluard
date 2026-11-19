@@ -9111,7 +9111,7 @@ mod tests {
         // rejects duplicates) and a BOM breaks the '{' sniff, so neither
         // writes a file either.
         for payload in [
-            format!(r#"{{"format":"baluard-encrypted","passphrase":"reknit-pass"}}"#),
+            r#"{"format":"baluard-encrypted","passphrase":"reknit-pass"}"#.to_string(),
             "baluard".to_string(),
             format!(
                 r#"{{"out_path":"{steal}","out_path":"{steal}","format":"baluard-encrypted","passphrase":"reknit-pass"}}"#
