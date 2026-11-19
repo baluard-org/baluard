@@ -64,13 +64,18 @@ function makeChrome({ worldError = false } = {}) {
         if (worldError && scripts.some((s) => s.world === "MAIN")) {
           throw new Error("Invalid value for world: MAIN");
         }
-        for (const s of scripts) state.registered.push(s.id);
+        for (const s of scripts) {
+          // Store the full registration object: the real API echoes back
+          // every field, which is what drift comparison reads.
+          state.registered = state.registered.filter((r) => r.id !== s.id);
+          state.registered.push({ ...s });
+        }
       }),
       unregisterContentScripts: vi.fn(async ({ ids }) => {
-        state.registered = state.registered.filter((id) => !ids.includes(id));
+        state.registered = state.registered.filter((r) => !ids.includes(r.id));
       }),
       getRegisteredContentScripts: vi.fn(async () =>
-        state.registered.map((id) => ({ id }))
+        state.registered.map((r) => ({ ...r }))
       ),
       executeScript: vi.fn(async ({ target, files }) => {
         // Two scripts ride one tab injection pass (page + bridge).
@@ -96,6 +101,11 @@ async function loadSync(chromeApi) {
   return mod.syncPasskeyScripts;
 }
 
+async function loadMod(chromeApi) {
+  globalThis.chrome = chromeApi;
+  return import("../src/background.js");
+}
+
 const SETTINGS_KEY = "settings";
 
 describe("syncPasskeyScripts", () => {
@@ -109,8 +119,9 @@ describe("syncPasskeyScripts", () => {
     const sync = await loadSync(chromeApi);
     await sync();
     const s = chromeApi.__state;
-    expect(s.registered).toContain("baluard-passkey-page");
-    expect(s.registered).toContain("baluard-passkey-bridge");
+    const ids = s.registered.map((r) => r.id);
+    expect(ids).toContain("baluard-passkey-page");
+    expect(ids).toContain("baluard-passkey-bridge");
     expect(s.injectedTabs).toEqual([
       "11:passkey-page.js",
       "11:passkey-bridge.js",
@@ -129,18 +140,22 @@ describe("syncPasskeyScripts", () => {
     const sync = await loadSync(chromeApi);
     await sync();
     const s = chromeApi.__state;
-    expect(s.registered).toContain("baluard-passkey-page");
-    expect(s.registered).toContain("baluard-passkey-bridge");
+    const ids = s.registered.map((r) => r.id);
+    expect(ids).toContain("baluard-passkey-page");
+    expect(ids).toContain("baluard-passkey-bridge");
   });
 
   it("unregisters and restores natives when disabled", async () => {
     const chromeApi = makeChrome();
     chromeApi.__state.settings = { [SETTINGS_KEY]: { enablePasskeys: false } };
-    chromeApi.__state.registered = ["baluard-passkey-page", "baluard-passkey-bridge"];
+    chromeApi.__state.registered = [
+      { id: "baluard-passkey-page" },
+      { id: "baluard-passkey-bridge" },
+    ];
     const sync = await loadSync(chromeApi);
     await sync();
     const s = chromeApi.__state;
-    const passkeyIds = s.registered.filter((id) => id.startsWith("baluard-passkey"));
+    const passkeyIds = s.registered.map((r) => r.id).filter((id) => id.startsWith("baluard-passkey"));
     expect(passkeyIds).toEqual([]);
     expect(s.injectedTabs).toEqual([]);
     expect(chromeApi.tabs.sendMessage).toHaveBeenCalledTimes(2);
@@ -152,9 +167,7 @@ describe("syncPasskeyScripts", () => {
     const sync = await loadSync(chromeApi);
     await Promise.all([sync(), sync(), sync()]);
     const s = chromeApi.__state;
-    // Exactly one page + one bridge registration despite three syncs
-    // (baluard-inline is the separate, always-on autofill registration).
-    const passkeyIds = s.registered.filter((id) => id.startsWith("baluard-passkey"));
+    const passkeyIds = s.registered.map((r) => r.id).filter((id) => id.startsWith("baluard-passkey"));
     expect(passkeyIds).toEqual(["baluard-passkey-page", "baluard-passkey-bridge"]);
     // Injection runs once per browser session: one page + one bridge per tab.
     expect(s.injectedTabs).toEqual([
@@ -203,5 +216,111 @@ describe("syncPasskeyScripts", () => {
     const s = chromeApi.__state;
     expect(s.settings[SETTINGS_KEY].enablePasskeys).toBe(true);
     expect(s.settings.passkeysWorldUnsupported).toBeUndefined();
+  });
+
+  it("repairs a stale registration that predates world MAIN", async () => {
+    const chromeApi = makeChrome();
+    const s = chromeApi.__state;
+    s.settings = { [SETTINGS_KEY]: { enablePasskeys: true } };
+    // What a pre-MAIN release persisted: right id, wrong params.
+    s.registered = [
+      {
+        id: "baluard-passkey-page",
+        js: ["passkey-page.js"],
+        matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+        runAt: "document_start",
+        allFrames: false,
+        persistAcrossSessions: true,
+      },
+    ];
+    const sync = await loadSync(chromeApi);
+    await sync();
+    const pages = s.registered.filter((r) => r.id === "baluard-passkey-page");
+    expect(pages).toHaveLength(1);
+    expect(pages[0].world).toBe("MAIN");
+    expect(s.registered.some((r) => r.id === "baluard-passkey-bridge")).toBe(true);
+  });
+
+  it("leaves matching registrations alone across syncs", async () => {
+    const chromeApi = makeChrome();
+    const s = chromeApi.__state;
+    s.settings = { [SETTINGS_KEY]: { enablePasskeys: true } };
+    const sync = await loadSync(chromeApi);
+    await sync();
+    const callsAfterFirst = s.registerCalls;
+    await sync();
+    expect(s.registerCalls).toBe(callsAfterFirst);
+  });
+
+  it("repairs a bridge entry pinned with world MAIN (drift outside spec keys)", async () => {
+    const chromeApi = makeChrome();
+    const s = chromeApi.__state;
+    s.settings = { [SETTINGS_KEY]: { enablePasskeys: true } };
+    // The bridge spec omits world; a persisted entry carrying MAIN is
+    // still drift and must be repaired even though the id matches.
+    s.registered = [
+      {
+        id: "baluard-passkey-bridge",
+        js: ["passkey-bridge.js"],
+        matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+        runAt: "document_start",
+        world: "MAIN",
+        allFrames: false,
+        persistAcrossSessions: true,
+      },
+    ];
+    const sync = await loadSync(chromeApi);
+    await sync();
+    const bridge = s.registered.find((r) => r.id === "baluard-passkey-bridge");
+    expect(bridge).toBeTruthy();
+    expect(bridge.world ?? "ISOLATED").toBe("ISOLATED");
+  });
+
+  it("does not churn when the engine omits default-valued echo fields", async () => {
+    const chromeApi = makeChrome();
+    const s = chromeApi.__state;
+    s.settings = { [SETTINGS_KEY]: { enablePasskeys: true } };
+    // Both entries in omitted-echo form: no allFrames / persistAcrossSessions,
+    // bridge without world. Matches the spec once defaults are applied.
+    s.registered = [
+      {
+        id: "baluard-passkey-page",
+        js: ["passkey-page.js"],
+        matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+        runAt: "document_start",
+        world: "MAIN",
+      },
+      {
+        id: "baluard-passkey-bridge",
+        js: ["passkey-bridge.js"],
+        matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+        runAt: "document_start",
+      },
+    ];
+    const sync = await loadSync(chromeApi);
+    await sync();
+    // The only permitted register call is the separate always-on inline
+    // autofill script; zero calls may target the passkey scripts across
+    // BOTH the import-time boot sync and this one.
+    const passkeyRegisters = chromeApi.scripting.registerContentScripts.mock.calls.filter(
+      (args) => args[0].some((x) => String(x.id).startsWith("baluard-passkey"))
+    );
+    expect(passkeyRegisters).toHaveLength(0);
+    const passkeyEntries = s.registered.filter((r) => r.id.startsWith("baluard-passkey"));
+    expect(passkeyEntries).toHaveLength(2);
+  });
+
+  it("reports the registration as unverified while a repair fails", async () => {
+    const chromeApi = makeChrome();
+    // Reject every register attempt: the import-time boot sync races this
+    // test's own sync through the shared chain, so a once-rejection could
+    // land on either. Both fail -> flag stays false, deterministically.
+    chromeApi.scripting.registerContentScripts.mockRejectedValue(
+      new Error("duplicate content script id")
+    );
+    const mod = await loadMod(chromeApi);
+    chromeApi.__state.settings = { [SETTINGS_KEY]: { enablePasskeys: true } };
+    await mod.syncPasskeyScripts();
+    expect(mod.passkeyRegistrationVerified()).toBe(false);
   });
 });

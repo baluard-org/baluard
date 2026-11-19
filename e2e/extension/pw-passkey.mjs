@@ -435,6 +435,106 @@ try {
   );
   console.log("PASS toggle-cycle (off restores natives, on re-arms the wrap)");
 
+  // ── 9. Service-worker kill: wrap survives, pipeline re-arms ──
+  // MV3 idles the service worker ~30s after its last event; the bridge
+  // content script must reconnect (not destroy) when that disconnect
+  // lands, and the whole ceremony pipeline must still work afterwards.
+  // DevTools-attached workers do not idle-terminate, so the harness stops
+  // all workers deterministically over CDP instead of sleeping 36s.
+  console.log("leg 9: stopping all service workers over CDP");
+  // Clear the status line so the post-kill assertion cannot pass on leg
+  // 8's stale text (rp.mjs never clears it between clicks).
+  await page.evaluate(() => {
+    document.getElementById("status").textContent = "";
+  });
+  const idleCdp = await ctx.newCDPSession(page);
+  await idleCdp.send("ServiceWorker.stopAllWorkers");
+  await sleep(1500);
+  const idleWrap = await page.evaluate(() => window.__baluardPasskey);
+  if (idleWrap !== true)
+    fail(`wrap did not survive the service-worker stop (__baluardPasskey=${idleWrap})`);
+  await page.click("#signin");
+  if (!(await pickInPopout(ctx))) fail("post-idle picker never opened");
+  await waitFor(
+    page,
+    () => {
+      const s = document.getElementById("status").textContent;
+      return s.includes("ASSERT") && s.includes('"verified":true') ? s : null;
+    },
+    "post-idle assertion"
+  );
+  console.log("PASS idle-survival (wrap + ceremony intact after SW stop)");
+
+  // ── 10. Stale-registration repair ──
+  // Simulate what an extension UPDATE actually leaves behind: the page
+  // script pinned with STALE PARAMS (no world MAIN — an older release's
+  // shape). The id-present check of the old sync considered this healthy;
+  // the spec-compare sync must repair it. The wrap stays dark (the
+  // ISOLATED-world copy never touches the page's MAIN-world flag), then a
+  // settings write with a REAL value change fires storage.onChanged →
+  // syncPasskeyScripts, which re-registers with the current spec.
+  const repair = await ctx.newPage();
+  await repair.goto(`chrome-extension://${EXT_ID}/popup.html`);
+  await repair.waitForSelector(".baluard-popup");
+  await repair.evaluate(async () => {
+    await chrome.scripting.unregisterContentScripts({ ids: ["baluard-passkey-page"] });
+    await chrome.scripting.registerContentScripts([
+      {
+        id: "baluard-passkey-page",
+        js: ["passkey-page.js"],
+        matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+        runAt: "document_start",
+        allFrames: false,
+        persistAcrossSessions: true,
+      },
+    ]);
+  });
+  await sleep(500);
+  await repair.close();
+  await page.reload();
+  await waitFor(page, () => document.getElementById("status") !== null, "RP reload");
+  const staleWrap = await page.evaluate(() => window.__baluardPasskey);
+  if (staleWrap === true)
+    fail(`page script still wraps the MAIN world after stale registration (__baluardPasskey=${staleWrap})`);
+  // Trigger the sync deterministically: an identical write would not fire
+  // storage.onChanged, so flip a throwaway key and restore it.
+  const swWake = await ctx.newPage();
+  await swWake.goto(`chrome-extension://${EXT_ID}/popup.html`);
+  await swWake.waitForSelector(".baluard-popup");
+  await swWake.evaluate(async () => {
+    const cur = await chrome.storage.local.get("settings");
+    const base = cur.settings || {};
+    await chrome.storage.local.set({ settings: { ...base, _syncNudge: Date.now() } });
+    await chrome.storage.local.set({ settings: base });
+  });
+  await sleep(2000);
+  const repaired = await swWake.evaluate(async () => {
+    const all = await chrome.scripting.getRegisteredContentScripts();
+    return all.find((r) => r.id === "baluard-passkey-page");
+  });
+  if (!repaired || (repaired.world ?? "ISOLATED") !== "MAIN")
+    fail(`registration repair did not restore world MAIN (${JSON.stringify(repaired || null)})`);
+  await swWake.close();
+  await page.reload();
+  await waitFor(page, () => document.getElementById("status") !== null, "RP reload 2");
+  const repairedWrap = await page.evaluate(() => window.__baluardPasskey);
+  if (repairedWrap !== true)
+    fail(`registration repair did not re-arm the wrap (__baluardPasskey=${repairedWrap})`);
+  await page.evaluate(() => {
+    document.getElementById("status").textContent = "";
+  });
+  await page.click("#signin");
+  if (!(await pickInPopout(ctx))) fail("post-repair picker never opened");
+  await waitFor(
+    page,
+    () => {
+      const s = document.getElementById("status").textContent;
+      return s.includes("ASSERT") && s.includes('"verified":true') ? s : null;
+    },
+    "post-repair assertion"
+  );
+  console.log("PASS registration-repair (stale unregister healed, pipeline re-armed)");
+
   console.log("RING3=1");
   // Close hard: a wedged popout or service worker must never hold the
   // runner's pipes open (process.exit also mirrors the fail() path).

@@ -45,27 +45,92 @@ export function createPasskeyBridge(env) {
   // DESTROY without it would never restore the natives.
   let pageContextId = null;
 
-  const swPort = chromeApi.runtime.connect({ name: "baluard-passkey" });
-  swPort.onMessage.addListener((msg) => {
+  // MV3 idles the service worker out after ~30s even with open runtime
+  // ports, and that disconnect must NOT tear the wrap down or every tab
+  // stops intercepting the moment the worker sleeps. A fresh connect()
+  // wakes the worker and rebuilds the pipeline. A throw — or a context
+  // that is already dead (extension reload/update) — restores the natives.
+  // Reconnects are capped: a worker that keeps refusing the port (or a
+  // context that dies without throwing) must converge on destroy instead
+  // of spinning an IPC loop for the life of the document.
+  let reconnectAttempts = 0;
+  const RECONNECT_DELAYS_MS = [0, 500, 1000, 2000, 4000];
+  let destroyed = false;
+  let swPort = null;
+  function onSwMessage(msg) {
     if (!msg || typeof msg.sessionId !== "string") return;
     if (msg.type === MsgType.DESTROY) {
-      forwardDestroy();
+      // Setting passkeys off: stop reconnecting too, or the bridge spins
+      // against a worker that will keep refusing an unwanted pipeline.
+      forwardDestroyOnce();
       return;
     }
     if (msg.type !== MsgType.RESPONSE) return;
     deliverToPage(msg.sessionId, msg.contextId, msg.data);
-  });
-  swPort.onDisconnect.addListener(() => {
-    // Extension reloaded, unregistered, or the SW tore the pipeline down:
-    // restore the page's natives so the site keeps working.
+  }
+  function forwardDestroyOnce() {
+    if (destroyed) return;
+    destroyed = true;
     forwardDestroy();
-  });
+  }
+  function onSwDisconnect(port) {
+    // Stale ports from an earlier reset still fire their disconnects; only
+    // the current pipeline may reconnect or count against the cap.
+    if (port && port !== swPort) return;
+    if (destroyed) return;
+    try {
+      // Chrome returns undefined (not a throw) for runtime.id on an
+      // invalidated context; a throwing getter covers the rare rest.
+      if (!chromeApi.runtime?.id) throw new Error("context invalidated");
+    } catch {
+      forwardDestroyOnce();
+      return;
+    }
+    const attempt = reconnectAttempts;
+    if (attempt >= RECONNECT_DELAYS_MS.length) {
+      forwardDestroyOnce();
+      return;
+    }
+    reconnectAttempts += 1;
+    const delay = RECONNECT_DELAYS_MS[attempt];
+    const gen = swPort;
+    if (delay === 0) {
+      try {
+        connectSw();
+      } catch {
+        forwardDestroyOnce();
+      }
+      return;
+    }
+    setTimeout(() => {
+      if (destroyed || swPort !== gen) return;
+      try {
+        connectSw();
+      } catch {
+        forwardDestroyOnce();
+      }
+    }, delay);
+  }
+  function connectSw() {
+    swPort = chromeApi.runtime.connect({ name: "baluard-passkey" });
+    swPort.onMessage.addListener(onSwMessage);
+    swPort.onDisconnect.addListener(onSwDisconnect);
+    // A port that survives a second is a healthy pipeline: reset the cap
+    // so the next idle kill reconnects from the front of the schedule.
+    const gen = swPort;
+    setTimeout(() => {
+      if (swPort === gen) reconnectAttempts = 0;
+    }, 1000);
+  }
+  connectSw();
 
   chromeApi.runtime.onMessage.addListener((msg) => {
     if (msg && msg.type === "baluard-passkey-destroy") {
       // Setting-off teardown path: the SW messages every tab directly (the
       // runtime port may already be gone on a freshly navigating page).
-      forwardDestroy();
+      // Marks the bridge dead so the disconnect handler stops reconnecting
+      // against a worker that will keep refusing an unwanted pipeline.
+      forwardDestroyOnce();
     }
     if (
       msg &&
@@ -119,6 +184,20 @@ export function createPasskeyBridge(env) {
     if (!msg.sessionId || !msg.data || typeof msg.data !== "object") return;
     if (!msg.contextId || typeof msg.contextId !== "string") return;
     pageContextId = msg.contextId;
+    if (destroyed) {
+      // Re-enable re-arms the wrap via fresh injection; this bridge stopped
+      // reconnecting at destroy, so a live ceremony re-opens the channel.
+      destroyed = false;
+      reconnectAttempts = 0;
+      // Drop any port that survived the destroy (its disconnect would
+      // otherwise race the fresh one and count against the cap).
+      try {
+        swPort?.disconnect();
+      } catch {}
+      try {
+        connectSw();
+      } catch {}
+    }
 
     const port = event.ports && event.ports[0];
     if (port) {

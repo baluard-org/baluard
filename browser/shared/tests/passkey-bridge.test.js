@@ -13,10 +13,12 @@ function makeEnv(overrides = {}) {
     onMessage: { addListener: vi.fn() },
     onDisconnect: { addListener: vi.fn() },
     postMessage: vi.fn(),
+    disconnect: vi.fn(),
   };
   const sendMessage = vi.fn(async () => ({ ok: true, payload: {} }));
   const chromeApi = {
     runtime: {
+      id: "test-ext-id",
       connect: vi.fn(() => swPort),
       sendMessage,
       onMessage: { addListener: (fn) => runtimeMessages.push(fn) },
@@ -119,12 +121,18 @@ describe("context learning and DESTROY stamping", () => {
     expect(api.contextId()).toBeNull();
   });
 
-  it("learns the context from HELLO and stamps DESTROY with it", () => {
-    const { env, api, posted, onSwDisconnect } = start();
+  it("learns the context from HELLO and stamps context-loss DESTROY with it", () => {
+    const { env, api, posted } = start();
     for (const fn of env.__winHandlers) {
       fn({ source: env.window, data: { sender: SENDER_TAG, contextId: "ctx-page-1", type: MsgType.HELLO } });
     }
     expect(api.contextId()).toBe("ctx-page-1");
+    // Context loss (extension reload): the fresh connect() throws and the
+    // resulting destroy carries the learned context id.
+    env.chrome.runtime.connect.mockImplementation(() => {
+      throw new Error("Extension context invalidated.");
+    });
+    const onSwDisconnect = env.__swPort.onDisconnect.addListener.mock.calls[0][0];
     onSwDisconnect();
     expect(posted[0].msg).toEqual({
       sender: SENDER_TAG,
@@ -135,8 +143,9 @@ describe("context learning and DESTROY stamping", () => {
 
   it("does not stamp an unstamped DESTROY before any hello or request", () => {
     const { posted, onSwDisconnect } = start();
+    // SW idle disconnect before any HELLO: reconnect posts nothing.
     onSwDisconnect();
-    expect(posted[0].msg.contextId).toBeNull();
+    expect(posted).toHaveLength(0);
   });
 
   it("rejects a HELLO with a junk or missing context id", () => {
@@ -298,5 +307,126 @@ describe("setting-off destroy", () => {
     }
     onRuntimeMessage({ type: "baluard-passkey-destroy" });
     expect(posted[0].msg).toMatchObject({ type: MsgType.DESTROY, contextId: "ctx-page-1" });
+  });
+});
+
+describe("SW disconnect lifecycle", () => {
+  it("reconnects instead of destroying when the SW port disconnects", () => {
+    // MV3 idles the SW out ~30s after navigation; that disconnect must
+    // wake the worker via a fresh connect, never restore the natives.
+    const { env, onSwDisconnect, posted } = start();
+    const before = env.chrome.runtime.connect.mock.calls.length;
+    onSwDisconnect();
+    expect(env.chrome.runtime.connect.mock.calls.length).toBe(before + 1);
+    expect(posted.some((p) => p.msg.type === MsgType.DESTROY)).toBe(false);
+  });
+
+  it("restores natives only when reconnect throws (extension context lost)", () => {
+    const env = makeEnv();
+    let calls = 0;
+    env.chrome.runtime.connect.mockImplementation(() => {
+      calls += 1;
+      if (calls > 1) throw new Error("Extension context invalidated.");
+      return env.__swPort;
+    });
+    const api = createPasskeyBridge(env);
+    const onSwDisconnect = env.__swPort.onDisconnect.addListener.mock.calls[0][0];
+    onSwDisconnect();
+    expect(env.__posted.some((p) => p.msg.type === MsgType.DESTROY)).toBe(true);
+  });
+
+  it("restores natives when the context is dead without connect throwing", () => {
+    const env = makeEnv();
+    // Chrome's real invalidated-context behavior: runtime.id reads
+    // undefined rather than throwing.
+    Object.defineProperty(env.chrome.runtime, "id", { value: undefined, configurable: true });
+    const api = createPasskeyBridge(env);
+    const before = env.chrome.runtime.connect.mock.calls.length;
+    const onSwDisconnect = env.__swPort.onDisconnect.addListener.mock.calls[0][0];
+    onSwDisconnect();
+    expect(env.chrome.runtime.connect.mock.calls.length).toBe(before);
+    expect(env.__posted.some((p) => p.msg.type === MsgType.DESTROY)).toBe(true);
+  });
+
+  it("ignores disconnects from a stale port after a ceremony reset", async () => {
+    const { env, api, onSwDisconnect, onRuntimeMessage } = start();
+    onRuntimeMessage({ type: "baluard-passkey-destroy" });
+    onSwDisconnect();
+    // The reset connects a NEW port; the fake hands back a distinct object
+    // so stale-vs-current identity is observable.
+    const fresh = {
+      onMessage: { addListener: vi.fn() },
+      onDisconnect: { addListener: vi.fn() },
+      postMessage: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    env.chrome.runtime.connect.mockImplementationOnce(() => fresh);
+    const { event } = pageRequest();
+    event.source = env.window;
+    await api.onPageMessage(event);
+    // The reset dropped the stale port explicitly.
+    expect(env.__swPort.disconnect).toHaveBeenCalledTimes(1);
+    const before = env.chrome.runtime.connect.mock.calls.length;
+    const destroysBefore = env.__posted.filter((p) => p.msg.type === MsgType.DESTROY).length;
+    // A late disconnect from the stale port must not reconnect or count.
+    onSwDisconnect(env.__swPort);
+    expect(env.chrome.runtime.connect.mock.calls.length).toBe(before);
+    expect(env.__posted.filter((p) => p.msg.type === MsgType.DESTROY).length).toBe(destroysBefore);
+  });
+
+  it("caps reconnect attempts and destroys instead of spinning forever", () => {
+    const { onSwDisconnect, posted } = start();
+    // Five attempts are scheduled, then the sixth disconnect converges on
+    // destroy rather than looping for the life of the document.
+    for (let i = 0; i < 5; i += 1) onSwDisconnect();
+    expect(posted.some((p) => p.msg.type === MsgType.DESTROY)).toBe(false);
+    onSwDisconnect();
+    expect(posted.some((p) => p.msg.type === MsgType.DESTROY)).toBe(true);
+  });
+
+  it("stops reconnecting after a DESTROY (setting turned off)", () => {
+    const { env, onSwDisconnect, onSwMessage, posted } = start();
+    const before = env.chrome.runtime.connect.mock.calls.length;
+    onSwMessage({ sessionId: "s1", type: MsgType.DESTROY });
+    expect(posted.some((p) => p.msg.type === MsgType.DESTROY)).toBe(true);
+    onSwDisconnect();
+    expect(env.chrome.runtime.connect.mock.calls.length).toBe(before);
+  });
+
+  it("stops reconnecting after the tabs.sendMessage destroy path", () => {
+    const { env, onSwDisconnect, onRuntimeMessage, posted } = start();
+    const before = env.chrome.runtime.connect.mock.calls.length;
+    // The production setting-off path: a direct tabs.sendMessage, not a
+    // port message.
+    onRuntimeMessage({ type: "baluard-passkey-destroy" });
+    expect(posted.some((p) => p.msg.type === MsgType.DESTROY)).toBe(true);
+    onSwDisconnect();
+    expect(env.chrome.runtime.connect.mock.calls.length).toBe(before);
+  });
+
+  it("re-opens the channel when a ceremony arrives after destroy", async () => {
+    const { env, api, onSwDisconnect, onRuntimeMessage } = start();
+    onRuntimeMessage({ type: "baluard-passkey-destroy" });
+    onSwDisconnect();
+    const before = env.chrome.runtime.connect.mock.calls.length;
+    // Re-enable injects a fresh page script; its first ceremony demand
+    // must reset the bridge and reconnect.
+    const { event } = pageRequest();
+    event.source = env.window;
+    await api.onPageMessage(event);
+    expect(env.chrome.runtime.connect.mock.calls.length).toBe(before + 1);
+  });
+
+  it("re-arms message handling on the reconnected port", () => {
+    const { env, onSwDisconnect, onSwMessage } = start();
+    onSwDisconnect();
+    // The reconnected port must carry the same handlers: the fake env
+    // returns the same port object, so addListener gained two entries.
+    const msgCalls = env.__swPort.onMessage.addListener.mock.calls.length;
+    const discCalls = env.__swPort.onDisconnect.addListener.mock.calls.length;
+    expect(msgCalls).toBe(2);
+    expect(discCalls).toBe(2);
+    // The handler identity is stable, so responses keep flowing.
+    expect(env.__swPort.onMessage.addListener.mock.calls[1][0]).toBe(onSwMessage);
   });
 });

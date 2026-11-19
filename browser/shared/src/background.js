@@ -21,6 +21,11 @@ let nextId = 1;
 // current. Cleared ONLY in the ping-success branch; a missing, slow, or
 // stale host leaves it true and every non-ping send refuses.
 let versionSkew = false;
+// NMH/app + protocol versions from the connect-time ping payload. Kept at
+// module scope so the popup's diagnostics route can surface them without a
+// round trip through the NMH (which may be mid-reconnect).
+let nmhVersion = "0.0.0";
+let protoVersion = null;
 // Settles once per connection when the handshake ping resolves, fails, or
 // times out. Non-ping sends queue on it (see send()).
 let handshake = null;
@@ -69,6 +74,8 @@ function connect() {
         const raw = typeof r === "string" ? r : (r && r.payload);
         const parsed = JSON.parse(raw);
         nmh = parsed.nmh_version || "0.0.0";
+      protoVersion = typeof parsed.proto_version === "number" ? parsed.proto_version : null;
+      nmhVersion = nmh;
       } catch (_) {}
       if (compareVersions(nmh, MIN_NMH_VERSION) < 0) {
         versionSkew = true;
@@ -458,6 +465,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: e.message, code: e.code }));
     return true;
   }
+  // Popup diagnostics (extension-origin pages, full routing per B4).
+  if (fromExtensionPage && msg.action === "passkey.diagnostics") {
+    handlePasskeyDiagnostics()
+      .then((payload) => sendResponse({ ok: true, payload }))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
   // Popout ceremony UI (extension-origin pages, full routing per B4).
   if (
     fromExtensionPage &&
@@ -759,6 +773,57 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
 const PASSKEY_CLIENT = createPasskeyClient(send);
 const PASSKEY_PAGE_SCRIPT_ID = "baluard-passkey-page";
 const PASSKEY_BRIDGE_SCRIPT_ID = "baluard-passkey-bridge";
+const PASSKEY_SCRIPT_MATCHES = ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"];
+// The exact registration contract. persistAcrossSessions entries survive
+// extension updates, so getRegisteredContentScripts can report whatever an
+// OLDER release registered; every sync compares fields and repairs drift —
+// an id-present check alone would pin stale matches/world forever.
+const PASSKEY_SCRIPT_SPECS = [
+  {
+    id: PASSKEY_PAGE_SCRIPT_ID,
+    js: ["passkey-page.js"],
+    matches: PASSKEY_SCRIPT_MATCHES,
+    runAt: "document_start",
+    world: "MAIN",
+    allFrames: false,
+    persistAcrossSessions: true,
+  },
+  {
+    id: PASSKEY_BRIDGE_SCRIPT_ID,
+    js: ["passkey-bridge.js"],
+    matches: PASSKEY_SCRIPT_MATCHES,
+    runAt: "document_start",
+    allFrames: false,
+    persistAcrossSessions: true,
+  },
+];
+
+// Echo defaults: engines may omit default-valued fields instead of echoing
+// them, and an omitted field must not read as drift (or every sync would
+// unregister/re-register in a loop). Keys the spec deliberately omits —
+// world on the bridge, css/excludeMatches everywhere — are drift when a
+// persisted entry carries a non-default value.
+const REGISTRATION_ECHO_DEFAULTS = {
+  world: "ISOLATED",
+  allFrames: false,
+  persistAcrossSessions: true,
+  runAt: "document_idle",
+};
+
+function registrationMatchesSpec(entry, spec) {
+  for (const key of Object.keys(spec)) {
+    if (key === "id") continue;
+    const got = entry[key] ?? REGISTRATION_ECHO_DEFAULTS[key];
+    if (JSON.stringify(got) !== JSON.stringify(spec[key])) return false;
+  }
+  for (const key of ["world", "css", "excludeMatches"]) {
+    if (key in spec) continue;
+    const got = entry[key] ?? REGISTRATION_ECHO_DEFAULTS[key];
+    const want = REGISTRATION_ECHO_DEFAULTS[key];
+    if (JSON.stringify(got) !== JSON.stringify(want)) return false;
+  }
+  return true;
+}
 
 chrome.runtime.onConnect?.addListener((port) => {
   if (port.name === "baluard-passkey") PASSKEY_CLIENT.onBridgePort(port);
@@ -810,6 +875,53 @@ function syncPasskeyScripts() {
   passkeySyncChain = passkeySyncChain.catch(() => {}).then(syncPasskeyScriptsOnce);
   return passkeySyncChain;
 }
+// Popup diagnostics payload: registration state, the session-keyed pkTrail,
+// and the version stack (extension / NMH / protocol). Exported for tests.
+export async function handlePasskeyDiagnostics() {
+  const settings = await readSettings();
+  let registered = [];
+  try {
+    const all = await chrome.scripting.getRegisteredContentScripts();
+    registered = all
+      .filter(
+        (s) => s.id === PASSKEY_PAGE_SCRIPT_ID || s.id === PASSKEY_BRIDGE_SCRIPT_ID
+      )
+      .map((s) => ({
+        id: s.id,
+        js: s.js,
+        matches: s.matches,
+        runAt: s.runAt || null,
+        world: s.world || null,
+        allFrames: Boolean(s.allFrames),
+      }));
+  } catch {}
+  let pkTrail = [];
+  try {
+    const stored = await chrome.storage.session.get("pkTrail");
+    pkTrail = Array.isArray(stored.pkTrail) ? stored.pkTrail : [];
+  } catch {}
+  let worldUnsupported = false;
+  try {
+    const flag = await chrome.storage.local.get("passkeysWorldUnsupported");
+    worldUnsupported = flag.passkeysWorldUnsupported === true;
+  } catch {}
+  return {
+    enabled: settings.enablePasskeys === true,
+    worldUnsupported,
+    registered,
+    pkTrail,
+    versions: {
+      extension: chrome.runtime.getManifest().version,
+      nmh: nmhVersion,
+      proto: protoVersion,
+    },
+  };
+}
+
+// Exported for unit tests (esbuild IIFE strips it from the bundle).
+export function passkeyRegistrationVerified() {
+  return passkeyScriptsRegistered;
+}
 export { syncPasskeyScripts };
 
 // Exported for unit tests (esbuild IIFE strips it from the bundle).
@@ -848,30 +960,18 @@ async function syncPasskeyScriptsOnce() {
     return;
   }
   try {
-    if (!hasPage) {
-      await chrome.scripting.registerContentScripts([
-        {
-          id: PASSKEY_PAGE_SCRIPT_ID,
-          js: ["passkey-page.js"],
-          matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
-          runAt: "document_start",
-          world: "MAIN",
-          allFrames: false,
-          persistAcrossSessions: true,
-        },
-      ]);
-    }
-    if (!hasBridge) {
-      await chrome.scripting.registerContentScripts([
-        {
-          id: PASSKEY_BRIDGE_SCRIPT_ID,
-          js: ["passkey-bridge.js"],
-          matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
-          runAt: "document_start",
-          allFrames: false,
-          persistAcrossSessions: true,
-        },
-      ]);
+    const byId = new Map(registered.map((r) => [r.id, r]));
+    for (const spec of PASSKEY_SCRIPT_SPECS) {
+      const cur = byId.get(spec.id);
+      if (cur && registrationMatchesSpec(cur, spec)) continue;
+      if (cur) {
+        try {
+          await chrome.scripting.unregisterContentScripts({ ids: [spec.id] });
+        } catch (e) {
+          console.error("[baluard] passkey script unregister failed:", e);
+        }
+      }
+      await chrome.scripting.registerContentScripts([spec]);
     }
     await chrome.storage.local.remove("passkeysWorldUnsupported");
   } catch (e) {

@@ -1,7 +1,8 @@
 import { render } from "solid-js/web";
-import { createSignal, Show, For, onMount, onCleanup } from "solid-js";
+import { createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js";
 import { getSettings, updateSettings, normalizeClearSeconds } from "./settings.js";
 import { originOf } from "./url.js";
+import { probePasskeyPageState } from "./passkey-probe.js";
 // ?inline gives the raw CSS string. It is rendered as a DYNAMIC <style>
 // child on purpose: Solid bakes STATIC template children into an HTML
 // string and entity-escapes them, which turned every "&" nesting selector
@@ -112,6 +113,12 @@ const STRINGS = {
     passkeysTitle: "Offer passkeys",
     passkeysDesc: "Baluard fills sign-in requests with passkeys stored in your vault. Requires the Baluard app.",
     passkeysUnsupported: "This browser cannot offer passkeys.",
+    pkDiagOk: "Intercepting passkeys on this tab",
+    pkDiagShadow: "Another password manager is claiming passkeys on this tab",
+    pkDiagInactive: "Not intercepting on this tab yet — reload the page",
+    pkDiagNoTab: "Open a website tab to check interception",
+    pkDiagScripts: "passkey scripts registered",
+    pkDiagTrail: "Recent passkey activity",
     defaultMgrTitle: "Make Baluard the default password manager",
     defaultMgrDesc: "Turns off the browser's offer to save passwords, so only Baluard asks to save your logins.",
   },
@@ -196,6 +203,12 @@ const STRINGS = {
     passkeysTitle: "Ofrecer claves de acceso",
     passkeysDesc: "Baluard completa inicios de sesión con claves de acceso guardadas en tu bóveda. Requiere la app de Baluard.",
     passkeysUnsupported: "Este navegador no puede ofrecer claves de acceso.",
+    pkDiagOk: "Interceptando claves de acceso en esta pestaña",
+    pkDiagShadow: "Otro gestor de contraseñas está reclamando las claves de acceso en esta pestaña",
+    pkDiagInactive: "Aún no intercepta en esta pestaña — recarga la página",
+    pkDiagNoTab: "Abre una pestaña web para comprobar la intercepción",
+    pkDiagScripts: "scripts de claves de acceso registrados",
+    pkDiagTrail: "Actividad reciente de claves de acceso",
     defaultMgrTitle: "Usar Baluard como gestor de contraseñas predeterminado",
     defaultMgrDesc: "Desactiva el aviso del navegador para guardar contraseñas, de modo que solo Baluard te pregunte si quieres guardarlas.",
   },
@@ -281,6 +294,12 @@ const STRINGS = {
     passkeysTitle: "Oferecer chaves de acesso",
     passkeysDesc: "O Baluard completa logins com chaves de acesso guardadas no seu cofre. Requer o app Baluard.",
     passkeysUnsupported: "Este navegador não pode oferecer chaves de acesso.",
+    pkDiagOk: "Interceptando chaves de acesso nesta aba",
+    pkDiagShadow: "Outro gerenciador de senhas está reivindicando as chaves de acesso nesta aba",
+    pkDiagInactive: "Ainda não intercepta nesta aba — recarregue a página",
+    pkDiagNoTab: "Abra uma aba de site para verificar a interceptação",
+    pkDiagScripts: "scripts de chaves de acesso registrados",
+    pkDiagTrail: "Atividade recente de chaves de acesso",
     defaultMgrTitle: "Usar o Baluard como gerenciador de senhas padrão",
     defaultMgrDesc: "Desativa o aviso do navegador para salvar senhas, para que apenas o Baluard peça para salvar seus logins.",
   },
@@ -315,6 +334,34 @@ const defaultMgrAvailable = Boolean(
 const [clipboardClear, setClipboardClear] = createSignal(60);
 const [passkeysEnabled, setPasskeysEnabled] = createSignal(false);
 const [passkeysSupported, setPasskeysSupported] = createSignal(true);
+// Diagnostics (settings view): SW-side facts + the active tab's MAIN-world
+// probe. Loaded when the settings view opens with passkeys on.
+const [pkDiag, setPkDiag] = createSignal(null);
+const [pkProbe, setPkProbe] = createSignal(null);
+
+async function refreshPasskeyDiagnostics() {
+  if (!passkeysEnabled() || !passkeysSupported()) return;
+  // Reset first: a probe that cannot run (no http tab) must not keep the
+  // previous tab's verdict on screen.
+  setPkProbe(null);
+  setPkDiag(null);
+  try {
+    // send() resolves with the payload itself.
+    const payload = await send("passkey.diagnostics");
+    if (payload) setPkDiag(payload);
+  } catch {}
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.id && /^https?:/i.test(tab.url || "")) {
+      const frames = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: probePasskeyPageState,
+      });
+      if (frames && frames[0] && frames[0].result) setPkProbe(frames[0].result);
+    }
+  } catch {}
+}
 // Live TOTP ring clock. Windows are epoch-aligned, so the drained fraction
 // is just now mod the row's period — no code is ever fetched for display.
 const [nowSec, setNowSec] = createSignal(Date.now() / 1000);
@@ -826,6 +873,13 @@ async function toggleDefaultMgr() {
 
 function App() {
   const t = (k) => (STRINGS[detectLocale()] || STRINGS.en)[k] || k;
+  // Reads all three gates so boot-order and toggle flips re-probe.
+  createEffect(() => {
+    const open = settingsOpen();
+    const enabled = passkeysEnabled();
+    const supported = passkeysSupported();
+    if (open && enabled && supported) void refreshPasskeyDiagnostics();
+  });
 
   return (
     <div class="baluard-popup">
@@ -920,6 +974,44 @@ function App() {
               <span class="toggle-knob" aria-hidden="true"></span>
             </span>
           </label>
+          <Show when={passkeysEnabled() && passkeysSupported()}>
+            <div class="pk-diag">
+              <div
+                class={`pk-diag-status ${
+                  pkProbe()
+                    ? pkProbe().shadow
+                      ? "pk-diag-warn"
+                      : pkProbe().wrap
+                        ? "pk-diag-ok"
+                        : ""
+                    : ""
+                }`}
+              >
+                {pkProbe()
+                  ? pkProbe().shadow
+                    ? `⚠ ${t("pkDiagShadow")}`
+                    : pkProbe().wrap
+                      ? `✓ ${t("pkDiagOk")}`
+                      : t("pkDiagInactive")
+                  : t("pkDiagNoTab")}
+              </div>
+              <Show when={pkDiag()}>
+                <div class="pk-diag-meta">
+                  {pkDiag().registered.length}/2 {t("pkDiagScripts")} — v{""}
+                  {pkDiag().versions.extension ?? "—"}, NMH {pkDiag().versions.nmh ?? "—"}
+                  {pkDiag().versions.proto ? `, proto ${pkDiag().versions.proto}` : ""}
+                </div>
+                <Show when={pkDiag().pkTrail.length > 0}>
+                  <details class="pk-diag-trail">
+                    <summary>{t("pkDiagTrail")}</summary>
+                    <For each={pkDiag().pkTrail}>
+                      {(entry) => <div class="pk-diag-trail-row">{entry}</div>}
+                    </For>
+                  </details>
+                </Show>
+              </Show>
+            </div>
+          </Show>
           <Show when={defaultMgrAvailable}>
             <label class="setting-row">
               <div class="setting-text">
