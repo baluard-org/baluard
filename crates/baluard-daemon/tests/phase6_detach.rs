@@ -1390,3 +1390,29 @@ async fn route_unlock_on_a_downloaded_vault_names_the_recovery_phrase() {
         resp.error_message
     );
 }
+
+#[tokio::test]
+async fn vault_clone_start_accepts_folder_provider() {
+    let (_data_dir, _guard) = sandboxed_data_dir().await;
+    let folder = tempfile::tempdir().expect("folder tempdir");
+    let repo_dir = folder.path().join("folder-clone.git");
+    std::fs::create_dir_all(&repo_dir).expect("create repo dir");
+    let clone_url = format!("file://{}", repo_dir.display());
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vault.clone_start",
+        serde_json::json!({
+            "clone_url": clone_url,
+            "provider": "folder",
+            "slug": "folder-clone",
+            "display_name": "folder-clone",
+        }),
+    );
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "vault.clone_start with provider=folder must succeed, got: {}",
+        resp.error_message
+    );
+}

@@ -4742,8 +4742,8 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
         "github" => Some(baluard_core::providers::types::Provider::GitHub),
         "gitlab" => Some(baluard_core::providers::types::Provider::GitLab),
         "codeberg" => Some(baluard_core::providers::types::Provider::Codeberg),
-        // A custom remote clones a plain URL with no provider object.
-        "custom" => None,
+        // Custom and folder remotes clone a plain/file:// URL with no provider object.
+        "custom" | "folder" => None,
         other => return err_response(format!("Unknown provider: {other}")),
     };
     let provider_str_owned: Option<String> = if provider_str.is_empty() {
