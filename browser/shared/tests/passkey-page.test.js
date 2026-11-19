@@ -23,6 +23,11 @@ function makeEnv(overrides = {}) {
     addEventListener: (type, fn) => {
       if (type === "message") messageHandlers.push(fn);
     },
+    removeEventListener: (type, fn) => {
+      if (type !== "message") return;
+      const idx = messageHandlers.indexOf(fn);
+      if (idx !== -1) messageHandlers.splice(idx, 1);
+    },
     postMessage: (msg, origin, transfer) => posted.push({ msg, origin, transfer }),
   };
   win.self = win;
@@ -98,6 +103,13 @@ describe("eligibility", () => {
       location: { protocol: "http:", hostname: "localhost", origin: "http://localhost:3000" },
     });
     expect(createPageInterception(env)).not.toBeNull();
+  });
+
+  it("returns null when navigator.credentials.get is missing", () => {
+    const env = makeEnv();
+    delete env.__wrapProto.get;
+    expect(createPageInterception(env)).toBeNull();
+    expect(env.window.__baluardPasskey).toBe(false);
   });
 
   it("refuses a second copy", () => {
@@ -329,12 +341,13 @@ describe("rebuild", () => {
 });
 
 describe("competing configurable instance hooks", () => {
-  it("wraps configurable own-property create/get on credentials and restores them on destroy", async () => {
+  it("wraps configurable own-property create/get on credentials and restores exact descriptors on destroy", async () => {
     const env = makeEnv();
     const otherCreate = vi.fn(() => new Promise(() => {}));
-    const otherGet = vi.fn(() => new Promise(() => {}));
+    const otherCreateGetter = () => otherCreate;
+    const otherGet = vi.fn(() => Promise.resolve({ id: "from-other" }));
     Object.defineProperty(env.__credentials, "create", {
-      get: () => otherCreate,
+      get: otherCreateGetter,
       configurable: true,
     });
     Object.defineProperty(env.__credentials, "get", {
@@ -348,27 +361,184 @@ describe("competing configurable instance hooks", () => {
     expect(env.__credentials.create.__baluard).toBe(true);
     expect(env.__credentials.get.__baluard).toBe(true);
 
+    // Fallback routes through the captured competing instance hook.
     const p = env.__credentials.get(getOpts());
     expect(env.__posted.some((m) => m.msg.type === MsgType.GET)).toBe(true);
     expect(otherGet).not.toHaveBeenCalled();
+    deliver(env.__posted[0], api, { type: "error", name: ErrName.FALLBACK });
+    await expect(p).resolves.toEqual({ id: "from-other" });
+    expect(otherGet).toHaveBeenCalledTimes(1);
 
     api.destroy();
-    await expect(p).rejects.toMatchObject({ name: "NotAllowedError" });
-    expect(env.__credentials.create).toBe(otherCreate);
+    expect(Object.getOwnPropertyDescriptor(env.__credentials, "create").get).toBe(otherCreateGetter);
     expect(env.__credentials.get).toBe(otherGet);
   });
 
-  it("fails closed and rolls back when an own property is non-configurable", () => {
+  it("wraps and restores non-configurable writable data properties", () => {
     const env = makeEnv();
+    const otherGet = vi.fn(() => new Promise(() => {}));
+    Object.defineProperty(env.__credentials, "get", {
+      value: otherGet,
+      writable: true,
+      configurable: false,
+    });
+
+    const api = createPageInterception(env);
+    expect(api.install()).toBe(true);
+    expect(env.__credentials.get.__baluard).toBe(true);
+    api.destroy();
+    expect(env.__credentials.get).toBe(otherGet);
+  });
+
+  it("wraps 1Password-style non-configurable accessor when its setter accepts writes (disabled)", async () => {
+    const env = makeEnv();
+    const passthrough = vi.fn(() => Promise.resolve({ id: "from-1p-passthrough" }));
+    let enabled = false;
+    for (const prop of ["create", "get"]) {
+      Object.defineProperty(env.__credentials, prop, {
+        configurable: false,
+        enumerable: true,
+        get() {
+          return enabled ? passthrough : this["_" + prop] ?? passthrough;
+        },
+        set(v) {
+          if (enabled) return;
+          this["_" + prop] = v;
+        },
+      });
+    }
+
+    const api = createPageInterception(env);
+    expect(api.install()).toBe(true);
+    expect(env.__credentials.get.__baluard).toBe(true);
+
+    const p = env.__credentials.get(getOpts());
+    deliver(env.__posted[0], api, { type: "error", name: ErrName.FALLBACK });
+    await expect(p).resolves.toEqual({ id: "from-1p-passthrough" });
+    expect(passthrough).toHaveBeenCalledTimes(1);
+
+    api.destroy();
+    expect(env.__credentials.get).toBe(passthrough);
+    expect(env.__credentials.get.__baluard).toBeUndefined();
+    expect(env.__handlers.length).toBe(0);
+  });
+
+  it("handles a competing hook enabling after install without throwing on destroy", () => {
+    const env = makeEnv();
+    const passthrough = vi.fn(() => new Promise(() => {}));
+    const activeHook = vi.fn(() => new Promise(() => {}));
+    let enabled = false;
+    for (const prop of ["create", "get"]) {
+      Object.defineProperty(env.__credentials, prop, {
+        configurable: false,
+        enumerable: true,
+        get() {
+          return enabled ? activeHook : this["_" + prop] ?? passthrough;
+        },
+        set(v) {
+          if (enabled) return;
+          this["_" + prop] = v;
+        },
+      });
+    }
+
+    const api = createPageInterception(env);
+    expect(api.install()).toBe(true);
+    enabled = true;
+    expect(() => api.destroy()).not.toThrow();
+    expect(env.__credentials.get).toBe(activeHook);
+  });
+
+  it("forwards a retained wrapper reference directly to native after destroy", async () => {
+    const env = makeEnv();
+    const nativeResp = { id: "native-after-destroy" };
+    env.__nativeGet.mockResolvedValueOnce(nativeResp);
+    const api = createPageInterception(env);
+    expect(api.install()).toBe(true);
+
+    const retainedGet = env.__credentials.get;
+    expect(retainedGet.name).toBe("get");
+    expect(Object.keys(retainedGet)).not.toContain("__baluard");
+    api.destroy();
+
+    await expect(retainedGet(getOpts())).resolves.toEqual(nativeResp);
+    expect(env.__nativeGet).toHaveBeenCalledTimes(1);
+    expect(env.__posted.length).toBe(0);
+  });
+
+  it("rolls back a viaAssign create wrap when get fails", () => {
+    const env = makeEnv();
+    const passthrough = vi.fn(() => new Promise(() => {}));
     const lockedGet = vi.fn(() => new Promise(() => {}));
+    Object.defineProperty(env.__credentials, "create", {
+      configurable: false,
+      enumerable: true,
+      get() {
+        return this._create ?? passthrough;
+      },
+      set(v) {
+        this._create = v;
+      },
+    });
     Object.defineProperty(env.__credentials, "get", {
       value: lockedGet,
+      writable: false,
+      configurable: false,
+    });
+
+    const api = createPageInterception(env);
+    expect(api.install()).toBe(false);
+    expect(env.__credentials.create).toBe(passthrough);
+    expect(env.__handlers.length).toBe(0);
+  });
+
+  it("fails closed when a non-configurable accessor setter ignores writes (enabled)", () => {
+    const env = makeEnv();
+    const activeHook = vi.fn(() => new Promise(() => {}));
+    Object.defineProperty(env.__credentials, "get", {
+      configurable: false,
+      enumerable: true,
+      get: () => activeHook,
+      set: () => {},
+    });
+
+    const api = createPageInterception(env);
+    expect(api.install()).toBe(false);
+    expect(env.window.__baluardPasskey).toBe(false);
+    expect(env.__handlers.length).toBe(0);
+    expect(env.__wrapProto.create).toBe(env.__nativeCreate);
+  });
+
+  it("does not clobber a late hook installed after Baluard on destroy", () => {
+    const env = makeEnv();
+    const api = createPageInterception(env);
+    expect(api.install()).toBe(true);
+
+    const lateGet = vi.fn(() => new Promise(() => {}));
+    Object.defineProperty(env.__wrapProto, "get", {
+      value: lateGet,
+      writable: true,
+      configurable: true,
+    });
+
+    api.destroy();
+    expect(env.__wrapProto.get).toBe(lateGet);
+    expect(env.__wrapProto.create).toBe(env.__nativeCreate);
+  });
+
+  it("fails closed, rolls back partial create wrap, and attaches no listener on non-configurable create/get", () => {
+    const env = makeEnv();
+    const lockedCreate = vi.fn(() => new Promise(() => {}));
+    Object.defineProperty(env.__credentials, "create", {
+      value: lockedCreate,
+      writable: false,
       configurable: false,
     });
 
     const api = createPageInterception(env);
     expect(api.install()).toBe(false);
     expect(env.window.__baluardPasskey).toBe(false);
-    expect(env.__wrapProto.create).toBe(env.__nativeCreate);
+    expect(env.__handlers.length).toBe(0);
+    expect(env.__wrapProto.get).toBe(env.__nativeGet);
   });
 });

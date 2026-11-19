@@ -65,7 +65,11 @@ export function createPageInterception(env) {
     return null;
   }
   const nativeCredentials = nav.credentials;
-  if (!nativeCredentials || typeof nativeCredentials.create !== "function") {
+  if (
+    !nativeCredentials ||
+    typeof nativeCredentials.create !== "function" ||
+    typeof nativeCredentials.get !== "function"
+  ) {
     win.__baluardPasskey = false;
     return null;
   }
@@ -95,16 +99,21 @@ export function createPageInterception(env) {
   const restoreNatives = () => {
     if (nativesRestored) return;
     nativesRestored = true;
-    for (const { target, prop, prevDesc, fallbackValue } of installedTargets) {
+    for (const { target, prop, prevDesc, prevValue, fn, viaAssign } of installedTargets) {
       try {
-        if (prevDesc) {
-          Object.defineProperty(target, prop, prevDesc);
+        const cur = Object.getOwnPropertyDescriptor(target, prop);
+        // Only restore if our wrapper is still the active value; never clobber
+        // a hook installed after Baluard.
+        if (viaAssign) {
+          if (target[prop] !== fn) continue;
+          target[prop] = prevDesc && "value" in prevDesc ? prevDesc.value : prevValue;
         } else {
-          Object.defineProperty(target, prop, {
-            value: fallbackValue,
-            writable: true,
-            configurable: true,
-          });
+          if (!cur || cur.value !== fn) continue;
+          if (prevDesc) {
+            Object.defineProperty(target, prop, prevDesc);
+          } else {
+            delete target[prop];
+          }
         }
       } catch {}
     }
@@ -153,7 +162,17 @@ export function createPageInterception(env) {
     entry.reject(Err(ErrName.NOT_ALLOWED, "Bad response"));
   }
 
+  function onMessage(event) {
+    if (event.source !== win) return;
+    const msg = event.data;
+    if (!msg || msg.sender !== SENDER_TAG || msg.contextId !== contextId) return;
+    if (msg.type === MsgType.DESTROY) destroy();
+  }
+
   function destroy() {
+    if (typeof win.removeEventListener === "function") {
+      win.removeEventListener("message", onMessage);
+    }
     restoreNatives();
     for (const sessionId of Array.from(pending.keys())) {
       settle(sessionId, (entry) => {
@@ -165,13 +184,6 @@ export function createPageInterception(env) {
     // Allow a later re-registration cycle (setting toggled off + on).
     win.__baluardPasskey = false;
   }
-
-  win.addEventListener("message", (event) => {
-    if (event.source !== win) return;
-    const msg = event.data;
-    if (!msg || msg.sender !== SENDER_TAG || msg.contextId !== contextId) return;
-    if (msg.type === MsgType.DESTROY) destroy();
-  });
 
   function wireAbortSignal(signal, sessionId, port) {
     if (!signal || typeof signal.addEventListener !== "function") return;
@@ -255,6 +267,10 @@ export function createPageInterception(env) {
   }
 
   function request(mode, originalOptions) {
+    if (nativesRestored) {
+      const call = mode === "create" ? nativeCreate : nativeGet;
+      return call(originalOptions);
+    }
     const publicKey = originalOptions && originalOptions.publicKey;
     if (!publicKey || typeof publicKey !== "object") {
       // Not a WebAuthn ceremony: transparent passthrough.
@@ -386,7 +402,7 @@ export function createPageInterception(env) {
     );
   }
 
-  function wrapMethod(prop, mode, fallbackValue) {
+  function wrapMethod(prop, mode) {
     const ownDesc = Object.getOwnPropertyDescriptor(nativeCredentials, prop);
     // An own property on navigator.credentials (e.g. another manager's
     // passthrough hook) shadows CredentialsContainer.prototype, so wrap
@@ -396,19 +412,35 @@ export function createPageInterception(env) {
     const fn = function (options) {
       return request(mode, options);
     };
-    fn.__baluard = true;
-    Object.defineProperty(target, prop, {
-      value: fn,
-      writable: true,
-      configurable: true,
-    });
-    installedTargets.push({ target, prop, prevDesc, fallbackValue });
+    Object.defineProperty(fn, "name", { value: prop, configurable: true });
+    Object.defineProperty(fn, "__baluard", { value: true, configurable: true });
+    const viaAssign = Boolean(
+      ownDesc &&
+        !ownDesc.configurable &&
+        ((!ownDesc.get && !ownDesc.set && ownDesc.writable) || typeof ownDesc.set === "function")
+    );
+    const prevValue = viaAssign ? target[prop] : undefined;
+    if (viaAssign) {
+      target[prop] = fn;
+      // A competing manager's setter may silently ignore writes when enabled.
+      if (target[prop] !== fn) {
+        throw new Error(`Cannot overwrite ${prop}`);
+      }
+    } else {
+      Object.defineProperty(target, prop, {
+        value: fn,
+        writable: true,
+        configurable: true,
+      });
+    }
+    installedTargets.push({ target, prop, prevDesc, prevValue, fn, viaAssign });
   }
 
   function install() {
     try {
-      wrapMethod("create", "create", nativeCreate);
-      wrapMethod("get", "get", nativeGet);
+      wrapMethod("create", "create");
+      wrapMethod("get", "get");
+      win.addEventListener("message", onMessage);
       return true;
     } catch {
       // Cannot wrap safely: roll back any partial wrap and stay invisible.
